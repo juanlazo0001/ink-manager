@@ -1,0 +1,117 @@
+import { Router } from "express";
+import { prisma } from "../lib/prisma";
+import { Channel } from "../../generated/prisma/enums";
+
+const router = Router();
+
+const REQUIRED_FIELDS = [
+  "firstName",
+  "lastName",
+  "email",
+  "channel",
+  "description",
+  "colorOrBlackGrey",
+  "placement",
+  "estimatedSize",
+] as const;
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+// Public: the intake form is unauthenticated. Creates the Client (or reuses
+// an existing one, matched by email within the studio) and the Inquiry
+// together, so the studio's pipeline sees a single lead rather than a
+// duplicate client every time the same person submits again.
+// TEMPORARY SIMPLIFICATION: looks up the single existing studio rather than
+// scoping by studioSlug, since only one studio exists right now.
+router.post("/", async (req, res) => {
+  const body = req.body ?? {};
+
+  const missing = REQUIRED_FIELDS.filter((field) => !body[field]);
+  if (missing.length > 0) {
+    return res.status(400).json({ error: `Missing required field(s): ${missing.join(", ")}` });
+  }
+
+  if (typeof body.hasBeenTattooedBefore !== "boolean") {
+    return res.status(400).json({ error: "hasBeenTattooedBefore must be a boolean" });
+  }
+
+  if (!Object.values(Channel).includes(body.channel)) {
+    return res.status(400).json({ error: `channel must be one of: ${Object.values(Channel).join(", ")}` });
+  }
+
+  if (body.referenceImages !== undefined && !isStringArray(body.referenceImages)) {
+    return res.status(400).json({ error: "referenceImages must be an array of strings" });
+  }
+
+  if (body.placementImages !== undefined && !isStringArray(body.placementImages)) {
+    return res.status(400).json({ error: "placementImages must be an array of strings" });
+  }
+
+  const studio = await prisma.studio.findFirst();
+  if (!studio) {
+    return res.status(500).json({ error: "No studio is configured yet" });
+  }
+
+  const {
+    firstName,
+    lastName,
+    email,
+    phone,
+    channel,
+    description,
+    colorOrBlackGrey,
+    placement,
+    estimatedSize,
+    hasBeenTattooedBefore,
+    budget,
+    desiredTiming,
+    preferredArtistId,
+    referenceImages,
+    placementImages,
+  } = body;
+
+  if (preferredArtistId) {
+    const preferredArtist = await prisma.artist.findUnique({
+      where: { id: preferredArtistId },
+      include: { user: true },
+    });
+
+    if (!preferredArtist || preferredArtist.user.studioId !== studio.id) {
+      return res.status(400).json({ error: "preferredArtistId must belong to this studio" });
+    }
+  }
+
+  const existingClient = await prisma.client.findFirst({
+    where: { studioId: studio.id, email },
+  });
+
+  const client =
+    existingClient ??
+    (await prisma.client.create({
+      data: { studioId: studio.id, firstName, lastName, email, phone },
+    }));
+
+  const inquiry = await prisma.inquiry.create({
+    data: {
+      studioId: studio.id,
+      clientId: client.id,
+      channel,
+      description,
+      colorOrBlackGrey,
+      placement,
+      estimatedSize,
+      hasBeenTattooedBefore,
+      budget,
+      desiredTiming,
+      preferredArtistId: preferredArtistId || null,
+      referenceImages: referenceImages ?? [],
+      placementImages: placementImages ?? [],
+    },
+  });
+
+  res.status(201).json(inquiry);
+});
+
+export default router;

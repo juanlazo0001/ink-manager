@@ -1,0 +1,209 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  OWNER
+  FRONT_DESK
+  ARTIST
+  CUSTOMER
+}
+
+enum AppointmentStatus {
+  REQUESTED
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum Channel {
+  EMAIL
+  INSTAGRAM
+  FACEBOOK
+}
+
+enum InquiryStatus {
+  NEW
+  ARTIST_ASSIGNED
+  AWAITING_CLIENT_RESPONSE
+  SCHEDULING
+  WAITLISTED
+  DEPOSIT_PENDING
+  CONFIRMED
+  CLOSED_LOST
+  COLD_LEAD
+}
+
+model Studio {
+  id        String   @id @default(cuid())
+  name      String
+  logoUrl   String?
+  website   String?
+  createdAt DateTime @default(now())
+
+  users           User[]
+  clients         Client[]
+  appointments    Appointment[]
+  locations       Location[]
+  rolePermissions RolePermission[]
+  inquiries       Inquiry[]
+}
+
+model RolePermission {
+  id            String  @id @default(cuid())
+  role          Role
+  permissionKey String
+  allowed       Boolean @default(false)
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  @@unique([studioId, role, permissionKey])
+}
+
+model Location {
+  id        String   @id @default(cuid())
+  name      String
+  address   String?
+  phone     String?
+  email     String?
+  hours     Json?
+  createdAt DateTime @default(now())
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  @@index([studioId])
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String?
+  phone     String?
+  avatarUrl String?
+  role      Role
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  artist Artist?
+  client Client?
+}
+
+model Artist {
+  id          String   @id @default(cuid())
+  bio         String?
+  specialties String[]
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id])
+
+  appointments       Appointment[]
+  preferredInquiries Inquiry[]     @relation("PreferredArtist")
+  assignedInquiries  Inquiry[]     @relation("AssignedArtist")
+}
+
+model Client {
+  id        String   @id @default(cuid())
+  firstName String
+  lastName  String
+  email     String?
+  phone     String?
+  createdAt DateTime @default(now())
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  userId String? @unique
+  user   User?   @relation(fields: [userId], references: [id])
+
+  appointments Appointment[]
+  consentForms ConsentForm[]
+  inquiries    Inquiry[]
+}
+
+model Appointment {
+  id          String            @id @default(cuid())
+  startTime   DateTime
+  endTime     DateTime
+  status      AppointmentStatus @default(REQUESTED)
+  depositPaid Boolean           @default(false)
+  notes       String?
+  createdAt   DateTime          @default(now())
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  artistId String
+  artist   Artist @relation(fields: [artistId], references: [id])
+
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id])
+
+  consentForm ConsentForm?
+}
+
+model ConsentForm {
+  id            String    @id @default(cuid())
+  signedAt      DateTime?
+  signatureData String?
+  createdAt     DateTime  @default(now())
+
+  signingToken   String?   @unique
+  tokenExpiresAt DateTime?
+
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id])
+
+  appointmentId String?      @unique
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id])
+}
+
+model Inquiry {
+  id                    String        @id @default(cuid())
+  channel               Channel
+  description           String
+  colorOrBlackGrey      String
+  placement             String
+  estimatedSize         String
+  hasBeenTattooedBefore Boolean
+  budget                String?
+  desiredTiming         String?
+  referenceImages       String[]
+  placementImages       String[]
+  status                InquiryStatus @default(NEW)
+  priceEstimateLow      Float?
+  priceEstimateHigh     Float?
+  timeEstimateHours     Float?
+  createdAt             DateTime      @default(now())
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id])
+
+  preferredArtistId String?
+  preferredArtist   Artist? @relation("PreferredArtist", fields: [preferredArtistId], references: [id])
+
+  assignedArtistId String?
+  assignedArtist   Artist? @relation("AssignedArtist", fields: [assignedArtistId], references: [id])
+
+  @@index([studioId])
+  @@index([clientId])
+}
