@@ -1,10 +1,14 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
+import Modal from '../components/Modal'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatStatus } from '../lib/format'
 import { ArrowLeftIcon, PlusIcon } from '../components/icons'
 import { useUserProfile } from '../context/useUserProfile'
+import { useAuth } from '../context/useAuth'
+import { clientsQueryKey } from '../lib/queryKeys'
 
 interface ConsentForm {
   id: string
@@ -38,18 +42,38 @@ interface Appointment {
   artist: { id: string; user: { email: string } } | null
 }
 
+interface ClientOption {
+  id: string
+  firstName: string
+  lastName: string
+  email: string | null
+  phone: string | null
+}
+
+const EMPTY_MERGE_FORM = { firstName: '', lastName: '', email: '', phone: '' }
+
 export default function ClientDetail() {
   const { id } = useParams<{ id: string }>()
+  const { user } = useAuth()
   const { profile } = useUserProfile()
   const canManage = profile?.permissions.includes('clients.manage') ?? false
+  const queryClient = useQueryClient()
   const [client, setClient] = useState<Client | null>(null)
   const [appointments, setAppointments] = useState<Appointment[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [refreshIndex, setRefreshIndex] = useState(0)
 
   const [sendingForm, setSendingForm] = useState(false)
   const [sendFormError, setSendFormError] = useState<string | null>(null)
   const [latestSigningUrl, setLatestSigningUrl] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+
+  const [showMergeModal, setShowMergeModal] = useState(false)
+  const [otherClients, setOtherClients] = useState<ClientOption[] | null>(null)
+  const [duplicateId, setDuplicateId] = useState('')
+  const [mergeForm, setMergeForm] = useState(EMPTY_MERGE_FORM)
+  const [merging, setMerging] = useState(false)
+  const [mergeError, setMergeError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!id) return
@@ -88,7 +112,68 @@ export default function ClientDetail() {
     return () => {
       ignore = true
     }
-  }, [id])
+  }, [id, refreshIndex])
+
+  const duplicate = otherClients?.find((c) => c.id === duplicateId) ?? null
+
+  function openMergeModal() {
+    setShowMergeModal(true)
+    setMergeError(null)
+
+    if (otherClients === null) {
+      apiFetch<ClientOption[]>('/clients')
+        .then((data) => setOtherClients(data.filter((c) => c.id !== id)))
+        .catch(() => {
+          // The picker just stays empty if this fails; the modal's error
+          // state covers the submit-time failure case.
+        })
+    }
+  }
+
+  function selectDuplicate(selectedId: string) {
+    setDuplicateId(selectedId)
+    const selected = otherClients?.find((c) => c.id === selectedId)
+
+    if (client && selected) {
+      setMergeForm({
+        firstName: client.firstName || selected.firstName,
+        lastName: client.lastName || selected.lastName,
+        email: client.email || selected.email || '',
+        phone: client.phone || selected.phone || '',
+      })
+    }
+  }
+
+  async function handleMerge() {
+    if (!id || !duplicateId) return
+
+    setMerging(true)
+    setMergeError(null)
+
+    try {
+      await apiFetch(`/clients/${id}/merge`, {
+        method: 'POST',
+        body: JSON.stringify({
+          duplicateId,
+          firstName: mergeForm.firstName,
+          lastName: mergeForm.lastName,
+          email: mergeForm.email || undefined,
+          phone: mergeForm.phone || undefined,
+        }),
+      })
+
+      if (user) queryClient.invalidateQueries({ queryKey: clientsQueryKey(user.studioId) })
+      setShowMergeModal(false)
+      setOtherClients(null)
+      setDuplicateId('')
+      setMergeForm(EMPTY_MERGE_FORM)
+      setRefreshIndex((index) => index + 1)
+    } catch (err) {
+      setMergeError(err instanceof Error ? err.message : 'Failed to merge clients')
+    } finally {
+      setMerging(false)
+    }
+  }
 
   async function handleSendConsentForm() {
     if (!id) return
@@ -152,18 +237,30 @@ export default function ClientDetail() {
           {!error && client && (
             <>
               <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-                <div className="flex items-center gap-4">
-                  <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-neutral-800 text-lg font-semibold text-white">
-                    {client.firstName[0]}
-                    {client.lastName[0]}
-                  </span>
-                  <div>
-                    <h1 className="text-xl font-bold text-white">
-                      {client.firstName} {client.lastName}
-                    </h1>
-                    <p className="mt-1 text-sm text-neutral-400">{client.email ?? 'No email on file'}</p>
-                    <p className="text-sm text-neutral-400">{client.phone ?? 'No phone on file'}</p>
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div className="flex items-center gap-4">
+                    <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-neutral-800 text-lg font-semibold text-white">
+                      {client.firstName[0]}
+                      {client.lastName[0]}
+                    </span>
+                    <div>
+                      <h1 className="text-xl font-bold text-white">
+                        {client.firstName} {client.lastName}
+                      </h1>
+                      <p className="mt-1 text-sm text-neutral-400">{client.email ?? 'No email on file'}</p>
+                      <p className="text-sm text-neutral-400">{client.phone ?? 'No phone on file'}</p>
+                    </div>
                   </div>
+
+                  {canManage && (
+                    <button
+                      type="button"
+                      onClick={openMergeModal}
+                      className="rounded-full border border-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-800"
+                    >
+                      Merge Duplicate
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -314,6 +411,123 @@ export default function ClientDetail() {
           )}
         </div>
       </div>
+
+      {showMergeModal && (
+        <Modal
+          title="Merge Duplicate Client"
+          onClose={() => {
+            setShowMergeModal(false)
+            setDuplicateId('')
+            setMergeForm(EMPTY_MERGE_FORM)
+            setMergeError(null)
+          }}
+        >
+          <p className="text-sm text-neutral-400">
+            Pick the duplicate record. All of its appointments, inquiries, and consent forms move here, then it's
+            deleted.
+          </p>
+
+          <div className="mt-4">
+            <label htmlFor="duplicateId" className="mb-1 block text-sm font-medium text-neutral-300">
+              Duplicate client
+            </label>
+            <select
+              id="duplicateId"
+              value={duplicateId}
+              onChange={(event) => selectDuplicate(event.target.value)}
+              className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+            >
+              <option value="" disabled>
+                {otherClients === null ? 'Loading…' : 'Select a client'}
+              </option>
+              {otherClients?.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.firstName} {c.lastName} {c.email ? `(${c.email})` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {duplicate && (
+            <div className="mt-4 space-y-3">
+              <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                Choose which value to keep
+              </p>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-neutral-300">First name</label>
+                <select
+                  value={mergeForm.firstName}
+                  onChange={(event) => setMergeForm({ ...mergeForm, firstName: event.target.value })}
+                  className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                >
+                  {[...new Set([client?.firstName, duplicate.firstName])].map((value) => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-neutral-300">Last name</label>
+                <select
+                  value={mergeForm.lastName}
+                  onChange={(event) => setMergeForm({ ...mergeForm, lastName: event.target.value })}
+                  className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                >
+                  {[...new Set([client?.lastName, duplicate.lastName])].map((value) => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-neutral-300">Email</label>
+                <select
+                  value={mergeForm.email}
+                  onChange={(event) => setMergeForm({ ...mergeForm, email: event.target.value })}
+                  className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                >
+                  {[...new Set([client?.email ?? '', duplicate.email ?? ''])].map((value) => (
+                    <option key={value || 'none'} value={value}>
+                      {value || 'Not provided'}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-neutral-300">Phone</label>
+                <select
+                  value={mergeForm.phone}
+                  onChange={(event) => setMergeForm({ ...mergeForm, phone: event.target.value })}
+                  className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                >
+                  {[...new Set([client?.phone ?? '', duplicate.phone ?? ''])].map((value) => (
+                    <option key={value || 'none'} value={value}>
+                      {value || 'Not provided'}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
+
+          {mergeError && <p className="mt-3 text-sm text-red-400">{mergeError}</p>}
+
+          <button
+            type="button"
+            onClick={handleMerge}
+            disabled={!duplicateId || merging}
+            className="mt-5 w-full rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-600 disabled:opacity-60"
+          >
+            {merging ? 'Merging…' : 'Merge and Delete Duplicate'}
+          </button>
+        </Modal>
+      )}
     </div>
   )
 }

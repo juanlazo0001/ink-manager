@@ -58,6 +58,71 @@ router.get("/:id", async (req, res) => {
   res.json(client);
 });
 
+// Folds a duplicate client record into this one: every appointment, consent
+// form, and inquiry the duplicate had gets reassigned here, then the
+// duplicate is deleted. firstName/lastName/email/phone come from the
+// request because staff pick the correct value per field when the two
+// records disagree -- this isn't a simple "keep the newer one" merge.
+router.post("/:id/merge", async (req, res) => {
+  const id = req.params.id as string;
+  const body = req.body ?? {};
+  const { duplicateId, firstName, lastName, email, phone } = body;
+
+  if (!duplicateId) {
+    return res.status(400).json({ error: "duplicateId is required" });
+  }
+
+  if (duplicateId === id) {
+    return res.status(400).json({ error: "A client cannot be merged with itself" });
+  }
+
+  if (!firstName || !lastName) {
+    return res.status(400).json({ error: "firstName and lastName are required" });
+  }
+
+  const [survivor, duplicate] = await Promise.all([
+    prisma.client.findUnique({ where: { id } }),
+    prisma.client.findUnique({ where: { id: duplicateId } }),
+  ]);
+
+  if (!survivor || survivor.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Client not found" });
+  }
+
+  if (!duplicate || duplicate.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Duplicate client not found" });
+  }
+
+  if (survivor.userId && duplicate.userId) {
+    return res
+      .status(400)
+      .json({ error: "Both clients have a linked portal account -- resolve that manually before merging" });
+  }
+
+  const [, merged] = await prisma.$transaction([
+    // Frees up the unique userId slot before the survivor can claim it --
+    // both updates touching the same userId in one statement would violate
+    // the unique constraint even within this transaction.
+    prisma.client.update({ where: { id: duplicateId }, data: { userId: null } }),
+    prisma.client.update({
+      where: { id },
+      data: {
+        firstName,
+        lastName,
+        email: email || null,
+        phone: phone || null,
+        userId: survivor.userId ?? duplicate.userId ?? null,
+      },
+    }),
+    prisma.appointment.updateMany({ where: { clientId: duplicateId }, data: { clientId: id } }),
+    prisma.consentForm.updateMany({ where: { clientId: duplicateId }, data: { clientId: id } }),
+    prisma.inquiry.updateMany({ where: { clientId: duplicateId }, data: { clientId: id } }),
+    prisma.client.delete({ where: { id: duplicateId } }),
+  ]);
+
+  res.json(merged);
+});
+
 router.post("/:clientId/consent-forms", async (req, res) => {
   const clientId = req.params.clientId as string;
 
