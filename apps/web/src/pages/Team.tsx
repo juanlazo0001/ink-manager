@@ -284,7 +284,7 @@ export default function Team() {
                   <thead>
                     <tr className="text-xs text-neutral-500">
                       <th className="pb-3 font-medium">Name</th>
-                      <th className="pb-3 font-medium">Email</th>
+                      <th className="hidden pb-3 font-medium md:table-cell">Email</th>
                       <th className="pb-3 font-medium">Role</th>
                       <th className="pb-3 font-medium">Status</th>
                       <th className="pb-3 font-medium"></th>
@@ -311,7 +311,7 @@ export default function Team() {
                               {teamUser.name || '—'}
                             </div>
                           </td>
-                          <td className="py-3 text-neutral-400">{teamUser.email}</td>
+                          <td className="hidden py-3 text-neutral-400 md:table-cell">{teamUser.email}</td>
                           <td className="py-3 text-neutral-400">{formatStatus(teamUser.role)}</td>
                           <td className="py-3">
                             <span className={teamUser.isActive ? 'text-green-400' : 'text-neutral-500'}>

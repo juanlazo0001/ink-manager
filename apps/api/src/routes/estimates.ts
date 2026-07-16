@@ -7,11 +7,7 @@ const router = Router();
 // Matches the SOP's collaborative-design-policy wording shown alongside
 // every estimate — adjust here if the studio's actual policy text changes.
 const COLLABORATIVE_DESIGN_POLICY =
-  "This estimate reflects your artist's initial read on your description and references. The final " +
-  "design is developed collaboratively with your artist, and small adjustments to sizing, placement, or " +
-  "detail during your consultation or session can move the final price within (or slightly beyond) the " +
-  "quoted range. A deposit is required to confirm your appointment; it is non-refundable but is applied " +
-  "toward the total cost of your tattoo.";
+  "No design is drawn in advance — it is created together with the client on the day of the appointment.";
 
 function isExpiredOrInvalid(inquiry: { estimateTokenExpiresAt: Date | null } | null) {
   if (!inquiry) {

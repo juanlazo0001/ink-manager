@@ -140,8 +140,8 @@ export default function EstimateResponse() {
               </div>
             </div>
 
-            <div className="mt-5 max-h-40 overflow-y-auto rounded-lg border border-neutral-800 bg-neutral-950/40 p-3 text-xs leading-relaxed text-neutral-400">
-              <p>{verifyData.collaborativeDesignPolicy}</p>
+            <div className="mt-5 rounded-lg border border-neutral-800 bg-neutral-950/40 p-3 text-xs text-neutral-400">
+              {verifyData.collaborativeDesignPolicy}
             </div>
 
             {submitError && (
