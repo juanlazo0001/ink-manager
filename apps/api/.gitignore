@@ -1,6 +1,9 @@
 node_modules
-# Keep environment variables out of version control
-.env
+# Keep environment variables out of version control -- .env* covers .env,
+# .env.production, .env.local, etc.; .env.example is the one exception,
+# since it documents the shape with no real secrets.
+.env*
+!.env.example
 
 /generated/prisma
 /dist
