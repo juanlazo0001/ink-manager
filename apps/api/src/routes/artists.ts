@@ -2,9 +2,13 @@ import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { requireAuth } from "../middleware/auth";
 import { Role } from "../../generated/prisma/enums";
+import type { Prisma } from "../../generated/prisma/client";
 import { requirePermission } from "../lib/permissions";
 
 const router = Router();
+
+const PUBLIC_ARTIST_INCLUDE = { user: { select: { name: true } } } as const;
+type PublicArtist = Prisma.ArtistGetPayload<{ include: typeof PUBLIC_ARTIST_INCLUDE }>;
 
 // Public: lets the unauthenticated intake form populate a "preferred artist"
 // dropdown. Only exposes id/name, never bio/specialties/user contact info.
@@ -18,11 +22,11 @@ router.get("/public", async (_req, res) => {
 
   const artists = await prisma.artist.findMany({
     where: { user: { studioId: studio.id, role: Role.ARTIST, isActive: true } },
-    include: { user: { select: { name: true } } },
+    include: PUBLIC_ARTIST_INCLUDE,
     orderBy: { user: { name: "asc" } },
   });
 
-  res.json(artists.map((artist) => ({ id: artist.id, name: artist.user.name ?? "Unnamed artist" })));
+  res.json(artists.map((artist: PublicArtist) => ({ id: artist.id, name: artist.user.name ?? "Unnamed artist" })));
 });
 
 router.use(requireAuth);

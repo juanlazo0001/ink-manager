@@ -5,6 +5,7 @@ import { requireAuth, requireRole } from "../middleware/auth";
 import { BOOTSTRAP_SECRET } from "../lib/bootstrapSecret";
 import { Role } from "../../generated/prisma/enums";
 import { Prisma } from "../../generated/prisma/client";
+import type { RolePermission } from "../../generated/prisma/client";
 import { serializeUser } from "./users";
 import { CONFIGURABLE_ROLES, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS, requirePermission } from "../lib/permissions";
 import type { PermissionKey } from "../lib/permissions";
@@ -149,6 +150,7 @@ router.post("/:studioId/users", requireAuth, requireRole(Role.OWNER), async (req
 });
 
 const USER_INCLUDE_ARTIST = { artist: { select: { bio: true, specialties: true } } } as const;
+type UserWithArtist = Prisma.UserGetPayload<{ include: typeof USER_INCLUDE_ARTIST }>;
 
 // Admin-only staff directory. Unlike studio/location info (readable by any
 // studio member), this lists every user's email/phone — OWNER only.
@@ -166,7 +168,7 @@ router.get("/:studioId/users", requireAuth, requireRole(Role.OWNER), async (req,
   });
 
   res.json(
-    users.map((user) => {
+    users.map((user: UserWithArtist) => {
       const { password: _password, ...safeUser } = user;
       return serializeUser(safeUser);
     }),
@@ -262,7 +264,7 @@ router.patch("/:studioId/users/:userId", requireAuth, requireRole(Role.OWNER), a
 
 async function buildPermissionMatrix(studioId: string) {
   const overrides = await prisma.rolePermission.findMany({ where: { studioId } });
-  const overrideMap = new Map(overrides.map((o) => [`${o.role}:${o.permissionKey}`, o.allowed]));
+  const overrideMap = new Map(overrides.map((o: RolePermission) => [`${o.role}:${o.permissionKey}`, o.allowed]));
 
   const matrix: Record<string, Record<PermissionKey, boolean>> = {};
   for (const role of CONFIGURABLE_ROLES) {

@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { prisma } from "./prisma";
 import { Role } from "../../generated/prisma/enums";
+import type { RolePermission } from "../../generated/prisma/client";
 
 // One key per capability that used to be a hardcoded requireRole check.
 // Kept in sync with apps/web/src/lib/permissions.ts for display labels.
@@ -46,7 +47,7 @@ export async function getEffectivePermissions(studioId: string, role: Role): Pro
   if (!defaults) return [];
 
   const overrides = await prisma.rolePermission.findMany({ where: { studioId, role } });
-  const overrideMap = new Map(overrides.map((o) => [o.permissionKey, o.allowed]));
+  const overrideMap = new Map(overrides.map((o: RolePermission) => [o.permissionKey, o.allowed]));
 
   return PERMISSION_KEYS.filter((key) => overrideMap.get(key) ?? defaults.has(key));
 }
