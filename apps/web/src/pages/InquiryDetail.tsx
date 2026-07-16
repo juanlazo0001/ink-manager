@@ -32,6 +32,17 @@ interface Inquiry {
   preferredArtist: { id: string; user: { name: string | null } } | null
   assignedArtist: { id: string; user: { name: string | null } } | null
   appointment: { id: string; startTime: string; endTime: string; status: string } | null
+  depositForm: {
+    id: string
+    token: string
+    depositAmount: number
+    feeAmount: number
+    totalCharged: number
+    signedAt: string | null
+    signatureName: string | null
+    paidManually: boolean
+    paidAt: string | null
+  } | null
 }
 
 interface ArtistOption {
@@ -94,6 +105,11 @@ export default function InquiryDetail() {
   const [waitlistNote, setWaitlistNote] = useState('')
   const [waitlisting, setWaitlisting] = useState(false)
   const [waitlistError, setWaitlistError] = useState<string | null>(null)
+
+  const [sendingDeposit, setSendingDeposit] = useState(false)
+  const [sendDepositError, setSendDepositError] = useState<string | null>(null)
+  const [markingPaid, setMarkingPaid] = useState(false)
+  const [markPaidError, setMarkPaidError] = useState<string | null>(null)
 
   // Seeds the editable estimate fields from the inquiry once per inquiry id
   // (not on every refetch), so an in-progress edit doesn't get clobbered by
@@ -248,7 +264,43 @@ export default function InquiryDetail() {
     }
   }
 
+  async function handleSendDepositForm() {
+    if (!id) return
+
+    setSendingDeposit(true)
+    setSendDepositError(null)
+
+    try {
+      await apiFetch(`/inquiries/${id}/deposit-form`, { method: 'POST' })
+      setRefreshIndex((index) => index + 1)
+    } catch (err) {
+      setSendDepositError(err instanceof Error ? err.message : 'Failed to send deposit form')
+    } finally {
+      setSendingDeposit(false)
+    }
+  }
+
+  async function handleMarkPaid() {
+    if (!inquiry?.depositForm) return
+
+    setMarkingPaid(true)
+    setMarkPaidError(null)
+
+    try {
+      await apiFetch(`/deposit-forms/${inquiry.depositForm.id}/mark-paid`, { method: 'PATCH' })
+      setRefreshIndex((index) => index + 1)
+    } catch (err) {
+      setMarkPaidError(err instanceof Error ? err.message : 'Failed to mark deposit as paid')
+    } finally {
+      setMarkingPaid(false)
+    }
+  }
+
   const estimateUrl = inquiry?.estimateToken ? `${window.location.origin}/estimate/${inquiry.estimateToken}` : null
+  const depositUrl =
+    inquiry?.depositForm && !inquiry.depositForm.signedAt
+      ? `${window.location.origin}/deposit/${inquiry.depositForm.token}`
+      : null
 
   return (
     <div className="flex min-h-screen bg-neutral-900 text-white">
@@ -545,6 +597,73 @@ export default function InquiryDetail() {
                           >
                             {waitlisting ? 'Saving…' : 'Confirm Waitlist'}
                           </button>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+
+              {(inquiry.status === 'DEPOSIT_PENDING' || inquiry.depositForm) && (
+                <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
+                  <h2 className="text-base font-semibold text-white">Deposit</h2>
+
+                  {inquiry.depositForm && (
+                    <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+                      <DetailField label="Deposit" value={`$${inquiry.depositForm.depositAmount}`} />
+                      <DetailField label="Fee" value={`$${inquiry.depositForm.feeAmount}`} />
+                      <DetailField label="Total to collect" value={`$${inquiry.depositForm.totalCharged}`} />
+                    </div>
+                  )}
+
+                  {inquiry.depositForm?.signedAt ? (
+                    <>
+                      <p className="mt-4 text-sm text-neutral-300">
+                        Signed by {inquiry.depositForm.signatureName} on {formatDateTime(inquiry.depositForm.signedAt)}
+                      </p>
+
+                      {markPaidError && <p className="mt-3 text-sm text-red-400">{markPaidError}</p>}
+
+                      {inquiry.depositForm.paidManually ? (
+                        <p className="mt-3 text-sm text-green-400">
+                          Marked paid {inquiry.depositForm.paidAt ? formatDateTime(inquiry.depositForm.paidAt) : ''}
+                        </p>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleMarkPaid}
+                          disabled={markingPaid}
+                          className="mt-3 rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                        >
+                          {markingPaid ? 'Saving…' : `Mark $${inquiry.depositForm.totalCharged} as Paid`}
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      {sendDepositError && <p className="mt-3 text-sm text-red-400">{sendDepositError}</p>}
+
+                      <button
+                        type="button"
+                        onClick={handleSendDepositForm}
+                        disabled={sendingDeposit}
+                        className="mt-4 rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                      >
+                        {sendingDeposit ? 'Sending…' : inquiry.depositForm ? 'Resend Deposit Form' : 'Send Deposit Form'}
+                      </button>
+
+                      {depositUrl && (
+                        <div className="mt-4 rounded-lg border border-neutral-800 p-3">
+                          <p className="mb-2 text-xs text-neutral-500">
+                            Share this link with the client — it expires in 48 hours.
+                          </p>
+                          <input
+                            type="text"
+                            readOnly
+                            value={depositUrl}
+                            onFocus={(event) => event.target.select()}
+                            className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:outline-none"
+                          />
                         </div>
                       )}
                     </>

@@ -9,7 +9,17 @@ const router = Router();
 
 const ESTIMATE_TOKEN_TTL_DAYS = 7;
 const SCHEDULING_BUFFER_MS = 1.5 * 60 * 60 * 1000;
+const DEPOSIT_TOKEN_TTL_HOURS = 48;
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
+
+// $0-200 -> $50 deposit / $60 total, $201-599 -> $100/$110, $600+ -> $200/$210.
+// Fee is a flat $10 in every tier, but derived (not hardcoded) from the two
+// numbers so the tier table stays the single source of truth.
+function computeDepositTier(averageEstimate: number): { depositAmount: number; totalCharged: number } {
+  if (averageEstimate <= 200) return { depositAmount: 50, totalCharged: 60 };
+  if (averageEstimate <= 599) return { depositAmount: 100, totalCharged: 110 };
+  return { depositAmount: 200, totalCharged: 210 };
+}
 
 const REQUIRED_FIELDS = [
   "studioSlug",
@@ -126,6 +136,19 @@ const INQUIRY_INCLUDE = {
   preferredArtist: { select: { id: true, user: { select: { name: true } } } },
   assignedArtist: { select: { id: true, user: { select: { name: true } } } },
   appointment: { select: { id: true, startTime: true, endTime: true, status: true } },
+  depositForm: {
+    select: {
+      id: true,
+      token: true,
+      depositAmount: true,
+      feeAmount: true,
+      totalCharged: true,
+      signedAt: true,
+      signatureName: true,
+      paidManually: true,
+      paidAt: true,
+    },
+  },
 } as const;
 
 // Staff-facing inbox: every inquiry submitted for this studio, newest first.
@@ -413,6 +436,46 @@ router.post("/:id/waitlist", requireAuth, requireRole(Role.OWNER, Role.FRONT_DES
   });
 
   res.json(updated);
+});
+
+// Generates (or, if unsigned, regenerates) the client-facing deposit form
+// link. Only valid once staff has scheduled a real appointment
+// (DEPOSIT_PENDING), and the tier is computed from the artist's own
+// estimate, not anything the client stated.
+router.post("/:id/deposit-form", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { id }, include: { depositForm: true } });
+  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  if (inquiry.status !== InquiryStatus.DEPOSIT_PENDING) {
+    return res.status(400).json({ error: "Only an inquiry in DEPOSIT_PENDING can get a deposit form" });
+  }
+
+  if (inquiry.priceEstimateLow == null || inquiry.priceEstimateHigh == null) {
+    return res.status(400).json({ error: "This inquiry is missing a price estimate" });
+  }
+
+  if (inquiry.depositForm?.signedAt) {
+    return res.status(400).json({ error: "This deposit form has already been signed" });
+  }
+
+  const average = (inquiry.priceEstimateLow + inquiry.priceEstimateHigh) / 2;
+  const { depositAmount, totalCharged } = computeDepositTier(average);
+  const feeAmount = totalCharged - depositAmount;
+
+  const token = crypto.randomBytes(32).toString("hex");
+  const tokenExpiresAt = new Date(Date.now() + DEPOSIT_TOKEN_TTL_HOURS * 60 * 60 * 1000);
+
+  const depositForm = await prisma.depositForm.upsert({
+    where: { inquiryId: id },
+    create: { inquiryId: id, token, tokenExpiresAt, depositAmount, feeAmount, totalCharged },
+    update: { token, tokenExpiresAt, depositAmount, feeAmount, totalCharged },
+  });
+
+  res.status(201).json({ ...depositForm, depositUrl: `${FRONTEND_URL}/deposit/${token}` });
 });
 
 export default router;

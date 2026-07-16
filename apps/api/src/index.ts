@@ -10,6 +10,7 @@ import appointmentsRouter from "./routes/appointments";
 import consentFormsRouter from "./routes/consentForms";
 import inquiriesRouter from "./routes/inquiries";
 import estimatesRouter from "./routes/estimates";
+import { publicRouter as depositsRouter, staffRouter as depositFormsRouter } from "./routes/deposits";
 import uploadsRouter from "./routes/uploads";
 import { requireAuth } from "./middleware/auth";
 
@@ -32,6 +33,8 @@ app.use("/appointments", appointmentsRouter);
 app.use("/consent-forms", consentFormsRouter);
 app.use("/inquiries", inquiriesRouter);
 app.use("/estimates", estimatesRouter);
+app.use("/deposits", depositsRouter);
+app.use("/deposit-forms", depositFormsRouter);
 app.use("/uploads", uploadsRouter);
 
 app.get("/me", requireAuth, (req, res) => {

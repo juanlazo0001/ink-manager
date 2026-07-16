@@ -219,6 +219,33 @@ model Inquiry {
   appointmentId String?      @unique
   appointment   Appointment? @relation(fields: [appointmentId], references: [id])
 
+  depositForm DepositForm?
+
   @@index([studioId])
   @@index([clientId])
+}
+
+model DepositForm {
+  id                          String    @id @default(cuid())
+  token                       String    @unique
+  tokenExpiresAt              DateTime
+  agreedNonRefundable         Boolean   @default(false)
+  agreedLatePolicy            Boolean   @default(false)
+  agreedNoShowForfeit         Boolean   @default(false)
+  agreedNewDepositAfterNoShow Boolean   @default(false)
+  agreedRescheduleLimit       Boolean   @default(false)
+  agreedExpiration            Boolean   @default(false)
+  agreedIdAndVoucher          Boolean   @default(false)
+  agreedAge18                 Boolean   @default(false)
+  signatureName               String?
+  signedAt                    DateTime?
+  depositAmount               Float
+  feeAmount                   Float
+  totalCharged                Float
+  paidManually                Boolean   @default(false)
+  paidAt                      DateTime?
+  createdAt                   DateTime  @default(now())
+
+  inquiryId String  @unique
+  inquiry   Inquiry @relation(fields: [inquiryId], references: [id])
 }
