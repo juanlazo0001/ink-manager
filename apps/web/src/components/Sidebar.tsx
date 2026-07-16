@@ -81,9 +81,9 @@ export default function Sidebar() {
 
       <aside
         className={[
-          'fixed inset-y-0 left-0 z-50 flex w-64 max-w-[80vw] shrink-0 flex-col overflow-y-auto border-r border-neutral-800 bg-neutral-900 px-4 py-6 transition-transform duration-200 ease-in-out',
+          'fixed inset-y-0 left-0 z-50 flex w-[80vw] shrink-0 flex-col overflow-y-auto border-r border-neutral-800 bg-neutral-900 px-4 py-6 transition-transform duration-200 ease-in-out',
           mobileOpen ? 'translate-x-0' : '-translate-x-full',
-          'md:relative md:translate-x-0',
+          'md:relative md:w-64 md:translate-x-0',
         ].join(' ')}
       >
         <div className="flex items-center gap-2 px-2">
