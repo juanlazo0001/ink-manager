@@ -2,6 +2,7 @@ import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { AppointmentStatus, InquiryStatus, Role } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
+import { diffObjects, logAudit } from "../lib/audit";
 
 // Exact SOP wording, in the order the client must agree to each one.
 const TERMS = [
@@ -175,6 +176,15 @@ staffRouter.patch("/:id/mark-paid", requireAuth, requireRole(Role.OWNER, Role.FR
         ]
       : []),
   ]);
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Inquiry",
+    entityId: depositForm.inquiryId,
+    action: "status_change",
+    changes: diffObjects(depositForm.inquiry, { status: InquiryStatus.CONFIRMED }, ["status"]),
+  });
 
   res.json(updatedDepositForm);
 });

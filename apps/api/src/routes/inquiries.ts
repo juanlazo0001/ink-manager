@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma";
 import { Channel, InquiryStatus } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { Role } from "../../generated/prisma/enums";
+import { diffObjects, logAudit } from "../lib/audit";
 
 const router = Router();
 
@@ -230,10 +231,21 @@ router.patch("/:id/assign", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK
     return res.status(400).json({ error: "artistId must belong to your studio" });
   }
 
+  const updateData = { assignedArtistId: artistId, assignedAt: new Date(), status: InquiryStatus.ARTIST_ASSIGNED };
+
   const updated = await prisma.inquiry.update({
     where: { id },
-    data: { assignedArtistId: artistId, assignedAt: new Date(), status: InquiryStatus.ARTIST_ASSIGNED },
+    data: updateData,
     include: INQUIRY_INCLUDE,
+  });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Inquiry",
+    entityId: id,
+    action: "status_change",
+    changes: diffObjects(inquiry, updateData, ["status", "assignedArtistId", "assignedAt"]),
   });
 
   res.json(updated);
@@ -269,15 +281,26 @@ router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), async (req, 
       return res.status(400).json({ error: "declineNote is required when declining" });
     }
 
+    const declineData = {
+      assignedArtistId: null,
+      assignedAt: null,
+      status: InquiryStatus.NEW,
+      declineNote: declineNote.trim(),
+    };
+
     const updated = await prisma.inquiry.update({
       where: { id },
-      data: {
-        assignedArtistId: null,
-        assignedAt: null,
-        status: InquiryStatus.NEW,
-        declineNote: declineNote.trim(),
-      },
+      data: declineData,
       include: INQUIRY_INCLUDE,
+    });
+
+    await logAudit({
+      studioId: req.user!.studioId,
+      actorUserId: req.user!.userId,
+      entityType: "Inquiry",
+      entityId: id,
+      action: "status_change",
+      changes: diffObjects(inquiry, declineData, ["status", "assignedArtistId", "assignedAt", "declineNote"]),
     });
 
     return res.json(updated);
@@ -289,15 +312,26 @@ router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), async (req, 
     }
   }
 
+  const approveData = {
+    status: InquiryStatus.AWAITING_CLIENT_RESPONSE,
+    priceEstimateLow: priceEstimateLow ?? null,
+    priceEstimateHigh: priceEstimateHigh ?? null,
+    timeEstimateHours: timeEstimateHours ?? null,
+  };
+
   const updated = await prisma.inquiry.update({
     where: { id },
-    data: {
-      status: InquiryStatus.AWAITING_CLIENT_RESPONSE,
-      priceEstimateLow: priceEstimateLow ?? null,
-      priceEstimateHigh: priceEstimateHigh ?? null,
-      timeEstimateHours: timeEstimateHours ?? null,
-    },
+    data: approveData,
     include: INQUIRY_INCLUDE,
+  });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Inquiry",
+    entityId: id,
+    action: "status_change",
+    changes: diffObjects(inquiry, approveData, ["status", "priceEstimateLow", "priceEstimateHigh", "timeEstimateHours"]),
   });
 
   res.json(updated);
@@ -335,18 +369,35 @@ router.post("/:id/send-estimate", requireAuth, requireRole(Role.OWNER, Role.FRON
   const estimateToken = crypto.randomBytes(32).toString("hex");
   const estimateTokenExpiresAt = new Date(Date.now() + ESTIMATE_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000);
 
+  const sendEstimateData = {
+    estimateToken,
+    estimateTokenExpiresAt,
+    estimateSentAt: new Date(),
+    status: InquiryStatus.AWAITING_CLIENT_RESPONSE,
+    ...(priceEstimateLow !== undefined ? { priceEstimateLow } : {}),
+    ...(priceEstimateHigh !== undefined ? { priceEstimateHigh } : {}),
+    ...(timeEstimateHours !== undefined ? { timeEstimateHours } : {}),
+  };
+
   const updated = await prisma.inquiry.update({
     where: { id },
-    data: {
-      estimateToken,
-      estimateTokenExpiresAt,
-      estimateSentAt: new Date(),
-      status: InquiryStatus.AWAITING_CLIENT_RESPONSE,
-      ...(priceEstimateLow !== undefined ? { priceEstimateLow } : {}),
-      ...(priceEstimateHigh !== undefined ? { priceEstimateHigh } : {}),
-      ...(timeEstimateHours !== undefined ? { timeEstimateHours } : {}),
-    },
+    data: sendEstimateData,
     include: INQUIRY_INCLUDE,
+  });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Inquiry",
+    entityId: id,
+    action: "status_change",
+    changes: diffObjects(inquiry, sendEstimateData, [
+      "status",
+      "estimateSentAt",
+      "priceEstimateLow",
+      "priceEstimateHigh",
+      "timeEstimateHours",
+    ]),
   });
 
   res.status(201).json({ ...updated, estimateUrl: `${FRONTEND_URL}/estimate/${estimateToken}` });
@@ -407,10 +458,21 @@ router.post("/:id/schedule", requireAuth, requireRole(Role.OWNER, Role.FRONT_DES
     },
   });
 
+  const scheduleData = { appointmentId: appointment.id, status: InquiryStatus.DEPOSIT_PENDING };
+
   const updated = await prisma.inquiry.update({
     where: { id },
-    data: { appointmentId: appointment.id, status: InquiryStatus.DEPOSIT_PENDING },
+    data: scheduleData,
     include: INQUIRY_INCLUDE,
+  });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Inquiry",
+    entityId: id,
+    action: "status_change",
+    changes: diffObjects(inquiry, scheduleData, ["status", "appointmentId"]),
   });
 
   res.status(201).json({
@@ -442,10 +504,21 @@ router.post("/:id/waitlist", requireAuth, requireRole(Role.OWNER, Role.FRONT_DES
     return res.status(400).json({ error: "Only an inquiry in SCHEDULING can be waitlisted" });
   }
 
+  const waitlistData = { status: InquiryStatus.WAITLISTED, declineNote: note?.trim() || null };
+
   const updated = await prisma.inquiry.update({
     where: { id },
-    data: { status: InquiryStatus.WAITLISTED, declineNote: note?.trim() || null },
+    data: waitlistData,
     include: INQUIRY_INCLUDE,
+  });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Inquiry",
+    entityId: id,
+    action: "status_change",
+    changes: diffObjects(inquiry, waitlistData, ["status", "declineNote"]),
   });
 
   res.json(updated);

@@ -33,6 +33,13 @@ enum Channel {
   FACEBOOK
 }
 
+enum GiftCardStatus {
+  ACTIVE
+  REDEEMED
+  EXPIRED
+  VOID
+}
+
 enum InquiryStatus {
   NEW
   ARTIST_ASSIGNED
@@ -60,6 +67,9 @@ model Studio {
   locations       Location[]
   rolePermissions RolePermission[]
   inquiries       Inquiry[]
+  auditLogs       AuditLog[]
+  giftCards       GiftCard[]
+  settings        StudioSettings?
 }
 
 model RolePermission {
@@ -86,6 +96,8 @@ model Location {
   studioId String
   studio   Studio @relation(fields: [studioId], references: [id])
 
+  users User[]
+
   @@index([studioId])
 }
 
@@ -106,6 +118,12 @@ model User {
   artist Artist?
   client Client?
 
+  auditLogs       AuditLog[]
+  issuedGiftCards GiftCard[]
+
+  locationId String?
+  location   Location? @relation(fields: [locationId], references: [id])
+
   @@index([studioId])
 }
 
@@ -114,6 +132,11 @@ model Artist {
   bio             String?
   specialties     String[]
   portfolioImages String[]
+
+  // Advisory weekly availability, not enforced (same philosophy as the
+  // scheduling buffer warning -- it informs staff, doesn't block them).
+  // Shape: Array<{ dayOfWeek: 0-6 (0 = Sunday), startTime: "HH:MM", endTime: "HH:MM" }>
+  preferredSchedule Json?
 
   userId String @unique
   user   User   @relation(fields: [userId], references: [id])
@@ -130,6 +153,7 @@ model Client {
   email     String?
   phone     String?
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   studioId String
   studio   Studio @relation(fields: [studioId], references: [id])
@@ -137,9 +161,16 @@ model Client {
   userId String? @unique
   user   User?   @relation(fields: [userId], references: [id])
 
+  // A client with this set is considered merged/inactive; the surviving
+  // client is the one at mergedIntoId. Exclude these from list views.
+  mergedIntoId String?
+  mergedInto   Client?  @relation("ClientMerge", fields: [mergedIntoId], references: [id])
+  mergedFrom   Client[] @relation("ClientMerge")
+
   appointments Appointment[]
   consentForms ConsentForm[]
   inquiries    Inquiry[]
+  giftCards    GiftCard[]
 
   @@index([studioId])
 }
@@ -162,10 +193,22 @@ model Appointment {
   clientId String
   client   Client @relation(fields: [clientId], references: [id])
 
+  // One project (Inquiry) has many sessions (Appointment) -- distinct from
+  // Inquiry.appointmentId below, which is the older 1:1 "scheduled slot"
+  // link from the original scheduling flow. Nullable for now: some existing
+  // appointments were created standalone via the Appointments page with no
+  // inquiry at all, and couldn't be backfilled -- see migration notes.
+  // TODO: once every appointment has a confident inquiryId, tighten this to
+  // required and consider retiring Inquiry.appointmentId in favor of it.
+  inquiryId      String?
+  inquiryProject Inquiry? @relation("InquirySessions", fields: [inquiryId], references: [id])
+
   consentForm ConsentForm?
-  inquiry     Inquiry?
+  inquiry     Inquiry?     @relation("InquiryScheduledAppointment")
+  giftCard    GiftCard?
 
   @@index([studioId, startTime])
+  @@index([inquiryId])
 }
 
 model ConsentForm {
@@ -222,14 +265,56 @@ model Inquiry {
   assignedArtistId String?
   assignedArtist   Artist? @relation("AssignedArtist", fields: [assignedArtistId], references: [id])
 
+  // Older 1:1 "scheduled slot" link from the original scheduling flow.
   appointmentId String?      @unique
-  appointment   Appointment? @relation(fields: [appointmentId], references: [id])
+  appointment   Appointment? @relation("InquiryScheduledAppointment", fields: [appointmentId], references: [id])
+
+  // Newer 1:many "sessions under this project" link -- see Appointment.inquiryId.
+  sessions Appointment[] @relation("InquirySessions")
 
   depositForm DepositForm?
 
   @@index([studioId])
   @@index([studioId, status])
   @@index([clientId])
+}
+
+model StudioSettings {
+  id                            String   @id @default(cuid())
+  refundPolicy                  String?
+  depositPolicy                 String?
+  reschedulePolicy              String?
+  communicationPolicy           String?
+  estimateFollowUpHours         Int      @default(24)
+  giftCardDefaultExpirationDays Int?
+  calendarInviteTemplate        String?
+  // Reserved for later phases (e.g. per-channel message copy).
+  messageTemplates              Json?
+  createdAt                     DateTime @default(now())
+  updatedAt                     DateTime @updatedAt
+
+  studioId String @unique
+  studio   Studio @relation(fields: [studioId], references: [id])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  entityType String
+  entityId   String
+  action     String
+  changes    Json?
+  createdAt  DateTime @default(now())
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  // Null actor means a public/unauthenticated or system action (e.g. a
+  // client signing a public token link), not a missing/deleted user.
+  actorUserId String?
+  actorUser   User?   @relation(fields: [actorUserId], references: [id])
+
+  @@index([studioId, entityType, entityId])
+  @@index([studioId, createdAt])
 }
 
 model DepositForm {
@@ -255,4 +340,41 @@ model DepositForm {
 
   inquiryId String  @unique
   inquiry   Inquiry @relation(fields: [inquiryId], references: [id])
+
+  // One-way optional link to the gift card issued for this deposit, once
+  // one exists. Nullable: older/unsigned deposit forms won't have one yet.
+  giftCardId String?   @unique
+  giftCard   GiftCard? @relation(fields: [giftCardId], references: [id])
+}
+
+model GiftCard {
+  id          String         @id @default(cuid())
+  code        String         @unique
+  amountCents Int
+  status      GiftCardStatus @default(ACTIVE)
+  expiresAt   DateTime?
+  paidAt      DateTime?
+  redeemedAt  DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id])
+
+  // Nullable is deliberate: a card can sit unattached (purchased as an
+  // actual gift, or left over after a deposit rollover) until it's used
+  // toward a specific appointment.
+  appointmentId String?      @unique
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id])
+
+  issuedById String
+  issuedBy   User   @relation(fields: [issuedById], references: [id])
+
+  depositForm DepositForm?
+
+  @@index([studioId])
+  @@index([clientId])
 }
