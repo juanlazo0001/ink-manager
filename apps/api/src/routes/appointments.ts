@@ -74,6 +74,7 @@ router.get("/", requirePermission("appointments.view"), async (req, res) => {
       client: { select: { id: true, firstName: true, lastName: true } },
     },
     orderBy: { startTime: "asc" },
+    take: 100,
   });
 
   res.json(appointments);

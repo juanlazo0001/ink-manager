@@ -64,21 +64,41 @@ const ARTIST_INCLUDE = {
   user: { select: { id: true, email: true, role: true, name: true, phone: true, avatarUrl: true, studioId: true } },
 } as const;
 
+// List view only renders id/bio/specialties/portfolioImages plus a handful
+// of user fields -- role/phone/studioId are detail-page-only.
+const ARTIST_LIST_SELECT = {
+  id: true,
+  bio: true,
+  specialties: true,
+  portfolioImages: true,
+  user: { select: { id: true, email: true, name: true, avatarUrl: true } },
+} as const;
+
 // Self-heals any ARTIST-role user in the studio who doesn't have an Artist
 // profile yet -- e.g. one created before this existed, or via some other
 // path that didn't go through the studios.ts user routes. Keeps the Team
-// and Artists pages from ever silently falling out of sync.
+// and Artists pages from ever silently falling out of sync. This is a rare
+// edge case, so re-checking a studio within RECHECK_MS of its last check is
+// skipped -- avoids an extra DB round trip on every single list load.
+const RECHECK_MS = 60_000;
+const lastChecked = new Map<string, number>();
+
 async function ensureArtistProfiles(studioId: string) {
+  const last = lastChecked.get(studioId);
+  if (last != null && Date.now() - last < RECHECK_MS) return;
+
   const missing = await prisma.user.findMany({
     where: { studioId, role: Role.ARTIST, artist: null },
     select: { id: true },
   });
 
-  if (missing.length === 0) return;
+  if (missing.length > 0) {
+    await prisma.artist.createMany({
+      data: missing.map((u) => ({ userId: u.id, specialties: [], portfolioImages: [] })),
+    });
+  }
 
-  await prisma.artist.createMany({
-    data: missing.map((u) => ({ userId: u.id, specialties: [], portfolioImages: [] })),
-  });
+  lastChecked.set(studioId, Date.now());
 }
 
 router.get("/", requirePermission("artists.view"), async (req, res) => {
@@ -86,8 +106,9 @@ router.get("/", requirePermission("artists.view"), async (req, res) => {
 
   const artists = await prisma.artist.findMany({
     where: { user: { studioId: req.user!.studioId } },
-    include: ARTIST_INCLUDE,
+    select: ARTIST_LIST_SELECT,
     orderBy: { user: { name: "asc" } },
+    take: 100,
   });
 
   res.json(artists);

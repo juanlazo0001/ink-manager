@@ -151,12 +151,25 @@ const INQUIRY_INCLUDE = {
   },
 } as const;
 
+// The inbox list only renders these fields -- preferredArtist/assignedArtist/
+// appointment/depositForm are detail-page-only, so the list query skips them.
+const INQUIRY_LIST_SELECT = {
+  id: true,
+  channel: true,
+  description: true,
+  status: true,
+  createdAt: true,
+  referenceImages: true,
+  client: { select: { firstName: true, lastName: true } },
+} as const;
+
 // Staff-facing inbox: every inquiry submitted for this studio, newest first.
 router.get("/", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
   const inquiries = await prisma.inquiry.findMany({
     where: { studioId: req.user!.studioId },
-    include: INQUIRY_INCLUDE,
+    select: INQUIRY_LIST_SELECT,
     orderBy: { createdAt: "desc" },
+    take: 100,
   });
 
   res.json(inquiries);

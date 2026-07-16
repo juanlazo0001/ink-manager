@@ -1,9 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatStatus } from '../lib/format'
 import { ArrowLeftIcon } from '../components/icons'
+import { useAuth } from '../context/useAuth'
+import { artistsQueryKey, inquiriesQueryKey, inquiryQueryKey } from '../lib/queryKeys'
 
 interface Inquiry {
   id: string
@@ -83,11 +86,38 @@ function ImageGrid({ images }: { images: string[] }) {
 
 export default function InquiryDetail() {
   const { id } = useParams<{ id: string }>()
-  const [inquiry, setInquiry] = useState<Inquiry | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [refreshIndex, setRefreshIndex] = useState(0)
+  const { user } = useAuth()
+  const queryClient = useQueryClient()
 
-  const [artistOptions, setArtistOptions] = useState<ArtistOption[] | null>(null)
+  const {
+    data: inquiry,
+    error: queryError,
+  } = useQuery({
+    queryKey: inquiryQueryKey(id!),
+    queryFn: () => apiFetch<Inquiry>(`/inquiries/${id}`),
+    enabled: !!id,
+  })
+
+  const error = queryError
+    ? queryError instanceof ApiError && queryError.status === 404
+      ? 'Inquiry not found.'
+      : queryError instanceof ApiError && queryError.status === 403
+        ? "You don't have permission to view this inquiry."
+        : queryError.message
+    : null
+
+  // Any mutation below that changes this inquiry's status/fields needs to
+  // invalidate both this detail query and the Inquiries list it feeds.
+  function invalidateInquiry() {
+    queryClient.invalidateQueries({ queryKey: inquiryQueryKey(id!) })
+    queryClient.invalidateQueries({ queryKey: inquiriesQueryKey(user!.studioId) })
+  }
+
+  const { data: artistOptions } = useQuery({
+    queryKey: artistsQueryKey(user!.studioId),
+    queryFn: () => apiFetch<ArtistOption[]>('/artists'),
+  })
+
   const [selectedArtistId, setSelectedArtistId] = useState('')
   const [assigning, setAssigning] = useState(false)
   const [assignError, setAssignError] = useState<string | null>(null)
@@ -125,55 +155,6 @@ export default function InquiryDetail() {
     })
   }
 
-  useEffect(() => {
-    if (!id) return
-
-    let ignore = false
-
-    async function load() {
-      setInquiry(null)
-      setError(null)
-
-      try {
-        const data = await apiFetch<Inquiry>(`/inquiries/${id}`)
-        if (!ignore) setInquiry(data)
-      } catch (err) {
-        if (ignore) return
-
-        if (err instanceof ApiError && err.status === 404) {
-          setError('Inquiry not found.')
-        } else if (err instanceof ApiError && err.status === 403) {
-          setError("You don't have permission to view this inquiry.")
-        } else {
-          setError(err instanceof Error ? err.message : 'Failed to load inquiry')
-        }
-      }
-    }
-
-    load()
-
-    return () => {
-      ignore = true
-    }
-  }, [id, refreshIndex])
-
-  useEffect(() => {
-    let ignore = false
-
-    apiFetch<ArtistOption[]>('/artists')
-      .then((data) => {
-        if (!ignore) setArtistOptions(data)
-      })
-      .catch(() => {
-        // The assign dropdown just stays empty if this fails — the rest of
-        // the page still works.
-      })
-
-    return () => {
-      ignore = true
-    }
-  }, [])
-
   async function handleAssign() {
     if (!id || !selectedArtistId) return
 
@@ -186,7 +167,7 @@ export default function InquiryDetail() {
         body: JSON.stringify({ artistId: selectedArtistId }),
       })
 
-      setRefreshIndex((index) => index + 1)
+      invalidateInquiry()
     } catch (err) {
       setAssignError(err instanceof Error ? err.message : 'Failed to assign artist')
     } finally {
@@ -210,7 +191,7 @@ export default function InquiryDetail() {
         }),
       })
 
-      setRefreshIndex((index) => index + 1)
+      invalidateInquiry()
     } catch (err) {
       setSendEstimateError(err instanceof Error ? err.message : 'Failed to send estimate')
     } finally {
@@ -235,7 +216,7 @@ export default function InquiryDetail() {
       })
 
       setBufferWarning(result.bufferWarning)
-      setRefreshIndex((index) => index + 1)
+      invalidateInquiry()
     } catch (err) {
       setScheduleError(err instanceof Error ? err.message : 'Failed to schedule appointment')
     } finally {
@@ -256,7 +237,7 @@ export default function InquiryDetail() {
       })
 
       setShowWaitlistForm(false)
-      setRefreshIndex((index) => index + 1)
+      invalidateInquiry()
     } catch (err) {
       setWaitlistError(err instanceof Error ? err.message : 'Failed to waitlist inquiry')
     } finally {
@@ -272,7 +253,7 @@ export default function InquiryDetail() {
 
     try {
       await apiFetch(`/inquiries/${id}/deposit-form`, { method: 'POST' })
-      setRefreshIndex((index) => index + 1)
+      invalidateInquiry()
     } catch (err) {
       setSendDepositError(err instanceof Error ? err.message : 'Failed to send deposit form')
     } finally {
@@ -288,7 +269,7 @@ export default function InquiryDetail() {
 
     try {
       await apiFetch(`/deposit-forms/${inquiry.depositForm.id}/mark-paid`, { method: 'PATCH' })
-      setRefreshIndex((index) => index + 1)
+      invalidateInquiry()
     } catch (err) {
       setMarkPaidError(err instanceof Error ? err.message : 'Failed to mark deposit as paid')
     } finally {
@@ -355,7 +336,7 @@ export default function InquiryDetail() {
                       className="rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
                     >
                       <option value="" disabled>
-                        {artistOptions === null ? 'Loading artists…' : 'Select an artist'}
+                        {artistOptions === undefined ? 'Loading artists…' : 'Select an artist'}
                       </option>
                       {artistOptions?.map((artist) => (
                         <option key={artist.id} value={artist.id}>

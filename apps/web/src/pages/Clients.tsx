@@ -1,10 +1,14 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
+import { SkeletonTableRows } from '../components/Skeleton'
 import { apiFetch, ApiError } from '../lib/api'
 import { PlusIcon, SearchIcon } from '../components/icons'
 import { useUserProfile } from '../context/useUserProfile'
+import { useAuth } from '../context/useAuth'
+import { clientsQueryKey } from '../lib/queryKeys'
 
 interface Client {
   id: string
@@ -18,69 +22,58 @@ const EMPTY_FORM = { firstName: '', lastName: '', email: '', phone: '' }
 
 export default function Clients() {
   const navigate = useNavigate()
+  const { user } = useAuth()
   const { profile } = useUserProfile()
   const canManage = profile?.permissions.includes('clients.manage') ?? false
-  const [clients, setClients] = useState<Client[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
 
   const [showAddModal, setShowAddModal] = useState(false)
   const [form, setForm] = useState(EMPTY_FORM)
   const [formError, setFormError] = useState<string | null>(null)
-  const [submitting, setSubmitting] = useState(false)
-  const [refreshIndex, setRefreshIndex] = useState(0)
 
-  useEffect(() => {
-    let ignore = false
+  const queryClient = useQueryClient()
+  const queryKey = clientsQueryKey(user!.studioId)
 
-    async function load() {
-      setError(null)
+  const {
+    data: clients,
+    isLoading,
+    error,
+  } = useQuery({
+    queryKey,
+    queryFn: () => apiFetch<Client[]>('/clients'),
+  })
 
-      try {
-        const data = await apiFetch<Client[]>('/clients')
-        if (!ignore) setClients(data)
-      } catch (err) {
-        if (ignore) return
+  const errorMessage = error
+    ? error instanceof ApiError && error.status === 403
+      ? "You don't have permission to view clients."
+      : error.message
+    : null
 
-        if (err instanceof ApiError && err.status === 403) {
-          setError("You don't have permission to view clients.")
-        } else {
-          setError(err instanceof Error ? err.message : 'Failed to load clients')
-        }
-      }
-    }
-
-    load()
-
-    return () => {
-      ignore = true
-    }
-  }, [refreshIndex])
-
-  async function handleAddClient(event: FormEvent) {
-    event.preventDefault()
-    setFormError(null)
-    setSubmitting(true)
-
-    try {
-      await apiFetch('/clients', {
+  const addClient = useMutation({
+    mutationFn: (payload: typeof EMPTY_FORM) =>
+      apiFetch('/clients', {
         method: 'POST',
         body: JSON.stringify({
-          firstName: form.firstName,
-          lastName: form.lastName,
-          email: form.email || undefined,
-          phone: form.phone || undefined,
+          firstName: payload.firstName,
+          lastName: payload.lastName,
+          email: payload.email || undefined,
+          phone: payload.phone || undefined,
         }),
-      })
-
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey })
       setShowAddModal(false)
       setForm(EMPTY_FORM)
-      setRefreshIndex((index) => index + 1)
-    } catch (err) {
+    },
+    onError: (err) => {
       setFormError(err instanceof Error ? err.message : 'Failed to create client')
-    } finally {
-      setSubmitting(false)
-    }
+    },
+  })
+
+  function handleAddClient(event: FormEvent) {
+    event.preventDefault()
+    setFormError(null)
+    addClient.mutate(form)
   }
 
   const filteredClients = clients?.filter((client) =>
@@ -123,17 +116,15 @@ export default function Clients() {
           </div>
 
           <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-            {error && <p className="text-sm text-red-400">{error}</p>}
+            {errorMessage && <p className="text-sm text-red-400">{errorMessage}</p>}
 
-            {!error && clients === null && <p className="text-sm text-neutral-400">Loading clients…</p>}
-
-            {!error && clients !== null && filteredClients?.length === 0 && (
+            {!errorMessage && !isLoading && filteredClients?.length === 0 && (
               <p className="text-sm text-neutral-400">
                 {search ? 'No clients match your search.' : 'No clients yet. Add your first one to get started.'}
               </p>
             )}
 
-            {!error && filteredClients && filteredClients.length > 0 && (
+            {!errorMessage && (isLoading || (filteredClients && filteredClients.length > 0)) && (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <thead>
@@ -143,21 +134,25 @@ export default function Clients() {
                       <th className="pb-3 font-medium">Phone</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-neutral-800">
-                    {filteredClients.map((client) => (
-                      <tr
-                        key={client.id}
-                        onClick={() => navigate(`/clients/${client.id}`)}
-                        className="cursor-pointer hover:bg-neutral-800/40"
-                      >
-                        <td className="py-3 text-white">
-                          {client.firstName} {client.lastName}
-                        </td>
-                        <td className="py-3 text-neutral-400">{client.email ?? '—'}</td>
-                        <td className="py-3 text-neutral-400">{client.phone ?? '—'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
+                  {isLoading ? (
+                    <SkeletonTableRows rows={6} columns={3} />
+                  ) : (
+                    <tbody className="divide-y divide-neutral-800">
+                      {filteredClients!.map((client) => (
+                        <tr
+                          key={client.id}
+                          onClick={() => navigate(`/clients/${client.id}`)}
+                          className="cursor-pointer hover:bg-neutral-800/40"
+                        >
+                          <td className="py-3 text-white">
+                            {client.firstName} {client.lastName}
+                          </td>
+                          <td className="py-3 text-neutral-400">{client.email ?? '—'}</td>
+                          <td className="py-3 text-neutral-400">{client.phone ?? '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  )}
                 </table>
               </div>
             )}
@@ -232,10 +227,10 @@ export default function Clients() {
 
             <button
               type="submit"
-              disabled={submitting}
+              disabled={addClient.isPending}
               className="mt-5 w-full rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-600 disabled:opacity-60"
             >
-              {submitting ? 'Adding…' : 'Add Client'}
+              {addClient.isPending ? 'Adding…' : 'Add Client'}
             </button>
           </form>
         </Modal>

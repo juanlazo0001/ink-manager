@@ -1,5 +1,6 @@
 import { useState, type ComponentType } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   AppointmentsIcon,
   ArtistsIcon,
@@ -15,6 +16,8 @@ import {
 import { useAuth } from '../context/useAuth'
 import { useStudio } from '../context/useStudio'
 import { useUserProfile } from '../context/useUserProfile'
+import { apiFetch } from '../lib/api'
+import { appointmentsQueryKey, artistsQueryKey, clientsQueryKey, inquiriesQueryKey } from '../lib/queryKeys'
 
 interface NavItem {
   label: string
@@ -40,6 +43,7 @@ export default function Sidebar() {
   const { studio } = useStudio()
   const { profile } = useUserProfile()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [mobileOpen, setMobileOpen] = useState(false)
 
   // Closing on route change covers both nav-link clicks and logout's
@@ -55,6 +59,23 @@ export default function Sidebar() {
   function handleLogout() {
     logout()
     navigate('/login')
+  }
+
+  // Only nav targets converted to react-query have a cache worth warming;
+  // Team/My Inquiries/Settings still fetch their own way, so this no-ops for them.
+  function handlePrefetch(to: string) {
+    if (!user) return
+
+    const studioId = user.studioId
+    const queries: Record<string, { queryKey: readonly unknown[]; queryFn: () => Promise<unknown> }> = {
+      '/clients': { queryKey: clientsQueryKey(studioId), queryFn: () => apiFetch('/clients') },
+      '/appointments': { queryKey: appointmentsQueryKey(studioId), queryFn: () => apiFetch('/appointments') },
+      '/artists': { queryKey: artistsQueryKey(studioId), queryFn: () => apiFetch('/artists') },
+      '/inquiries': { queryKey: inquiriesQueryKey(studioId), queryFn: () => apiFetch('/inquiries') },
+    }
+
+    const query = queries[to]
+    if (query) queryClient.prefetchQuery(query)
   }
 
   return (
@@ -116,7 +137,13 @@ export default function Sidebar() {
 
               if (to) {
                 return (
-                  <Link key={label} to={to} className={itemClassName}>
+                  <Link
+                    key={label}
+                    to={to}
+                    className={itemClassName}
+                    onMouseEnter={() => handlePrefetch(to)}
+                    onFocus={() => handlePrefetch(to)}
+                  >
                     <Icon className="h-5 w-5" />
                     {label}
                   </Link>

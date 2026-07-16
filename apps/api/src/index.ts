@@ -1,6 +1,7 @@
 import "dotenv/config";
 import express, { type ErrorRequestHandler } from "express";
 import cors from "cors";
+import compression from "compression";
 import studiosRouter from "./routes/studios";
 import authRouter from "./routes/auth";
 import usersRouter from "./routes/users";
@@ -18,7 +19,21 @@ const app = express();
 const port = process.env.PORT || 4000;
 
 app.use(cors());
+app.use(compression());
 app.use(express.json({ limit: "8mb" })); // logo/avatar uploads (base64, up to 5MB source) exceed Express's 100kb default
+
+// Opt-in request timing, for diagnosing slow endpoints. Off by default;
+// set DEBUG_TIMING=true to log method/path/status/duration per request.
+if (process.env.DEBUG_TIMING === "true") {
+  app.use((req, res, next) => {
+    const start = process.hrtime.bigint();
+    res.on("finish", () => {
+      const durationMs = Number(process.hrtime.bigint() - start) / 1e6;
+      console.log(`[timing] ${req.method} ${req.originalUrl} ${res.statusCode} ${durationMs.toFixed(1)}ms`);
+    });
+    next();
+  });
+}
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", app: "Ink Manager API" });

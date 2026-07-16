@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
+import { SkeletonCards } from '../components/Skeleton'
 import { apiFetch, ApiError } from '../lib/api'
 import { useAuth } from '../context/useAuth'
+import { artistsQueryKey } from '../lib/queryKeys'
 
 interface Artist {
   id: string
@@ -16,35 +18,20 @@ export default function Artists() {
   const { user } = useAuth()
   const isOwner = user?.role === 'OWNER'
 
-  const [artists, setArtists] = useState<Artist[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const {
+    data: artists,
+    isLoading,
+    error,
+  } = useQuery({
+    queryKey: artistsQueryKey(user!.studioId),
+    queryFn: () => apiFetch<Artist[]>('/artists'),
+  })
 
-  useEffect(() => {
-    let ignore = false
-
-    async function load() {
-      setError(null)
-
-      try {
-        const data = await apiFetch<Artist[]>('/artists')
-        if (!ignore) setArtists(data)
-      } catch (err) {
-        if (ignore) return
-
-        if (err instanceof ApiError && err.status === 403) {
-          setError("You don't have permission to view artists.")
-        } else {
-          setError(err instanceof Error ? err.message : 'Failed to load artists')
-        }
-      }
-    }
-
-    load()
-
-    return () => {
-      ignore = true
-    }
-  }, [])
+  const errorMessage = error
+    ? error instanceof ApiError && error.status === 403
+      ? "You don't have permission to view artists."
+      : error.message
+    : null
 
   const navigate = useNavigate()
 
@@ -70,15 +57,19 @@ export default function Artists() {
             )}
           </div>
 
-          {error && (
+          {errorMessage && (
             <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-              <p className="text-sm text-red-400">{error}</p>
+              <p className="text-sm text-red-400">{errorMessage}</p>
             </div>
           )}
 
-          {!error && artists === null && <p className="mt-6 text-sm text-neutral-400">Loading artists…</p>}
+          {!errorMessage && isLoading && (
+            <div className="mt-6">
+              <SkeletonCards count={6} />
+            </div>
+          )}
 
-          {!error && artists !== null && artists.length === 0 && (
+          {!errorMessage && !isLoading && artists?.length === 0 && (
             <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
               <p className="text-sm text-neutral-400">
                 No artists yet.{' '}
@@ -89,7 +80,7 @@ export default function Artists() {
             </div>
           )}
 
-          {!error && artists && artists.length > 0 && (
+          {!errorMessage && artists && artists.length > 0 && (
             <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {artists.map((artist) => (
                 <div

@@ -30,7 +30,11 @@ router.post("/", async (req, res) => {
 });
 
 router.get("/", async (req, res) => {
-  const clients = await prisma.client.findMany({ where: { studioId: req.user!.studioId } });
+  const clients = await prisma.client.findMany({
+    where: { studioId: req.user!.studioId },
+    orderBy: { createdAt: "desc" },
+    take: 100,
+  });
   res.json(clients);
 });
 

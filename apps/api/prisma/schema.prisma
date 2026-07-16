@@ -105,6 +105,8 @@ model User {
 
   artist Artist?
   client Client?
+
+  @@index([studioId])
 }
 
 model Artist {
@@ -138,6 +140,8 @@ model Client {
   appointments Appointment[]
   consentForms ConsentForm[]
   inquiries    Inquiry[]
+
+  @@index([studioId])
 }
 
 model Appointment {
@@ -160,6 +164,8 @@ model Appointment {
 
   consentForm ConsentForm?
   inquiry     Inquiry?
+
+  @@index([studioId, startTime])
 }
 
 model ConsentForm {
@@ -222,6 +228,7 @@ model Inquiry {
   depositForm DepositForm?
 
   @@index([studioId])
+  @@index([studioId, status])
   @@index([clientId])
 }
 

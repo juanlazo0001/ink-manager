@@ -1,9 +1,13 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
+import { SkeletonTableRows } from '../components/Skeleton'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatStatus } from '../lib/format'
 import { useUserProfile } from '../context/useUserProfile'
+import { useAuth } from '../context/useAuth'
+import { appointmentsQueryKey, clientsQueryKey, artistsQueryKey } from '../lib/queryKeys'
 import { PlusIcon } from '../components/icons'
 
 const APPOINTMENT_STATUSES = ['REQUESTED', 'CONFIRMED', 'COMPLETED', 'CANCELLED', 'NO_SHOW'] as const
@@ -31,106 +35,77 @@ interface ArtistOption {
 const EMPTY_FORM = { clientId: '', artistId: '', startTime: '', endTime: '', notes: '' }
 
 export default function Appointments() {
+  const { user } = useAuth()
   const { profile } = useUserProfile()
   const canCreate = profile?.permissions.includes('appointments.create') ?? false
   const canManage = profile?.permissions.includes('appointments.manage') ?? false
 
-  const [appointments, setAppointments] = useState<Appointment[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState('ALL')
-  const [refreshIndex, setRefreshIndex] = useState(0)
   const [updatingId, setUpdatingId] = useState<string | null>(null)
-
-  const [clientOptions, setClientOptions] = useState<ClientOption[] | null>(null)
-  const [artistOptions, setArtistOptions] = useState<ArtistOption[] | null>(null)
 
   const [showAddModal, setShowAddModal] = useState(false)
   const [form, setForm] = useState(EMPTY_FORM)
   const [formError, setFormError] = useState<string | null>(null)
-  const [submitting, setSubmitting] = useState(false)
 
-  useEffect(() => {
-    let ignore = false
+  const queryClient = useQueryClient()
+  const appointmentsKey = appointmentsQueryKey(user!.studioId)
 
-    async function load() {
-      setError(null)
+  const {
+    data: appointments,
+    isLoading,
+    error,
+  } = useQuery({
+    queryKey: appointmentsKey,
+    queryFn: () => apiFetch<Appointment[]>('/appointments'),
+  })
 
-      try {
-        const data = await apiFetch<Appointment[]>('/appointments')
-        if (!ignore) setAppointments(data)
-      } catch (err) {
-        if (ignore) return
+  const errorMessage = error
+    ? error instanceof ApiError && error.status === 403
+      ? "You don't have permission to view appointments."
+      : error.message
+    : null
 
-        if (err instanceof ApiError && err.status === 403) {
-          setError("You don't have permission to view appointments.")
-        } else {
-          setError(err instanceof Error ? err.message : 'Failed to load appointments')
-        }
-      }
-    }
+  // Shares its cache with the Clients/Artists pages -- if either was
+  // visited recently, these selects populate instantly with no fetch.
+  const { data: clientOptions } = useQuery({
+    queryKey: clientsQueryKey(user!.studioId),
+    queryFn: () => apiFetch<ClientOption[]>('/clients'),
+    enabled: canCreate,
+  })
 
-    load()
+  const { data: artistOptions } = useQuery({
+    queryKey: artistsQueryKey(user!.studioId),
+    queryFn: () => apiFetch<ArtistOption[]>('/artists'),
+    enabled: canCreate,
+  })
 
-    return () => {
-      ignore = true
-    }
-  }, [refreshIndex])
-
-  useEffect(() => {
-    if (!canCreate) return
-
-    let ignore = false
-
-    async function loadOptions() {
-      try {
-        const [clientsData, artistsData] = await Promise.all([
-          apiFetch<ClientOption[]>('/clients'),
-          apiFetch<ArtistOption[]>('/artists'),
-        ])
-
-        if (!ignore) {
-          setClientOptions(clientsData)
-          setArtistOptions(artistsData)
-        }
-      } catch {
-        // The main list's error state already covers the important failure case;
-        // if this fails the modal's selects just stay empty.
-      }
-    }
-
-    loadOptions()
-
-    return () => {
-      ignore = true
-    }
-  }, [canCreate])
-
-  async function handleCreateAppointment(event: FormEvent) {
-    event.preventDefault()
-    setFormError(null)
-    setSubmitting(true)
-
-    try {
-      await apiFetch('/appointments', {
+  const createAppointment = useMutation({
+    mutationFn: (payload: typeof EMPTY_FORM) =>
+      apiFetch('/appointments', {
         method: 'POST',
         body: JSON.stringify({
-          clientId: form.clientId,
-          artistId: form.artistId,
-          startTime: new Date(form.startTime).toISOString(),
-          endTime: new Date(form.endTime).toISOString(),
-          notes: form.notes || undefined,
+          clientId: payload.clientId,
+          artistId: payload.artistId,
+          startTime: new Date(payload.startTime).toISOString(),
+          endTime: new Date(payload.endTime).toISOString(),
+          notes: payload.notes || undefined,
         }),
-      })
-
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: appointmentsKey })
       setShowAddModal(false)
       setForm(EMPTY_FORM)
-      setRefreshIndex((index) => index + 1)
-    } catch (err) {
+    },
+    onError: (err) => {
       setFormError(err instanceof Error ? err.message : 'Failed to create appointment')
-    } finally {
-      setSubmitting(false)
-    }
+    },
+  })
+
+  function handleCreateAppointment(event: FormEvent) {
+    event.preventDefault()
+    setFormError(null)
+    createAppointment.mutate(form)
   }
 
   async function handleStatusChange(appointmentId: string, newStatus: string) {
@@ -138,14 +113,12 @@ export default function Appointments() {
     setUpdatingId(appointmentId)
 
     try {
-      const updated = await apiFetch<{ status: string }>(`/appointments/${appointmentId}`, {
+      await apiFetch(`/appointments/${appointmentId}`, {
         method: 'PATCH',
         body: JSON.stringify({ status: newStatus }),
       })
 
-      setAppointments((prev) =>
-        prev ? prev.map((a) => (a.id === appointmentId ? { ...a, status: updated.status } : a)) : prev,
-      )
+      queryClient.invalidateQueries({ queryKey: appointmentsKey })
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Failed to update status')
     } finally {
@@ -203,17 +176,15 @@ export default function Appointments() {
               </div>
             )}
 
-            {error && <p className="text-sm text-red-400">{error}</p>}
+            {errorMessage && <p className="text-sm text-red-400">{errorMessage}</p>}
 
-            {!error && appointments === null && <p className="text-sm text-neutral-400">Loading appointments…</p>}
-
-            {!error && appointments !== null && filteredAppointments?.length === 0 && (
+            {!errorMessage && !isLoading && filteredAppointments?.length === 0 && (
               <p className="text-sm text-neutral-400">
                 {statusFilter !== 'ALL' ? 'No appointments match this filter.' : 'No appointments yet.'}
               </p>
             )}
 
-            {!error && filteredAppointments && filteredAppointments.length > 0 && (
+            {!errorMessage && (isLoading || (filteredAppointments && filteredAppointments.length > 0)) && (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <thead>
@@ -225,8 +196,11 @@ export default function Appointments() {
                       <th className="pb-3 font-medium">Status</th>
                     </tr>
                   </thead>
+                  {isLoading ? (
+                    <SkeletonTableRows rows={6} columns={5} />
+                  ) : (
                   <tbody className="divide-y divide-neutral-800">
-                    {filteredAppointments.map((appointment) => (
+                    {filteredAppointments!.map((appointment) => (
                       <tr key={appointment.id}>
                         <td className="py-3 text-white">
                           {appointment.client
@@ -259,6 +233,7 @@ export default function Appointments() {
                       </tr>
                     ))}
                   </tbody>
+                  )}
                 </table>
               </div>
             )}
@@ -275,11 +250,11 @@ export default function Appointments() {
               </div>
             )}
 
-            {clientOptions !== null && clientOptions.length === 0 && (
+            {clientOptions && clientOptions.length === 0 && (
               <p className="mb-3 text-sm text-neutral-400">No clients yet — add one from the Clients page first.</p>
             )}
 
-            {artistOptions !== null && artistOptions.length === 0 && (
+            {artistOptions && artistOptions.length === 0 && (
               <p className="mb-3 text-sm text-neutral-400">No artists yet — add one first.</p>
             )}
 
@@ -295,7 +270,7 @@ export default function Appointments() {
                 className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
               >
                 <option value="" disabled>
-                  {clientOptions === null ? 'Loading…' : 'Select a client'}
+                  {clientOptions === undefined ? 'Loading…' : 'Select a client'}
                 </option>
                 {clientOptions?.map((client) => (
                   <option key={client.id} value={client.id}>
@@ -317,7 +292,7 @@ export default function Appointments() {
                 className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
               >
                 <option value="" disabled>
-                  {artistOptions === null ? 'Loading…' : 'Select an artist'}
+                  {artistOptions === undefined ? 'Loading…' : 'Select an artist'}
                 </option>
                 {artistOptions?.map((artist) => (
                   <option key={artist.id} value={artist.id}>
@@ -372,10 +347,10 @@ export default function Appointments() {
 
             <button
               type="submit"
-              disabled={submitting}
+              disabled={createAppointment.isPending}
               className="mt-5 w-full rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-600 disabled:opacity-60"
             >
-              {submitting ? 'Scheduling…' : 'Create Appointment'}
+              {createAppointment.isPending ? 'Scheduling…' : 'Create Appointment'}
             </button>
           </form>
         </Modal>
