@@ -37,6 +37,7 @@ enum InquiryStatus {
   NEW
   ARTIST_ASSIGNED
   AWAITING_CLIENT_RESPONSE
+  BUDGET_NEGOTIATION
   SCHEDULING
   WAITLISTED
   DEPOSIT_PENDING
@@ -157,6 +158,7 @@ model Appointment {
   client   Client @relation(fields: [clientId], references: [id])
 
   consentForm ConsentForm?
+  inquiry     Inquiry?
 }
 
 model ConsentForm {
@@ -195,6 +197,12 @@ model Inquiry {
   createdAt             DateTime      @default(now())
   assignedAt            DateTime?
 
+  estimateToken          String?   @unique
+  estimateTokenExpiresAt DateTime?
+  estimateSentAt         DateTime?
+  clientStatedBudget     String?
+  closedReason           String?
+
   studioId String
   studio   Studio @relation(fields: [studioId], references: [id])
 
@@ -206,6 +214,9 @@ model Inquiry {
 
   assignedArtistId String?
   assignedArtist   Artist? @relation("AssignedArtist", fields: [assignedArtistId], references: [id])
+
+  appointmentId String?      @unique
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id])
 
   @@index([studioId])
   @@index([clientId])

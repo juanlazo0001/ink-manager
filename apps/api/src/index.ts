@@ -9,6 +9,7 @@ import clientsRouter from "./routes/clients";
 import appointmentsRouter from "./routes/appointments";
 import consentFormsRouter from "./routes/consentForms";
 import inquiriesRouter from "./routes/inquiries";
+import estimatesRouter from "./routes/estimates";
 import uploadsRouter from "./routes/uploads";
 import { requireAuth } from "./middleware/auth";
 
@@ -30,6 +31,7 @@ app.use("/clients", clientsRouter);
 app.use("/appointments", appointmentsRouter);
 app.use("/consent-forms", consentFormsRouter);
 app.use("/inquiries", inquiriesRouter);
+app.use("/estimates", estimatesRouter);
 app.use("/uploads", uploadsRouter);
 
 app.get("/me", requireAuth, (req, res) => {

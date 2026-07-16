@@ -1,10 +1,15 @@
 import { Router } from "express";
+import crypto from "node:crypto";
 import { prisma } from "../lib/prisma";
 import { Channel, InquiryStatus } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { Role } from "../../generated/prisma/enums";
 
 const router = Router();
+
+const ESTIMATE_TOKEN_TTL_DAYS = 7;
+const SCHEDULING_BUFFER_MS = 1.5 * 60 * 60 * 1000;
+const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 
 const REQUIRED_FIELDS = [
   "studioSlug",
@@ -120,6 +125,7 @@ const INQUIRY_INCLUDE = {
   client: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
   preferredArtist: { select: { id: true, user: { select: { name: true } } } },
   assignedArtist: { select: { id: true, user: { select: { name: true } } } },
+  appointment: { select: { id: true, startTime: true, endTime: true, status: true } },
 } as const;
 
 // Staff-facing inbox: every inquiry submitted for this studio, newest first.
@@ -255,6 +261,154 @@ router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), async (req, 
       priceEstimateHigh: priceEstimateHigh ?? null,
       timeEstimateHours: timeEstimateHours ?? null,
     },
+    include: INQUIRY_INCLUDE,
+  });
+
+  res.json(updated);
+});
+
+// Staff sends (or resends, with revised numbers) the client-facing estimate
+// link. Valid from AWAITING_CLIENT_RESPONSE (first send) or
+// BUDGET_NEGOTIATION (resend after the client pushed back on price) — either
+// way it lands the client back in AWAITING_CLIENT_RESPONSE to review the
+// (possibly updated) numbers.
+router.post("/:id/send-estimate", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+  const { priceEstimateLow, priceEstimateHigh, timeEstimateHours } = req.body ?? {};
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  if (
+    inquiry.status !== InquiryStatus.AWAITING_CLIENT_RESPONSE &&
+    inquiry.status !== InquiryStatus.BUDGET_NEGOTIATION
+  ) {
+    return res
+      .status(400)
+      .json({ error: "An estimate can only be sent while awaiting client response or during budget negotiation" });
+  }
+
+  for (const [field, value] of Object.entries({ priceEstimateLow, priceEstimateHigh, timeEstimateHours })) {
+    if (value !== undefined && typeof value !== "number") {
+      return res.status(400).json({ error: `${field} must be a number` });
+    }
+  }
+
+  const estimateToken = crypto.randomBytes(32).toString("hex");
+  const estimateTokenExpiresAt = new Date(Date.now() + ESTIMATE_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000);
+
+  const updated = await prisma.inquiry.update({
+    where: { id },
+    data: {
+      estimateToken,
+      estimateTokenExpiresAt,
+      estimateSentAt: new Date(),
+      status: InquiryStatus.AWAITING_CLIENT_RESPONSE,
+      ...(priceEstimateLow !== undefined ? { priceEstimateLow } : {}),
+      ...(priceEstimateHigh !== undefined ? { priceEstimateHigh } : {}),
+      ...(timeEstimateHours !== undefined ? { timeEstimateHours } : {}),
+    },
+    include: INQUIRY_INCLUDE,
+  });
+
+  res.status(201).json({ ...updated, estimateUrl: `${FRONTEND_URL}/estimate/${estimateToken}` });
+});
+
+// Creates the real Appointment once the client has proceeded past their
+// estimate, links it back to the Inquiry, and moves the pipeline to
+// DEPOSIT_PENDING. Doesn't block on a tight same-day schedule for the
+// artist — just flags it via bufferWarning so staff can decide.
+router.post("/:id/schedule", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+  const { startTime, endTime } = req.body ?? {};
+
+  if (!startTime || !endTime) {
+    return res.status(400).json({ error: "startTime and endTime are required" });
+  }
+
+  const start = new Date(startTime);
+  const end = new Date(endTime);
+
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start >= end) {
+    return res.status(400).json({ error: "startTime and endTime must be valid dates, with startTime before endTime" });
+  }
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  if (inquiry.status !== InquiryStatus.SCHEDULING) {
+    return res.status(400).json({ error: "Only an inquiry in SCHEDULING can be scheduled" });
+  }
+
+  if (!inquiry.assignedArtistId) {
+    return res.status(400).json({ error: "This inquiry has no assigned artist" });
+  }
+
+  const dayStart = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
+  const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+
+  const sameDayAppointments = await prisma.appointment.findMany({
+    where: { artistId: inquiry.assignedArtistId, startTime: { gte: dayStart, lt: dayEnd } },
+  });
+
+  const conflict = sameDayAppointments.find(
+    (appt) =>
+      start.getTime() < appt.endTime.getTime() + SCHEDULING_BUFFER_MS &&
+      appt.startTime.getTime() < end.getTime() + SCHEDULING_BUFFER_MS,
+  );
+
+  const appointment = await prisma.appointment.create({
+    data: {
+      studioId: req.user!.studioId,
+      artistId: inquiry.assignedArtistId,
+      clientId: inquiry.clientId,
+      startTime: start,
+      endTime: end,
+    },
+  });
+
+  const updated = await prisma.inquiry.update({
+    where: { id },
+    data: { appointmentId: appointment.id, status: InquiryStatus.DEPOSIT_PENDING },
+    include: INQUIRY_INCLUDE,
+  });
+
+  res.status(201).json({
+    ...updated,
+    bufferWarning: conflict
+      ? `Less than 1.5 hours from another appointment for this artist the same day (${conflict.startTime.toISOString()} – ${conflict.endTime.toISOString()}).`
+      : null,
+  });
+});
+
+// Alternative to scheduling right away: keeps the inquiry out of active
+// scheduling without losing it, for a client who wants to wait for a
+// specific slot. The optional note is stored the same way an artist's
+// decline note is -- a single "most recent status note" field.
+router.post("/:id/waitlist", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+  const { note } = req.body ?? {};
+
+  if (note !== undefined && typeof note !== "string") {
+    return res.status(400).json({ error: "note must be a string" });
+  }
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  if (inquiry.status !== InquiryStatus.SCHEDULING) {
+    return res.status(400).json({ error: "Only an inquiry in SCHEDULING can be waitlisted" });
+  }
+
+  const updated = await prisma.inquiry.update({
+    where: { id },
+    data: { status: InquiryStatus.WAITLISTED, declineNote: note?.trim() || null },
     include: INQUIRY_INCLUDE,
   });
 

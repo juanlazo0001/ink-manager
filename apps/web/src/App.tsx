@@ -14,6 +14,7 @@ import IntakeForm from './pages/IntakeForm'
 import Inquiries from './pages/Inquiries'
 import InquiryDetail from './pages/InquiryDetail'
 import MyInquiries from './pages/MyInquiries'
+import EstimateResponse from './pages/EstimateResponse'
 
 function App() {
   return (
@@ -23,6 +24,7 @@ function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/sign/:token" element={<SignConsentForm />} />
         <Route path="/inquiry/:studioSlug" element={<IntakeForm />} />
+        <Route path="/estimate/:token" element={<EstimateResponse />} />
         <Route
           path="/dashboard"
           element={
