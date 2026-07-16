@@ -6,6 +6,7 @@ import Clients from './pages/Clients'
 import ClientDetail from './pages/ClientDetail'
 import Appointments from './pages/Appointments'
 import Artists from './pages/Artists'
+import ArtistDetail from './pages/ArtistDetail'
 import Settings from './pages/Settings'
 import Profile from './pages/Profile'
 import Team from './pages/Team'
@@ -62,6 +63,14 @@ function App() {
           element={
             <ProtectedRoute>
               <Artists />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/artists/:id"
+          element={
+            <ProtectedRoute>
+              <ArtistDetail />
             </ProtectedRoute>
           }
         />

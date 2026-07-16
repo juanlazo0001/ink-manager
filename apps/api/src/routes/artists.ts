@@ -54,19 +54,93 @@ router.post("/", requirePermission("artists.manage"), async (req, res) => {
   }
 
   const artist = await prisma.artist.create({
-    data: { userId, bio, specialties: specialties ?? [] },
+    data: { userId, bio, specialties: specialties ?? [], portfolioImages: [] },
   });
 
   res.status(201).json(artist);
 });
 
+const ARTIST_INCLUDE = {
+  user: { select: { id: true, email: true, role: true, name: true, phone: true, avatarUrl: true, studioId: true } },
+} as const;
+
+// Self-heals any ARTIST-role user in the studio who doesn't have an Artist
+// profile yet -- e.g. one created before this existed, or via some other
+// path that didn't go through the studios.ts user routes. Keeps the Team
+// and Artists pages from ever silently falling out of sync.
+async function ensureArtistProfiles(studioId: string) {
+  const missing = await prisma.user.findMany({
+    where: { studioId, role: Role.ARTIST, artist: null },
+    select: { id: true },
+  });
+
+  if (missing.length === 0) return;
+
+  await prisma.artist.createMany({
+    data: missing.map((u) => ({ userId: u.id, specialties: [], portfolioImages: [] })),
+  });
+}
+
 router.get("/", requirePermission("artists.view"), async (req, res) => {
+  await ensureArtistProfiles(req.user!.studioId);
+
   const artists = await prisma.artist.findMany({
     where: { user: { studioId: req.user!.studioId } },
-    include: { user: { select: { id: true, email: true, role: true } } },
+    include: ARTIST_INCLUDE,
+    orderBy: { user: { name: "asc" } },
   });
 
   res.json(artists);
+});
+
+router.get("/:id", requirePermission("artists.view"), async (req, res) => {
+  const id = req.params.id as string;
+
+  const artist = await prisma.artist.findUnique({ where: { id }, include: ARTIST_INCLUDE });
+
+  if (!artist || artist.user.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Artist not found" });
+  }
+
+  res.json(artist);
+});
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
+  const id = req.params.id as string;
+  const { bio, specialties, portfolioImages } = req.body ?? {};
+
+  const artist = await prisma.artist.findUnique({ where: { id }, include: { user: true } });
+  if (!artist || artist.user.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Artist not found" });
+  }
+
+  if (bio !== undefined && bio !== null && typeof bio !== "string") {
+    return res.status(400).json({ error: "bio must be a string or null" });
+  }
+
+  if (specialties !== undefined && !isStringArray(specialties)) {
+    return res.status(400).json({ error: "specialties must be an array of strings" });
+  }
+
+  if (portfolioImages !== undefined && !isStringArray(portfolioImages)) {
+    return res.status(400).json({ error: "portfolioImages must be an array of strings" });
+  }
+
+  const updated = await prisma.artist.update({
+    where: { id },
+    data: {
+      ...(bio !== undefined ? { bio: bio?.trim() || null } : {}),
+      ...(specialties !== undefined ? { specialties } : {}),
+      ...(portfolioImages !== undefined ? { portfolioImages } : {}),
+    },
+    include: ARTIST_INCLUDE,
+  });
+
+  res.json(updated);
 });
 
 export default router;

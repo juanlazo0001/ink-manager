@@ -108,9 +108,10 @@ model User {
 }
 
 model Artist {
-  id          String   @id @default(cuid())
-  bio         String?
-  specialties String[]
+  id              String   @id @default(cuid())
+  bio             String?
+  specialties     String[]
+  portfolioImages String[]
 
   userId String @unique
   user   User   @relation(fields: [userId], references: [id])

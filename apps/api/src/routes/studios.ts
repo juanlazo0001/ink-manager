@@ -148,7 +148,7 @@ router.post("/:studioId/users", requireAuth, requireRole(Role.OWNER), async (req
     return res.status(400).json({ error: `Missing required field(s): ${missing.join(", ")}` });
   }
 
-  const { email, password, role } = body;
+  const { email, password, role, name, phone } = body;
 
   if (!Object.values(Role).includes(role)) {
     return res.status(400).json({ error: `role must be one of: ${Object.values(Role).join(", ")}` });
@@ -165,8 +165,19 @@ router.post("/:studioId/users", requireAuth, requireRole(Role.OWNER), async (req
 
   const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
 
-  const user = await prisma.user.create({
-    data: { email, password: passwordHash, role, studioId, avatarUrl },
+  // An ARTIST-role account always gets an Artist profile (bio/specialties/
+  // portfolio) in the same transaction it's created in, so the Team and
+  // Artists pages never fall out of sync with each other.
+  const user = await prisma.$transaction(async (tx) => {
+    const created = await tx.user.create({
+      data: { email, password: passwordHash, role, studioId, avatarUrl, name: name || null, phone: phone || null },
+    });
+
+    if (role === Role.ARTIST) {
+      await tx.artist.create({ data: { userId: created.id, specialties: [], portfolioImages: [] } });
+    }
+
+    return created;
   });
 
   const { password: _userPassword, ...userWithoutPassword } = user;
@@ -279,6 +290,17 @@ router.patch("/:studioId/users/:userId", requireAuth, requireRole(Role.OWNER), a
       return res.status(400).json({ error: "newPassword must be at least 8 characters" });
     }
     data.password = await bcrypt.hash(body.newPassword, SALT_ROUNDS);
+  }
+
+  // Same guarantee as creation: switching a user's role to ARTIST always
+  // leaves them with an Artist profile, so the Team and Artists pages stay
+  // in sync regardless of which page changed the role.
+  const becomingArtist = body.role === Role.ARTIST && existing.role !== Role.ARTIST;
+  if (becomingArtist) {
+    const alreadyHasProfile = await prisma.artist.findUnique({ where: { userId } });
+    if (!alreadyHasProfile) {
+      await prisma.artist.create({ data: { userId, specialties: [], portfolioImages: [] } });
+    }
   }
 
   const updated = await prisma.user.update({ where: { id: userId }, data, include: USER_INCLUDE_ARTIST });

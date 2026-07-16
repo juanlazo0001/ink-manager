@@ -28,7 +28,7 @@ interface TeamUser {
 
 const ROLE_OPTIONS = ['OWNER', 'FRONT_DESK', 'ARTIST', 'CUSTOMER']
 
-const EMPTY_ADD_FORM = { email: '', password: '', role: 'FRONT_DESK' }
+const EMPTY_ADD_FORM = { name: '', phone: '', email: '', password: '', role: 'FRONT_DESK' }
 
 const EMPTY_EDIT_FORM = { name: '', phone: '', email: '', role: 'FRONT_DESK', isActive: true, newPassword: '' }
 
@@ -455,6 +455,32 @@ export default function Team() {
             </div>
 
             <div className="mb-3">
+              <label htmlFor="addName" className="mb-1 block text-sm font-medium text-neutral-300">
+                Name
+              </label>
+              <input
+                id="addName"
+                type="text"
+                value={addForm.name}
+                onChange={(event) => setAddForm({ ...addForm, name: event.target.value })}
+                className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+              />
+            </div>
+
+            <div className="mb-3">
+              <label htmlFor="addPhone" className="mb-1 block text-sm font-medium text-neutral-300">
+                Phone
+              </label>
+              <input
+                id="addPhone"
+                type="text"
+                value={addForm.phone}
+                onChange={(event) => setAddForm({ ...addForm, phone: event.target.value })}
+                className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+              />
+            </div>
+
+            <div className="mb-3">
               <label htmlFor="addEmail" className="mb-1 block text-sm font-medium text-neutral-300">
                 Email
               </label>
@@ -498,6 +524,11 @@ export default function Team() {
                   </option>
                 ))}
               </select>
+              {addForm.role === 'ARTIST' && (
+                <p className="mt-1 text-xs text-neutral-500">
+                  This also creates their profile on the Artists page — specialties and portfolio can be added there.
+                </p>
+              )}
             </div>
 
             <button
