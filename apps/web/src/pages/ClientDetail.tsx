@@ -46,6 +46,15 @@ interface GiftCard {
   createdAt: string
 }
 
+interface WaiverSummary {
+  id: string
+  status: string
+  signedAt: string | null
+  verifiedAt: string | null
+  appointmentId: string
+  createdAt: string
+}
+
 interface Client {
   id: string
   firstName: string
@@ -57,6 +66,7 @@ interface Client {
   consentForms: ConsentForm[]
   inquiries: InquirySummary[]
   giftCards: GiftCard[]
+  liabilityWaivers: WaiverSummary[]
 }
 
 interface Appointment {
@@ -64,6 +74,8 @@ interface Appointment {
   startTime: string
   endTime: string
   status: string
+  finalCostCents: number | null
+  closeoutNotes: string | null
   artist: { id: string; user: { email: string } } | null
 }
 
@@ -538,17 +550,25 @@ export default function ClientDetail() {
                           <th className="pb-3 font-medium">Artist</th>
                           <th className="pb-3 font-medium">Date &amp; Time</th>
                           <th className="pb-3 font-medium">Status</th>
+                          <th className="pb-3 font-medium">Final Cost</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-neutral-800">
                         {appointments.map((appointment) => (
-                          <tr key={appointment.id}>
+                          <tr
+                            key={appointment.id}
+                            onClick={() => navigate(`/appointments/${appointment.id}`)}
+                            className="cursor-pointer hover:bg-neutral-800/40"
+                          >
                             <td className="py-3 text-white">{appointment.artist?.user.email ?? '—'}</td>
                             <td className="py-3 text-neutral-400">{formatDateTime(appointment.startTime)}</td>
                             <td className="py-3">
                               <span className="inline-flex items-center rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-300">
                                 {formatStatus(appointment.status)}
                               </span>
+                            </td>
+                            <td className="py-3 text-neutral-400">
+                              {appointment.finalCostCents != null ? formatCents(appointment.finalCostCents) : '—'}
                             </td>
                           </tr>
                         ))}
@@ -720,7 +740,29 @@ export default function ClientDetail() {
 
               <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
                 <h2 className="text-base font-semibold text-white">Waivers</h2>
-                <p className="mt-4 text-sm text-neutral-400">Coming soon.</p>
+
+                {client.liabilityWaivers.length === 0 && (
+                  <p className="mt-4 text-sm text-neutral-400">No waivers yet.</p>
+                )}
+
+                {client.liabilityWaivers.length > 0 && (
+                  <ul className="mt-4 divide-y divide-neutral-800">
+                    {client.liabilityWaivers.map((waiver) => (
+                      <li
+                        key={waiver.id}
+                        onClick={() => navigate(`/appointments/${waiver.appointmentId}`)}
+                        className="flex cursor-pointer items-center justify-between py-3 text-sm hover:bg-neutral-800/40"
+                      >
+                        <span className="text-neutral-400">
+                          {waiver.signedAt ? `Signed ${formatDateTime(waiver.signedAt)}` : `Created ${formatDateTime(waiver.createdAt)}`}
+                        </span>
+                        <span className="inline-flex items-center rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-300">
+                          {formatStatus(waiver.status)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
 
               <AuditTrail entityType="Client" entityId={client.id} />

@@ -84,6 +84,12 @@ router.get("/:id", async (req, res) => {
         },
         orderBy: { createdAt: "desc" },
       },
+      // Non-PII summary only -- the health data and ID image live behind
+      // GET /waivers/:id, which is OWNER/FRONT_DESK only.
+      liabilityWaivers: {
+        select: { id: true, status: true, signedAt: true, verifiedAt: true, appointmentId: true, createdAt: true },
+        orderBy: { createdAt: "desc" },
+      },
       mergedInto: { select: { id: true, firstName: true, lastName: true } },
     },
   });

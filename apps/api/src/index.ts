@@ -16,6 +16,7 @@ import uploadsRouter from "./routes/uploads";
 import auditRouter from "./routes/audit";
 import studioSettingsRouter from "./routes/studioSettings";
 import { publicRouter as giftCardsPublicRouter, staffRouter as giftCardsStaffRouter } from "./routes/giftCards";
+import { publicRouter as waiversPublicRouter, staffRouter as waiversStaffRouter } from "./routes/waivers";
 import { requireAuth } from "./middleware/auth";
 
 const app = express();
@@ -60,6 +61,10 @@ app.use("/studio-settings", studioSettingsRouter);
 // staff router's /gift-cards/:id would otherwise swallow it.
 app.use("/gift-cards", giftCardsPublicRouter);
 app.use("/gift-cards", giftCardsStaffRouter);
+// Public router first: /waivers/verify/:token and /waivers/sign/:token
+// must match before the staff router's /waivers/:id would swallow them.
+app.use("/waivers", waiversPublicRouter);
+app.use("/waivers", waiversStaffRouter);
 
 app.get("/me", requireAuth, (req, res) => {
   res.json(req.user);

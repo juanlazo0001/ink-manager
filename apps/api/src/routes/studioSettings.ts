@@ -30,13 +30,36 @@ const TEXT_FIELDS = [
   "communicationPolicy",
   "calendarInviteTemplate",
   "estimateTerms",
+  "waiverAcknowledgment",
+  "waiverPhotoRelease",
 ] as const;
+
+const HEALTH_QUESTION_TYPES = ["yes_no", "yes_no_explain"];
+
+function isValidHealthQuestions(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+
+  return value.every((entry) => {
+    if (typeof entry !== "object" || entry === null) return false;
+    const q = entry as Record<string, unknown>;
+
+    if (typeof q.question !== "string" || q.question.trim().length === 0) return false;
+    if (!HEALTH_QUESTION_TYPES.includes(q.type as string)) return false;
+    if (q.explainPrompt !== undefined && typeof q.explainPrompt !== "string") return false;
+
+    return true;
+  });
+}
+
+function isValidClauses(value: unknown): value is string[] {
+  return Array.isArray(value) && value.length > 0 && value.every((c) => typeof c === "string" && c.trim().length > 0);
+}
 
 router.patch("/", requireRole(Role.OWNER), async (req, res) => {
   const body = req.body ?? {};
   const existing = await getOrCreateSettings(req.user!.studioId);
 
-  const data: Record<string, string | number | null> = {};
+  const data: Record<string, unknown> = {};
 
   for (const field of TEXT_FIELDS) {
     if (body[field] === undefined) continue;
@@ -60,6 +83,22 @@ router.patch("/", requireRole(Role.OWNER), async (req, res) => {
     data.giftCardDefaultExpirationDays = body.giftCardDefaultExpirationDays;
   }
 
+  if (body.waiverHealthQuestions !== undefined) {
+    if (body.waiverHealthQuestions !== null && !isValidHealthQuestions(body.waiverHealthQuestions)) {
+      return res.status(400).json({
+        error: "waiverHealthQuestions must be an array of { question, type: 'yes_no' | 'yes_no_explain', explainPrompt? }",
+      });
+    }
+    data.waiverHealthQuestions = body.waiverHealthQuestions;
+  }
+
+  if (body.waiverClauses !== undefined) {
+    if (body.waiverClauses !== null && !isValidClauses(body.waiverClauses)) {
+      return res.status(400).json({ error: "waiverClauses must be a non-empty array of non-empty strings" });
+    }
+    data.waiverClauses = body.waiverClauses;
+  }
+
   const updated = await prisma.studioSettings.update({ where: { studioId: req.user!.studioId }, data });
 
   await logAudit({
@@ -72,6 +111,8 @@ router.patch("/", requireRole(Role.OWNER), async (req, res) => {
       ...TEXT_FIELDS,
       "estimateFollowUpHours",
       "giftCardDefaultExpirationDays",
+      "waiverHealthQuestions",
+      "waiverClauses",
     ] as (keyof typeof existing)[]),
   });
 

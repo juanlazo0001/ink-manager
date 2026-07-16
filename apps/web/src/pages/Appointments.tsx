@@ -1,5 +1,5 @@
-import { useState, type FormEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { useEffect, useState, type FormEvent } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
@@ -71,6 +71,8 @@ const EMPTY_FORM = {
 export default function Appointments() {
   const { user } = useAuth()
   const { profile } = useUserProfile()
+  const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const canCreate = profile?.permissions.includes('appointments.create') ?? false
   const canManage = profile?.permissions.includes('appointments.manage') ?? false
 
@@ -81,6 +83,21 @@ export default function Appointments() {
   const [showAddModal, setShowAddModal] = useState(false)
   const [form, setForm] = useState(EMPTY_FORM)
   const [formError, setFormError] = useState<string | null>(null)
+
+  // "Book follow-up" from a just-checked-out appointment deep-links here
+  // with the same client + project pre-filled, since Phase 3 will demand a
+  // gift card (the rolled one, or a new deposit) either way.
+  useEffect(() => {
+    const prefillClientId = searchParams.get('prefillClientId')
+    const prefillInquiryId = searchParams.get('prefillInquiryId')
+
+    if (prefillClientId) {
+      setForm((current) => ({ ...current, clientId: prefillClientId, inquiryId: prefillInquiryId ?? '' }))
+      setShowAddModal(true)
+      setSearchParams({}, { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const queryClient = useQueryClient()
   const appointmentsKey = appointmentsQueryKey(user!.studioId)
@@ -255,7 +272,11 @@ export default function Appointments() {
                   ) : (
                   <tbody className="divide-y divide-neutral-800">
                     {filteredAppointments!.map((appointment) => (
-                      <tr key={appointment.id}>
+                      <tr
+                        key={appointment.id}
+                        onClick={() => navigate(`/appointments/${appointment.id}`)}
+                        className="cursor-pointer hover:bg-neutral-800/40"
+                      >
                         <td className="py-3 text-white">
                           {appointment.client
                             ? `${appointment.client.firstName} ${appointment.client.lastName}`
@@ -264,7 +285,7 @@ export default function Appointments() {
                         <td className="py-3 text-neutral-400">{appointment.artist?.user.email ?? '—'}</td>
                         <td className="py-3 text-neutral-400">{formatDateTime(appointment.startTime)}</td>
                         <td className="py-3 text-neutral-400">{formatDateTime(appointment.endTime)}</td>
-                        <td className="py-3">
+                        <td className="py-3" onClick={(event) => event.stopPropagation()}>
                           {canManage ? (
                             <select
                               value={appointment.status}

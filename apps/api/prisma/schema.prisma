@@ -40,6 +40,12 @@ enum GiftCardStatus {
   VOID
 }
 
+enum LiabilityWaiverStatus {
+  PENDING
+  SIGNED
+  VERIFIED
+}
+
 enum InquiryStatus {
   NEW
   ARTIST_ASSIGNED
@@ -70,6 +76,7 @@ model Studio {
   auditLogs       AuditLog[]
   giftCards       GiftCard[]
   settings        StudioSettings?
+  liabilityWaivers LiabilityWaiver[]
 }
 
 model RolePermission {
@@ -120,6 +127,8 @@ model User {
 
   auditLogs       AuditLog[]
   issuedGiftCards GiftCard[]
+  verifiedWaivers        LiabilityWaiver[] @relation("WaiverVerifiedBy")
+  checkedOutAppointments Appointment[]     @relation("AppointmentCheckedOutBy")
 
   locationId String?
   location   Location? @relation(fields: [locationId], references: [id])
@@ -171,6 +180,7 @@ model Client {
   consentForms ConsentForm[]
   inquiries    Inquiry[]
   giftCards    GiftCard[]
+  liabilityWaivers LiabilityWaiver[]
 
   @@index([studioId])
 }
@@ -183,6 +193,17 @@ model Appointment {
   depositPaid Boolean           @default(false)
   notes       String?
   createdAt   DateTime          @default(now())
+
+  // Checkout (Phase 4): filled in together, at the end of the session, by
+  // POST /appointments/:id/checkout. status moves to COMPLETED at the same
+  // time -- COMPLETED already existed as a plain manual status option with
+  // no other logic attached to it, so checkout formalizes what that value
+  // already meant rather than repurposing something with different meaning.
+  finalCostCents Int?
+  closeoutNotes  String?
+  checkedOutAt   DateTime?
+  checkedOutById String?
+  checkedOutBy   User?     @relation("AppointmentCheckedOutBy", fields: [checkedOutById], references: [id])
 
   studioId String
   studio   Studio @relation(fields: [studioId], references: [id])
@@ -201,9 +222,10 @@ model Appointment {
   inquiryId      String
   inquiryProject Inquiry  @relation("InquirySessions", fields: [inquiryId], references: [id])
 
-  consentForm ConsentForm?
-  inquiry     Inquiry?     @relation("InquiryScheduledAppointment")
-  giftCard    GiftCard?
+  consentForm     ConsentForm?
+  inquiry         Inquiry?         @relation("InquiryScheduledAppointment")
+  giftCard        GiftCard?
+  liabilityWaiver LiabilityWaiver?
 
   @@index([studioId, startTime])
   @@index([inquiryId])
@@ -300,6 +322,13 @@ model StudioSettings {
   calendarInviteTemplate        String?
   // Reserved for later phases (e.g. per-channel message copy).
   messageTemplates              Json?
+  // Liability waiver template (Phase 4), editable by OWNER from Settings.
+  // Array<{ question: string, type: "yes_no" | "yes_no_explain", explainPrompt?: string }>
+  waiverHealthQuestions Json?
+  // Array<string>, exactly 10 clauses in display/initialing order.
+  waiverClauses         Json?
+  waiverAcknowledgment  String?
+  waiverPhotoRelease    String?
   createdAt                     DateTime @default(now())
   updatedAt                     DateTime @updatedAt
 
@@ -384,6 +413,59 @@ model GiftCard {
   issuedBy   User   @relation(fields: [issuedById], references: [id])
 
   depositForm DepositForm?
+
+  @@index([studioId])
+  @@index([clientId])
+}
+
+model LiabilityWaiver {
+  id     String                 @id @default(cuid())
+  status LiabilityWaiverStatus  @default(PENDING)
+
+  // Public-flow bearer token (same pattern as ConsentForm) -- unlike
+  // GiftCard.code, this token IS single-use: it's cleared on signing.
+  token          String?   @unique
+  tokenExpiresAt DateTime?
+
+  legalName             String?
+  dateOfBirth           DateTime?
+  emergencyContactName  String?
+  emergencyContactPhone String?
+  // Array<{ questionIndex: number, answer: "YES" | "NO", explanation?: string }>
+  healthAnswers  Json?
+  idImageUrl     String?
+  // Array<{ clauseIndex: number, initials: string }>
+  clauseInitials Json?
+  signatureName  String?
+
+  photoReleaseAccepted     Boolean @default(false)
+  photoReleaseSignatureName String?
+
+  // Snapshots of the template exactly as the client saw it at signing time,
+  // so a later edit to StudioSettings' waiver template never retroactively
+  // changes what a signed record shows (same immutability principle as
+  // Inquiry.estimateTermsSnapshot).
+  healthQuestionsSnapshot Json
+  clausesSnapshot         Json
+  acknowledgmentSnapshot  String?
+  photoReleaseSnapshot    String?
+
+  signedAt   DateTime?
+  verifiedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id])
+
+  appointmentId String      @unique
+  appointment   Appointment @relation(fields: [appointmentId], references: [id])
+
+  verifiedById String?
+  verifiedBy   User?   @relation("WaiverVerifiedBy", fields: [verifiedById], references: [id])
 
   @@index([studioId])
   @@index([clientId])

@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard'
 import Clients from './pages/Clients'
 import ClientDetail from './pages/ClientDetail'
 import Appointments from './pages/Appointments'
+import AppointmentDetail from './pages/AppointmentDetail'
 import Artists from './pages/Artists'
 import ArtistDetail from './pages/ArtistDetail'
 import Settings from './pages/Settings'
@@ -19,6 +20,7 @@ import EstimateResponse from './pages/EstimateResponse'
 import DepositResponse from './pages/DepositResponse'
 import GiftCardResponse from './pages/GiftCardResponse'
 import GiftCardDetail from './pages/GiftCardDetail'
+import WaiverSign from './pages/WaiverSign'
 
 function App() {
   return (
@@ -31,6 +33,7 @@ function App() {
         <Route path="/estimate/:token" element={<EstimateResponse />} />
         <Route path="/deposit/:token" element={<DepositResponse />} />
         <Route path="/gift-card/:code" element={<GiftCardResponse />} />
+        <Route path="/waiver/:token" element={<WaiverSign />} />
         <Route
           path="/gift-cards/:id"
           element={
@@ -68,6 +71,14 @@ function App() {
           element={
             <ProtectedRoute>
               <Appointments />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/appointments/:id"
+          element={
+            <ProtectedRoute>
+              <AppointmentDetail />
             </ProtectedRoute>
           }
         />

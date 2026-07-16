@@ -1,10 +1,14 @@
 import { Router } from "express";
+import crypto from "node:crypto";
 import { prisma } from "../lib/prisma";
-import { requireAuth } from "../middleware/auth";
-import { Role, AppointmentStatus } from "../../generated/prisma/enums";
+import { requireAuth, requireRole } from "../middleware/auth";
+import { Role, AppointmentStatus, GiftCardStatus } from "../../generated/prisma/enums";
 import { requirePermission } from "../lib/permissions";
 import { logAudit } from "../lib/audit";
 import { validateGiftCardForAttachment } from "../lib/giftCards";
+
+const WAIVER_TOKEN_TTL_HOURS = 24; // day-of form -- signed in-shop, so a short window is intentional
+const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 
 const router = Router();
 
@@ -122,6 +126,184 @@ router.get("/", requirePermission("appointments.view"), async (req, res) => {
   });
 
   res.json(appointments);
+});
+
+const APPOINTMENT_DETAIL_INCLUDE = {
+  artist: { select: { id: true, user: { select: { email: true, name: true } } } },
+  client: { select: { id: true, firstName: true, lastName: true } },
+  // The project this session belongs to -- via inquiryId/inquiryProject, not
+  // the older 1:1 `inquiry` back-relation (Inquiry.appointmentId), which is
+  // a different, usually-null link left over from the original scheduling flow.
+  inquiryProject: { select: { id: true, description: true, clientId: true } },
+  giftCard: { select: { id: true, code: true, amountCents: true, status: true, expiresAt: true } },
+  checkedOutBy: { select: { id: true, name: true, email: true } },
+  // Non-PII summary only -- the health data and ID image behind this
+  // waiver live behind GET /waivers/:id, which is OWNER/FRONT_DESK only.
+  liabilityWaiver: { select: { id: true, status: true, signedAt: true, verifiedAt: true } },
+} as const;
+
+router.get("/:id", requirePermission("appointments.view"), async (req, res) => {
+  const id = req.params.id as string;
+
+  const appointment = await prisma.appointment.findUnique({ where: { id }, include: APPOINTMENT_DETAIL_INCLUDE });
+
+  if (!appointment || appointment.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Appointment not found" });
+  }
+
+  const { inquiryProject, ...rest } = appointment;
+  res.json({ ...rest, inquiry: inquiryProject });
+});
+
+// Day-of liability waiver: one per appointment, front desk creates it and
+// hands the client the link; front desk later verifies the signed result
+// against the client's physical ID (POST /waivers/:id/verify).
+router.post("/:id/waiver", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+  const studioId = req.user!.studioId;
+
+  const appointment = await prisma.appointment.findUnique({ where: { id }, include: { liabilityWaiver: true } });
+
+  if (!appointment || appointment.studioId !== studioId) {
+    return res.status(404).json({ error: "Appointment not found" });
+  }
+
+  if (appointment.liabilityWaiver) {
+    return res.status(400).json({ error: "A waiver already exists for this appointment" });
+  }
+
+  const settings = await prisma.studioSettings.findUnique({ where: { studioId } });
+
+  if (!settings?.waiverHealthQuestions || !settings?.waiverClauses) {
+    return res.status(400).json({ error: "Configure the waiver template in Settings before creating waivers" });
+  }
+
+  const token = crypto.randomBytes(32).toString("hex");
+  const tokenExpiresAt = new Date(Date.now() + WAIVER_TOKEN_TTL_HOURS * 60 * 60 * 1000);
+
+  const waiver = await prisma.liabilityWaiver.create({
+    data: {
+      studioId,
+      clientId: appointment.clientId,
+      appointmentId: appointment.id,
+      token,
+      tokenExpiresAt,
+      healthQuestionsSnapshot: settings.waiverHealthQuestions,
+      clausesSnapshot: settings.waiverClauses,
+      acknowledgmentSnapshot: settings.waiverAcknowledgment,
+      photoReleaseSnapshot: settings.waiverPhotoRelease,
+    },
+  });
+
+  await logAudit({
+    studioId,
+    actorUserId: req.user!.userId,
+    entityType: "LiabilityWaiver",
+    entityId: waiver.id,
+    action: "create",
+    changes: { appointmentId: appointment.id },
+  });
+
+  res.status(201).json({ ...waiver, signingUrl: `${FRONTEND_URL}/waiver/${token}` });
+});
+
+// Checkout: confirms the final cost with the artist, settles the deposit
+// (redeem now vs. roll to a future appointment), and records closeout
+// notes. Phase 3 guarantees every appointment has an attached ACTIVE gift
+// card, but the guard below still checks -- if it's somehow missing, that's
+// a data problem to resolve manually rather than something to paper over.
+router.post("/:id/checkout", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+  const studioId = req.user!.studioId;
+  const body = req.body ?? {};
+  const { finalCostCents, depositDecision, closeoutNotes } = body;
+
+  if (typeof finalCostCents !== "number" || !Number.isFinite(finalCostCents) || finalCostCents < 0) {
+    return res.status(400).json({ error: "finalCostCents must be a non-negative number" });
+  }
+
+  if (depositDecision !== "REDEEM" && depositDecision !== "ROLL") {
+    return res.status(400).json({ error: "depositDecision must be 'REDEEM' or 'ROLL'" });
+  }
+
+  const appointment = await prisma.appointment.findUnique({ where: { id }, include: { giftCard: true } });
+
+  if (!appointment || appointment.studioId !== studioId) {
+    return res.status(404).json({ error: "Appointment not found" });
+  }
+
+  if (appointment.checkedOutAt) {
+    return res.status(400).json({ error: "This appointment has already been checked out" });
+  }
+
+  if (!appointment.giftCard) {
+    return res.status(400).json({
+      error:
+        "This appointment has no attached gift card to redeem or roll. Every appointment should have one (Phase 3) -- resolve this manually before checking out.",
+    });
+  }
+
+  const card = appointment.giftCard;
+  let amountDueCents = 0;
+  let remainderCents = 0;
+
+  if (depositDecision === "REDEEM") {
+    amountDueCents = Math.max(0, finalCostCents - card.amountCents);
+    remainderCents = Math.max(0, card.amountCents - finalCostCents);
+  } else {
+    amountDueCents = finalCostCents;
+  }
+
+  const updated = await prisma.$transaction(async (tx) => {
+    if (depositDecision === "REDEEM") {
+      await tx.giftCard.update({
+        where: { id: card.id },
+        data: { status: GiftCardStatus.REDEEMED, redeemedAt: new Date() },
+      });
+    } else {
+      await tx.giftCard.update({ where: { id: card.id }, data: { appointmentId: null } });
+    }
+
+    return tx.appointment.update({
+      where: { id },
+      data: {
+        finalCostCents,
+        closeoutNotes: typeof closeoutNotes === "string" && closeoutNotes.trim() ? closeoutNotes.trim() : null,
+        checkedOutAt: new Date(),
+        checkedOutById: req.user!.userId,
+        status: AppointmentStatus.COMPLETED,
+      },
+    });
+  });
+
+  await logAudit({
+    studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Appointment",
+    entityId: id,
+    action: "checkout",
+    changes: {
+      finalCostCents,
+      depositDecision,
+      giftCardId: card.id,
+      amountDueCents,
+      ...(remainderCents > 0 ? { remainderCents } : {}),
+    },
+  });
+
+  await logAudit({
+    studioId,
+    actorUserId: req.user!.userId,
+    entityType: "GiftCard",
+    entityId: card.id,
+    action: depositDecision === "REDEEM" ? "redeemed" : "rollover",
+    changes:
+      depositDecision === "REDEEM"
+        ? { status: { from: card.status, to: GiftCardStatus.REDEEMED }, appointmentId: id, finalCostCents, remainderCents }
+        : { fromAppointmentId: id, toAppointmentId: null, reason: "checkout_roll" },
+  });
+
+  res.json({ ...updated, amountDueCents, remainderCents });
 });
 
 router.patch("/:id", requirePermission("appointments.manage"), async (req, res) => {

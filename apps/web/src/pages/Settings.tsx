@@ -6,6 +6,12 @@ import { useStudio } from '../context/useStudio'
 import { useUserProfile } from '../context/useUserProfile'
 import { useAuth } from '../context/useAuth'
 
+interface HealthQuestion {
+  question: string
+  type: 'yes_no' | 'yes_no_explain'
+  explainPrompt?: string
+}
+
 interface StudioSettingsData {
   refundPolicy: string | null
   depositPolicy: string | null
@@ -15,6 +21,10 @@ interface StudioSettingsData {
   estimateFollowUpHours: number
   giftCardDefaultExpirationDays: number | null
   calendarInviteTemplate: string | null
+  waiverHealthQuestions: HealthQuestion[] | null
+  waiverClauses: string[] | null
+  waiverAcknowledgment: string | null
+  waiverPhotoRelease: string | null
 }
 
 const EMPTY_POLICIES_FORM = {
@@ -27,6 +37,8 @@ const EMPTY_POLICIES_FORM = {
   giftCardDefaultExpirationDays: '',
   calendarInviteTemplate: '',
 }
+
+const EMPTY_HEALTH_QUESTION: HealthQuestion = { question: '', type: 'yes_no', explainPrompt: '' }
 
 const EMPTY_STUDIO_FORM = { name: '', website: '' }
 
@@ -94,6 +106,11 @@ export default function Settings() {
   const [policiesSubmitting, setPoliciesSubmitting] = useState(false)
   const [editingPolicies, setEditingPolicies] = useState(false)
 
+  const [waiverHealthQuestions, setWaiverHealthQuestions] = useState<HealthQuestion[]>([])
+  const [waiverClauses, setWaiverClauses] = useState<string[]>([])
+  const [waiverAcknowledgment, setWaiverAcknowledgment] = useState('')
+  const [waiverPhotoRelease, setWaiverPhotoRelease] = useState('')
+
   useEffect(() => {
     if (!canViewPolicies) return
 
@@ -113,6 +130,10 @@ export default function Settings() {
           giftCardDefaultExpirationDays: data.giftCardDefaultExpirationDays?.toString() ?? '',
           calendarInviteTemplate: data.calendarInviteTemplate ?? '',
         })
+        setWaiverHealthQuestions(data.waiverHealthQuestions ?? [])
+        setWaiverClauses(data.waiverClauses ?? [])
+        setWaiverAcknowledgment(data.waiverAcknowledgment ?? '')
+        setWaiverPhotoRelease(data.waiverPhotoRelease ?? '')
       })
       .catch(() => {
         // Section just stays empty if this fails; not critical page content.
@@ -129,6 +150,22 @@ export default function Settings() {
     setPoliciesError(null)
     setPoliciesSuccess(false)
 
+    const cleanedQuestions = waiverHealthQuestions
+      .filter((q) => q.question.trim().length > 0)
+      .map((q) => ({
+        question: q.question.trim(),
+        type: q.type,
+        ...(q.type === 'yes_no_explain' ? { explainPrompt: q.explainPrompt?.trim() || undefined } : {}),
+      }))
+
+    const cleanedClauses = waiverClauses.map((c) => c.trim()).filter((c) => c.length > 0)
+
+    if (cleanedClauses.length === 0) {
+      setPoliciesError('At least one waiver clause is required.')
+      setPoliciesSubmitting(false)
+      return
+    }
+
     try {
       const updated = await apiFetch<StudioSettingsData>('/studio-settings', {
         method: 'PATCH',
@@ -143,10 +180,16 @@ export default function Settings() {
             ? Number(policiesForm.giftCardDefaultExpirationDays)
             : null,
           calendarInviteTemplate: policiesForm.calendarInviteTemplate || null,
+          waiverHealthQuestions: cleanedQuestions,
+          waiverClauses: cleanedClauses,
+          waiverAcknowledgment: waiverAcknowledgment || null,
+          waiverPhotoRelease: waiverPhotoRelease || null,
         }),
       })
 
       setPolicies(updated)
+      setWaiverHealthQuestions(updated.waiverHealthQuestions ?? [])
+      setWaiverClauses(updated.waiverClauses ?? [])
       setEditingPolicies(false)
       setPoliciesSuccess(true)
       setTimeout(() => setPoliciesSuccess(false), 2000)
@@ -155,6 +198,30 @@ export default function Settings() {
     } finally {
       setPoliciesSubmitting(false)
     }
+  }
+
+  function updateHealthQuestion(index: number, patch: Partial<HealthQuestion>) {
+    setWaiverHealthQuestions((current) => current.map((q, i) => (i === index ? { ...q, ...patch } : q)))
+  }
+
+  function addHealthQuestion() {
+    setWaiverHealthQuestions((current) => [...current, { ...EMPTY_HEALTH_QUESTION }])
+  }
+
+  function removeHealthQuestion(index: number) {
+    setWaiverHealthQuestions((current) => current.filter((_, i) => i !== index))
+  }
+
+  function updateClause(index: number, value: string) {
+    setWaiverClauses((current) => current.map((c, i) => (i === index ? value : c)))
+  }
+
+  function addClause() {
+    setWaiverClauses((current) => [...current, ''])
+  }
+
+  function removeClause(index: number) {
+    setWaiverClauses((current) => current.filter((_, i) => i !== index))
   }
 
   const [editing, setEditing] = useState(false)
@@ -679,6 +746,123 @@ export default function Settings() {
                     />
                   </div>
 
+                  <div className="border-t border-neutral-800 pt-4">
+                    <div className="flex items-center justify-between">
+                      <label className="text-sm font-medium text-neutral-300">Waiver health screening questions</label>
+                      <button
+                        type="button"
+                        onClick={addHealthQuestion}
+                        className="rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-white transition hover:bg-neutral-800"
+                      >
+                        Add question
+                      </button>
+                    </div>
+
+                    <div className="mt-3 space-y-3">
+                      {waiverHealthQuestions.map((q, i) => (
+                        <div key={i} className="rounded-lg border border-neutral-800 p-3">
+                          <div className="flex items-start gap-2">
+                            <textarea
+                              rows={2}
+                              value={q.question}
+                              onChange={(e) => updateHealthQuestion(i, { question: e.target.value })}
+                              placeholder="Question text"
+                              className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => removeHealthQuestion(i)}
+                              className="shrink-0 rounded-full border border-neutral-700 px-2 py-1 text-xs text-neutral-400 transition hover:bg-neutral-800 hover:text-white"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                          <div className="mt-2 flex flex-wrap items-center gap-3">
+                            <select
+                              value={q.type}
+                              onChange={(e) =>
+                                updateHealthQuestion(i, { type: e.target.value as HealthQuestion['type'] })
+                              }
+                              className="rounded-lg border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                            >
+                              <option value="yes_no">Yes/No</option>
+                              <option value="yes_no_explain">Yes/No + explain if yes</option>
+                            </select>
+                            {q.type === 'yes_no_explain' && (
+                              <input
+                                type="text"
+                                placeholder="Explain prompt (e.g. 'If yes, please explain')"
+                                value={q.explainPrompt ?? ''}
+                                onChange={(e) => updateHealthQuestion(i, { explainPrompt: e.target.value })}
+                                className="min-w-0 flex-1 rounded-lg border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                              />
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                      {waiverHealthQuestions.length === 0 && (
+                        <p className="text-sm text-neutral-400">No health questions yet.</p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="border-t border-neutral-800 pt-4">
+                    <div className="flex items-center justify-between">
+                      <label className="text-sm font-medium text-neutral-300">Waiver clauses (initialed individually)</label>
+                      <button
+                        type="button"
+                        onClick={addClause}
+                        className="rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-white transition hover:bg-neutral-800"
+                      >
+                        Add clause
+                      </button>
+                    </div>
+
+                    <div className="mt-3 space-y-3">
+                      {waiverClauses.map((clause, i) => (
+                        <div key={i} className="flex items-start gap-2">
+                          <span className="mt-2 text-xs text-neutral-500">{i + 1}.</span>
+                          <textarea
+                            rows={2}
+                            value={clause}
+                            onChange={(e) => updateClause(i, e.target.value)}
+                            className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => removeClause(i)}
+                            className="mt-1 shrink-0 rounded-full border border-neutral-700 px-2 py-1 text-xs text-neutral-400 transition hover:bg-neutral-800 hover:text-white"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))}
+                      {waiverClauses.length === 0 && <p className="text-sm text-neutral-400">No clauses yet.</p>}
+                    </div>
+                  </div>
+
+                  <div className="border-t border-neutral-800 pt-4">
+                    <label className="mb-1 block text-sm font-medium text-neutral-300">Waiver acknowledgment</label>
+                    <textarea
+                      rows={3}
+                      value={waiverAcknowledgment}
+                      onChange={(e) => setWaiverAcknowledgment(e.target.value)}
+                      className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-neutral-300">
+                      Photo/video release text (optional section)
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={waiverPhotoRelease}
+                      onChange={(e) => setWaiverPhotoRelease(e.target.value)}
+                      className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                    />
+                  </div>
+
                   {policiesError && <p className="text-sm text-red-400">{policiesError}</p>}
 
                   <div className="flex gap-3">
@@ -748,6 +932,13 @@ export default function Settings() {
                       {policies.giftCardDefaultExpirationDays
                         ? `${policies.giftCardDefaultExpirationDays} days`
                         : 'Never expires'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Waiver template</p>
+                    <p className="mt-1 text-sm text-neutral-300">
+                      {waiverHealthQuestions.length} health question{waiverHealthQuestions.length === 1 ? '' : 's'},{' '}
+                      {waiverClauses.length} clause{waiverClauses.length === 1 ? '' : 's'}
                     </p>
                   </div>
                 </div>
