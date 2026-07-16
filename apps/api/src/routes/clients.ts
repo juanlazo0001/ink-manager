@@ -44,6 +44,10 @@ router.get("/:id", async (req, res) => {
     where: { id },
     include: {
       consentForms: { select: { id: true, signedAt: true, createdAt: true }, orderBy: { createdAt: "desc" } },
+      inquiries: {
+        select: { id: true, description: true, status: true, channel: true, createdAt: true },
+        orderBy: { createdAt: "desc" },
+      },
     },
   });
 

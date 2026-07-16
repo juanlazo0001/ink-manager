@@ -12,6 +12,14 @@ interface ConsentForm {
   createdAt: string
 }
 
+interface InquirySummary {
+  id: string
+  description: string
+  status: string
+  channel: string
+  createdAt: string
+}
+
 interface Client {
   id: string
   firstName: string
@@ -19,6 +27,7 @@ interface Client {
   email: string | null
   phone: string | null
   consentForms: ConsentForm[]
+  inquiries: InquirySummary[]
 }
 
 interface Appointment {
@@ -156,6 +165,47 @@ export default function ClientDetail() {
                     <p className="text-sm text-neutral-400">{client.phone ?? 'No phone on file'}</p>
                   </div>
                 </div>
+              </div>
+
+              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
+                <h2 className="text-base font-semibold text-white">Inquiries</h2>
+
+                {client.inquiries.length === 0 && <p className="mt-4 text-sm text-neutral-400">No inquiries yet.</p>}
+
+                {client.inquiries.length > 0 && (
+                  <div className="mt-4 overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead>
+                        <tr className="text-xs text-neutral-500">
+                          <th className="pb-3 font-medium">Description</th>
+                          <th className="pb-3 font-medium">Channel</th>
+                          <th className="pb-3 font-medium">Submitted</th>
+                          <th className="pb-3 font-medium">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-neutral-800">
+                        {client.inquiries.map((inquiry) => (
+                          <tr key={inquiry.id}>
+                            <td className="py-3 text-white">
+                              <Link to={`/inquiries/${inquiry.id}`} className="hover:underline">
+                                {inquiry.description.length > 60
+                                  ? `${inquiry.description.slice(0, 60).trimEnd()}…`
+                                  : inquiry.description}
+                              </Link>
+                            </td>
+                            <td className="py-3 text-neutral-400">{formatStatus(inquiry.channel)}</td>
+                            <td className="py-3 text-neutral-400">{formatDateTime(inquiry.createdAt)}</td>
+                            <td className="py-3">
+                              <span className="inline-flex items-center rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-300">
+                                {formatStatus(inquiry.status)}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
 
               <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
