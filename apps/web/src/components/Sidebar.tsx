@@ -28,6 +28,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Appointments', to: '/appointments', icon: AppointmentsIcon },
   { label: 'Artists', to: '/artists', icon: ArtistsIcon },
   { label: 'Inquiries', to: '/inquiries', icon: DocumentIcon, roles: ['OWNER', 'FRONT_DESK'] },
+  { label: 'My Inquiries', to: '/my-inquiries', icon: DocumentIcon, roles: ['ARTIST'] },
   { label: 'Team', to: '/team', icon: TeamIcon, roles: ['OWNER'] },
   { label: 'Settings', to: '/settings', icon: SettingsIcon },
 ]

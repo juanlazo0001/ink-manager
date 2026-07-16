@@ -191,7 +191,9 @@ model Inquiry {
   priceEstimateLow      Float?
   priceEstimateHigh     Float?
   timeEstimateHours     Float?
+  declineNote           String?
   createdAt             DateTime      @default(now())
+  assignedAt            DateTime?
 
   studioId String
   studio   Studio @relation(fields: [studioId], references: [id])

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
-import { Channel } from "../../generated/prisma/enums";
+import { Channel, InquiryStatus } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { Role } from "../../generated/prisma/enums";
 
@@ -133,6 +133,24 @@ router.get("/", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (re
   res.json(inquiries);
 });
 
+// Artist-facing inbox: inquiries currently assigned to the requesting
+// artist and awaiting their review. Registered before the "/:id" route
+// below so Express doesn't try to match "assigned-to-me" as an :id.
+router.get("/assigned-to-me", requireAuth, requireRole(Role.ARTIST), async (req, res) => {
+  const artist = await prisma.artist.findUnique({ where: { userId: req.user!.userId } });
+  if (!artist) {
+    return res.json([]);
+  }
+
+  const inquiries = await prisma.inquiry.findMany({
+    where: { assignedArtistId: artist.id, status: InquiryStatus.ARTIST_ASSIGNED },
+    include: INQUIRY_INCLUDE,
+    orderBy: { assignedAt: "desc" },
+  });
+
+  res.json(inquiries);
+});
+
 router.get("/:id", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
   const id = req.params.id as string;
 
@@ -143,6 +161,104 @@ router.get("/:id", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async 
   }
 
   res.json(inquiry);
+});
+
+// Staff hands a NEW inquiry off to an artist. Re-assigning only makes sense
+// while it's still NEW — once an artist has responded (or is mid-review),
+// this endpoint won't touch it; DECLINE below is what puts it back to NEW.
+router.patch("/:id/assign", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+  const { artistId } = req.body ?? {};
+
+  if (!artistId) {
+    return res.status(400).json({ error: "artistId is required" });
+  }
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  if (inquiry.status !== InquiryStatus.NEW) {
+    return res.status(400).json({ error: "Only a NEW inquiry can be assigned" });
+  }
+
+  const artist = await prisma.artist.findUnique({ where: { id: artistId }, include: { user: true } });
+  if (!artist || artist.user.studioId !== req.user!.studioId) {
+    return res.status(400).json({ error: "artistId must belong to your studio" });
+  }
+
+  const updated = await prisma.inquiry.update({
+    where: { id },
+    data: { assignedArtistId: artistId, assignedAt: new Date(), status: InquiryStatus.ARTIST_ASSIGNED },
+    include: INQUIRY_INCLUDE,
+  });
+
+  res.json(updated);
+});
+
+const DECISIONS = ["APPROVE", "DECLINE"] as const;
+
+// Artist's response to an inquiry assigned to them. APPROVE records the
+// artist's own estimate and hands it back to staff (AWAITING_CLIENT_RESPONSE).
+// DECLINE unassigns it and puts it back in the pool (NEW) with a note for
+// staff explaining why, so it can be reassigned.
+router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), async (req, res) => {
+  const id = req.params.id as string;
+  const { decision, priceEstimateLow, priceEstimateHigh, timeEstimateHours, declineNote } = req.body ?? {};
+
+  if (!DECISIONS.includes(decision)) {
+    return res.status(400).json({ error: `decision must be one of: ${DECISIONS.join(", ")}` });
+  }
+
+  const artist = await prisma.artist.findUnique({ where: { userId: req.user!.userId } });
+  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+
+  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  if (!artist || inquiry.assignedArtistId !== artist.id) {
+    return res.status(403).json({ error: "This inquiry is not assigned to you" });
+  }
+
+  if (decision === "DECLINE") {
+    if (typeof declineNote !== "string" || declineNote.trim().length === 0) {
+      return res.status(400).json({ error: "declineNote is required when declining" });
+    }
+
+    const updated = await prisma.inquiry.update({
+      where: { id },
+      data: {
+        assignedArtistId: null,
+        assignedAt: null,
+        status: InquiryStatus.NEW,
+        declineNote: declineNote.trim(),
+      },
+      include: INQUIRY_INCLUDE,
+    });
+
+    return res.json(updated);
+  }
+
+  for (const [field, value] of Object.entries({ priceEstimateLow, priceEstimateHigh, timeEstimateHours })) {
+    if (value !== undefined && typeof value !== "number") {
+      return res.status(400).json({ error: `${field} must be a number` });
+    }
+  }
+
+  const updated = await prisma.inquiry.update({
+    where: { id },
+    data: {
+      status: InquiryStatus.AWAITING_CLIENT_RESPONSE,
+      priceEstimateLow: priceEstimateLow ?? null,
+      priceEstimateHigh: priceEstimateHigh ?? null,
+      timeEstimateHours: timeEstimateHours ?? null,
+    },
+    include: INQUIRY_INCLUDE,
+  });
+
+  res.json(updated);
 });
 
 export default router;

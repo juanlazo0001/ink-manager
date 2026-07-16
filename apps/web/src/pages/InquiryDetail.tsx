@@ -18,10 +18,20 @@ interface Inquiry {
   referenceImages: string[]
   placementImages: string[]
   status: string
+  priceEstimateLow: number | null
+  priceEstimateHigh: number | null
+  timeEstimateHours: number | null
+  declineNote: string | null
   createdAt: string
+  assignedAt: string | null
   client: { firstName: string; lastName: string; email: string | null; phone: string | null }
   preferredArtist: { id: string; user: { name: string | null } } | null
   assignedArtist: { id: string; user: { name: string | null } } | null
+}
+
+interface ArtistOption {
+  id: string
+  user: { email: string }
 }
 
 function DetailField({ label, value }: { label: string; value: string }) {
@@ -59,6 +69,12 @@ export default function InquiryDetail() {
   const { id } = useParams<{ id: string }>()
   const [inquiry, setInquiry] = useState<Inquiry | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [refreshIndex, setRefreshIndex] = useState(0)
+
+  const [artistOptions, setArtistOptions] = useState<ArtistOption[] | null>(null)
+  const [selectedArtistId, setSelectedArtistId] = useState('')
+  const [assigning, setAssigning] = useState(false)
+  const [assignError, setAssignError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!id) return
@@ -90,7 +106,44 @@ export default function InquiryDetail() {
     return () => {
       ignore = true
     }
-  }, [id])
+  }, [id, refreshIndex])
+
+  useEffect(() => {
+    let ignore = false
+
+    apiFetch<ArtistOption[]>('/artists')
+      .then((data) => {
+        if (!ignore) setArtistOptions(data)
+      })
+      .catch(() => {
+        // The assign dropdown just stays empty if this fails — the rest of
+        // the page still works.
+      })
+
+    return () => {
+      ignore = true
+    }
+  }, [])
+
+  async function handleAssign() {
+    if (!id || !selectedArtistId) return
+
+    setAssigning(true)
+    setAssignError(null)
+
+    try {
+      await apiFetch(`/inquiries/${id}/assign`, {
+        method: 'PATCH',
+        body: JSON.stringify({ artistId: selectedArtistId }),
+      })
+
+      setRefreshIndex((index) => index + 1)
+    } catch (err) {
+      setAssignError(err instanceof Error ? err.message : 'Failed to assign artist')
+    } finally {
+      setAssigning(false)
+    }
+  }
 
   return (
     <div className="flex min-h-screen bg-neutral-900 text-white">
@@ -135,6 +188,75 @@ export default function InquiryDetail() {
               </div>
 
               <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
+                <h2 className="text-base font-semibold text-white">Assignment</h2>
+
+                {inquiry.status === 'NEW' ? (
+                  <div className="mt-4 flex flex-wrap items-center gap-3">
+                    <select
+                      value={selectedArtistId}
+                      onChange={(event) => setSelectedArtistId(event.target.value)}
+                      className="rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                    >
+                      <option value="" disabled>
+                        {artistOptions === null ? 'Loading artists…' : 'Select an artist'}
+                      </option>
+                      {artistOptions?.map((artist) => (
+                        <option key={artist.id} value={artist.id}>
+                          {artist.user.email}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={handleAssign}
+                      disabled={!selectedArtistId || assigning}
+                      className="rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                    >
+                      {assigning ? 'Assigning…' : 'Assign Artist'}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <DetailField label="Assigned artist" value={inquiry.assignedArtist?.user.name ?? 'Not yet assigned'} />
+                    <DetailField
+                      label="Assigned at"
+                      value={inquiry.assignedAt ? formatDateTime(inquiry.assignedAt) : 'Not yet assigned'}
+                    />
+                  </div>
+                )}
+
+                {assignError && <p className="mt-3 text-sm text-red-400">{assignError}</p>}
+
+                {(inquiry.priceEstimateLow != null ||
+                  inquiry.priceEstimateHigh != null ||
+                  inquiry.timeEstimateHours != null) && (
+                  <div className="mt-5 grid grid-cols-1 gap-4 border-t border-neutral-800 pt-4 sm:grid-cols-3">
+                    <DetailField
+                      label="Price estimate low"
+                      value={inquiry.priceEstimateLow != null ? `$${inquiry.priceEstimateLow}` : 'Not provided'}
+                    />
+                    <DetailField
+                      label="Price estimate high"
+                      value={inquiry.priceEstimateHigh != null ? `$${inquiry.priceEstimateHigh}` : 'Not provided'}
+                    />
+                    <DetailField
+                      label="Time estimate"
+                      value={inquiry.timeEstimateHours != null ? `${inquiry.timeEstimateHours} hours` : 'Not provided'}
+                    />
+                  </div>
+                )}
+
+                {inquiry.declineNote && (
+                  <div className="mt-5 rounded-lg border border-amber-900/50 bg-amber-950/30 p-3">
+                    <p className="text-xs font-medium uppercase tracking-wider text-amber-500">
+                      Last decline note
+                    </p>
+                    <p className="mt-1 text-sm text-amber-200">{inquiry.declineNote}</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
                 <h2 className="text-base font-semibold text-white">Tattoo details</h2>
 
                 <div className="mt-4">
@@ -150,7 +272,6 @@ export default function InquiryDetail() {
                   <DetailField label="Budget" value={inquiry.budget ?? 'Not provided'} />
                   <DetailField label="Desired timing" value={inquiry.desiredTiming ?? 'Not provided'} />
                   <DetailField label="Preferred artist" value={inquiry.preferredArtist?.user.name ?? 'No preference'} />
-                  <DetailField label="Assigned artist" value={inquiry.assignedArtist?.user.name ?? 'Not yet assigned'} />
                 </div>
               </div>
 

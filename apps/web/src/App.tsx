@@ -13,6 +13,7 @@ import SignConsentForm from './pages/SignConsentForm'
 import IntakeForm from './pages/IntakeForm'
 import Inquiries from './pages/Inquiries'
 import InquiryDetail from './pages/InquiryDetail'
+import MyInquiries from './pages/MyInquiries'
 
 function App() {
   return (
@@ -75,6 +76,14 @@ function App() {
           element={
             <ProtectedRoute>
               <InquiryDetail />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/my-inquiries"
+          element={
+            <ProtectedRoute>
+              <MyInquiries />
             </ProtectedRoute>
           }
         />
