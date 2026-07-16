@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import Sidebar from '../components/Sidebar'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatStatus } from '../lib/format'
+import { PhotoIcon } from '../components/icons'
 
 interface Inquiry {
   id: string
@@ -10,6 +11,7 @@ interface Inquiry {
   description: string
   status: string
   createdAt: string
+  referenceImages: string[]
   client: { firstName: string; lastName: string }
 }
 
@@ -105,6 +107,7 @@ export default function Inquiries() {
                 <table className="w-full text-left text-sm">
                   <thead>
                     <tr className="text-xs text-neutral-500">
+                      <th className="pb-3 font-medium"></th>
                       <th className="pb-3 font-medium">Client</th>
                       <th className="pb-3 font-medium">Channel</th>
                       <th className="pb-3 font-medium">Description</th>
@@ -119,6 +122,19 @@ export default function Inquiries() {
                         onClick={() => navigate(`/inquiries/${inquiry.id}`)}
                         className="cursor-pointer hover:bg-neutral-800/40"
                       >
+                        <td className="py-3">
+                          {inquiry.referenceImages[0] ? (
+                            <img
+                              src={inquiry.referenceImages[0]}
+                              alt=""
+                              className="h-10 w-10 rounded-lg object-cover"
+                            />
+                          ) : (
+                            <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-neutral-800 text-neutral-600">
+                              <PhotoIcon className="h-5 w-5" />
+                            </div>
+                          )}
+                        </td>
                         <td className="py-3 text-white">
                           {inquiry.client.firstName} {inquiry.client.lastName}
                         </td>

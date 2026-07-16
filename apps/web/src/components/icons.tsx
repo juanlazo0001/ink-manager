@@ -154,3 +154,23 @@ export function ArrowLeftIcon({ className }: IconProps) {
     </svg>
   )
 }
+
+export function MenuIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <line x1="3" y1="5.5" x2="17" y2="5.5" />
+      <line x1="3" y1="10" x2="17" y2="10" />
+      <line x1="3" y1="14.5" x2="17" y2="14.5" />
+    </svg>
+  )
+}
+
+export function PhotoIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <rect x="2.5" y="3.5" width="15" height="13" rx="1.5" />
+      <circle cx="7" cy="8" r="1.5" />
+      <path d="M3 14.5 7.5 10l3 3 2.5-2.5L17 14" strokeLinejoin="round" />
+    </svg>
+  )
+}

@@ -14,3 +14,13 @@
     @apply bg-neutral-900 text-white;
   }
 }
+
+/* Sidebar's mobile hamburger button is fixed (top-4, h-10), so it doesn't
+   push page content down like an in-flow element would. Every page's
+   content div is Sidebar's next sibling, so this clears space for it
+   below md without every page needing its own top-padding class. */
+@media (max-width: 767px) {
+  aside + div {
+    padding-top: 3.5rem;
+  }
+}
