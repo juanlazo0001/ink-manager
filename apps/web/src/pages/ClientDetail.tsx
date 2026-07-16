@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
+import AuditTrail from '../components/AuditTrail'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatStatus } from '../lib/format'
-import { ArrowLeftIcon, PlusIcon } from '../components/icons'
+import { ArrowLeftIcon, PencilIcon, PlusIcon } from '../components/icons'
 import { useUserProfile } from '../context/useUserProfile'
 import { useAuth } from '../context/useAuth'
 import { clientsQueryKey } from '../lib/queryKeys'
@@ -16,11 +17,32 @@ interface ConsentForm {
   createdAt: string
 }
 
+interface DepositFormSummary {
+  id: string
+  depositAmount: number
+  feeAmount: number
+  totalCharged: number
+  signedAt: string | null
+  paidManually: boolean
+  paidAt: string | null
+}
+
 interface InquirySummary {
   id: string
   description: string
   status: string
   channel: string
+  createdAt: string
+  depositForm: DepositFormSummary | null
+}
+
+interface GiftCard {
+  id: string
+  code: string
+  amountCents: number
+  status: string
+  expiresAt: string | null
+  appointmentId: string | null
   createdAt: string
 }
 
@@ -30,8 +52,11 @@ interface Client {
   lastName: string
   email: string | null
   phone: string | null
+  mergedIntoId: string | null
+  mergedInto: { id: string; firstName: string; lastName: string } | null
   consentForms: ConsentForm[]
   inquiries: InquirySummary[]
+  giftCards: GiftCard[]
 }
 
 interface Appointment {
@@ -42,7 +67,7 @@ interface Appointment {
   artist: { id: string; user: { email: string } } | null
 }
 
-interface ClientOption {
+interface DuplicateCandidate {
   id: string
   firstName: string
   lastName: string
@@ -50,7 +75,18 @@ interface ClientOption {
   phone: string | null
 }
 
-const EMPTY_MERGE_FORM = { firstName: '', lastName: '', email: '', phone: '' }
+interface MergePreview {
+  inquiries: number
+  appointments: number
+  consentForms: number
+  giftCards: number
+}
+
+function formatCents(cents: number): string {
+  return `$${(cents / 100).toFixed(2)}`
+}
+
+const EMPTY_EDIT_FORM = { firstName: '', lastName: '', email: '', phone: '' }
 
 export default function ClientDetail() {
   const { id } = useParams<{ id: string }>()
@@ -63,15 +99,20 @@ export default function ClientDetail() {
   const [error, setError] = useState<string | null>(null)
   const [refreshIndex, setRefreshIndex] = useState(0)
 
+  const [editing, setEditing] = useState(false)
+  const [editForm, setEditForm] = useState(EMPTY_EDIT_FORM)
+  const [editError, setEditError] = useState<string | null>(null)
+  const [editSubmitting, setEditSubmitting] = useState(false)
+
   const [sendingForm, setSendingForm] = useState(false)
   const [sendFormError, setSendFormError] = useState<string | null>(null)
   const [latestSigningUrl, setLatestSigningUrl] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
 
-  const [showMergeModal, setShowMergeModal] = useState(false)
-  const [otherClients, setOtherClients] = useState<ClientOption[] | null>(null)
-  const [duplicateId, setDuplicateId] = useState('')
-  const [mergeForm, setMergeForm] = useState(EMPTY_MERGE_FORM)
+  const [duplicates, setDuplicates] = useState<DuplicateCandidate[] | null>(null)
+  const [mergeTarget, setMergeTarget] = useState<DuplicateCandidate | null>(null)
+  const [mergePreview, setMergePreview] = useState<MergePreview | null>(null)
+  const [mergePreviewLoading, setMergePreviewLoading] = useState(false)
   const [merging, setMerging] = useState(false)
   const [mergeError, setMergeError] = useState<string | null>(null)
 
@@ -86,14 +127,16 @@ export default function ClientDetail() {
       setError(null)
 
       try {
-        const [clientData, appointmentsData] = await Promise.all([
+        const [clientData, appointmentsData, duplicatesData] = await Promise.all([
           apiFetch<Client>(`/clients/${id}`),
           apiFetch<Appointment[]>(`/appointments?clientId=${id}`),
+          apiFetch<DuplicateCandidate[]>(`/clients/${id}/potential-duplicates`).catch(() => []),
         ])
 
         if (ignore) return
         setClient(clientData)
         setAppointments(appointmentsData)
+        setDuplicates(duplicatesData)
       } catch (err) {
         if (ignore) return
 
@@ -114,38 +157,73 @@ export default function ClientDetail() {
     }
   }, [id, refreshIndex])
 
-  const duplicate = otherClients?.find((c) => c.id === duplicateId) ?? null
-
-  function openMergeModal() {
-    setShowMergeModal(true)
-    setMergeError(null)
-
-    if (otherClients === null) {
-      apiFetch<ClientOption[]>('/clients')
-        .then((data) => setOtherClients(data.filter((c) => c.id !== id)))
-        .catch(() => {
-          // The picker just stays empty if this fails; the modal's error
-          // state covers the submit-time failure case.
-        })
-    }
+  function startEditing() {
+    if (!client) return
+    setEditForm({
+      firstName: client.firstName,
+      lastName: client.lastName,
+      email: client.email ?? '',
+      phone: client.phone ?? '',
+    })
+    setEditError(null)
+    setEditing(true)
   }
 
-  function selectDuplicate(selectedId: string) {
-    setDuplicateId(selectedId)
-    const selected = otherClients?.find((c) => c.id === selectedId)
+  async function handleEditSubmit(event: FormEvent) {
+    event.preventDefault()
+    if (!id) return
 
-    if (client && selected) {
-      setMergeForm({
-        firstName: client.firstName || selected.firstName,
-        lastName: client.lastName || selected.lastName,
-        email: client.email || selected.email || '',
-        phone: client.phone || selected.phone || '',
+    setEditSubmitting(true)
+    setEditError(null)
+
+    try {
+      const updated = await apiFetch<Client>(`/clients/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          firstName: editForm.firstName,
+          lastName: editForm.lastName,
+          email: editForm.email || null,
+          phone: editForm.phone || null,
+        }),
       })
+
+      setClient((prev) => (prev ? { ...prev, ...updated } : prev))
+      if (user) queryClient.invalidateQueries({ queryKey: clientsQueryKey(user.studioId) })
+      setEditing(false)
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : 'Failed to update client')
+    } finally {
+      setEditSubmitting(false)
     }
   }
 
-  async function handleMerge() {
-    if (!id || !duplicateId) return
+  async function openMergeConfirm(candidate: DuplicateCandidate) {
+    setMergeTarget(candidate)
+    setMergeError(null)
+    setMergePreview(null)
+    setMergePreviewLoading(true)
+
+    try {
+      const [candidateDetail, candidateAppointments] = await Promise.all([
+        apiFetch<Client>(`/clients/${candidate.id}`),
+        apiFetch<Appointment[]>(`/appointments?clientId=${candidate.id}`),
+      ])
+
+      setMergePreview({
+        inquiries: candidateDetail.inquiries.length,
+        consentForms: candidateDetail.consentForms.length,
+        giftCards: candidateDetail.giftCards.length,
+        appointments: candidateAppointments.length,
+      })
+    } catch (err) {
+      setMergeError(err instanceof Error ? err.message : 'Failed to load what would move')
+    } finally {
+      setMergePreviewLoading(false)
+    }
+  }
+
+  async function handleConfirmMerge() {
+    if (!id || !mergeTarget) return
 
     setMerging(true)
     setMergeError(null)
@@ -153,20 +231,12 @@ export default function ClientDetail() {
     try {
       await apiFetch(`/clients/${id}/merge`, {
         method: 'POST',
-        body: JSON.stringify({
-          duplicateId,
-          firstName: mergeForm.firstName,
-          lastName: mergeForm.lastName,
-          email: mergeForm.email || undefined,
-          phone: mergeForm.phone || undefined,
-        }),
+        body: JSON.stringify({ sourceClientId: mergeTarget.id }),
       })
 
       if (user) queryClient.invalidateQueries({ queryKey: clientsQueryKey(user.studioId) })
-      setShowMergeModal(false)
-      setOtherClients(null)
-      setDuplicateId('')
-      setMergeForm(EMPTY_MERGE_FORM)
+      setMergeTarget(null)
+      setMergePreview(null)
       setRefreshIndex((index) => index + 1)
     } catch (err) {
       setMergeError(err instanceof Error ? err.message : 'Failed to merge clients')
@@ -215,6 +285,8 @@ export default function ClientDetail() {
     }
   }
 
+  const depositForms = client?.inquiries.filter((inquiry) => inquiry.depositForm !== null) ?? []
+
   return (
     <div className="flex min-h-screen bg-neutral-900 text-white">
       <Sidebar />
@@ -236,33 +308,137 @@ export default function ClientDetail() {
 
           {!error && client && (
             <>
-              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-                <div className="flex flex-wrap items-center justify-between gap-4">
-                  <div className="flex items-center gap-4">
-                    <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-neutral-800 text-lg font-semibold text-white">
-                      {client.firstName[0]}
-                      {client.lastName[0]}
-                    </span>
-                    <div>
-                      <h1 className="text-xl font-bold text-white">
-                        {client.firstName} {client.lastName}
-                      </h1>
-                      <p className="mt-1 text-sm text-neutral-400">{client.email ?? 'No email on file'}</p>
-                      <p className="text-sm text-neutral-400">{client.phone ?? 'No phone on file'}</p>
-                    </div>
-                  </div>
-
-                  {canManage && (
-                    <button
-                      type="button"
-                      onClick={openMergeModal}
-                      className="rounded-full border border-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-800"
-                    >
-                      Merge Duplicate
-                    </button>
-                  )}
+              {client.mergedIntoId && client.mergedInto && (
+                <div className="mt-6 rounded-2xl border border-amber-900/50 bg-amber-950/30 p-4 text-sm text-amber-200">
+                  This client was merged into{' '}
+                  <Link to={`/clients/${client.mergedInto.id}`} className="font-semibold underline">
+                    {client.mergedInto.firstName} {client.mergedInto.lastName}
+                  </Link>
+                  . It's kept for history but is no longer an active record.
                 </div>
+              )}
+
+              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
+                {editing ? (
+                  <form onSubmit={handleEditSubmit}>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-neutral-300">First name</label>
+                        <input
+                          type="text"
+                          required
+                          value={editForm.firstName}
+                          onChange={(e) => setEditForm({ ...editForm, firstName: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-neutral-300">Last name</label>
+                        <input
+                          type="text"
+                          required
+                          value={editForm.lastName}
+                          onChange={(e) => setEditForm({ ...editForm, lastName: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-neutral-300">Email</label>
+                        <input
+                          type="email"
+                          value={editForm.email}
+                          onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-neutral-300">Phone</label>
+                        <input
+                          type="tel"
+                          value={editForm.phone}
+                          onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                        />
+                      </div>
+                    </div>
+
+                    {editError && <p className="mt-3 text-sm text-red-400">{editError}</p>}
+
+                    <div className="mt-4 flex gap-3">
+                      <button
+                        type="submit"
+                        disabled={editSubmitting}
+                        className="rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                      >
+                        {editSubmitting ? 'Saving…' : 'Save'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditing(false)}
+                        className="rounded-full border border-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-800"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <div className="flex flex-wrap items-center justify-between gap-4">
+                    <div className="flex items-center gap-4">
+                      <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-neutral-800 text-lg font-semibold text-white">
+                        {client.firstName[0]}
+                        {client.lastName[0]}
+                      </span>
+                      <div>
+                        <h1 className="text-xl font-bold text-white">
+                          {client.firstName} {client.lastName}
+                        </h1>
+                        <p className="mt-1 text-sm text-neutral-400">{client.email ?? 'No email on file'}</p>
+                        <p className="text-sm text-neutral-400">{client.phone ?? 'No phone on file'}</p>
+                      </div>
+                    </div>
+
+                    {canManage && !client.mergedIntoId && (
+                      <button
+                        type="button"
+                        onClick={startEditing}
+                        className="flex items-center gap-2 rounded-full border border-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-800"
+                      >
+                        <PencilIcon className="h-4 w-4" />
+                        Edit
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
+
+              {canManage && !client.mergedIntoId && duplicates && duplicates.length > 0 && (
+                <div className="mt-6 rounded-2xl border border-amber-900/50 bg-amber-950/30 p-4">
+                  <p className="text-sm font-medium text-amber-200">
+                    {duplicates.length} potential duplicate{duplicates.length > 1 ? 's' : ''} found
+                  </p>
+                  <ul className="mt-3 space-y-2">
+                    {duplicates.map((candidate) => (
+                      <li
+                        key={candidate.id}
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-900/40 bg-neutral-900/40 px-3 py-2 text-sm"
+                      >
+                        <span className="text-amber-100">
+                          {candidate.firstName} {candidate.lastName}
+                          {candidate.email ? ` — ${candidate.email}` : ''}
+                          {candidate.phone ? ` — ${candidate.phone}` : ''}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => openMergeConfirm(candidate)}
+                          className="rounded-full border border-amber-700 px-3 py-1 text-xs font-semibold text-amber-100 transition hover:bg-amber-900/40"
+                        >
+                          Merge into this client
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
               <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
                 <h2 className="text-base font-semibold text-white">Inquiries</h2>
@@ -343,9 +519,87 @@ export default function ClientDetail() {
               </div>
 
               <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
+                <h2 className="text-base font-semibold text-white">Gift Cards</h2>
+
+                {client.giftCards.length === 0 && <p className="mt-4 text-sm text-neutral-400">No gift cards yet.</p>}
+
+                {client.giftCards.length > 0 && (
+                  <div className="mt-4 overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead>
+                        <tr className="text-xs text-neutral-500">
+                          <th className="pb-3 font-medium">Code</th>
+                          <th className="pb-3 font-medium">Amount</th>
+                          <th className="pb-3 font-medium">Status</th>
+                          <th className="pb-3 font-medium">Expires</th>
+                          <th className="pb-3 font-medium">Attached</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-neutral-800">
+                        {client.giftCards.map((card) => (
+                          <tr key={card.id}>
+                            <td className="py-3 font-mono text-xs text-white">{card.code}</td>
+                            <td className="py-3 text-neutral-400">{formatCents(card.amountCents)}</td>
+                            <td className="py-3">
+                              <span className="inline-flex items-center rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-300">
+                                {formatStatus(card.status)}
+                              </span>
+                            </td>
+                            <td className="py-3 text-neutral-400">
+                              {card.expiresAt ? formatDateTime(card.expiresAt) : 'No expiration'}
+                            </td>
+                            <td className="py-3 text-neutral-400">{card.appointmentId ? 'Yes' : 'Unattached'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
+                <h2 className="text-base font-semibold text-white">Deposit Forms</h2>
+
+                {depositForms.length === 0 && <p className="mt-4 text-sm text-neutral-400">No deposit forms yet.</p>}
+
+                {depositForms.length > 0 && (
+                  <div className="mt-4 overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead>
+                        <tr className="text-xs text-neutral-500">
+                          <th className="pb-3 font-medium">Deposit</th>
+                          <th className="pb-3 font-medium">Total</th>
+                          <th className="pb-3 font-medium">Signed</th>
+                          <th className="pb-3 font-medium">Paid</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-neutral-800">
+                        {depositForms.map((inquiry) => (
+                          <tr key={inquiry.id}>
+                            <td className="py-3 text-white">${inquiry.depositForm!.depositAmount}</td>
+                            <td className="py-3 text-neutral-400">${inquiry.depositForm!.totalCharged}</td>
+                            <td className="py-3 text-neutral-400">
+                              {inquiry.depositForm!.signedAt ? formatDateTime(inquiry.depositForm!.signedAt) : 'Pending'}
+                            </td>
+                            <td className="py-3 text-neutral-400">
+                              {inquiry.depositForm!.paidManually
+                                ? inquiry.depositForm!.paidAt
+                                  ? formatDateTime(inquiry.depositForm!.paidAt)
+                                  : 'Yes'
+                                : 'Not yet'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
                 <div className="flex items-center justify-between">
                   <h2 className="text-base font-semibold text-white">Consent Forms</h2>
-                  {canManage && (
+                  {canManage && !client.mergedIntoId && (
                     <button
                       type="button"
                       onClick={handleSendConsentForm}
@@ -407,112 +661,48 @@ export default function ClientDetail() {
                   )}
                 </div>
               </div>
+
+              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
+                <h2 className="text-base font-semibold text-white">Waivers</h2>
+                <p className="mt-4 text-sm text-neutral-400">Coming soon.</p>
+              </div>
+
+              <AuditTrail entityType="Client" entityId={client.id} />
             </>
           )}
         </div>
       </div>
 
-      {showMergeModal && (
+      {mergeTarget && (
         <Modal
-          title="Merge Duplicate Client"
+          title="Confirm Merge"
           onClose={() => {
-            setShowMergeModal(false)
-            setDuplicateId('')
-            setMergeForm(EMPTY_MERGE_FORM)
+            setMergeTarget(null)
+            setMergePreview(null)
             setMergeError(null)
           }}
         >
-          <p className="text-sm text-neutral-400">
-            Pick the duplicate record. All of its appointments, inquiries, and consent forms move here, then it's
-            deleted.
+          <p className="text-sm text-neutral-300">
+            Merge <span className="font-semibold">{mergeTarget.firstName} {mergeTarget.lastName}</span> into{' '}
+            <span className="font-semibold">{client?.firstName} {client?.lastName}</span>?
           </p>
 
-          <div className="mt-4">
-            <label htmlFor="duplicateId" className="mb-1 block text-sm font-medium text-neutral-300">
-              Duplicate client
-            </label>
-            <select
-              id="duplicateId"
-              value={duplicateId}
-              onChange={(event) => selectDuplicate(event.target.value)}
-              className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
-            >
-              <option value="" disabled>
-                {otherClients === null ? 'Loading…' : 'Select a client'}
-              </option>
-              {otherClients?.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.firstName} {c.lastName} {c.email ? `(${c.email})` : ''}
-                </option>
-              ))}
-            </select>
-          </div>
+          <p className="mt-2 text-xs text-neutral-500">
+            {mergeTarget.firstName} will be kept for history but marked merged, and won't appear in client lists
+            anymore. This is not easily reversible.
+          </p>
 
-          {duplicate && (
-            <div className="mt-4 space-y-3">
-              <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-                Choose which value to keep
-              </p>
+          {mergePreviewLoading && <p className="mt-4 text-sm text-neutral-400">Checking what will move…</p>}
 
-              <div>
-                <label className="mb-1 block text-sm font-medium text-neutral-300">First name</label>
-                <select
-                  value={mergeForm.firstName}
-                  onChange={(event) => setMergeForm({ ...mergeForm, firstName: event.target.value })}
-                  className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
-                >
-                  {[...new Set([client?.firstName, duplicate.firstName])].map((value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm font-medium text-neutral-300">Last name</label>
-                <select
-                  value={mergeForm.lastName}
-                  onChange={(event) => setMergeForm({ ...mergeForm, lastName: event.target.value })}
-                  className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
-                >
-                  {[...new Set([client?.lastName, duplicate.lastName])].map((value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm font-medium text-neutral-300">Email</label>
-                <select
-                  value={mergeForm.email}
-                  onChange={(event) => setMergeForm({ ...mergeForm, email: event.target.value })}
-                  className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
-                >
-                  {[...new Set([client?.email ?? '', duplicate.email ?? ''])].map((value) => (
-                    <option key={value || 'none'} value={value}>
-                      {value || 'Not provided'}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm font-medium text-neutral-300">Phone</label>
-                <select
-                  value={mergeForm.phone}
-                  onChange={(event) => setMergeForm({ ...mergeForm, phone: event.target.value })}
-                  className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
-                >
-                  {[...new Set([client?.phone ?? '', duplicate.phone ?? ''])].map((value) => (
-                    <option key={value || 'none'} value={value}>
-                      {value || 'Not provided'}
-                    </option>
-                  ))}
-                </select>
-              </div>
+          {mergePreview && (
+            <div className="mt-4 rounded-lg border border-neutral-800 p-3 text-sm">
+              <p className="mb-2 text-xs font-medium uppercase tracking-wider text-neutral-500">Will move to this client</p>
+              <ul className="space-y-1 text-neutral-300">
+                <li>{mergePreview.inquiries} inquir{mergePreview.inquiries === 1 ? 'y' : 'ies'}</li>
+                <li>{mergePreview.appointments} appointment{mergePreview.appointments === 1 ? '' : 's'}</li>
+                <li>{mergePreview.consentForms} consent form{mergePreview.consentForms === 1 ? '' : 's'}</li>
+                <li>{mergePreview.giftCards} gift card{mergePreview.giftCards === 1 ? '' : 's'}</li>
+              </ul>
             </div>
           )}
 
@@ -520,11 +710,11 @@ export default function ClientDetail() {
 
           <button
             type="button"
-            onClick={handleMerge}
-            disabled={!duplicateId || merging}
+            onClick={handleConfirmMerge}
+            disabled={merging || mergePreviewLoading}
             className="mt-5 w-full rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-600 disabled:opacity-60"
           >
-            {merging ? 'Merging…' : 'Merge and Delete Duplicate'}
+            {merging ? 'Merging…' : 'Confirm Merge'}
           </button>
         </Modal>
       )}

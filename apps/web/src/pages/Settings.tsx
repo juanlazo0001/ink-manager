@@ -4,6 +4,27 @@ import { apiFetch } from '../lib/api'
 import { formatPhoneInput, readFileAsDataUrl, MAX_IMAGE_FILE_BYTES } from '../lib/format'
 import { useStudio } from '../context/useStudio'
 import { useUserProfile } from '../context/useUserProfile'
+import { useAuth } from '../context/useAuth'
+
+interface StudioSettingsData {
+  refundPolicy: string | null
+  depositPolicy: string | null
+  reschedulePolicy: string | null
+  communicationPolicy: string | null
+  estimateFollowUpHours: number
+  giftCardDefaultExpirationDays: number | null
+  calendarInviteTemplate: string | null
+}
+
+const EMPTY_POLICIES_FORM = {
+  refundPolicy: '',
+  depositPolicy: '',
+  reschedulePolicy: '',
+  communicationPolicy: '',
+  estimateFollowUpHours: '24',
+  giftCardDefaultExpirationDays: '',
+  calendarInviteTemplate: '',
+}
 
 const EMPTY_STUDIO_FORM = { name: '', website: '' }
 
@@ -58,8 +79,79 @@ function hoursSummary(hours: LocationHoursDay[] | null) {
 export default function Settings() {
   const { studio, loading, refresh } = useStudio()
   const { profile } = useUserProfile()
+  const { user } = useAuth()
   const canManageStudio = profile?.permissions.includes('studio.manage') ?? false
   const canManageLocations = profile?.permissions.includes('locations.manage') ?? false
+  const canViewPolicies = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
+  const canEditPolicies = user?.role === 'OWNER'
+
+  const [policies, setPolicies] = useState<StudioSettingsData | null>(null)
+  const [policiesForm, setPoliciesForm] = useState(EMPTY_POLICIES_FORM)
+  const [policiesError, setPoliciesError] = useState<string | null>(null)
+  const [policiesSuccess, setPoliciesSuccess] = useState(false)
+  const [policiesSubmitting, setPoliciesSubmitting] = useState(false)
+  const [editingPolicies, setEditingPolicies] = useState(false)
+
+  useEffect(() => {
+    if (!canViewPolicies) return
+
+    let ignore = false
+
+    apiFetch<StudioSettingsData>('/studio-settings')
+      .then((data) => {
+        if (ignore) return
+        setPolicies(data)
+        setPoliciesForm({
+          refundPolicy: data.refundPolicy ?? '',
+          depositPolicy: data.depositPolicy ?? '',
+          reschedulePolicy: data.reschedulePolicy ?? '',
+          communicationPolicy: data.communicationPolicy ?? '',
+          estimateFollowUpHours: String(data.estimateFollowUpHours),
+          giftCardDefaultExpirationDays: data.giftCardDefaultExpirationDays?.toString() ?? '',
+          calendarInviteTemplate: data.calendarInviteTemplate ?? '',
+        })
+      })
+      .catch(() => {
+        // Section just stays empty if this fails; not critical page content.
+      })
+
+    return () => {
+      ignore = true
+    }
+  }, [canViewPolicies])
+
+  async function handlePoliciesSubmit(event: FormEvent) {
+    event.preventDefault()
+    setPoliciesSubmitting(true)
+    setPoliciesError(null)
+    setPoliciesSuccess(false)
+
+    try {
+      const updated = await apiFetch<StudioSettingsData>('/studio-settings', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          refundPolicy: policiesForm.refundPolicy || null,
+          depositPolicy: policiesForm.depositPolicy || null,
+          reschedulePolicy: policiesForm.reschedulePolicy || null,
+          communicationPolicy: policiesForm.communicationPolicy || null,
+          estimateFollowUpHours: Number(policiesForm.estimateFollowUpHours) || 0,
+          giftCardDefaultExpirationDays: policiesForm.giftCardDefaultExpirationDays
+            ? Number(policiesForm.giftCardDefaultExpirationDays)
+            : null,
+          calendarInviteTemplate: policiesForm.calendarInviteTemplate || null,
+        }),
+      })
+
+      setPolicies(updated)
+      setEditingPolicies(false)
+      setPoliciesSuccess(true)
+      setTimeout(() => setPoliciesSuccess(false), 2000)
+    } catch (err) {
+      setPoliciesError(err instanceof Error ? err.message : 'Failed to update policies')
+    } finally {
+      setPoliciesSubmitting(false)
+    }
+  }
 
   const [editing, setEditing] = useState(false)
   const [form, setForm] = useState(EMPTY_STUDIO_FORM)
@@ -498,6 +590,157 @@ export default function Settings() {
                   />
                 )}
               </div>
+            </div>
+          )}
+
+          {canViewPolicies && policies && (
+            <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-6">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-semibold text-white">Policies &amp; Defaults</h2>
+                  <p className="mt-1 text-sm text-neutral-400">
+                    Wording and defaults used across estimates, deposits, and gift cards.
+                  </p>
+                </div>
+
+                {canEditPolicies && !editingPolicies && (
+                  <button
+                    type="button"
+                    onClick={() => setEditingPolicies(true)}
+                    className="shrink-0 rounded-full border border-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-800"
+                  >
+                    Edit
+                  </button>
+                )}
+              </div>
+
+              {editingPolicies ? (
+                <form onSubmit={handlePoliciesSubmit} className="mt-4 space-y-4">
+                  {(
+                    [
+                      ['refundPolicy', 'Refund policy'],
+                      ['depositPolicy', 'Deposit policy'],
+                      ['reschedulePolicy', 'Reschedule policy'],
+                      ['communicationPolicy', 'Communication policy'],
+                    ] as const
+                  ).map(([field, label]) => (
+                    <div key={field}>
+                      <label className="mb-1 block text-sm font-medium text-neutral-300">{label}</label>
+                      <textarea
+                        rows={3}
+                        value={policiesForm[field]}
+                        onChange={(e) => setPoliciesForm({ ...policiesForm, [field]: e.target.value })}
+                        className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                      />
+                    </div>
+                  ))}
+
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-neutral-300">
+                        Estimate follow-up (hours)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={policiesForm.estimateFollowUpHours}
+                        onChange={(e) => setPoliciesForm({ ...policiesForm, estimateFollowUpHours: e.target.value })}
+                        className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-neutral-300">
+                        Gift card expiration (days, blank = never)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={policiesForm.giftCardDefaultExpirationDays}
+                        onChange={(e) =>
+                          setPoliciesForm({ ...policiesForm, giftCardDefaultExpirationDays: e.target.value })
+                        }
+                        className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-neutral-300">Calendar invite template</label>
+                    <textarea
+                      rows={3}
+                      value={policiesForm.calendarInviteTemplate}
+                      onChange={(e) => setPoliciesForm({ ...policiesForm, calendarInviteTemplate: e.target.value })}
+                      className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                    />
+                  </div>
+
+                  {policiesError && <p className="text-sm text-red-400">{policiesError}</p>}
+
+                  <div className="flex gap-3">
+                    <button
+                      type="submit"
+                      disabled={policiesSubmitting}
+                      className="rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                    >
+                      {policiesSubmitting ? 'Saving…' : 'Save'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditingPolicies(false)}
+                      className="rounded-full border border-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-800"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Refund policy</p>
+                    <p className="mt-1 whitespace-pre-wrap text-sm text-neutral-300">
+                      {policies.refundPolicy || 'Not set'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Deposit policy</p>
+                    <p className="mt-1 whitespace-pre-wrap text-sm text-neutral-300">
+                      {policies.depositPolicy || 'Not set'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Reschedule policy</p>
+                    <p className="mt-1 whitespace-pre-wrap text-sm text-neutral-300">
+                      {policies.reschedulePolicy || 'Not set'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                      Communication policy
+                    </p>
+                    <p className="mt-1 whitespace-pre-wrap text-sm text-neutral-300">
+                      {policies.communicationPolicy || 'Not set'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                      Estimate follow-up
+                    </p>
+                    <p className="mt-1 text-sm text-neutral-300">{policies.estimateFollowUpHours} hours</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                      Gift card expiration
+                    </p>
+                    <p className="mt-1 text-sm text-neutral-300">
+                      {policies.giftCardDefaultExpirationDays
+                        ? `${policies.giftCardDefaultExpirationDays} days`
+                        : 'Never expires'}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {policiesSuccess && <p className="mt-3 text-sm text-green-400">Saved.</p>}
             </div>
           )}
         </div>

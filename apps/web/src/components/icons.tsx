@@ -174,3 +174,12 @@ export function PhotoIcon({ className }: IconProps) {
     </svg>
   )
 }
+
+export function PencilIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <path d="M13.5 3.5 16.5 6.5 7 16H4v-3z" strokeLinejoin="round" />
+      <line x1="12" y1="5" x2="15" y2="8" />
+    </svg>
+  )
+}

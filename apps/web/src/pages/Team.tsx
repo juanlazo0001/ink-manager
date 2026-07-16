@@ -23,14 +23,28 @@ interface TeamUser {
   role: string
   isActive: boolean
   createdAt: string
+  locationId: string | null
   artist?: { bio: string | null; specialties: string[] }
+}
+
+interface LocationOption {
+  id: string
+  name: string
 }
 
 const ROLE_OPTIONS = ['OWNER', 'FRONT_DESK', 'ARTIST', 'CUSTOMER']
 
 const EMPTY_ADD_FORM = { name: '', phone: '', email: '', password: '', role: 'FRONT_DESK' }
 
-const EMPTY_EDIT_FORM = { name: '', phone: '', email: '', role: 'FRONT_DESK', isActive: true, newPassword: '' }
+const EMPTY_EDIT_FORM = {
+  name: '',
+  phone: '',
+  email: '',
+  role: 'FRONT_DESK',
+  isActive: true,
+  newPassword: '',
+  locationId: '',
+}
 
 function emptyEditForm(teamUser: TeamUser) {
   return {
@@ -40,6 +54,7 @@ function emptyEditForm(teamUser: TeamUser) {
     role: teamUser.role,
     isActive: teamUser.isActive,
     newPassword: '',
+    locationId: teamUser.locationId ?? '',
   }
 }
 
@@ -67,6 +82,8 @@ export default function Team() {
   const [permissionsError, setPermissionsError] = useState<string | null>(null)
   const [permissionsSuccess, setPermissionsSuccess] = useState(false)
   const [permissionsSubmitting, setPermissionsSubmitting] = useState(false)
+
+  const [locations, setLocations] = useState<LocationOption[] | null>(null)
 
   useEffect(() => {
     if (!isOwner || !user?.studioId) return
@@ -106,6 +123,23 @@ export default function Team() {
     }
 
     loadPermissions()
+
+    return () => {
+      ignore = true
+    }
+  }, [isOwner, user?.studioId])
+
+  useEffect(() => {
+    if (!isOwner || !user?.studioId) return
+    let ignore = false
+
+    apiFetch<LocationOption[]>(`/studios/${user.studioId}/locations`)
+      .then((data) => {
+        if (!ignore) setLocations(data)
+      })
+      .catch(() => {
+        // The location dropdown just stays empty if this fails.
+      })
 
     return () => {
       ignore = true
@@ -218,6 +252,7 @@ export default function Team() {
       role: editForm.role,
       isActive: editForm.isActive,
       avatarUrl: editAvatarUrl,
+      locationId: editForm.locationId || null,
     }
     if (editForm.newPassword.trim().length > 0) {
       payload.newPassword = editForm.newPassword
@@ -647,6 +682,25 @@ export default function Team() {
                 />
                 Active (can log in)
               </label>
+            </div>
+
+            <div className="mb-3">
+              <label htmlFor="editLocation" className="mb-1 block text-sm font-medium text-neutral-300">
+                Location
+              </label>
+              <select
+                id="editLocation"
+                value={editForm.locationId}
+                onChange={(event) => setEditForm({ ...editForm, locationId: event.target.value })}
+                className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+              >
+                <option value="">No location assigned</option>
+                {locations?.map((location) => (
+                  <option key={location.id} value={location.id}>
+                    {location.name}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div className="mb-1">

@@ -13,6 +13,8 @@ import inquiriesRouter from "./routes/inquiries";
 import estimatesRouter from "./routes/estimates";
 import { publicRouter as depositsRouter, staffRouter as depositFormsRouter } from "./routes/deposits";
 import uploadsRouter from "./routes/uploads";
+import auditRouter from "./routes/audit";
+import studioSettingsRouter from "./routes/studioSettings";
 import { requireAuth } from "./middleware/auth";
 
 const app = express();
@@ -51,6 +53,8 @@ app.use("/estimates", estimatesRouter);
 app.use("/deposits", depositsRouter);
 app.use("/deposit-forms", depositFormsRouter);
 app.use("/uploads", uploadsRouter);
+app.use("/audit", auditRouter);
+app.use("/studio-settings", studioSettingsRouter);
 
 app.get("/me", requireAuth, (req, res) => {
   res.json(req.user);

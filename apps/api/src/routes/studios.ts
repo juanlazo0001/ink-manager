@@ -10,6 +10,7 @@ import { serializeUser } from "./users";
 import { CONFIGURABLE_ROLES, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS, requirePermission } from "../lib/permissions";
 import type { PermissionKey } from "../lib/permissions";
 import { validateImageDataUrl } from "../lib/images";
+import { diffObjects, logAudit } from "../lib/audit";
 
 const router = Router();
 
@@ -267,6 +268,21 @@ router.patch("/:studioId/users/:userId", requireAuth, requireRole(Role.OWNER), a
     data.avatarUrl = result.value;
   }
 
+  if (body.locationId !== undefined) {
+    if (body.locationId !== null && typeof body.locationId !== "string") {
+      return res.status(400).json({ error: "locationId must be a string or null" });
+    }
+
+    if (body.locationId !== null) {
+      const location = await prisma.location.findUnique({ where: { id: body.locationId } });
+      if (!location || location.studioId !== studioId) {
+        return res.status(400).json({ error: "locationId must belong to your studio" });
+      }
+    }
+
+    data.locationId = body.locationId;
+  }
+
   // A studio can never be left without at least one active owner. If this
   // user currently is one and the update would take that away (role change
   // off OWNER, or deactivation), there must be another active owner.
@@ -304,6 +320,18 @@ router.patch("/:studioId/users/:userId", requireAuth, requireRole(Role.OWNER), a
   }
 
   const updated = await prisma.user.update({ where: { id: userId }, data, include: USER_INCLUDE_ARTIST });
+
+  if (body.locationId !== undefined) {
+    await logAudit({
+      studioId,
+      actorUserId: req.user!.userId,
+      entityType: "User",
+      entityId: userId,
+      action: "update",
+      changes: diffObjects(existing, { locationId: data.locationId }, ["locationId"]),
+    });
+  }
+
   const { password: _password, ...safeUser } = updated;
   res.json(serializeUser(safeUser));
 });

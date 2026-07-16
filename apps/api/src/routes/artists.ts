@@ -4,6 +4,7 @@ import { requireAuth } from "../middleware/auth";
 import { Role } from "../../generated/prisma/enums";
 import type { Prisma } from "../../generated/prisma/client";
 import { requirePermission } from "../lib/permissions";
+import { diffObjects, logAudit } from "../lib/audit";
 
 const router = Router();
 
@@ -159,6 +160,69 @@ router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
       ...(portfolioImages !== undefined ? { portfolioImages } : {}),
     },
     include: ARTIST_INCLUDE,
+  });
+
+  res.json(updated);
+});
+
+const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+function isValidPreferredSchedule(value: unknown): value is Array<{ dayOfWeek: number; startTime: string; endTime: string }> {
+  if (!Array.isArray(value)) return false;
+
+  return value.every(
+    (block) =>
+      block &&
+      typeof block === "object" &&
+      typeof block.dayOfWeek === "number" &&
+      Number.isInteger(block.dayOfWeek) &&
+      block.dayOfWeek >= 0 &&
+      block.dayOfWeek <= 6 &&
+      typeof block.startTime === "string" &&
+      TIME_PATTERN.test(block.startTime) &&
+      typeof block.endTime === "string" &&
+      TIME_PATTERN.test(block.endTime),
+  );
+}
+
+// Advisory weekly availability -- editable by OWNER/FRONT_DESK for any
+// artist, or by the artist themselves for their own profile only (checked
+// via the JWT's own userId, never a client-supplied id).
+router.patch("/:id/preferred-schedule", async (req, res) => {
+  const id = req.params.id as string;
+  const { preferredSchedule } = req.body ?? {};
+
+  const artist = await prisma.artist.findUnique({ where: { id }, include: { user: true } });
+  if (!artist || artist.user.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Artist not found" });
+  }
+
+  const isStaff = req.user!.role === Role.OWNER || req.user!.role === Role.FRONT_DESK;
+  const isSelf = req.user!.role === Role.ARTIST && artist.userId === req.user!.userId;
+
+  if (!isStaff && !isSelf) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  if (preferredSchedule !== null && !isValidPreferredSchedule(preferredSchedule)) {
+    return res.status(400).json({
+      error: "preferredSchedule must be null or an array of { dayOfWeek: 0-6, startTime: 'HH:MM', endTime: 'HH:MM' }",
+    });
+  }
+
+  const updated = await prisma.artist.update({
+    where: { id },
+    data: { preferredSchedule },
+    include: ARTIST_INCLUDE,
+  });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Artist",
+    entityId: id,
+    action: "update",
+    changes: diffObjects(artist, { preferredSchedule }, ["preferredSchedule"]),
   });
 
   res.json(updated);

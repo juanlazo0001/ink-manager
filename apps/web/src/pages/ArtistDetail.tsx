@@ -5,15 +5,25 @@ import SpecialtiesInput from '../components/SpecialtiesInput'
 import { apiFetch, ApiError } from '../lib/api'
 import { uploadPortfolioImage } from '../lib/cloudinary'
 import { useUserProfile } from '../context/useUserProfile'
+import { useAuth } from '../context/useAuth'
 import { ArrowLeftIcon, CloseIcon } from '../components/icons'
+
+interface ScheduleBlock {
+  dayOfWeek: number
+  startTime: string
+  endTime: string
+}
 
 interface Artist {
   id: string
   bio: string | null
   specialties: string[]
   portfolioImages: string[]
+  preferredSchedule: ScheduleBlock[] | null
   user: { id: string; email: string; name: string | null; phone: string | null; avatarUrl: string | null }
 }
+
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 
 interface UploadItem {
   id: string
@@ -22,8 +32,26 @@ interface UploadItem {
   error?: string
 }
 
+// Every day disabled by default; enabling one seeds a sensible 9-5 block.
+function defaultSchedule(): (ScheduleBlock | null)[] {
+  return Array.from({ length: 7 }, () => null)
+}
+
+function scheduleToBlocks(days: (ScheduleBlock | null)[]): ScheduleBlock[] {
+  return days.filter((day): day is ScheduleBlock => day !== null)
+}
+
+function blocksToDays(blocks: ScheduleBlock[] | null): (ScheduleBlock | null)[] {
+  const days = defaultSchedule()
+  for (const block of blocks ?? []) {
+    if (block.dayOfWeek >= 0 && block.dayOfWeek <= 6) days[block.dayOfWeek] = block
+  }
+  return days
+}
+
 export default function ArtistDetail() {
   const { id } = useParams<{ id: string }>()
+  const { user } = useAuth()
   const { profile } = useUserProfile()
   const canManage = profile?.permissions.includes('artists.manage') ?? false
 
@@ -39,6 +67,11 @@ export default function ArtistDetail() {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saveSuccess, setSaveSuccess] = useState(false)
+
+  const [scheduleDays, setScheduleDays] = useState<(ScheduleBlock | null)[]>(defaultSchedule())
+  const [scheduleSaving, setScheduleSaving] = useState(false)
+  const [scheduleError, setScheduleError] = useState<string | null>(null)
+  const [scheduleSuccess, setScheduleSuccess] = useState(false)
 
   useEffect(() => {
     if (!id) return
@@ -81,6 +114,51 @@ export default function ArtistDetail() {
     setBio(artist.bio ?? '')
     setSpecialties(artist.specialties)
     setPortfolioImages(artist.portfolioImages)
+    setScheduleDays(blocksToDays(artist.preferredSchedule))
+  }
+
+  const canEditSchedule =
+    !!artist && (user?.role === 'OWNER' || user?.role === 'FRONT_DESK' || artist.user.id === user?.userId)
+
+  function toggleScheduleDay(dayOfWeek: number, enabled: boolean) {
+    setScheduleDays((prev) => {
+      const next = [...prev]
+      next[dayOfWeek] = enabled ? { dayOfWeek, startTime: '09:00', endTime: '17:00' } : null
+      return next
+    })
+  }
+
+  function updateScheduleTime(dayOfWeek: number, field: 'startTime' | 'endTime', value: string) {
+    setScheduleDays((prev) => {
+      const next = [...prev]
+      const day = next[dayOfWeek]
+      if (day) next[dayOfWeek] = { ...day, [field]: value }
+      return next
+    })
+  }
+
+  async function handleSaveSchedule() {
+    if (!id) return
+
+    setScheduleSaving(true)
+    setScheduleError(null)
+    setScheduleSuccess(false)
+
+    const blocks = scheduleToBlocks(scheduleDays)
+
+    try {
+      await apiFetch(`/artists/${id}/preferred-schedule`, {
+        method: 'PATCH',
+        body: JSON.stringify({ preferredSchedule: blocks.length > 0 ? blocks : null }),
+      })
+
+      setScheduleSuccess(true)
+      setRefreshIndex((i) => i + 1)
+    } catch (err) {
+      setScheduleError(err instanceof Error ? err.message : 'Failed to save schedule')
+    } finally {
+      setScheduleSaving(false)
+    }
   }
 
   function handleFiles(fileList: FileList | null) {
@@ -232,6 +310,78 @@ export default function ArtistDetail() {
                     <p className="text-sm text-neutral-400">No specialties listed.</p>
                   )}
                 </div>
+              </div>
+
+              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
+                <h2 className="text-base font-semibold text-white">Preferred Schedule</h2>
+                <p className="mt-1 text-xs text-neutral-500">
+                  Advisory availability only — doesn't block scheduling, just informs staff.
+                </p>
+
+                <div className="mt-4 space-y-2">
+                  {DAY_NAMES.map((dayName, dayOfWeek) => {
+                    const day = scheduleDays[dayOfWeek]
+                    return (
+                      <div
+                        key={dayOfWeek}
+                        className="flex flex-wrap items-center gap-3 rounded-lg border border-neutral-800 px-3 py-2"
+                      >
+                        <label className="flex w-32 shrink-0 items-center gap-2 text-sm text-neutral-300">
+                          {canEditSchedule ? (
+                            <input
+                              type="checkbox"
+                              checked={day !== null}
+                              onChange={(e) => toggleScheduleDay(dayOfWeek, e.target.checked)}
+                              className="h-4 w-4 rounded border-neutral-700 bg-neutral-900"
+                            />
+                          ) : null}
+                          {dayName}
+                        </label>
+
+                        {day ? (
+                          canEditSchedule ? (
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="time"
+                                value={day.startTime}
+                                onChange={(e) => updateScheduleTime(dayOfWeek, 'startTime', e.target.value)}
+                                className="rounded-lg border border-neutral-800 bg-neutral-900 px-2 py-1 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                              />
+                              <span className="text-neutral-500">to</span>
+                              <input
+                                type="time"
+                                value={day.endTime}
+                                onChange={(e) => updateScheduleTime(dayOfWeek, 'endTime', e.target.value)}
+                                className="rounded-lg border border-neutral-800 bg-neutral-900 px-2 py-1 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                              />
+                            </div>
+                          ) : (
+                            <span className="text-sm text-neutral-400">
+                              {day.startTime} – {day.endTime}
+                            </span>
+                          )
+                        ) : (
+                          <span className="text-sm text-neutral-500">Not available</span>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {canEditSchedule && (
+                  <div className="mt-4 flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={handleSaveSchedule}
+                      disabled={scheduleSaving}
+                      className="rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                    >
+                      {scheduleSaving ? 'Saving…' : 'Save schedule'}
+                    </button>
+                    {scheduleError && <p className="text-sm text-red-400">{scheduleError}</p>}
+                    {scheduleSuccess && !scheduleError && <p className="text-sm text-green-400">Saved.</p>}
+                  </div>
+                )}
               </div>
 
               <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
