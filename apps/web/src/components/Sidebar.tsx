@@ -4,7 +4,6 @@ import {
   AppointmentsIcon,
   ArtistsIcon,
   ClientsIcon,
-  CloseIcon,
   DashboardIcon,
   DocumentIcon,
   LogoutIcon,
@@ -86,26 +85,16 @@ export default function Sidebar() {
           'md:relative md:w-64 md:translate-x-0',
         ].join(' ')}
       >
-        <div className="flex items-center gap-2 px-2">
-          <div className="min-w-0 flex-1">
-            {studio?.logoUrl ? (
-              <img src={studio.logoUrl} alt={studio.name} className="h-auto max-h-32 w-full object-contain" />
-            ) : (
-              <img
-                src="/branding/logo-white-512.png"
-                alt="Ink Manager"
-                className="h-auto max-h-32 w-full object-contain"
-              />
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={() => setMobileOpen(false)}
-            aria-label="Close menu"
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-neutral-500 transition hover:bg-neutral-800 hover:text-white md:hidden"
-          >
-            <CloseIcon className="h-4 w-4" />
-          </button>
+        <div className="px-2">
+          {studio?.logoUrl ? (
+            <img src={studio.logoUrl} alt={studio.name} className="h-auto max-h-32 w-full object-contain" />
+          ) : (
+            <img
+              src="/branding/logo-white-512.png"
+              alt="Ink Manager"
+              className="h-auto max-h-32 w-full object-contain"
+            />
+          )}
         </div>
 
         <div className="mt-6 flex items-center gap-2 rounded-lg border border-neutral-800 px-3 py-2 text-sm text-neutral-400">

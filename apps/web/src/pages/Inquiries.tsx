@@ -109,8 +109,8 @@ export default function Inquiries() {
                     <tr className="text-xs text-neutral-500">
                       <th className="pb-3 font-medium"></th>
                       <th className="pb-3 font-medium">Client</th>
-                      <th className="pb-3 font-medium">Channel</th>
-                      <th className="pb-3 font-medium">Description</th>
+                      <th className="hidden pb-3 font-medium md:table-cell">Channel</th>
+                      <th className="hidden pb-3 font-medium md:table-cell">Description</th>
                       <th className="pb-3 font-medium">Submitted</th>
                       <th className="pb-3 font-medium">Status</th>
                     </tr>
@@ -138,8 +138,8 @@ export default function Inquiries() {
                         <td className="py-3 text-white">
                           {inquiry.client.firstName} {inquiry.client.lastName}
                         </td>
-                        <td className="py-3 text-neutral-400">{formatStatus(inquiry.channel)}</td>
-                        <td className="py-3 text-neutral-400">{truncate(inquiry.description, 60)}</td>
+                        <td className="hidden py-3 text-neutral-400 md:table-cell">{formatStatus(inquiry.channel)}</td>
+                        <td className="hidden py-3 text-neutral-400 md:table-cell">{truncate(inquiry.description, 60)}</td>
                         <td className="py-3 text-neutral-400">{formatDateTime(inquiry.createdAt)}</td>
                         <td className="py-3">
                           <span className="inline-flex items-center rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-300">
