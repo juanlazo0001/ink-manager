@@ -14,8 +14,15 @@ interface VerifyResponse {
   artistName: string | null
   priceEstimateLow: number | null
   priceEstimateHigh: number | null
-  timeEstimateHours: number | null
+  timeEstimateHoursMin: number | null
+  timeEstimateHoursMax: number | null
+  estimateTermsSnapshot: string | null
   collaborativeDesignPolicy: string
+}
+
+function formatHourRange(min: number | null, max: number | null): string {
+  if (min == null || max == null) return 'To be discussed'
+  return min === max ? `${min} hours` : `${min}–${max} hours`
 }
 
 export default function EstimateResponse() {
@@ -135,7 +142,7 @@ export default function EstimateResponse() {
               <div>
                 <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Estimated time</p>
                 <p className="mt-1 text-lg font-semibold text-white">
-                  {verifyData.timeEstimateHours != null ? `${verifyData.timeEstimateHours} hours` : 'To be discussed'}
+                  {formatHourRange(verifyData.timeEstimateHoursMin, verifyData.timeEstimateHoursMax)}
                 </p>
               </div>
             </div>
@@ -143,6 +150,13 @@ export default function EstimateResponse() {
             <div className="mt-5 rounded-lg border border-neutral-800 bg-neutral-950/40 p-3 text-xs text-neutral-400">
               {verifyData.collaborativeDesignPolicy}
             </div>
+
+            {verifyData.estimateTermsSnapshot && (
+              <div className="mt-3 rounded-lg border border-neutral-800 bg-neutral-950/40 p-3 text-xs text-neutral-400">
+                <p className="mb-1 font-medium uppercase tracking-wider text-neutral-500">Terms &amp; Conditions</p>
+                <p className="whitespace-pre-wrap">{verifyData.estimateTermsSnapshot}</p>
+              </div>
+            )}
 
             {submitError && (
               <div className="mt-4 rounded-lg border border-red-900 bg-red-950/40 px-3 py-2 text-sm text-red-400">

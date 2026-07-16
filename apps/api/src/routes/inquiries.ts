@@ -206,6 +206,74 @@ router.get("/:id", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async 
   res.json(inquiry);
 });
 
+// Detail-field edits only -- status transitions stay in their own dedicated
+// routes above/below (assign, respond, schedule, waitlist), never here.
+const REQUIRED_STRING_FIELDS = ["description", "colorOrBlackGrey", "placement", "estimatedSize"] as const;
+const NULLABLE_STRING_FIELDS = ["budget", "desiredTiming"] as const;
+const NUMERIC_FIELDS = [
+  "priceEstimateLow",
+  "priceEstimateHigh",
+  "timeEstimateHoursMin",
+  "timeEstimateHoursMax",
+] as const;
+
+router.patch("/:id", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+  const body = req.body ?? {};
+
+  if ("status" in body) {
+    return res.status(400).json({ error: "status cannot be changed through this route" });
+  }
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  const data: Record<string, string | number | null> = {};
+
+  for (const field of REQUIRED_STRING_FIELDS) {
+    if (body[field] === undefined) continue;
+    if (typeof body[field] !== "string" || body[field].trim().length === 0) {
+      return res.status(400).json({ error: `${field} must be a non-empty string` });
+    }
+    data[field] = body[field].trim();
+  }
+
+  for (const field of NULLABLE_STRING_FIELDS) {
+    if (body[field] === undefined) continue;
+    if (body[field] !== null && typeof body[field] !== "string") {
+      return res.status(400).json({ error: `${field} must be a string or null` });
+    }
+    data[field] = typeof body[field] === "string" ? body[field].trim() || null : null;
+  }
+
+  for (const field of NUMERIC_FIELDS) {
+    if (body[field] === undefined) continue;
+    if (body[field] !== null && typeof body[field] !== "number") {
+      return res.status(400).json({ error: `${field} must be a number or null` });
+    }
+    data[field] = body[field];
+  }
+
+  const updated = await prisma.inquiry.update({ where: { id }, data, include: INQUIRY_INCLUDE });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Inquiry",
+    entityId: id,
+    action: "update",
+    changes: diffObjects(inquiry, data, [
+      ...REQUIRED_STRING_FIELDS,
+      ...NULLABLE_STRING_FIELDS,
+      ...NUMERIC_FIELDS,
+    ] as unknown as (keyof typeof inquiry)[]),
+  });
+
+  res.json(updated);
+});
+
 // Staff hands a NEW inquiry off to an artist. Re-assigning only makes sense
 // while it's still NEW — once an artist has responded (or is mid-review),
 // this endpoint won't touch it; DECLINE below is what puts it back to NEW.
@@ -259,7 +327,8 @@ const DECISIONS = ["APPROVE", "DECLINE"] as const;
 // staff explaining why, so it can be reassigned.
 router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), async (req, res) => {
   const id = req.params.id as string;
-  const { decision, priceEstimateLow, priceEstimateHigh, timeEstimateHours, declineNote } = req.body ?? {};
+  const { decision, priceEstimateLow, priceEstimateHigh, timeEstimateHoursMin, timeEstimateHoursMax, declineNote } =
+    req.body ?? {};
 
   if (!DECISIONS.includes(decision)) {
     return res.status(400).json({ error: `decision must be one of: ${DECISIONS.join(", ")}` });
@@ -306,7 +375,12 @@ router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), async (req, 
     return res.json(updated);
   }
 
-  for (const [field, value] of Object.entries({ priceEstimateLow, priceEstimateHigh, timeEstimateHours })) {
+  for (const [field, value] of Object.entries({
+    priceEstimateLow,
+    priceEstimateHigh,
+    timeEstimateHoursMin,
+    timeEstimateHoursMax,
+  })) {
     if (value !== undefined && typeof value !== "number") {
       return res.status(400).json({ error: `${field} must be a number` });
     }
@@ -316,7 +390,8 @@ router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), async (req, 
     status: InquiryStatus.AWAITING_CLIENT_RESPONSE,
     priceEstimateLow: priceEstimateLow ?? null,
     priceEstimateHigh: priceEstimateHigh ?? null,
-    timeEstimateHours: timeEstimateHours ?? null,
+    timeEstimateHoursMin: timeEstimateHoursMin ?? null,
+    timeEstimateHoursMax: timeEstimateHoursMax ?? null,
   };
 
   const updated = await prisma.inquiry.update({
@@ -331,7 +406,13 @@ router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), async (req, 
     entityType: "Inquiry",
     entityId: id,
     action: "status_change",
-    changes: diffObjects(inquiry, approveData, ["status", "priceEstimateLow", "priceEstimateHigh", "timeEstimateHours"]),
+    changes: diffObjects(inquiry, approveData, [
+      "status",
+      "priceEstimateLow",
+      "priceEstimateHigh",
+      "timeEstimateHoursMin",
+      "timeEstimateHoursMax",
+    ]),
   });
 
   res.json(updated);
@@ -344,7 +425,7 @@ router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), async (req, 
 // (possibly updated) numbers.
 router.post("/:id/send-estimate", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
   const id = req.params.id as string;
-  const { priceEstimateLow, priceEstimateHigh, timeEstimateHours } = req.body ?? {};
+  const { priceEstimateLow, priceEstimateHigh, timeEstimateHoursMin, timeEstimateHoursMax } = req.body ?? {};
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
   if (!inquiry || inquiry.studioId !== req.user!.studioId) {
@@ -360,23 +441,69 @@ router.post("/:id/send-estimate", requireAuth, requireRole(Role.OWNER, Role.FRON
       .json({ error: "An estimate can only be sent while awaiting client response or during budget negotiation" });
   }
 
-  for (const [field, value] of Object.entries({ priceEstimateLow, priceEstimateHigh, timeEstimateHours })) {
+  for (const [field, value] of Object.entries({
+    priceEstimateLow,
+    priceEstimateHigh,
+    timeEstimateHoursMin,
+    timeEstimateHoursMax,
+  })) {
     if (value !== undefined && typeof value !== "number") {
       return res.status(400).json({ error: `${field} must be a number` });
     }
   }
 
+  // Validate the *effective* range (newly submitted value, falling back to
+  // whatever's already on the inquiry) -- staff can resend without
+  // resubmitting numbers that were already approved by the artist.
+  const effective = {
+    priceEstimateLow: priceEstimateLow ?? inquiry.priceEstimateLow,
+    priceEstimateHigh: priceEstimateHigh ?? inquiry.priceEstimateHigh,
+    timeEstimateHoursMin: timeEstimateHoursMin ?? inquiry.timeEstimateHoursMin,
+    timeEstimateHoursMax: timeEstimateHoursMax ?? inquiry.timeEstimateHoursMax,
+  };
+
+  for (const [field, value] of Object.entries(effective)) {
+    if (value == null) {
+      return res.status(400).json({ error: `${field} is required before an estimate can be sent` });
+    }
+    if (value <= 0) {
+      return res.status(400).json({ error: `${field} must be a positive number` });
+    }
+  }
+
+  if (effective.priceEstimateLow! > effective.priceEstimateHigh!) {
+    return res.status(400).json({ error: "priceEstimateLow must be less than or equal to priceEstimateHigh" });
+  }
+
+  if (effective.timeEstimateHoursMin! > effective.timeEstimateHoursMax!) {
+    return res
+      .status(400)
+      .json({ error: "timeEstimateHoursMin must be less than or equal to timeEstimateHoursMax" });
+  }
+
+  // A prior send/resend already having a sent timestamp is what distinguishes
+  // a resend from a first send -- everything else about the flow is identical.
+  const isResend = inquiry.estimateSentAt != null;
+
   const estimateToken = crypto.randomBytes(32).toString("hex");
   const estimateTokenExpiresAt = new Date(Date.now() + ESTIMATE_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000);
+
+  const studioSettings = await prisma.studioSettings.findUnique({ where: { studioId: req.user!.studioId } });
 
   const sendEstimateData = {
     estimateToken,
     estimateTokenExpiresAt,
     estimateSentAt: new Date(),
+    estimateTermsSnapshot: studioSettings?.estimateTerms ?? null,
     status: InquiryStatus.AWAITING_CLIENT_RESPONSE,
-    ...(priceEstimateLow !== undefined ? { priceEstimateLow } : {}),
-    ...(priceEstimateHigh !== undefined ? { priceEstimateHigh } : {}),
-    ...(timeEstimateHours !== undefined ? { timeEstimateHours } : {}),
+    priceEstimateLow: effective.priceEstimateLow,
+    priceEstimateHigh: effective.priceEstimateHigh,
+    timeEstimateHoursMin: effective.timeEstimateHoursMin,
+    timeEstimateHoursMax: effective.timeEstimateHoursMax,
+    // A resend is a new estimate event -- prior open/response timing no
+    // longer describes the estimate the client is about to see. It's still
+    // recoverable from the audit log below if needed.
+    ...(isResend ? { estimateOpenedAt: null, estimateRespondedAt: null } : {}),
   };
 
   const updated = await prisma.inquiry.update({
@@ -390,13 +517,16 @@ router.post("/:id/send-estimate", requireAuth, requireRole(Role.OWNER, Role.FRON
     actorUserId: req.user!.userId,
     entityType: "Inquiry",
     entityId: id,
-    action: "status_change",
+    action: isResend ? "estimate_resent" : "estimate_sent",
     changes: diffObjects(inquiry, sendEstimateData, [
       "status",
       "estimateSentAt",
+      "estimateOpenedAt",
+      "estimateRespondedAt",
       "priceEstimateLow",
       "priceEstimateHigh",
-      "timeEstimateHours",
+      "timeEstimateHoursMin",
+      "timeEstimateHoursMax",
     ]),
   });
 

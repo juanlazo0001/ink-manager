@@ -2,9 +2,10 @@ import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
+import AuditTrail from '../components/AuditTrail'
 import { apiFetch, ApiError } from '../lib/api'
-import { formatDateTime, formatStatus } from '../lib/format'
-import { ArrowLeftIcon } from '../components/icons'
+import { formatDateTime, formatDuration, formatStatus } from '../lib/format'
+import { ArrowLeftIcon, PencilIcon } from '../components/icons'
 import { useAuth } from '../context/useAuth'
 import { artistsQueryKey, inquiriesQueryKey, inquiryQueryKey } from '../lib/queryKeys'
 
@@ -23,12 +24,15 @@ interface Inquiry {
   status: string
   priceEstimateLow: number | null
   priceEstimateHigh: number | null
-  timeEstimateHours: number | null
+  timeEstimateHoursMin: number | null
+  timeEstimateHoursMax: number | null
   declineNote: string | null
   createdAt: string
   assignedAt: string | null
   estimateToken: string | null
   estimateSentAt: string | null
+  estimateOpenedAt: string | null
+  estimateRespondedAt: string | null
   clientStatedBudget: string | null
   closedReason: string | null
   client: { firstName: string; lastName: string; email: string | null; phone: string | null }
@@ -122,9 +126,26 @@ export default function InquiryDetail() {
   const [assigning, setAssigning] = useState(false)
   const [assignError, setAssignError] = useState<string | null>(null)
 
-  const [estimateForm, setEstimateForm] = useState({ priceEstimateLow: '', priceEstimateHigh: '', timeEstimateHours: '' })
+  const [estimateForm, setEstimateForm] = useState({
+    priceEstimateLow: '',
+    priceEstimateHigh: '',
+    timeEstimateHoursMin: '',
+    timeEstimateHoursMax: '',
+  })
   const [sendingEstimate, setSendingEstimate] = useState(false)
   const [sendEstimateError, setSendEstimateError] = useState<string | null>(null)
+
+  const [editingDetails, setEditingDetails] = useState(false)
+  const [detailsForm, setDetailsForm] = useState({
+    description: '',
+    colorOrBlackGrey: '',
+    placement: '',
+    estimatedSize: '',
+    budget: '',
+    desiredTiming: '',
+  })
+  const [savingDetails, setSavingDetails] = useState(false)
+  const [detailsError, setDetailsError] = useState<string | null>(null)
 
   const [scheduleForm, setScheduleForm] = useState({ startTime: '', endTime: '' })
   const [scheduling, setScheduling] = useState(false)
@@ -151,9 +172,46 @@ export default function InquiryDetail() {
     setEstimateForm({
       priceEstimateLow: inquiry.priceEstimateLow?.toString() ?? '',
       priceEstimateHigh: inquiry.priceEstimateHigh?.toString() ?? '',
-      timeEstimateHours: inquiry.timeEstimateHours?.toString() ?? '',
+      timeEstimateHoursMin: inquiry.timeEstimateHoursMin?.toString() ?? '',
+      timeEstimateHoursMax: inquiry.timeEstimateHoursMax?.toString() ?? '',
+    })
+    setDetailsForm({
+      description: inquiry.description,
+      colorOrBlackGrey: inquiry.colorOrBlackGrey,
+      placement: inquiry.placement,
+      estimatedSize: inquiry.estimatedSize,
+      budget: inquiry.budget ?? '',
+      desiredTiming: inquiry.desiredTiming ?? '',
     })
   }
+
+  // Mirrors the backend's own validation, so staff get instant feedback
+  // instead of a round trip for something obviously incomplete.
+  const effectiveEstimate = {
+    priceEstimateLow: estimateForm.priceEstimateLow ? Number(estimateForm.priceEstimateLow) : inquiry?.priceEstimateLow,
+    priceEstimateHigh: estimateForm.priceEstimateHigh
+      ? Number(estimateForm.priceEstimateHigh)
+      : inquiry?.priceEstimateHigh,
+    timeEstimateHoursMin: estimateForm.timeEstimateHoursMin
+      ? Number(estimateForm.timeEstimateHoursMin)
+      : inquiry?.timeEstimateHoursMin,
+    timeEstimateHoursMax: estimateForm.timeEstimateHoursMax
+      ? Number(estimateForm.timeEstimateHoursMax)
+      : inquiry?.timeEstimateHoursMax,
+  }
+
+  const estimateValidationError = (() => {
+    const values = Object.values(effectiveEstimate)
+    if (values.some((v) => v == null)) return 'Price and time ranges are required before sending an estimate.'
+    if (values.some((v) => v! <= 0)) return 'All range values must be positive.'
+    if (effectiveEstimate.priceEstimateLow! > effectiveEstimate.priceEstimateHigh!) {
+      return 'Price low must be less than or equal to price high.'
+    }
+    if (effectiveEstimate.timeEstimateHoursMin! > effectiveEstimate.timeEstimateHoursMax!) {
+      return 'Minimum hours must be less than or equal to maximum hours.'
+    }
+    return null
+  })()
 
   async function handleAssign() {
     if (!id || !selectedArtistId) return
@@ -178,6 +236,11 @@ export default function InquiryDetail() {
   async function handleSendEstimate() {
     if (!id) return
 
+    if (estimateValidationError) {
+      setSendEstimateError(estimateValidationError)
+      return
+    }
+
     setSendingEstimate(true)
     setSendEstimateError(null)
 
@@ -187,7 +250,12 @@ export default function InquiryDetail() {
         body: JSON.stringify({
           priceEstimateLow: estimateForm.priceEstimateLow ? Number(estimateForm.priceEstimateLow) : undefined,
           priceEstimateHigh: estimateForm.priceEstimateHigh ? Number(estimateForm.priceEstimateHigh) : undefined,
-          timeEstimateHours: estimateForm.timeEstimateHours ? Number(estimateForm.timeEstimateHours) : undefined,
+          timeEstimateHoursMin: estimateForm.timeEstimateHoursMin
+            ? Number(estimateForm.timeEstimateHoursMin)
+            : undefined,
+          timeEstimateHoursMax: estimateForm.timeEstimateHoursMax
+            ? Number(estimateForm.timeEstimateHoursMax)
+            : undefined,
         }),
       })
 
@@ -196,6 +264,34 @@ export default function InquiryDetail() {
       setSendEstimateError(err instanceof Error ? err.message : 'Failed to send estimate')
     } finally {
       setSendingEstimate(false)
+    }
+  }
+
+  async function handleSaveDetails() {
+    if (!id) return
+
+    setSavingDetails(true)
+    setDetailsError(null)
+
+    try {
+      await apiFetch(`/inquiries/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          description: detailsForm.description,
+          colorOrBlackGrey: detailsForm.colorOrBlackGrey,
+          placement: detailsForm.placement,
+          estimatedSize: detailsForm.estimatedSize,
+          budget: detailsForm.budget || null,
+          desiredTiming: detailsForm.desiredTiming || null,
+        }),
+      })
+
+      setEditingDetails(false)
+      invalidateInquiry()
+    } catch (err) {
+      setDetailsError(err instanceof Error ? err.message : 'Failed to save changes')
+    } finally {
+      setSavingDetails(false)
     }
   }
 
@@ -367,7 +463,8 @@ export default function InquiryDetail() {
 
                 {(inquiry.priceEstimateLow != null ||
                   inquiry.priceEstimateHigh != null ||
-                  inquiry.timeEstimateHours != null) && (
+                  inquiry.timeEstimateHoursMin != null ||
+                  inquiry.timeEstimateHoursMax != null) && (
                   <div className="mt-5 grid grid-cols-1 gap-4 border-t border-neutral-800 pt-4 sm:grid-cols-3">
                     <DetailField
                       label="Price estimate low"
@@ -379,7 +476,11 @@ export default function InquiryDetail() {
                     />
                     <DetailField
                       label="Time estimate"
-                      value={inquiry.timeEstimateHours != null ? `${inquiry.timeEstimateHours} hours` : 'Not provided'}
+                      value={
+                        inquiry.timeEstimateHoursMin != null && inquiry.timeEstimateHoursMax != null
+                          ? `${inquiry.timeEstimateHoursMin}–${inquiry.timeEstimateHoursMax} hours`
+                          : 'Not provided'
+                      }
                     />
                   </div>
                 )}
@@ -419,7 +520,7 @@ export default function InquiryDetail() {
 
                   {(inquiry.status === 'AWAITING_CLIENT_RESPONSE' || inquiry.status === 'BUDGET_NEGOTIATION') && (
                     <>
-                      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <div>
                           <label className="mb-1 block text-xs font-medium text-neutral-400">Price low ($)</label>
                           <input
@@ -443,13 +544,24 @@ export default function InquiryDetail() {
                           />
                         </div>
                         <div>
-                          <label className="mb-1 block text-xs font-medium text-neutral-400">Time (hours)</label>
+                          <label className="mb-1 block text-xs font-medium text-neutral-400">Time min (hours)</label>
                           <input
                             type="number"
                             min="0"
                             step="0.5"
-                            value={estimateForm.timeEstimateHours}
-                            onChange={(e) => setEstimateForm({ ...estimateForm, timeEstimateHours: e.target.value })}
+                            value={estimateForm.timeEstimateHoursMin}
+                            onChange={(e) => setEstimateForm({ ...estimateForm, timeEstimateHoursMin: e.target.value })}
+                            className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-neutral-400">Time max (hours)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.5"
+                            value={estimateForm.timeEstimateHoursMax}
+                            onChange={(e) => setEstimateForm({ ...estimateForm, timeEstimateHoursMax: e.target.value })}
                             className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
                           />
                         </div>
@@ -465,11 +577,9 @@ export default function InquiryDetail() {
                       >
                         {sendingEstimate
                           ? 'Sending…'
-                          : inquiry.status === 'BUDGET_NEGOTIATION'
-                            ? 'Resend Estimate'
-                            : inquiry.estimateSentAt
-                              ? 'Resend Estimate'
-                              : 'Send Estimate'}
+                          : inquiry.estimateSentAt
+                            ? 'Generate & Resend Estimate'
+                            : 'Generate & Send Estimate'}
                       </button>
                     </>
                   )}
@@ -490,9 +600,35 @@ export default function InquiryDetail() {
                   )}
 
                   {inquiry.estimateSentAt && (
-                    <p className="mt-3 text-xs text-neutral-500">
-                      Last sent {formatDateTime(inquiry.estimateSentAt)}
-                    </p>
+                    <div className="mt-5 space-y-2 border-t border-neutral-800 pt-4 text-sm">
+                      <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                        Estimate timeline
+                      </p>
+
+                      <p className="text-neutral-300">Sent {formatDateTime(inquiry.estimateSentAt)}</p>
+
+                      {inquiry.estimateOpenedAt ? (
+                        <p className="text-neutral-300">
+                          Opened {formatDateTime(inquiry.estimateOpenedAt)} (
+                          {formatDuration(inquiry.estimateSentAt, inquiry.estimateOpenedAt)} after sending)
+                        </p>
+                      ) : (
+                        <p className="text-neutral-500">Not yet opened</p>
+                      )}
+
+                      {inquiry.estimateRespondedAt ? (
+                        <p className="text-neutral-300">
+                          Responded {formatDateTime(inquiry.estimateRespondedAt)} (
+                          {formatDuration(
+                            inquiry.estimateOpenedAt ?? inquiry.estimateSentAt,
+                            inquiry.estimateRespondedAt,
+                          )}{' '}
+                          after {inquiry.estimateOpenedAt ? 'opening' : 'sending'})
+                        </p>
+                      ) : (
+                        <p className="text-neutral-500">Awaiting response</p>
+                      )}
+                    </div>
                   )}
                 </div>
               )}
@@ -653,22 +789,121 @@ export default function InquiryDetail() {
               )}
 
               <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-                <h2 className="text-base font-semibold text-white">Tattoo details</h2>
-
-                <div className="mt-4">
-                  <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Description</p>
-                  <p className="mt-1 whitespace-pre-wrap text-sm text-white">{inquiry.description}</p>
+                <div className="flex items-center justify-between">
+                  <h2 className="text-base font-semibold text-white">Tattoo details</h2>
+                  {!editingDetails && (
+                    <button
+                      type="button"
+                      onClick={() => setEditingDetails(true)}
+                      className="flex items-center gap-2 rounded-full border border-neutral-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800"
+                    >
+                      <PencilIcon className="h-3.5 w-3.5" />
+                      Edit
+                    </button>
+                  )}
                 </div>
 
-                <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <DetailField label="Color or Black & Grey" value={inquiry.colorOrBlackGrey} />
-                  <DetailField label="Placement" value={inquiry.placement} />
-                  <DetailField label="Estimated size" value={inquiry.estimatedSize} />
-                  <DetailField label="Tattooed before" value={inquiry.hasBeenTattooedBefore ? 'Yes' : 'No'} />
-                  <DetailField label="Budget" value={inquiry.budget ?? 'Not provided'} />
-                  <DetailField label="Desired timing" value={inquiry.desiredTiming ?? 'Not provided'} />
-                  <DetailField label="Preferred artist" value={inquiry.preferredArtist?.user.name ?? 'No preference'} />
-                </div>
+                {editingDetails ? (
+                  <div className="mt-4 space-y-4">
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-neutral-400">Description</label>
+                      <textarea
+                        rows={4}
+                        value={detailsForm.description}
+                        onChange={(e) => setDetailsForm({ ...detailsForm, description: e.target.value })}
+                        className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-neutral-400">Color or Black & Grey</label>
+                        <input
+                          type="text"
+                          value={detailsForm.colorOrBlackGrey}
+                          onChange={(e) => setDetailsForm({ ...detailsForm, colorOrBlackGrey: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-neutral-400">Placement</label>
+                        <input
+                          type="text"
+                          value={detailsForm.placement}
+                          onChange={(e) => setDetailsForm({ ...detailsForm, placement: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-neutral-400">Estimated size</label>
+                        <input
+                          type="text"
+                          value={detailsForm.estimatedSize}
+                          onChange={(e) => setDetailsForm({ ...detailsForm, estimatedSize: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-neutral-400">Budget</label>
+                        <input
+                          type="text"
+                          value={detailsForm.budget}
+                          onChange={(e) => setDetailsForm({ ...detailsForm, budget: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-neutral-400">Desired timing</label>
+                        <input
+                          type="text"
+                          value={detailsForm.desiredTiming}
+                          onChange={(e) => setDetailsForm({ ...detailsForm, desiredTiming: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                        />
+                      </div>
+                    </div>
+
+                    {detailsError && <p className="text-sm text-red-400">{detailsError}</p>}
+
+                    <div className="flex gap-3">
+                      <button
+                        type="button"
+                        onClick={handleSaveDetails}
+                        disabled={savingDetails}
+                        className="rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                      >
+                        {savingDetails ? 'Saving…' : 'Save'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingDetails(false)}
+                        className="rounded-full border border-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-800"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="mt-4">
+                      <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Description</p>
+                      <p className="mt-1 whitespace-pre-wrap text-sm text-white">{inquiry.description}</p>
+                    </div>
+
+                    <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <DetailField label="Color or Black & Grey" value={inquiry.colorOrBlackGrey} />
+                      <DetailField label="Placement" value={inquiry.placement} />
+                      <DetailField label="Estimated size" value={inquiry.estimatedSize} />
+                      <DetailField label="Tattooed before" value={inquiry.hasBeenTattooedBefore ? 'Yes' : 'No'} />
+                      <DetailField label="Budget" value={inquiry.budget ?? 'Not provided'} />
+                      <DetailField label="Desired timing" value={inquiry.desiredTiming ?? 'Not provided'} />
+                      <DetailField
+                        label="Preferred artist"
+                        value={inquiry.preferredArtist?.user.name ?? 'No preference'}
+                      />
+                    </div>
+                  </>
+                )}
               </div>
 
               <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
@@ -684,6 +919,8 @@ export default function InquiryDetail() {
                   <ImageGrid images={inquiry.placementImages} />
                 </div>
               </div>
+
+              <AuditTrail entityType="Inquiry" entityId={inquiry.id} />
             </>
           )}
         </div>

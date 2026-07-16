@@ -23,7 +23,14 @@ router.get("/", async (req, res) => {
   res.json(settings);
 });
 
-const TEXT_FIELDS = ["refundPolicy", "depositPolicy", "reschedulePolicy", "communicationPolicy", "calendarInviteTemplate"] as const;
+const TEXT_FIELDS = [
+  "refundPolicy",
+  "depositPolicy",
+  "reschedulePolicy",
+  "communicationPolicy",
+  "calendarInviteTemplate",
+  "estimateTerms",
+] as const;
 
 router.patch("/", requireRole(Role.OWNER), async (req, res) => {
   const body = req.body ?? {};

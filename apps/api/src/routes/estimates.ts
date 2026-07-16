@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { InquiryStatus } from "../../generated/prisma/enums";
+import { logAudit } from "../lib/audit";
 
 const router = Router();
 
@@ -37,13 +38,32 @@ router.get("/verify/:token", async (req, res) => {
     return res.status(status).json(invalidity);
   }
 
+  // First open only -- the conditional filter makes this atomic, so two
+  // near-simultaneous opens can't both think they were "first."
+  const openResult = await prisma.inquiry.updateMany({
+    where: { id: inquiry!.id, estimateOpenedAt: null },
+    data: { estimateOpenedAt: new Date() },
+  });
+
+  if (openResult.count > 0) {
+    await logAudit({
+      studioId: inquiry!.studioId,
+      actorUserId: null,
+      entityType: "Inquiry",
+      entityId: inquiry!.id,
+      action: "estimate_opened",
+    });
+  }
+
   res.json({
     clientFirstName: inquiry!.client.firstName,
     studioName: inquiry!.studio.name,
     artistName: inquiry!.assignedArtist?.user.name ?? null,
     priceEstimateLow: inquiry!.priceEstimateLow,
     priceEstimateHigh: inquiry!.priceEstimateHigh,
-    timeEstimateHours: inquiry!.timeEstimateHours,
+    timeEstimateHoursMin: inquiry!.timeEstimateHoursMin,
+    timeEstimateHoursMax: inquiry!.timeEstimateHoursMax,
+    estimateTermsSnapshot: inquiry!.estimateTermsSnapshot,
     collaborativeDesignPolicy: COLLABORATIVE_DESIGN_POLICY,
   });
 });
@@ -70,7 +90,7 @@ router.patch("/respond/:token", async (req, res) => {
     return res.status(status).json(invalidity);
   }
 
-  const clearToken = { estimateToken: null, estimateTokenExpiresAt: null };
+  const clearToken = { estimateToken: null, estimateTokenExpiresAt: null, estimateRespondedAt: new Date() };
 
   if (decision === "PROCEED") {
     await prisma.inquiry.update({

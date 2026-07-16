@@ -242,7 +242,12 @@ model Inquiry {
   status                InquiryStatus @default(NEW)
   priceEstimateLow      Float?
   priceEstimateHigh     Float?
+  // Deprecated: superseded by timeEstimateHoursMin/Max below, which make
+  // the time estimate a real range (consistent with the price range) --
+  // kept for historical rows, no longer written to by any route.
   timeEstimateHours     Float?
+  timeEstimateHoursMin  Float?
+  timeEstimateHoursMax  Float?
   declineNote           String?
   createdAt             DateTime      @default(now())
   assignedAt            DateTime?
@@ -250,6 +255,12 @@ model Inquiry {
   estimateToken          String?   @unique
   estimateTokenExpiresAt DateTime?
   estimateSentAt         DateTime?
+  estimateOpenedAt       DateTime?
+  estimateRespondedAt    DateTime?
+  // The studio's estimate T&C text exactly as it was when this estimate was
+  // sent, so a later edit to StudioSettings.estimateTerms never retroactively
+  // changes what a client already saw/agreed to.
+  estimateTermsSnapshot  String?
   clientStatedBudget     String?
   closedReason           String?
 
@@ -286,6 +297,7 @@ model StudioSettings {
   reschedulePolicy              String?
   communicationPolicy           String?
   estimateFollowUpHours         Int      @default(24)
+  estimateTerms                 String?
   giftCardDefaultExpirationDays Int?
   calendarInviteTemplate        String?
   // Reserved for later phases (e.g. per-channel message copy).

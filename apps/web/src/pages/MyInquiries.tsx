@@ -44,7 +44,12 @@ function ImageGrid({ images }: { images: string[] }) {
   )
 }
 
-const EMPTY_APPROVE_FORM = { priceEstimateLow: '', priceEstimateHigh: '', timeEstimateHours: '' }
+const EMPTY_APPROVE_FORM = {
+  priceEstimateLow: '',
+  priceEstimateHigh: '',
+  timeEstimateHoursMin: '',
+  timeEstimateHoursMax: '',
+}
 
 export default function MyInquiries() {
   const { user } = useAuth()
@@ -106,7 +111,12 @@ export default function MyInquiries() {
           decision: 'APPROVE',
           priceEstimateLow: approveForm.priceEstimateLow ? Number(approveForm.priceEstimateLow) : undefined,
           priceEstimateHigh: approveForm.priceEstimateHigh ? Number(approveForm.priceEstimateHigh) : undefined,
-          timeEstimateHours: approveForm.timeEstimateHours ? Number(approveForm.timeEstimateHours) : undefined,
+          timeEstimateHoursMin: approveForm.timeEstimateHoursMin
+            ? Number(approveForm.timeEstimateHoursMin)
+            : undefined,
+          timeEstimateHoursMax: approveForm.timeEstimateHoursMax
+            ? Number(approveForm.timeEstimateHoursMax)
+            : undefined,
         }),
       })
 
@@ -292,19 +302,35 @@ export default function MyInquiries() {
               </div>
             </div>
 
-            <div className="mt-3">
-              <label htmlFor="timeHours" className="mb-1 block text-sm font-medium text-neutral-300">
-                Time estimate (hours)
-              </label>
-              <input
-                id="timeHours"
-                type="number"
-                min="0"
-                step="0.5"
-                value={approveForm.timeEstimateHours}
-                onChange={(event) => setApproveForm({ ...approveForm, timeEstimateHours: event.target.value })}
-                className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
-              />
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <div>
+                <label htmlFor="timeHoursMin" className="mb-1 block text-sm font-medium text-neutral-300">
+                  Time min (hours)
+                </label>
+                <input
+                  id="timeHoursMin"
+                  type="number"
+                  min="0"
+                  step="0.5"
+                  value={approveForm.timeEstimateHoursMin}
+                  onChange={(event) => setApproveForm({ ...approveForm, timeEstimateHoursMin: event.target.value })}
+                  className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                />
+              </div>
+              <div>
+                <label htmlFor="timeHoursMax" className="mb-1 block text-sm font-medium text-neutral-300">
+                  Time max (hours)
+                </label>
+                <input
+                  id="timeHoursMax"
+                  type="number"
+                  min="0"
+                  step="0.5"
+                  value={approveForm.timeEstimateHoursMax}
+                  onChange={(event) => setApproveForm({ ...approveForm, timeEstimateHoursMax: event.target.value })}
+                  className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                />
+              </div>
             </div>
 
             <button

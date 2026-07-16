@@ -11,6 +11,7 @@ interface StudioSettingsData {
   depositPolicy: string | null
   reschedulePolicy: string | null
   communicationPolicy: string | null
+  estimateTerms: string | null
   estimateFollowUpHours: number
   giftCardDefaultExpirationDays: number | null
   calendarInviteTemplate: string | null
@@ -21,6 +22,7 @@ const EMPTY_POLICIES_FORM = {
   depositPolicy: '',
   reschedulePolicy: '',
   communicationPolicy: '',
+  estimateTerms: '',
   estimateFollowUpHours: '24',
   giftCardDefaultExpirationDays: '',
   calendarInviteTemplate: '',
@@ -106,6 +108,7 @@ export default function Settings() {
           depositPolicy: data.depositPolicy ?? '',
           reschedulePolicy: data.reschedulePolicy ?? '',
           communicationPolicy: data.communicationPolicy ?? '',
+          estimateTerms: data.estimateTerms ?? '',
           estimateFollowUpHours: String(data.estimateFollowUpHours),
           giftCardDefaultExpirationDays: data.giftCardDefaultExpirationDays?.toString() ?? '',
           calendarInviteTemplate: data.calendarInviteTemplate ?? '',
@@ -134,6 +137,7 @@ export default function Settings() {
           depositPolicy: policiesForm.depositPolicy || null,
           reschedulePolicy: policiesForm.reschedulePolicy || null,
           communicationPolicy: policiesForm.communicationPolicy || null,
+          estimateTerms: policiesForm.estimateTerms || null,
           estimateFollowUpHours: Number(policiesForm.estimateFollowUpHours) || 0,
           giftCardDefaultExpirationDays: policiesForm.giftCardDefaultExpirationDays
             ? Number(policiesForm.giftCardDefaultExpirationDays)
@@ -622,6 +626,7 @@ export default function Settings() {
                       ['depositPolicy', 'Deposit policy'],
                       ['reschedulePolicy', 'Reschedule policy'],
                       ['communicationPolicy', 'Communication policy'],
+                      ['estimateTerms', 'Estimate Terms & Conditions'],
                     ] as const
                   ).map(([field, label]) => (
                     <div key={field}>
@@ -719,6 +724,14 @@ export default function Settings() {
                     </p>
                     <p className="mt-1 whitespace-pre-wrap text-sm text-neutral-300">
                       {policies.communicationPolicy || 'Not set'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                      Estimate Terms &amp; Conditions
+                    </p>
+                    <p className="mt-1 whitespace-pre-wrap text-sm text-neutral-300">
+                      {policies.estimateTerms || 'Not set'}
                     </p>
                   </div>
                   <div>
