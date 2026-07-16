@@ -5,6 +5,7 @@ import {
   ArtistsIcon,
   ClientsIcon,
   DashboardIcon,
+  DocumentIcon,
   LogoutIcon,
   SearchIcon,
   SettingsIcon,
@@ -26,6 +27,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Clients', to: '/clients', icon: ClientsIcon },
   { label: 'Appointments', to: '/appointments', icon: AppointmentsIcon },
   { label: 'Artists', to: '/artists', icon: ArtistsIcon },
+  { label: 'Inquiries', to: '/inquiries', icon: DocumentIcon, roles: ['OWNER', 'FRONT_DESK'] },
   { label: 'Team', to: '/team', icon: TeamIcon, roles: ['OWNER'] },
   { label: 'Settings', to: '/settings', icon: SettingsIcon },
 ]

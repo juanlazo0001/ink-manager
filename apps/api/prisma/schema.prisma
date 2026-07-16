@@ -47,6 +47,7 @@ enum InquiryStatus {
 
 model Studio {
   id        String   @id @default(cuid())
+  slug      String   @unique
   name      String
   logoUrl   String?
   website   String?

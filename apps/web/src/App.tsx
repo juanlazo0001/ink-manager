@@ -11,6 +11,8 @@ import Profile from './pages/Profile'
 import Team from './pages/Team'
 import SignConsentForm from './pages/SignConsentForm'
 import IntakeForm from './pages/IntakeForm'
+import Inquiries from './pages/Inquiries'
+import InquiryDetail from './pages/InquiryDetail'
 
 function App() {
   return (
@@ -19,7 +21,7 @@ function App() {
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/login" element={<Login />} />
         <Route path="/sign/:token" element={<SignConsentForm />} />
-        <Route path="/inquiry/new" element={<IntakeForm />} />
+        <Route path="/inquiry/:studioSlug" element={<IntakeForm />} />
         <Route
           path="/dashboard"
           element={
@@ -57,6 +59,22 @@ function App() {
           element={
             <ProtectedRoute>
               <Artists />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/inquiries"
+          element={
+            <ProtectedRoute>
+              <Inquiries />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/inquiries/:id"
+          element={
+            <ProtectedRoute>
+              <InquiryDetail />
             </ProtectedRoute>
           }
         />

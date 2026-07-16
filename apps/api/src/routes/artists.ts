@@ -12,12 +12,17 @@ type PublicArtist = Prisma.ArtistGetPayload<{ include: typeof PUBLIC_ARTIST_INCL
 
 // Public: lets the unauthenticated intake form populate a "preferred artist"
 // dropdown. Only exposes id/name, never bio/specialties/user contact info.
-// TEMPORARY SIMPLIFICATION: looks up the single existing studio rather than
-// scoping by studioSlug, since only one studio exists right now.
-router.get("/public", async (_req, res) => {
-  const studio = await prisma.studio.findFirst();
+// Scoped by studioSlug (from the form's /inquiry/:studioSlug URL) so each
+// studio only ever sees its own artists.
+router.get("/public", async (req, res) => {
+  const studioSlug = req.query.studioSlug;
+  if (typeof studioSlug !== "string" || !studioSlug) {
+    return res.status(400).json({ error: "studioSlug is required" });
+  }
+
+  const studio = await prisma.studio.findUnique({ where: { slug: studioSlug } });
   if (!studio) {
-    return res.json([]);
+    return res.status(404).json({ error: "Studio not found" });
   }
 
   const artists = await prisma.artist.findMany({

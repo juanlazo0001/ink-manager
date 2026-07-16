@@ -1,10 +1,13 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { Channel } from "../../generated/prisma/enums";
+import { requireAuth, requireRole } from "../middleware/auth";
+import { Role } from "../../generated/prisma/enums";
 
 const router = Router();
 
 const REQUIRED_FIELDS = [
+  "studioSlug",
   "firstName",
   "lastName",
   "email",
@@ -23,8 +26,6 @@ function isStringArray(value: unknown): value is string[] {
 // an existing one, matched by email within the studio) and the Inquiry
 // together, so the studio's pipeline sees a single lead rather than a
 // duplicate client every time the same person submits again.
-// TEMPORARY SIMPLIFICATION: looks up the single existing studio rather than
-// scoping by studioSlug, since only one studio exists right now.
 router.post("/", async (req, res) => {
   const body = req.body ?? {};
 
@@ -49,12 +50,8 @@ router.post("/", async (req, res) => {
     return res.status(400).json({ error: "placementImages must be an array of strings" });
   }
 
-  const studio = await prisma.studio.findFirst();
-  if (!studio) {
-    return res.status(500).json({ error: "No studio is configured yet" });
-  }
-
   const {
+    studioSlug,
     firstName,
     lastName,
     email,
@@ -71,6 +68,11 @@ router.post("/", async (req, res) => {
     referenceImages,
     placementImages,
   } = body;
+
+  const studio = await prisma.studio.findUnique({ where: { slug: studioSlug } });
+  if (!studio) {
+    return res.status(404).json({ error: "Studio not found" });
+  }
 
   if (preferredArtistId) {
     const preferredArtist = await prisma.artist.findUnique({
@@ -112,6 +114,35 @@ router.post("/", async (req, res) => {
   });
 
   res.status(201).json(inquiry);
+});
+
+const INQUIRY_INCLUDE = {
+  client: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
+  preferredArtist: { select: { id: true, user: { select: { name: true } } } },
+  assignedArtist: { select: { id: true, user: { select: { name: true } } } },
+} as const;
+
+// Staff-facing inbox: every inquiry submitted for this studio, newest first.
+router.get("/", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const inquiries = await prisma.inquiry.findMany({
+    where: { studioId: req.user!.studioId },
+    include: INQUIRY_INCLUDE,
+    orderBy: { createdAt: "desc" },
+  });
+
+  res.json(inquiries);
+});
+
+router.get("/:id", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { id }, include: INQUIRY_INCLUDE });
+
+  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  res.json(inquiry);
 });
 
 export default router;

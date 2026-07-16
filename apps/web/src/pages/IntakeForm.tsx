@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
+import { useParams } from 'react-router-dom'
 import { apiFetch, ApiError } from '../lib/api'
 import { uploadImageToCloudinary } from '../lib/cloudinary'
+
+const INPUT_CLASS =
+  'mt-1 w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600'
+const LABEL_CLASS = 'block text-sm font-medium text-neutral-300'
 
 interface PublicArtist {
   id: string
@@ -80,8 +85,8 @@ function ImageUploadSection({
 
   return (
     <div>
-      <label className="block text-sm font-medium text-gray-700">{label}</label>
-      <p className="mt-0.5 text-xs text-gray-500">{hint}</p>
+      <label className={LABEL_CLASS}>{label}</label>
+      <p className="mt-0.5 text-xs text-neutral-500">{hint}</p>
 
       <input
         type="file"
@@ -91,21 +96,21 @@ function ImageUploadSection({
           handleFiles(e.target.files)
           e.target.value = ''
         }}
-        className="mt-2 block w-full text-sm text-gray-700 file:mr-3 file:rounded-full file:border-0 file:bg-gray-900 file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-gray-800"
+        className="mt-2 block w-full text-sm text-neutral-400 file:mr-3 file:rounded-full file:border file:border-neutral-700 file:bg-neutral-700 file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-neutral-600"
       />
 
       {items.length > 0 && (
         <div className="mt-3 grid grid-cols-3 gap-3 sm:grid-cols-4">
           {items.map((item) => (
-            <div key={item.id} className="relative aspect-square overflow-hidden rounded-lg border border-gray-200">
+            <div key={item.id} className="relative aspect-square overflow-hidden rounded-lg border border-neutral-800">
               <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
               {item.status === 'uploading' && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/40 text-xs text-white">
+                <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-xs text-white">
                   Uploading…
                 </div>
               )}
               {item.status === 'error' && (
-                <div className="absolute inset-0 flex items-center justify-center bg-red-900/70 p-1 text-center text-[10px] text-white">
+                <div className="absolute inset-0 flex items-center justify-center bg-red-950/80 p-1 text-center text-[10px] text-red-300">
                   {item.error ?? 'Upload failed'}
                 </div>
               )}
@@ -125,7 +130,11 @@ function ImageUploadSection({
   )
 }
 
+type StudioCheck = 'loading' | 'valid' | 'invalid'
+
 export default function IntakeForm() {
+  const { studioSlug } = useParams<{ studioSlug: string }>()
+
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
   const [email, setEmail] = useState('')
@@ -140,6 +149,7 @@ export default function IntakeForm() {
   const [desiredTiming, setDesiredTiming] = useState('')
   const [preferredArtistId, setPreferredArtistId] = useState('')
 
+  const [studioCheck, setStudioCheck] = useState<StudioCheck>('loading')
   const [artists, setArtists] = useState<PublicArtist[]>([])
   const [referenceImages, setReferenceImages] = useState<ImageUploadState>({ urls: [], uploading: false })
   const [placementImages, setPlacementImages] = useState<ImageUploadState>({ urls: [], uploading: false })
@@ -149,21 +159,33 @@ export default function IntakeForm() {
   const [submitted, setSubmitted] = useState(false)
 
   useEffect(() => {
+    if (!studioSlug) return
+
     let ignore = false
 
-    apiFetch<PublicArtist[]>('/artists/public')
+    apiFetch<PublicArtist[]>(`/artists/public?studioSlug=${encodeURIComponent(studioSlug)}`)
       .then((data) => {
-        if (!ignore) setArtists(data)
+        if (ignore) return
+        setArtists(data)
+        setStudioCheck('valid')
       })
-      .catch(() => {
-        // Preferred-artist dropdown is a nice-to-have; if it fails to load,
-        // the form still works with "No preference" as the only option.
+      .catch((err) => {
+        if (ignore) return
+
+        if (err instanceof ApiError && err.status === 404) {
+          setStudioCheck('invalid')
+          return
+        }
+
+        // Preferred-artist dropdown is a nice-to-have; a non-404 hiccup
+        // shouldn't block the form, just leave it with "No preference" only.
+        setStudioCheck('valid')
       })
 
     return () => {
       ignore = true
     }
-  }, [])
+  }, [studioSlug])
 
   const imagesUploading = referenceImages.uploading || placementImages.uploading
 
@@ -197,6 +219,7 @@ export default function IntakeForm() {
       await apiFetch('/inquiries', {
         method: 'POST',
         body: JSON.stringify({
+          studioSlug,
           firstName,
           lastName,
           email,
@@ -223,12 +246,33 @@ export default function IntakeForm() {
     }
   }
 
+  if (!studioSlug || studioCheck === 'invalid') {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-neutral-900 px-4 py-10 text-white">
+        <div className="w-full max-w-lg rounded-2xl border border-neutral-800 bg-neutral-900 p-8 text-center">
+          <h1 className="text-xl font-semibold text-white">We couldn't find this studio</h1>
+          <p className="mt-2 text-sm text-neutral-400">
+            Please double-check the link you were given, or contact the studio directly.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  if (studioCheck === 'loading') {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-neutral-900 px-4 py-10 text-white">
+        <p className="text-sm text-neutral-400">Loading…</p>
+      </div>
+    )
+  }
+
   if (submitted) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4 py-10">
-        <div className="w-full max-w-lg rounded-2xl border border-gray-200 bg-white p-8 text-center shadow-sm">
-          <h1 className="text-xl font-semibold text-gray-900">Thanks — your inquiry is in!</h1>
-          <p className="mt-2 text-sm text-gray-500">
+      <div className="flex min-h-screen items-center justify-center bg-neutral-900 px-4 py-10 text-white">
+        <div className="w-full max-w-lg rounded-2xl border border-neutral-800 bg-neutral-900 p-8 text-center">
+          <h1 className="text-xl font-semibold text-white">Thanks — your inquiry is in!</h1>
+          <p className="mt-2 text-sm text-neutral-400">
             We've received your submission and someone from the studio will reach out soon.
           </p>
         </div>
@@ -237,12 +281,12 @@ export default function IntakeForm() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4 py-10">
-      <div className="w-full max-w-2xl rounded-2xl border border-gray-200 bg-white p-8 shadow-sm">
-        <h1 className="text-xl font-semibold text-gray-900">Tattoo Inquiry</h1>
-        <p className="mt-1 text-sm text-gray-500">Tell us about the tattoo you have in mind.</p>
+    <div className="flex min-h-screen items-center justify-center bg-neutral-900 px-4 py-10 text-white">
+      <div className="w-full max-w-2xl rounded-2xl border border-neutral-800 bg-neutral-900 p-8">
+        <h1 className="text-2xl font-bold text-white">Tattoo Inquiry</h1>
+        <p className="mt-1 text-sm text-neutral-400">Tell us about the tattoo you have in mind.</p>
 
-        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+        <div className="mt-4 rounded-lg border border-amber-900/50 bg-amber-950/30 p-3 text-xs text-amber-300">
           You must be 18 years or older to receive a tattoo. Submitting this form does not confirm an appointment —
           it starts a conversation with the studio.
         </div>
@@ -250,47 +294,42 @@ export default function IntakeForm() {
         <form onSubmit={handleSubmit} className="mt-6 space-y-5">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
-              <label className="block text-sm font-medium text-gray-700">First name *</label>
+              <label className={LABEL_CLASS}>First name *</label>
               <input
                 type="text"
                 value={firstName}
                 onChange={(e) => setFirstName(e.target.value)}
                 required
-                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
+                className={INPUT_CLASS}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700">Last name *</label>
+              <label className={LABEL_CLASS}>Last name *</label>
               <input
                 type="text"
                 value={lastName}
                 onChange={(e) => setLastName(e.target.value)}
                 required
-                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
+                className={INPUT_CLASS}
               />
             </div>
           </div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
-              <label className="block text-sm font-medium text-gray-700">Email *</label>
+              <label className={LABEL_CLASS}>Email *</label>
               <input
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
+                className={INPUT_CLASS}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700">Phone</label>
-              <input
-                type="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
-              />
-              <p className="mt-1 text-[11px] leading-snug text-gray-500">
+              <label className={LABEL_CLASS}>Phone</label>
+              <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className={INPUT_CLASS} />
+              <p className="mt-1 text-[11px] leading-snug text-neutral-500">
                 By providing your phone number, you consent to receive SMS messages about your inquiry and
                 appointment. Message and data rates may apply. Reply STOP to opt out.
               </p>
@@ -298,13 +337,8 @@ export default function IntakeForm() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700">How did you hear about us? *</label>
-            <select
-              value={channel}
-              onChange={(e) => setChannel(e.target.value)}
-              required
-              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
-            >
+            <label className={LABEL_CLASS}>How did you hear about us? *</label>
+            <select value={channel} onChange={(e) => setChannel(e.target.value)} required className={INPUT_CLASS}>
               <option value="" disabled>
                 Select one
               </option>
@@ -315,21 +349,21 @@ export default function IntakeForm() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700">Describe the tattoo you want *</label>
+            <label className={LABEL_CLASS}>Describe the tattoo you want *</label>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               required
               rows={4}
-              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
+              className={INPUT_CLASS}
             />
           </div>
 
           <div>
-            <span className="block text-sm font-medium text-gray-700">Color or Black &amp; Grey? *</span>
+            <span className={LABEL_CLASS}>Color or Black &amp; Grey? *</span>
             <div className="mt-2 flex gap-4">
               {['Color', 'Black & Grey'].map((option) => (
-                <label key={option} className="flex items-center gap-2 text-sm text-gray-700">
+                <label key={option} className="flex items-center gap-2 text-sm text-neutral-300">
                   <input
                     type="radio"
                     name="colorOrBlackGrey"
@@ -337,6 +371,7 @@ export default function IntakeForm() {
                     checked={colorOrBlackGrey === option}
                     onChange={(e) => setColorOrBlackGrey(e.target.value)}
                     required
+                    className="accent-neutral-400"
                   />
                   {option}
                 </label>
@@ -346,37 +381,37 @@ export default function IntakeForm() {
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
-              <label className="block text-sm font-medium text-gray-700">Placement *</label>
+              <label className={LABEL_CLASS}>Placement *</label>
               <input
                 type="text"
                 placeholder="e.g. forearm, left side"
                 value={placement}
                 onChange={(e) => setPlacement(e.target.value)}
                 required
-                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
+                className={INPUT_CLASS}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700">Estimated size *</label>
+              <label className={LABEL_CLASS}>Estimated size *</label>
               <input
                 type="text"
                 placeholder="e.g. palm-sized"
                 value={estimatedSize}
                 onChange={(e) => setEstimatedSize(e.target.value)}
                 required
-                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
+                className={INPUT_CLASS}
               />
             </div>
           </div>
 
           <div>
-            <span className="block text-sm font-medium text-gray-700">Have you been tattooed before? *</span>
+            <span className={LABEL_CLASS}>Have you been tattooed before? *</span>
             <div className="mt-2 flex gap-4">
               {[
                 { value: 'yes', label: 'Yes' },
                 { value: 'no', label: 'No' },
               ].map((option) => (
-                <label key={option.value} className="flex items-center gap-2 text-sm text-gray-700">
+                <label key={option.value} className="flex items-center gap-2 text-sm text-neutral-300">
                   <input
                     type="radio"
                     name="hasBeenTattooedBefore"
@@ -384,6 +419,7 @@ export default function IntakeForm() {
                     checked={hasBeenTattooedBefore === option.value}
                     onChange={(e) => setHasBeenTattooedBefore(e.target.value)}
                     required
+                    className="accent-neutral-400"
                   />
                   {option.label}
                 </label>
@@ -392,11 +428,11 @@ export default function IntakeForm() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700">Preferred artist</label>
+            <label className={LABEL_CLASS}>Preferred artist</label>
             <select
               value={preferredArtistId}
               onChange={(e) => setPreferredArtistId(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
+              className={INPUT_CLASS}
             >
               <option value="">No preference</option>
               {artists.map((artist) => (
@@ -409,23 +445,23 @@ export default function IntakeForm() {
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
-              <label className="block text-sm font-medium text-gray-700">Budget</label>
+              <label className={LABEL_CLASS}>Budget</label>
               <input
                 type="text"
                 placeholder="e.g. $300-500"
                 value={budget}
                 onChange={(e) => setBudget(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
+                className={INPUT_CLASS}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700">Desired timing</label>
+              <label className={LABEL_CLASS}>Desired timing</label>
               <input
                 type="text"
                 placeholder="e.g. within a month"
                 value={desiredTiming}
                 onChange={(e) => setDesiredTiming(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
+                className={INPUT_CLASS}
               />
             </div>
           </div>
@@ -442,12 +478,16 @@ export default function IntakeForm() {
             onChange={setPlacementImages}
           />
 
-          {submitError && <p className="text-sm text-red-600">{submitError}</p>}
+          {submitError && (
+            <div className="rounded-lg border border-red-900 bg-red-950/40 px-3 py-2 text-sm text-red-400">
+              {submitError}
+            </div>
+          )}
 
           <button
             type="submit"
             disabled={submitting || imagesUploading}
-            className="w-full rounded-full bg-gray-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-gray-800 disabled:opacity-60"
+            className="w-full rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-600 disabled:opacity-60"
           >
             {submitting ? 'Submitting…' : 'Submit inquiry'}
           </button>

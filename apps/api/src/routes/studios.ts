@@ -15,6 +15,29 @@ const router = Router();
 
 const SALT_ROUNDS = 10;
 
+function slugify(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+// Generates a unique, stable public slug for a new studio's intake-form URL
+// (/inquiry/:studioSlug). Appends -2, -3, ... on collision; never reused
+// once assigned, since studio links get shared publicly.
+async function generateUniqueSlug(name: string): Promise<string> {
+  const base = slugify(name) || "studio";
+  let candidate = base;
+  let suffix = 2;
+
+  while (await prisma.studio.findUnique({ where: { slug: candidate } })) {
+    candidate = `${base}-${suffix}`;
+    suffix += 1;
+  }
+
+  return candidate;
+}
+
 // Manual-use only: creates a Studio and its first OWNER together. Never expose
 // this as a public signup flow — it's gated by BOOTSTRAP_SECRET, not real auth.
 router.post("/bootstrap", async (req, res) => {
@@ -32,9 +55,10 @@ router.post("/bootstrap", async (req, res) => {
 
   const { studioName, ownerEmail, ownerPassword } = body;
   const passwordHash = await bcrypt.hash(ownerPassword, SALT_ROUNDS);
+  const slug = await generateUniqueSlug(studioName);
 
   const { studio, owner } = await prisma.$transaction(async (tx) => {
-    const studio = await tx.studio.create({ data: { name: studioName } });
+    const studio = await tx.studio.create({ data: { name: studioName, slug } });
     const owner = await tx.user.create({
       data: { email: ownerEmail, password: passwordHash, role: Role.OWNER, studioId: studio.id },
     });
