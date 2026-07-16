@@ -93,9 +93,13 @@ router.patch("/respond/:token", async (req, res) => {
   const clearToken = { estimateToken: null, estimateTokenExpiresAt: null, estimateRespondedAt: new Date() };
 
   if (decision === "PROCEED") {
+    // Deposit collection now happens before scheduling (Phase 3: an
+    // appointment can't be created without an attached gift card, and a
+    // gift card only exists once a deposit's been paid) -- so PROCEED
+    // lands here instead of directly in SCHEDULING.
     await prisma.inquiry.update({
       where: { id: inquiry!.id },
-      data: { ...clearToken, status: InquiryStatus.SCHEDULING },
+      data: { ...clearToken, status: InquiryStatus.DEPOSIT_PENDING },
     });
   } else if (decision === "BUDGET_TOO_HIGH") {
     await prisma.inquiry.update({

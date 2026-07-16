@@ -1,8 +1,10 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
-import { AppointmentStatus, InquiryStatus, Role } from "../../generated/prisma/enums";
+import { InquiryStatus, Role } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { diffObjects, logAudit } from "../lib/audit";
+import { dollarsToCents } from "../lib/money";
+import { computeGiftCardExpiration, generateUniqueGiftCardCode } from "../lib/giftCards";
 
 // Exact SOP wording, in the order the client must agree to each one.
 const TERMS = [
@@ -146,6 +148,12 @@ publicRouter.patch("/sign/:token", async (req, res) => {
 // time, this is what confirms it actually has.
 const staffRouter = Router();
 
+// Deposits ARE gift cards: paying one issues a gift card for the same tier
+// amount the deposit form shows (depositAmount, not totalCharged -- the fee
+// isn't part of what the client redeems later). The inquiry moves to
+// SCHEDULING rather than CONFIRMED -- an appointment can't be created
+// without an attached gift card (Phase 3), so scheduling has to come after
+// the card exists, not before.
 staffRouter.patch("/:id/mark-paid", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
   const id = req.params.id as string;
 
@@ -162,31 +170,62 @@ staffRouter.patch("/:id/mark-paid", requireAuth, requireRole(Role.OWNER, Role.FR
     return res.status(400).json({ error: "This deposit has already been marked as paid" });
   }
 
-  const paidAt = new Date();
+  // Guards against a double-issue if this route were ever somehow called
+  // twice for the same deposit -- paidManually already guards it above, but
+  // this is the more direct invariant for the gift card itself.
+  if (depositForm.giftCardId) {
+    return res.status(400).json({ error: "A gift card has already been issued for this deposit" });
+  }
 
-  const [updatedDepositForm] = await prisma.$transaction([
-    prisma.depositForm.update({ where: { id }, data: { paidManually: true, paidAt } }),
-    prisma.inquiry.update({ where: { id: depositForm.inquiryId }, data: { status: InquiryStatus.CONFIRMED } }),
-    ...(depositForm.inquiry.appointmentId
-      ? [
-          prisma.appointment.update({
-            where: { id: depositForm.inquiry.appointmentId },
-            data: { status: AppointmentStatus.CONFIRMED },
-          }),
-        ]
-      : []),
+  const paidAt = new Date();
+  const studioId = req.user!.studioId;
+
+  const [studioSettings, code] = await Promise.all([
+    prisma.studioSettings.findUnique({ where: { studioId } }),
+    generateUniqueGiftCardCode(),
   ]);
 
+  const { giftCard, updatedDepositForm } = await prisma.$transaction(async (tx) => {
+    const giftCard = await tx.giftCard.create({
+      data: {
+        studioId,
+        clientId: depositForm.inquiry.clientId,
+        code,
+        amountCents: dollarsToCents(depositForm.depositAmount),
+        expiresAt: computeGiftCardExpiration(studioSettings?.giftCardDefaultExpirationDays ?? null),
+        issuedById: req.user!.userId,
+      },
+    });
+
+    const updatedDepositForm = await tx.depositForm.update({
+      where: { id },
+      data: { paidManually: true, paidAt, giftCardId: giftCard.id },
+    });
+
+    await tx.inquiry.update({ where: { id: depositForm.inquiryId }, data: { status: InquiryStatus.SCHEDULING } });
+
+    return { giftCard, updatedDepositForm };
+  });
+
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId,
+    actorUserId: req.user!.userId,
+    entityType: "DepositForm",
+    entityId: id,
+    action: "gift_card_issued_from_deposit",
+    changes: { depositFormId: id, giftCardId: giftCard.id, amountCents: giftCard.amountCents },
+  });
+
+  await logAudit({
+    studioId,
     actorUserId: req.user!.userId,
     entityType: "Inquiry",
     entityId: depositForm.inquiryId,
     action: "status_change",
-    changes: diffObjects(depositForm.inquiry, { status: InquiryStatus.CONFIRMED }, ["status"]),
+    changes: diffObjects(depositForm.inquiry, { status: InquiryStatus.SCHEDULING }, ["status"]),
   });
 
-  res.json(updatedDepositForm);
+  res.json({ ...updatedDepositForm, giftCardId: giftCard.id });
 });
 
 export { publicRouter, staffRouter };

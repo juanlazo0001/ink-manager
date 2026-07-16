@@ -1,10 +1,11 @@
 import { Router } from "express";
 import crypto from "node:crypto";
 import { prisma } from "../lib/prisma";
-import { Channel, InquiryStatus } from "../../generated/prisma/enums";
+import { AppointmentStatus, Channel, InquiryStatus } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { Role } from "../../generated/prisma/enums";
 import { diffObjects, logAudit } from "../lib/audit";
+import { validateGiftCardForAttachment } from "../lib/giftCards";
 
 const router = Router();
 
@@ -533,16 +534,23 @@ router.post("/:id/send-estimate", requireAuth, requireRole(Role.OWNER, Role.FRON
   res.status(201).json({ ...updated, estimateUrl: `${FRONTEND_URL}/estimate/${estimateToken}` });
 });
 
-// Creates the real Appointment once the client has proceeded past their
-// estimate, links it back to the Inquiry, and moves the pipeline to
-// DEPOSIT_PENDING. Doesn't block on a tight same-day schedule for the
-// artist — just flags it via bufferWarning so staff can decide.
+// Creates the real Appointment once the deposit's been paid (SCHEDULING is
+// only reachable after mark-paid issues a gift card -- Phase 3), links it
+// back to the Inquiry, and attaches the gift card in the same transaction.
+// Doesn't block on a tight same-day schedule for the artist — just flags
+// it via bufferWarning so staff can decide.
 router.post("/:id/schedule", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
   const id = req.params.id as string;
-  const { startTime, endTime } = req.body ?? {};
+  const { startTime, endTime, giftCardId } = req.body ?? {};
 
   if (!startTime || !endTime) {
     return res.status(400).json({ error: "startTime and endTime are required" });
+  }
+
+  if (!giftCardId) {
+    return res
+      .status(400)
+      .json({ error: "giftCardId is required — collect a deposit or issue a gift card for this client first." });
   }
 
   const start = new Date(startTime);
@@ -565,6 +573,11 @@ router.post("/:id/schedule", requireAuth, requireRole(Role.OWNER, Role.FRONT_DES
     return res.status(400).json({ error: "This inquiry has no assigned artist" });
   }
 
+  const giftCardResult = await validateGiftCardForAttachment(giftCardId, req.user!.studioId, inquiry.clientId);
+  if ("error" in giftCardResult) {
+    return res.status(400).json({ error: giftCardResult.error });
+  }
+
   const dayStart = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
   const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
 
@@ -578,17 +591,25 @@ router.post("/:id/schedule", requireAuth, requireRole(Role.OWNER, Role.FRONT_DES
       appt.startTime.getTime() < end.getTime() + SCHEDULING_BUFFER_MS,
   );
 
-  const appointment = await prisma.appointment.create({
-    data: {
-      studioId: req.user!.studioId,
-      artistId: inquiry.assignedArtistId,
-      clientId: inquiry.clientId,
-      startTime: start,
-      endTime: end,
-    },
+  const appointment = await prisma.$transaction(async (tx) => {
+    const created = await tx.appointment.create({
+      data: {
+        studioId: req.user!.studioId,
+        artistId: inquiry.assignedArtistId!,
+        clientId: inquiry.clientId,
+        inquiryId: id,
+        startTime: start,
+        endTime: end,
+        status: AppointmentStatus.CONFIRMED,
+      },
+    });
+
+    await tx.giftCard.update({ where: { id: giftCardId }, data: { appointmentId: created.id } });
+
+    return created;
   });
 
-  const scheduleData = { appointmentId: appointment.id, status: InquiryStatus.DEPOSIT_PENDING };
+  const scheduleData = { appointmentId: appointment.id, status: InquiryStatus.CONFIRMED };
 
   const updated = await prisma.inquiry.update({
     where: { id },

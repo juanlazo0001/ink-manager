@@ -15,6 +15,7 @@ import { publicRouter as depositsRouter, staffRouter as depositFormsRouter } fro
 import uploadsRouter from "./routes/uploads";
 import auditRouter from "./routes/audit";
 import studioSettingsRouter from "./routes/studioSettings";
+import { publicRouter as giftCardsPublicRouter, staffRouter as giftCardsStaffRouter } from "./routes/giftCards";
 import { requireAuth } from "./middleware/auth";
 
 const app = express();
@@ -55,6 +56,10 @@ app.use("/deposit-forms", depositFormsRouter);
 app.use("/uploads", uploadsRouter);
 app.use("/audit", auditRouter);
 app.use("/studio-settings", studioSettingsRouter);
+// Public router first: /gift-cards/view/:code must match before the
+// staff router's /gift-cards/:id would otherwise swallow it.
+app.use("/gift-cards", giftCardsPublicRouter);
+app.use("/gift-cards", giftCardsStaffRouter);
 
 app.get("/me", requireAuth, (req, res) => {
   res.json(req.user);

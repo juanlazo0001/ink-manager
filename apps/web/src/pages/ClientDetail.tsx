@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
@@ -88,16 +88,25 @@ function formatCents(cents: number): string {
 
 const EMPTY_EDIT_FORM = { firstName: '', lastName: '', email: '', phone: '' }
 
+const EMPTY_GIFT_CARD_FORM = { amountDollars: '', expiresAt: '' }
+
 export default function ClientDetail() {
   const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
   const { user } = useAuth()
   const { profile } = useUserProfile()
   const canManage = profile?.permissions.includes('clients.manage') ?? false
+  const canIssueGiftCards = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
   const queryClient = useQueryClient()
   const [client, setClient] = useState<Client | null>(null)
   const [appointments, setAppointments] = useState<Appointment[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [refreshIndex, setRefreshIndex] = useState(0)
+
+  const [showIssueGiftCard, setShowIssueGiftCard] = useState(false)
+  const [giftCardForm, setGiftCardForm] = useState(EMPTY_GIFT_CARD_FORM)
+  const [issuingGiftCard, setIssuingGiftCard] = useState(false)
+  const [giftCardError, setGiftCardError] = useState<string | null>(null)
 
   const [editing, setEditing] = useState(false)
   const [editForm, setEditForm] = useState(EMPTY_EDIT_FORM)
@@ -194,6 +203,37 @@ export default function ClientDetail() {
       setEditError(err instanceof Error ? err.message : 'Failed to update client')
     } finally {
       setEditSubmitting(false)
+    }
+  }
+
+  async function handleIssueGiftCard(event: FormEvent) {
+    event.preventDefault()
+    if (!id) return
+
+    setIssuingGiftCard(true)
+    setGiftCardError(null)
+
+    try {
+      const amountCents = Math.round(Number(giftCardForm.amountDollars) * 100)
+
+      await apiFetch('/gift-cards', {
+        method: 'POST',
+        body: JSON.stringify({
+          clientId: id,
+          amountCents,
+          ...(user?.role === 'OWNER' && giftCardForm.expiresAt
+            ? { expiresAt: new Date(giftCardForm.expiresAt).toISOString() }
+            : {}),
+        }),
+      })
+
+      setShowIssueGiftCard(false)
+      setGiftCardForm(EMPTY_GIFT_CARD_FORM)
+      setRefreshIndex((index) => index + 1)
+    } catch (err) {
+      setGiftCardError(err instanceof Error ? err.message : 'Failed to issue gift card')
+    } finally {
+      setIssuingGiftCard(false)
     }
   }
 
@@ -519,7 +559,19 @@ export default function ClientDetail() {
               </div>
 
               <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-                <h2 className="text-base font-semibold text-white">Gift Cards</h2>
+                <div className="flex items-center justify-between">
+                  <h2 className="text-base font-semibold text-white">Gift Cards</h2>
+                  {canIssueGiftCards && (
+                    <button
+                      type="button"
+                      onClick={() => setShowIssueGiftCard(true)}
+                      className="flex items-center gap-2 rounded-full border border-neutral-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800"
+                    >
+                      <PlusIcon className="h-3.5 w-3.5" />
+                      Issue Gift Card
+                    </button>
+                  )}
+                </div>
 
                 {client.giftCards.length === 0 && <p className="mt-4 text-sm text-neutral-400">No gift cards yet.</p>}
 
@@ -537,7 +589,11 @@ export default function ClientDetail() {
                       </thead>
                       <tbody className="divide-y divide-neutral-800">
                         {client.giftCards.map((card) => (
-                          <tr key={card.id}>
+                          <tr
+                            key={card.id}
+                            onClick={() => navigate(`/gift-cards/${card.id}`)}
+                            className="cursor-pointer hover:bg-neutral-800/40"
+                          >
                             <td className="py-3 font-mono text-xs text-white">{card.code}</td>
                             <td className="py-3 text-neutral-400">{formatCents(card.amountCents)}</td>
                             <td className="py-3">
@@ -672,6 +728,56 @@ export default function ClientDetail() {
           )}
         </div>
       </div>
+
+      {showIssueGiftCard && (
+        <Modal
+          title="Issue Gift Card"
+          onClose={() => {
+            setShowIssueGiftCard(false)
+            setGiftCardForm(EMPTY_GIFT_CARD_FORM)
+            setGiftCardError(null)
+          }}
+        >
+          <form onSubmit={handleIssueGiftCard}>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-neutral-300">Amount ($)</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                required
+                value={giftCardForm.amountDollars}
+                onChange={(e) => setGiftCardForm({ ...giftCardForm, amountDollars: e.target.value })}
+                className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+              />
+            </div>
+
+            {user?.role === 'OWNER' && (
+              <div className="mt-3">
+                <label className="mb-1 block text-sm font-medium text-neutral-300">
+                  Custom expiration (optional, overrides studio default)
+                </label>
+                <input
+                  type="date"
+                  value={giftCardForm.expiresAt}
+                  onChange={(e) => setGiftCardForm({ ...giftCardForm, expiresAt: e.target.value })}
+                  className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                />
+              </div>
+            )}
+
+            {giftCardError && <p className="mt-3 text-sm text-red-400">{giftCardError}</p>}
+
+            <button
+              type="submit"
+              disabled={issuingGiftCard}
+              className="mt-5 w-full rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-600 disabled:opacity-60"
+            >
+              {issuingGiftCard ? 'Issuing…' : 'Issue Gift Card'}
+            </button>
+          </form>
+        </Modal>
+      )}
 
       {mergeTarget && (
         <Modal

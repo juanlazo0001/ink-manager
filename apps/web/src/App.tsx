@@ -17,6 +17,8 @@ import InquiryDetail from './pages/InquiryDetail'
 import MyInquiries from './pages/MyInquiries'
 import EstimateResponse from './pages/EstimateResponse'
 import DepositResponse from './pages/DepositResponse'
+import GiftCardResponse from './pages/GiftCardResponse'
+import GiftCardDetail from './pages/GiftCardDetail'
 
 function App() {
   return (
@@ -28,6 +30,15 @@ function App() {
         <Route path="/inquiry/:studioSlug" element={<IntakeForm />} />
         <Route path="/estimate/:token" element={<EstimateResponse />} />
         <Route path="/deposit/:token" element={<DepositResponse />} />
+        <Route path="/gift-card/:code" element={<GiftCardResponse />} />
+        <Route
+          path="/gift-cards/:id"
+          element={
+            <ProtectedRoute>
+              <GiftCardDetail />
+            </ProtectedRoute>
+          }
+        />
         <Route
           path="/dashboard"
           element={

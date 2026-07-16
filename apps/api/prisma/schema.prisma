@@ -195,13 +195,11 @@ model Appointment {
 
   // One project (Inquiry) has many sessions (Appointment) -- distinct from
   // Inquiry.appointmentId below, which is the older 1:1 "scheduled slot"
-  // link from the original scheduling flow. Nullable for now: some existing
-  // appointments were created standalone via the Appointments page with no
-  // inquiry at all, and couldn't be backfilled -- see migration notes.
-  // TODO: once every appointment has a confident inquiryId, tighten this to
-  // required and consider retiring Inquiry.appointmentId in favor of it.
-  inquiryId      String?
-  inquiryProject Inquiry? @relation("InquirySessions", fields: [inquiryId], references: [id])
+  // link from the original scheduling flow. Required as of Phase 3: both
+  // appointment-creation routes (standalone and /inquiries/:id/schedule)
+  // now populate it, and every appointment must have one.
+  inquiryId      String
+  inquiryProject Inquiry  @relation("InquirySessions", fields: [inquiryId], references: [id])
 
   consentForm ConsentForm?
   inquiry     Inquiry?     @relation("InquiryScheduledAppointment")

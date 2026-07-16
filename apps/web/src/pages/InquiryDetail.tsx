@@ -35,6 +35,7 @@ interface Inquiry {
   estimateRespondedAt: string | null
   clientStatedBudget: string | null
   closedReason: string | null
+  clientId: string
   client: { firstName: string; lastName: string; email: string | null; phone: string | null }
   preferredArtist: { id: string; user: { name: string | null } } | null
   assignedArtist: { id: string; user: { name: string | null } } | null
@@ -55,6 +56,20 @@ interface Inquiry {
 interface ArtistOption {
   id: string
   user: { email: string }
+}
+
+interface GiftCardOption {
+  id: string
+  code: string
+  amountCents: number
+  status: string
+  expiresAt: string | null
+  appointmentId: string | null
+}
+
+function isCardAvailable(card: GiftCardOption): boolean {
+  if (card.status !== 'ACTIVE' || card.appointmentId) return false
+  return !card.expiresAt || new Date(card.expiresAt) > new Date()
 }
 
 function DetailField({ label, value }: { label: string; value: string }) {
@@ -122,6 +137,16 @@ export default function InquiryDetail() {
     queryFn: () => apiFetch<ArtistOption[]>('/artists'),
   })
 
+  // Scheduling now requires attaching a gift card (Phase 3) -- this is the
+  // client's own available cards, typically the one just issued from their
+  // deposit.
+  const { data: clientGiftCards } = useQuery({
+    queryKey: ['client-gift-cards', inquiry?.clientId],
+    queryFn: () => apiFetch<{ giftCards: GiftCardOption[] }>(`/clients/${inquiry!.clientId}`),
+    enabled: !!inquiry?.clientId,
+    select: (data) => data.giftCards.filter(isCardAvailable),
+  })
+
   const [selectedArtistId, setSelectedArtistId] = useState('')
   const [assigning, setAssigning] = useState(false)
   const [assignError, setAssignError] = useState<string | null>(null)
@@ -147,7 +172,7 @@ export default function InquiryDetail() {
   const [savingDetails, setSavingDetails] = useState(false)
   const [detailsError, setDetailsError] = useState<string | null>(null)
 
-  const [scheduleForm, setScheduleForm] = useState({ startTime: '', endTime: '' })
+  const [scheduleForm, setScheduleForm] = useState({ startTime: '', endTime: '', giftCardId: '' })
   const [scheduling, setScheduling] = useState(false)
   const [scheduleError, setScheduleError] = useState<string | null>(null)
   const [bufferWarning, setBufferWarning] = useState<string | null>(null)
@@ -296,7 +321,7 @@ export default function InquiryDetail() {
   }
 
   async function handleSchedule() {
-    if (!id || !scheduleForm.startTime || !scheduleForm.endTime) return
+    if (!id || !scheduleForm.startTime || !scheduleForm.endTime || !scheduleForm.giftCardId) return
 
     setScheduling(true)
     setScheduleError(null)
@@ -308,6 +333,7 @@ export default function InquiryDetail() {
         body: JSON.stringify({
           startTime: new Date(scheduleForm.startTime).toISOString(),
           endTime: new Date(scheduleForm.endTime).toISOString(),
+          giftCardId: scheduleForm.giftCardId,
         }),
       })
 
@@ -674,13 +700,44 @@ export default function InquiryDetail() {
                         </div>
                       </div>
 
+                      <div className="mt-3">
+                        <label className="mb-1 block text-xs font-medium text-neutral-400">
+                          Gift card (deposit) to attach
+                        </label>
+                        {clientGiftCards && clientGiftCards.length === 0 ? (
+                          <p className="text-sm text-neutral-400">
+                            No available gift card for this client yet — the deposit should have issued one.
+                          </p>
+                        ) : (
+                          <select
+                            value={scheduleForm.giftCardId}
+                            onChange={(e) => setScheduleForm({ ...scheduleForm, giftCardId: e.target.value })}
+                            className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                          >
+                            <option value="" disabled>
+                              {clientGiftCards === undefined ? 'Loading…' : 'Select a gift card'}
+                            </option>
+                            {clientGiftCards?.map((card) => (
+                              <option key={card.id} value={card.id}>
+                                ${(card.amountCents / 100).toFixed(2)} — {card.code.slice(0, 8)}…
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                      </div>
+
                       {scheduleError && <p className="mt-3 text-sm text-red-400">{scheduleError}</p>}
 
                       <div className="mt-3 flex flex-wrap gap-3">
                         <button
                           type="button"
                           onClick={handleSchedule}
-                          disabled={scheduling || !scheduleForm.startTime || !scheduleForm.endTime}
+                          disabled={
+                            scheduling ||
+                            !scheduleForm.startTime ||
+                            !scheduleForm.endTime ||
+                            !scheduleForm.giftCardId
+                          }
                           className="rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
                         >
                           {scheduling ? 'Scheduling…' : 'Schedule Appointment'}
