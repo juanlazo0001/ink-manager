@@ -5,8 +5,8 @@ import { uploadImageToCloudinary } from '../lib/cloudinary'
 import { formatDateTime } from '../lib/format'
 
 const INPUT_CLASS =
-  'mt-1 w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600'
-const LABEL_CLASS = 'block text-sm font-medium text-neutral-300'
+  'mt-1 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
+const LABEL_CLASS = 'block text-sm font-medium text-fg-secondary'
 
 type PageState = 'loading' | 'invalid' | 'ready' | 'success'
 
@@ -176,38 +176,38 @@ export default function WaiverSign() {
   }
 
   return (
-    <div className="min-h-screen bg-neutral-900 px-4 py-8 text-white">
+    <div className="min-h-screen bg-bg px-4 py-8 text-fg">
       <div className="mx-auto w-full max-w-lg">
-        {state === 'loading' && <p className="text-center text-sm text-neutral-400">Loading…</p>}
+        {state === 'loading' && <p className="text-center text-sm text-fg-secondary">Loading…</p>}
 
         {state === 'invalid' && (
-          <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-6 text-center">
-            <h1 className="text-xl font-semibold text-white">This link isn't available</h1>
-            <p className="mt-2 text-sm text-neutral-400">{invalidMessage}</p>
-            <p className="mt-4 text-sm text-neutral-400">Please ask the front desk for a new link.</p>
+          <div className="rounded-2xl border border-border bg-surface p-6 text-center">
+            <h1 className="text-xl font-semibold text-fg">This link isn't available</h1>
+            <p className="mt-2 text-sm text-fg-secondary">{invalidMessage}</p>
+            <p className="mt-4 text-sm text-fg-secondary">Please ask the front desk for a new link.</p>
           </div>
         )}
 
         {state === 'success' && (
-          <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-6 text-center">
-            <h1 className="text-xl font-semibold text-white">Thanks — you're all set!</h1>
-            <p className="mt-2 text-sm text-neutral-400">
+          <div className="rounded-2xl border border-border bg-surface p-6 text-center">
+            <h1 className="text-xl font-semibold text-fg">Thanks — you're all set!</h1>
+            <p className="mt-2 text-sm text-fg-secondary">
               Your waiver has been received. Please have your government ID ready for the front desk to verify.
             </p>
           </div>
         )}
 
         {state === 'ready' && data && (
-          <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-            <h1 className="text-xl font-bold text-white">Liability Waiver</h1>
-            <p className="mt-1 text-sm text-neutral-400">{data.studioName}</p>
-            <p className="mt-1 text-sm text-neutral-400">
+          <div className="rounded-2xl border border-border bg-surface p-5">
+            <h1 className="text-xl font-bold text-fg">Liability Waiver</h1>
+            <p className="mt-1 text-sm text-fg-secondary">{data.studioName}</p>
+            <p className="mt-1 text-sm text-fg-secondary">
               Appointment: {formatDateTime(data.appointmentStart)} – {formatDateTime(data.appointmentEnd)}
             </p>
 
             <form onSubmit={handleSubmit} className="mt-6 space-y-6">
               <section className="space-y-4">
-                <h2 className="text-sm font-semibold text-white">Personal details</h2>
+                <h2 className="text-sm font-semibold text-fg">Personal details</h2>
 
                 <div>
                   <label className={LABEL_CLASS}>Legal name *</label>
@@ -230,7 +230,7 @@ export default function WaiverSign() {
                     className={INPUT_CLASS}
                   />
                   {dateOfBirth.length > 0 && !isAtLeast18(dateOfBirth) && (
-                    <p className="mt-1 text-xs text-red-400">
+                    <p className="mt-1 text-xs text-danger">
                       You must be 18 or older to be tattooed in North Carolina.
                     </p>
                   )}
@@ -259,15 +259,15 @@ export default function WaiverSign() {
                 </div>
               </section>
 
-              <section className="space-y-4 border-t border-neutral-800 pt-6">
-                <h2 className="text-sm font-semibold text-white">Health screening</h2>
+              <section className="space-y-4 border-t border-border pt-6">
+                <h2 className="text-sm font-semibold text-fg">Health screening</h2>
 
                 {data.healthQuestions.map((q, i) => (
-                  <div key={i} className="rounded-lg border border-neutral-800 p-3">
-                    <p className="text-sm text-neutral-200">{q.question} *</p>
+                  <div key={i} className="rounded-lg border border-border p-3">
+                    <p className="text-sm text-fg">{q.question} *</p>
                     <div className="mt-2 flex gap-4">
                       {(['YES', 'NO'] as const).map((option) => (
-                        <label key={option} className="flex items-center gap-2 text-sm text-neutral-300">
+                        <label key={option} className="flex items-center gap-2 text-sm text-fg-secondary">
                           <input
                             type="radio"
                             name={`health-${i}`}
@@ -279,7 +279,7 @@ export default function WaiverSign() {
                               })
                             }
                             required
-                            className="accent-neutral-400"
+                            className="accent-accent"
                           />
                           {option === 'YES' ? 'Yes' : 'No'}
                         </label>
@@ -304,37 +304,37 @@ export default function WaiverSign() {
                 ))}
               </section>
 
-              <section className="space-y-3 border-t border-neutral-800 pt-6">
-                <h2 className="text-sm font-semibold text-white">Photo ID</h2>
-                <p className="text-xs text-neutral-500">Take or upload a clear photo of your government-issued ID.</p>
+              <section className="space-y-3 border-t border-border pt-6">
+                <h2 className="text-sm font-semibold text-fg">Photo ID</h2>
+                <p className="text-xs text-fg-muted">Take or upload a clear photo of your government-issued ID.</p>
 
                 {idImagePreview && (
-                  <img src={idImagePreview} alt="ID preview" className="max-h-48 rounded-lg border border-neutral-800" />
+                  <img src={idImagePreview} alt="ID preview" className="max-h-48 rounded-lg border border-border" />
                 )}
 
-                <label className="inline-block cursor-pointer rounded-full border border-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-800">
+                <label className="inline-block cursor-pointer rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface">
                   {idImageUrl ? 'Change photo' : 'Upload ID photo'}
                   <input type="file" accept="image/*" capture="environment" onChange={handleIdImageChange} className="hidden" />
                 </label>
 
-                {idImageUploading && <p className="text-xs text-neutral-400">Uploading…</p>}
-                {idImageError && <p className="text-xs text-red-400">{idImageError}</p>}
+                {idImageUploading && <p className="text-xs text-fg-secondary">Uploading…</p>}
+                {idImageError && <p className="text-xs text-danger">{idImageError}</p>}
               </section>
 
-              <section className="space-y-3 border-t border-neutral-800 pt-6">
-                <h2 className="text-sm font-semibold text-white">Please read and initial each clause</h2>
+              <section className="space-y-3 border-t border-border pt-6">
+                <h2 className="text-sm font-semibold text-fg">Please read and initial each clause</h2>
 
                 {data.clauses.map((clause, i) => (
-                  <div key={i} className="rounded-lg border border-neutral-800 p-3">
-                    <p className="text-sm text-neutral-300">{clause}</p>
+                  <div key={i} className="rounded-lg border border-border p-3">
+                    <p className="text-sm text-fg-secondary">{clause}</p>
                     <div className="mt-2 flex items-center gap-2">
-                      <label className="text-xs text-neutral-500">Initials *</label>
+                      <label className="text-xs text-fg-muted">Initials *</label>
                       <input
                         type="text"
                         maxLength={6}
                         value={clauseInitials[i] ?? ''}
                         onChange={(e) => setClauseInitials({ ...clauseInitials, [i]: e.target.value })}
-                        className="w-20 rounded-lg border border-neutral-800 bg-neutral-900 px-2 py-1 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                        className="w-20 rounded-lg border border-border bg-surface-inset px-2 py-1 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                       />
                     </div>
                   </div>
@@ -342,13 +342,13 @@ export default function WaiverSign() {
               </section>
 
               {data.acknowledgment && (
-                <section className="space-y-2 border-t border-neutral-800 pt-6">
-                  <h2 className="text-sm font-semibold text-white">Acknowledgment</h2>
-                  <p className="text-sm text-neutral-300">{data.acknowledgment}</p>
+                <section className="space-y-2 border-t border-border pt-6">
+                  <h2 className="text-sm font-semibold text-fg">Acknowledgment</h2>
+                  <p className="text-sm text-fg-secondary">{data.acknowledgment}</p>
                 </section>
               )}
 
-              <section className="border-t border-neutral-800 pt-6">
+              <section className="border-t border-border pt-6">
                 <label className={LABEL_CLASS}>Signature — type your full legal name *</label>
                 <input
                   type="text"
@@ -360,19 +360,19 @@ export default function WaiverSign() {
               </section>
 
               {data.photoRelease && (
-                <section className="space-y-3 rounded-lg border border-neutral-800 p-4">
-                  <h2 className="text-sm font-semibold text-white">Photo/video release (optional)</h2>
-                  <p className="text-xs text-neutral-500">
+                <section className="space-y-3 rounded-lg border border-border p-4">
+                  <h2 className="text-sm font-semibold text-fg">Photo/video release (optional)</h2>
+                  <p className="text-xs text-fg-muted">
                     Optional — you may decline without affecting your appointment.
                   </p>
-                  <p className="text-sm text-neutral-300">{data.photoRelease}</p>
+                  <p className="text-sm text-fg-secondary">{data.photoRelease}</p>
 
-                  <label className="flex items-start gap-2 text-sm text-neutral-300">
+                  <label className="flex items-start gap-2 text-sm text-fg-secondary">
                     <input
                       type="checkbox"
                       checked={photoReleaseAccepted}
                       onChange={(e) => setPhotoReleaseAccepted(e.target.checked)}
-                      className="mt-0.5 h-4 w-4 shrink-0 rounded border-neutral-700 bg-neutral-900"
+                      className="mt-0.5 h-4 w-4 shrink-0 rounded border-border bg-surface-inset accent-accent"
                     />
                     I agree to the photo/video release above
                   </label>
@@ -392,7 +392,7 @@ export default function WaiverSign() {
               )}
 
               {submitError && (
-                <div className="rounded-lg border border-red-900 bg-red-950/40 px-3 py-2 text-sm text-red-400">
+                <div className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
                   {submitError}
                 </div>
               )}
@@ -400,7 +400,7 @@ export default function WaiverSign() {
               <button
                 type="submit"
                 disabled={submitting || !canSubmit}
-                className="w-full rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                className="w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
               >
                 {submitting ? 'Submitting…' : 'Sign Waiver'}
               </button>

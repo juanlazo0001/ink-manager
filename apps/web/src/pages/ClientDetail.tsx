@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
 import AuditTrail from '../components/AuditTrail'
+import StatusPill from '../components/StatusPill'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatStatus } from '../lib/format'
 import { ArrowLeftIcon, MessageIcon, PencilIcon, PlusIcon } from '../components/icons'
@@ -360,28 +361,28 @@ export default function ClientDetail() {
   const depositForms = client?.inquiries.filter((inquiry) => inquiry.depositForm !== null) ?? []
 
   return (
-    <div className="flex min-h-screen bg-neutral-900 text-white">
+    <div className="flex min-h-screen bg-bg text-fg">
       <Sidebar />
 
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-5xl px-6 py-6 sm:px-10 sm:py-8">
-          <Link to="/clients" className="inline-flex items-center gap-2 text-sm text-neutral-400 hover:text-white">
+          <Link to="/clients" className="inline-flex items-center gap-2 text-sm text-fg-secondary hover:text-fg">
             <ArrowLeftIcon className="h-4 w-4" />
             Back to Clients
           </Link>
 
           {error && (
-            <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-              <p className="text-sm text-red-400">{error}</p>
+            <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+              <p className="text-sm text-danger">{error}</p>
             </div>
           )}
 
-          {!error && !client && <p className="mt-6 text-sm text-neutral-400">Loading client…</p>}
+          {!error && !client && <p className="mt-6 text-sm text-fg-secondary">Loading client…</p>}
 
           {!error && client && (
             <>
               {client.mergedIntoId && client.mergedInto && (
-                <div className="mt-6 rounded-2xl border border-amber-900/50 bg-amber-950/30 p-4 text-sm text-amber-200">
+                <div className="mt-6 rounded-2xl border border-warning/30 bg-warning/10 p-4 text-sm text-warning">
                   This client was merged into{' '}
                   <Link to={`/clients/${client.mergedInto.id}`} className="font-semibold underline">
                     {client.mergedInto.firstName} {client.mergedInto.lastName}
@@ -390,64 +391,64 @@ export default function ClientDetail() {
                 </div>
               )}
 
-              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
                 {editing ? (
                   <form onSubmit={handleEditSubmit}>
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <div>
-                        <label className="mb-1 block text-sm font-medium text-neutral-300">First name</label>
+                        <label className="mb-1 block text-sm font-medium text-fg-secondary">First name</label>
                         <input
                           type="text"
                           required
                           value={editForm.firstName}
                           onChange={(e) => setEditForm({ ...editForm, firstName: e.target.value })}
-                          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block text-sm font-medium text-neutral-300">Last name</label>
+                        <label className="mb-1 block text-sm font-medium text-fg-secondary">Last name</label>
                         <input
                           type="text"
                           required
                           value={editForm.lastName}
                           onChange={(e) => setEditForm({ ...editForm, lastName: e.target.value })}
-                          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block text-sm font-medium text-neutral-300">Email</label>
+                        <label className="mb-1 block text-sm font-medium text-fg-secondary">Email</label>
                         <input
                           type="email"
                           value={editForm.email}
                           onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
-                          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block text-sm font-medium text-neutral-300">Phone</label>
+                        <label className="mb-1 block text-sm font-medium text-fg-secondary">Phone</label>
                         <input
                           type="tel"
                           value={editForm.phone}
                           onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
-                          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                         />
                       </div>
                     </div>
 
-                    {editError && <p className="mt-3 text-sm text-red-400">{editError}</p>}
+                    {editError && <p className="mt-3 text-sm text-danger">{editError}</p>}
 
                     <div className="mt-4 flex gap-3">
                       <button
                         type="submit"
                         disabled={editSubmitting}
-                        className="rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                        className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                       >
                         {editSubmitting ? 'Saving…' : 'Save'}
                       </button>
                       <button
                         type="button"
                         onClick={() => setEditing(false)}
-                        className="rounded-full border border-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-800"
+                        className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
                       >
                         Cancel
                       </button>
@@ -456,16 +457,16 @@ export default function ClientDetail() {
                 ) : (
                   <div className="flex flex-wrap items-center justify-between gap-4">
                     <div className="flex items-center gap-4">
-                      <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-neutral-800 text-lg font-semibold text-white">
+                      <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-surface text-lg font-semibold text-fg">
                         {client.firstName[0]}
                         {client.lastName[0]}
                       </span>
                       <div>
-                        <h1 className="text-xl font-bold text-white">
+                        <h1 className="text-xl font-bold text-fg">
                           {client.firstName} {client.lastName}
                         </h1>
-                        <p className="mt-1 text-sm text-neutral-400">{client.email ?? 'No email on file'}</p>
-                        <p className="text-sm text-neutral-400">{client.phone ?? 'No phone on file'}</p>
+                        <p className="mt-1 text-sm text-fg-secondary">{client.email ?? 'No email on file'}</p>
+                        <p className="text-sm text-fg-secondary">{client.phone ?? 'No phone on file'}</p>
                       </div>
                     </div>
 
@@ -475,7 +476,7 @@ export default function ClientDetail() {
                           type="button"
                           onClick={handleMessage}
                           disabled={startingConversation}
-                          className="flex items-center gap-2 rounded-full border border-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-800 disabled:opacity-60"
+                          className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
                         >
                           <MessageIcon className="h-4 w-4" />
                           Message
@@ -485,7 +486,7 @@ export default function ClientDetail() {
                         <button
                           type="button"
                           onClick={startEditing}
-                          className="flex items-center gap-2 rounded-full border border-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-800"
+                          className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
                         >
                           <PencilIcon className="h-4 w-4" />
                           Edit
@@ -497,17 +498,17 @@ export default function ClientDetail() {
               </div>
 
               {canManage && !client.mergedIntoId && duplicates && duplicates.length > 0 && (
-                <div className="mt-6 rounded-2xl border border-amber-900/50 bg-amber-950/30 p-4">
-                  <p className="text-sm font-medium text-amber-200">
+                <div className="mt-6 rounded-2xl border border-warning/30 bg-warning/10 p-4">
+                  <p className="text-sm font-medium text-warning">
                     {duplicates.length} potential duplicate{duplicates.length > 1 ? 's' : ''} found
                   </p>
                   <ul className="mt-3 space-y-2">
                     {duplicates.map((candidate) => (
                       <li
                         key={candidate.id}
-                        className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-900/40 bg-neutral-900/40 px-3 py-2 text-sm"
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-sm"
                       >
-                        <span className="text-amber-100">
+                        <span className="text-warning">
                           {candidate.firstName} {candidate.lastName}
                           {candidate.email ? ` — ${candidate.email}` : ''}
                           {candidate.phone ? ` — ${candidate.phone}` : ''}
@@ -515,7 +516,7 @@ export default function ClientDetail() {
                         <button
                           type="button"
                           onClick={() => openMergeConfirm(candidate)}
-                          className="rounded-full border border-amber-700 px-3 py-1 text-xs font-semibold text-amber-100 transition hover:bg-amber-900/40"
+                          className="rounded-full border border-warning/40 px-3 py-1 text-xs font-semibold text-warning transition hover:bg-warning/10"
                         >
                           Merge into this client
                         </button>
@@ -525,38 +526,36 @@ export default function ClientDetail() {
                 </div>
               )}
 
-              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-                <h2 className="text-base font-semibold text-white">Inquiries</h2>
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                <h2 className="text-base font-semibold text-fg">Inquiries</h2>
 
-                {client.inquiries.length === 0 && <p className="mt-4 text-sm text-neutral-400">No inquiries yet.</p>}
+                {client.inquiries.length === 0 && <p className="mt-4 text-sm text-fg-secondary">No inquiries yet.</p>}
 
                 {client.inquiries.length > 0 && (
                   <div className="mt-4 overflow-x-auto">
                     <table className="w-full text-left text-sm">
                       <thead>
-                        <tr className="text-xs text-neutral-500">
+                        <tr className="bg-surface-inset text-xs text-fg-muted">
                           <th className="pb-3 font-medium">Description</th>
                           <th className="pb-3 font-medium">Channel</th>
                           <th className="pb-3 font-medium">Submitted</th>
                           <th className="pb-3 font-medium">Status</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-neutral-800">
+                      <tbody className="divide-y divide-border">
                         {client.inquiries.map((inquiry) => (
                           <tr key={inquiry.id}>
-                            <td className="py-3 text-white">
+                            <td className="py-3 text-fg">
                               <Link to={`/inquiries/${inquiry.id}`} className="hover:underline">
                                 {inquiry.description.length > 60
                                   ? `${inquiry.description.slice(0, 60).trimEnd()}…`
                                   : inquiry.description}
                               </Link>
                             </td>
-                            <td className="py-3 text-neutral-400">{formatStatus(inquiry.channel)}</td>
-                            <td className="py-3 text-neutral-400">{formatDateTime(inquiry.createdAt)}</td>
+                            <td className="py-3 text-fg-secondary">{formatStatus(inquiry.channel)}</td>
+                            <td className="py-3 text-fg-secondary">{formatDateTime(inquiry.createdAt)}</td>
                             <td className="py-3">
-                              <span className="inline-flex items-center rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-300">
-                                {formatStatus(inquiry.status)}
-                              </span>
+                              <StatusPill status={inquiry.status} />
                             </td>
                           </tr>
                         ))}
@@ -566,41 +565,39 @@ export default function ClientDetail() {
                 )}
               </div>
 
-              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-                <h2 className="text-base font-semibold text-white">Appointments</h2>
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                <h2 className="text-base font-semibold text-fg">Appointments</h2>
 
-                {appointments === null && <p className="mt-4 text-sm text-neutral-400">Loading appointments…</p>}
+                {appointments === null && <p className="mt-4 text-sm text-fg-secondary">Loading appointments…</p>}
 
                 {appointments !== null && appointments.length === 0 && (
-                  <p className="mt-4 text-sm text-neutral-400">No appointments yet.</p>
+                  <p className="mt-4 text-sm text-fg-secondary">No appointments yet.</p>
                 )}
 
                 {appointments !== null && appointments.length > 0 && (
                   <div className="mt-4 overflow-x-auto">
                     <table className="w-full text-left text-sm">
                       <thead>
-                        <tr className="text-xs text-neutral-500">
+                        <tr className="bg-surface-inset text-xs text-fg-muted">
                           <th className="pb-3 font-medium">Artist</th>
                           <th className="pb-3 font-medium">Date &amp; Time</th>
                           <th className="pb-3 font-medium">Status</th>
                           <th className="pb-3 font-medium">Final Cost</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-neutral-800">
+                      <tbody className="divide-y divide-border">
                         {appointments.map((appointment) => (
                           <tr
                             key={appointment.id}
                             onClick={() => navigate(`/appointments/${appointment.id}`)}
-                            className="cursor-pointer hover:bg-neutral-800/40"
+                            className="cursor-pointer hover:bg-surface/40"
                           >
-                            <td className="py-3 text-white">{appointment.artist?.user.email ?? '—'}</td>
-                            <td className="py-3 text-neutral-400">{formatDateTime(appointment.startTime)}</td>
+                            <td className="py-3 text-fg">{appointment.artist?.user.email ?? '—'}</td>
+                            <td className="py-3 text-fg-secondary">{formatDateTime(appointment.startTime)}</td>
                             <td className="py-3">
-                              <span className="inline-flex items-center rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-300">
-                                {formatStatus(appointment.status)}
-                              </span>
+                              <StatusPill status={appointment.status} />
                             </td>
-                            <td className="py-3 text-neutral-400">
+                            <td className="py-3 text-fg-secondary">
                               {appointment.finalCostCents != null ? formatCents(appointment.finalCostCents) : '—'}
                             </td>
                           </tr>
@@ -611,14 +608,14 @@ export default function ClientDetail() {
                 )}
               </div>
 
-              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-base font-semibold text-white">Gift Cards</h2>
+                  <h2 className="text-base font-semibold text-fg">Gift Cards</h2>
                   {canIssueGiftCards && (
                     <button
                       type="button"
                       onClick={() => setShowIssueGiftCard(true)}
-                      className="flex items-center gap-2 rounded-full border border-neutral-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800"
+                      className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
                     >
                       <PlusIcon className="h-3.5 w-3.5" />
                       Issue Gift Card
@@ -626,13 +623,13 @@ export default function ClientDetail() {
                   )}
                 </div>
 
-                {client.giftCards.length === 0 && <p className="mt-4 text-sm text-neutral-400">No gift cards yet.</p>}
+                {client.giftCards.length === 0 && <p className="mt-4 text-sm text-fg-secondary">No gift cards yet.</p>}
 
                 {client.giftCards.length > 0 && (
                   <div className="mt-4 overflow-x-auto">
                     <table className="w-full text-left text-sm">
                       <thead>
-                        <tr className="text-xs text-neutral-500">
+                        <tr className="bg-surface-inset text-xs text-fg-muted">
                           <th className="pb-3 font-medium">Code</th>
                           <th className="pb-3 font-medium">Amount</th>
                           <th className="pb-3 font-medium">Status</th>
@@ -640,24 +637,22 @@ export default function ClientDetail() {
                           <th className="pb-3 font-medium">Attached</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-neutral-800">
+                      <tbody className="divide-y divide-border">
                         {client.giftCards.map((card) => (
                           <tr
                             key={card.id}
                             onClick={() => navigate(`/gift-cards/${card.id}`)}
-                            className="cursor-pointer hover:bg-neutral-800/40"
+                            className="cursor-pointer hover:bg-surface/40"
                           >
-                            <td className="py-3 font-mono text-xs text-white">{card.code}</td>
-                            <td className="py-3 text-neutral-400">{formatCents(card.amountCents)}</td>
+                            <td className="py-3 font-mono text-xs text-fg">{card.code}</td>
+                            <td className="py-3 text-fg-secondary">{formatCents(card.amountCents)}</td>
                             <td className="py-3">
-                              <span className="inline-flex items-center rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-300">
-                                {formatStatus(card.status)}
-                              </span>
+                              <StatusPill status={card.status} />
                             </td>
-                            <td className="py-3 text-neutral-400">
+                            <td className="py-3 text-fg-secondary">
                               {card.expiresAt ? formatDateTime(card.expiresAt) : 'No expiration'}
                             </td>
-                            <td className="py-3 text-neutral-400">{card.appointmentId ? 'Yes' : 'Unattached'}</td>
+                            <td className="py-3 text-fg-secondary">{card.appointmentId ? 'Yes' : 'Unattached'}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -666,31 +661,31 @@ export default function ClientDetail() {
                 )}
               </div>
 
-              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-                <h2 className="text-base font-semibold text-white">Deposit Forms</h2>
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                <h2 className="text-base font-semibold text-fg">Deposit Forms</h2>
 
-                {depositForms.length === 0 && <p className="mt-4 text-sm text-neutral-400">No deposit forms yet.</p>}
+                {depositForms.length === 0 && <p className="mt-4 text-sm text-fg-secondary">No deposit forms yet.</p>}
 
                 {depositForms.length > 0 && (
                   <div className="mt-4 overflow-x-auto">
                     <table className="w-full text-left text-sm">
                       <thead>
-                        <tr className="text-xs text-neutral-500">
+                        <tr className="bg-surface-inset text-xs text-fg-muted">
                           <th className="pb-3 font-medium">Deposit</th>
                           <th className="pb-3 font-medium">Total</th>
                           <th className="pb-3 font-medium">Signed</th>
                           <th className="pb-3 font-medium">Paid</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-neutral-800">
+                      <tbody className="divide-y divide-border">
                         {depositForms.map((inquiry) => (
                           <tr key={inquiry.id}>
-                            <td className="py-3 text-white">${inquiry.depositForm!.depositAmount}</td>
-                            <td className="py-3 text-neutral-400">${inquiry.depositForm!.totalCharged}</td>
-                            <td className="py-3 text-neutral-400">
+                            <td className="py-3 text-fg">${inquiry.depositForm!.depositAmount}</td>
+                            <td className="py-3 text-fg-secondary">${inquiry.depositForm!.totalCharged}</td>
+                            <td className="py-3 text-fg-secondary">
                               {inquiry.depositForm!.signedAt ? formatDateTime(inquiry.depositForm!.signedAt) : 'Pending'}
                             </td>
-                            <td className="py-3 text-neutral-400">
+                            <td className="py-3 text-fg-secondary">
                               {inquiry.depositForm!.paidManually
                                 ? inquiry.depositForm!.paidAt
                                   ? formatDateTime(inquiry.depositForm!.paidAt)
@@ -705,15 +700,15 @@ export default function ClientDetail() {
                 )}
               </div>
 
-              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-base font-semibold text-white">Consent Forms</h2>
+                  <h2 className="text-base font-semibold text-fg">Consent Forms</h2>
                   {canManage && !client.mergedIntoId && (
                     <button
                       type="button"
                       onClick={handleSendConsentForm}
                       disabled={sendingForm}
-                      className="flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                      className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                     >
                       <PlusIcon className="h-4 w-4" />
                       {sendingForm ? 'Sending…' : 'Send Consent Form'}
@@ -722,14 +717,14 @@ export default function ClientDetail() {
                 </div>
 
                 {sendFormError && (
-                  <div className="mt-4 rounded-lg border border-red-900 bg-red-950/40 px-3 py-2 text-sm text-red-400">
+                  <div className="mt-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
                     {sendFormError}
                   </div>
                 )}
 
                 {latestSigningUrl && (
-                  <div className="mt-4 rounded-lg border border-neutral-800 p-3">
-                    <p className="mb-2 text-xs text-neutral-500">
+                  <div className="mt-4 rounded-lg border border-border p-3">
+                    <p className="mb-2 text-xs text-fg-muted">
                       Share this link with the client — it expires in 48 hours.
                     </p>
                     <div className="flex items-center gap-2">
@@ -738,12 +733,12 @@ export default function ClientDetail() {
                         readOnly
                         value={latestSigningUrl}
                         onFocus={(event) => event.target.select()}
-                        className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:outline-none"
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:outline-none"
                       />
                       <button
                         type="button"
                         onClick={handleCopyLink}
-                        className="shrink-0 rounded-full border border-neutral-700 bg-neutral-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-700"
+                        className="shrink-0 rounded-full border border-border bg-surface px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface-raised"
                       >
                         {copied ? 'Copied!' : 'Copy Link'}
                       </button>
@@ -753,17 +748,18 @@ export default function ClientDetail() {
 
                 <div className="mt-4">
                   {client.consentForms.length === 0 && (
-                    <p className="text-sm text-neutral-400">No consent forms sent yet.</p>
+                    <p className="text-sm text-fg-secondary">No consent forms sent yet.</p>
                   )}
 
                   {client.consentForms.length > 0 && (
-                    <ul className="divide-y divide-neutral-800">
+                    <ul className="divide-y divide-border">
                       {client.consentForms.map((form) => (
                         <li key={form.id} className="flex items-center justify-between py-3 text-sm">
-                          <span className="text-neutral-400">Sent {formatDateTime(form.createdAt)}</span>
-                          <span className="inline-flex items-center rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-300">
-                            {form.signedAt ? `Signed ${formatDateTime(form.signedAt)}` : 'Pending'}
-                          </span>
+                          <span className="text-fg-secondary">Sent {formatDateTime(form.createdAt)}</span>
+                          <StatusPill
+                            status={form.signedAt ? 'SIGNED' : 'PENDING'}
+                            label={form.signedAt ? `Signed ${formatDateTime(form.signedAt)}` : 'Pending'}
+                          />
                         </li>
                       ))}
                     </ul>
@@ -771,27 +767,25 @@ export default function ClientDetail() {
                 </div>
               </div>
 
-              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-                <h2 className="text-base font-semibold text-white">Waivers</h2>
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                <h2 className="text-base font-semibold text-fg">Waivers</h2>
 
                 {client.liabilityWaivers.length === 0 && (
-                  <p className="mt-4 text-sm text-neutral-400">No waivers yet.</p>
+                  <p className="mt-4 text-sm text-fg-secondary">No waivers yet.</p>
                 )}
 
                 {client.liabilityWaivers.length > 0 && (
-                  <ul className="mt-4 divide-y divide-neutral-800">
+                  <ul className="mt-4 divide-y divide-border">
                     {client.liabilityWaivers.map((waiver) => (
                       <li
                         key={waiver.id}
                         onClick={() => navigate(`/appointments/${waiver.appointmentId}`)}
-                        className="flex cursor-pointer items-center justify-between py-3 text-sm hover:bg-neutral-800/40"
+                        className="flex cursor-pointer items-center justify-between py-3 text-sm hover:bg-surface/40"
                       >
-                        <span className="text-neutral-400">
+                        <span className="text-fg-secondary">
                           {waiver.signedAt ? `Signed ${formatDateTime(waiver.signedAt)}` : `Created ${formatDateTime(waiver.createdAt)}`}
                         </span>
-                        <span className="inline-flex items-center rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-300">
-                          {formatStatus(waiver.status)}
-                        </span>
+                        <StatusPill status={waiver.status} />
                       </li>
                     ))}
                   </ul>
@@ -815,7 +809,7 @@ export default function ClientDetail() {
         >
           <form onSubmit={handleIssueGiftCard}>
             <div>
-              <label className="mb-1 block text-sm font-medium text-neutral-300">Amount ($)</label>
+              <label className="mb-1 block text-sm font-medium text-fg-secondary">Amount ($)</label>
               <input
                 type="number"
                 min="0"
@@ -823,30 +817,30 @@ export default function ClientDetail() {
                 required
                 value={giftCardForm.amountDollars}
                 onChange={(e) => setGiftCardForm({ ...giftCardForm, amountDollars: e.target.value })}
-                className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               />
             </div>
 
             {user?.role === 'OWNER' && (
               <div className="mt-3">
-                <label className="mb-1 block text-sm font-medium text-neutral-300">
+                <label className="mb-1 block text-sm font-medium text-fg-secondary">
                   Custom expiration (optional, overrides studio default)
                 </label>
                 <input
                   type="date"
                   value={giftCardForm.expiresAt}
                   onChange={(e) => setGiftCardForm({ ...giftCardForm, expiresAt: e.target.value })}
-                  className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                 />
               </div>
             )}
 
-            {giftCardError && <p className="mt-3 text-sm text-red-400">{giftCardError}</p>}
+            {giftCardError && <p className="mt-3 text-sm text-danger">{giftCardError}</p>}
 
             <button
               type="submit"
               disabled={issuingGiftCard}
-              className="mt-5 w-full rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-600 disabled:opacity-60"
+              className="mt-5 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
             >
               {issuingGiftCard ? 'Issuing…' : 'Issue Gift Card'}
             </button>
@@ -863,22 +857,22 @@ export default function ClientDetail() {
             setMergeError(null)
           }}
         >
-          <p className="text-sm text-neutral-300">
+          <p className="text-sm text-fg-secondary">
             Merge <span className="font-semibold">{mergeTarget.firstName} {mergeTarget.lastName}</span> into{' '}
             <span className="font-semibold">{client?.firstName} {client?.lastName}</span>?
           </p>
 
-          <p className="mt-2 text-xs text-neutral-500">
+          <p className="mt-2 text-xs text-fg-muted">
             {mergeTarget.firstName} will be kept for history but marked merged, and won't appear in client lists
             anymore. This is not easily reversible.
           </p>
 
-          {mergePreviewLoading && <p className="mt-4 text-sm text-neutral-400">Checking what will move…</p>}
+          {mergePreviewLoading && <p className="mt-4 text-sm text-fg-secondary">Checking what will move…</p>}
 
           {mergePreview && (
-            <div className="mt-4 rounded-lg border border-neutral-800 p-3 text-sm">
-              <p className="mb-2 text-xs font-medium uppercase tracking-wider text-neutral-500">Will move to this client</p>
-              <ul className="space-y-1 text-neutral-300">
+            <div className="mt-4 rounded-lg border border-border p-3 text-sm">
+              <p className="mb-2 text-xs font-medium uppercase tracking-wider text-fg-muted">Will move to this client</p>
+              <ul className="space-y-1 text-fg-secondary">
                 <li>{mergePreview.inquiries} inquir{mergePreview.inquiries === 1 ? 'y' : 'ies'}</li>
                 <li>{mergePreview.appointments} appointment{mergePreview.appointments === 1 ? '' : 's'}</li>
                 <li>{mergePreview.consentForms} consent form{mergePreview.consentForms === 1 ? '' : 's'}</li>
@@ -887,13 +881,13 @@ export default function ClientDetail() {
             </div>
           )}
 
-          {mergeError && <p className="mt-3 text-sm text-red-400">{mergeError}</p>}
+          {mergeError && <p className="mt-3 text-sm text-danger">{mergeError}</p>}
 
           <button
             type="button"
             onClick={handleConfirmMerge}
             disabled={merging || mergePreviewLoading}
-            className="mt-5 w-full rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-600 disabled:opacity-60"
+            className="mt-5 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
           >
             {merging ? 'Merging…' : 'Confirm Merge'}
           </button>

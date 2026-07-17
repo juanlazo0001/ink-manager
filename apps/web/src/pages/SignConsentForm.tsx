@@ -144,8 +144,8 @@ export default function SignConsentForm() {
               <canvas ref={canvasRef} className="h-40 w-full touch-none" />
             </div>
 
-            {signatureEmptyError && <p className="mt-2 text-sm text-red-600">Please sign before submitting.</p>}
-            {submitError && <p className="mt-2 text-sm text-red-600">{submitError}</p>}
+            {signatureEmptyError && <p className="mt-2 text-sm text-danger">Please sign before submitting.</p>}
+            {submitError && <p className="mt-2 text-sm text-danger">{submitError}</p>}
 
             <div className="mt-4 flex items-center gap-3">
               <button
@@ -159,7 +159,7 @@ export default function SignConsentForm() {
                 type="button"
                 onClick={handleSubmit}
                 disabled={submitting}
-                className="flex-1 rounded-full bg-gray-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-gray-800 disabled:opacity-60"
+                className="flex-1 rounded-full bg-gray-900 px-4 py-2 text-sm font-medium text-fg transition hover:bg-gray-800 disabled:opacity-60"
               >
                 {submitting ? 'Submitting…' : 'Submit'}
               </button>

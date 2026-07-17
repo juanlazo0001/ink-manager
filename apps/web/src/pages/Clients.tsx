@@ -83,22 +83,22 @@ export default function Clients() {
   )
 
   return (
-    <div className="flex min-h-screen bg-neutral-900 text-white">
+    <div className="flex min-h-screen bg-bg text-fg">
       <Sidebar />
 
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-7xl px-6 py-6 sm:px-10 sm:py-8">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-bold text-white sm:text-3xl">Clients</h1>
-              <p className="mt-1 text-sm text-neutral-400">Everyone who's booked with your studio.</p>
+              <h1 className="text-2xl font-bold text-fg sm:text-3xl">Clients</h1>
+              <p className="mt-1 text-sm text-fg-secondary">Everyone who's booked with your studio.</p>
             </div>
 
             {canManage && (
               <button
                 type="button"
                 onClick={() => setShowAddModal(true)}
-                className="flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600"
+                className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover"
               >
                 <PlusIcon className="h-4 w-4" />
                 Add Client
@@ -106,22 +106,22 @@ export default function Clients() {
             )}
           </div>
 
-          <div className="mt-6 flex items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white sm:max-w-xs">
-            <SearchIcon className="h-4 w-4 text-neutral-500" />
+          <div className="mt-6 flex items-center gap-2 rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg sm:max-w-xs">
+            <SearchIcon className="h-4 w-4 text-fg-muted" />
             <input
               type="text"
               placeholder="Search by name"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              className="w-full bg-transparent placeholder:text-neutral-500 focus:outline-none"
+              className="w-full bg-transparent placeholder:text-fg-muted focus:outline-none"
             />
           </div>
 
-          <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-            {errorMessage && <p className="text-sm text-red-400">{errorMessage}</p>}
+          <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+            {errorMessage && <p className="text-sm text-danger">{errorMessage}</p>}
 
             {!errorMessage && !isLoading && filteredClients?.length === 0 && (
-              <p className="text-sm text-neutral-400">
+              <p className="text-sm text-fg-secondary">
                 {search ? 'No clients match your search.' : 'No clients yet. Add your first one to get started.'}
               </p>
             )}
@@ -130,7 +130,7 @@ export default function Clients() {
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <thead>
-                    <tr className="text-xs text-neutral-500">
+                    <tr className="bg-surface-inset text-xs text-fg-muted">
                       <th className="pb-3 font-medium">Name</th>
                       <th className="pb-3 font-medium">Email</th>
                       <th className="pb-3 font-medium">Phone</th>
@@ -139,18 +139,18 @@ export default function Clients() {
                   {isLoading ? (
                     <SkeletonTableRows rows={6} columns={3} />
                   ) : (
-                    <tbody className="divide-y divide-neutral-800">
+                    <tbody className="divide-y divide-border">
                       {filteredClients!.map((client) => (
                         <tr
                           key={client.id}
                           onClick={() => navigate(`/clients/${client.id}`)}
-                          className="cursor-pointer hover:bg-neutral-800/40"
+                          className="cursor-pointer hover:bg-surface/40"
                         >
-                          <td className="py-3 text-white">
+                          <td className="py-3 text-fg">
                             {client.firstName} {client.lastName}
                           </td>
-                          <td className="py-3 text-neutral-400">{client.email ?? '—'}</td>
-                          <td className="py-3 text-neutral-400">{client.phone ?? '—'}</td>
+                          <td className="py-3 text-fg-secondary">{client.email ?? '—'}</td>
+                          <td className="py-3 text-fg-secondary">{client.phone ?? '—'}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -166,14 +166,14 @@ export default function Clients() {
         <Modal title="Add Client" onClose={() => setShowAddModal(false)}>
           <form onSubmit={handleAddClient}>
             {formError && (
-              <div className="mb-4 rounded-lg border border-red-900 bg-red-950/40 px-3 py-2 text-sm text-red-400">
+              <div className="mb-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
                 {formError}
               </div>
             )}
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label htmlFor="firstName" className="mb-1 block text-sm font-medium text-neutral-300">
+                <label htmlFor="firstName" className="mb-1 block text-sm font-medium text-fg-secondary">
                   First Name
                 </label>
                 <input
@@ -182,12 +182,12 @@ export default function Clients() {
                   required
                   value={form.firstName}
                   onChange={(event) => setForm({ ...form, firstName: event.target.value })}
-                  className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                 />
               </div>
 
               <div>
-                <label htmlFor="lastName" className="mb-1 block text-sm font-medium text-neutral-300">
+                <label htmlFor="lastName" className="mb-1 block text-sm font-medium text-fg-secondary">
                   Last Name
                 </label>
                 <input
@@ -196,13 +196,13 @@ export default function Clients() {
                   required
                   value={form.lastName}
                   onChange={(event) => setForm({ ...form, lastName: event.target.value })}
-                  className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                 />
               </div>
             </div>
 
             <div className="mt-3">
-              <label htmlFor="email" className="mb-1 block text-sm font-medium text-neutral-300">
+              <label htmlFor="email" className="mb-1 block text-sm font-medium text-fg-secondary">
                 Email
               </label>
               <input
@@ -210,12 +210,12 @@ export default function Clients() {
                 type="email"
                 value={form.email}
                 onChange={(event) => setForm({ ...form, email: event.target.value })}
-                className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               />
             </div>
 
             <div className="mt-3">
-              <label htmlFor="phone" className="mb-1 block text-sm font-medium text-neutral-300">
+              <label htmlFor="phone" className="mb-1 block text-sm font-medium text-fg-secondary">
                 Phone
               </label>
               <input
@@ -223,14 +223,14 @@ export default function Clients() {
                 type="tel"
                 value={form.phone}
                 onChange={(event) => setForm({ ...form, phone: event.target.value })}
-                className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               />
             </div>
 
             <button
               type="submit"
               disabled={addClient.isPending}
-              className="mt-5 w-full rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-600 disabled:opacity-60"
+              className="mt-5 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
             >
               {addClient.isPending ? 'Adding…' : 'Add Client'}
             </button>

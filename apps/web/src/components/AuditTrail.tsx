@@ -41,37 +41,37 @@ export default function AuditTrail({ entityType, entityId }: { entityType: strin
   }, [entityType, entityId])
 
   return (
-    <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-      <h2 className="text-base font-semibold text-white">Activity History</h2>
+    <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+      <h2 className="text-base font-semibold text-fg">Activity History</h2>
 
-      {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
+      {error && <p className="mt-4 text-sm text-danger">{error}</p>}
 
-      {!error && logs === null && <p className="mt-4 text-sm text-neutral-400">Loading…</p>}
+      {!error && logs === null && <p className="mt-4 text-sm text-fg-secondary">Loading…</p>}
 
       {!error && logs !== null && logs.length === 0 && (
-        <p className="mt-4 text-sm text-neutral-400">No activity recorded yet.</p>
+        <p className="mt-4 text-sm text-fg-secondary">No activity recorded yet.</p>
       )}
 
       {!error && logs !== null && logs.length > 0 && (
         <ul className="mt-4 space-y-3">
           {logs.map((log) => (
-            <li key={log.id} className="rounded-lg border border-neutral-800 p-3 text-sm">
+            <li key={log.id} className="rounded-lg border border-border p-3 text-sm">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-white">
+                <span className="text-fg">
                   <span className="font-medium">{log.actorUser?.name || log.actorUser?.email || 'System'}</span>{' '}
-                  <span className="text-neutral-400">{log.action}</span>
+                  <span className="text-fg-secondary">{log.action}</span>
                 </span>
-                <span className="text-xs text-neutral-500">{formatDateTime(log.createdAt)}</span>
+                <span className="text-xs text-fg-muted">{formatDateTime(log.createdAt)}</span>
               </div>
 
               {log.changes && Object.keys(log.changes).length > 0 && (
-                <ul className="mt-2 space-y-1 text-xs text-neutral-400">
+                <ul className="mt-2 space-y-1 text-xs text-fg-secondary">
                   {Object.entries(log.changes).map(([field, value]) => (
                     <li key={field}>
-                      <span className="font-medium text-neutral-300">{field}:</span>{' '}
+                      <span className="font-medium text-fg-secondary">{field}:</span>{' '}
                       {isFromToShape(value) ? (
                         <>
-                          {formatValue(value.from)} <span className="text-neutral-600">→</span> {formatValue(value.to)}
+                          {formatValue(value.from)} <span className="text-fg-muted">→</span> {formatValue(value.to)}
                         </>
                       ) : (
                         formatValue(value)

@@ -16,8 +16,8 @@ interface PrefillPayload {
 }
 
 const INPUT_CLASS =
-  'mt-1 w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600'
-const LABEL_CLASS = 'block text-sm font-medium text-neutral-300'
+  'mt-1 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
+const LABEL_CLASS = 'block text-sm font-medium text-fg-secondary'
 
 interface PublicArtist {
   id: string
@@ -98,7 +98,7 @@ function ImageUploadSection({
   return (
     <div>
       <label className={LABEL_CLASS}>{label}</label>
-      <p className="mt-0.5 text-xs text-neutral-500">{hint}</p>
+      <p className="mt-0.5 text-xs text-fg-muted">{hint}</p>
 
       <input
         type="file"
@@ -108,28 +108,28 @@ function ImageUploadSection({
           handleFiles(e.target.files)
           e.target.value = ''
         }}
-        className="mt-2 block w-full text-sm text-neutral-400 file:mr-3 file:rounded-full file:border file:border-neutral-700 file:bg-neutral-700 file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-neutral-600"
+        className="mt-2 block w-full text-sm text-fg-secondary file:mr-3 file:rounded-full file:border file:border-border file:bg-surface file:px-4 file:py-2 file:text-sm file:font-medium file:text-fg hover:file:bg-surface-raised"
       />
 
       {items.length > 0 && (
         <div className="mt-3 grid grid-cols-3 gap-3 sm:grid-cols-4">
           {items.map((item) => (
-            <div key={item.id} className="relative aspect-square overflow-hidden rounded-lg border border-neutral-800">
+            <div key={item.id} className="relative aspect-square overflow-hidden rounded-lg border border-border">
               <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
               {item.status === 'uploading' && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-xs text-white">
+                <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-xs text-fg">
                   Uploading…
                 </div>
               )}
               {item.status === 'error' && (
-                <div className="absolute inset-0 flex items-center justify-center bg-red-950/80 p-1 text-center text-[10px] text-red-300">
+                <div className="absolute inset-0 flex items-center justify-center bg-danger/80 p-1 text-center text-[10px] text-fg">
                   {item.error ?? 'Upload failed'}
                 </div>
               )}
               <button
                 type="button"
                 onClick={() => handleRemove(item.id)}
-                className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-xs text-white hover:bg-black/80"
+                className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-xs text-fg hover:bg-black/80"
                 aria-label="Remove image"
               >
                 ×
@@ -293,10 +293,10 @@ export default function IntakeForm() {
 
   if (!studioSlug || studioCheck === 'invalid') {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-neutral-900 px-4 py-10 text-white">
-        <div className="w-full max-w-lg rounded-2xl border border-neutral-800 bg-neutral-900 p-8 text-center">
-          <h1 className="text-xl font-semibold text-white">We couldn't find this studio</h1>
-          <p className="mt-2 text-sm text-neutral-400">
+      <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
+        <div className="w-full max-w-lg rounded-2xl border border-border bg-surface p-8 text-center">
+          <h1 className="text-xl font-semibold text-fg">We couldn't find this studio</h1>
+          <p className="mt-2 text-sm text-fg-secondary">
             Please double-check the link you were given, or contact the studio directly.
           </p>
         </div>
@@ -306,18 +306,18 @@ export default function IntakeForm() {
 
   if (studioCheck === 'loading') {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-neutral-900 px-4 py-10 text-white">
-        <p className="text-sm text-neutral-400">Loading…</p>
+      <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
+        <p className="text-sm text-fg-secondary">Loading…</p>
       </div>
     )
   }
 
   if (submitted) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-neutral-900 px-4 py-10 text-white">
-        <div className="w-full max-w-lg rounded-2xl border border-neutral-800 bg-neutral-900 p-8 text-center">
-          <h1 className="text-xl font-semibold text-white">Thanks — your inquiry is in!</h1>
-          <p className="mt-2 text-sm text-neutral-400">
+      <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
+        <div className="w-full max-w-lg rounded-2xl border border-border bg-surface p-8 text-center">
+          <h1 className="text-xl font-semibold text-fg">Thanks — your inquiry is in!</h1>
+          <p className="mt-2 text-sm text-fg-secondary">
             We've received your submission and someone from the studio will reach out soon.
           </p>
         </div>
@@ -326,12 +326,12 @@ export default function IntakeForm() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-neutral-900 px-4 py-10 text-white">
-      <div className="w-full max-w-2xl rounded-2xl border border-neutral-800 bg-neutral-900 p-8">
-        <h1 className="text-2xl font-bold text-white">Tattoo Inquiry</h1>
-        <p className="mt-1 text-sm text-neutral-400">Tell us about the tattoo you have in mind.</p>
+    <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
+      <div className="w-full max-w-2xl rounded-2xl border border-border bg-surface p-8">
+        <h1 className="text-2xl font-bold text-fg">Tattoo Inquiry</h1>
+        <p className="mt-1 text-sm text-fg-secondary">Tell us about the tattoo you have in mind.</p>
 
-        <div className="mt-4 rounded-lg border border-amber-900/50 bg-amber-950/30 p-3 text-xs text-amber-300">
+        <div className="mt-4 rounded-lg border border-warning/30 bg-warning/10 p-3 text-xs text-warning">
           You must be 18 years or older to receive a tattoo. Submitting this form does not confirm an appointment —
           it starts a conversation with the studio.
         </div>
@@ -374,7 +374,7 @@ export default function IntakeForm() {
             <div>
               <label className={LABEL_CLASS}>Phone</label>
               <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className={INPUT_CLASS} />
-              <p className="mt-1 text-[11px] leading-snug text-neutral-500">
+              <p className="mt-1 text-[11px] leading-snug text-fg-muted">
                 By providing your phone number, you consent to receive SMS messages about your inquiry and
                 appointment. Message and data rates may apply. Reply STOP to opt out.
               </p>
@@ -408,7 +408,7 @@ export default function IntakeForm() {
             <span className={LABEL_CLASS}>Color or Black &amp; Grey? *</span>
             <div className="mt-2 flex gap-4">
               {['Color', 'Black & Grey'].map((option) => (
-                <label key={option} className="flex items-center gap-2 text-sm text-neutral-300">
+                <label key={option} className="flex items-center gap-2 text-sm text-fg-secondary">
                   <input
                     type="radio"
                     name="colorOrBlackGrey"
@@ -416,7 +416,7 @@ export default function IntakeForm() {
                     checked={colorOrBlackGrey === option}
                     onChange={(e) => setColorOrBlackGrey(e.target.value)}
                     required
-                    className="accent-neutral-400"
+                    className="accent-accent"
                   />
                   {option}
                 </label>
@@ -456,7 +456,7 @@ export default function IntakeForm() {
                 { value: 'yes', label: 'Yes' },
                 { value: 'no', label: 'No' },
               ].map((option) => (
-                <label key={option.value} className="flex items-center gap-2 text-sm text-neutral-300">
+                <label key={option.value} className="flex items-center gap-2 text-sm text-fg-secondary">
                   <input
                     type="radio"
                     name="hasBeenTattooedBefore"
@@ -464,7 +464,7 @@ export default function IntakeForm() {
                     checked={hasBeenTattooedBefore === option.value}
                     onChange={(e) => setHasBeenTattooedBefore(e.target.value)}
                     required
-                    className="accent-neutral-400"
+                    className="accent-accent"
                   />
                   {option.label}
                 </label>
@@ -524,7 +524,7 @@ export default function IntakeForm() {
           />
 
           {submitError && (
-            <div className="rounded-lg border border-red-900 bg-red-950/40 px-3 py-2 text-sm text-red-400">
+            <div className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
               {submitError}
             </div>
           )}
@@ -532,7 +532,7 @@ export default function IntakeForm() {
           <button
             type="submit"
             disabled={submitting || imagesUploading}
-            className="w-full rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-600 disabled:opacity-60"
+            className="w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
           >
             {submitting ? 'Submitting…' : 'Submit inquiry'}
           </button>

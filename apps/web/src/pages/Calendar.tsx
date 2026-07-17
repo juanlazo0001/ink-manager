@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
 import { SkeletonTableRows } from '../components/Skeleton'
+import StatusPill from '../components/StatusPill'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatStatus } from '../lib/format'
 import { useUserProfile } from '../context/useUserProfile'
@@ -202,15 +203,15 @@ export default function Calendar() {
   const filteredAppointments = appointments?.filter((a) => statusFilter === 'ALL' || a.status === statusFilter)
 
   return (
-    <div className="flex min-h-screen bg-neutral-900 text-white">
+    <div className="flex min-h-screen bg-bg text-fg">
       <Sidebar />
 
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-7xl px-6 py-6 sm:px-10 sm:py-8">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-bold text-white sm:text-3xl">Calendar</h1>
-              <p className="mt-1 text-sm text-neutral-400">
+              <h1 className="text-2xl font-bold text-fg sm:text-3xl">Calendar</h1>
+              <p className="mt-1 text-sm text-fg-secondary">
                 {canManage || canCreate ? 'Every booking across your studio.' : 'Your upcoming and past appointments.'}
               </p>
             </div>
@@ -219,7 +220,7 @@ export default function Calendar() {
               <button
                 type="button"
                 onClick={() => setShowAddModal(true)}
-                className="flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600"
+                className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover"
               >
                 <PlusIcon className="h-4 w-4" />
                 New Appointment
@@ -231,7 +232,7 @@ export default function Calendar() {
             <select
               value={statusFilter}
               onChange={(event) => setStatusFilter(event.target.value)}
-              className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+              className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
             >
               <option value="ALL">All statuses</option>
               {APPOINTMENT_STATUSES.map((status) => (
@@ -242,17 +243,17 @@ export default function Calendar() {
             </select>
           </div>
 
-          <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
+          <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
             {actionError && (
-              <div className="mb-4 rounded-lg border border-red-900 bg-red-950/40 px-3 py-2 text-sm text-red-400">
+              <div className="mb-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
                 {actionError}
               </div>
             )}
 
-            {errorMessage && <p className="text-sm text-red-400">{errorMessage}</p>}
+            {errorMessage && <p className="text-sm text-danger">{errorMessage}</p>}
 
             {!errorMessage && !isLoading && filteredAppointments?.length === 0 && (
-              <p className="text-sm text-neutral-400">
+              <p className="text-sm text-fg-secondary">
                 {statusFilter !== 'ALL' ? 'No appointments match this filter.' : 'No appointments yet.'}
               </p>
             )}
@@ -261,7 +262,7 @@ export default function Calendar() {
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <thead>
-                    <tr className="text-xs text-neutral-500">
+                    <tr className="bg-surface-inset text-xs text-fg-muted">
                       <th className="pb-3 font-medium">Client Name</th>
                       <th className="pb-3 font-medium">Artist</th>
                       <th className="pb-3 font-medium">Start Time</th>
@@ -272,28 +273,28 @@ export default function Calendar() {
                   {isLoading ? (
                     <SkeletonTableRows rows={6} columns={5} />
                   ) : (
-                  <tbody className="divide-y divide-neutral-800">
+                  <tbody className="divide-y divide-border">
                     {filteredAppointments!.map((appointment) => (
                       <tr
                         key={appointment.id}
                         onClick={() => navigate(`/appointments/${appointment.id}`)}
-                        className="cursor-pointer hover:bg-neutral-800/40"
+                        className="cursor-pointer hover:bg-surface/40"
                       >
-                        <td className="py-3 text-white">
+                        <td className="py-3 text-fg">
                           {appointment.client
                             ? `${appointment.client.firstName} ${appointment.client.lastName}`
                             : '—'}
                         </td>
-                        <td className="py-3 text-neutral-400">{appointment.artist?.user.email ?? '—'}</td>
-                        <td className="py-3 text-neutral-400">{formatDateTime(appointment.startTime)}</td>
-                        <td className="py-3 text-neutral-400">{formatDateTime(appointment.endTime)}</td>
+                        <td className="py-3 text-fg-secondary">{appointment.artist?.user.email ?? '—'}</td>
+                        <td className="py-3 text-fg-secondary">{formatDateTime(appointment.startTime)}</td>
+                        <td className="py-3 text-fg-secondary">{formatDateTime(appointment.endTime)}</td>
                         <td className="py-3" onClick={(event) => event.stopPropagation()}>
                           {canManage ? (
                             <select
                               value={appointment.status}
                               disabled={updatingId === appointment.id}
                               onChange={(event) => handleStatusChange(appointment.id, event.target.value)}
-                              className="rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1 text-xs font-medium text-neutral-300 focus:outline-none focus:ring-1 focus:ring-neutral-600 disabled:opacity-50"
+                              className="rounded-full border border-border bg-bg px-3 py-1 text-xs font-medium text-fg-secondary focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-50"
                             >
                               {APPOINTMENT_STATUSES.map((status) => (
                                 <option key={status} value={status}>
@@ -302,9 +303,7 @@ export default function Calendar() {
                               ))}
                             </select>
                           ) : (
-                            <span className="inline-flex items-center rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-300">
-                              {formatStatus(appointment.status)}
-                            </span>
+                            <StatusPill status={appointment.status} />
                           )}
                         </td>
                       </tr>
@@ -322,21 +321,21 @@ export default function Calendar() {
         <Modal title="New Appointment" onClose={() => setShowAddModal(false)}>
           <form onSubmit={handleCreateAppointment}>
             {formError && (
-              <div className="mb-4 rounded-lg border border-red-900 bg-red-950/40 px-3 py-2 text-sm text-red-400">
+              <div className="mb-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
                 {formError}
               </div>
             )}
 
             {clientOptions && clientOptions.length === 0 && (
-              <p className="mb-3 text-sm text-neutral-400">No clients yet — add one from the Clients page first.</p>
+              <p className="mb-3 text-sm text-fg-secondary">No clients yet — add one from the Clients page first.</p>
             )}
 
             {artistOptions && artistOptions.length === 0 && (
-              <p className="mb-3 text-sm text-neutral-400">No artists yet — add one first.</p>
+              <p className="mb-3 text-sm text-fg-secondary">No artists yet — add one first.</p>
             )}
 
             <div className="mb-3">
-              <label htmlFor="clientId" className="mb-1 block text-sm font-medium text-neutral-300">
+              <label htmlFor="clientId" className="mb-1 block text-sm font-medium text-fg-secondary">
                 Client
               </label>
               <select
@@ -344,7 +343,7 @@ export default function Calendar() {
                 required
                 value={form.clientId}
                 onChange={(event) => handleClientChange(event.target.value)}
-                className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               >
                 <option value="" disabled>
                   {clientOptions === undefined ? 'Loading…' : 'Select a client'}
@@ -360,18 +359,18 @@ export default function Calendar() {
             {form.clientId && (
               <>
                 <div className="mb-3">
-                  <label htmlFor="inquiryId" className="mb-1 block text-sm font-medium text-neutral-300">
+                  <label htmlFor="inquiryId" className="mb-1 block text-sm font-medium text-fg-secondary">
                     Project (inquiry)
                   </label>
                   {availableInquiries.length === 0 ? (
-                    <p className="text-sm text-neutral-400">This client has no inquiries yet.</p>
+                    <p className="text-sm text-fg-secondary">This client has no inquiries yet.</p>
                   ) : (
                     <select
                       id="inquiryId"
                       required
                       value={form.inquiryId}
                       onChange={(event) => setForm({ ...form, inquiryId: event.target.value })}
-                      className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                      className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                     >
                       <option value="" disabled>
                         Select the project this session is for
@@ -388,13 +387,13 @@ export default function Calendar() {
                 </div>
 
                 <div className="mb-3">
-                  <label htmlFor="giftCardId" className="mb-1 block text-sm font-medium text-neutral-300">
+                  <label htmlFor="giftCardId" className="mb-1 block text-sm font-medium text-fg-secondary">
                     Gift card (deposit)
                   </label>
                   {availableGiftCards.length === 0 ? (
-                    <p className="text-sm text-neutral-400">
+                    <p className="text-sm text-fg-secondary">
                       This client has no available gift card — collect a deposit or{' '}
-                      <Link to={`/clients/${form.clientId}`} className="underline hover:text-white">
+                      <Link to={`/clients/${form.clientId}`} className="underline hover:text-fg">
                         issue one from their profile
                       </Link>{' '}
                       first.
@@ -405,7 +404,7 @@ export default function Calendar() {
                       required
                       value={form.giftCardId}
                       onChange={(event) => setForm({ ...form, giftCardId: event.target.value })}
-                      className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                      className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                     >
                       <option value="" disabled>
                         Select a gift card to attach
@@ -423,7 +422,7 @@ export default function Calendar() {
             )}
 
             <div className="mb-3">
-              <label htmlFor="artistId" className="mb-1 block text-sm font-medium text-neutral-300">
+              <label htmlFor="artistId" className="mb-1 block text-sm font-medium text-fg-secondary">
                 Artist
               </label>
               <select
@@ -431,7 +430,7 @@ export default function Calendar() {
                 required
                 value={form.artistId}
                 onChange={(event) => setForm({ ...form, artistId: event.target.value })}
-                className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               >
                 <option value="" disabled>
                   {artistOptions === undefined ? 'Loading…' : 'Select an artist'}
@@ -446,7 +445,7 @@ export default function Calendar() {
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label htmlFor="startTime" className="mb-1 block text-sm font-medium text-neutral-300">
+                <label htmlFor="startTime" className="mb-1 block text-sm font-medium text-fg-secondary">
                   Start
                 </label>
                 <input
@@ -455,12 +454,12 @@ export default function Calendar() {
                   required
                   value={form.startTime}
                   onChange={(event) => setForm({ ...form, startTime: event.target.value })}
-                  className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                 />
               </div>
 
               <div>
-                <label htmlFor="endTime" className="mb-1 block text-sm font-medium text-neutral-300">
+                <label htmlFor="endTime" className="mb-1 block text-sm font-medium text-fg-secondary">
                   End
                 </label>
                 <input
@@ -469,13 +468,13 @@ export default function Calendar() {
                   required
                   value={form.endTime}
                   onChange={(event) => setForm({ ...form, endTime: event.target.value })}
-                  className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                 />
               </div>
             </div>
 
             <div className="mt-3">
-              <label htmlFor="notes" className="mb-1 block text-sm font-medium text-neutral-300">
+              <label htmlFor="notes" className="mb-1 block text-sm font-medium text-fg-secondary">
                 Notes
               </label>
               <textarea
@@ -483,7 +482,7 @@ export default function Calendar() {
                 rows={3}
                 value={form.notes}
                 onChange={(event) => setForm({ ...form, notes: event.target.value })}
-                className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               />
             </div>
 
@@ -495,7 +494,7 @@ export default function Calendar() {
                 availableInquiries.length === 0 ||
                 availableGiftCards.length === 0
               }
-              className="mt-5 w-full rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-600 disabled:opacity-60"
+              className="mt-5 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
             >
               {createAppointment.isPending ? 'Scheduling…' : 'Create Appointment'}
             </button>

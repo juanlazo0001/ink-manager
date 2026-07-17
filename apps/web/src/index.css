@@ -5,13 +5,80 @@
 @import "@fontsource/inter/600.css";
 @import "@fontsource/inter/700.css";
 
+/* UI-2 design tokens -- one place, consumed everywhere via Tailwind
+   utilities generated from these custom properties (bg-surface,
+   text-secondary, border-border, bg-success/15, etc.). No hardcoded hex
+   values in components; if a new color is needed, it goes here first.
+   Reference: public/desktop/screenshots/layout v3.jpg -- near-black
+   canvas, charcoal cards, one lime accent. */
 @theme {
   --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+
+  /* Surfaces */
+  --color-bg: #0a0a0b;
+  --color-surface: #17171a;
+  --color-surface-raised: #1e1e22;
+  --color-surface-inset: #121214;
+
+  /* Borders -- 1px hairlines, white at low alpha per the reference's
+     barely-there card edges. */
+  --color-border: #ffffff14; /* ~8% */
+  --color-border-strong: #ffffff26; /* ~15%, hover/focus-adjacent emphasis */
+
+  /* Text -- never pure white on pure black. Named fg/fg-secondary/fg-muted
+     (not text-primary/etc) so the generated utility reads text-fg rather
+     than the doubled-up text-text-primary. fg-muted is deliberately
+     lighter than the written spec's ~#6B6B74 suggestion: that value
+     computes to ~3.4:1 against --color-surface, below WCAG AA's 4.5:1 for
+     normal text. #8b8b94 computes to ~5.3:1 -- see REPORT.md. */
+  --color-fg: #f4f4f5;
+  --color-fg-secondary: #a1a1aa;
+  --color-fg-muted: #8b8b94;
+
+  /* Accent -- chartreuse/lime, on-brand for Black Hive. One primary
+     action per view; not sprayed around. accent-fg is the dark text/icon
+     color used ON TOP of an accent-filled surface (buttons, active nav
+     pill) -- the accent color itself is high-contrast enough to also be
+     used as small text directly on bg/surface. */
+  --color-accent: #c9f031;
+  --color-accent-fg: #0a0a0b;
+  --color-accent-hover: #b8dd25;
+
+  /* Semantic status -- used as bg-{name}/15 (translucent tint) +
+     text-{name} (solid), per the reference's pill treatment. Mapping is
+     documented in components/StatusPill.tsx, not scattered per-page. */
+  --color-success: #4ade80;
+  --color-info: #60a5fa;
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
+  --color-neutral: #b4b4bd;
 }
 
 @layer base {
   body {
-    @apply bg-neutral-900 text-white;
+    @apply bg-bg text-fg;
+  }
+
+  /* Visible focus state on every interactive element, not just the ones
+     that happen to get a bespoke focus:ring class -- the accessibility
+     floor calls for this everywhere, so it's a base-layer default rather
+     than something each component has to remember to add individually. */
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  /* Native <select> chrome ignores background-color for its arrow/spinner
+     region on Windows, leaving a pale swatch on the dark theme no matter
+     what className is passed. One global fix instead of touching every
+     page's select markup: drop native appearance, draw our own chevron. */
+  select {
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%238b8b94' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8l4 4 4-4'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.75rem center;
+    background-size: 1rem;
+    padding-right: 2.25rem;
   }
 }
 

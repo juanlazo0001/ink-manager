@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import AuditTrail from '../components/AuditTrail'
 import Modal from '../components/Modal'
+import StatusPill from '../components/StatusPill'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatDuration, formatStatus } from '../lib/format'
 import { ArrowLeftIcon, MessageIcon, PencilIcon, PlusIcon } from '../components/icons'
@@ -90,15 +91,15 @@ function isCardAvailable(card: GiftCardOption): boolean {
 function DetailField({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">{label}</p>
-      <p className="mt-1 text-sm text-white">{value}</p>
+      <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{label}</p>
+      <p className="mt-1 text-sm text-fg">{value}</p>
     </div>
   )
 }
 
 function ImageGrid({ images }: { images: string[] }) {
   if (images.length === 0) {
-    return <p className="text-sm text-neutral-400">None uploaded.</p>
+    return <p className="text-sm text-fg-secondary">None uploaded.</p>
   }
 
   return (
@@ -109,7 +110,7 @@ function ImageGrid({ images }: { images: string[] }) {
           href={url}
           target="_blank"
           rel="noreferrer"
-          className="block aspect-square overflow-hidden rounded-lg border border-neutral-800"
+          className="block aspect-square overflow-hidden rounded-lg border border-border"
         >
           <img src={url} alt="" className="h-full w-full object-cover transition hover:opacity-80" />
         </a>
@@ -545,7 +546,7 @@ export default function InquiryDetail() {
       : null
 
   return (
-    <div className="flex min-h-screen bg-neutral-900 text-white">
+    <div className="flex min-h-screen bg-bg text-fg">
       <Sidebar />
 
       <div className="min-w-0 flex-1 overflow-y-auto">
@@ -556,29 +557,29 @@ export default function InquiryDetail() {
                 ? '/inquiries?tab=projects'
                 : '/inquiries'
             }
-            className="inline-flex items-center gap-2 text-sm text-neutral-400 hover:text-white"
+            className="inline-flex items-center gap-2 text-sm text-fg-secondary hover:text-fg"
           >
             <ArrowLeftIcon className="h-4 w-4" />
             Back to {inquiry && ['SCHEDULING', 'WAITLISTED', 'CONFIRMED'].includes(inquiry.status) ? 'Projects' : 'Inquiries'}
           </Link>
 
           {error && (
-            <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-              <p className="text-sm text-red-400">{error}</p>
+            <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+              <p className="text-sm text-danger">{error}</p>
             </div>
           )}
 
-          {!error && !inquiry && <p className="mt-6 text-sm text-neutral-400">Loading inquiry…</p>}
+          {!error && !inquiry && <p className="mt-6 text-sm text-fg-secondary">Loading inquiry…</p>}
 
           {!error && inquiry && (
             <>
-              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <h1 className="text-xl font-bold text-white">
+                    <h1 className="text-xl font-bold text-fg">
                       {inquiry.client.firstName} {inquiry.client.lastName}
                     </h1>
-                    <p className="mt-1 text-sm text-neutral-400">
+                    <p className="mt-1 text-sm text-fg-secondary">
                       Submitted {formatDateTime(inquiry.createdAt)} via {formatStatus(inquiry.channel)}
                     </p>
                   </div>
@@ -588,7 +589,7 @@ export default function InquiryDetail() {
                         type="button"
                         onClick={handleMessage}
                         disabled={startingConversation}
-                        className="flex items-center gap-2 rounded-full border border-neutral-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800 disabled:opacity-60"
+                        className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:opacity-60"
                       >
                         <MessageIcon className="h-3.5 w-3.5" />
                         Message
@@ -603,14 +604,12 @@ export default function InquiryDetail() {
                           setShareSent(false)
                           setShowShareModal(true)
                         }}
-                        className="flex items-center gap-2 rounded-full border border-neutral-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800"
+                        className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
                       >
                         Share with artist
                       </button>
                     )}
-                    <span className="inline-flex items-center rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-300">
-                      {formatStatus(inquiry.status)}
-                    </span>
+                    <StatusPill status={inquiry.status} />
                   </div>
                 </div>
 
@@ -623,7 +622,7 @@ export default function InquiryDetail() {
                   <button
                     type="button"
                     onClick={() => openPanel(taggedConversation)}
-                    className="mt-4 flex items-center gap-1 text-xs font-medium text-neutral-400 hover:text-white"
+                    className="mt-4 flex items-center gap-1 text-xs font-medium text-fg-secondary hover:text-fg"
                   >
                     <MessageIcon className="h-3.5 w-3.5" />
                     Tagged on this client's conversation — open thread
@@ -631,15 +630,15 @@ export default function InquiryDetail() {
                 )}
               </div>
 
-              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-                <h2 className="text-base font-semibold text-white">Assignment</h2>
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                <h2 className="text-base font-semibold text-fg">Assignment</h2>
 
                 {inquiry.status === 'NEW' ? (
                   <div className="mt-4 flex flex-wrap items-center gap-3">
                     <select
                       value={selectedArtistId}
                       onChange={(event) => setSelectedArtistId(event.target.value)}
-                      className="rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                      className="rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                     >
                       <option value="" disabled>
                         {artistOptions === undefined ? 'Loading artists…' : 'Select an artist'}
@@ -654,7 +653,7 @@ export default function InquiryDetail() {
                       type="button"
                       onClick={handleAssign}
                       disabled={!selectedArtistId || assigning}
-                      className="rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                      className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                     >
                       {assigning ? 'Assigning…' : 'Assign Artist'}
                     </button>
@@ -669,13 +668,13 @@ export default function InquiryDetail() {
                   </div>
                 )}
 
-                {assignError && <p className="mt-3 text-sm text-red-400">{assignError}</p>}
+                {assignError && <p className="mt-3 text-sm text-danger">{assignError}</p>}
 
                 {(inquiry.priceEstimateLow != null ||
                   inquiry.priceEstimateHigh != null ||
                   inquiry.timeEstimateHoursMin != null ||
                   inquiry.timeEstimateHoursMax != null) && (
-                  <div className="mt-5 grid grid-cols-1 gap-4 border-t border-neutral-800 pt-4 sm:grid-cols-3">
+                  <div className="mt-5 grid grid-cols-1 gap-4 border-t border-border pt-4 sm:grid-cols-3">
                     <DetailField
                       label="Price estimate low"
                       value={inquiry.priceEstimateLow != null ? `$${inquiry.priceEstimateLow}` : 'Not provided'}
@@ -696,11 +695,11 @@ export default function InquiryDetail() {
                 )}
 
                 {inquiry.declineNote && (
-                  <div className="mt-5 rounded-lg border border-amber-900/50 bg-amber-950/30 p-3">
-                    <p className="text-xs font-medium uppercase tracking-wider text-amber-500">
+                  <div className="mt-5 rounded-lg border border-warning/30 bg-warning/10 p-3">
+                    <p className="text-xs font-medium uppercase tracking-wider text-warning">
                       {inquiry.status === 'WAITLISTED' ? 'Note' : 'Last decline note'}
                     </p>
-                    <p className="mt-1 text-sm text-amber-200">{inquiry.declineNote}</p>
+                    <p className="mt-1 text-sm text-warning">{inquiry.declineNote}</p>
                   </div>
                 )}
               </div>
@@ -709,22 +708,22 @@ export default function InquiryDetail() {
                 inquiry.status === 'BUDGET_NEGOTIATION' ||
                 inquiry.estimateSentAt ||
                 inquiry.closedReason) && (
-                <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-                  <h2 className="text-base font-semibold text-white">Client Response</h2>
+                <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                  <h2 className="text-base font-semibold text-fg">Client Response</h2>
 
                   {inquiry.clientStatedBudget && (
-                    <div className="mt-4 rounded-lg border border-amber-900/50 bg-amber-950/30 p-3">
-                      <p className="text-xs font-medium uppercase tracking-wider text-amber-500">
+                    <div className="mt-4 rounded-lg border border-warning/30 bg-warning/10 p-3">
+                      <p className="text-xs font-medium uppercase tracking-wider text-warning">
                         Client's stated budget
                       </p>
-                      <p className="mt-1 text-sm text-amber-200">{inquiry.clientStatedBudget}</p>
+                      <p className="mt-1 text-sm text-warning">{inquiry.clientStatedBudget}</p>
                     </div>
                   )}
 
                   {inquiry.closedReason && (
-                    <div className="mt-4 rounded-lg border border-red-900 bg-red-950/40 p-3">
-                      <p className="text-xs font-medium uppercase tracking-wider text-red-400">Closed</p>
-                      <p className="mt-1 text-sm text-red-300">{inquiry.closedReason}</p>
+                    <div className="mt-4 rounded-lg border border-danger/30 bg-danger/10 p-3">
+                      <p className="text-xs font-medium uppercase tracking-wider text-danger">Closed</p>
+                      <p className="mt-1 text-sm text-danger">{inquiry.closedReason}</p>
                     </div>
                   )}
 
@@ -732,58 +731,58 @@ export default function InquiryDetail() {
                     <>
                       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <div>
-                          <label className="mb-1 block text-xs font-medium text-neutral-400">Price low ($)</label>
+                          <label className="mb-1 block text-xs font-medium text-fg-secondary">Price low ($)</label>
                           <input
                             type="number"
                             min="0"
                             step="1"
                             value={estimateForm.priceEstimateLow}
                             onChange={(e) => setEstimateForm({ ...estimateForm, priceEstimateLow: e.target.value })}
-                            className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                           />
                         </div>
                         <div>
-                          <label className="mb-1 block text-xs font-medium text-neutral-400">Price high ($)</label>
+                          <label className="mb-1 block text-xs font-medium text-fg-secondary">Price high ($)</label>
                           <input
                             type="number"
                             min="0"
                             step="1"
                             value={estimateForm.priceEstimateHigh}
                             onChange={(e) => setEstimateForm({ ...estimateForm, priceEstimateHigh: e.target.value })}
-                            className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                           />
                         </div>
                         <div>
-                          <label className="mb-1 block text-xs font-medium text-neutral-400">Time min (hours)</label>
+                          <label className="mb-1 block text-xs font-medium text-fg-secondary">Time min (hours)</label>
                           <input
                             type="number"
                             min="0"
                             step="0.5"
                             value={estimateForm.timeEstimateHoursMin}
                             onChange={(e) => setEstimateForm({ ...estimateForm, timeEstimateHoursMin: e.target.value })}
-                            className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                           />
                         </div>
                         <div>
-                          <label className="mb-1 block text-xs font-medium text-neutral-400">Time max (hours)</label>
+                          <label className="mb-1 block text-xs font-medium text-fg-secondary">Time max (hours)</label>
                           <input
                             type="number"
                             min="0"
                             step="0.5"
                             value={estimateForm.timeEstimateHoursMax}
                             onChange={(e) => setEstimateForm({ ...estimateForm, timeEstimateHoursMax: e.target.value })}
-                            className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                           />
                         </div>
                       </div>
 
-                      {sendEstimateError && <p className="mt-3 text-sm text-red-400">{sendEstimateError}</p>}
+                      {sendEstimateError && <p className="mt-3 text-sm text-danger">{sendEstimateError}</p>}
 
                       <button
                         type="button"
                         onClick={handleSendEstimate}
                         disabled={sendingEstimate}
-                        className="mt-3 rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                        className="mt-3 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                       >
                         {sendingEstimate
                           ? 'Sending…'
@@ -795,8 +794,8 @@ export default function InquiryDetail() {
                   )}
 
                   {estimateUrl && (
-                    <div className="mt-4 rounded-lg border border-neutral-800 p-3">
-                      <p className="mb-2 text-xs text-neutral-500">
+                    <div className="mt-4 rounded-lg border border-border p-3">
+                      <p className="mb-2 text-xs text-fg-muted">
                         Share this link with the client — it expires in 7 days.
                       </p>
                       <input
@@ -804,30 +803,30 @@ export default function InquiryDetail() {
                         readOnly
                         value={estimateUrl}
                         onFocus={(event) => event.target.select()}
-                        className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:outline-none"
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:outline-none"
                       />
                     </div>
                   )}
 
                   {inquiry.estimateSentAt && (
-                    <div className="mt-5 space-y-2 border-t border-neutral-800 pt-4 text-sm">
-                      <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                    <div className="mt-5 space-y-2 border-t border-border pt-4 text-sm">
+                      <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
                         Estimate timeline
                       </p>
 
-                      <p className="text-neutral-300">Sent {formatDateTime(inquiry.estimateSentAt)}</p>
+                      <p className="text-fg-secondary">Sent {formatDateTime(inquiry.estimateSentAt)}</p>
 
                       {inquiry.estimateOpenedAt ? (
-                        <p className="text-neutral-300">
+                        <p className="text-fg-secondary">
                           Opened {formatDateTime(inquiry.estimateOpenedAt)} (
                           {formatDuration(inquiry.estimateSentAt, inquiry.estimateOpenedAt)} after sending)
                         </p>
                       ) : (
-                        <p className="text-neutral-500">Not yet opened</p>
+                        <p className="text-fg-muted">Not yet opened</p>
                       )}
 
                       {inquiry.estimateRespondedAt ? (
-                        <p className="text-neutral-300">
+                        <p className="text-fg-secondary">
                           Responded {formatDateTime(inquiry.estimateRespondedAt)} (
                           {formatDuration(
                             inquiry.estimateOpenedAt ?? inquiry.estimateSentAt,
@@ -836,7 +835,7 @@ export default function InquiryDetail() {
                           after {inquiry.estimateOpenedAt ? 'opening' : 'sending'})
                         </p>
                       ) : (
-                        <p className="text-neutral-500">Awaiting response</p>
+                        <p className="text-fg-muted">Awaiting response</p>
                       )}
                     </div>
                   )}
@@ -844,11 +843,11 @@ export default function InquiryDetail() {
               )}
 
               {(inquiry.status === 'SCHEDULING' || inquiry.status === 'WAITLISTED' || inquiry.appointment) && (
-                <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-                  <h2 className="text-base font-semibold text-white">Scheduling</h2>
+                <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                  <h2 className="text-base font-semibold text-fg">Scheduling</h2>
 
                   {bufferWarning && (
-                    <div className="mt-4 rounded-lg border border-amber-900/50 bg-amber-950/30 p-3 text-sm text-amber-200">
+                    <div className="mt-4 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
                       {bufferWarning}
                     </div>
                   )}
@@ -865,38 +864,38 @@ export default function InquiryDetail() {
                     <>
                       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <div>
-                          <label className="mb-1 block text-xs font-medium text-neutral-400">Start</label>
+                          <label className="mb-1 block text-xs font-medium text-fg-secondary">Start</label>
                           <input
                             type="datetime-local"
                             value={scheduleForm.startTime}
                             onChange={(e) => setScheduleForm({ ...scheduleForm, startTime: e.target.value })}
-                            className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                           />
                         </div>
                         <div>
-                          <label className="mb-1 block text-xs font-medium text-neutral-400">End</label>
+                          <label className="mb-1 block text-xs font-medium text-fg-secondary">End</label>
                           <input
                             type="datetime-local"
                             value={scheduleForm.endTime}
                             onChange={(e) => setScheduleForm({ ...scheduleForm, endTime: e.target.value })}
-                            className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                           />
                         </div>
                       </div>
 
                       <div className="mt-3">
-                        <label className="mb-1 block text-xs font-medium text-neutral-400">
+                        <label className="mb-1 block text-xs font-medium text-fg-secondary">
                           Gift card (deposit) to attach
                         </label>
                         {clientGiftCards && clientGiftCards.length === 0 ? (
-                          <p className="text-sm text-neutral-400">
+                          <p className="text-sm text-fg-secondary">
                             No available gift card for this client yet — the deposit should have issued one.
                           </p>
                         ) : (
                           <select
                             value={scheduleForm.giftCardId}
                             onChange={(e) => setScheduleForm({ ...scheduleForm, giftCardId: e.target.value })}
-                            className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                           >
                             <option value="" disabled>
                               {clientGiftCards === undefined ? 'Loading…' : 'Select a gift card'}
@@ -910,7 +909,7 @@ export default function InquiryDetail() {
                         )}
                       </div>
 
-                      {scheduleError && <p className="mt-3 text-sm text-red-400">{scheduleError}</p>}
+                      {scheduleError && <p className="mt-3 text-sm text-danger">{scheduleError}</p>}
 
                       <div className="mt-3 flex flex-wrap gap-3">
                         <button
@@ -922,36 +921,36 @@ export default function InquiryDetail() {
                             !scheduleForm.endTime ||
                             !scheduleForm.giftCardId
                           }
-                          className="rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                          className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                         >
                           {scheduling ? 'Scheduling…' : 'Schedule Appointment'}
                         </button>
                         <button
                           type="button"
                           onClick={() => setShowWaitlistForm((v) => !v)}
-                          className="rounded-full border border-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-800"
+                          className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
                         >
                           Add to Waitlist
                         </button>
                       </div>
 
                       {showWaitlistForm && (
-                        <div className="mt-4 rounded-lg border border-neutral-800 p-3">
-                          <label className="mb-1 block text-xs font-medium text-neutral-400">
+                        <div className="mt-4 rounded-lg border border-border p-3">
+                          <label className="mb-1 block text-xs font-medium text-fg-secondary">
                             Waitlist note (optional)
                           </label>
                           <textarea
                             rows={2}
                             value={waitlistNote}
                             onChange={(e) => setWaitlistNote(e.target.value)}
-                            className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                           />
-                          {waitlistError && <p className="mt-2 text-sm text-red-400">{waitlistError}</p>}
+                          {waitlistError && <p className="mt-2 text-sm text-danger">{waitlistError}</p>}
                           <button
                             type="button"
                             onClick={handleWaitlist}
                             disabled={waitlisting}
-                            className="mt-2 rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                            className="mt-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                           >
                             {waitlisting ? 'Saving…' : 'Confirm Waitlist'}
                           </button>
@@ -962,14 +961,14 @@ export default function InquiryDetail() {
                 </div>
               )}
 
-              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-base font-semibold text-white">Appointments</h2>
+                  <h2 className="text-base font-semibold text-fg">Appointments</h2>
                   {canMessage && (
                     <button
                       type="button"
                       onClick={() => setShowAppointmentModal(true)}
-                      className="flex items-center gap-2 rounded-full border border-neutral-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800"
+                      className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
                     >
                       <PlusIcon className="h-3.5 w-3.5" />
                       New Appointment
@@ -978,26 +977,24 @@ export default function InquiryDetail() {
                 </div>
 
                 {inquiry.sessions.length === 0 && (
-                  <p className="mt-4 text-sm text-neutral-400">No appointments booked for this project yet.</p>
+                  <p className="mt-4 text-sm text-fg-secondary">No appointments booked for this project yet.</p>
                 )}
 
                 {inquiry.sessions.length > 0 && (
-                  <div className="mt-4 divide-y divide-neutral-800">
+                  <div className="mt-4 divide-y divide-border">
                     {inquiry.sessions.map((session) => (
                       <Link
                         key={session.id}
                         to={`/appointments/${session.id}`}
-                        className="flex flex-wrap items-center justify-between gap-2 py-3 first:pt-0 last:pb-0 hover:bg-neutral-800/40"
+                        className="flex flex-wrap items-center justify-between gap-2 py-3 first:pt-0 last:pb-0 hover:bg-surface/40"
                       >
                         <div>
-                          <p className="text-sm text-white">{formatDateTime(session.startTime)}</p>
-                          <p className="mt-0.5 text-xs text-neutral-500">
+                          <p className="text-sm text-fg">{formatDateTime(session.startTime)}</p>
+                          <p className="mt-0.5 text-xs text-fg-muted">
                             with {session.artist.user.name ?? session.artist.user.email}
                           </p>
                         </div>
-                        <span className="inline-flex items-center rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-300">
-                          {formatStatus(session.status)}
-                        </span>
+                        <StatusPill status={session.status} />
                       </Link>
                     ))}
                   </div>
@@ -1005,8 +1002,8 @@ export default function InquiryDetail() {
               </div>
 
               {(inquiry.status === 'DEPOSIT_PENDING' || inquiry.depositForm) && (
-                <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-                  <h2 className="text-base font-semibold text-white">Deposit</h2>
+                <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                  <h2 className="text-base font-semibold text-fg">Deposit</h2>
 
                   {inquiry.depositForm && (
                     <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -1018,14 +1015,14 @@ export default function InquiryDetail() {
 
                   {inquiry.depositForm?.signedAt ? (
                     <>
-                      <p className="mt-4 text-sm text-neutral-300">
+                      <p className="mt-4 text-sm text-fg-secondary">
                         Signed by {inquiry.depositForm.signatureName} on {formatDateTime(inquiry.depositForm.signedAt)}
                       </p>
 
-                      {markPaidError && <p className="mt-3 text-sm text-red-400">{markPaidError}</p>}
+                      {markPaidError && <p className="mt-3 text-sm text-danger">{markPaidError}</p>}
 
                       {inquiry.depositForm.paidManually ? (
-                        <p className="mt-3 text-sm text-green-400">
+                        <p className="mt-3 text-sm text-success">
                           Marked paid {inquiry.depositForm.paidAt ? formatDateTime(inquiry.depositForm.paidAt) : ''}
                         </p>
                       ) : (
@@ -1033,7 +1030,7 @@ export default function InquiryDetail() {
                           type="button"
                           onClick={handleMarkPaid}
                           disabled={markingPaid}
-                          className="mt-3 rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                          className="mt-3 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                         >
                           {markingPaid ? 'Saving…' : `Mark $${inquiry.depositForm.totalCharged} as Paid`}
                         </button>
@@ -1041,20 +1038,20 @@ export default function InquiryDetail() {
                     </>
                   ) : (
                     <>
-                      {sendDepositError && <p className="mt-3 text-sm text-red-400">{sendDepositError}</p>}
+                      {sendDepositError && <p className="mt-3 text-sm text-danger">{sendDepositError}</p>}
 
                       <button
                         type="button"
                         onClick={handleSendDepositForm}
                         disabled={sendingDeposit}
-                        className="mt-4 rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                        className="mt-4 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                       >
                         {sendingDeposit ? 'Sending…' : inquiry.depositForm ? 'Resend Deposit Form' : 'Send Deposit Form'}
                       </button>
 
                       {depositUrl && (
-                        <div className="mt-4 rounded-lg border border-neutral-800 p-3">
-                          <p className="mb-2 text-xs text-neutral-500">
+                        <div className="mt-4 rounded-lg border border-border p-3">
+                          <p className="mb-2 text-xs text-fg-muted">
                             Share this link with the client — it expires in 48 hours.
                           </p>
                           <input
@@ -1062,7 +1059,7 @@ export default function InquiryDetail() {
                             readOnly
                             value={depositUrl}
                             onFocus={(event) => event.target.select()}
-                            className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:outline-none"
+                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:outline-none"
                           />
                         </div>
                       )}
@@ -1071,14 +1068,14 @@ export default function InquiryDetail() {
                 </div>
               )}
 
-              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-base font-semibold text-white">Tattoo details</h2>
+                  <h2 className="text-base font-semibold text-fg">Tattoo details</h2>
                   {!editingDetails && (
                     <button
                       type="button"
                       onClick={() => setEditingDetails(true)}
-                      className="flex items-center gap-2 rounded-full border border-neutral-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800"
+                      className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
                     >
                       <PencilIcon className="h-3.5 w-3.5" />
                       Edit
@@ -1089,78 +1086,78 @@ export default function InquiryDetail() {
                 {editingDetails ? (
                   <div className="mt-4 space-y-4">
                     <div>
-                      <label className="mb-1 block text-xs font-medium text-neutral-400">Description</label>
+                      <label className="mb-1 block text-xs font-medium text-fg-secondary">Description</label>
                       <textarea
                         rows={4}
                         value={detailsForm.description}
                         onChange={(e) => setDetailsForm({ ...detailsForm, description: e.target.value })}
-                        className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                       />
                     </div>
 
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <div>
-                        <label className="mb-1 block text-xs font-medium text-neutral-400">Color or Black & Grey</label>
+                        <label className="mb-1 block text-xs font-medium text-fg-secondary">Color or Black & Grey</label>
                         <input
                           type="text"
                           value={detailsForm.colorOrBlackGrey}
                           onChange={(e) => setDetailsForm({ ...detailsForm, colorOrBlackGrey: e.target.value })}
-                          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block text-xs font-medium text-neutral-400">Placement</label>
+                        <label className="mb-1 block text-xs font-medium text-fg-secondary">Placement</label>
                         <input
                           type="text"
                           value={detailsForm.placement}
                           onChange={(e) => setDetailsForm({ ...detailsForm, placement: e.target.value })}
-                          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block text-xs font-medium text-neutral-400">Estimated size</label>
+                        <label className="mb-1 block text-xs font-medium text-fg-secondary">Estimated size</label>
                         <input
                           type="text"
                           value={detailsForm.estimatedSize}
                           onChange={(e) => setDetailsForm({ ...detailsForm, estimatedSize: e.target.value })}
-                          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block text-xs font-medium text-neutral-400">Budget</label>
+                        <label className="mb-1 block text-xs font-medium text-fg-secondary">Budget</label>
                         <input
                           type="text"
                           value={detailsForm.budget}
                           onChange={(e) => setDetailsForm({ ...detailsForm, budget: e.target.value })}
-                          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block text-xs font-medium text-neutral-400">Desired timing</label>
+                        <label className="mb-1 block text-xs font-medium text-fg-secondary">Desired timing</label>
                         <input
                           type="text"
                           value={detailsForm.desiredTiming}
                           onChange={(e) => setDetailsForm({ ...detailsForm, desiredTiming: e.target.value })}
-                          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                         />
                       </div>
                     </div>
 
-                    {detailsError && <p className="text-sm text-red-400">{detailsError}</p>}
+                    {detailsError && <p className="text-sm text-danger">{detailsError}</p>}
 
                     <div className="flex gap-3">
                       <button
                         type="button"
                         onClick={handleSaveDetails}
                         disabled={savingDetails || !!viewAsTarget}
-                        className="rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                        className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                       >
                         {savingDetails ? 'Saving…' : 'Save'}
                       </button>
                       <button
                         type="button"
                         onClick={() => setEditingDetails(false)}
-                        className="rounded-full border border-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-800"
+                        className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
                       >
                         Cancel
                       </button>
@@ -1169,8 +1166,8 @@ export default function InquiryDetail() {
                 ) : (
                   <>
                     <div className="mt-4">
-                      <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Description</p>
-                      <p className="mt-1 whitespace-pre-wrap text-sm text-white">{inquiry.description}</p>
+                      <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Description</p>
+                      <p className="mt-1 whitespace-pre-wrap text-sm text-fg">{inquiry.description}</p>
                     </div>
 
                     <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -1189,15 +1186,15 @@ export default function InquiryDetail() {
                 )}
               </div>
 
-              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-                <h2 className="text-base font-semibold text-white">Reference images</h2>
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                <h2 className="text-base font-semibold text-fg">Reference images</h2>
                 <div className="mt-4">
                   <ImageGrid images={inquiry.referenceImages} />
                 </div>
               </div>
 
-              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-                <h2 className="text-base font-semibold text-white">Placement photos</h2>
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                <h2 className="text-base font-semibold text-fg">Placement photos</h2>
                 <div className="mt-4">
                   <ImageGrid images={inquiry.placementImages} />
                 </div>
@@ -1209,26 +1206,26 @@ export default function InquiryDetail() {
                 <Modal title="Share with artist" onClose={() => setShowShareModal(false)}>
                   {shareSent ? (
                     <div className="space-y-4">
-                      <p className="text-sm text-green-400">Sent to the artist's Team thread.</p>
+                      <p className="text-sm text-success">Sent to the artist's Team thread.</p>
                       <button
                         type="button"
                         onClick={() => setShowShareModal(false)}
-                        className="rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600"
+                        className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover"
                       >
                         Done
                       </button>
                     </div>
                   ) : (
                     <div className="space-y-4">
-                      <p className="text-xs text-neutral-500">
+                      <p className="text-xs text-fg-muted">
                         Only the tattoo details below are sent — never the client's name, contact info, or health
                         information.
                       </p>
 
-                      <div className="rounded-lg border border-neutral-800 p-3 text-sm">
+                      <div className="rounded-lg border border-border p-3 text-sm">
                         {sharePreview ? (
                           <>
-                            <p className="whitespace-pre-wrap text-neutral-200">{sharePreview.body}</p>
+                            <p className="whitespace-pre-wrap text-fg">{sharePreview.body}</p>
                             {sharePreview.attachments.length > 0 && (
                               <div className="mt-2 grid grid-cols-4 gap-2">
                                 {sharePreview.attachments.map((url) => (
@@ -1238,16 +1235,16 @@ export default function InquiryDetail() {
                             )}
                           </>
                         ) : (
-                          <p className="text-neutral-500">Loading preview…</p>
+                          <p className="text-fg-muted">Loading preview…</p>
                         )}
                       </div>
 
                       <div>
-                        <label className="mb-1 block text-xs font-medium text-neutral-400">Send to</label>
+                        <label className="mb-1 block text-xs font-medium text-fg-secondary">Send to</label>
                         <select
                           value={shareArtistUserId}
                           onChange={(e) => setShareArtistUserId(e.target.value)}
-                          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                         >
                           <option value="" disabled>
                             {artistOptions === undefined ? 'Loading artists…' : 'Select an artist'}
@@ -1260,13 +1257,13 @@ export default function InquiryDetail() {
                         </select>
                       </div>
 
-                      {shareError && <p className="text-sm text-red-400">{shareError}</p>}
+                      {shareError && <p className="text-sm text-danger">{shareError}</p>}
 
                       <button
                         type="button"
                         onClick={handleShareToArtist}
                         disabled={!shareArtistUserId || sharing}
-                        className="w-full rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                        className="w-full rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                       >
                         {sharing ? 'Sending…' : 'Send'}
                       </button>
@@ -1278,17 +1275,17 @@ export default function InquiryDetail() {
               {showAppointmentModal && (
                 <Modal title="New Appointment" onClose={() => setShowAppointmentModal(false)}>
                   <div className="space-y-4">
-                    <p className="text-xs text-neutral-500">
+                    <p className="text-xs text-fg-muted">
                       Booking another appointment for {inquiry.client.firstName} {inquiry.client.lastName} under this
                       project.
                     </p>
 
                     <div>
-                      <label className="mb-1 block text-sm font-medium text-neutral-300">Artist</label>
+                      <label className="mb-1 block text-sm font-medium text-fg-secondary">Artist</label>
                       <select
                         value={appointmentForm.artistId}
                         onChange={(e) => setAppointmentForm({ ...appointmentForm, artistId: e.target.value })}
-                        className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                       >
                         <option value="" disabled>
                           {artistOptions === undefined ? 'Loading artists…' : 'Select an artist'}
@@ -1303,38 +1300,38 @@ export default function InquiryDetail() {
 
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <div>
-                        <label className="mb-1 block text-sm font-medium text-neutral-300">Start</label>
+                        <label className="mb-1 block text-sm font-medium text-fg-secondary">Start</label>
                         <input
                           type="datetime-local"
                           value={appointmentForm.startTime}
                           onChange={(e) => setAppointmentForm({ ...appointmentForm, startTime: e.target.value })}
-                          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                         />
                       </div>
                       <div>
-                        <label className="mb-1 block text-sm font-medium text-neutral-300">End</label>
+                        <label className="mb-1 block text-sm font-medium text-fg-secondary">End</label>
                         <input
                           type="datetime-local"
                           value={appointmentForm.endTime}
                           onChange={(e) => setAppointmentForm({ ...appointmentForm, endTime: e.target.value })}
-                          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                         />
                       </div>
                     </div>
 
                     <div>
-                      <label className="mb-1 block text-sm font-medium text-neutral-300">
+                      <label className="mb-1 block text-sm font-medium text-fg-secondary">
                         Gift card (deposit) to attach
                       </label>
                       {clientGiftCards && clientGiftCards.length === 0 ? (
-                        <p className="text-sm text-neutral-400">
+                        <p className="text-sm text-fg-secondary">
                           No available gift card for this client yet — collect a deposit or issue one first.
                         </p>
                       ) : (
                         <select
                           value={appointmentForm.giftCardId}
                           onChange={(e) => setAppointmentForm({ ...appointmentForm, giftCardId: e.target.value })}
-                          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                         >
                           <option value="" disabled>
                             {clientGiftCards === undefined ? 'Loading…' : 'Select a gift card'}
@@ -1349,16 +1346,16 @@ export default function InquiryDetail() {
                     </div>
 
                     <div>
-                      <label className="mb-1 block text-sm font-medium text-neutral-300">Notes (optional)</label>
+                      <label className="mb-1 block text-sm font-medium text-fg-secondary">Notes (optional)</label>
                       <textarea
                         rows={2}
                         value={appointmentForm.notes}
                         onChange={(e) => setAppointmentForm({ ...appointmentForm, notes: e.target.value })}
-                        className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                       />
                     </div>
 
-                    {appointmentError && <p className="text-sm text-red-400">{appointmentError}</p>}
+                    {appointmentError && <p className="text-sm text-danger">{appointmentError}</p>}
 
                     <button
                       type="button"
@@ -1370,7 +1367,7 @@ export default function InquiryDetail() {
                         !appointmentForm.startTime ||
                         !appointmentForm.endTime
                       }
-                      className="w-full rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                      className="w-full rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                     >
                       {creatingAppointment ? 'Creating…' : 'Create Appointment'}
                     </button>

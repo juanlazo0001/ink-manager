@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom'
 import { apiFetch, ApiError } from '../lib/api'
 
 const INPUT_CLASS =
-  'mt-1 w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600'
+  'mt-1 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
 
 type PageState = 'loading' | 'invalid' | 'ready' | 'success'
 type Decision = 'PROCEED' | 'BUDGET_TOO_HIGH' | 'DECLINE'
@@ -92,26 +92,26 @@ export default function EstimateResponse() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-neutral-900 px-4 py-10 text-white">
-      <div className="w-full max-w-lg rounded-2xl border border-neutral-800 bg-neutral-900 p-8">
-        {state === 'loading' && <p className="text-center text-sm text-neutral-400">Loading…</p>}
+    <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
+      <div className="w-full max-w-lg rounded-2xl border border-border bg-surface p-8">
+        {state === 'loading' && <p className="text-center text-sm text-fg-secondary">Loading…</p>}
 
         {state === 'invalid' && (
           <div className="text-center">
-            <h1 className="text-xl font-semibold text-white">This link has expired</h1>
-            <p className="mt-2 text-sm text-neutral-400">{invalidMessage}</p>
-            <p className="mt-4 text-sm text-neutral-400">Please contact the studio to request a new estimate.</p>
+            <h1 className="text-xl font-semibold text-fg">This link has expired</h1>
+            <p className="mt-2 text-sm text-fg-secondary">{invalidMessage}</p>
+            <p className="mt-4 text-sm text-fg-secondary">Please contact the studio to request a new estimate.</p>
           </div>
         )}
 
         {state === 'success' && (
           <div className="text-center">
-            <h1 className="text-xl font-semibold text-white">
+            <h1 className="text-xl font-semibold text-fg">
               {respondedAs === 'PROCEED' && "Thanks — let's get you scheduled!"}
               {respondedAs === 'BUDGET_TOO_HIGH' && "Thanks for letting us know"}
               {respondedAs === 'DECLINE' && "We're sorry to see you go"}
             </h1>
-            <p className="mt-2 text-sm text-neutral-400">
+            <p className="mt-2 text-sm text-fg-secondary">
               {respondedAs === 'PROCEED' &&
                 "We've let the studio know you're ready to move forward. They'll be in touch to schedule your appointment."}
               {respondedAs === 'BUDGET_TOO_HIGH' &&
@@ -124,42 +124,42 @@ export default function EstimateResponse() {
 
         {state === 'ready' && verifyData && (
           <div>
-            <h1 className="text-xl font-semibold text-white">Your Tattoo Estimate</h1>
-            <p className="mt-1 text-sm text-neutral-400">
-              {verifyData.clientFirstName}, here's what {verifyData.artistName ?? 'your artist'} put together for you
-              at {verifyData.studioName}.
+            <h1 className="text-xl font-semibold text-fg">Your Tattoo Estimate</h1>
+            <p className="mt-1 text-sm font-medium text-fg-secondary">{verifyData.studioName}</p>
+            <p className="mt-2 text-sm text-fg-secondary">
+              {verifyData.clientFirstName}, here's what {verifyData.artistName ?? 'your artist'} put together for you.
             </p>
 
             <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Price range</p>
-                <p className="mt-1 text-lg font-semibold text-white">
+                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Price range</p>
+                <p className="mt-1 text-lg font-semibold text-fg">
                   {verifyData.priceEstimateLow != null && verifyData.priceEstimateHigh != null
                     ? `$${verifyData.priceEstimateLow} – $${verifyData.priceEstimateHigh}`
                     : 'To be discussed'}
                 </p>
               </div>
               <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Estimated time</p>
-                <p className="mt-1 text-lg font-semibold text-white">
+                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Estimated time</p>
+                <p className="mt-1 text-lg font-semibold text-fg">
                   {formatHourRange(verifyData.timeEstimateHoursMin, verifyData.timeEstimateHoursMax)}
                 </p>
               </div>
             </div>
 
-            <div className="mt-5 rounded-lg border border-neutral-800 bg-neutral-950/40 p-3 text-xs text-neutral-400">
+            <div className="mt-5 rounded-lg border border-border bg-surface-inset p-3 text-xs text-fg-secondary">
               {verifyData.collaborativeDesignPolicy}
             </div>
 
             {verifyData.estimateTermsSnapshot && (
-              <div className="mt-3 rounded-lg border border-neutral-800 bg-neutral-950/40 p-3 text-xs text-neutral-400">
-                <p className="mb-1 font-medium uppercase tracking-wider text-neutral-500">Terms &amp; Conditions</p>
+              <div className="mt-3 rounded-lg border border-border bg-surface-inset p-3 text-xs text-fg-secondary">
+                <p className="mb-1 font-medium uppercase tracking-wider text-fg-muted">Terms &amp; Conditions</p>
                 <p className="whitespace-pre-wrap">{verifyData.estimateTermsSnapshot}</p>
               </div>
             )}
 
             {submitError && (
-              <div className="mt-4 rounded-lg border border-red-900 bg-red-950/40 px-3 py-2 text-sm text-red-400">
+              <div className="mt-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
                 {submitError}
               </div>
             )}
@@ -169,14 +169,14 @@ export default function EstimateResponse() {
                 type="button"
                 onClick={() => respond('PROCEED')}
                 disabled={submitting}
-                className="w-full rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                className="w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
               >
                 {submitting && pendingDecision === 'PROCEED' ? 'Submitting…' : "Proceed — I'm in!"}
               </button>
 
               {activeForm === 'BUDGET_TOO_HIGH' ? (
-                <div className="rounded-lg border border-neutral-800 p-3">
-                  <label className="mb-1 block text-xs font-medium text-neutral-400">
+                <div className="rounded-lg border border-border p-3">
+                  <label className="mb-1 block text-xs font-medium text-fg-secondary">
                     What budget would work for you?
                   </label>
                   <input
@@ -190,7 +190,7 @@ export default function EstimateResponse() {
                     type="button"
                     onClick={() => respond('BUDGET_TOO_HIGH')}
                     disabled={submitting}
-                    className="mt-3 w-full rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                    className="mt-3 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
                   >
                     {submitting && pendingDecision === 'BUDGET_TOO_HIGH' ? 'Submitting…' : 'Send my budget'}
                   </button>
@@ -199,7 +199,7 @@ export default function EstimateResponse() {
                 <button
                   type="button"
                   onClick={() => setActiveForm('BUDGET_TOO_HIGH')}
-                  className="w-full rounded-full border border-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-800"
+                  className="w-full rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
                 >
                   This is a bit more than I expected
                 </button>
@@ -209,7 +209,7 @@ export default function EstimateResponse() {
                 type="button"
                 onClick={() => respond('DECLINE')}
                 disabled={submitting}
-                className="w-full rounded-full border border-neutral-800 px-4 py-2 text-sm font-medium text-neutral-400 transition hover:bg-neutral-800 hover:text-white disabled:opacity-60"
+                className="w-full rounded-full border border-border px-4 py-2 text-sm font-medium text-fg-secondary transition hover:bg-surface hover:text-fg disabled:opacity-60"
               >
                 {submitting && pendingDecision === 'DECLINE' ? 'Submitting…' : "No thanks, I'm not moving forward"}
               </button>

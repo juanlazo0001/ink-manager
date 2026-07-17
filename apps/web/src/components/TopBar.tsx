@@ -6,6 +6,7 @@ import { useAuth } from '../context/useAuth'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useViewAs } from '../context/useViewAs'
 import { useUserProfile } from '../context/useUserProfile'
+import { formatStatus } from '../lib/format'
 import { tasksQueryKey } from '../lib/queryKeys'
 import { formatBubbleCount } from '../lib/useNavCounts'
 import { BellIcon, ChevronDownIcon, LogoutIcon, SettingsIcon, TasksIcon, ViewIcon } from './icons'
@@ -68,11 +69,11 @@ export default function TopBar() {
           to="/tasks"
           onClick={closeMenus}
           aria-label="My Tasks"
-          className="relative flex h-10 w-10 items-center justify-center rounded-full border border-neutral-800 bg-neutral-900 text-neutral-400 shadow-lg transition hover:text-white"
+          className="relative flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface text-fg-secondary shadow-lg transition hover:text-fg"
         >
           <TasksIcon className="h-5 w-5" />
           {taskBadgeCount > 0 && (
-            <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[11px] font-semibold text-white">
+            <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-danger px-1 text-[11px] font-semibold text-bg">
               {formatBubbleCount(taskBadgeCount)}
             </span>
           )}
@@ -87,7 +88,7 @@ export default function TopBar() {
             setShowAccountMenu(false)
           }}
           aria-label="Mentions"
-          className="flex h-10 w-10 items-center justify-center rounded-full border border-neutral-800 bg-neutral-900 text-neutral-400 shadow-lg transition hover:text-white"
+          className="flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface text-fg-secondary shadow-lg transition hover:text-fg"
         >
           <BellIcon className="h-5 w-5" />
         </button>
@@ -95,8 +96,8 @@ export default function TopBar() {
         {showMentions && (
           <>
             <div className="fixed inset-0 z-10" onClick={() => setShowMentions(false)} aria-hidden="true" />
-            <div className="absolute right-0 top-12 z-20 w-64 rounded-lg border border-neutral-800 bg-neutral-900 p-4 shadow-xl">
-              <p className="text-sm text-neutral-400">
+            <div className="absolute right-0 top-12 z-20 w-64 rounded-2xl border border-border bg-surface-raised p-4 shadow-xl">
+              <p className="text-sm text-fg-secondary">
                 No mentions yet — internal mentions are coming to Conversations.
               </p>
             </div>
@@ -112,33 +113,37 @@ export default function TopBar() {
             setShowMentions(false)
           }}
           aria-label="Account menu"
-          className="flex items-center gap-1.5 rounded-full border border-neutral-800 bg-neutral-900 py-1 pl-1 pr-2 shadow-lg transition hover:border-neutral-700"
+          className="flex items-center gap-2 rounded-full border border-border bg-surface py-1 pl-1 pr-3 shadow-lg transition hover:border-border-strong"
         >
           {profile?.avatarUrl ? (
             <img src={profile.avatarUrl} alt="" className="h-8 w-8 rounded-full object-cover" />
           ) : (
-            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-neutral-800 text-xs font-semibold text-white">
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-surface-raised text-xs font-semibold text-fg">
               {(profile?.name ?? user.role ?? 'U').slice(0, 1)}
             </span>
           )}
-          <ChevronDownIcon className="h-3.5 w-3.5 text-neutral-500" />
+          <span className="hidden flex-col items-start leading-tight sm:flex">
+            <span className="text-sm font-medium text-fg">{profile?.name ?? formatStatus(user.role)}</span>
+            <span className="text-xs text-fg-muted">{formatStatus(user.role)}</span>
+          </span>
+          <ChevronDownIcon className="h-3.5 w-3.5 text-fg-muted" />
         </button>
 
         {showAccountMenu && (
           <>
             <div className="fixed inset-0 z-10" onClick={() => setShowAccountMenu(false)} aria-hidden="true" />
-            <div className="absolute right-0 top-12 z-20 w-48 rounded-lg border border-neutral-800 bg-neutral-900 p-1 shadow-xl">
+            <div className="absolute right-0 top-12 z-20 w-48 rounded-2xl border border-border bg-surface-raised p-1 shadow-xl">
               <Link
                 to="/profile"
                 onClick={() => setShowAccountMenu(false)}
-                className="block rounded-md px-3 py-2 text-sm text-neutral-300 transition hover:bg-neutral-800 hover:text-white"
+                className="block rounded-xl px-3 py-2 text-sm text-fg-secondary transition hover:bg-surface hover:text-fg"
               >
                 Profile
               </Link>
               <Link
                 to="/settings"
                 onClick={() => setShowAccountMenu(false)}
-                className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-neutral-300 transition hover:bg-neutral-800 hover:text-white"
+                className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-fg-secondary transition hover:bg-surface hover:text-fg"
               >
                 <SettingsIcon className="h-3.5 w-3.5" />
                 Settings
@@ -150,7 +155,7 @@ export default function TopBar() {
                     setShowAccountMenu(false)
                     setShowViewAsPicker(true)
                   }}
-                  className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-neutral-300 transition hover:bg-neutral-800 hover:text-white"
+                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-fg-secondary transition hover:bg-surface hover:text-fg"
                 >
                   <ViewIcon className="h-3.5 w-3.5" />
                   View portal as...
@@ -159,7 +164,7 @@ export default function TopBar() {
               <button
                 type="button"
                 onClick={handleLogout}
-                className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-neutral-300 transition hover:bg-neutral-800 hover:text-white"
+                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-fg-secondary transition hover:bg-surface hover:text-fg"
               >
                 <LogoutIcon className="h-3.5 w-3.5" />
                 Log out

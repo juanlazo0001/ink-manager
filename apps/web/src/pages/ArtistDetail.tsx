@@ -225,30 +225,30 @@ export default function ArtistDetail() {
   const isUploading = uploadingItems.some((i) => i.status === 'uploading')
 
   return (
-    <div className="flex min-h-screen bg-neutral-900 text-white">
+    <div className="flex min-h-screen bg-bg text-fg">
       <Sidebar />
 
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-4xl px-6 py-6 sm:px-10 sm:py-8">
           <Link
             to="/team?tab=artists"
-            className="inline-flex items-center gap-2 text-sm text-neutral-400 hover:text-white"
+            className="inline-flex items-center gap-2 text-sm text-fg-secondary hover:text-fg"
           >
             <ArrowLeftIcon className="h-4 w-4" />
             Back to Artists
           </Link>
 
           {error && (
-            <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-              <p className="text-sm text-red-400">{error}</p>
+            <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+              <p className="text-sm text-danger">{error}</p>
             </div>
           )}
 
-          {!error && !artist && <p className="mt-6 text-sm text-neutral-400">Loading artist…</p>}
+          {!error && !artist && <p className="mt-6 text-sm text-fg-secondary">Loading artist…</p>}
 
           {!error && artist && (
             <>
-              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
                 <div className="flex items-center gap-4">
                   {artist.user.avatarUrl ? (
                     <img
@@ -257,20 +257,20 @@ export default function ArtistDetail() {
                       className="h-16 w-16 shrink-0 rounded-full object-cover"
                     />
                   ) : (
-                    <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-neutral-800 text-xl font-semibold text-white">
+                    <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-surface text-xl font-semibold text-fg">
                       {(artist.user.name ?? artist.user.email).slice(0, 1).toUpperCase()}
                     </span>
                   )}
                   <div>
-                    <h1 className="text-xl font-bold text-white">{artist.user.name || artist.user.email}</h1>
-                    <p className="mt-1 text-sm text-neutral-400">{artist.user.email}</p>
-                    {artist.user.phone && <p className="text-sm text-neutral-400">{artist.user.phone}</p>}
+                    <h1 className="text-xl font-bold text-fg">{artist.user.name || artist.user.email}</h1>
+                    <p className="mt-1 text-sm text-fg-secondary">{artist.user.email}</p>
+                    {artist.user.phone && <p className="text-sm text-fg-secondary">{artist.user.phone}</p>}
                   </div>
                 </div>
                 {canManage && (
-                  <p className="mt-3 text-xs text-neutral-500">
+                  <p className="mt-3 text-xs text-fg-muted">
                     Profile picture is managed from{' '}
-                    <Link to="/team" className="underline hover:text-neutral-300">
+                    <Link to="/team" className="underline hover:text-fg-secondary">
                       Team
                     </Link>
                     .
@@ -278,23 +278,23 @@ export default function ArtistDetail() {
                 )}
               </div>
 
-              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-                <h2 className="text-base font-semibold text-white">Bio</h2>
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                <h2 className="text-base font-semibold text-fg">Bio</h2>
                 {canManage ? (
                   <textarea
                     rows={4}
                     value={bio}
                     onChange={(e) => setBio(e.target.value)}
                     placeholder="A short bio about this artist…"
-                    className="mt-3 w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                    className="mt-3 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                   />
                 ) : (
-                  <p className="mt-3 whitespace-pre-wrap text-sm text-neutral-300">{artist.bio || 'No bio yet.'}</p>
+                  <p className="mt-3 whitespace-pre-wrap text-sm text-fg-secondary">{artist.bio || 'No bio yet.'}</p>
                 )}
               </div>
 
-              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-                <h2 className="text-base font-semibold text-white">Specialties</h2>
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                <h2 className="text-base font-semibold text-fg">Specialties</h2>
                 <div className="mt-3">
                   {canManage ? (
                     <SpecialtiesInput value={specialties} onChange={setSpecialties} />
@@ -303,21 +303,21 @@ export default function ArtistDetail() {
                       {specialties.map((specialty) => (
                         <span
                           key={specialty}
-                          className="inline-flex items-center rounded-full border border-neutral-700 px-2.5 py-1 text-xs font-medium text-neutral-300"
+                          className="inline-flex items-center rounded-full border border-border px-2.5 py-1 text-xs font-medium text-fg-secondary"
                         >
                           {specialty}
                         </span>
                       ))}
                     </div>
                   ) : (
-                    <p className="text-sm text-neutral-400">No specialties listed.</p>
+                    <p className="text-sm text-fg-secondary">No specialties listed.</p>
                   )}
                 </div>
               </div>
 
-              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-                <h2 className="text-base font-semibold text-white">Preferred Schedule</h2>
-                <p className="mt-1 text-xs text-neutral-500">
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                <h2 className="text-base font-semibold text-fg">Preferred Schedule</h2>
+                <p className="mt-1 text-xs text-fg-muted">
                   Advisory availability only — doesn't block scheduling, just informs staff.
                 </p>
 
@@ -327,15 +327,15 @@ export default function ArtistDetail() {
                     return (
                       <div
                         key={dayOfWeek}
-                        className="flex flex-wrap items-center gap-3 rounded-lg border border-neutral-800 px-3 py-2"
+                        className="flex flex-wrap items-center gap-3 rounded-lg border border-border px-3 py-2"
                       >
-                        <label className="flex w-32 shrink-0 items-center gap-2 text-sm text-neutral-300">
+                        <label className="flex w-32 shrink-0 items-center gap-2 text-sm text-fg-secondary">
                           {canEditSchedule ? (
                             <input
                               type="checkbox"
                               checked={day !== null}
                               onChange={(e) => toggleScheduleDay(dayOfWeek, e.target.checked)}
-                              className="h-4 w-4 rounded border-neutral-700 bg-neutral-900"
+                              className="h-4 w-4 rounded border-border bg-surface-inset accent-accent"
                             />
                           ) : null}
                           {dayName}
@@ -348,23 +348,23 @@ export default function ArtistDetail() {
                                 type="time"
                                 value={day.startTime}
                                 onChange={(e) => updateScheduleTime(dayOfWeek, 'startTime', e.target.value)}
-                                className="rounded-lg border border-neutral-800 bg-neutral-900 px-2 py-1 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                                className="rounded-lg border border-border bg-surface-inset px-2 py-1 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                               />
-                              <span className="text-neutral-500">to</span>
+                              <span className="text-fg-muted">to</span>
                               <input
                                 type="time"
                                 value={day.endTime}
                                 onChange={(e) => updateScheduleTime(dayOfWeek, 'endTime', e.target.value)}
-                                className="rounded-lg border border-neutral-800 bg-neutral-900 px-2 py-1 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                                className="rounded-lg border border-border bg-surface-inset px-2 py-1 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                               />
                             </div>
                           ) : (
-                            <span className="text-sm text-neutral-400">
+                            <span className="text-sm text-fg-secondary">
                               {day.startTime} – {day.endTime}
                             </span>
                           )
                         ) : (
-                          <span className="text-sm text-neutral-500">Not available</span>
+                          <span className="text-sm text-fg-muted">Not available</span>
                         )}
                       </div>
                     )
@@ -377,18 +377,18 @@ export default function ArtistDetail() {
                       type="button"
                       onClick={handleSaveSchedule}
                       disabled={scheduleSaving}
-                      className="rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                      className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                     >
                       {scheduleSaving ? 'Saving…' : 'Save schedule'}
                     </button>
-                    {scheduleError && <p className="text-sm text-red-400">{scheduleError}</p>}
-                    {scheduleSuccess && !scheduleError && <p className="text-sm text-green-400">Saved.</p>}
+                    {scheduleError && <p className="text-sm text-danger">{scheduleError}</p>}
+                    {scheduleSuccess && !scheduleError && <p className="text-sm text-success">Saved.</p>}
                   </div>
                 )}
               </div>
 
-              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-                <h2 className="text-base font-semibold text-white">Portfolio</h2>
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                <h2 className="text-base font-semibold text-fg">Portfolio</h2>
 
                 {canManage && (
                   <input
@@ -399,25 +399,25 @@ export default function ArtistDetail() {
                       handleFiles(e.target.files)
                       e.target.value = ''
                     }}
-                    className="mt-3 block w-full text-sm text-neutral-400 file:mr-3 file:rounded-full file:border file:border-neutral-700 file:bg-neutral-700 file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-neutral-600"
+                    className="mt-3 block w-full text-sm text-fg-secondary file:mr-3 file:rounded-full file:border file:border-border file:bg-surface file:px-4 file:py-2 file:text-sm file:font-medium file:text-fg hover:file:bg-surface-raised"
                   />
                 )}
 
                 {portfolioImages.length === 0 && uploadingItems.length === 0 && (
-                  <p className="mt-3 text-sm text-neutral-400">No portfolio images yet.</p>
+                  <p className="mt-3 text-sm text-fg-secondary">No portfolio images yet.</p>
                 )}
 
                 {(portfolioImages.length > 0 || uploadingItems.length > 0) && (
                   <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
                     {portfolioImages.map((url) => (
-                      <div key={url} className="group relative aspect-square overflow-hidden rounded-lg border border-neutral-800">
+                      <div key={url} className="group relative aspect-square overflow-hidden rounded-lg border border-border">
                         <img src={url} alt="" className="h-full w-full object-cover" />
                         {canManage && (
                           <button
                             type="button"
                             onClick={() => removePortfolioImage(url)}
                             aria-label="Remove image"
-                            className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition group-hover:opacity-100 hover:bg-black/80"
+                            className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-fg opacity-0 transition group-hover:opacity-100 hover:bg-black/80"
                           >
                             <CloseIcon className="h-3.5 w-3.5" />
                           </button>
@@ -425,20 +425,20 @@ export default function ArtistDetail() {
                       </div>
                     ))}
                     {uploadingItems.map((item) => (
-                      <div key={item.id} className="relative aspect-square overflow-hidden rounded-lg border border-neutral-800">
+                      <div key={item.id} className="relative aspect-square overflow-hidden rounded-lg border border-border">
                         <img src={item.previewUrl} alt="" className="h-full w-full object-cover" />
                         {item.status === 'uploading' && (
-                          <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-xs text-white">
+                          <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-xs text-fg">
                             Uploading…
                           </div>
                         )}
                         {item.status === 'error' && (
-                          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-red-950/80 p-1 text-center text-[10px] text-red-300">
+                          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-danger/80 p-1 text-center text-[10px] text-fg">
                             {item.error ?? 'Upload failed'}
                             <button
                               type="button"
                               onClick={() => removeUploadingItem(item.id)}
-                              className="rounded-full border border-red-800 px-2 py-0.5 text-[10px] text-red-200 hover:bg-red-900"
+                              className="rounded-full border border-danger/40 px-2 py-0.5 text-[10px] text-danger hover:bg-danger/10"
                             >
                               Remove
                             </button>
@@ -456,12 +456,12 @@ export default function ArtistDetail() {
                     type="button"
                     onClick={handleSave}
                     disabled={saving || isUploading}
-                    className="rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                    className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                   >
                     {saving ? 'Saving…' : 'Save changes'}
                   </button>
-                  {saveError && <p className="text-sm text-red-400">{saveError}</p>}
-                  {saveSuccess && !saveError && <p className="text-sm text-green-400">Saved.</p>}
+                  {saveError && <p className="text-sm text-danger">{saveError}</p>}
+                  {saveSuccess && !saveError && <p className="text-sm text-success">Saved.</p>}
                 </div>
               )}
             </>

@@ -477,23 +477,23 @@ export default function Settings() {
   }
 
   return (
-    <div className="flex min-h-screen bg-neutral-900 text-white">
+    <div className="flex min-h-screen bg-bg text-fg">
       <Sidebar />
 
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-2xl px-6 py-6 sm:px-10 sm:py-8">
-          <h1 className="text-2xl font-bold text-white sm:text-3xl">Studio account</h1>
-          <p className="mt-1 text-sm text-neutral-400">
+          <h1 className="text-2xl font-bold text-fg sm:text-3xl">Studio account</h1>
+          <p className="mt-1 text-sm text-fg-secondary">
             {canManageStudio ? 'Manage your studio profile and branding.' : 'Your studio profile.'}
           </p>
 
-          <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-6">
-            {loading && !studio && <p className="text-sm text-neutral-400">Loading studio…</p>}
+          <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
+            {loading && !studio && <p className="text-sm text-fg-secondary">Loading studio…</p>}
 
-            {!loading && !studio && <p className="text-sm text-red-400">Could not load studio information.</p>}
+            {!loading && !studio && <p className="text-sm text-danger">Could not load studio information.</p>}
 
             {success && (
-              <div className="mb-4 rounded-lg border border-green-900 bg-green-950/40 px-3 py-2 text-sm text-green-400">
+              <div className="mb-4 rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-sm text-success">
                 Studio profile updated.
               </div>
             )}
@@ -504,15 +504,15 @@ export default function Settings() {
                   {studio.logoUrl ? (
                     <img src={studio.logoUrl} alt={studio.name} className="h-14 w-auto rounded-lg" />
                   ) : (
-                    <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg border border-neutral-800 text-xs text-neutral-500">
+                    <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg border border-border text-xs text-fg-muted">
                       No logo
                     </div>
                   )}
                   <div>
-                    <p className="text-sm font-medium text-white">{studio.name}</p>
-                    {studio.website && <p className="mt-1 text-xs text-neutral-400">{studio.website}</p>}
+                    <p className="text-sm font-medium text-fg">{studio.name}</p>
+                    {studio.website && <p className="mt-1 text-xs text-fg-secondary">{studio.website}</p>}
                     {!canManageStudio && (
-                      <p className="mt-2 text-xs text-neutral-500">You don't have permission to edit this.</p>
+                      <p className="mt-2 text-xs text-fg-muted">You don't have permission to edit this.</p>
                     )}
                   </div>
                 </div>
@@ -521,7 +521,7 @@ export default function Settings() {
                   <button
                     type="button"
                     onClick={handleEdit}
-                    className="shrink-0 rounded-full border border-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-800"
+                    className="shrink-0 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
                   >
                     Edit
                   </button>
@@ -532,13 +532,13 @@ export default function Settings() {
             {studio && canManageStudio && editing && (
               <form onSubmit={handleSubmit}>
                 {error && (
-                  <div className="mb-4 rounded-lg border border-red-900 bg-red-950/40 px-3 py-2 text-sm text-red-400">
+                  <div className="mb-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
                     {error}
                   </div>
                 )}
 
                 <div className="mb-5">
-                  <label htmlFor="studioName" className="mb-1 block text-sm font-medium text-neutral-300">
+                  <label htmlFor="studioName" className="mb-1 block text-sm font-medium text-fg-secondary">
                     Studio name
                   </label>
                   <input
@@ -547,12 +547,12 @@ export default function Settings() {
                     required
                     value={form.name}
                     onChange={updateField('name')}
-                    className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                   />
                 </div>
 
                 <div className="mb-5">
-                  <label htmlFor="studioWebsite" className="mb-1 block text-sm font-medium text-neutral-300">
+                  <label htmlFor="studioWebsite" className="mb-1 block text-sm font-medium text-fg-secondary">
                     Website
                   </label>
                   <input
@@ -561,13 +561,13 @@ export default function Settings() {
                     placeholder="https://yourstudio.com"
                     value={form.website}
                     onChange={updateField('website')}
-                    className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                   />
                 </div>
 
                 <div className="mb-5">
-                  <span className="mb-1 block text-sm font-medium text-neutral-300">Logo</span>
-                  <p className="mb-3 text-xs text-neutral-500">
+                  <span className="mb-1 block text-sm font-medium text-fg-secondary">Logo</span>
+                  <p className="mb-3 text-xs text-fg-muted">
                     Shown at the top of your studio's portal in place of the Ink Manager logo.
                   </p>
 
@@ -575,12 +575,12 @@ export default function Settings() {
                     {logoUrl ? (
                       <img src={logoUrl} alt="Studio logo preview" className="h-14 w-auto rounded-lg" />
                     ) : (
-                      <div className="flex h-14 w-14 items-center justify-center rounded-lg border border-neutral-800 text-xs text-neutral-500">
+                      <div className="flex h-14 w-14 items-center justify-center rounded-lg border border-border text-xs text-fg-muted">
                         No logo
                       </div>
                     )}
 
-                    <label className="cursor-pointer rounded-full border border-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-800">
+                    <label className="cursor-pointer rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface">
                       {logoUrl ? 'Change logo' : 'Upload logo'}
                       <input type="file" accept="image/*" onChange={handleLogoChange} className="hidden" />
                     </label>
@@ -589,7 +589,7 @@ export default function Settings() {
                       <button
                         type="button"
                         onClick={() => setLogoUrl(null)}
-                        className="text-sm font-medium text-neutral-400 transition hover:text-white"
+                        className="text-sm font-medium text-fg-secondary transition hover:text-fg"
                       >
                         Remove
                       </button>
@@ -601,7 +601,7 @@ export default function Settings() {
                   <button
                     type="submit"
                     disabled={submitting}
-                    className="flex-1 rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                    className="flex-1 rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
                   >
                     {submitting ? 'Saving…' : 'Save changes'}
                   </button>
@@ -609,7 +609,7 @@ export default function Settings() {
                     type="button"
                     onClick={handleCancel}
                     disabled={submitting}
-                    className="rounded-full border border-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-800 disabled:opacity-60"
+                    className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
                   >
                     Cancel
                   </button>
@@ -619,11 +619,11 @@ export default function Settings() {
           </div>
 
           {studio && (
-            <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-6">
+            <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
               <div className="flex items-center justify-between gap-4">
                 <div>
-                  <h2 className="text-lg font-semibold text-white">Locations</h2>
-                  <p className="mt-1 text-sm text-neutral-400">
+                  <h2 className="text-lg font-semibold text-fg">Locations</h2>
+                  <p className="mt-1 text-sm text-fg-secondary">
                     {canManageLocations ? 'Every shop location, its hours, and how to reach it.' : 'Where to find us.'}
                   </p>
                 </div>
@@ -632,7 +632,7 @@ export default function Settings() {
                   <button
                     type="button"
                     onClick={handleAddLocation}
-                    className="shrink-0 rounded-full border border-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-800"
+                    className="shrink-0 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
                   >
                     Add location
                   </button>
@@ -640,17 +640,17 @@ export default function Settings() {
               </div>
 
               {locationsError && (
-                <div className="mt-4 rounded-lg border border-red-900 bg-red-950/40 px-3 py-2 text-sm text-red-400">
+                <div className="mt-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
                   {locationsError}
                 </div>
               )}
 
               {locations === null && !locationsError && (
-                <p className="mt-4 text-sm text-neutral-400">Loading locations…</p>
+                <p className="mt-4 text-sm text-fg-secondary">Loading locations…</p>
               )}
 
               {locations !== null && locations.length === 0 && editingLocationId !== 'new' && (
-                <p className="mt-4 text-sm text-neutral-400">
+                <p className="mt-4 text-sm text-fg-secondary">
                   {canManageLocations ? 'No locations yet. Add your first one.' : 'No locations yet.'}
                 </p>
               )}
@@ -704,11 +704,11 @@ export default function Settings() {
           )}
 
           {canViewPolicies && policies && (
-            <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-6">
+            <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
               <div className="flex items-center justify-between gap-4">
                 <div>
-                  <h2 className="text-lg font-semibold text-white">Policies &amp; Defaults</h2>
-                  <p className="mt-1 text-sm text-neutral-400">
+                  <h2 className="text-lg font-semibold text-fg">Policies &amp; Defaults</h2>
+                  <p className="mt-1 text-sm text-fg-secondary">
                     Wording and defaults used across estimates, deposits, and gift cards.
                   </p>
                 </div>
@@ -717,7 +717,7 @@ export default function Settings() {
                   <button
                     type="button"
                     onClick={() => setEditingPolicies(true)}
-                    className="shrink-0 rounded-full border border-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-800"
+                    className="shrink-0 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
                   >
                     Edit
                   </button>
@@ -736,19 +736,19 @@ export default function Settings() {
                     ] as const
                   ).map(([field, label]) => (
                     <div key={field}>
-                      <label className="mb-1 block text-sm font-medium text-neutral-300">{label}</label>
+                      <label className="mb-1 block text-sm font-medium text-fg-secondary">{label}</label>
                       <textarea
                         rows={3}
                         value={policiesForm[field]}
                         onChange={(e) => setPoliciesForm({ ...policiesForm, [field]: e.target.value })}
-                        className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                       />
                     </div>
                   ))}
 
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <div>
-                      <label className="mb-1 block text-sm font-medium text-neutral-300">
+                      <label className="mb-1 block text-sm font-medium text-fg-secondary">
                         Estimate follow-up (hours)
                       </label>
                       <input
@@ -756,11 +756,11 @@ export default function Settings() {
                         min="0"
                         value={policiesForm.estimateFollowUpHours}
                         onChange={(e) => setPoliciesForm({ ...policiesForm, estimateFollowUpHours: e.target.value })}
-                        className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                       />
                     </div>
                     <div>
-                      <label className="mb-1 block text-sm font-medium text-neutral-300">
+                      <label className="mb-1 block text-sm font-medium text-fg-secondary">
                         Gift card expiration (days, blank = never)
                       </label>
                       <input
@@ -770,28 +770,28 @@ export default function Settings() {
                         onChange={(e) =>
                           setPoliciesForm({ ...policiesForm, giftCardDefaultExpirationDays: e.target.value })
                         }
-                        className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="mb-1 block text-sm font-medium text-neutral-300">Calendar invite template</label>
+                    <label className="mb-1 block text-sm font-medium text-fg-secondary">Calendar invite template</label>
                     <textarea
                       rows={3}
                       value={policiesForm.calendarInviteTemplate}
                       onChange={(e) => setPoliciesForm({ ...policiesForm, calendarInviteTemplate: e.target.value })}
-                      className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                      className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                     />
                   </div>
 
-                  <div className="border-t border-neutral-800 pt-4">
+                  <div className="border-t border-border pt-4">
                     <div className="flex items-center justify-between">
-                      <label className="text-sm font-medium text-neutral-300">Waiver health screening questions</label>
+                      <label className="text-sm font-medium text-fg-secondary">Waiver health screening questions</label>
                       <button
                         type="button"
                         onClick={addHealthQuestion}
-                        className="rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-white transition hover:bg-neutral-800"
+                        className="rounded-full border border-border px-3 py-1 text-xs font-medium text-fg transition hover:bg-surface"
                       >
                         Add question
                       </button>
@@ -799,19 +799,19 @@ export default function Settings() {
 
                     <div className="mt-3 space-y-3">
                       {waiverHealthQuestions.map((q, i) => (
-                        <div key={i} className="rounded-lg border border-neutral-800 p-3">
+                        <div key={i} className="rounded-lg border border-border p-3">
                           <div className="flex items-start gap-2">
                             <textarea
                               rows={2}
                               value={q.question}
                               onChange={(e) => updateHealthQuestion(i, { question: e.target.value })}
                               placeholder="Question text"
-                              className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                              className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                             />
                             <button
                               type="button"
                               onClick={() => removeHealthQuestion(i)}
-                              className="shrink-0 rounded-full border border-neutral-700 px-2 py-1 text-xs text-neutral-400 transition hover:bg-neutral-800 hover:text-white"
+                              className="shrink-0 rounded-full border border-border px-2 py-1 text-xs text-fg-secondary transition hover:bg-surface hover:text-fg"
                             >
                               Remove
                             </button>
@@ -822,7 +822,7 @@ export default function Settings() {
                               onChange={(e) =>
                                 updateHealthQuestion(i, { type: e.target.value as HealthQuestion['type'] })
                               }
-                              className="rounded-lg border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                              className="rounded-lg border border-border bg-surface-inset px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                             >
                               <option value="yes_no">Yes/No</option>
                               <option value="yes_no_explain">Yes/No + explain if yes</option>
@@ -833,25 +833,25 @@ export default function Settings() {
                                 placeholder="Explain prompt (e.g. 'If yes, please explain')"
                                 value={q.explainPrompt ?? ''}
                                 onChange={(e) => updateHealthQuestion(i, { explainPrompt: e.target.value })}
-                                className="min-w-0 flex-1 rounded-lg border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                                className="min-w-0 flex-1 rounded-lg border border-border bg-surface-inset px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                               />
                             )}
                           </div>
                         </div>
                       ))}
                       {waiverHealthQuestions.length === 0 && (
-                        <p className="text-sm text-neutral-400">No health questions yet.</p>
+                        <p className="text-sm text-fg-secondary">No health questions yet.</p>
                       )}
                     </div>
                   </div>
 
-                  <div className="border-t border-neutral-800 pt-4">
+                  <div className="border-t border-border pt-4">
                     <div className="flex items-center justify-between">
-                      <label className="text-sm font-medium text-neutral-300">Waiver clauses (initialed individually)</label>
+                      <label className="text-sm font-medium text-fg-secondary">Waiver clauses (initialed individually)</label>
                       <button
                         type="button"
                         onClick={addClause}
-                        className="rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-white transition hover:bg-neutral-800"
+                        className="rounded-full border border-border px-3 py-1 text-xs font-medium text-fg transition hover:bg-surface"
                       >
                         Add clause
                       </button>
@@ -860,78 +860,78 @@ export default function Settings() {
                     <div className="mt-3 space-y-3">
                       {waiverClauses.map((clause, i) => (
                         <div key={i} className="flex items-start gap-2">
-                          <span className="mt-2 text-xs text-neutral-500">{i + 1}.</span>
+                          <span className="mt-2 text-xs text-fg-muted">{i + 1}.</span>
                           <textarea
                             rows={2}
                             value={clause}
                             onChange={(e) => updateClause(i, e.target.value)}
-                            className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                           />
                           <button
                             type="button"
                             onClick={() => removeClause(i)}
-                            className="mt-1 shrink-0 rounded-full border border-neutral-700 px-2 py-1 text-xs text-neutral-400 transition hover:bg-neutral-800 hover:text-white"
+                            className="mt-1 shrink-0 rounded-full border border-border px-2 py-1 text-xs text-fg-secondary transition hover:bg-surface hover:text-fg"
                           >
                             Remove
                           </button>
                         </div>
                       ))}
-                      {waiverClauses.length === 0 && <p className="text-sm text-neutral-400">No clauses yet.</p>}
+                      {waiverClauses.length === 0 && <p className="text-sm text-fg-secondary">No clauses yet.</p>}
                     </div>
                   </div>
 
-                  <div className="border-t border-neutral-800 pt-4">
-                    <label className="mb-1 block text-sm font-medium text-neutral-300">Waiver acknowledgment</label>
+                  <div className="border-t border-border pt-4">
+                    <label className="mb-1 block text-sm font-medium text-fg-secondary">Waiver acknowledgment</label>
                     <textarea
                       rows={3}
                       value={waiverAcknowledgment}
                       onChange={(e) => setWaiverAcknowledgment(e.target.value)}
-                      className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                      className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                     />
                   </div>
 
                   <div>
-                    <label className="mb-1 block text-sm font-medium text-neutral-300">
+                    <label className="mb-1 block text-sm font-medium text-fg-secondary">
                       Photo/video release text (optional section)
                     </label>
                     <textarea
                       rows={3}
                       value={waiverPhotoRelease}
                       onChange={(e) => setWaiverPhotoRelease(e.target.value)}
-                      className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                      className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                     />
                   </div>
 
-                  <div className="border-t border-neutral-800 pt-4">
+                  <div className="border-t border-border pt-4">
                     <div className="flex items-center justify-between">
-                      <label className="text-sm font-medium text-neutral-300">Message templates</label>
+                      <label className="text-sm font-medium text-fg-secondary">Message templates</label>
                       <button
                         type="button"
                         onClick={addTemplate}
-                        className="rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-white transition hover:bg-neutral-800"
+                        className="rounded-full border border-border px-3 py-1 text-xs font-medium text-fg transition hover:bg-surface"
                       >
                         Add template
                       </button>
                     </div>
-                    <p className="mt-1 text-xs text-neutral-500">
+                    <p className="mt-1 text-xs text-fg-muted">
                       Available in the conversation composer's template picker.
                     </p>
 
                     <div className="mt-3 space-y-3">
                       {messageTemplates.map((template, i) => (
-                        <div key={template.id} className="rounded-lg border border-neutral-800 p-3">
+                        <div key={template.id} className="rounded-lg border border-border p-3">
                           <div className="flex items-start gap-2">
                             <input
                               type="text"
                               placeholder="Template name (e.g. 'Booking confirmation')"
                               value={template.name}
                               onChange={(e) => updateTemplate(i, { name: e.target.value })}
-                              className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                              className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                             />
                             <button
                               type="button"
                               onClick={() => removeTemplate(i)}
-                              className="shrink-0 rounded-full border border-neutral-700 px-2 py-1 text-xs text-neutral-400 transition hover:bg-neutral-800 hover:text-white"
+                              className="shrink-0 rounded-full border border-border px-2 py-1 text-xs text-fg-secondary transition hover:bg-surface hover:text-fg"
                             >
                               Remove
                             </button>
@@ -941,47 +941,47 @@ export default function Settings() {
                             placeholder="Template body"
                             value={template.body}
                             onChange={(e) => updateTemplate(i, { body: e.target.value })}
-                            className="mt-2 w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                            className="mt-2 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                           />
                         </div>
                       ))}
                       {messageTemplates.length === 0 && (
-                        <p className="text-sm text-neutral-400">No templates yet.</p>
+                        <p className="text-sm text-fg-secondary">No templates yet.</p>
                       )}
                     </div>
                   </div>
 
-                  <div className="border-t border-neutral-800 pt-4">
-                    <label className="text-sm font-medium text-neutral-300">Interface</label>
-                    <label className="mt-2 flex items-center gap-2 text-sm text-neutral-300">
+                  <div className="border-t border-border pt-4">
+                    <label className="text-sm font-medium text-fg-secondary">Interface</label>
+                    <label className="mt-2 flex items-center gap-2 text-sm text-fg-secondary">
                       <input
                         type="checkbox"
                         checked={showSidebarBadges}
                         onChange={(e) => setShowSidebarBadges(e.target.checked)}
-                        className="h-4 w-4 rounded border-neutral-700 bg-neutral-900"
+                        className="h-4 w-4 rounded border-border bg-surface-inset accent-accent"
                       />
                       Show new-item count badges on sidebar navigation
                     </label>
-                    <p className="mt-1 text-xs text-neutral-500">
+                    <p className="mt-1 text-xs text-fg-muted">
                       Off by default. Doesn't affect the conversations unread badge or the Tasks icon's count, both
                       of which always show.
                     </p>
                   </div>
 
-                  {policiesError && <p className="text-sm text-red-400">{policiesError}</p>}
+                  {policiesError && <p className="text-sm text-danger">{policiesError}</p>}
 
                   <div className="flex gap-3">
                     <button
                       type="submit"
                       disabled={policiesSubmitting}
-                      className="rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                      className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                     >
                       {policiesSubmitting ? 'Saving…' : 'Save'}
                     </button>
                     <button
                       type="button"
                       onClick={() => setEditingPolicies(false)}
-                      className="rounded-full border border-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-800"
+                      className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
                     >
                       Cancel
                     </button>
@@ -990,80 +990,80 @@ export default function Settings() {
               ) : (
                 <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Refund policy</p>
-                    <p className="mt-1 whitespace-pre-wrap text-sm text-neutral-300">
+                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Refund policy</p>
+                    <p className="mt-1 whitespace-pre-wrap text-sm text-fg-secondary">
                       {policies.refundPolicy || 'Not set'}
                     </p>
                   </div>
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Deposit policy</p>
-                    <p className="mt-1 whitespace-pre-wrap text-sm text-neutral-300">
+                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Deposit policy</p>
+                    <p className="mt-1 whitespace-pre-wrap text-sm text-fg-secondary">
                       {policies.depositPolicy || 'Not set'}
                     </p>
                   </div>
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Reschedule policy</p>
-                    <p className="mt-1 whitespace-pre-wrap text-sm text-neutral-300">
+                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Reschedule policy</p>
+                    <p className="mt-1 whitespace-pre-wrap text-sm text-fg-secondary">
                       {policies.reschedulePolicy || 'Not set'}
                     </p>
                   </div>
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
                       Communication policy
                     </p>
-                    <p className="mt-1 whitespace-pre-wrap text-sm text-neutral-300">
+                    <p className="mt-1 whitespace-pre-wrap text-sm text-fg-secondary">
                       {policies.communicationPolicy || 'Not set'}
                     </p>
                   </div>
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
                       Estimate Terms &amp; Conditions
                     </p>
-                    <p className="mt-1 whitespace-pre-wrap text-sm text-neutral-300">
+                    <p className="mt-1 whitespace-pre-wrap text-sm text-fg-secondary">
                       {policies.estimateTerms || 'Not set'}
                     </p>
                   </div>
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
                       Estimate follow-up
                     </p>
-                    <p className="mt-1 text-sm text-neutral-300">{policies.estimateFollowUpHours} hours</p>
+                    <p className="mt-1 text-sm text-fg-secondary">{policies.estimateFollowUpHours} hours</p>
                   </div>
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
                       Gift card expiration
                     </p>
-                    <p className="mt-1 text-sm text-neutral-300">
+                    <p className="mt-1 text-sm text-fg-secondary">
                       {policies.giftCardDefaultExpirationDays
                         ? `${policies.giftCardDefaultExpirationDays} days`
                         : 'Never expires'}
                     </p>
                   </div>
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Waiver template</p>
-                    <p className="mt-1 text-sm text-neutral-300">
+                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Waiver template</p>
+                    <p className="mt-1 text-sm text-fg-secondary">
                       {waiverHealthQuestions.length} health question{waiverHealthQuestions.length === 1 ? '' : 's'},{' '}
                       {waiverClauses.length} clause{waiverClauses.length === 1 ? '' : 's'}
                     </p>
                   </div>
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
                       Message templates
                     </p>
-                    <p className="mt-1 text-sm text-neutral-300">
+                    <p className="mt-1 text-sm text-fg-secondary">
                       {messageTemplates.length} template{messageTemplates.length === 1 ? '' : 's'}
                     </p>
                   </div>
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
                       Sidebar badges
                     </p>
-                    <p className="mt-1 text-sm text-neutral-300">{showSidebarBadges ? 'On' : 'Off'}</p>
+                    <p className="mt-1 text-sm text-fg-secondary">{showSidebarBadges ? 'On' : 'Off'}</p>
                   </div>
                 </div>
               )}
 
-              {policiesSuccess && <p className="mt-3 text-sm text-green-400">Saved.</p>}
+              {policiesSuccess && <p className="mt-3 text-sm text-success">Saved.</p>}
             </div>
           )}
         </div>
@@ -1092,22 +1092,22 @@ function LocationCard({
   const summary = hoursSummary(location.hours)
 
   return (
-    <div className="rounded-xl border border-neutral-800 p-4">
+    <div className="rounded-xl border border-border p-4">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="text-sm font-medium text-white">{location.name}</p>
+          <p className="text-sm font-medium text-fg">{location.name}</p>
           {location.address && (
             <a
               href={googleMapsUrl(location.address)}
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-1 block text-xs text-neutral-400 underline decoration-neutral-600 underline-offset-2 hover:text-white"
+              className="mt-1 block text-xs text-fg-secondary underline decoration-border-strong underline-offset-2 hover:text-fg"
             >
               {location.address}
             </a>
           )}
-          {location.phone && <p className="mt-1 text-xs text-neutral-400">{location.phone}</p>}
-          {location.email && <p className="mt-1 text-xs text-neutral-400">{location.email}</p>}
+          {location.phone && <p className="mt-1 text-xs text-fg-secondary">{location.phone}</p>}
+          {location.email && <p className="mt-1 text-xs text-fg-secondary">{location.email}</p>}
         </div>
 
         {canManage && !confirmingDelete && (
@@ -1115,14 +1115,14 @@ function LocationCard({
             <button
               type="button"
               onClick={onEdit}
-              className="rounded-full border border-neutral-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800"
+              className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
             >
               Edit
             </button>
             <button
               type="button"
               onClick={onDeleteClick}
-              className="rounded-full border border-neutral-700 px-3 py-1.5 text-xs font-medium text-neutral-400 transition hover:bg-neutral-800 hover:text-white"
+              className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg-secondary transition hover:bg-surface hover:text-fg"
             >
               Delete
             </button>
@@ -1131,18 +1131,18 @@ function LocationCard({
 
         {canManage && confirmingDelete && (
           <div className="flex shrink-0 items-center gap-2 text-xs">
-            <span className="text-neutral-400">Delete this location?</span>
+            <span className="text-fg-secondary">Delete this location?</span>
             <button
               type="button"
               onClick={onDeleteConfirm}
-              className="rounded-full border border-red-900 bg-red-950/40 px-3 py-1.5 font-medium text-red-400 transition hover:bg-red-950/70"
+              className="rounded-full border border-danger/40 bg-danger/10 px-3 py-1.5 font-medium text-danger transition hover:bg-danger/20"
             >
               Confirm
             </button>
             <button
               type="button"
               onClick={onDeleteCancel}
-              className="rounded-full border border-neutral-700 px-3 py-1.5 font-medium text-white transition hover:bg-neutral-800"
+              className="rounded-full border border-border px-3 py-1.5 font-medium text-fg transition hover:bg-surface"
             >
               Cancel
             </button>
@@ -1151,11 +1151,11 @@ function LocationCard({
       </div>
 
       {summary && (
-        <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-1 border-t border-neutral-800 pt-3 sm:grid-cols-4">
+        <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-1 border-t border-border pt-3 sm:grid-cols-4">
           {summary.map((day) => (
             <div key={day.label} className="text-xs">
-              <span className="text-neutral-500">{day.label} </span>
-              <span className="text-neutral-300">{day.text}</span>
+              <span className="text-fg-muted">{day.label} </span>
+              <span className="text-fg-secondary">{day.text}</span>
             </div>
           ))}
         </div>
@@ -1184,15 +1184,15 @@ function LocationForm({
   onCancel: () => void
 }) {
   return (
-    <form onSubmit={onSubmit} className="rounded-xl border border-neutral-700 bg-neutral-900 p-4">
+    <form onSubmit={onSubmit} className="rounded-xl border border-border bg-bg p-4">
       {error && (
-        <div className="mb-4 rounded-lg border border-red-900 bg-red-950/40 px-3 py-2 text-sm text-red-400">
+        <div className="mb-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
           {error}
         </div>
       )}
 
       <div className="mb-4">
-        <label htmlFor="locationName" className="mb-1 block text-sm font-medium text-neutral-300">
+        <label htmlFor="locationName" className="mb-1 block text-sm font-medium text-fg-secondary">
           Location name
         </label>
         <input
@@ -1202,12 +1202,12 @@ function LocationForm({
           placeholder="Downtown"
           value={form.name}
           onChange={onFieldChange('name')}
-          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
         />
       </div>
 
       <div className="mb-4">
-        <label htmlFor="locationAddress" className="mb-1 block text-sm font-medium text-neutral-300">
+        <label htmlFor="locationAddress" className="mb-1 block text-sm font-medium text-fg-secondary">
           Address
         </label>
         <textarea
@@ -1216,13 +1216,13 @@ function LocationForm({
           placeholder="123 Main St, Suite 2, Portland, OR 97201"
           value={form.address}
           onChange={onFieldChange('address')}
-          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
         />
       </div>
 
       <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
-          <label htmlFor="locationPhone" className="mb-1 block text-sm font-medium text-neutral-300">
+          <label htmlFor="locationPhone" className="mb-1 block text-sm font-medium text-fg-secondary">
             Phone
           </label>
           <input
@@ -1233,12 +1233,12 @@ function LocationForm({
             maxLength={14}
             value={form.phone}
             onChange={(event) => onPhoneChange(event.target.value)}
-            className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
           />
         </div>
 
         <div>
-          <label htmlFor="locationEmail" className="mb-1 block text-sm font-medium text-neutral-300">
+          <label htmlFor="locationEmail" className="mb-1 block text-sm font-medium text-fg-secondary">
             Contact email
           </label>
           <input
@@ -1247,23 +1247,23 @@ function LocationForm({
             placeholder="hello@yourstudio.com"
             value={form.email}
             onChange={onFieldChange('email')}
-            className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
           />
         </div>
       </div>
 
       <div className="mb-4">
-        <span className="mb-2 block text-sm font-medium text-neutral-300">Hours</span>
+        <span className="mb-2 block text-sm font-medium text-fg-secondary">Hours</span>
         <div className="space-y-2">
           {form.hours.map((day) => (
             <div key={day.day} className="flex flex-wrap items-center gap-2">
-              <span className="w-9 text-xs font-medium text-neutral-400">{DAY_LABELS[day.day]}</span>
-              <label className="flex items-center gap-1.5 text-xs text-neutral-400">
+              <span className="w-9 text-xs font-medium text-fg-secondary">{DAY_LABELS[day.day]}</span>
+              <label className="flex items-center gap-1.5 text-xs text-fg-secondary">
                 <input
                   type="checkbox"
                   checked={day.closed}
                   onChange={(event) => onHoursChange(day.day, { closed: event.target.checked })}
-                  className="h-3.5 w-3.5 rounded border-neutral-700 bg-neutral-900"
+                  className="h-3.5 w-3.5 rounded border-border bg-surface-inset accent-accent"
                 />
                 Closed
               </label>
@@ -1272,15 +1272,15 @@ function LocationForm({
                 value={day.open ?? ''}
                 disabled={day.closed}
                 onChange={(event) => onHoursChange(day.day, { open: event.target.value })}
-                className="rounded-lg border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600 disabled:opacity-40"
+                className="rounded-lg border border-border bg-surface-inset px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-40"
               />
-              <span className="text-xs text-neutral-500">to</span>
+              <span className="text-xs text-fg-muted">to</span>
               <input
                 type="time"
                 value={day.close ?? ''}
                 disabled={day.closed}
                 onChange={(event) => onHoursChange(day.day, { close: event.target.value })}
-                className="rounded-lg border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600 disabled:opacity-40"
+                className="rounded-lg border border-border bg-surface-inset px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-40"
               />
             </div>
           ))}
@@ -1291,7 +1291,7 @@ function LocationForm({
         <button
           type="submit"
           disabled={submitting}
-          className="flex-1 rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-600 disabled:opacity-60"
+          className="flex-1 rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
         >
           {submitting ? 'Saving…' : 'Save location'}
         </button>
@@ -1299,7 +1299,7 @@ function LocationForm({
           type="button"
           onClick={onCancel}
           disabled={submitting}
-          className="rounded-full border border-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-800 disabled:opacity-60"
+          className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
         >
           Cancel
         </button>

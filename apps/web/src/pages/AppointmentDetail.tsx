@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import AuditTrail from '../components/AuditTrail'
+import StatusPill from '../components/StatusPill'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatStatus } from '../lib/format'
 import { formatCents, dollarsToCents } from '../lib/money'
@@ -271,44 +272,44 @@ export default function AppointmentDetail() {
       : 0
 
   return (
-    <div className="flex min-h-screen bg-neutral-900 text-white">
+    <div className="flex min-h-screen bg-bg text-fg">
       <Sidebar />
 
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl px-6 py-6 sm:px-10 sm:py-8">
           <Link
             to={appointment ? `/inquiries/${appointment.inquiry.id}` : '/calendar'}
-            className="inline-flex items-center gap-2 text-sm text-neutral-400 hover:text-white"
+            className="inline-flex items-center gap-2 text-sm text-fg-secondary hover:text-fg"
           >
             <ArrowLeftIcon className="h-4 w-4" />
             Back to {appointment ? 'Project' : 'Calendar'}
           </Link>
 
           {error && (
-            <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-              <p className="text-sm text-red-400">{error}</p>
+            <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+              <p className="text-sm text-danger">{error}</p>
             </div>
           )}
 
-          {!error && !appointment && <p className="mt-6 text-sm text-neutral-400">Loading appointment…</p>}
+          {!error && !appointment && <p className="mt-6 text-sm text-fg-secondary">Loading appointment…</p>}
 
           {!error && appointment && (
             <>
-              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
-                    <h1 className="text-xl font-bold text-white">
+                    <h1 className="text-xl font-bold text-fg">
                       <Link to={`/clients/${appointment.client.id}`} className="hover:underline">
                         {appointment.client.firstName} {appointment.client.lastName}
                       </Link>
                     </h1>
-                    <p className="mt-1 text-sm text-neutral-400">
+                    <p className="mt-1 text-sm text-fg-secondary">
                       {formatDateTime(appointment.startTime)} – {formatDateTime(appointment.endTime)}
                     </p>
-                    <p className="mt-1 text-sm text-neutral-400">
+                    <p className="mt-1 text-sm text-fg-secondary">
                       Artist: {appointment.artist.user.name ?? appointment.artist.user.email}
                     </p>
-                    <p className="mt-1 text-sm text-neutral-400">Project: {appointment.inquiry.description}</p>
+                    <p className="mt-1 text-sm text-fg-secondary">Project: {appointment.inquiry.description}</p>
                   </div>
 
                   <div className="flex shrink-0 items-center gap-2">
@@ -317,26 +318,24 @@ export default function AppointmentDetail() {
                         type="button"
                         onClick={handleMessage}
                         disabled={startingConversation}
-                        className="flex items-center gap-2 rounded-full border border-neutral-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800 disabled:opacity-60"
+                        className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:opacity-60"
                       >
                         <MessageIcon className="h-3.5 w-3.5" />
                         Message
                       </button>
                     )}
-                    <span className="inline-flex items-center rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-300">
-                      {formatStatus(appointment.status)}
-                    </span>
+                    <StatusPill status={appointment.status} />
                   </div>
                 </div>
 
                 {appointment.notes && (
-                  <p className="mt-4 border-t border-neutral-800 pt-4 text-sm text-neutral-300">{appointment.notes}</p>
+                  <p className="mt-4 border-t border-border pt-4 text-sm text-fg-secondary">{appointment.notes}</p>
                 )}
 
                 {appointment.giftCard && (
-                  <div className="mt-4 border-t border-neutral-800 pt-4 text-sm">
-                    <span className="text-neutral-500">Gift card: </span>
-                    <Link to={`/gift-cards/${appointment.giftCard.id}`} className="text-white hover:underline">
+                  <div className="mt-4 border-t border-border pt-4 text-sm">
+                    <span className="text-fg-muted">Gift card: </span>
+                    <Link to={`/gift-cards/${appointment.giftCard.id}`} className="text-fg hover:underline">
                       {formatCents(appointment.giftCard.amountCents)} ({formatStatus(appointment.giftCard.status)})
                     </Link>
                   </div>
@@ -344,43 +343,43 @@ export default function AppointmentDetail() {
               </div>
 
               {/* Waiver section */}
-              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-                <h2 className="text-base font-semibold text-white">Liability Waiver</h2>
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                <h2 className="text-base font-semibold text-fg">Liability Waiver</h2>
 
                 {!appointment.liabilityWaiver && canManage && (
                   <div className="mt-4">
-                    <p className="text-sm text-neutral-400">No waiver created for this appointment yet.</p>
+                    <p className="text-sm text-fg-secondary">No waiver created for this appointment yet.</p>
                     <button
                       type="button"
                       onClick={handleCreateWaiver}
                       disabled={creatingWaiver}
-                      className="mt-3 rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                      className="mt-3 rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
                     >
                       {creatingWaiver ? 'Creating…' : 'Create Waiver'}
                     </button>
-                    {waiverError && <p className="mt-2 text-sm text-red-400">{waiverError}</p>}
+                    {waiverError && <p className="mt-2 text-sm text-danger">{waiverError}</p>}
                   </div>
                 )}
 
                 {!appointment.liabilityWaiver && !canManage && (
-                  <p className="mt-4 text-sm text-neutral-400">No waiver yet.</p>
+                  <p className="mt-4 text-sm text-fg-secondary">No waiver yet.</p>
                 )}
 
                 {latestSigningUrl && (
-                  <div className="mt-4 rounded-lg border border-neutral-800 p-3">
-                    <p className="mb-2 text-xs text-neutral-500">Share this link with the client to sign in-shop.</p>
+                  <div className="mt-4 rounded-lg border border-border p-3">
+                    <p className="mb-2 text-xs text-fg-muted">Share this link with the client to sign in-shop.</p>
                     <div className="flex items-center gap-2">
                       <input
                         type="text"
                         readOnly
                         value={latestSigningUrl}
                         onFocus={(event) => event.target.select()}
-                        className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:outline-none"
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:outline-none"
                       />
                       <button
                         type="button"
                         onClick={() => handleCopyLink(latestSigningUrl)}
-                        className="shrink-0 rounded-full border border-neutral-700 bg-neutral-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-700"
+                        className="shrink-0 rounded-full border border-border bg-surface px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface-raised"
                       >
                         {copied ? 'Copied!' : 'Copy Link'}
                       </button>
@@ -391,36 +390,34 @@ export default function AppointmentDetail() {
                 {appointment.liabilityWaiver && (
                   <div className="mt-4">
                     <div className="flex flex-wrap items-center gap-3">
-                      <span className="inline-flex items-center rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-300">
-                        {formatStatus(appointment.liabilityWaiver.status)}
-                      </span>
+                      <StatusPill status={appointment.liabilityWaiver.status} />
                       {appointment.liabilityWaiver.signedAt && (
-                        <span className="text-xs text-neutral-500">
+                        <span className="text-xs text-fg-muted">
                           Signed {formatDateTime(appointment.liabilityWaiver.signedAt)}
                         </span>
                       )}
                       {appointment.liabilityWaiver.verifiedAt && (
-                        <span className="text-xs text-neutral-500">
+                        <span className="text-xs text-fg-muted">
                           Verified {formatDateTime(appointment.liabilityWaiver.verifiedAt)}
                         </span>
                       )}
                     </div>
 
                     {appointment.liabilityWaiver.status === 'PENDING' && canManage && waiverDetail?.token && (
-                      <div className="mt-3 rounded-lg border border-neutral-800 p-3">
-                        <p className="mb-2 text-xs text-neutral-500">Waiting for the client to sign.</p>
+                      <div className="mt-3 rounded-lg border border-border p-3">
+                        <p className="mb-2 text-xs text-fg-muted">Waiting for the client to sign.</p>
                         <div className="flex items-center gap-2">
                           <input
                             type="text"
                             readOnly
                             value={`${window.location.origin}/waiver/${waiverDetail.token}`}
                             onFocus={(event) => event.target.select()}
-                            className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:outline-none"
+                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:outline-none"
                           />
                           <button
                             type="button"
                             onClick={() => handleCopyLink(`${window.location.origin}/waiver/${waiverDetail.token}`)}
-                            className="shrink-0 rounded-full border border-neutral-700 bg-neutral-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-700"
+                            className="shrink-0 rounded-full border border-border bg-surface px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface-raised"
                           >
                             {copied ? 'Copied!' : 'Copy Link'}
                           </button>
@@ -429,58 +426,58 @@ export default function AppointmentDetail() {
                     )}
 
                     {canManage && waiverDetail && waiverDetail.status !== 'PENDING' && (
-                      <div className="mt-4 space-y-4 border-t border-neutral-800 pt-4 text-sm">
+                      <div className="mt-4 space-y-4 border-t border-border pt-4 text-sm">
                         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                           <div>
-                            <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Legal name</p>
-                            <p className="mt-1 text-white">{waiverDetail.legalName}</p>
+                            <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Legal name</p>
+                            <p className="mt-1 text-fg">{waiverDetail.legalName}</p>
                           </div>
                           <div>
-                            <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                            <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
                               Date of birth
                             </p>
-                            <p className="mt-1 text-white">
+                            <p className="mt-1 text-fg">
                               {waiverDetail.dateOfBirth ? new Date(waiverDetail.dateOfBirth).toLocaleDateString() : '—'}
                             </p>
                           </div>
                           <div>
-                            <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                            <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
                               Emergency contact
                             </p>
-                            <p className="mt-1 text-white">
+                            <p className="mt-1 text-fg">
                               {waiverDetail.emergencyContactName} — {waiverDetail.emergencyContactPhone}
                             </p>
                           </div>
                           <div>
-                            <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Signature</p>
-                            <p className="mt-1 text-white">{waiverDetail.signatureName}</p>
+                            <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Signature</p>
+                            <p className="mt-1 text-fg">{waiverDetail.signatureName}</p>
                           </div>
                         </div>
 
                         {waiverDetail.idImageUrl && (
                           <div>
-                            <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                            <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
                               ID photo
                             </p>
                             <img
                               src={waiverDetail.idImageUrl}
                               alt="Government ID"
-                              className="mt-2 max-h-64 rounded-lg border border-neutral-800"
+                              className="mt-2 max-h-64 rounded-lg border border-border"
                             />
                           </div>
                         )}
 
                         <div>
-                          <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                          <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
                             Health screening
                           </p>
                           <ul className="mt-2 space-y-2">
                             {waiverDetail.healthQuestionsSnapshot.map((q, i) => {
                               const answer = waiverDetail.healthAnswers?.find((a) => a.questionIndex === i)
                               return (
-                                <li key={i} className="rounded-lg border border-neutral-800 p-2">
-                                  <p className="text-neutral-300">{q.question}</p>
-                                  <p className="mt-1 text-white">
+                                <li key={i} className="rounded-lg border border-border p-2">
+                                  <p className="text-fg-secondary">{q.question}</p>
+                                  <p className="mt-1 text-fg">
                                     {answer?.answer ?? '—'}
                                     {answer?.explanation ? ` — ${answer.explanation}` : ''}
                                   </p>
@@ -491,16 +488,16 @@ export default function AppointmentDetail() {
                         </div>
 
                         <div>
-                          <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                          <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
                             Initialed clauses
                           </p>
                           <ul className="mt-2 space-y-2">
                             {waiverDetail.clausesSnapshot.map((clause, i) => {
                               const initial = waiverDetail.clauseInitials?.find((c) => c.clauseIndex === i)
                               return (
-                                <li key={i} className="rounded-lg border border-neutral-800 p-2">
-                                  <p className="text-neutral-300">{clause}</p>
-                                  <p className="mt-1 text-white">Initialed: {initial?.initials ?? '—'}</p>
+                                <li key={i} className="rounded-lg border border-border p-2">
+                                  <p className="text-fg-secondary">{clause}</p>
+                                  <p className="mt-1 text-fg">Initialed: {initial?.initials ?? '—'}</p>
                                 </li>
                               )
                             })}
@@ -508,10 +505,10 @@ export default function AppointmentDetail() {
                         </div>
 
                         <div>
-                          <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                          <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
                             Photo/video release
                           </p>
-                          <p className="mt-1 text-white">
+                          <p className="mt-1 text-fg">
                             {waiverDetail.photoReleaseAccepted
                               ? `Accepted — signed by ${waiverDetail.photoReleaseSignatureName}`
                               : 'Declined'}
@@ -519,7 +516,7 @@ export default function AppointmentDetail() {
                         </div>
 
                         {waiverDetail.verifiedBy && (
-                          <p className="text-xs text-neutral-500">
+                          <p className="text-xs text-fg-muted">
                             Verified by {waiverDetail.verifiedBy.name ?? waiverDetail.verifiedBy.email}
                           </p>
                         )}
@@ -530,11 +527,11 @@ export default function AppointmentDetail() {
                               type="button"
                               onClick={handleVerify}
                               disabled={verifying}
-                              className="rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                              className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                             >
                               {verifying ? 'Verifying…' : 'Verify against ID'}
                             </button>
-                            {verifyError && <p className="mt-2 text-sm text-red-400">{verifyError}</p>}
+                            {verifyError && <p className="mt-2 text-sm text-danger">{verifyError}</p>}
                           </div>
                         )}
                       </div>
@@ -549,11 +546,11 @@ export default function AppointmentDetail() {
 
               {/* Checkout section */}
               {canManage && (
-                <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-                  <h2 className="text-base font-semibold text-white">Checkout</h2>
+                <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                  <h2 className="text-base font-semibold text-fg">Checkout</h2>
 
                   {!appointment.checkedOutAt && !appointment.giftCard && (
-                    <p className="mt-4 text-sm text-neutral-400">
+                    <p className="mt-4 text-sm text-fg-secondary">
                       This appointment has no attached gift card — checkout is unavailable until that's resolved.
                     </p>
                   )}
@@ -561,7 +558,7 @@ export default function AppointmentDetail() {
                   {!appointment.checkedOutAt && appointment.giftCard && (
                     <form onSubmit={handleCheckout} className="mt-4 space-y-4">
                       <div>
-                        <label className="mb-1 block text-sm font-medium text-neutral-300">Final cost ($)</label>
+                        <label className="mb-1 block text-sm font-medium text-fg-secondary">Final cost ($)</label>
                         <input
                           type="number"
                           min="0"
@@ -569,44 +566,44 @@ export default function AppointmentDetail() {
                           required
                           value={checkoutForm.finalCostDollars}
                           onChange={(e) => setCheckoutForm({ ...checkoutForm, finalCostDollars: e.target.value })}
-                          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                         />
                       </div>
 
                       <div>
-                        <span className="mb-2 block text-sm font-medium text-neutral-300">
+                        <span className="mb-2 block text-sm font-medium text-fg-secondary">
                           Deposit ({formatCents(appointment.giftCard.amountCents)})
                         </span>
                         <div className="flex gap-4">
-                          <label className="flex items-center gap-2 text-sm text-neutral-300">
+                          <label className="flex items-center gap-2 text-sm text-fg-secondary">
                             <input
                               type="radio"
                               name="depositDecision"
                               checked={checkoutForm.depositDecision === 'REDEEM'}
                               onChange={() => setCheckoutForm({ ...checkoutForm, depositDecision: 'REDEEM' })}
-                              className="accent-neutral-400"
+                              className="accent-accent"
                             />
                             Redeem toward today's cost
                           </label>
-                          <label className="flex items-center gap-2 text-sm text-neutral-300">
+                          <label className="flex items-center gap-2 text-sm text-fg-secondary">
                             <input
                               type="radio"
                               name="depositDecision"
                               checked={checkoutForm.depositDecision === 'ROLL'}
                               onChange={() => setCheckoutForm({ ...checkoutForm, depositDecision: 'ROLL' })}
-                              className="accent-neutral-400"
+                              className="accent-accent"
                             />
                             Roll to a future appointment
                           </label>
                         </div>
                       </div>
 
-                      <div className="rounded-lg border border-neutral-800 p-3 text-sm">
-                        <p className="text-neutral-400">
-                          Amount due today: <span className="font-semibold text-white">{formatCents(amountDuePreview)}</span>
+                      <div className="rounded-lg border border-border p-3 text-sm">
+                        <p className="text-fg-secondary">
+                          Amount due today: <span className="font-semibold text-fg">{formatCents(amountDuePreview)}</span>
                         </p>
                         {remainderPreview > 0 && (
-                          <p className="mt-1 text-amber-300">
+                          <p className="mt-1 text-warning">
                             Deposit exceeds final cost by {formatCents(remainderPreview)} — handle the remainder
                             manually (no refund processing yet).
                           </p>
@@ -614,21 +611,21 @@ export default function AppointmentDetail() {
                       </div>
 
                       <div>
-                        <label className="mb-1 block text-sm font-medium text-neutral-300">Closeout notes</label>
+                        <label className="mb-1 block text-sm font-medium text-fg-secondary">Closeout notes</label>
                         <textarea
                           rows={3}
                           value={checkoutForm.closeoutNotes}
                           onChange={(e) => setCheckoutForm({ ...checkoutForm, closeoutNotes: e.target.value })}
-                          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                         />
                       </div>
 
-                      {checkoutError && <p className="text-sm text-red-400">{checkoutError}</p>}
+                      {checkoutError && <p className="text-sm text-danger">{checkoutError}</p>}
 
                       <button
                         type="submit"
                         disabled={checkingOut || !checkoutForm.finalCostDollars}
-                        className="w-full rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                        className="w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
                       >
                         {checkingOut ? 'Checking out…' : 'Confirm Checkout'}
                       </button>
@@ -639,24 +636,24 @@ export default function AppointmentDetail() {
                     <div className="mt-4 space-y-3 text-sm">
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <div>
-                          <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Final cost</p>
-                          <p className="mt-1 text-white">{formatCents(appointment.finalCostCents ?? 0)}</p>
+                          <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Final cost</p>
+                          <p className="mt-1 text-fg">{formatCents(appointment.finalCostCents ?? 0)}</p>
                         </div>
                         <div>
-                          <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Deposit</p>
-                          <p className="mt-1 text-white">{checkoutDecision === 'REDEEM' ? 'Redeemed' : 'Rolled forward'}</p>
+                          <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Deposit</p>
+                          <p className="mt-1 text-fg">{checkoutDecision === 'REDEEM' ? 'Redeemed' : 'Rolled forward'}</p>
                         </div>
                         <div>
-                          <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                          <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
                             Amount due
                           </p>
-                          <p className="mt-1 text-white">{formatCents(checkoutAmountDue ?? 0)}</p>
+                          <p className="mt-1 text-fg">{formatCents(checkoutAmountDue ?? 0)}</p>
                         </div>
                         <div>
-                          <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                          <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
                             Checked out
                           </p>
-                          <p className="mt-1 text-white">
+                          <p className="mt-1 text-fg">
                             {formatDateTime(appointment.checkedOutAt)} by{' '}
                             {appointment.checkedOutBy?.name ?? appointment.checkedOutBy?.email ?? '—'}
                           </p>
@@ -664,17 +661,17 @@ export default function AppointmentDetail() {
                       </div>
 
                       {checkoutRemainder > 0 && (
-                        <p className="text-amber-300">
+                        <p className="text-warning">
                           Deposit exceeded final cost by {formatCents(checkoutRemainder)} — handled manually.
                         </p>
                       )}
 
                       {appointment.closeoutNotes && (
                         <div>
-                          <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                          <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
                             Closeout notes
                           </p>
-                          <p className="mt-1 whitespace-pre-wrap text-neutral-300">{appointment.closeoutNotes}</p>
+                          <p className="mt-1 whitespace-pre-wrap text-fg-secondary">{appointment.closeoutNotes}</p>
                         </div>
                       )}
 
@@ -685,7 +682,7 @@ export default function AppointmentDetail() {
                             `/calendar?prefillClientId=${appointment.client.id}&prefillInquiryId=${appointment.inquiry.id}`,
                           )
                         }
-                        className="rounded-full border border-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-800"
+                        className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
                       >
                         Book follow-up
                       </button>

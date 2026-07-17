@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { apiFetch } from '../lib/api'
-import { formatDateTime, formatStatus } from '../lib/format'
+import { formatDateTime } from '../lib/format'
 import QrCode from '../components/QrCode'
+import StatusPill from '../components/StatusPill'
 
 interface GiftCardView {
   studioName: string
@@ -35,22 +36,22 @@ export default function GiftCardResponse() {
   }, [code])
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-neutral-900 px-4 py-10 text-white">
-      <div className="w-full max-w-md rounded-2xl border border-neutral-800 bg-neutral-900 p-8 text-center">
+    <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
+      <div className="w-full max-w-md rounded-2xl border border-border bg-surface p-8 text-center">
         {error && (
           <>
-            <h1 className="text-xl font-semibold text-white">Gift card not found</h1>
-            <p className="mt-2 text-sm text-neutral-400">{error}</p>
+            <h1 className="text-xl font-semibold text-fg">Gift card not found</h1>
+            <p className="mt-2 text-sm text-fg-secondary">{error}</p>
           </>
         )}
 
-        {!error && !data && <p className="text-sm text-neutral-400">Loading…</p>}
+        {!error && !data && <p className="text-sm text-fg-secondary">Loading…</p>}
 
         {!error && data && (
           <>
-            <p className="text-sm text-neutral-400">{data.studioName}</p>
-            <h1 className="mt-1 text-3xl font-bold text-white">${(data.amountCents / 100).toFixed(2)}</h1>
-            <p className="mt-1 text-sm text-neutral-400">Gift Card</p>
+            <p className="text-sm text-fg-secondary">{data.studioName}</p>
+            <h1 className="mt-1 text-3xl font-bold text-fg">${(data.amountCents / 100).toFixed(2)}</h1>
+            <p className="mt-1 text-sm text-fg-secondary">Gift Card</p>
 
             <div className="mt-4 flex justify-center">
               <QrCode value={window.location.href} />
@@ -58,12 +59,14 @@ export default function GiftCardResponse() {
 
             <div className="mt-5 flex justify-center gap-6 text-sm">
               <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Status</p>
-                <p className="mt-1 text-white">{formatStatus(data.status)}</p>
+                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Status</p>
+                <div className="mt-1">
+                  <StatusPill status={data.status} />
+                </div>
               </div>
               <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Expires</p>
-                <p className="mt-1 text-white">{data.expiresAt ? formatDateTime(data.expiresAt) : 'Never'}</p>
+                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Expires</p>
+                <p className="mt-1 text-fg">{data.expiresAt ? formatDateTime(data.expiresAt) : 'Never'}</p>
               </div>
             </div>
           </>

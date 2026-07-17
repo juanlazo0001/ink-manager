@@ -154,46 +154,46 @@ export default function Tasks() {
   const completedPersonal = data?.personal.filter((t) => t.completedAt) ?? []
 
   return (
-    <div className="flex min-h-screen bg-neutral-900 text-white">
+    <div className="flex min-h-screen bg-bg text-fg">
       <Sidebar />
 
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl px-6 py-6 sm:px-10 sm:py-8">
-          <h1 className="text-2xl font-bold text-white sm:text-3xl">Tasks</h1>
-          <p className="mt-1 text-sm text-neutral-400">Everything needing attention, plus your own to-dos.</p>
+          <h1 className="text-2xl font-bold text-fg sm:text-3xl">Tasks</h1>
+          <p className="mt-1 text-sm text-fg-secondary">Everything needing attention, plus your own to-dos.</p>
 
-          {isLoading && <p className="mt-6 text-sm text-neutral-400">Loading…</p>}
-          {error && <p className="mt-6 text-sm text-red-400">{error instanceof Error ? error.message : 'Failed to load tasks'}</p>}
+          {isLoading && <p className="mt-6 text-sm text-fg-secondary">Loading…</p>}
+          {error && <p className="mt-6 text-sm text-danger">{error instanceof Error ? error.message : 'Failed to load tasks'}</p>}
 
           {data && (
             <>
               {user?.role !== 'ARTIST' && (
-              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-                <h2 className="text-base font-semibold text-white">Studio Queue</h2>
-                <p className="mt-1 text-sm text-neutral-400">
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                <h2 className="text-base font-semibold text-fg">Studio Queue</h2>
+                <p className="mt-1 text-sm text-fg-secondary">
                   Shared and unassigned -- anyone can act on an item; it disappears once resolved.
                 </p>
 
                 {data.system.length === 0 && (
-                  <p className="mt-4 text-sm text-neutral-400">Nothing needs attention right now.</p>
+                  <p className="mt-4 text-sm text-fg-secondary">Nothing needs attention right now.</p>
                 )}
 
                 {systemGroups.map(([type, tasks]) => (
                   <div key={type} className="mt-4">
-                    <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
                       {TASK_TYPE_LABELS[type] ?? type}
                     </p>
                     <ul className="mt-2 space-y-2">
                       {tasks.map((task) => (
                         <li
                           key={`${task.type}:${task.dismissalKey}`}
-                          className="flex items-center justify-between gap-3 rounded-lg border border-neutral-800 p-3 text-sm"
+                          className="flex items-center justify-between gap-3 rounded-lg border border-border p-3 text-sm"
                         >
                           <div className="min-w-0">
-                            <Link to={task.deepLink} className="text-white hover:underline">
+                            <Link to={task.deepLink} className="text-fg hover:underline">
                               {task.title}
                             </Link>
-                            <p className="mt-0.5 text-xs text-neutral-500">
+                            <p className="mt-0.5 text-xs text-fg-muted">
                               Since {formatDateTime(task.actionableAt)}
                             </p>
                           </div>
@@ -201,7 +201,7 @@ export default function Tasks() {
                             type="button"
                             onClick={() => dismissMutation.mutate(task)}
                             disabled={dismissMutation.isPending || !!viewAsTarget}
-                            className="shrink-0 rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-300 transition hover:bg-neutral-800 hover:text-white disabled:opacity-60"
+                            className="shrink-0 rounded-full border border-border px-3 py-1 text-xs font-medium text-fg-secondary transition hover:bg-surface hover:text-fg disabled:opacity-60"
                           >
                             Dismiss
                           </button>
@@ -213,8 +213,8 @@ export default function Tasks() {
               </div>
               )}
 
-              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-                <h2 className="text-base font-semibold text-white">Assigned to Me</h2>
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                <h2 className="text-base font-semibold text-fg">Assigned to Me</h2>
 
                 <form onSubmit={handleAddTask} className="mt-4 flex flex-wrap gap-2">
                   <input
@@ -222,13 +222,13 @@ export default function Tasks() {
                     placeholder="Add a task…"
                     value={form.title}
                     onChange={(e) => setForm({ ...form, title: e.target.value })}
-                    className="min-w-0 flex-1 rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                    className="min-w-0 flex-1 rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                   />
                   {canAssign && (
                     <select
                       value={form.assigneeUserId}
                       onChange={(e) => setForm({ ...form, assigneeUserId: e.target.value })}
-                      className="rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                      className="rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                     >
                       <option value="">Assign to myself</option>
                       {staffRoster
@@ -244,33 +244,33 @@ export default function Tasks() {
                     type="date"
                     value={form.dueAt}
                     onChange={(e) => setForm({ ...form, dueAt: e.target.value })}
-                    className="rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                    className="rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                   />
                   <button
                     type="submit"
                     disabled={createMutation.isPending || !!viewAsTarget}
-                    className="flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                    className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                   >
                     <PlusIcon className="h-4 w-4" />
                     Add
                   </button>
                 </form>
-                {formError && <p className="mt-2 text-sm text-red-400">{formError}</p>}
+                {formError && <p className="mt-2 text-sm text-danger">{formError}</p>}
 
                 {incompletePersonal.length === 0 && completedPersonal.length === 0 && (
-                  <p className="mt-4 text-sm text-neutral-400">No personal tasks yet — add one above.</p>
+                  <p className="mt-4 text-sm text-fg-secondary">No personal tasks yet — add one above.</p>
                 )}
 
                 {incompletePersonal.length > 0 && (
                   <ul className="mt-4 space-y-2">
                     {incompletePersonal.map((task) => (
-                      <li key={task.id} className="flex items-center gap-3 rounded-lg border border-neutral-800 p-3 text-sm">
+                      <li key={task.id} className="flex items-center gap-3 rounded-lg border border-border p-3 text-sm">
                         <button
                           type="button"
                           onClick={() => toggleComplete(task)}
                           disabled={!!viewAsTarget}
                           aria-label="Mark complete"
-                          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-neutral-600 text-transparent transition hover:border-neutral-400 hover:text-neutral-400 disabled:cursor-not-allowed disabled:opacity-50"
+                          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border text-transparent transition hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           <CheckIcon className="h-3 w-3" />
                         </button>
@@ -283,19 +283,19 @@ export default function Tasks() {
                             onChange={(e) => setEditTitle(e.target.value)}
                             onBlur={() => saveEdit(task.id)}
                             onKeyDown={(e) => e.key === 'Enter' && saveEdit(task.id)}
-                            className="min-w-0 flex-1 rounded-lg border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-white focus:outline-none"
+                            className="min-w-0 flex-1 rounded-xl border border-border bg-surface-inset px-2 py-1 text-sm text-fg focus:outline-none"
                           />
                         ) : (
                           <div className="min-w-0 flex-1">
                             <button
                               type="button"
                               onClick={() => startEdit(task)}
-                              className="block w-full truncate text-left text-white hover:underline"
+                              className="block w-full truncate text-left text-fg hover:underline"
                             >
                               {task.title}
                             </button>
                             {task.createdBy.id !== user?.userId && (
-                              <p className="mt-0.5 text-xs text-neutral-500">
+                              <p className="mt-0.5 text-xs text-fg-muted">
                                 Assigned by {task.createdBy.name ?? task.createdBy.email}
                               </p>
                             )}
@@ -303,7 +303,7 @@ export default function Tasks() {
                         )}
 
                         {task.dueAt && (
-                          <span className="shrink-0 text-xs text-neutral-500">
+                          <span className="shrink-0 text-xs text-fg-muted">
                             Due {new Date(task.dueAt).toLocaleDateString()}
                           </span>
                         )}
@@ -313,7 +313,7 @@ export default function Tasks() {
                           onClick={() => deleteMutation.mutate(task.id)}
                           disabled={!!viewAsTarget}
                           aria-label="Delete task"
-                          className="shrink-0 rounded-full p-1 text-neutral-500 transition hover:bg-neutral-800 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                          className="shrink-0 rounded-full p-1 text-fg-muted transition hover:bg-surface hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           <CloseIcon className="h-3.5 w-3.5" />
                         </button>
@@ -327,7 +327,7 @@ export default function Tasks() {
                     <button
                       type="button"
                       onClick={() => setShowCompleted((v) => !v)}
-                      className="text-xs font-medium text-neutral-500 hover:text-white"
+                      className="text-xs font-medium text-fg-muted hover:text-fg"
                     >
                       {showCompleted ? 'Hide' : 'Show'} completed ({completedPersonal.length})
                     </button>
@@ -337,23 +337,23 @@ export default function Tasks() {
                         {completedPersonal.map((task) => (
                           <li
                             key={task.id}
-                            className="flex items-center gap-3 rounded-lg border border-neutral-800 p-3 text-sm opacity-60"
+                            className="flex items-center gap-3 rounded-lg border border-border p-3 text-sm opacity-60"
                           >
                             <button
                               type="button"
                               onClick={() => toggleComplete(task)}
                               disabled={!!viewAsTarget}
                               aria-label="Mark incomplete"
-                              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-neutral-500 bg-neutral-700 text-white disabled:cursor-not-allowed disabled:opacity-50"
+                              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-accent bg-accent text-bg disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               <CheckIcon className="h-3 w-3" />
                             </button>
-                            <span className="min-w-0 flex-1 truncate text-neutral-300 line-through">{task.title}</span>
+                            <span className="min-w-0 flex-1 truncate text-fg-secondary line-through">{task.title}</span>
                             <button
                               type="button"
                               onClick={() => deleteMutation.mutate(task.id)}
                               aria-label="Delete task"
-                              className="shrink-0 rounded-full p-1 text-neutral-500 transition hover:bg-neutral-800 hover:text-white"
+                              className="shrink-0 rounded-full p-1 text-fg-muted transition hover:bg-surface hover:text-fg"
                             >
                               <CloseIcon className="h-3.5 w-3.5" />
                             </button>

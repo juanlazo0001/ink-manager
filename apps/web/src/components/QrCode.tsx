@@ -21,7 +21,7 @@ export default function QrCode({ value, size = 180 }: { value: string; size?: nu
   }, [value, size])
 
   if (!dataUrl) {
-    return <div className="rounded-lg bg-neutral-800" style={{ width: size, height: size }} />
+    return <div className="rounded-lg bg-surface" style={{ width: size, height: size }} />
   }
 
   return (
@@ -30,7 +30,7 @@ export default function QrCode({ value, size = 180 }: { value: string; size?: nu
       alt="QR code"
       width={size}
       height={size}
-      className="rounded-lg border border-neutral-800 bg-white p-2"
+      className="rounded-lg border border-border bg-white p-2"
     />
   )
 }

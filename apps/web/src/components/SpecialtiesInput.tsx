@@ -75,14 +75,14 @@ export default function SpecialtiesInput({ value, onChange }: SpecialtiesInputPr
           {value.map((specialty) => (
             <span
               key={specialty}
-              className="inline-flex items-center gap-1 rounded-full border border-neutral-700 bg-neutral-800 py-1 pl-2.5 pr-1.5 text-xs font-medium text-neutral-300"
+              className="inline-flex items-center gap-1 rounded-full border border-border bg-surface py-1 pl-2.5 pr-1.5 text-xs font-medium text-fg-secondary"
             >
               {specialty}
               <button
                 type="button"
                 onClick={() => removeSpecialty(specialty)}
                 aria-label={`Remove ${specialty}`}
-                className="flex h-4 w-4 items-center justify-center rounded-full text-neutral-500 hover:bg-neutral-700 hover:text-white"
+                className="flex h-4 w-4 items-center justify-center rounded-full text-fg-muted hover:bg-surface-raised hover:text-fg"
               >
                 <CloseIcon className="h-2.5 w-2.5" />
               </button>
@@ -103,18 +103,18 @@ export default function SpecialtiesInput({ value, onChange }: SpecialtiesInputPr
           onBlur={() => setTimeout(() => setOpen(false), 150)}
           onKeyDown={handleKeyDown}
           placeholder="Search or add a specialty…"
-          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
         />
 
         {open && (suggestions.length > 0 || isNewCustomValue) && (
-          <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900 shadow-lg">
+          <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-xl border border-border bg-surface-raised shadow-lg">
             {suggestions.map((option) => (
               <button
                 key={option}
                 type="button"
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => addSpecialty(option)}
-                className="block w-full px-3 py-2 text-left text-sm text-neutral-300 hover:bg-neutral-800"
+                className="block w-full px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
               >
                 {option}
               </button>
@@ -124,7 +124,7 @@ export default function SpecialtiesInput({ value, onChange }: SpecialtiesInputPr
                 type="button"
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => addSpecialty(trimmedInput)}
-                className="block w-full border-t border-neutral-800 px-3 py-2 text-left text-sm font-medium text-white hover:bg-neutral-800"
+                className="block w-full border-t border-border px-3 py-2 text-left text-sm font-medium text-fg hover:bg-surface"
               >
                 Add "{trimmedInput}"
               </button>

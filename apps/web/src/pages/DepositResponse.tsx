@@ -4,7 +4,7 @@ import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime } from '../lib/format'
 
 const INPUT_CLASS =
-  'mt-1 w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600'
+  'mt-1 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
 
 type PageState = 'loading' | 'invalid' | 'ready' | 'success'
 
@@ -95,22 +95,22 @@ export default function DepositResponse() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-neutral-900 px-4 py-10 text-white">
-      <div className="w-full max-w-lg rounded-2xl border border-neutral-800 bg-neutral-900 p-8">
-        {state === 'loading' && <p className="text-center text-sm text-neutral-400">Loading…</p>}
+    <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
+      <div className="w-full max-w-lg rounded-2xl border border-border bg-surface p-8">
+        {state === 'loading' && <p className="text-center text-sm text-fg-secondary">Loading…</p>}
 
         {state === 'invalid' && (
           <div className="text-center">
-            <h1 className="text-xl font-semibold text-white">This link has expired</h1>
-            <p className="mt-2 text-sm text-neutral-400">{invalidMessage}</p>
-            <p className="mt-4 text-sm text-neutral-400">Please contact the studio to request a new deposit form.</p>
+            <h1 className="text-xl font-semibold text-fg">This link has expired</h1>
+            <p className="mt-2 text-sm text-fg-secondary">{invalidMessage}</p>
+            <p className="mt-4 text-sm text-fg-secondary">Please contact the studio to request a new deposit form.</p>
           </div>
         )}
 
         {state === 'success' && (
           <div className="text-center">
-            <h1 className="text-xl font-semibold text-white">Thanks — you're all set!</h1>
-            <p className="mt-2 text-sm text-neutral-400">
+            <h1 className="text-xl font-semibold text-fg">Thanks — you're all set!</h1>
+            <p className="mt-2 text-sm text-fg-secondary">
               Your signed deposit form has been received. No payment has been collected yet — the studio will reach
               out to collect your deposit and confirm your appointment.
             </p>
@@ -119,16 +119,17 @@ export default function DepositResponse() {
 
         {state === 'ready' && verifyData && (
           <div>
-            <h1 className="text-xl font-semibold text-white">Deposit Agreement</h1>
-            <p className="mt-1 text-sm text-neutral-400">
+            <h1 className="text-xl font-semibold text-fg">Deposit Agreement</h1>
+            <p className="mt-1 text-sm font-medium text-fg-secondary">{verifyData.studioName}</p>
+            <p className="mt-2 text-sm text-fg-secondary">
               {verifyData.clientFirstName}, please review and sign below to confirm your appointment
-              {verifyData.artistName ? ` with ${verifyData.artistName}` : ''} at {verifyData.studioName}.
+              {verifyData.artistName ? ` with ${verifyData.artistName}` : ''}.
             </p>
 
             {verifyData.appointmentStart && verifyData.appointmentEnd && (
-              <div className="mt-4 rounded-lg border border-neutral-800 p-3">
-                <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Appointment</p>
-                <p className="mt-1 text-sm text-white">
+              <div className="mt-4 rounded-lg border border-border p-3">
+                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Appointment</p>
+                <p className="mt-1 text-sm text-fg">
                   {formatDateTime(verifyData.appointmentStart)} – {formatDateTime(verifyData.appointmentEnd)}
                 </p>
               </div>
@@ -136,39 +137,39 @@ export default function DepositResponse() {
 
             <div className="mt-4 grid grid-cols-3 gap-3">
               <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Deposit</p>
-                <p className="mt-1 text-lg font-semibold text-white">${verifyData.depositAmount}</p>
+                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Deposit</p>
+                <p className="mt-1 text-lg font-semibold text-fg">${verifyData.depositAmount}</p>
               </div>
               <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Fee</p>
-                <p className="mt-1 text-lg font-semibold text-white">${verifyData.feeAmount}</p>
+                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Fee</p>
+                <p className="mt-1 text-lg font-semibold text-fg">${verifyData.feeAmount}</p>
               </div>
               <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Total</p>
-                <p className="mt-1 text-lg font-semibold text-white">${verifyData.totalCharged}</p>
+                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Total</p>
+                <p className="mt-1 text-lg font-semibold text-fg">${verifyData.totalCharged}</p>
               </div>
             </div>
 
             <form onSubmit={handleSubmit} className="mt-6 space-y-3">
-              <p className="text-sm font-medium text-neutral-300">Please read and agree to each term:</p>
+              <p className="text-sm font-medium text-fg-secondary">Please read and agree to each term:</p>
 
               {verifyData.terms.map((term) => (
                 <label
                   key={term.key}
-                  className="flex items-start gap-3 rounded-lg border border-neutral-800 p-3 text-sm text-neutral-300"
+                  className="flex items-start gap-3 rounded-lg border border-border p-3 text-sm text-fg-secondary"
                 >
                   <input
                     type="checkbox"
                     checked={agreed[term.key] ?? false}
                     onChange={(e) => setAgreed({ ...agreed, [term.key]: e.target.checked })}
-                    className="mt-0.5 h-4 w-4 shrink-0 rounded border-neutral-700 bg-neutral-900"
+                    className="mt-0.5 h-4 w-4 shrink-0 rounded border-border bg-surface-inset accent-accent"
                   />
                   <span>{term.label}</span>
                 </label>
               ))}
 
               <div>
-                <label className="mb-1 block text-sm font-medium text-neutral-300">
+                <label className="mb-1 block text-sm font-medium text-fg-secondary">
                   Type your full name as your signature
                 </label>
                 <input
@@ -180,7 +181,7 @@ export default function DepositResponse() {
               </div>
 
               {submitError && (
-                <div className="rounded-lg border border-red-900 bg-red-950/40 px-3 py-2 text-sm text-red-400">
+                <div className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
                   {submitError}
                 </div>
               )}
@@ -188,7 +189,7 @@ export default function DepositResponse() {
               <button
                 type="submit"
                 disabled={submitting || !allAgreed}
-                className="w-full rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                className="w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
               >
                 {submitting ? 'Submitting…' : 'Sign and Confirm'}
               </button>

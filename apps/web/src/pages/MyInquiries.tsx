@@ -25,7 +25,7 @@ interface Inquiry {
 
 function ImageGrid({ images }: { images: string[] }) {
   if (images.length === 0) {
-    return <p className="text-sm text-neutral-400">None uploaded.</p>
+    return <p className="text-sm text-fg-secondary">None uploaded.</p>
   }
 
   return (
@@ -36,7 +36,7 @@ function ImageGrid({ images }: { images: string[] }) {
           href={url}
           target="_blank"
           rel="noreferrer"
-          className="block aspect-square overflow-hidden rounded-lg border border-neutral-800"
+          className="block aspect-square overflow-hidden rounded-lg border border-border"
         >
           <img src={url} alt="" className="h-full w-full object-cover transition hover:opacity-80" />
         </a>
@@ -164,40 +164,40 @@ export default function MyInquiries() {
   }
 
   return (
-    <div className="flex min-h-screen bg-neutral-900 text-white">
+    <div className="flex min-h-screen bg-bg text-fg">
       <Sidebar />
 
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-5xl px-6 py-6 sm:px-10 sm:py-8">
           <div>
-            <h1 className="text-2xl font-bold text-white sm:text-3xl">My Inquiries</h1>
-            <p className="mt-1 text-sm text-neutral-400">Tattoo requests assigned to you for review.</p>
+            <h1 className="text-2xl font-bold text-fg sm:text-3xl">My Inquiries</h1>
+            <p className="mt-1 text-sm text-fg-secondary">Tattoo requests assigned to you for review.</p>
           </div>
 
           {error && (
-            <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-              <p className="text-sm text-red-400">{error}</p>
+            <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+              <p className="text-sm text-danger">{error}</p>
             </div>
           )}
 
-          {!error && inquiries === null && <p className="mt-6 text-sm text-neutral-400">Loading inquiries…</p>}
+          {!error && inquiries === null && <p className="mt-6 text-sm text-fg-secondary">Loading inquiries…</p>}
 
           {!error && inquiries !== null && inquiries.length === 0 && (
-            <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-              <p className="text-sm text-neutral-400">Nothing assigned to you right now.</p>
+            <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+              <p className="text-sm text-fg-secondary">Nothing assigned to you right now.</p>
             </div>
           )}
 
           {!error && inquiries && inquiries.length > 0 && (
             <div className="mt-6 space-y-5">
               {inquiries.map((inquiry) => (
-                <div key={inquiry.id} className="rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
+                <div key={inquiry.id} className="rounded-2xl border border-border bg-surface p-5">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                      <h2 className="text-lg font-semibold text-white">
+                      <h2 className="text-lg font-semibold text-fg">
                         {inquiry.client.firstName} {inquiry.client.lastName}
                       </h2>
-                      <p className="mt-1 text-sm text-neutral-400">
+                      <p className="mt-1 text-sm text-fg-secondary">
                         Submitted {formatDateTime(inquiry.createdAt)} via {formatStatus(inquiry.channel)}
                       </p>
                     </div>
@@ -205,50 +205,50 @@ export default function MyInquiries() {
                       <button
                         type="button"
                         onClick={() => openApprove(inquiry)}
-                        className="rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600"
+                        className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover"
                       >
                         Approve
                       </button>
                       <button
                         type="button"
                         onClick={() => openDecline(inquiry)}
-                        className="rounded-full border border-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-800"
+                        className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
                       >
                         Decline
                       </button>
                     </div>
                   </div>
 
-                  <p className="mt-4 whitespace-pre-wrap text-sm text-white">{inquiry.description}</p>
+                  <p className="mt-4 whitespace-pre-wrap text-sm text-fg">{inquiry.description}</p>
 
                   <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
                     <div>
-                      <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Placement</p>
-                      <p className="mt-1 text-sm text-white">{inquiry.placement}</p>
+                      <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Placement</p>
+                      <p className="mt-1 text-sm text-fg">{inquiry.placement}</p>
                     </div>
                     <div>
-                      <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Size</p>
-                      <p className="mt-1 text-sm text-white">{inquiry.estimatedSize}</p>
+                      <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Size</p>
+                      <p className="mt-1 text-sm text-fg">{inquiry.estimatedSize}</p>
                     </div>
                     <div>
-                      <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Color</p>
-                      <p className="mt-1 text-sm text-white">{inquiry.colorOrBlackGrey}</p>
+                      <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Color</p>
+                      <p className="mt-1 text-sm text-fg">{inquiry.colorOrBlackGrey}</p>
                     </div>
                     <div>
-                      <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Budget</p>
-                      <p className="mt-1 text-sm text-white">{inquiry.budget ?? 'Not provided'}</p>
+                      <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Budget</p>
+                      <p className="mt-1 text-sm text-fg">{inquiry.budget ?? 'Not provided'}</p>
                     </div>
                   </div>
 
                   <div className="mt-4">
-                    <p className="mb-2 text-xs font-medium uppercase tracking-wider text-neutral-500">
+                    <p className="mb-2 text-xs font-medium uppercase tracking-wider text-fg-muted">
                       Reference images
                     </p>
                     <ImageGrid images={inquiry.referenceImages} />
                   </div>
 
                   <div className="mt-4">
-                    <p className="mb-2 text-xs font-medium uppercase tracking-wider text-neutral-500">
+                    <p className="mb-2 text-xs font-medium uppercase tracking-wider text-fg-muted">
                       Placement photos
                     </p>
                     <ImageGrid images={inquiry.placementImages} />
@@ -267,14 +267,14 @@ export default function MyInquiries() {
         >
           <form onSubmit={handleApproveSubmit}>
             {approveError && (
-              <div className="mb-4 rounded-lg border border-red-900 bg-red-950/40 px-3 py-2 text-sm text-red-400">
+              <div className="mb-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
                 {approveError}
               </div>
             )}
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label htmlFor="priceLow" className="mb-1 block text-sm font-medium text-neutral-300">
+                <label htmlFor="priceLow" className="mb-1 block text-sm font-medium text-fg-secondary">
                   Price low ($)
                 </label>
                 <input
@@ -284,12 +284,12 @@ export default function MyInquiries() {
                   step="1"
                   value={approveForm.priceEstimateLow}
                   onChange={(event) => setApproveForm({ ...approveForm, priceEstimateLow: event.target.value })}
-                  className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                 />
               </div>
 
               <div>
-                <label htmlFor="priceHigh" className="mb-1 block text-sm font-medium text-neutral-300">
+                <label htmlFor="priceHigh" className="mb-1 block text-sm font-medium text-fg-secondary">
                   Price high ($)
                 </label>
                 <input
@@ -299,14 +299,14 @@ export default function MyInquiries() {
                   step="1"
                   value={approveForm.priceEstimateHigh}
                   onChange={(event) => setApproveForm({ ...approveForm, priceEstimateHigh: event.target.value })}
-                  className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                 />
               </div>
             </div>
 
             <div className="mt-3 grid grid-cols-2 gap-3">
               <div>
-                <label htmlFor="timeHoursMin" className="mb-1 block text-sm font-medium text-neutral-300">
+                <label htmlFor="timeHoursMin" className="mb-1 block text-sm font-medium text-fg-secondary">
                   Time min (hours)
                 </label>
                 <input
@@ -316,11 +316,11 @@ export default function MyInquiries() {
                   step="0.5"
                   value={approveForm.timeEstimateHoursMin}
                   onChange={(event) => setApproveForm({ ...approveForm, timeEstimateHoursMin: event.target.value })}
-                  className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                 />
               </div>
               <div>
-                <label htmlFor="timeHoursMax" className="mb-1 block text-sm font-medium text-neutral-300">
+                <label htmlFor="timeHoursMax" className="mb-1 block text-sm font-medium text-fg-secondary">
                   Time max (hours)
                 </label>
                 <input
@@ -330,7 +330,7 @@ export default function MyInquiries() {
                   step="0.5"
                   value={approveForm.timeEstimateHoursMax}
                   onChange={(event) => setApproveForm({ ...approveForm, timeEstimateHoursMax: event.target.value })}
-                  className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                 />
               </div>
             </div>
@@ -338,7 +338,7 @@ export default function MyInquiries() {
             <button
               type="submit"
               disabled={approveSubmitting}
-              className="mt-5 w-full rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-600 disabled:opacity-60"
+              className="mt-5 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
             >
               {approveSubmitting ? 'Approving…' : 'Approve'}
             </button>
@@ -353,12 +353,12 @@ export default function MyInquiries() {
         >
           <form onSubmit={handleDeclineSubmit}>
             {declineError && (
-              <div className="mb-4 rounded-lg border border-red-900 bg-red-950/40 px-3 py-2 text-sm text-red-400">
+              <div className="mb-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
                 {declineError}
               </div>
             )}
 
-            <label htmlFor="declineNote" className="mb-1 block text-sm font-medium text-neutral-300">
+            <label htmlFor="declineNote" className="mb-1 block text-sm font-medium text-fg-secondary">
               Why are you declining?
             </label>
             <textarea
@@ -367,16 +367,16 @@ export default function MyInquiries() {
               rows={4}
               value={declineNote}
               onChange={(event) => setDeclineNote(event.target.value)}
-              className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+              className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
             />
-            <p className="mt-1 text-xs text-neutral-500">
+            <p className="mt-1 text-xs text-fg-muted">
               This goes back to staff so they can reassign it — the inquiry returns to the New pool.
             </p>
 
             <button
               type="submit"
               disabled={declineSubmitting}
-              className="mt-5 w-full rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-600 disabled:opacity-60"
+              className="mt-5 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
             >
               {declineSubmitting ? 'Declining…' : 'Decline'}
             </button>

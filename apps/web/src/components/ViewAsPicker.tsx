@@ -43,26 +43,26 @@ export default function ViewAsPicker({ onClose }: { onClose: () => void }) {
 
   return (
     <Modal title="View portal as..." onClose={onClose}>
-      <p className="text-xs text-neutral-500">
+      <p className="text-xs text-fg-muted">
         You'll see the portal exactly as they do -- their navigation, their data, their permission walls. Read-only
         while active.
       </p>
 
-      {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
+      {error && <p className="mt-3 text-sm text-danger">{error}</p>}
 
       <div className="mt-4 space-y-1">
-        {roster === undefined && <p className="text-sm text-neutral-400">Loading…</p>}
-        {roster && targets.length === 0 && <p className="text-sm text-neutral-400">No other staff members yet.</p>}
+        {roster === undefined && <p className="text-sm text-fg-secondary">Loading…</p>}
+        {roster && targets.length === 0 && <p className="text-sm text-fg-secondary">No other staff members yet.</p>}
         {targets.map((member) => (
           <button
             key={member.id}
             type="button"
             disabled={activating}
             onClick={() => handleSelect(member.id)}
-            className="flex w-full items-center justify-between gap-2 rounded-lg border border-neutral-800 px-3 py-2 text-left text-sm text-neutral-300 transition hover:bg-neutral-800 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex w-full items-center justify-between gap-2 rounded-lg border border-border px-3 py-2 text-left text-sm text-fg-secondary transition hover:bg-surface hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
           >
             <span className="truncate">{member.name}</span>
-            <span className="shrink-0 text-xs text-neutral-500">{member.role}</span>
+            <span className="shrink-0 text-xs text-fg-muted">{member.role}</span>
           </button>
         ))}
       </div>

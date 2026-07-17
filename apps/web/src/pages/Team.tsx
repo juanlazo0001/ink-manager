@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
 import { SkeletonCards } from '../components/Skeleton'
+import StatusPill from '../components/StatusPill'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatStatus, readFileAsDataUrl, MAX_IMAGE_FILE_BYTES } from '../lib/format'
 import { PERMISSION_GROUPS, CONFIGURABLE_ROLES } from '../lib/permissions'
@@ -334,22 +335,22 @@ export default function Team() {
   }
 
   return (
-    <div className="flex min-h-screen bg-neutral-900 text-white">
+    <div className="flex min-h-screen bg-bg text-fg">
       <Sidebar />
 
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-7xl px-6 py-6 sm:px-10 sm:py-8">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-bold text-white sm:text-3xl">Team</h1>
-              <p className="mt-1 text-sm text-neutral-400">Everyone with access to your studio's portal.</p>
+              <h1 className="text-2xl font-bold text-fg sm:text-3xl">Team</h1>
+              <p className="mt-1 text-sm text-fg-secondary">Everyone with access to your studio's portal.</p>
             </div>
 
             {activeTab === 'staff' && isOwner && (
               <button
                 type="button"
                 onClick={() => setShowAddModal(true)}
-                className="flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600"
+                className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover"
               >
                 <PlusIcon className="h-4 w-4" />
                 Add team member
@@ -357,7 +358,7 @@ export default function Team() {
             )}
           </div>
 
-          <div className="mt-6 flex gap-1 border-b border-neutral-800">
+          <div className="mt-6 flex gap-1 border-b border-border">
             {(
               [
                 ['staff', 'Staff'],
@@ -374,8 +375,8 @@ export default function Team() {
                   className={[
                     'rounded-t-lg px-4 py-2 text-sm font-medium transition',
                     activeTab === tab
-                      ? 'border-b-2 border-white text-white'
-                      : 'text-neutral-500 hover:text-white',
+                      ? 'border-b-2 border-accent text-fg'
+                      : 'text-fg-muted hover:text-fg',
                   ].join(' ')}
                 >
                   {label}
@@ -384,17 +385,17 @@ export default function Team() {
           </div>
 
           {activeTab === 'staff' && isOwner && (
-          <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-            {viewAsError && <p className="mb-3 text-sm text-red-400">{viewAsError}</p>}
-            {error && <p className="text-sm text-red-400">{error}</p>}
+          <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+            {viewAsError && <p className="mb-3 text-sm text-danger">{viewAsError}</p>}
+            {error && <p className="text-sm text-danger">{error}</p>}
 
-            {!error && users === null && <p className="text-sm text-neutral-400">Loading team…</p>}
+            {!error && users === null && <p className="text-sm text-fg-secondary">Loading team…</p>}
 
             {!error && users !== null && (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <thead>
-                    <tr className="text-xs text-neutral-500">
+                    <tr className="bg-surface-inset text-xs text-fg-muted">
                       <th className="pb-3 font-medium">Name</th>
                       <th className="hidden pb-3 font-medium md:table-cell">Email</th>
                       <th className="pb-3 font-medium">Role</th>
@@ -402,12 +403,12 @@ export default function Team() {
                       <th className="pb-3 font-medium"></th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-neutral-800">
+                  <tbody className="divide-y divide-border">
                     {users.map((teamUser) => {
                       const isSelf = teamUser.id === user?.userId
                       return (
                         <tr key={teamUser.id}>
-                          <td className="py-3 text-white">
+                          <td className="py-3 text-fg">
                             <div className="flex items-center gap-2.5">
                               {teamUser.avatarUrl ? (
                                 <img
@@ -416,19 +417,20 @@ export default function Team() {
                                   className="h-7 w-7 shrink-0 rounded-full object-cover"
                                 />
                               ) : (
-                                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-neutral-800 text-xs font-semibold text-white">
+                                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface text-xs font-semibold text-fg">
                                   {(teamUser.name ?? teamUser.email).slice(0, 1).toUpperCase()}
                                 </span>
                               )}
                               {teamUser.name || '—'}
                             </div>
                           </td>
-                          <td className="hidden py-3 text-neutral-400 md:table-cell">{teamUser.email}</td>
-                          <td className="py-3 text-neutral-400">{formatStatus(teamUser.role)}</td>
+                          <td className="hidden py-3 text-fg-secondary md:table-cell">{teamUser.email}</td>
+                          <td className="py-3 text-fg-secondary">{formatStatus(teamUser.role)}</td>
                           <td className="py-3">
-                            <span className={teamUser.isActive ? 'text-green-400' : 'text-neutral-500'}>
-                              {teamUser.isActive ? 'Active' : 'Deactivated'}
-                            </span>
+                            <StatusPill
+                              status={teamUser.isActive ? 'ACTIVE' : 'DEACTIVATED'}
+                              label={teamUser.isActive ? 'Active' : 'Deactivated'}
+                            />
                           </td>
                           <td className="py-3 text-right">
                             <div className="flex justify-end gap-2">
@@ -436,7 +438,7 @@ export default function Team() {
                                 <button
                                   type="button"
                                   onClick={() => handleViewAs(teamUser.id)}
-                                  className="flex items-center gap-1.5 rounded-full border border-neutral-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800"
+                                  className="flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
                                 >
                                   <ViewIcon className="h-3.5 w-3.5" />
                                   View as
@@ -447,7 +449,7 @@ export default function Team() {
                                 onClick={() => openEdit(teamUser)}
                                 disabled={isSelf}
                                 title={isSelf ? 'Edit your own account from your profile' : undefined}
-                                className="rounded-full border border-neutral-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
+                                className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
                               >
                                 Edit
                               </button>
@@ -466,16 +468,16 @@ export default function Team() {
           {activeTab === 'artists' && (
             <div className="mt-6">
               {artistsErrorMessage && (
-                <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-                  <p className="text-sm text-red-400">{artistsErrorMessage}</p>
+                <div className="rounded-2xl border border-border bg-surface p-5">
+                  <p className="text-sm text-danger">{artistsErrorMessage}</p>
                 </div>
               )}
 
               {!artistsErrorMessage && artistsLoading && <SkeletonCards count={6} />}
 
               {!artistsErrorMessage && !artistsLoading && artists?.length === 0 && (
-                <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-                  <p className="text-sm text-neutral-400">
+                <div className="rounded-2xl border border-border bg-surface p-5">
+                  <p className="text-sm text-fg-secondary">
                     No artists yet.{' '}
                     {isOwner
                       ? "Add one from the Staff tab (role: Artist) — their profile here is created automatically."
@@ -490,7 +492,7 @@ export default function Team() {
                     <div
                       key={artist.id}
                       onClick={() => navigate(`/artists/${artist.id}`)}
-                      className="cursor-pointer rounded-2xl border border-neutral-800 bg-neutral-900 p-5 transition hover:border-neutral-700"
+                      className="cursor-pointer rounded-2xl border border-border bg-surface p-5 transition hover:border-border-strong"
                     >
                       <div className="flex items-center gap-3">
                         {artist.user.avatarUrl ? (
@@ -500,32 +502,32 @@ export default function Team() {
                             className="h-12 w-12 shrink-0 rounded-full object-cover"
                           />
                         ) : (
-                          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-neutral-800 text-lg font-semibold text-white">
+                          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-surface text-lg font-semibold text-fg">
                             {(artist.user.name ?? artist.user.email).slice(0, 1).toUpperCase()}
                           </span>
                         )}
                         <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold text-white">
+                          <p className="truncate text-sm font-semibold text-fg">
                             {artist.user.name || artist.user.email}
                           </p>
-                          <p className="truncate text-xs text-neutral-500">{artist.user.email}</p>
+                          <p className="truncate text-xs text-fg-muted">{artist.user.email}</p>
                         </div>
                       </div>
 
-                      {artist.bio && <p className="mt-3 line-clamp-2 text-sm text-neutral-400">{artist.bio}</p>}
+                      {artist.bio && <p className="mt-3 line-clamp-2 text-sm text-fg-secondary">{artist.bio}</p>}
 
                       {artist.specialties.length > 0 && (
                         <div className="mt-3 flex flex-wrap gap-1.5">
                           {artist.specialties.slice(0, 4).map((specialty) => (
                             <span
                               key={specialty}
-                              className="inline-flex items-center rounded-full border border-neutral-700 px-2.5 py-1 text-xs font-medium text-neutral-300"
+                              className="inline-flex items-center rounded-full border border-border px-2.5 py-1 text-xs font-medium text-fg-secondary"
                             >
                               {specialty}
                             </span>
                           ))}
                           {artist.specialties.length > 4 && (
-                            <span className="inline-flex items-center px-1 text-xs text-neutral-500">
+                            <span className="inline-flex items-center px-1 text-xs text-fg-muted">
                               +{artist.specialties.length - 4} more
                             </span>
                           )}
@@ -535,7 +537,7 @@ export default function Team() {
                       {artist.portfolioImages.length > 0 && (
                         <div className="mt-3 grid grid-cols-4 gap-1.5">
                           {artist.portfolioImages.slice(0, 4).map((url) => (
-                            <div key={url} className="aspect-square overflow-hidden rounded-lg border border-neutral-800">
+                            <div key={url} className="aspect-square overflow-hidden rounded-lg border border-border">
                               <img src={url} alt="" className="h-full w-full object-cover" />
                             </div>
                           ))}
@@ -549,11 +551,11 @@ export default function Team() {
           )}
 
           {activeTab === 'permissions' && isOwner && (
-          <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
+          <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
-                <h2 className="text-lg font-semibold text-white">Permissions</h2>
-                <p className="mt-1 text-sm text-neutral-400">
+                <h2 className="text-lg font-semibold text-fg">Permissions</h2>
+                <p className="mt-1 text-sm text-fg-secondary">
                   Choose what each role can do in your studio's portal. Owner always has full access.
                 </p>
               </div>
@@ -563,26 +565,26 @@ export default function Team() {
                   type="button"
                   onClick={handleSavePermissions}
                   disabled={permissionsSubmitting}
-                  className="rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                  className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                 >
                   {permissionsSubmitting ? 'Saving…' : 'Save changes'}
                 </button>
               )}
             </div>
 
-            {permissionsError && <p className="mt-4 text-sm text-red-400">{permissionsError}</p>}
+            {permissionsError && <p className="mt-4 text-sm text-danger">{permissionsError}</p>}
 
-            {permissionsSuccess && <p className="mt-4 text-sm text-green-400">Permissions updated.</p>}
+            {permissionsSuccess && <p className="mt-4 text-sm text-success">Permissions updated.</p>}
 
             {!permissionsError && !permissionsMatrix && (
-              <p className="mt-4 text-sm text-neutral-400">Loading permissions…</p>
+              <p className="mt-4 text-sm text-fg-secondary">Loading permissions…</p>
             )}
 
             {permissionsMatrix && (
               <div className="mt-4 overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <thead>
-                    <tr className="text-xs text-neutral-500">
+                    <tr className="bg-surface-inset text-xs text-fg-muted">
                       <th className="pb-3 font-medium">Permission</th>
                       <th className="pb-3 text-center font-medium">Owner</th>
                       {CONFIGURABLE_ROLES.map((role) => (
@@ -592,19 +594,19 @@ export default function Team() {
                       ))}
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-neutral-800">
+                  <tbody className="divide-y divide-border">
                     {PERMISSION_GROUPS.map((group) => (
                       <Fragment key={group.label}>
                         <tr>
-                          <td colSpan={5} className="pt-4 pb-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">
+                          <td colSpan={5} className="pt-4 pb-1 text-xs font-semibold uppercase tracking-wider text-fg-muted">
                             {group.label}
                           </td>
                         </tr>
                         {group.keys.map(({ key, label }) => (
                           <tr key={key}>
-                            <td className="py-2 text-neutral-300">{label}</td>
+                            <td className="py-2 text-fg-secondary">{label}</td>
                             <td className="py-2 text-center">
-                              <input type="checkbox" checked disabled className="h-4 w-4 rounded border-neutral-700" />
+                              <input type="checkbox" checked disabled className="h-4 w-4 rounded border-border accent-accent" />
                             </td>
                             {CONFIGURABLE_ROLES.map((role) => (
                               <td key={role} className="py-2 text-center">
@@ -612,7 +614,7 @@ export default function Team() {
                                   type="checkbox"
                                   checked={permissionsMatrix[role]?.[key] ?? false}
                                   onChange={() => togglePermission(role, key)}
-                                  className="h-4 w-4 rounded border-neutral-700 bg-neutral-900"
+                                  className="h-4 w-4 rounded border-border bg-surface-inset accent-accent"
                                 />
                               </td>
                             ))}
@@ -633,7 +635,7 @@ export default function Team() {
         <Modal title="Add team member" onClose={() => setShowAddModal(false)}>
           <form onSubmit={handleAddSubmit}>
             {addFormError && (
-              <div className="mb-4 rounded-lg border border-red-900 bg-red-950/40 px-3 py-2 text-sm text-red-400">
+              <div className="mb-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
                 {addFormError}
               </div>
             )}
@@ -642,11 +644,11 @@ export default function Team() {
               {addAvatarUrl ? (
                 <img src={addAvatarUrl} alt="Profile picture preview" className="h-12 w-12 rounded-full object-cover" />
               ) : (
-                <div className="flex h-12 w-12 items-center justify-center rounded-full border border-neutral-800 text-xs text-neutral-500">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full border border-border text-xs text-fg-muted">
                   No photo
                 </div>
               )}
-              <label className="cursor-pointer rounded-full border border-neutral-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800">
+              <label className="cursor-pointer rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface">
                 {addAvatarUrl ? 'Change photo' : 'Upload photo'}
                 <input
                   type="file"
@@ -659,7 +661,7 @@ export default function Team() {
                 <button
                   type="button"
                   onClick={() => setAddAvatarUrl(null)}
-                  className="text-xs font-medium text-neutral-400 transition hover:text-white"
+                  className="text-xs font-medium text-fg-secondary transition hover:text-fg"
                 >
                   Remove
                 </button>
@@ -667,7 +669,7 @@ export default function Team() {
             </div>
 
             <div className="mb-3">
-              <label htmlFor="addName" className="mb-1 block text-sm font-medium text-neutral-300">
+              <label htmlFor="addName" className="mb-1 block text-sm font-medium text-fg-secondary">
                 Name
               </label>
               <input
@@ -675,12 +677,12 @@ export default function Team() {
                 type="text"
                 value={addForm.name}
                 onChange={(event) => setAddForm({ ...addForm, name: event.target.value })}
-                className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               />
             </div>
 
             <div className="mb-3">
-              <label htmlFor="addPhone" className="mb-1 block text-sm font-medium text-neutral-300">
+              <label htmlFor="addPhone" className="mb-1 block text-sm font-medium text-fg-secondary">
                 Phone
               </label>
               <input
@@ -688,12 +690,12 @@ export default function Team() {
                 type="text"
                 value={addForm.phone}
                 onChange={(event) => setAddForm({ ...addForm, phone: event.target.value })}
-                className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               />
             </div>
 
             <div className="mb-3">
-              <label htmlFor="addEmail" className="mb-1 block text-sm font-medium text-neutral-300">
+              <label htmlFor="addEmail" className="mb-1 block text-sm font-medium text-fg-secondary">
                 Email
               </label>
               <input
@@ -702,12 +704,12 @@ export default function Team() {
                 required
                 value={addForm.email}
                 onChange={(event) => setAddForm({ ...addForm, email: event.target.value })}
-                className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               />
             </div>
 
             <div className="mb-3">
-              <label htmlFor="addPassword" className="mb-1 block text-sm font-medium text-neutral-300">
+              <label htmlFor="addPassword" className="mb-1 block text-sm font-medium text-fg-secondary">
                 Temporary Password
               </label>
               <input
@@ -716,19 +718,19 @@ export default function Team() {
                 required
                 value={addForm.password}
                 onChange={(event) => setAddForm({ ...addForm, password: event.target.value })}
-                className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               />
             </div>
 
             <div>
-              <label htmlFor="addRole" className="mb-1 block text-sm font-medium text-neutral-300">
+              <label htmlFor="addRole" className="mb-1 block text-sm font-medium text-fg-secondary">
                 Role
               </label>
               <select
                 id="addRole"
                 value={addForm.role}
                 onChange={(event) => setAddForm({ ...addForm, role: event.target.value })}
-                className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               >
                 {ROLE_OPTIONS.map((role) => (
                   <option key={role} value={role}>
@@ -737,7 +739,7 @@ export default function Team() {
                 ))}
               </select>
               {addForm.role === 'ARTIST' && (
-                <p className="mt-1 text-xs text-neutral-500">
+                <p className="mt-1 text-xs text-fg-muted">
                   This also creates their profile on the Artists tab — specialties and portfolio can be added there.
                 </p>
               )}
@@ -746,7 +748,7 @@ export default function Team() {
             <button
               type="submit"
               disabled={addSubmitting}
-              className="mt-5 w-full rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-600 disabled:opacity-60"
+              className="mt-5 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
             >
               {addSubmitting ? 'Adding…' : 'Add team member'}
             </button>
@@ -758,7 +760,7 @@ export default function Team() {
         <Modal title={`Edit ${editingUser.name || editingUser.email}`} onClose={() => setEditingUser(null)}>
           <form onSubmit={handleEditSubmit}>
             {editFormError && (
-              <div className="mb-4 rounded-lg border border-red-900 bg-red-950/40 px-3 py-2 text-sm text-red-400">
+              <div className="mb-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
                 {editFormError}
               </div>
             )}
@@ -767,11 +769,11 @@ export default function Team() {
               {editAvatarUrl ? (
                 <img src={editAvatarUrl} alt="Profile picture preview" className="h-12 w-12 rounded-full object-cover" />
               ) : (
-                <div className="flex h-12 w-12 items-center justify-center rounded-full border border-neutral-800 text-xs text-neutral-500">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full border border-border text-xs text-fg-muted">
                   No photo
                 </div>
               )}
-              <label className="cursor-pointer rounded-full border border-neutral-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800">
+              <label className="cursor-pointer rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface">
                 {editAvatarUrl ? 'Change photo' : 'Upload photo'}
                 <input
                   type="file"
@@ -784,7 +786,7 @@ export default function Team() {
                 <button
                   type="button"
                   onClick={() => setEditAvatarUrl(null)}
-                  className="text-xs font-medium text-neutral-400 transition hover:text-white"
+                  className="text-xs font-medium text-fg-secondary transition hover:text-fg"
                 >
                   Remove
                 </button>
@@ -792,7 +794,7 @@ export default function Team() {
             </div>
 
             <div className="mb-3">
-              <label htmlFor="editName" className="mb-1 block text-sm font-medium text-neutral-300">
+              <label htmlFor="editName" className="mb-1 block text-sm font-medium text-fg-secondary">
                 Name
               </label>
               <input
@@ -800,12 +802,12 @@ export default function Team() {
                 type="text"
                 value={editForm.name}
                 onChange={(event) => setEditForm({ ...editForm, name: event.target.value })}
-                className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               />
             </div>
 
             <div className="mb-3">
-              <label htmlFor="editPhone" className="mb-1 block text-sm font-medium text-neutral-300">
+              <label htmlFor="editPhone" className="mb-1 block text-sm font-medium text-fg-secondary">
                 Phone
               </label>
               <input
@@ -813,12 +815,12 @@ export default function Team() {
                 type="text"
                 value={editForm.phone}
                 onChange={(event) => setEditForm({ ...editForm, phone: event.target.value })}
-                className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               />
             </div>
 
             <div className="mb-3">
-              <label htmlFor="editEmail" className="mb-1 block text-sm font-medium text-neutral-300">
+              <label htmlFor="editEmail" className="mb-1 block text-sm font-medium text-fg-secondary">
                 Email
               </label>
               <input
@@ -827,19 +829,19 @@ export default function Team() {
                 required
                 value={editForm.email}
                 onChange={(event) => setEditForm({ ...editForm, email: event.target.value })}
-                className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               />
             </div>
 
             <div className="mb-3">
-              <label htmlFor="editRole" className="mb-1 block text-sm font-medium text-neutral-300">
+              <label htmlFor="editRole" className="mb-1 block text-sm font-medium text-fg-secondary">
                 Role
               </label>
               <select
                 id="editRole"
                 value={editForm.role}
                 onChange={(event) => setEditForm({ ...editForm, role: event.target.value })}
-                className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               >
                 {ROLE_OPTIONS.map((role) => (
                   <option key={role} value={role}>
@@ -850,26 +852,26 @@ export default function Team() {
             </div>
 
             <div className="mb-3">
-              <label className="flex items-center gap-2 text-sm font-medium text-neutral-300">
+              <label className="flex items-center gap-2 text-sm font-medium text-fg-secondary">
                 <input
                   type="checkbox"
                   checked={editForm.isActive}
                   onChange={(event) => setEditForm({ ...editForm, isActive: event.target.checked })}
-                  className="h-4 w-4 rounded border-neutral-700 bg-neutral-900"
+                  className="h-4 w-4 rounded border-border bg-surface-inset accent-accent"
                 />
                 Active (can log in)
               </label>
             </div>
 
             <div className="mb-3">
-              <label htmlFor="editLocation" className="mb-1 block text-sm font-medium text-neutral-300">
+              <label htmlFor="editLocation" className="mb-1 block text-sm font-medium text-fg-secondary">
                 Location
               </label>
               <select
                 id="editLocation"
                 value={editForm.locationId}
                 onChange={(event) => setEditForm({ ...editForm, locationId: event.target.value })}
-                className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               >
                 <option value="">No location assigned</option>
                 {locations?.map((location) => (
@@ -881,7 +883,7 @@ export default function Team() {
             </div>
 
             <div className="mb-1">
-              <label htmlFor="editNewPassword" className="mb-1 block text-sm font-medium text-neutral-300">
+              <label htmlFor="editNewPassword" className="mb-1 block text-sm font-medium text-fg-secondary">
                 Reset password
               </label>
               <input
@@ -890,14 +892,14 @@ export default function Team() {
                 placeholder="Leave blank to keep current password"
                 value={editForm.newPassword}
                 onChange={(event) => setEditForm({ ...editForm, newPassword: event.target.value })}
-                className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               />
             </div>
 
             <button
               type="submit"
               disabled={editSubmitting}
-              className="mt-5 w-full rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-600 disabled:opacity-60"
+              className="mt-5 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
             >
               {editSubmitting ? 'Saving…' : 'Save changes'}
             </button>

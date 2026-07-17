@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '../lib/api'
-import { formatDateTime, formatRelativeTime, formatStatus } from '../lib/format'
+import StatusPill from './StatusPill'
+import { formatDateTime, formatRelativeTime } from '../lib/format'
 import { uploadImageToCloudinary } from '../lib/cloudinary'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useViewAs } from '../context/useViewAs'
@@ -171,10 +172,14 @@ function dayLabel(iso: string): string {
   return date.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })
 }
 
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
 export default function ConversationsPanel() {
   const user = useEffectiveUser()
   const queryClient = useQueryClient()
   const { isOpen, activeConversationId, openPanel, closePanel } = useConversationPanel()
+  const panelRef = useRef<HTMLDivElement>(null)
 
   const isArtist = user?.role === 'ARTIST'
   const [tab, setTab] = useState<Tab>(isArtist ? 'STAFF' : 'CLIENT')
@@ -200,10 +205,30 @@ export default function ConversationsPanel() {
   }, [activeConversationId])
 
   // UI-1 §8: Esc dismisses the slide-over, same as the scrim/close button.
+  // UI-2 accessibility floor: Tab/Shift+Tab wrap within the panel instead of
+  // escaping to the page behind the scrim while it's open.
   useEffect(() => {
     if (!isOpen) return
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') closePanel()
+      if (event.key === 'Escape') {
+        closePanel()
+        return
+      }
+      if (event.key !== 'Tab' || !panelRef.current) return
+
+      const focusable = Array.from(panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+      if (focusable.length === 0) return
+
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
@@ -231,11 +256,11 @@ export default function ConversationsPanel() {
         type="button"
         onClick={() => openPanel()}
         aria-label="Open conversations"
-        className="fixed bottom-6 right-6 z-40 flex h-14 w-14 items-center justify-center rounded-full border border-neutral-700 bg-neutral-800 text-white shadow-xl transition hover:bg-neutral-700"
+        className="fixed bottom-6 right-6 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-bg shadow-xl transition hover:bg-accent-hover"
       >
         <MessageIcon className="h-6 w-6" />
         {!!badgeCounts?.conversations && badgeCounts.conversations > 0 && (
-          <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[11px] font-semibold text-white">
+          <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-danger px-1 text-[11px] font-semibold text-bg">
             {badgeCounts.conversations > 99 ? '99+' : badgeCounts.conversations}
           </span>
         )}
@@ -262,8 +287,12 @@ export default function ConversationsPanel() {
           so it -- and whichever thread is open -- survives route changes
           while open. */}
       <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Conversations"
         className={[
-          'fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-neutral-800 bg-neutral-900 shadow-2xl transition-transform duration-200 ease-in-out',
+          'fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-border bg-surface-raised shadow-2xl transition-transform duration-200 ease-in-out',
           isOpen ? 'translate-x-0' : 'translate-x-full',
           'sm:w-[560px]',
         ].join(' ')}
@@ -338,8 +367,8 @@ function ConversationListView({
 
   return (
     <>
-      <div className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
-        <h2 className="text-sm font-semibold text-white">Conversations</h2>
+      <div className="flex items-center justify-between border-b border-border px-4 py-3">
+        <h2 className="text-sm font-semibold text-fg">Conversations</h2>
         <div className="flex items-center gap-1">
           {tab === 'CLIENT' && (
             <button
@@ -347,8 +376,8 @@ function ConversationListView({
               onClick={() => setShowFilters((v) => !v)}
               aria-label="Filter conversations"
               className={[
-                'flex h-7 w-7 items-center justify-center rounded-full transition hover:bg-neutral-800 hover:text-white',
-                hasActiveFilter ? 'text-white' : 'text-neutral-500',
+                'flex h-7 w-7 items-center justify-center rounded-full transition hover:bg-surface hover:text-fg',
+                hasActiveFilter ? 'text-fg' : 'text-fg-muted',
               ].join(' ')}
             >
               <TagIcon className="h-4 w-4" />
@@ -358,7 +387,7 @@ function ConversationListView({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="flex h-7 w-7 items-center justify-center rounded-full text-neutral-500 transition hover:bg-neutral-800 hover:text-white"
+            className="flex h-7 w-7 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
           >
             <CloseIcon className="h-4 w-4" />
           </button>
@@ -366,7 +395,7 @@ function ConversationListView({
       </div>
 
       {showTabs && (
-        <div className="flex gap-1 border-b border-neutral-800 px-3 pt-2">
+        <div className="flex gap-1 border-b border-border px-3 pt-2">
           {(['CLIENT', 'STAFF'] as const).map((t) => (
             <button
               key={t}
@@ -374,7 +403,7 @@ function ConversationListView({
               onClick={() => onTabChange(t)}
               className={[
                 'rounded-t-lg px-3 py-1.5 text-xs font-medium transition',
-                tab === t ? 'bg-neutral-800 text-white' : 'text-neutral-500 hover:text-white',
+                tab === t ? 'bg-surface text-fg' : 'text-fg-muted hover:text-fg',
               ].join(' ')}
             >
               {t === 'CLIENT' ? 'Clients' : 'Team'}
@@ -384,19 +413,19 @@ function ConversationListView({
       )}
 
       {tab === 'CLIENT' && showFilters && (
-        <div className="space-y-2 border-b border-neutral-800 px-3 py-3">
+        <div className="space-y-2 border-b border-border px-3 py-3">
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search by client name…"
-            className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-2.5 py-1.5 text-xs text-white focus:border-neutral-600 focus:outline-none"
+            className="w-full rounded-lg border border-border bg-surface-inset px-2.5 py-1.5 text-xs text-fg focus:border-accent focus:outline-none"
           />
           <div className="flex gap-2">
             <select
               value={entityTypeFilter}
               onChange={(e) => setEntityTypeFilter(e.target.value)}
-              className="min-w-0 flex-1 rounded-lg border border-neutral-800 bg-neutral-900 px-2 py-1.5 text-xs text-white focus:border-neutral-600 focus:outline-none"
+              className="min-w-0 flex-1 rounded-lg border border-border bg-surface-inset px-2 py-1.5 text-xs text-fg focus:border-accent focus:outline-none"
             >
               <option value="">Any tagged type</option>
               {TAGGABLE_ENTITY_TYPES.map((t) => (
@@ -408,7 +437,7 @@ function ConversationListView({
             <select
               value={artistIdFilter}
               onChange={(e) => setArtistIdFilter(e.target.value)}
-              className="min-w-0 flex-1 rounded-lg border border-neutral-800 bg-neutral-900 px-2 py-1.5 text-xs text-white focus:border-neutral-600 focus:outline-none"
+              className="min-w-0 flex-1 rounded-lg border border-border bg-surface-inset px-2 py-1.5 text-xs text-fg focus:border-accent focus:outline-none"
             >
               <option value="">Any artist</option>
               {artistOptions?.map((artist) => (
@@ -426,7 +455,7 @@ function ConversationListView({
                 setArtistIdFilter('')
                 setSearch('')
               }}
-              className="text-xs text-neutral-500 underline hover:text-white"
+              className="text-xs text-fg-muted underline hover:text-fg"
             >
               Clear filters
             </button>
@@ -435,42 +464,42 @@ function ConversationListView({
       )}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {isLoading && <p className="p-4 text-sm text-neutral-400">Loading…</p>}
+        {isLoading && <p className="p-4 text-sm text-fg-secondary">Loading…</p>}
 
         {!isLoading && conversations?.length === 0 && rosterWithoutThread.length === 0 && (
-          <p className="p-4 text-sm text-neutral-400">
+          <p className="p-4 text-sm text-fg-secondary">
             {tab === 'CLIENT' ? 'No client conversations yet.' : 'No team conversations yet.'}
           </p>
         )}
 
-        <ul className="divide-y divide-neutral-800">
+        <ul className="divide-y divide-border">
           {conversations?.map((conversation) => (
             <li key={conversation.id}>
               <button
                 type="button"
                 onClick={() => onSelect(conversation.id)}
-                className="flex w-full items-start gap-2 px-4 py-3 text-left transition hover:bg-neutral-800/60"
+                className="flex w-full items-start gap-2 px-4 py-3 text-left transition hover:bg-surface/60"
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-2">
-                    <p className="truncate text-sm font-medium text-white">
+                    <p className="truncate text-sm font-medium text-fg">
                       {conversation.counterpart?.name ?? 'Unknown'}
                     </p>
                     {conversation.lastMessageAt && (
-                      <span className="shrink-0 text-[11px] text-neutral-500">
+                      <span className="shrink-0 text-[11px] text-fg-muted">
                         {formatRelativeTime(conversation.lastMessageAt)}
                       </span>
                     )}
                   </div>
                   {conversation.lastMessage && (
-                    <p className="mt-0.5 truncate text-xs text-neutral-400">
+                    <p className="mt-0.5 truncate text-xs text-fg-secondary">
                       {conversation.lastMessage.direction === 'OUTBOUND' ? 'You: ' : ''}
                       {conversation.lastMessage.body || '📷 Image'}
                     </p>
                   )}
                 </div>
                 {conversation.unreadCount > 0 && (
-                  <span className="mt-0.5 flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-red-600 px-1.5 text-[11px] font-semibold text-white">
+                  <span className="mt-0.5 flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-danger px-1.5 text-[11px] font-semibold text-fg">
                     {conversation.unreadCount}
                   </span>
                 )}
@@ -490,10 +519,10 @@ function ConversationListView({
                     })
                     onSelect(conversation.id)
                   }}
-                  className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left transition hover:bg-neutral-800/60"
+                  className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left transition hover:bg-surface/60"
                 >
-                  <span className="truncate text-sm text-neutral-300">{member.name}</span>
-                  <span className="shrink-0 text-[11px] text-neutral-500">Start</span>
+                  <span className="truncate text-sm text-fg-secondary">{member.name}</span>
+                  <span className="shrink-0 text-[11px] text-fg-muted">Start</span>
                 </button>
               </li>
             ))}
@@ -730,18 +759,18 @@ function ThreadView({
 
   return (
     <>
-      <div className="flex items-center gap-2 border-b border-neutral-800 px-3 py-3">
+      <div className="flex items-center gap-2 border-b border-border px-3 py-3">
         {canGoBack && (
           <button
             type="button"
             onClick={onBack}
             aria-label="Back"
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-neutral-500 transition hover:bg-neutral-800 hover:text-white"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
           >
             <ArrowLeftIcon className="h-4 w-4" />
           </button>
         )}
-        <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-white">{counterpartName}</h2>
+        <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-fg">{counterpartName}</h2>
         {isClientThread && (
           <>
             <button
@@ -751,7 +780,7 @@ function ThreadView({
                 setShowContext(false)
               }}
               aria-label="Add tag"
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-neutral-500 transition hover:bg-neutral-800 hover:text-white"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
             >
               <TagIcon className="h-4 w-4" />
             </button>
@@ -762,7 +791,7 @@ function ThreadView({
                 setShowTagPicker(false)
               }}
               aria-label="Client details"
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-neutral-500 transition hover:bg-neutral-800 hover:text-white"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
             >
               <InfoIcon className="h-4 w-4" />
             </button>
@@ -771,16 +800,16 @@ function ThreadView({
                 type="button"
                 onClick={() => setShowMoreMenu((v) => !v)}
                 aria-label="More actions"
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-neutral-500 transition hover:bg-neutral-800 hover:text-white"
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
               >
                 <MoreIcon className="h-4 w-4" />
               </button>
               {showMoreMenu && (
-                <div className="absolute right-0 top-8 z-20 w-56 rounded-lg border border-neutral-700 bg-neutral-900 p-1 shadow-xl">
+                <div className="absolute right-0 top-8 z-20 w-56 rounded-xl border border-border bg-surface-raised p-1 shadow-xl">
                   <button
                     type="button"
                     onClick={handleOpenDraftModal}
-                    className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-neutral-300 hover:bg-neutral-800"
+                    className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-fg-secondary hover:bg-surface"
                   >
                     <SparkleIcon className="h-3.5 w-3.5" />
                     Draft inquiry from conversation
@@ -794,27 +823,27 @@ function ThreadView({
           type="button"
           onClick={onClose}
           aria-label="Close"
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-neutral-500 transition hover:bg-neutral-800 hover:text-white"
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
         >
           <CloseIcon className="h-4 w-4" />
         </button>
       </div>
 
       {isClientThread && data.conversation.tags.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 border-b border-neutral-800 px-3 py-2">
+        <div className="flex flex-wrap gap-1.5 border-b border-border px-3 py-2">
           {data.conversation.tags.map((tag) => (
             <span
               key={tag.id}
-              className="flex items-center gap-1 rounded-full border border-neutral-700 bg-neutral-800/60 px-2 py-0.5 text-[11px] text-neutral-300"
+              className="flex items-center gap-1 rounded-full border border-border bg-surface/60 px-2 py-0.5 text-[11px] text-fg-secondary"
             >
-              <Link to={tag.deepLink} className="hover:text-white">
+              <Link to={tag.deepLink} className="hover:text-fg">
                 {tag.entityType}: {tag.label}
               </Link>
               <button
                 type="button"
                 onClick={() => handleRemoveTag(tag.id)}
                 aria-label={`Remove ${tag.entityType} tag`}
-                className="text-neutral-500 hover:text-white"
+                className="text-fg-muted hover:text-fg"
               >
                 <CloseIcon className="h-2.5 w-2.5" />
               </button>
@@ -824,9 +853,9 @@ function ThreadView({
       )}
 
       {isClientThread && showTagPicker && (
-        <div className="max-h-48 overflow-y-auto border-b border-neutral-800 px-3 py-2">
-          {tagError && <p className="mb-1 text-xs text-red-400">{tagError}</p>}
-          {!context && <p className="text-xs text-neutral-500">Loading…</p>}
+        <div className="max-h-48 overflow-y-auto border-b border-border px-3 py-2">
+          {tagError && <p className="mb-1 text-xs text-danger">{tagError}</p>}
+          {!context && <p className="text-xs text-fg-muted">Loading…</p>}
           {context && (
             <div className="space-y-1">
               {context.inquiries.map((inquiry) => {
@@ -837,7 +866,7 @@ function ThreadView({
                     type="button"
                     disabled={existingTagKeys.has(key)}
                     onClick={() => handleAddTag('Inquiry', inquiry.id)}
-                    className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-neutral-300 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-fg-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <span className="truncate">Inquiry: {inquiry.description}</span>
                     {!existingTagKeys.has(key) && <PlusIcon className="h-3 w-3 shrink-0" />}
@@ -852,7 +881,7 @@ function ThreadView({
                     type="button"
                     disabled={existingTagKeys.has(key)}
                     onClick={() => handleAddTag('GiftCard', card.id)}
-                    className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-neutral-300 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-fg-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <span className="truncate">Gift card: ${(card.amountCents / 100).toFixed(2)}</span>
                     {!existingTagKeys.has(key) && <PlusIcon className="h-3 w-3 shrink-0" />}
@@ -869,7 +898,7 @@ function ThreadView({
                       type="button"
                       disabled={existingTagKeys.has(key)}
                       onClick={() => handleAddTag('DepositForm', inquiry.depositForm!.id)}
-                      className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-neutral-300 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
+                      className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-fg-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       <span className="truncate">Deposit: ${inquiry.depositForm!.totalCharged}</span>
                       {!existingTagKeys.has(key) && <PlusIcon className="h-3 w-3 shrink-0" />}
@@ -881,7 +910,7 @@ function ThreadView({
                   type="button"
                   disabled={existingTagKeys.has(`Appointment:${context.nextAppointment.id}`)}
                   onClick={() => handleAddTag('Appointment', context.nextAppointment!.id)}
-                  className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-neutral-300 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-fg-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <span className="truncate">Appointment: {formatDateTime(context.nextAppointment.startTime)}</span>
                   {!existingTagKeys.has(`Appointment:${context.nextAppointment.id}`) && <PlusIcon className="h-3 w-3 shrink-0" />}
@@ -892,7 +921,7 @@ function ThreadView({
                   type="button"
                   disabled={existingTagKeys.has(`LiabilityWaiver:${context.nextAppointment.waiverId}`)}
                   onClick={() => handleAddTag('LiabilityWaiver', context.nextAppointment!.waiverId!)}
-                  className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-neutral-300 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-fg-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <span className="truncate">Waiver: {context.nextAppointment.waiverStatus}</span>
                   {!existingTagKeys.has(`LiabilityWaiver:${context.nextAppointment.waiverId}`) && (
@@ -901,7 +930,7 @@ function ThreadView({
                 </button>
               )}
               {context.inquiries.length === 0 && context.giftCards.length === 0 && !context.nextAppointment && (
-                <p className="px-2 py-1 text-xs text-neutral-500">Nothing to tag yet for this client.</p>
+                <p className="px-2 py-1 text-xs text-fg-muted">Nothing to tag yet for this client.</p>
               )}
             </div>
           )}
@@ -914,49 +943,51 @@ function ThreadView({
           // Desktop (sm:): docks as a second column instead -- sm:order-last
           // visually places it after the thread without needing to move it
           // in the DOM, sm:static drops it out of the overlay positioning.
-          <div className="absolute inset-0 z-20 overflow-y-auto bg-neutral-900 px-4 py-4 sm:static sm:z-auto sm:order-last sm:w-72 sm:shrink-0 sm:border-l sm:border-neutral-800">
-            {!context && <p className="text-sm text-neutral-400">Loading…</p>}
+          <div className="absolute inset-0 z-20 overflow-y-auto bg-bg px-4 py-4 sm:static sm:z-auto sm:order-last sm:w-72 sm:shrink-0 sm:border-l sm:border-border">
+            {!context && <p className="text-sm text-fg-secondary">Loading…</p>}
             {context && (
               <div className="space-y-4 text-sm">
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Contact</p>
-                  <p className="mt-1 text-white">
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Contact</p>
+                  <p className="mt-1 text-fg">
                     {context.client.firstName} {context.client.lastName}
                   </p>
-                  <p className="text-xs text-neutral-400">{context.client.email ?? 'No email'}</p>
-                  <p className="text-xs text-neutral-400">{context.client.phone ?? 'No phone'}</p>
+                  <p className="text-xs text-fg-secondary">{context.client.email ?? 'No email'}</p>
+                  <p className="text-xs text-fg-secondary">{context.client.phone ?? 'No phone'}</p>
                 </div>
 
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Inquiries</p>
-                  {context.inquiries.length === 0 && <p className="mt-1 text-xs text-neutral-500">None</p>}
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Inquiries</p>
+                  {context.inquiries.length === 0 && <p className="mt-1 text-xs text-fg-muted">None</p>}
                   {context.inquiries.map((inquiry) => (
                     <Link
                       key={inquiry.id}
                       to={`/inquiries/${inquiry.id}`}
-                      className="mt-1 block rounded-lg border border-neutral-800 px-2.5 py-2 hover:bg-neutral-800/60"
+                      className="mt-1 block rounded-lg border border-border px-2.5 py-2 hover:bg-surface/60"
                     >
-                      <p className="truncate text-xs text-white">{inquiry.description}</p>
-                      <p className="mt-0.5 text-[11px] text-neutral-500">
-                        {formatStatus(inquiry.status)}
-                        {inquiry.priceEstimateLow != null && inquiry.priceEstimateHigh != null
-                          ? ` · $${inquiry.priceEstimateLow}-$${inquiry.priceEstimateHigh}`
-                          : ''}
-                      </p>
+                      <p className="truncate text-xs text-fg">{inquiry.description}</p>
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                        <StatusPill status={inquiry.status} />
+                        {inquiry.priceEstimateLow != null && inquiry.priceEstimateHigh != null && (
+                          <span className="text-[11px] text-fg-muted">
+                            ${inquiry.priceEstimateLow}-${inquiry.priceEstimateHigh}
+                          </span>
+                        )}
+                      </div>
                     </Link>
                   ))}
                 </div>
 
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Next appointment</p>
-                  {!context.nextAppointment && <p className="mt-1 text-xs text-neutral-500">None scheduled</p>}
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Next appointment</p>
+                  {!context.nextAppointment && <p className="mt-1 text-xs text-fg-muted">None scheduled</p>}
                   {context.nextAppointment && (
                     <Link
                       to={`/appointments/${context.nextAppointment.id}`}
-                      className="mt-1 block rounded-lg border border-neutral-800 px-2.5 py-2 hover:bg-neutral-800/60"
+                      className="mt-1 block rounded-lg border border-border px-2.5 py-2 hover:bg-surface/60"
                     >
-                      <p className="text-xs text-white">{formatDateTime(context.nextAppointment.startTime)}</p>
-                      <p className="mt-0.5 text-[11px] text-neutral-500">
+                      <p className="text-xs text-fg">{formatDateTime(context.nextAppointment.startTime)}</p>
+                      <p className="mt-0.5 text-[11px] text-fg-muted">
                         with {context.nextAppointment.artistName}
                         {context.nextAppointment.waiverStatus ? ` · Waiver: ${context.nextAppointment.waiverStatus}` : ''}
                       </p>
@@ -965,16 +996,18 @@ function ThreadView({
                 </div>
 
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Gift cards</p>
-                  {context.giftCards.length === 0 && <p className="mt-1 text-xs text-neutral-500">None</p>}
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Gift cards</p>
+                  {context.giftCards.length === 0 && <p className="mt-1 text-xs text-fg-muted">None</p>}
                   {context.giftCards.map((card) => (
                     <Link
                       key={card.id}
                       to={`/gift-cards/${card.id}`}
-                      className="mt-1 block rounded-lg border border-neutral-800 px-2.5 py-2 hover:bg-neutral-800/60"
+                      className="mt-1 block rounded-lg border border-border px-2.5 py-2 hover:bg-surface/60"
                     >
-                      <p className="text-xs text-white">${(card.amountCents / 100).toFixed(2)}</p>
-                      <p className="mt-0.5 text-[11px] text-neutral-500">{formatStatus(card.status)}</p>
+                      <p className="text-xs text-fg">${(card.amountCents / 100).toFixed(2)}</p>
+                      <div className="mt-1">
+                        <StatusPill status={card.status} />
+                      </div>
                     </Link>
                   ))}
                 </div>
@@ -984,7 +1017,7 @@ function ThreadView({
         )}
 
         <div ref={scrollRef} className="h-full min-w-0 flex-1 space-y-1 overflow-y-auto px-3 py-3">
-          {isLoading && <p className="text-sm text-neutral-400">Loading…</p>}
+          {isLoading && <p className="text-sm text-fg-secondary">Loading…</p>}
 
           {data?.messages.map((message) => {
             const isOutboundSide = isClientThread
@@ -1001,7 +1034,7 @@ function ThreadView({
             return (
               <div key={message.id}>
                 {showDaySeparator && (
-                  <p className="my-2 text-center text-[11px] uppercase tracking-wider text-neutral-600">
+                  <p className="my-2 text-center text-[11px] uppercase tracking-wider text-fg-muted">
                     {dayLabel(message.createdAt)}
                   </p>
                 )}
@@ -1010,19 +1043,19 @@ function ThreadView({
                     className={[
                       'max-w-[75%] rounded-2xl px-3 py-2 text-sm',
                       sharedInquiryId
-                        ? 'border border-neutral-700 bg-neutral-800/80 text-neutral-100'
+                        ? 'border border-border bg-surface-raised/80 text-fg'
                         : isOutboundSide
-                          ? 'bg-neutral-700 text-white'
-                          : 'bg-neutral-800 text-neutral-100',
+                          ? 'border border-accent/30 bg-accent/15 text-fg'
+                          : 'bg-surface text-fg',
                     ].join(' ')}
                   >
                     {!isClientThread && (
-                      <p className="mb-0.5 text-[11px] font-medium text-neutral-400">
+                      <p className="mb-0.5 text-[11px] font-medium text-fg-secondary">
                         {message.author?.name ?? message.author?.email ?? 'Unknown'}
                       </p>
                     )}
                     {sharedInquiryId && (
-                      <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-neutral-400">
+                      <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-fg-secondary">
                         Shared inquiry
                       </p>
                     )}
@@ -1036,24 +1069,24 @@ function ThreadView({
                               <button
                                 type="button"
                                 onClick={() => setImagePickerFor(imagePickerFor === url ? null : url)}
-                                className="absolute bottom-1 right-1 rounded-full bg-black/70 px-2 py-1 text-[10px] font-medium text-white opacity-0 transition group-hover:opacity-100"
+                                className="absolute bottom-1 right-1 rounded-full bg-black/70 px-2 py-1 text-[10px] font-medium text-fg opacity-0 transition group-hover:opacity-100"
                               >
                                 Add to inquiry
                               </button>
                             )}
                             {imagePickerFor === url && (
-                              <div className="absolute bottom-full right-0 z-10 mb-1 w-48 rounded-lg border border-neutral-700 bg-neutral-900 p-1.5 shadow-xl">
-                                {imageAttachError && <p className="px-1 pb-1 text-[10px] text-red-400">{imageAttachError}</p>}
-                                {!context && <p className="px-1 py-1 text-[10px] text-neutral-500">Loading…</p>}
+                              <div className="absolute bottom-full right-0 z-10 mb-1 w-48 rounded-xl border border-border bg-surface-raised p-1.5 shadow-xl">
+                                {imageAttachError && <p className="px-1 pb-1 text-[10px] text-danger">{imageAttachError}</p>}
+                                {!context && <p className="px-1 py-1 text-[10px] text-fg-muted">Loading…</p>}
                                 {context && context.inquiries.length === 0 && (
-                                  <p className="px-1 py-1 text-[10px] text-neutral-500">No inquiries for this client.</p>
+                                  <p className="px-1 py-1 text-[10px] text-fg-muted">No inquiries for this client.</p>
                                 )}
                                 {context?.inquiries.map((inquiry) => (
                                   <button
                                     key={inquiry.id}
                                     type="button"
                                     onClick={() => handleAttachImageToInquiry(url, inquiry.id)}
-                                    className="block w-full truncate rounded-md px-2 py-1 text-left text-[11px] text-neutral-300 hover:bg-neutral-800"
+                                    className="block w-full truncate rounded-md px-2 py-1 text-left text-[11px] text-fg-secondary hover:bg-surface"
                                   >
                                     {inquiry.description}
                                   </button>
@@ -1067,12 +1100,12 @@ function ThreadView({
                     {sharedInquiryLink && (
                       <Link
                         to={sharedInquiryLink}
-                        className="mt-1 flex items-center gap-1 text-[11px] font-medium text-neutral-300 hover:text-white"
+                        className="mt-1 flex items-center gap-1 text-[11px] font-medium text-fg-secondary hover:text-fg"
                       >
                         View in My Inquiries <ArrowUpRightIcon className="h-3 w-3" />
                       </Link>
                     )}
-                    <p className="mt-1 flex items-center gap-1 text-[10px] text-neutral-400">
+                    <p className="mt-1 flex items-center gap-1 text-[10px] text-fg-secondary">
                       {isClientThread && <span className="rounded-full bg-black/20 px-1.5 py-0.5">{channelLabel(message.channel)}</span>}
                       {formatDateTime(message.createdAt)}
                     </p>
@@ -1084,13 +1117,13 @@ function ThreadView({
         </div>
       </div>
 
-      <div className="border-t border-neutral-800 p-3">
+      <div className="border-t border-border p-3">
         {isClientThread && (
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <select
               value={channel}
               onChange={(e) => setChannel(e.target.value)}
-              className="rounded-lg border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-white focus:border-neutral-600 focus:outline-none"
+              className="rounded-lg border border-border bg-surface-inset px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none"
             >
               {CLIENT_CHANNELS.map((c) => (
                 <option key={c} value={c}>
@@ -1098,18 +1131,18 @@ function ThreadView({
                 </option>
               ))}
             </select>
-            <div className="flex items-center gap-1 rounded-full border border-neutral-800 p-0.5 text-xs">
+            <div className="flex items-center gap-1 rounded-full border border-border p-0.5 text-xs">
               <button
                 type="button"
                 onClick={() => setDirection('INBOUND')}
-                className={`rounded-full px-2 py-1 ${direction === 'INBOUND' ? 'bg-neutral-700 text-white' : 'text-neutral-500'}`}
+                className={`rounded-full px-2 py-1 ${direction === 'INBOUND' ? 'bg-accent text-bg' : 'text-fg-muted'}`}
               >
                 Their message
               </button>
               <button
                 type="button"
                 onClick={() => setDirection('OUTBOUND')}
-                className={`rounded-full px-2 py-1 ${direction === 'OUTBOUND' ? 'bg-neutral-700 text-white' : 'text-neutral-500'}`}
+                className={`rounded-full px-2 py-1 ${direction === 'OUTBOUND' ? 'bg-accent text-bg' : 'text-fg-muted'}`}
               >
                 Our reply
               </button>
@@ -1120,12 +1153,12 @@ function ThreadView({
         {attachments.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2">
             {attachments.map((url) => (
-              <div key={url} className="relative h-14 w-14 overflow-hidden rounded-lg border border-neutral-800">
+              <div key={url} className="relative h-14 w-14 overflow-hidden rounded-lg border border-border">
                 <img src={url} alt="" className="h-full w-full object-cover" />
                 <button
                   type="button"
                   onClick={() => setAttachments((current) => current.filter((a) => a !== url))}
-                  className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-black/70 text-white"
+                  className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-black/70 text-fg"
                 >
                   <CloseIcon className="h-2.5 w-2.5" />
                 </button>
@@ -1135,9 +1168,9 @@ function ThreadView({
         )}
 
         {showTemplates && isClientThread && (
-          <div className="mb-2 max-h-40 overflow-y-auto rounded-lg border border-neutral-800 p-2">
+          <div className="mb-2 max-h-40 overflow-y-auto rounded-lg border border-border p-2">
             {(templatesData?.messageTemplates ?? []).length === 0 && (
-              <p className="p-1 text-xs text-neutral-500">No templates configured (Settings → Policies &amp; Defaults).</p>
+              <p className="p-1 text-xs text-fg-muted">No templates configured (Settings → Policies &amp; Defaults).</p>
             )}
             {templatesData?.messageTemplates?.map((template) => (
               <button
@@ -1147,16 +1180,16 @@ function ThreadView({
                   setBody((current) => (current ? `${current}\n${template.body}` : template.body))
                   setShowTemplates(false)
                 }}
-                className="block w-full rounded-lg px-2 py-1 text-left text-xs text-neutral-300 hover:bg-neutral-800"
+                className="block w-full rounded-lg px-2 py-1 text-left text-xs text-fg-secondary hover:bg-surface"
               >
-                <span className="font-medium text-white">{template.name}</span>
+                <span className="font-medium text-fg">{template.name}</span>
               </button>
             ))}
           </div>
         )}
 
         {showLinkMenu && isClientThread && (
-          <div className="mb-2 max-h-48 overflow-y-auto rounded-lg border border-neutral-800 p-2 text-xs">
+          <div className="mb-2 max-h-48 overflow-y-auto rounded-lg border border-border p-2 text-xs">
             {[
               { label: 'Intake form', url: linksData?.intakeFormUrl ?? null, hint: null },
               ...(linksData?.estimateLinks ?? []),
@@ -1174,16 +1207,16 @@ function ThreadView({
                   setBody((current) => (current ? `${current}\n${url}` : url))
                   setShowLinkMenu(false)
                 }}
-                className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-neutral-300 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
+                className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-fg-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <span>{link.label}</span>
-                {link.hint && <span className="shrink-0 text-neutral-600">{link.hint}</span>}
+                {link.hint && <span className="shrink-0 text-fg-muted">{link.hint}</span>}
               </button>
             ))}
           </div>
         )}
 
-        {sendError && <p className="mb-2 text-xs text-red-400">{sendError}</p>}
+        {sendError && <p className="mb-2 text-xs text-danger">{sendError}</p>}
 
         <div className="flex items-end gap-2">
           <textarea
@@ -1191,10 +1224,10 @@ function ThreadView({
             value={body}
             onChange={(e) => setBody(e.target.value)}
             placeholder="Type a message…"
-            className="min-w-0 flex-1 resize-none rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+            className="min-w-0 flex-1 resize-none rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
           />
           <div className="flex shrink-0 flex-col gap-1">
-            <label className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border border-neutral-700 text-neutral-400 transition hover:bg-neutral-800 hover:text-white">
+            <label className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border border-border text-fg-secondary transition hover:bg-surface hover:text-fg">
               <AttachmentIcon className="h-4 w-4" />
               <input type="file" accept="image/*" onChange={handleAttach} className="hidden" disabled={uploading} />
             </label>
@@ -1207,7 +1240,7 @@ function ThreadView({
                     setShowLinkMenu(false)
                   }}
                   aria-label="Templates"
-                  className="flex h-8 w-8 items-center justify-center rounded-full border border-neutral-700 text-xs font-semibold text-neutral-400 transition hover:bg-neutral-800 hover:text-white"
+                  className="flex h-8 w-8 items-center justify-center rounded-full border border-border text-xs font-semibold text-fg-secondary transition hover:bg-surface hover:text-fg"
                 >
                   T
                 </button>
@@ -1218,7 +1251,7 @@ function ThreadView({
                     setShowTemplates(false)
                   }}
                   aria-label="Insert link"
-                  className="flex h-8 w-8 items-center justify-center rounded-full border border-neutral-700 text-neutral-400 transition hover:bg-neutral-800 hover:text-white"
+                  className="flex h-8 w-8 items-center justify-center rounded-full border border-border text-fg-secondary transition hover:bg-surface hover:text-fg"
                 >
                   <PlusIcon className="h-4 w-4" />
                 </button>
@@ -1231,7 +1264,7 @@ function ThreadView({
           type="button"
           onClick={handleSend}
           disabled={sending || uploading || !!viewAsTarget || (body.trim().length === 0 && attachments.length === 0)}
-          className="mt-2 w-full rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-600 disabled:opacity-60"
+          className="mt-2 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
         >
           {sending ? 'Sending…' : 'Send'}
         </button>
@@ -1243,46 +1276,46 @@ function ThreadView({
           onClick={() => setShowDraftModal(false)}
         >
           <div
-            className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-2xl border border-neutral-800 bg-neutral-900 p-6"
+            className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-2xl border border-border bg-surface p-6"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-white">Draft inquiry from conversation</h2>
+              <h2 className="text-lg font-semibold text-fg">Draft inquiry from conversation</h2>
               <button
                 type="button"
                 onClick={() => setShowDraftModal(false)}
                 aria-label="Close"
-                className="flex h-8 w-8 items-center justify-center rounded-full text-neutral-500 transition hover:bg-neutral-800 hover:text-white"
+                className="flex h-8 w-8 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
               >
                 <CloseIcon className="h-4 w-4" />
               </button>
             </div>
 
-            <p className="mt-3 text-xs text-neutral-500">
+            <p className="mt-3 text-xs text-fg-muted">
               AI-drafted from this conversation — review before sending.
             </p>
 
-            {draftLoading && <p className="mt-4 text-sm text-neutral-400">Extracting fields…</p>}
-            {draftError && <p className="mt-4 text-sm text-red-400">{draftError}</p>}
+            {draftLoading && <p className="mt-4 text-sm text-fg-secondary">Extracting fields…</p>}
+            {draftError && <p className="mt-4 text-sm text-danger">{draftError}</p>}
 
             {!draftLoading && (
               <div className="mt-4 space-y-3">
                 {DRAFT_FIELD_ORDER.map((field) => (
                   <div key={field}>
-                    <label className="mb-1 block text-xs font-medium text-neutral-400">{DRAFT_FIELD_LABELS[field]}</label>
+                    <label className="mb-1 block text-xs font-medium text-fg-secondary">{DRAFT_FIELD_LABELS[field]}</label>
                     {field === 'description' ? (
                       <textarea
                         rows={3}
                         value={draftFields[field] ?? ''}
                         onChange={(e) => setDraftFields((current) => ({ ...current, [field]: e.target.value }))}
-                        className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                       />
                     ) : (
                       <input
                         type="text"
                         value={draftFields[field] ?? ''}
                         onChange={(e) => setDraftFields((current) => ({ ...current, [field]: e.target.value }))}
-                        className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                       />
                     )}
                   </div>
@@ -1293,14 +1326,14 @@ function ThreadView({
                     type="button"
                     onClick={handleCreatePrefillLink}
                     disabled={creatingPrefillLink || Object.values(draftFields).every((v) => !v)}
-                    className="flex-1 rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                    className="flex-1 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                   >
                     {creatingPrefillLink ? 'Creating…' : 'Create prefill link'}
                   </button>
                   <button
                     type="button"
                     onClick={() => setShowDraftModal(false)}
-                    className="rounded-full border border-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-800"
+                    className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
                   >
                     Discard
                   </button>

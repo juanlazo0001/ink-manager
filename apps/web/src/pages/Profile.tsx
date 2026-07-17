@@ -156,21 +156,21 @@ export default function Profile() {
   }
 
   return (
-    <div className="flex min-h-screen bg-neutral-900 text-white">
+    <div className="flex min-h-screen bg-bg text-fg">
       <Sidebar />
 
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-2xl px-6 py-6 sm:px-10 sm:py-8">
-          <h1 className="text-2xl font-bold text-white sm:text-3xl">My profile</h1>
-          <p className="mt-1 text-sm text-neutral-400">Manage your account details and login.</p>
+          <h1 className="text-2xl font-bold text-fg sm:text-3xl">My profile</h1>
+          <p className="mt-1 text-sm text-fg-secondary">Manage your account details and login.</p>
 
-          <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-6">
-            {loading && !profile && <p className="text-sm text-neutral-400">Loading profile…</p>}
+          <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
+            {loading && !profile && <p className="text-sm text-fg-secondary">Loading profile…</p>}
 
-            {!loading && !profile && <p className="text-sm text-red-400">Could not load your profile.</p>}
+            {!loading && !profile && <p className="text-sm text-danger">Could not load your profile.</p>}
 
             {success && (
-              <div className="mb-4 rounded-lg border border-green-900 bg-green-950/40 px-3 py-2 text-sm text-green-400">
+              <div className="mb-4 rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-sm text-success">
                 Profile updated.
               </div>
             )}
@@ -186,37 +186,37 @@ export default function Profile() {
                         className="h-14 w-14 shrink-0 rounded-full object-cover"
                       />
                     ) : (
-                      <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-neutral-800 text-sm font-semibold text-neutral-400">
+                      <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-border text-sm font-semibold text-fg-secondary">
                         {(profile.name ?? profile.email).slice(0, 1).toUpperCase()}
                       </div>
                     )}
                     <div>
-                      <p className="text-sm font-medium text-white">{profile.name || 'Unnamed user'}</p>
-                      <p className="mt-1 text-xs text-neutral-400">{profile.email}</p>
-                      {profile.phone && <p className="mt-1 text-xs text-neutral-400">{profile.phone}</p>}
-                      <p className="mt-1 text-xs text-neutral-500">{profile.role}</p>
+                      <p className="text-sm font-medium text-fg">{profile.name || 'Unnamed user'}</p>
+                      <p className="mt-1 text-xs text-fg-secondary">{profile.email}</p>
+                      {profile.phone && <p className="mt-1 text-xs text-fg-secondary">{profile.phone}</p>}
+                      <p className="mt-1 text-xs text-fg-muted">{profile.role}</p>
                     </div>
                   </div>
 
                   <button
                     type="button"
                     onClick={handleEdit}
-                    className="shrink-0 rounded-full border border-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-800"
+                    className="shrink-0 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
                   >
                     Edit
                   </button>
                 </div>
 
                 {isArtist && (
-                  <div className="mt-4 border-t border-neutral-800 pt-4">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-neutral-500">Artist details</p>
-                    <p className="mt-2 text-sm text-neutral-300">{profile.artist?.bio || 'No bio yet.'}</p>
+                  <div className="mt-4 border-t border-border pt-4">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-fg-muted">Artist details</p>
+                    <p className="mt-2 text-sm text-fg-secondary">{profile.artist?.bio || 'No bio yet.'}</p>
                     {profile.artist && profile.artist.specialties.length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-1.5">
                         {profile.artist.specialties.map((specialty) => (
                           <span
                             key={specialty}
-                            className="inline-flex items-center rounded-full border border-neutral-700 px-2.5 py-1 text-xs font-medium text-neutral-300"
+                            className="inline-flex items-center rounded-full border border-border px-2.5 py-1 text-xs font-medium text-fg-secondary"
                           >
                             {specialty}
                           </span>
@@ -231,7 +231,7 @@ export default function Profile() {
             {profile && editing && (
               <form onSubmit={handleSubmit}>
                 {error && (
-                  <div className="mb-4 rounded-lg border border-red-900 bg-red-950/40 px-3 py-2 text-sm text-red-400">
+                  <div className="mb-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
                     {error}
                   </div>
                 )}
@@ -240,12 +240,12 @@ export default function Profile() {
                   {avatarUrl ? (
                     <img src={avatarUrl} alt="Profile picture preview" className="h-14 w-14 rounded-full object-cover" />
                   ) : (
-                    <div className="flex h-14 w-14 items-center justify-center rounded-full border border-neutral-800 text-xs text-neutral-500">
+                    <div className="flex h-14 w-14 items-center justify-center rounded-full border border-border text-xs text-fg-muted">
                       No photo
                     </div>
                   )}
 
-                  <label className="cursor-pointer rounded-full border border-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-800">
+                  <label className="cursor-pointer rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface">
                     {avatarUrl ? 'Change photo' : 'Upload photo'}
                     <input type="file" accept="image/*" onChange={handleAvatarChange} className="hidden" />
                   </label>
@@ -254,7 +254,7 @@ export default function Profile() {
                     <button
                       type="button"
                       onClick={() => setAvatarUrl(null)}
-                      className="text-sm font-medium text-neutral-400 transition hover:text-white"
+                      className="text-sm font-medium text-fg-secondary transition hover:text-fg"
                     >
                       Remove
                     </button>
@@ -262,7 +262,7 @@ export default function Profile() {
                 </div>
 
                 <div className="mb-5">
-                  <label htmlFor="profileName" className="mb-1 block text-sm font-medium text-neutral-300">
+                  <label htmlFor="profileName" className="mb-1 block text-sm font-medium text-fg-secondary">
                     Name
                   </label>
                   <input
@@ -270,12 +270,12 @@ export default function Profile() {
                     type="text"
                     value={form.name}
                     onChange={updateField('name')}
-                    className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                   />
                 </div>
 
                 <div className="mb-5">
-                  <label htmlFor="profilePhone" className="mb-1 block text-sm font-medium text-neutral-300">
+                  <label htmlFor="profilePhone" className="mb-1 block text-sm font-medium text-fg-secondary">
                     Phone
                   </label>
                   <input
@@ -286,14 +286,14 @@ export default function Profile() {
                     maxLength={14}
                     value={form.phone}
                     onChange={(event) => setForm((current) => ({ ...current, phone: formatPhoneInput(event.target.value) }))}
-                    className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                   />
                 </div>
 
                 {isArtist && (
                   <>
                     <div className="mb-5">
-                      <label htmlFor="profileBio" className="mb-1 block text-sm font-medium text-neutral-300">
+                      <label htmlFor="profileBio" className="mb-1 block text-sm font-medium text-fg-secondary">
                         Bio
                       </label>
                       <textarea
@@ -301,12 +301,12 @@ export default function Profile() {
                         rows={3}
                         value={form.bio}
                         onChange={updateField('bio')}
-                        className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                       />
                     </div>
 
                     <div className="mb-5">
-                      <label htmlFor="profileSpecialties" className="mb-1 block text-sm font-medium text-neutral-300">
+                      <label htmlFor="profileSpecialties" className="mb-1 block text-sm font-medium text-fg-secondary">
                         Specialties
                       </label>
                       <input
@@ -315,19 +315,19 @@ export default function Profile() {
                         placeholder="e.g. Blackwork, Fine line, Realism"
                         value={form.specialties}
                         onChange={updateField('specialties')}
-                        className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                       />
-                      <p className="mt-1 text-xs text-neutral-500">Comma-separated.</p>
+                      <p className="mt-1 text-xs text-fg-muted">Comma-separated.</p>
                     </div>
                   </>
                 )}
 
-                <div className="mb-2 border-t border-neutral-800 pt-5">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-neutral-500">Login &amp; security</p>
+                <div className="mb-2 border-t border-border pt-5">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-fg-muted">Login &amp; security</p>
                 </div>
 
                 <div className="mb-5">
-                  <label htmlFor="profileEmail" className="mb-1 block text-sm font-medium text-neutral-300">
+                  <label htmlFor="profileEmail" className="mb-1 block text-sm font-medium text-fg-secondary">
                     Email (used to sign in)
                   </label>
                   <input
@@ -336,13 +336,13 @@ export default function Profile() {
                     required
                     value={form.email}
                     onChange={updateField('email')}
-                    className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                   />
                 </div>
 
                 <div className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
-                    <label htmlFor="profileNewPassword" className="mb-1 block text-sm font-medium text-neutral-300">
+                    <label htmlFor="profileNewPassword" className="mb-1 block text-sm font-medium text-fg-secondary">
                       New password
                     </label>
                     <input
@@ -351,12 +351,12 @@ export default function Profile() {
                       placeholder="Leave blank to keep current"
                       value={newPassword}
                       onChange={(event) => setNewPassword(event.target.value)}
-                      className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                      className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                     />
                   </div>
 
                   <div>
-                    <label htmlFor="profileConfirmPassword" className="mb-1 block text-sm font-medium text-neutral-300">
+                    <label htmlFor="profileConfirmPassword" className="mb-1 block text-sm font-medium text-fg-secondary">
                       Confirm new password
                     </label>
                     <input
@@ -364,13 +364,13 @@ export default function Profile() {
                       type="password"
                       value={confirmNewPassword}
                       onChange={(event) => setConfirmNewPassword(event.target.value)}
-                      className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                      className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                     />
                   </div>
                 </div>
 
                 <div className="mb-5">
-                  <label htmlFor="profileCurrentPassword" className="mb-1 block text-sm font-medium text-neutral-300">
+                  <label htmlFor="profileCurrentPassword" className="mb-1 block text-sm font-medium text-fg-secondary">
                     Current password
                   </label>
                   <input
@@ -378,9 +378,9 @@ export default function Profile() {
                     type="password"
                     value={currentPassword}
                     onChange={(event) => setCurrentPassword(event.target.value)}
-                    className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                   />
-                  <p className="mt-1 text-xs text-neutral-500">
+                  <p className="mt-1 text-xs text-fg-muted">
                     Required only if you change your email or set a new password.
                   </p>
                 </div>
@@ -389,7 +389,7 @@ export default function Profile() {
                   <button
                     type="submit"
                     disabled={submitting}
-                    className="flex-1 rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                    className="flex-1 rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
                   >
                     {submitting ? 'Saving…' : 'Save changes'}
                   </button>
@@ -397,7 +397,7 @@ export default function Profile() {
                     type="button"
                     onClick={handleCancel}
                     disabled={submitting}
-                    className="rounded-full border border-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-800 disabled:opacity-60"
+                    className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
                   >
                     Cancel
                   </button>

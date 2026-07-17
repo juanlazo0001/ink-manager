@@ -14,7 +14,7 @@ export default function ViewAsBanner() {
   if (!target) return null
 
   return (
-    <div className="fixed inset-x-0 top-0 z-40 flex items-center justify-center gap-3 bg-amber-600 px-4 py-2 text-sm font-medium text-black shadow-lg">
+    <div className="fixed inset-x-0 top-0 z-40 flex items-center justify-center gap-3 bg-warning px-4 py-2 text-sm font-medium text-bg shadow-lg">
       <ViewIcon className="h-4 w-4 shrink-0" />
       <span className="truncate">
         Viewing as {target.name ?? target.email} — {formatStatus(target.role)} · Read-only
@@ -22,7 +22,7 @@ export default function ViewAsBanner() {
       <button
         type="button"
         onClick={exitViewAs}
-        className="flex shrink-0 items-center gap-1 rounded-full border border-black/20 bg-black/10 px-3 py-1 text-xs font-semibold transition hover:bg-black/20"
+        className="flex shrink-0 items-center gap-1 rounded-full border border-bg/20 bg-bg/10 px-3 py-1 text-xs font-semibold transition hover:bg-bg/20"
       >
         <CloseIcon className="h-3 w-3" />
         Exit
