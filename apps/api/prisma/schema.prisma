@@ -102,6 +102,7 @@ model Studio {
   sectionSeens     SectionSeen[]
   conversations Conversation[]
   messages      Message[]
+  conversationTags ConversationTag[]
 }
 
 model RolePermission {
@@ -160,6 +161,7 @@ model User {
   staffConversation      Conversation?      @relation("StaffConversation")
   authoredMessages       Message[]          @relation("MessageAuthor")
   conversationReads      ConversationRead[]
+  createdConversationTags ConversationTag[]
 
   locationId String?
   location   Location? @relation(fields: [locationId], references: [id])
@@ -535,8 +537,33 @@ model Conversation {
 
   messages Message[]
   reads    ConversationRead[]
+  tags     ConversationTag[]
 
   @@index([studioId, type, lastMessageAt])
+}
+
+// Links a conversation to a related record elsewhere in the app (that
+// record's studio and, for CLIENT threads, its client are validated to
+// match at the route layer -- no tagging someone else's inquiry onto a
+// thread). entityType is a plain string (like AuditLog.entityType) rather
+// than a Prisma enum, so a new taggable entity type never needs a migration.
+model ConversationTag {
+  id         String   @id @default(cuid())
+  entityType String
+  entityId   String
+  createdAt  DateTime @default(now())
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+
+  createdById String
+  createdBy   User   @relation(fields: [createdById], references: [id])
+
+  @@unique([conversationId, entityType, entityId])
+  @@index([studioId])
 }
 
 // Immutable once created -- a communications record, not an editable
@@ -548,6 +575,11 @@ model Message {
   body      String
   // Array<string> of Cloudinary URLs, reusing the existing upload flow.
   attachments Json?
+  // Set at creation only (messages stay immutable) -- null for ordinary
+  // messages. Phase 6B's sanitized share-to-artist sets
+  // { kind: "shared_inquiry", inquiryId } so the UI can render a distinct
+  // card instead of a plain text bubble.
+  metadata  Json?
   createdAt DateTime          @default(now())
 
   studioId String

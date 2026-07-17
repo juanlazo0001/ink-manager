@@ -200,6 +200,25 @@ export function AttachmentIcon({ className }: IconProps) {
   )
 }
 
+export function InfoIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <circle cx="10" cy="10" r="7.5" />
+      <line x1="10" y1="9" x2="10" y2="14" />
+      <circle cx="10" cy="6.3" r="0.9" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
+export function TagIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <path d="M3 3h6l8 8-6 6-8-8V3Z" strokeLinejoin="round" />
+      <circle cx="7" cy="7" r="1.2" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
 export function PencilIcon({ className }: IconProps) {
   return (
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>

@@ -1,9 +1,16 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
+import type { Prisma } from "../../generated/prisma/client";
 import { ConversationType, MessageChannel, MessageDirection, Role } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
-import { canViewConversation, getUnreadCountForConversation, visibleConversationWhere } from "../lib/conversations";
+import {
+  canViewConversation,
+  getOrCreateStaffConversation,
+  getUnreadCountForConversation,
+  visibleConversationWhere,
+} from "../lib/conversations";
+import { TAGGABLE_ENTITY_TYPES, resolveTagLabel, validateTaggableEntity } from "../lib/conversationTags";
 
 const router = Router();
 router.use(requireAuth);
@@ -38,16 +45,45 @@ function toCounterpart(conversation: {
 // List visible conversations, sorted by most recent activity. Each item
 // includes a preview of the last message and the requester's own unread
 // count (never someone else's -- unread-ness is per-user).
+//
+// All filtering happens here, server-side: entityType (has a tag of this
+// type), artistId (client has an inquiry assigned to that artist), search
+// (client name). Combining filters ANDs them together.
 router.get("/", async (req, res) => {
   const { studioId, userId, role } = req.user!;
   const typeFilter = typeof req.query.type === "string" ? req.query.type : undefined;
+  const entityTypeFilter = typeof req.query.entityType === "string" ? req.query.entityType : undefined;
+  const artistIdFilter = typeof req.query.artistId === "string" ? req.query.artistId : undefined;
+  const searchFilter = typeof req.query.search === "string" ? req.query.search.trim() : undefined;
 
   if (typeFilter && !Object.values(ConversationType).includes(typeFilter as ConversationType)) {
     return res.status(400).json({ error: `type must be one of: ${Object.values(ConversationType).join(", ")}` });
   }
 
+  if (entityTypeFilter && !TAGGABLE_ENTITY_TYPES.includes(entityTypeFilter as (typeof TAGGABLE_ENTITY_TYPES)[number])) {
+    return res.status(400).json({ error: `entityType must be one of: ${TAGGABLE_ENTITY_TYPES.join(", ")}` });
+  }
+
+  const clientWhere: Prisma.ClientWhereInput = {};
+  if (artistIdFilter) {
+    clientWhere.inquiries = { some: { assignedArtistId: artistIdFilter } };
+  }
+  if (searchFilter) {
+    clientWhere.OR = [
+      { firstName: { contains: searchFilter, mode: "insensitive" } },
+      { lastName: { contains: searchFilter, mode: "insensitive" } },
+    ];
+  }
+
+  const where: Prisma.ConversationWhereInput = {
+    ...visibleConversationWhere(studioId, userId, role),
+    ...(typeFilter ? { type: typeFilter as ConversationType } : {}),
+    ...(entityTypeFilter ? { tags: { some: { entityType: entityTypeFilter } } } : {}),
+    ...(Object.keys(clientWhere).length > 0 ? { client: clientWhere } : {}),
+  };
+
   const conversations = await prisma.conversation.findMany({
-    where: { ...visibleConversationWhere(studioId, userId, role), ...(typeFilter ? { type: typeFilter as ConversationType } : {}) },
+    where,
     include: {
       ...COUNTERPART_SELECT,
       messages: { orderBy: { createdAt: "desc" }, take: 1 },
@@ -153,19 +189,8 @@ router.post("/", async (req, res) => {
     return res.status(404).json({ error: "Staff member not found" });
   }
 
-  const existing = await prisma.conversation.findUnique({ where: { staffUserId } });
-  if (existing) return res.json(existing);
-
-  const created = await prisma.conversation.create({ data: { studioId, type: ConversationType.STAFF, staffUserId } });
-  await logAudit({
-    studioId,
-    actorUserId: userId,
-    entityType: "Conversation",
-    entityId: created.id,
-    action: "create",
-    changes: { type: "STAFF", staffUserId },
-  });
-  res.status(201).json(created);
+  const { conversation, created } = await getOrCreateStaffConversation(studioId, staffUserId, userId);
+  res.status(created ? 201 : 200).json(conversation);
 });
 
 const MESSAGES_PAGE_SIZE = 30;
@@ -179,7 +204,10 @@ router.get("/:id/messages", async (req, res) => {
   const { studioId, userId, role } = req.user!;
   const cursor = typeof req.query.cursor === "string" ? req.query.cursor : undefined;
 
-  const conversation = await prisma.conversation.findUnique({ where: { id }, include: COUNTERPART_SELECT });
+  const conversation = await prisma.conversation.findUnique({
+    where: { id },
+    include: { ...COUNTERPART_SELECT, tags: true },
+  });
   if (!conversation || !canViewConversation(conversation, studioId, userId, role)) {
     return res.status(404).json({ error: "Conversation not found" });
   }
@@ -195,6 +223,15 @@ router.get("/:id/messages", async (req, res) => {
   const hasMore = page.length > MESSAGES_PAGE_SIZE;
   const messages = page.slice(0, MESSAGES_PAGE_SIZE).reverse();
 
+  const tags = await Promise.all(
+    conversation.tags.map(async (tag) => ({
+      id: tag.id,
+      entityType: tag.entityType,
+      entityId: tag.entityId,
+      ...(await resolveTagLabel(tag.entityType, tag.entityId)),
+    })),
+  );
+
   res.json({
     conversation: {
       id: conversation.id,
@@ -202,10 +239,91 @@ router.get("/:id/messages", async (req, res) => {
       clientId: conversation.clientId,
       staffUserId: conversation.staffUserId,
       counterpart: toCounterpart(conversation),
+      tags,
     },
     messages,
     nextCursor: hasMore ? page[MESSAGES_PAGE_SIZE].id : null,
   });
+});
+
+// Tags only make sense on CLIENT threads -- everything taggable (Inquiry/
+// Appointment/GiftCard/DepositForm/LiabilityWaiver) is a client-owned
+// record, and validateTaggableEntity enforces it belongs to *this*
+// conversation's client specifically.
+router.post("/:id/tags", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+  const { studioId, userId, role } = req.user!;
+  const { entityType, entityId } = req.body ?? {};
+
+  const conversation = await prisma.conversation.findUnique({ where: { id } });
+  if (!conversation || !canViewConversation(conversation, studioId, userId, role)) {
+    return res.status(404).json({ error: "Conversation not found" });
+  }
+
+  if (conversation.type !== ConversationType.CLIENT || !conversation.clientId) {
+    return res.status(400).json({ error: "Only client conversations can be tagged" });
+  }
+
+  if (typeof entityType !== "string" || typeof entityId !== "string" || entityId.trim().length === 0) {
+    return res.status(400).json({ error: "entityType and entityId are required" });
+  }
+
+  const validation = await validateTaggableEntity(entityType, entityId, studioId, conversation.clientId);
+  if ("error" in validation) {
+    return res.status(400).json({ error: validation.error });
+  }
+
+  const existing = await prisma.conversationTag.findUnique({
+    where: { conversationId_entityType_entityId: { conversationId: id, entityType, entityId } },
+  });
+  if (existing) {
+    return res.status(400).json({ error: "This is already tagged on this conversation" });
+  }
+
+  const tag = await prisma.conversationTag.create({
+    data: { studioId, conversationId: id, entityType, entityId, createdById: userId },
+  });
+
+  await logAudit({
+    studioId,
+    actorUserId: userId,
+    entityType: "Conversation",
+    entityId: id,
+    action: "tag_added",
+    changes: { entityType, entityId, tagId: tag.id },
+  });
+
+  const label = await resolveTagLabel(entityType, entityId);
+  res.status(201).json({ id: tag.id, entityType, entityId, ...label });
+});
+
+router.delete("/:id/tags/:tagId", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+  const tagId = req.params.tagId as string;
+  const { studioId, userId, role } = req.user!;
+
+  const conversation = await prisma.conversation.findUnique({ where: { id } });
+  if (!conversation || !canViewConversation(conversation, studioId, userId, role)) {
+    return res.status(404).json({ error: "Conversation not found" });
+  }
+
+  const tag = await prisma.conversationTag.findUnique({ where: { id: tagId } });
+  if (!tag || tag.conversationId !== id || tag.studioId !== studioId) {
+    return res.status(404).json({ error: "Tag not found" });
+  }
+
+  await prisma.conversationTag.delete({ where: { id: tagId } });
+
+  await logAudit({
+    studioId,
+    actorUserId: userId,
+    entityType: "Conversation",
+    entityId: id,
+    action: "tag_removed",
+    changes: { entityType: tag.entityType, entityId: tag.entityId, tagId },
+  });
+
+  res.status(204).send();
 });
 
 router.post("/:id/messages", async (req, res) => {
@@ -283,6 +401,137 @@ router.post("/:id/messages", async (req, res) => {
   });
 
   res.status(201).json(message);
+});
+
+// Aggregate, summary-only view backing the quick-details drawer AND the
+// "add tag" picker (both need the same "what does this client have going
+// on" data). OWNER/FRONT_DESK only, studio-scoped, CLIENT threads only.
+router.get("/:id/context", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+  const { studioId, userId, role } = req.user!;
+
+  const conversation = await prisma.conversation.findUnique({ where: { id } });
+  if (!conversation || !canViewConversation(conversation, studioId, userId, role) || conversation.type !== ConversationType.CLIENT) {
+    return res.status(404).json({ error: "Conversation not found" });
+  }
+
+  const client = await prisma.client.findUnique({
+    where: { id: conversation.clientId! },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      email: true,
+      phone: true,
+      inquiries: {
+        select: {
+          id: true,
+          description: true,
+          status: true,
+          priceEstimateLow: true,
+          priceEstimateHigh: true,
+          depositForm: { select: { id: true, totalCharged: true, signedAt: true, paidManually: true } },
+        },
+        orderBy: { createdAt: "desc" },
+      },
+      giftCards: {
+        select: { id: true, amountCents: true, status: true, expiresAt: true },
+        orderBy: { createdAt: "desc" },
+      },
+      appointments: {
+        where: { startTime: { gte: new Date() } },
+        select: {
+          id: true,
+          startTime: true,
+          artist: { select: { user: { select: { name: true, email: true } } } },
+          liabilityWaiver: { select: { id: true, status: true } },
+        },
+        orderBy: { startTime: "asc" },
+        take: 1,
+      },
+    },
+  });
+
+  if (!client) {
+    return res.status(404).json({ error: "Conversation not found" });
+  }
+
+  const nextAppointment = client.appointments[0];
+
+  res.json({
+    client: { id: client.id, firstName: client.firstName, lastName: client.lastName, email: client.email, phone: client.phone },
+    inquiries: client.inquiries,
+    giftCards: client.giftCards,
+    nextAppointment: nextAppointment
+      ? {
+          id: nextAppointment.id,
+          startTime: nextAppointment.startTime,
+          artistName: nextAppointment.artist.user.name ?? nextAppointment.artist.user.email,
+          waiverId: nextAppointment.liabilityWaiver?.id ?? null,
+          waiverStatus: nextAppointment.liabilityWaiver?.status ?? null,
+        }
+      : null,
+  });
+});
+
+// Copies an image already attached to a message in this conversation onto
+// an inquiry's reference images. The URL must actually belong to a message
+// in THIS conversation (no arbitrary-URL injection -- can't be used to
+// smuggle an unrelated image onto an inquiry), and the inquiry must belong
+// to this conversation's client.
+router.post("/:id/attach-image", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+  const { studioId, userId, role } = req.user!;
+  const { imageUrl, inquiryId } = req.body ?? {};
+
+  const conversation = await prisma.conversation.findUnique({ where: { id } });
+  if (!conversation || !canViewConversation(conversation, studioId, userId, role) || conversation.type !== ConversationType.CLIENT) {
+    return res.status(404).json({ error: "Conversation not found" });
+  }
+
+  if (typeof imageUrl !== "string" || imageUrl.trim().length === 0) {
+    return res.status(400).json({ error: "imageUrl is required" });
+  }
+  if (typeof inquiryId !== "string" || inquiryId.trim().length === 0) {
+    return res.status(400).json({ error: "inquiryId is required" });
+  }
+
+  const messagesWithAttachments = await prisma.message.findMany({
+    where: { conversationId: id },
+    select: { attachments: true },
+  });
+  const urlBelongsToConversation = messagesWithAttachments.some(
+    (m) => Array.isArray(m.attachments) && (m.attachments as unknown[]).includes(imageUrl),
+  );
+  if (!urlBelongsToConversation) {
+    return res.status(400).json({ error: "That image does not belong to a message in this conversation" });
+  }
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { id: inquiryId } });
+  if (!inquiry || inquiry.studioId !== studioId || inquiry.clientId !== conversation.clientId) {
+    return res.status(400).json({ error: "inquiryId must belong to this conversation's client" });
+  }
+
+  if (inquiry.referenceImages.includes(imageUrl)) {
+    // Friendly no-op: already there, nothing to do or to audit.
+    return res.json(inquiry);
+  }
+
+  const updated = await prisma.inquiry.update({
+    where: { id: inquiryId },
+    data: { referenceImages: { push: imageUrl } },
+  });
+
+  await logAudit({
+    studioId,
+    actorUserId: userId,
+    entityType: "Inquiry",
+    entityId: inquiryId,
+    action: "reference_image_added",
+    changes: { imageUrl, sourceConversationId: id },
+  });
+
+  res.json(updated);
 });
 
 // Deliberately NOT audited: reading a thread happens on every open and

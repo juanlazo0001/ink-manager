@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import AuditTrail from '../components/AuditTrail'
+import Modal from '../components/Modal'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatDuration, formatStatus } from '../lib/format'
 import { ArrowLeftIcon, MessageIcon, PencilIcon } from '../components/icons'
@@ -56,7 +57,12 @@ interface Inquiry {
 
 interface ArtistOption {
   id: string
-  user: { email: string }
+  user: { id: string; email: string; name?: string | null }
+}
+
+interface SharePreview {
+  body: string
+  attachments: string[]
 }
 
 interface GiftCardOption {
@@ -128,6 +134,37 @@ export default function InquiryDetail() {
     }
   }
 
+  const [showShareModal, setShowShareModal] = useState(false)
+  const [shareArtistUserId, setShareArtistUserId] = useState('')
+  const [sharing, setSharing] = useState(false)
+  const [shareError, setShareError] = useState<string | null>(null)
+  const [shareSent, setShareSent] = useState(false)
+
+  const { data: sharePreview } = useQuery({
+    queryKey: ['inquiry-share-preview', id],
+    queryFn: () => apiFetch<SharePreview>(`/inquiries/${id}/share-to-artist/preview`),
+    enabled: !!id && showShareModal,
+  })
+
+  async function handleShareToArtist() {
+    if (!id || !shareArtistUserId) return
+
+    setSharing(true)
+    setShareError(null)
+
+    try {
+      await apiFetch(`/inquiries/${id}/share-to-artist`, {
+        method: 'POST',
+        body: JSON.stringify({ artistUserId: shareArtistUserId }),
+      })
+      setShareSent(true)
+    } catch (err) {
+      setShareError(err instanceof Error ? err.message : 'Failed to share with artist')
+    } finally {
+      setSharing(false)
+    }
+  }
+
   const {
     data: inquiry,
     error: queryError,
@@ -155,6 +192,27 @@ export default function InquiryDetail() {
   const { data: artistOptions } = useQuery({
     queryKey: artistsQueryKey(user!.studioId),
     queryFn: () => apiFetch<ArtistOption[]>('/artists'),
+  })
+
+  // Reverse link for 6B tagging: if this inquiry has been tagged onto the
+  // client's conversation, surface that here so staff can jump straight to
+  // the thread. There's no dedicated reverse-lookup endpoint -- CLIENT
+  // threads are one-per-client, so get-or-create + filtering its tags
+  // client-side is cheap and reuses existing routes.
+  const { data: taggedConversation } = useQuery({
+    queryKey: ['inquiry-conversation-tags', inquiry?.clientId, inquiry?.id],
+    queryFn: async () => {
+      const conversation = await apiFetch<{ id: string }>('/conversations', {
+        method: 'POST',
+        body: JSON.stringify({ clientId: inquiry!.clientId }),
+      })
+      const thread = await apiFetch<{ conversation: { tags: { entityType: string; entityId: string }[] } }>(
+        `/conversations/${conversation.id}/messages`,
+      )
+      const tagged = thread.conversation.tags.some((t) => t.entityType === 'Inquiry' && t.entityId === inquiry!.id)
+      return tagged ? conversation.id : null
+    },
+    enabled: canMessage && !!inquiry?.clientId,
   })
 
   // Scheduling now requires attaching a gift card (Phase 3) -- this is the
@@ -468,6 +526,20 @@ export default function InquiryDetail() {
                         Message
                       </button>
                     )}
+                    {canMessage && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShareArtistUserId('')
+                          setShareError(null)
+                          setShareSent(false)
+                          setShowShareModal(true)
+                        }}
+                        className="flex items-center gap-2 rounded-full border border-neutral-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800"
+                      >
+                        Share with artist
+                      </button>
+                    )}
                     <span className="inline-flex items-center rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-300">
                       {formatStatus(inquiry.status)}
                     </span>
@@ -478,6 +550,17 @@ export default function InquiryDetail() {
                   <DetailField label="Email" value={inquiry.client.email ?? 'Not provided'} />
                   <DetailField label="Phone" value={inquiry.client.phone ?? 'Not provided'} />
                 </div>
+
+                {taggedConversation && (
+                  <button
+                    type="button"
+                    onClick={() => openPanel(taggedConversation)}
+                    className="mt-4 flex items-center gap-1 text-xs font-medium text-neutral-400 hover:text-white"
+                  >
+                    <MessageIcon className="h-3.5 w-3.5" />
+                    Tagged on this client's conversation — open thread
+                  </button>
+                )}
               </div>
 
               <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
@@ -1011,6 +1094,76 @@ export default function InquiryDetail() {
               </div>
 
               <AuditTrail entityType="Inquiry" entityId={inquiry.id} />
+
+              {showShareModal && (
+                <Modal title="Share with artist" onClose={() => setShowShareModal(false)}>
+                  {shareSent ? (
+                    <div className="space-y-4">
+                      <p className="text-sm text-green-400">Sent to the artist's Team thread.</p>
+                      <button
+                        type="button"
+                        onClick={() => setShowShareModal(false)}
+                        className="rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600"
+                      >
+                        Done
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <p className="text-xs text-neutral-500">
+                        Only the tattoo details below are sent — never the client's name, contact info, or health
+                        information.
+                      </p>
+
+                      <div className="rounded-lg border border-neutral-800 p-3 text-sm">
+                        {sharePreview ? (
+                          <>
+                            <p className="whitespace-pre-wrap text-neutral-200">{sharePreview.body}</p>
+                            {sharePreview.attachments.length > 0 && (
+                              <div className="mt-2 grid grid-cols-4 gap-2">
+                                {sharePreview.attachments.map((url) => (
+                                  <img key={url} src={url} alt="" className="aspect-square rounded-lg object-cover" />
+                                ))}
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <p className="text-neutral-500">Loading preview…</p>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-neutral-400">Send to</label>
+                        <select
+                          value={shareArtistUserId}
+                          onChange={(e) => setShareArtistUserId(e.target.value)}
+                          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                        >
+                          <option value="" disabled>
+                            {artistOptions === undefined ? 'Loading artists…' : 'Select an artist'}
+                          </option>
+                          {artistOptions?.map((artist) => (
+                            <option key={artist.id} value={artist.user.id}>
+                              {artist.user.name ?? artist.user.email}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {shareError && <p className="text-sm text-red-400">{shareError}</p>}
+
+                      <button
+                        type="button"
+                        onClick={handleShareToArtist}
+                        disabled={!shareArtistUserId || sharing}
+                        className="w-full rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                      >
+                        {sharing ? 'Sending…' : 'Send'}
+                      </button>
+                    </div>
+                  )}
+                </Modal>
+              )}
             </>
           )}
         </div>

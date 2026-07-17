@@ -6,8 +6,9 @@ import AuditTrail from '../components/AuditTrail'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatStatus } from '../lib/format'
 import { formatCents, dollarsToCents } from '../lib/money'
-import { ArrowLeftIcon } from '../components/icons'
+import { ArrowLeftIcon, MessageIcon } from '../components/icons'
 import { useAuth } from '../context/useAuth'
+import { useConversationPanel } from '../context/useConversationPanel'
 import { appointmentsQueryKey } from '../lib/queryKeys'
 
 interface WaiverSummary {
@@ -87,7 +88,9 @@ export default function AppointmentDetail() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const queryClient = useQueryClient()
+  const { openPanel } = useConversationPanel()
   const canManage = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
+  const [startingConversation, setStartingConversation] = useState(false)
 
   const [appointment, setAppointment] = useState<Appointment | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -171,6 +174,22 @@ export default function AppointmentDetail() {
       setWaiverError(err instanceof Error ? err.message : 'Failed to create waiver')
     } finally {
       setCreatingWaiver(false)
+    }
+  }
+
+  async function handleMessage() {
+    if (!appointment) return
+    setStartingConversation(true)
+    try {
+      const conversation = await apiFetch<{ id: string }>('/conversations', {
+        method: 'POST',
+        body: JSON.stringify({ clientId: appointment.client.id }),
+      })
+      openPanel(conversation.id)
+    } catch {
+      // Non-critical -- messaging is also reachable from the client profile.
+    } finally {
+      setStartingConversation(false)
     }
   }
 
@@ -289,9 +308,22 @@ export default function AppointmentDetail() {
                     <p className="mt-1 text-sm text-neutral-400">Project: {appointment.inquiry.description}</p>
                   </div>
 
-                  <span className="inline-flex items-center rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-300">
-                    {formatStatus(appointment.status)}
-                  </span>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {canManage && (
+                      <button
+                        type="button"
+                        onClick={handleMessage}
+                        disabled={startingConversation}
+                        className="flex items-center gap-2 rounded-full border border-neutral-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800 disabled:opacity-60"
+                      >
+                        <MessageIcon className="h-3.5 w-3.5" />
+                        Message
+                      </button>
+                    )}
+                    <span className="inline-flex items-center rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-300">
+                      {formatStatus(appointment.status)}
+                    </span>
+                  </div>
                 </div>
 
                 {appointment.notes && (

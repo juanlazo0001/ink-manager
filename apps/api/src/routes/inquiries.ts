@@ -1,11 +1,12 @@
 import { Router } from "express";
 import crypto from "node:crypto";
 import { prisma } from "../lib/prisma";
-import { AppointmentStatus, Channel, InquiryStatus } from "../../generated/prisma/enums";
+import { AppointmentStatus, Channel, InquiryStatus, MessageChannel, MessageDirection } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { Role } from "../../generated/prisma/enums";
 import { diffObjects, logAudit } from "../lib/audit";
 import { validateGiftCardForAttachment } from "../lib/giftCards";
+import { getOrCreateStaffConversation } from "../lib/conversations";
 
 const router = Router();
 
@@ -713,6 +714,107 @@ router.post("/:id/deposit-form", requireAuth, requireRole(Role.OWNER, Role.FRONT
   });
 
   res.status(201).json({ ...depositForm, depositUrl: `${FRONTEND_URL}/deposit/${token}` });
+});
+
+// Explicit allowlist projection for the sanitized artist share -- named
+// fields only, built up rather than derived by deleting keys from a full
+// inquiry object, so nothing client-identifying (name/email/phone/DOB/
+// address/emergency contact/health data/ID images) can leak through by
+// accident as new Inquiry fields get added later.
+function buildSharedInquiryProjection(inquiry: {
+  description: string;
+  placement: string;
+  estimatedSize: string;
+  timeEstimateHoursMin: number | null;
+  timeEstimateHoursMax: number | null;
+  priceEstimateLow: number | null;
+  priceEstimateHigh: number | null;
+  referenceImages: string[];
+}): { body: string; attachments: string[] } {
+  const lines = [`Tattoo: ${inquiry.description}`, `Placement: ${inquiry.placement}`, `Size: ${inquiry.estimatedSize}`];
+
+  if (inquiry.timeEstimateHoursMin != null && inquiry.timeEstimateHoursMax != null) {
+    lines.push(`Estimated time: ${inquiry.timeEstimateHoursMin}-${inquiry.timeEstimateHoursMax} hours`);
+  }
+  if (inquiry.priceEstimateLow != null && inquiry.priceEstimateHigh != null) {
+    lines.push(`Estimated price: $${inquiry.priceEstimateLow}-$${inquiry.priceEstimateHigh}`);
+  }
+
+  return { body: lines.join("\n"), attachments: inquiry.referenceImages };
+}
+
+// Preview: exactly what would be composed into the artist's thread, before
+// an artist is even picked -- the projection never depends on who receives
+// it, so the frontend's confirmation modal can show this ahead of send.
+router.get("/:id/share-to-artist/preview", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  res.json(buildSharedInquiryProjection(inquiry));
+});
+
+// Sends a sanitized copy of an inquiry's tattoo details into the front-desk
+// <-> artist STAFF thread, deliberately excluding all client PII. The body
+// accepts artistUserId ONLY -- never message content from the client side --
+// so the composed message can never carry anything beyond the fixed
+// projection above.
+router.post("/:id/share-to-artist", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+  const { studioId, userId } = req.user!;
+  const { artistUserId } = req.body ?? {};
+
+  if (typeof artistUserId !== "string" || artistUserId.trim().length === 0) {
+    return res.status(400).json({ error: "artistUserId is required" });
+  }
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  if (!inquiry || inquiry.studioId !== studioId) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  const artist = await prisma.artist.findUnique({ where: { userId: artistUserId }, include: { user: true } });
+  if (!artist || artist.user.studioId !== studioId || artist.user.role !== Role.ARTIST) {
+    return res.status(400).json({ error: "artistUserId must be an artist in your studio" });
+  }
+
+  const { conversation } = await getOrCreateStaffConversation(studioId, artistUserId, userId);
+  const { body, attachments } = buildSharedInquiryProjection(inquiry);
+  const now = new Date();
+
+  const [message] = await prisma.$transaction([
+    prisma.message.create({
+      data: {
+        studioId,
+        conversationId: conversation.id,
+        channel: MessageChannel.IN_APP,
+        direction: MessageDirection.OUTBOUND,
+        body,
+        attachments: attachments.length > 0 ? attachments : undefined,
+        authorUserId: userId,
+        // Set at creation only -- messages stay immutable. Lets the UI
+        // render this as a distinct "Shared inquiry" card instead of a
+        // plain text bubble.
+        metadata: { kind: "shared_inquiry", inquiryId: id },
+        createdAt: now,
+      },
+    }),
+    prisma.conversation.update({ where: { id: conversation.id }, data: { lastMessageAt: now } }),
+  ]);
+
+  await logAudit({
+    studioId,
+    actorUserId: userId,
+    entityType: "Inquiry",
+    entityId: id,
+    action: "shared_to_artist",
+    changes: { artistUserId },
+  });
+
+  res.status(201).json({ conversationId: conversation.id, messageId: message.id });
 });
 
 export default router;

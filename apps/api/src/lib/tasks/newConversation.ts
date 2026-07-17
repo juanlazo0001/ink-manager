@@ -28,6 +28,9 @@ async function fetch(studioId: string, userId: string): Promise<SystemTask[]> {
   for (const conversation of conversations) {
     const lastMessage = conversation.messages[0];
     if (!lastMessage || lastMessage.direction !== MessageDirection.INBOUND) continue;
+    // Aligned with the unread-bubble logic (getUnreadConversationCount):
+    // a message you logged yourself is never "unread" to you.
+    if (lastMessage.authorUserId === userId) continue;
 
     const lastReadAt = readMap.get(conversation.id);
     if (lastReadAt && lastReadAt >= lastMessage.createdAt) continue;

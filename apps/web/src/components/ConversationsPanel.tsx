@@ -1,15 +1,27 @@
 import { useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '../lib/api'
-import { formatDateTime, formatRelativeTime } from '../lib/format'
+import { formatDateTime, formatRelativeTime, formatStatus } from '../lib/format'
 import { uploadImageToCloudinary } from '../lib/cloudinary'
 import { useAuth } from '../context/useAuth'
 import { useConversationPanel } from '../context/useConversationPanel'
 import { navCountsQueryKey } from '../lib/queryKeys'
 import type { NavCounts } from '../lib/useNavCounts'
-import { ArrowLeftIcon, AttachmentIcon, CloseIcon, MessageIcon, PlusIcon } from './icons'
+import {
+  ArrowLeftIcon,
+  ArrowUpRightIcon,
+  AttachmentIcon,
+  CloseIcon,
+  InfoIcon,
+  MessageIcon,
+  PlusIcon,
+  TagIcon,
+} from './icons'
 
 type Tab = 'CLIENT' | 'STAFF'
+
+const TAGGABLE_ENTITY_TYPES = ['Inquiry', 'Appointment', 'GiftCard', 'DepositForm', 'LiabilityWaiver'] as const
 
 interface ConversationSummary {
   id: string
@@ -30,15 +42,34 @@ interface StaffRosterEntry {
   conversationId: string | null
 }
 
+interface ArtistFilterOption {
+  id: string
+  user: { name: string | null; email: string }
+}
+
+interface MessageMetadata {
+  kind: 'shared_inquiry'
+  inquiryId: string
+}
+
 interface MessageItem {
   id: string
   channel: string
   direction: 'INBOUND' | 'OUTBOUND'
   body: string
   attachments: string[] | null
+  metadata: MessageMetadata | null
   createdAt: string
   authorUserId: string | null
   author: { id: string; name: string | null; email: string } | null
+}
+
+interface ConversationTag {
+  id: string
+  entityType: string
+  entityId: string
+  label: string
+  deepLink: string
 }
 
 interface ThreadResponse {
@@ -48,9 +79,30 @@ interface ThreadResponse {
     clientId: string | null
     staffUserId: string | null
     counterpart: { id: string; name: string } | null
+    tags: ConversationTag[]
   }
   messages: MessageItem[]
   nextCursor: string | null
+}
+
+interface ConversationContext {
+  client: { id: string; firstName: string; lastName: string; email: string | null; phone: string | null }
+  inquiries: {
+    id: string
+    description: string
+    status: string
+    priceEstimateLow: number | null
+    priceEstimateHigh: number | null
+    depositForm: { id: string; totalCharged: number; signedAt: string | null; paidManually: boolean } | null
+  }[]
+  giftCards: { id: string; amountCents: number; status: string; expiresAt: string | null }[]
+  nextAppointment: {
+    id: string
+    startTime: string
+    artistName: string
+    waiverId: string | null
+    waiverStatus: string | null
+  } | null
 }
 
 interface MessageTemplate {
@@ -203,9 +255,19 @@ function ConversationListView({
   onSelect: (id: string) => void
   onClose: () => void
 }) {
+  const [entityTypeFilter, setEntityTypeFilter] = useState('')
+  const [artistIdFilter, setArtistIdFilter] = useState('')
+  const [search, setSearch] = useState('')
+  const [showFilters, setShowFilters] = useState(false)
+
+  const params = new URLSearchParams({ type: tab })
+  if (tab === 'CLIENT' && entityTypeFilter) params.set('entityType', entityTypeFilter)
+  if (tab === 'CLIENT' && artistIdFilter) params.set('artistId', artistIdFilter)
+  if (tab === 'CLIENT' && search.trim()) params.set('search', search.trim())
+
   const { data: conversations, isLoading } = useQuery({
-    queryKey: ['conversations', tab],
-    queryFn: () => apiFetch<ConversationSummary[]>(`/conversations?type=${tab}`),
+    queryKey: ['conversations', tab, entityTypeFilter, artistIdFilter, search.trim()],
+    queryFn: () => apiFetch<ConversationSummary[]>(`/conversations?${params.toString()}`),
     refetchInterval: 30_000,
   })
 
@@ -215,20 +277,42 @@ function ConversationListView({
     enabled: tab === 'STAFF',
   })
 
+  const { data: artistOptions } = useQuery({
+    queryKey: ['artists-for-conversation-filter'],
+    queryFn: () => apiFetch<ArtistFilterOption[]>('/artists'),
+    enabled: tab === 'CLIENT' && showFilters,
+  })
+
   const rosterWithoutThread = (roster ?? []).filter((member) => !member.conversationId)
+  const hasActiveFilter = !!(entityTypeFilter || artistIdFilter || search.trim())
 
   return (
     <>
       <div className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
         <h2 className="text-sm font-semibold text-white">Conversations</h2>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close"
-          className="flex h-7 w-7 items-center justify-center rounded-full text-neutral-500 transition hover:bg-neutral-800 hover:text-white"
-        >
-          <CloseIcon className="h-4 w-4" />
-        </button>
+        <div className="flex items-center gap-1">
+          {tab === 'CLIENT' && (
+            <button
+              type="button"
+              onClick={() => setShowFilters((v) => !v)}
+              aria-label="Filter conversations"
+              className={[
+                'flex h-7 w-7 items-center justify-center rounded-full transition hover:bg-neutral-800 hover:text-white',
+                hasActiveFilter ? 'text-white' : 'text-neutral-500',
+              ].join(' ')}
+            >
+              <TagIcon className="h-4 w-4" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="flex h-7 w-7 items-center justify-center rounded-full text-neutral-500 transition hover:bg-neutral-800 hover:text-white"
+          >
+            <CloseIcon className="h-4 w-4" />
+          </button>
+        </div>
       </div>
 
       {showTabs && (
@@ -246,6 +330,57 @@ function ConversationListView({
               {t === 'CLIENT' ? 'Clients' : 'Team'}
             </button>
           ))}
+        </div>
+      )}
+
+      {tab === 'CLIENT' && showFilters && (
+        <div className="space-y-2 border-b border-neutral-800 px-3 py-3">
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by client name…"
+            className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-2.5 py-1.5 text-xs text-white focus:border-neutral-600 focus:outline-none"
+          />
+          <div className="flex gap-2">
+            <select
+              value={entityTypeFilter}
+              onChange={(e) => setEntityTypeFilter(e.target.value)}
+              className="min-w-0 flex-1 rounded-lg border border-neutral-800 bg-neutral-900 px-2 py-1.5 text-xs text-white focus:border-neutral-600 focus:outline-none"
+            >
+              <option value="">Any tagged type</option>
+              {TAGGABLE_ENTITY_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+            <select
+              value={artistIdFilter}
+              onChange={(e) => setArtistIdFilter(e.target.value)}
+              className="min-w-0 flex-1 rounded-lg border border-neutral-800 bg-neutral-900 px-2 py-1.5 text-xs text-white focus:border-neutral-600 focus:outline-none"
+            >
+              <option value="">Any artist</option>
+              {artistOptions?.map((artist) => (
+                <option key={artist.id} value={artist.id}>
+                  {artist.user.name ?? artist.user.email}
+                </option>
+              ))}
+            </select>
+          </div>
+          {hasActiveFilter && (
+            <button
+              type="button"
+              onClick={() => {
+                setEntityTypeFilter('')
+                setArtistIdFilter('')
+                setSearch('')
+              }}
+              className="text-xs text-neutral-500 underline hover:text-white"
+            >
+              Clear filters
+            </button>
+          )}
         </div>
       )}
 
@@ -350,6 +485,11 @@ function ThreadView({
   const [sendError, setSendError] = useState<string | null>(null)
   const [showTemplates, setShowTemplates] = useState(false)
   const [showLinkMenu, setShowLinkMenu] = useState(false)
+  const [showContext, setShowContext] = useState(false)
+  const [showTagPicker, setShowTagPicker] = useState(false)
+  const [tagError, setTagError] = useState<string | null>(null)
+  const [imagePickerFor, setImagePickerFor] = useState<string | null>(null)
+  const [imageAttachError, setImageAttachError] = useState<string | null>(null)
 
   const isClientThread = data?.conversation.type === 'CLIENT'
 
@@ -382,6 +522,63 @@ function ThreadView({
     queryFn: () => apiFetch<ShareableLinksResponse>(`/clients/${data!.conversation.clientId}/shareable-links`),
     enabled: isClientThread && showLinkMenu && !!data?.conversation.clientId,
   })
+
+  // Backs both the quick-details drawer and the "add tag" / "add to inquiry"
+  // pickers -- all three need the same "what does this client have going on"
+  // summary, so they share one query.
+  const { data: context } = useQuery({
+    queryKey: ['conversation-context', conversationId],
+    queryFn: () => apiFetch<ConversationContext>(`/conversations/${conversationId}/context`),
+    enabled: isClientThread && (showContext || showTagPicker || imagePickerFor !== null),
+  })
+
+  // Only relevant for a STAFF thread being viewed by an artist: used to
+  // decide whether a "shared inquiry" card should deep-link to My Inquiries
+  // (only if it's actually assigned to this artist -- never a staff-only view).
+  const { data: assignedInquiries } = useQuery({
+    queryKey: ['inquiries-assigned-to-me'],
+    queryFn: () => apiFetch<{ id: string }[]>('/inquiries/assigned-to-me'),
+    enabled: !isClientThread && user?.role === 'ARTIST',
+  })
+  const assignedInquiryIds = new Set((assignedInquiries ?? []).map((i) => i.id))
+
+  const existingTagKeys = new Set((data?.conversation.tags ?? []).map((t) => `${t.entityType}:${t.entityId}`))
+
+  async function handleAddTag(entityType: string, entityId: string) {
+    setTagError(null)
+    try {
+      await apiFetch(`/conversations/${conversationId}/tags`, {
+        method: 'POST',
+        body: JSON.stringify({ entityType, entityId }),
+      })
+      queryClient.invalidateQueries({ queryKey: ['conversation-thread', conversationId] })
+    } catch (err) {
+      setTagError(err instanceof Error ? err.message : 'Failed to add tag')
+    }
+  }
+
+  async function handleRemoveTag(tagId: string) {
+    setTagError(null)
+    try {
+      await apiFetch(`/conversations/${conversationId}/tags/${tagId}`, { method: 'DELETE' })
+      queryClient.invalidateQueries({ queryKey: ['conversation-thread', conversationId] })
+    } catch (err) {
+      setTagError(err instanceof Error ? err.message : 'Failed to remove tag')
+    }
+  }
+
+  async function handleAttachImageToInquiry(imageUrl: string, inquiryId: string) {
+    setImageAttachError(null)
+    try {
+      await apiFetch(`/conversations/${conversationId}/attach-image`, {
+        method: 'POST',
+        body: JSON.stringify({ imageUrl, inquiryId }),
+      })
+      setImagePickerFor(null)
+    } catch (err) {
+      setImageAttachError(err instanceof Error ? err.message : 'Failed to add image to inquiry')
+    }
+  }
 
   async function handleAttach(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
@@ -445,6 +642,32 @@ function ThreadView({
           </button>
         )}
         <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-white">{counterpartName}</h2>
+        {isClientThread && (
+          <>
+            <button
+              type="button"
+              onClick={() => {
+                setShowTagPicker((v) => !v)
+                setShowContext(false)
+              }}
+              aria-label="Add tag"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-neutral-500 transition hover:bg-neutral-800 hover:text-white"
+            >
+              <TagIcon className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowContext((v) => !v)
+                setShowTagPicker(false)
+              }}
+              aria-label="Client details"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-neutral-500 transition hover:bg-neutral-800 hover:text-white"
+            >
+              <InfoIcon className="h-4 w-4" />
+            </button>
+          </>
+        )}
         <button
           type="button"
           onClick={onClose}
@@ -455,48 +678,284 @@ function ThreadView({
         </button>
       </div>
 
-      <div ref={scrollRef} className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-3">
-        {isLoading && <p className="text-sm text-neutral-400">Loading…</p>}
+      {isClientThread && data.conversation.tags.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 border-b border-neutral-800 px-3 py-2">
+          {data.conversation.tags.map((tag) => (
+            <span
+              key={tag.id}
+              className="flex items-center gap-1 rounded-full border border-neutral-700 bg-neutral-800/60 px-2 py-0.5 text-[11px] text-neutral-300"
+            >
+              <Link to={tag.deepLink} className="hover:text-white">
+                {tag.entityType}: {tag.label}
+              </Link>
+              <button
+                type="button"
+                onClick={() => handleRemoveTag(tag.id)}
+                aria-label={`Remove ${tag.entityType} tag`}
+                className="text-neutral-500 hover:text-white"
+              >
+                <CloseIcon className="h-2.5 w-2.5" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
 
-        {data?.messages.map((message) => {
-          const isOutboundSide = isClientThread
-            ? message.direction === 'OUTBOUND'
-            : message.authorUserId === user?.userId
-          const showDaySeparator = dayKey(message.createdAt) !== lastDay
-          lastDay = dayKey(message.createdAt)
-
-          return (
-            <div key={message.id}>
-              {showDaySeparator && (
-                <p className="my-2 text-center text-[11px] uppercase tracking-wider text-neutral-600">
-                  {dayLabel(message.createdAt)}
-                </p>
-              )}
-              <div className={`flex ${isOutboundSide ? 'justify-end' : 'justify-start'}`}>
-                <div
-                  className={[
-                    'max-w-[75%] rounded-2xl px-3 py-2 text-sm',
-                    isOutboundSide ? 'bg-neutral-700 text-white' : 'bg-neutral-800 text-neutral-100',
-                  ].join(' ')}
+      {isClientThread && showTagPicker && (
+        <div className="max-h-48 overflow-y-auto border-b border-neutral-800 px-3 py-2">
+          {tagError && <p className="mb-1 text-xs text-red-400">{tagError}</p>}
+          {!context && <p className="text-xs text-neutral-500">Loading…</p>}
+          {context && (
+            <div className="space-y-1">
+              {context.inquiries.map((inquiry) => {
+                const key = `Inquiry:${inquiry.id}`
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    disabled={existingTagKeys.has(key)}
+                    onClick={() => handleAddTag('Inquiry', inquiry.id)}
+                    className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-neutral-300 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <span className="truncate">Inquiry: {inquiry.description}</span>
+                    {!existingTagKeys.has(key) && <PlusIcon className="h-3 w-3 shrink-0" />}
+                  </button>
+                )
+              })}
+              {context.giftCards.map((card) => {
+                const key = `GiftCard:${card.id}`
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    disabled={existingTagKeys.has(key)}
+                    onClick={() => handleAddTag('GiftCard', card.id)}
+                    className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-neutral-300 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <span className="truncate">Gift card: ${(card.amountCents / 100).toFixed(2)}</span>
+                    {!existingTagKeys.has(key) && <PlusIcon className="h-3 w-3 shrink-0" />}
+                  </button>
+                )
+              })}
+              {context.inquiries
+                .filter((i) => i.depositForm)
+                .map((inquiry) => {
+                  const key = `DepositForm:${inquiry.depositForm!.id}`
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      disabled={existingTagKeys.has(key)}
+                      onClick={() => handleAddTag('DepositForm', inquiry.depositForm!.id)}
+                      className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-neutral-300 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <span className="truncate">Deposit: ${inquiry.depositForm!.totalCharged}</span>
+                      {!existingTagKeys.has(key) && <PlusIcon className="h-3 w-3 shrink-0" />}
+                    </button>
+                  )
+                })}
+              {context.nextAppointment && (
+                <button
+                  type="button"
+                  disabled={existingTagKeys.has(`Appointment:${context.nextAppointment.id}`)}
+                  onClick={() => handleAddTag('Appointment', context.nextAppointment!.id)}
+                  className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-neutral-300 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  {!isClientThread && (
-                    <p className="mb-0.5 text-[11px] font-medium text-neutral-400">
-                      {message.author?.name ?? message.author?.email ?? 'Unknown'}
-                    </p>
+                  <span className="truncate">Appointment: {formatDateTime(context.nextAppointment.startTime)}</span>
+                  {!existingTagKeys.has(`Appointment:${context.nextAppointment.id}`) && <PlusIcon className="h-3 w-3 shrink-0" />}
+                </button>
+              )}
+              {context.nextAppointment?.waiverId && (
+                <button
+                  type="button"
+                  disabled={existingTagKeys.has(`LiabilityWaiver:${context.nextAppointment.waiverId}`)}
+                  onClick={() => handleAddTag('LiabilityWaiver', context.nextAppointment!.waiverId!)}
+                  className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-neutral-300 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <span className="truncate">Waiver: {context.nextAppointment.waiverStatus}</span>
+                  {!existingTagKeys.has(`LiabilityWaiver:${context.nextAppointment.waiverId}`) && (
+                    <PlusIcon className="h-3 w-3 shrink-0" />
                   )}
-                  {message.body && <p className="whitespace-pre-wrap">{message.body}</p>}
-                  {message.attachments?.map((url) => (
-                    <img key={url} src={url} alt="Attachment" className="mt-1 max-h-48 rounded-lg" />
-                  ))}
-                  <p className="mt-1 flex items-center gap-1 text-[10px] text-neutral-400">
-                    {isClientThread && <span className="rounded-full bg-black/20 px-1.5 py-0.5">{channelLabel(message.channel)}</span>}
-                    {formatDateTime(message.createdAt)}
+                </button>
+              )}
+              {context.inquiries.length === 0 && context.giftCards.length === 0 && !context.nextAppointment && (
+                <p className="px-2 py-1 text-xs text-neutral-500">Nothing to tag yet for this client.</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="relative min-h-0 flex-1">
+        {isClientThread && showContext && (
+          <div className="absolute inset-0 z-20 overflow-y-auto bg-neutral-900 px-4 py-4">
+            {!context && <p className="text-sm text-neutral-400">Loading…</p>}
+            {context && (
+              <div className="space-y-4 text-sm">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Contact</p>
+                  <p className="mt-1 text-white">
+                    {context.client.firstName} {context.client.lastName}
                   </p>
+                  <p className="text-xs text-neutral-400">{context.client.email ?? 'No email'}</p>
+                  <p className="text-xs text-neutral-400">{context.client.phone ?? 'No phone'}</p>
+                </div>
+
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Inquiries</p>
+                  {context.inquiries.length === 0 && <p className="mt-1 text-xs text-neutral-500">None</p>}
+                  {context.inquiries.map((inquiry) => (
+                    <Link
+                      key={inquiry.id}
+                      to={`/inquiries/${inquiry.id}`}
+                      className="mt-1 block rounded-lg border border-neutral-800 px-2.5 py-2 hover:bg-neutral-800/60"
+                    >
+                      <p className="truncate text-xs text-white">{inquiry.description}</p>
+                      <p className="mt-0.5 text-[11px] text-neutral-500">
+                        {formatStatus(inquiry.status)}
+                        {inquiry.priceEstimateLow != null && inquiry.priceEstimateHigh != null
+                          ? ` · $${inquiry.priceEstimateLow}-$${inquiry.priceEstimateHigh}`
+                          : ''}
+                      </p>
+                    </Link>
+                  ))}
+                </div>
+
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Next appointment</p>
+                  {!context.nextAppointment && <p className="mt-1 text-xs text-neutral-500">None scheduled</p>}
+                  {context.nextAppointment && (
+                    <Link
+                      to={`/appointments/${context.nextAppointment.id}`}
+                      className="mt-1 block rounded-lg border border-neutral-800 px-2.5 py-2 hover:bg-neutral-800/60"
+                    >
+                      <p className="text-xs text-white">{formatDateTime(context.nextAppointment.startTime)}</p>
+                      <p className="mt-0.5 text-[11px] text-neutral-500">
+                        with {context.nextAppointment.artistName}
+                        {context.nextAppointment.waiverStatus ? ` · Waiver: ${context.nextAppointment.waiverStatus}` : ''}
+                      </p>
+                    </Link>
+                  )}
+                </div>
+
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">Gift cards</p>
+                  {context.giftCards.length === 0 && <p className="mt-1 text-xs text-neutral-500">None</p>}
+                  {context.giftCards.map((card) => (
+                    <Link
+                      key={card.id}
+                      to={`/gift-cards/${card.id}`}
+                      className="mt-1 block rounded-lg border border-neutral-800 px-2.5 py-2 hover:bg-neutral-800/60"
+                    >
+                      <p className="text-xs text-white">${(card.amountCents / 100).toFixed(2)}</p>
+                      <p className="mt-0.5 text-[11px] text-neutral-500">{formatStatus(card.status)}</p>
+                    </Link>
+                  ))}
                 </div>
               </div>
-            </div>
-          )
-        })}
+            )}
+          </div>
+        )}
+
+        <div ref={scrollRef} className="h-full space-y-1 overflow-y-auto px-3 py-3">
+          {isLoading && <p className="text-sm text-neutral-400">Loading…</p>}
+
+          {data?.messages.map((message) => {
+            const isOutboundSide = isClientThread
+              ? message.direction === 'OUTBOUND'
+              : message.authorUserId === user?.userId
+            const showDaySeparator = dayKey(message.createdAt) !== lastDay
+            lastDay = dayKey(message.createdAt)
+            const sharedInquiryId = message.metadata?.kind === 'shared_inquiry' ? message.metadata.inquiryId : null
+            const sharedInquiryLink =
+              sharedInquiryId && user?.role === 'ARTIST' && assignedInquiryIds.has(sharedInquiryId)
+                ? '/my-inquiries'
+                : null
+
+            return (
+              <div key={message.id}>
+                {showDaySeparator && (
+                  <p className="my-2 text-center text-[11px] uppercase tracking-wider text-neutral-600">
+                    {dayLabel(message.createdAt)}
+                  </p>
+                )}
+                <div className={`flex ${isOutboundSide ? 'justify-end' : 'justify-start'}`}>
+                  <div
+                    className={[
+                      'max-w-[75%] rounded-2xl px-3 py-2 text-sm',
+                      sharedInquiryId
+                        ? 'border border-neutral-700 bg-neutral-800/80 text-neutral-100'
+                        : isOutboundSide
+                          ? 'bg-neutral-700 text-white'
+                          : 'bg-neutral-800 text-neutral-100',
+                    ].join(' ')}
+                  >
+                    {!isClientThread && (
+                      <p className="mb-0.5 text-[11px] font-medium text-neutral-400">
+                        {message.author?.name ?? message.author?.email ?? 'Unknown'}
+                      </p>
+                    )}
+                    {sharedInquiryId && (
+                      <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-neutral-400">
+                        Shared inquiry
+                      </p>
+                    )}
+                    {message.body && <p className="whitespace-pre-wrap">{message.body}</p>}
+                    {message.attachments && message.attachments.length > 0 && (
+                      <div className={sharedInquiryId ? 'mt-1 grid grid-cols-2 gap-1' : undefined}>
+                        {message.attachments.map((url) => (
+                          <div key={url} className="group relative mt-1">
+                            <img src={url} alt="Attachment" className="max-h-48 rounded-lg" />
+                            {isClientThread && !sharedInquiryId && (
+                              <button
+                                type="button"
+                                onClick={() => setImagePickerFor(imagePickerFor === url ? null : url)}
+                                className="absolute bottom-1 right-1 rounded-full bg-black/70 px-2 py-1 text-[10px] font-medium text-white opacity-0 transition group-hover:opacity-100"
+                              >
+                                Add to inquiry
+                              </button>
+                            )}
+                            {imagePickerFor === url && (
+                              <div className="absolute bottom-full right-0 z-10 mb-1 w-48 rounded-lg border border-neutral-700 bg-neutral-900 p-1.5 shadow-xl">
+                                {imageAttachError && <p className="px-1 pb-1 text-[10px] text-red-400">{imageAttachError}</p>}
+                                {!context && <p className="px-1 py-1 text-[10px] text-neutral-500">Loading…</p>}
+                                {context && context.inquiries.length === 0 && (
+                                  <p className="px-1 py-1 text-[10px] text-neutral-500">No inquiries for this client.</p>
+                                )}
+                                {context?.inquiries.map((inquiry) => (
+                                  <button
+                                    key={inquiry.id}
+                                    type="button"
+                                    onClick={() => handleAttachImageToInquiry(url, inquiry.id)}
+                                    className="block w-full truncate rounded-md px-2 py-1 text-left text-[11px] text-neutral-300 hover:bg-neutral-800"
+                                  >
+                                    {inquiry.description}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {sharedInquiryLink && (
+                      <Link
+                        to={sharedInquiryLink}
+                        className="mt-1 flex items-center gap-1 text-[11px] font-medium text-neutral-300 hover:text-white"
+                      >
+                        View in My Inquiries <ArrowUpRightIcon className="h-3 w-3" />
+                      </Link>
+                    )}
+                    <p className="mt-1 flex items-center gap-1 text-[10px] text-neutral-400">
+                      {isClientThread && <span className="rounded-full bg-black/20 px-1.5 py-0.5">{channelLabel(message.channel)}</span>}
+                      {formatDateTime(message.createdAt)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
       </div>
 
       <div className="border-t border-neutral-800 p-3">
@@ -584,8 +1043,9 @@ function ThreadView({
                 type="button"
                 disabled={!link.url}
                 onClick={() => {
-                  if (!link.url) return
-                  setBody((current) => (current ? `${current}\n${link.url}` : link.url))
+                  const url = link.url
+                  if (!url) return
+                  setBody((current) => (current ? `${current}\n${url}` : url))
                   setShowLinkMenu(false)
                 }}
                 className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-neutral-300 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
