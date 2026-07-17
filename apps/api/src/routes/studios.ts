@@ -392,6 +392,8 @@ router.patch("/:studioId/permissions", requireAuth, requireRole(Role.OWNER), asy
     }
   }
 
+  const before = await buildPermissionMatrix(studioId);
+
   await prisma.$transaction(
     updates.map((update) =>
       prisma.rolePermission.upsert({
@@ -402,7 +404,18 @@ router.patch("/:studioId/permissions", requireAuth, requireRole(Role.OWNER), asy
     ),
   );
 
-  res.json({ permissionKeys: PERMISSION_KEYS, matrix: await buildPermissionMatrix(studioId) });
+  const after = await buildPermissionMatrix(studioId);
+
+  await logAudit({
+    studioId,
+    actorUserId: req.user!.userId,
+    entityType: "StudioPermissions",
+    entityId: studioId,
+    action: "permissions_updated",
+    changes: diffObjects(before, after, CONFIGURABLE_ROLES as unknown as (keyof typeof before)[]),
+  });
+
+  res.json({ permissionKeys: PERMISSION_KEYS, matrix: after });
 });
 
 // Weekly hours: an array of exactly 7 entries, one per day (0 = Sunday … 6 =

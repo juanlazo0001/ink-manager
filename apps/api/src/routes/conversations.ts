@@ -253,6 +253,54 @@ router.post("/", async (req, res) => {
   res.status(created ? 201 : 200).json(conversation);
 });
 
+// Resolve-only counterpart to POST "/" above: looks up an existing thread
+// WITHOUT creating one, 404 if none exists yet. For auto-select/reverse-
+// lookup UI paths that fire on every page view or render (the ARTIST
+// single-thread auto-open, the inquiry-tag reverse link) rather than an
+// explicit user action -- those should never silently create a
+// Conversation row (and, under View As, a GET here never trips the
+// read-only block that a get-or-create POST would). The explicit "Message"
+// buttons elsewhere keep using POST "/", which is exactly the right tool
+// for an intentional "start this conversation" click.
+router.get("/resolve", async (req, res) => {
+  const { studioId, userId, role } = req.user!;
+  const clientId = typeof req.query.clientId === "string" ? req.query.clientId : undefined;
+  const staffUserId = typeof req.query.staffUserId === "string" ? req.query.staffUserId : undefined;
+
+  if (!!clientId === !!staffUserId) {
+    return res.status(400).json({ error: "Provide exactly one of clientId or staffUserId" });
+  }
+
+  if (clientId) {
+    if (role === Role.ARTIST) {
+      return res.status(404).json({ error: "Conversation not found" });
+    }
+
+    const client = await prisma.client.findUnique({ where: { id: clientId } });
+    if (!client || client.studioId !== studioId) {
+      return res.status(404).json({ error: "Client not found" });
+    }
+
+    const existing = await prisma.conversation.findUnique({ where: { clientId } });
+    if (!existing) return res.status(404).json({ error: "Conversation not found" });
+    return res.json(existing);
+  }
+
+  // staffUserId path
+  if (role === Role.ARTIST && staffUserId !== userId) {
+    return res.status(403).json({ error: "You can only resolve your own conversation" });
+  }
+
+  const staffMember = await prisma.user.findUnique({ where: { id: staffUserId } });
+  if (!staffMember || staffMember.studioId !== studioId) {
+    return res.status(404).json({ error: "Staff member not found" });
+  }
+
+  const existing = await prisma.conversation.findUnique({ where: { staffUserId } });
+  if (!existing) return res.status(404).json({ error: "Conversation not found" });
+  res.json(existing);
+});
+
 const MESSAGES_PAGE_SIZE = 30;
 
 // Cursor pagination on (createdAt, id); a page is the MESSAGES_PAGE_SIZE

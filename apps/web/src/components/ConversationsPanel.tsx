@@ -177,14 +177,19 @@ export default function ConversationsPanel() {
   const { isOpen, activeConversationId, openPanel, closePanel } = useConversationPanel()
 
   const isArtist = user?.role === 'ARTIST'
-  const [tab, setTab] = useState<Tab>('CLIENT')
+  const [tab, setTab] = useState<Tab>(isArtist ? 'STAFF' : 'CLIENT')
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
   // Artists only ever have their own single Team thread -- no tab UI, no
-  // list, just get-or-create it and go straight there.
+  // list, just resolve it and go straight there. Resolve-only GET, never a
+  // get-or-create POST: this effect fires on every open, not from an
+  // explicit user action, so it must never silently create a Conversation
+  // row (and under View As, a GET here doesn't trip the read-only block a
+  // POST would). If none exists yet (their first message hasn't landed),
+  // selectedId just stays null and the empty STAFF-tab list state shows.
   useEffect(() => {
     if (!isOpen || !isArtist || !user) return
-    apiFetch<ConversationSummary>('/conversations', { method: 'POST', body: JSON.stringify({ staffUserId: user.userId }) })
+    apiFetch<ConversationSummary>(`/conversations/resolve?staffUserId=${user.userId}`)
       .then((conversation) => setSelectedId(conversation.id))
       .catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -546,11 +551,19 @@ function ThreadView({
   const isClientThread = data?.conversation.type === 'CLIENT'
 
   useEffect(() => {
+    // Marking read is itself a mutation (ConversationRead.lastReadAt) that
+    // fires just from opening a thread, not an explicit user action -- and
+    // while viewing as someone, it would incorrectly mark *their* real
+    // thread read because the admin happened to look at it. Read-only mode
+    // already blocks it server-side (403); skip the call entirely here so
+    // opening a thread while impersonating doesn't spam blocked requests.
+    if (viewAsTarget) return
+
     apiFetch(`/conversations/${conversationId}/read`, { method: 'POST' })
       .then(onMessageSent)
       .catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversationId])
+  }, [conversationId, viewAsTarget])
 
   useEffect(() => {
     if (data?.messages.length) {

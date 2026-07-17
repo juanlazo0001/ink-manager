@@ -205,16 +205,20 @@ export default function InquiryDetail() {
 
   // Reverse link for 6B tagging: if this inquiry has been tagged onto the
   // client's conversation, surface that here so staff can jump straight to
-  // the thread. There's no dedicated reverse-lookup endpoint -- CLIENT
-  // threads are one-per-client, so get-or-create + filtering its tags
-  // client-side is cheap and reuses existing routes.
+  // the thread. Resolve-only GET, never a get-or-create POST -- this query
+  // fires on every page view, not an explicit user action, so it must
+  // never silently create a Conversation row for a client nobody's
+  // messaged yet. No conversation yet (404) just means nothing to link.
   const { data: taggedConversation } = useQuery({
     queryKey: ['inquiry-conversation-tags', inquiry?.clientId, inquiry?.id],
     queryFn: async () => {
-      const conversation = await apiFetch<{ id: string }>('/conversations', {
-        method: 'POST',
-        body: JSON.stringify({ clientId: inquiry!.clientId }),
-      })
+      let conversation: { id: string }
+      try {
+        conversation = await apiFetch<{ id: string }>(`/conversations/resolve?clientId=${inquiry!.clientId}`)
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return null
+        throw err
+      }
       const thread = await apiFetch<{ conversation: { tags: { entityType: string; entityId: string }[] } }>(
         `/conversations/${conversation.id}/messages`,
       )
