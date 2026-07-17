@@ -4,7 +4,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import { apiFetch } from '../lib/api'
 import { formatDateTime } from '../lib/format'
-import { useAuth } from '../context/useAuth'
+import { useEffectiveUser } from '../context/useEffectiveUser'
+import { useViewAs } from '../context/useViewAs'
 import { tasksQueryKey } from '../lib/queryKeys'
 import { PlusIcon, CloseIcon, CheckIcon } from '../components/icons'
 
@@ -63,7 +64,8 @@ function groupByType(tasks: SystemTask[]): [string, SystemTask[]][] {
 const EMPTY_FORM = { title: '', dueAt: '', assigneeUserId: '' }
 
 export default function Tasks() {
-  const { user } = useAuth()
+  const user = useEffectiveUser()
+  const { target: viewAsTarget } = useViewAs()
   const queryClient = useQueryClient()
   const queryKey = tasksQueryKey(user!.userId)
   const canAssign = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
@@ -198,7 +200,7 @@ export default function Tasks() {
                           <button
                             type="button"
                             onClick={() => dismissMutation.mutate(task)}
-                            disabled={dismissMutation.isPending}
+                            disabled={dismissMutation.isPending || !!viewAsTarget}
                             className="shrink-0 rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-300 transition hover:bg-neutral-800 hover:text-white disabled:opacity-60"
                           >
                             Dismiss
@@ -246,7 +248,7 @@ export default function Tasks() {
                   />
                   <button
                     type="submit"
-                    disabled={createMutation.isPending}
+                    disabled={createMutation.isPending || !!viewAsTarget}
                     className="flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
                   >
                     <PlusIcon className="h-4 w-4" />
@@ -266,8 +268,9 @@ export default function Tasks() {
                         <button
                           type="button"
                           onClick={() => toggleComplete(task)}
+                          disabled={!!viewAsTarget}
                           aria-label="Mark complete"
-                          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-neutral-600 text-transparent transition hover:border-neutral-400 hover:text-neutral-400"
+                          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-neutral-600 text-transparent transition hover:border-neutral-400 hover:text-neutral-400 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           <CheckIcon className="h-3 w-3" />
                         </button>
@@ -308,8 +311,9 @@ export default function Tasks() {
                         <button
                           type="button"
                           onClick={() => deleteMutation.mutate(task.id)}
+                          disabled={!!viewAsTarget}
                           aria-label="Delete task"
-                          className="shrink-0 rounded-full p-1 text-neutral-500 transition hover:bg-neutral-800 hover:text-white"
+                          className="shrink-0 rounded-full p-1 text-neutral-500 transition hover:bg-neutral-800 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           <CloseIcon className="h-3.5 w-3.5" />
                         </button>
@@ -338,8 +342,9 @@ export default function Tasks() {
                             <button
                               type="button"
                               onClick={() => toggleComplete(task)}
+                              disabled={!!viewAsTarget}
                               aria-label="Mark incomplete"
-                              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-neutral-500 bg-neutral-700 text-white"
+                              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-neutral-500 bg-neutral-700 text-white disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               <CheckIcon className="h-3 w-3" />
                             </button>

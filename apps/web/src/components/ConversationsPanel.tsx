@@ -4,7 +4,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '../lib/api'
 import { formatDateTime, formatRelativeTime, formatStatus } from '../lib/format'
 import { uploadImageToCloudinary } from '../lib/cloudinary'
-import { useAuth } from '../context/useAuth'
+import { useEffectiveUser } from '../context/useEffectiveUser'
+import { useViewAs } from '../context/useViewAs'
 import { useConversationPanel } from '../context/useConversationPanel'
 import { navCountsQueryKey } from '../lib/queryKeys'
 import type { NavCounts } from '../lib/useNavCounts'
@@ -171,7 +172,7 @@ function dayLabel(iso: string): string {
 }
 
 export default function ConversationsPanel() {
-  const { user } = useAuth()
+  const user = useEffectiveUser()
   const queryClient = useQueryClient()
   const { isOpen, activeConversationId, openPanel, closePanel } = useConversationPanel()
 
@@ -510,7 +511,8 @@ function ThreadView({
   onClose: () => void
   onMessageSent: () => void
 }) {
-  const { user } = useAuth()
+  const user = useEffectiveUser()
+  const { target: viewAsTarget } = useViewAs()
   const queryClient = useQueryClient()
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -1215,7 +1217,7 @@ function ThreadView({
         <button
           type="button"
           onClick={handleSend}
-          disabled={sending || uploading || (body.trim().length === 0 && attachments.length === 0)}
+          disabled={sending || uploading || !!viewAsTarget || (body.trim().length === 0 && attachments.length === 0)}
           className="mt-2 w-full rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-600 disabled:opacity-60"
         >
           {sending ? 'Sending…' : 'Send'}

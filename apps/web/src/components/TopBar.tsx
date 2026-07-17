@@ -3,10 +3,13 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { apiFetch } from '../lib/api'
 import { useAuth } from '../context/useAuth'
+import { useEffectiveUser } from '../context/useEffectiveUser'
+import { useViewAs } from '../context/useViewAs'
 import { useUserProfile } from '../context/useUserProfile'
 import { tasksQueryKey } from '../lib/queryKeys'
 import { formatBubbleCount } from '../lib/useNavCounts'
-import { BellIcon, ChevronDownIcon, LogoutIcon, SettingsIcon, TasksIcon } from './icons'
+import { BellIcon, ChevronDownIcon, LogoutIcon, SettingsIcon, TasksIcon, ViewIcon } from './icons'
+import ViewAsPicker from './ViewAsPicker'
 
 interface TasksBadgeResponse {
   system: unknown[]
@@ -18,13 +21,21 @@ interface TasksBadgeResponse {
 // personal cluster without each page needing to include it. Fixed
 // top-right, independent of each page's own in-flow header content.
 export default function TopBar() {
-  const { user, logout } = useAuth()
+  const { user: realUser, logout } = useAuth()
+  const user = useEffectiveUser()
+  const { target: viewAsTarget } = useViewAs()
   const { profile } = useUserProfile()
   const navigate = useNavigate()
   const [showMentions, setShowMentions] = useState(false)
   const [showAccountMenu, setShowAccountMenu] = useState(false)
+  const [showViewAsPicker, setShowViewAsPicker] = useState(false)
 
   const canSeeTasks = user?.role === 'OWNER' || user?.role === 'FRONT_DESK' || user?.role === 'ARTIST'
+  // The entry point itself must reflect who's REALLY logged in (not the
+  // impersonated target) -- and is hidden entirely while already viewing
+  // as someone, since switching targets mid-session isn't a supported flow
+  // (exit first).
+  const canUseViewAs = realUser?.role === 'OWNER' && !viewAsTarget
 
   // Same combined-count math the sidebar used to show on its Tasks item:
   // open Assigned-to-Me items + undismissed Studio Queue items visible to
@@ -51,7 +62,7 @@ export default function TopBar() {
   if (!user) return null
 
   return (
-    <div className="fixed right-4 top-4 z-30 flex items-center gap-2">
+    <div className={`fixed right-4 z-30 flex items-center gap-2 ${viewAsTarget ? 'top-14' : 'top-4'}`}>
       {canSeeTasks && (
         <Link
           to="/tasks"
@@ -132,6 +143,19 @@ export default function TopBar() {
                 <SettingsIcon className="h-3.5 w-3.5" />
                 Settings
               </Link>
+              {canUseViewAs && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAccountMenu(false)
+                    setShowViewAsPicker(true)
+                  }}
+                  className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-neutral-300 transition hover:bg-neutral-800 hover:text-white"
+                >
+                  <ViewIcon className="h-3.5 w-3.5" />
+                  View portal as...
+                </button>
+              )}
               <button
                 type="button"
                 onClick={handleLogout}
@@ -144,6 +168,8 @@ export default function TopBar() {
           </>
         )}
       </div>
+
+      {showViewAsPicker && <ViewAsPicker onClose={() => setShowViewAsPicker(false)} />}
     </div>
   )
 }

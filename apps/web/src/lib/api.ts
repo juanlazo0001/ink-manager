@@ -11,6 +11,22 @@ export class ApiError extends Error {
   }
 }
 
+// View As (admin impersonation): deliberately plain module state, not React
+// state or localStorage -- it must live only in frontend memory so a page
+// refresh drops back to the admin's own view, and apiFetch is a plain
+// function (not a hook) called from far more places than could reasonably
+// consume a context directly. ViewAsContext is the only thing that calls
+// this setter.
+let viewAsUserId: string | null = null
+
+export function setViewAsUserId(id: string | null) {
+  viewAsUserId = id
+}
+
+export function getViewAsUserId() {
+  return viewAsUserId
+}
+
 export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = localStorage.getItem(TOKEN_STORAGE_KEY)
 
@@ -19,6 +35,7 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(viewAsUserId ? { 'X-View-As-User': viewAsUserId } : {}),
       ...options.headers,
     },
   })

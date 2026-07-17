@@ -9,7 +9,9 @@ import { formatStatus, readFileAsDataUrl, MAX_IMAGE_FILE_BYTES } from '../lib/fo
 import { PERMISSION_GROUPS, CONFIGURABLE_ROLES } from '../lib/permissions'
 import { artistsQueryKey } from '../lib/queryKeys'
 import { useAuth } from '../context/useAuth'
-import { PlusIcon } from '../components/icons'
+import { useEffectiveUser } from '../context/useEffectiveUser'
+import { useViewAs } from '../context/useViewAs'
+import { PlusIcon, ViewIcon } from '../components/icons'
 
 type PermissionMatrix = Record<string, Record<string, boolean>>
 type TeamTab = 'staff' | 'artists' | 'permissions'
@@ -72,8 +74,15 @@ function emptyEditForm(teamUser: TeamUser) {
 }
 
 export default function Team() {
-  const { user } = useAuth()
+  const { user: realUser } = useAuth()
+  const user = useEffectiveUser()
   const isOwner = user?.role === 'OWNER'
+  const { target: viewAsTarget, startViewAs } = useViewAs()
+  // The View As entry point reflects who's REALLY logged in, not the
+  // impersonated target -- and is hidden entirely while already viewing as
+  // someone (switch by exiting first).
+  const canUseViewAs = realUser?.role === 'OWNER' && !viewAsTarget
+  const [viewAsError, setViewAsError] = useState<string | null>(null)
   const navigate = useNavigate()
 
   // Staff/Permissions are OWNER-only (unchanged); Artists is open to
@@ -280,6 +289,16 @@ export default function Team() {
     setEditFormError(null)
   }
 
+  async function handleViewAs(targetUserId: string) {
+    setViewAsError(null)
+    try {
+      await startViewAs(targetUserId)
+      navigate('/dashboard')
+    } catch (err) {
+      setViewAsError(err instanceof Error ? err.message : 'Failed to start View As')
+    }
+  }
+
   async function handleEditSubmit(event: FormEvent) {
     event.preventDefault()
     if (!user?.studioId || !editingUser) return
@@ -366,6 +385,7 @@ export default function Team() {
 
           {activeTab === 'staff' && isOwner && (
           <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
+            {viewAsError && <p className="mb-3 text-sm text-red-400">{viewAsError}</p>}
             {error && <p className="text-sm text-red-400">{error}</p>}
 
             {!error && users === null && <p className="text-sm text-neutral-400">Loading team…</p>}
@@ -411,15 +431,27 @@ export default function Team() {
                             </span>
                           </td>
                           <td className="py-3 text-right">
-                            <button
-                              type="button"
-                              onClick={() => openEdit(teamUser)}
-                              disabled={isSelf}
-                              title={isSelf ? 'Edit your own account from your profile' : undefined}
-                              className="rounded-full border border-neutral-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
-                            >
-                              Edit
-                            </button>
+                            <div className="flex justify-end gap-2">
+                              {canUseViewAs && teamUser.id !== realUser?.userId && teamUser.role !== 'CUSTOMER' && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleViewAs(teamUser.id)}
+                                  className="flex items-center gap-1.5 rounded-full border border-neutral-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800"
+                                >
+                                  <ViewIcon className="h-3.5 w-3.5" />
+                                  View as
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => openEdit(teamUser)}
+                                disabled={isSelf}
+                                title={isSelf ? 'Edit your own account from your profile' : undefined}
+                                className="rounded-full border border-neutral-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                Edit
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       )

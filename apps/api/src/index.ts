@@ -21,6 +21,7 @@ import tasksRouter from "./routes/tasks";
 import navCountsRouter from "./routes/navCounts";
 import conversationsRouter from "./routes/conversations";
 import prefillDraftsRouter from "./routes/prefillDrafts";
+import viewAsRouter from "./routes/viewAs";
 import { requireAuth } from "./middleware/auth";
 
 const app = express();
@@ -73,6 +74,7 @@ app.use("/tasks", tasksRouter);
 app.use("/nav-counts", navCountsRouter);
 app.use("/conversations", conversationsRouter);
 app.use("/prefill-drafts", prefillDraftsRouter);
+app.use("/view-as", viewAsRouter);
 
 app.get("/me", requireAuth, (req, res) => {
   res.json(req.user);

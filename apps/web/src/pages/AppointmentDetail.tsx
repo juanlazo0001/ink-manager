@@ -7,7 +7,7 @@ import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatStatus } from '../lib/format'
 import { formatCents, dollarsToCents } from '../lib/money'
 import { ArrowLeftIcon, MessageIcon } from '../components/icons'
-import { useAuth } from '../context/useAuth'
+import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useConversationPanel } from '../context/useConversationPanel'
 import { appointmentsQueryKey } from '../lib/queryKeys'
 
@@ -86,7 +86,7 @@ const EMPTY_CHECKOUT_FORM = { finalCostDollars: '', depositDecision: 'REDEEM' as
 export default function AppointmentDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { user } = useAuth()
+  const user = useEffectiveUser()
   const queryClient = useQueryClient()
   const { openPanel } = useConversationPanel()
   const canManage = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'

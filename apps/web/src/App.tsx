@@ -24,6 +24,7 @@ import Tasks from './pages/Tasks'
 import ConversationDeepLink from './pages/ConversationDeepLink'
 import ConversationsPanel from './components/ConversationsPanel'
 import TopBar from './components/TopBar'
+import ViewAsBanner from './components/ViewAsBanner'
 
 function App() {
   return (
@@ -165,6 +166,7 @@ function App() {
           }
         />
       </Routes>
+      <ViewAsBanner />
       <TopBar />
       <ConversationsPanel />
     </BrowserRouter>

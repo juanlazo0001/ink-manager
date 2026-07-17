@@ -5,7 +5,7 @@ import SpecialtiesInput from '../components/SpecialtiesInput'
 import { apiFetch, ApiError } from '../lib/api'
 import { uploadPortfolioImage } from '../lib/cloudinary'
 import { useUserProfile } from '../context/useUserProfile'
-import { useAuth } from '../context/useAuth'
+import { useEffectiveUser } from '../context/useEffectiveUser'
 import { ArrowLeftIcon, CloseIcon } from '../components/icons'
 
 interface ScheduleBlock {
@@ -51,7 +51,7 @@ function blocksToDays(blocks: ScheduleBlock[] | null): (ScheduleBlock | null)[] 
 
 export default function ArtistDetail() {
   const { id } = useParams<{ id: string }>()
-  const { user } = useAuth()
+  const user = useEffectiveUser()
   const { profile } = useUserProfile()
   const canManage = profile?.permissions.includes('artists.manage') ?? false
 

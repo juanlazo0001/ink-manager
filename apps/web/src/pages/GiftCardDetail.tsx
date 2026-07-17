@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatStatus } from '../lib/format'
 import { ArrowLeftIcon } from '../components/icons'
-import { useAuth } from '../context/useAuth'
+import { useEffectiveUser } from '../context/useEffectiveUser'
 import Sidebar from '../components/Sidebar'
 import QrCode from '../components/QrCode'
 import AuditTrail from '../components/AuditTrail'
@@ -22,7 +22,7 @@ interface GiftCard {
 
 export default function GiftCardDetail() {
   const { id } = useParams<{ id: string }>()
-  const { user } = useAuth()
+  const user = useEffectiveUser()
   const canManage = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
   const canVoidOrEditExpiry = user?.role === 'OWNER'
 

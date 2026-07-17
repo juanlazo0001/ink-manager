@@ -7,7 +7,8 @@ import Modal from '../components/Modal'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatDuration, formatStatus } from '../lib/format'
 import { ArrowLeftIcon, MessageIcon, PencilIcon, PlusIcon } from '../components/icons'
-import { useAuth } from '../context/useAuth'
+import { useEffectiveUser } from '../context/useEffectiveUser'
+import { useViewAs } from '../context/useViewAs'
 import { useConversationPanel } from '../context/useConversationPanel'
 import { artistsQueryKey, inquiriesQueryKey, inquiryQueryKey } from '../lib/queryKeys'
 
@@ -119,7 +120,8 @@ function ImageGrid({ images }: { images: string[] }) {
 
 export default function InquiryDetail() {
   const { id } = useParams<{ id: string }>()
-  const { user } = useAuth()
+  const user = useEffectiveUser()
+  const { target: viewAsTarget } = useViewAs()
   const queryClient = useQueryClient()
   const { openPanel } = useConversationPanel()
   const canMessage = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
@@ -1146,7 +1148,7 @@ export default function InquiryDetail() {
                       <button
                         type="button"
                         onClick={handleSaveDetails}
-                        disabled={savingDetails}
+                        disabled={savingDetails || !!viewAsTarget}
                         className="rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
                       >
                         {savingDetails ? 'Saving…' : 'Save'}

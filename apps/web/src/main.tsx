@@ -6,6 +6,7 @@ import App from './App.tsx'
 import { AuthProvider } from './context/AuthContext'
 import { StudioProvider } from './context/StudioContext'
 import { UserProfileProvider } from './context/UserProfileContext'
+import { ViewAsProvider } from './context/ViewAsContext'
 import { ConversationPanelProvider } from './context/ConversationPanelContext'
 import { queryClient } from './lib/queryClient'
 
@@ -15,9 +16,15 @@ createRoot(document.getElementById('root')!).render(
       <AuthProvider>
         <StudioProvider>
           <UserProfileProvider>
-            <ConversationPanelProvider>
-              <App />
-            </ConversationPanelProvider>
+            {/* Needs to be inside UserProfileProvider -- it calls that
+                context's refresh() on every view-as start/exit so
+                useUserProfile() (role/permissions, backed by GET /users/me)
+                reflects the impersonated user, not just the raw JWT. */}
+            <ViewAsProvider>
+              <ConversationPanelProvider>
+                <App />
+              </ConversationPanelProvider>
+            </ViewAsProvider>
           </UserProfileProvider>
         </StudioProvider>
       </AuthProvider>

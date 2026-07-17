@@ -3,6 +3,8 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { AppointmentsIcon, ClientsIcon, DashboardIcon, DocumentIcon, LogoutIcon, MenuIcon, SearchIcon, TeamIcon } from './icons'
 import { useAuth } from '../context/useAuth'
+import { useEffectiveUser } from '../context/useEffectiveUser'
+import { useViewAs } from '../context/useViewAs'
 import { useStudio } from '../context/useStudio'
 import { useUserProfile } from '../context/useUserProfile'
 import { apiFetch } from '../lib/api'
@@ -33,7 +35,9 @@ const NAV_ITEMS: NavItem[] = [
 
 export default function Sidebar() {
   const location = useLocation()
-  const { user, logout } = useAuth()
+  const { logout } = useAuth()
+  const user = useEffectiveUser()
+  const { target: viewAsTarget } = useViewAs()
   const { studio } = useStudio()
   const { profile } = useUserProfile()
   const navigate = useNavigate()
@@ -81,7 +85,7 @@ export default function Sidebar() {
           type="button"
           onClick={() => setMobileOpen(true)}
           aria-label="Open menu"
-          className="fixed left-4 top-4 z-30 flex h-10 w-10 items-center justify-center rounded-full border border-neutral-800 bg-neutral-900 text-white shadow-lg md:hidden"
+          className={`fixed left-4 z-30 flex h-10 w-10 items-center justify-center rounded-full border border-neutral-800 bg-neutral-900 text-white shadow-lg md:hidden ${viewAsTarget ? 'top-14' : 'top-4'}`}
         >
           <MenuIcon className="h-5 w-5" />
         </button>

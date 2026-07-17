@@ -6,7 +6,7 @@ import { formatPhoneInput, readFileAsDataUrl, MAX_IMAGE_FILE_BYTES } from '../li
 import { navCountsQueryKey } from '../lib/queryKeys'
 import { useStudio } from '../context/useStudio'
 import { useUserProfile } from '../context/useUserProfile'
-import { useAuth } from '../context/useAuth'
+import { useEffectiveUser } from '../context/useEffectiveUser'
 
 interface HealthQuestion {
   question: string
@@ -103,7 +103,7 @@ function hoursSummary(hours: LocationHoursDay[] | null) {
 export default function Settings() {
   const { studio, loading, refresh } = useStudio()
   const { profile } = useUserProfile()
-  const { user } = useAuth()
+  const user = useEffectiveUser()
   const canManageStudio = profile?.permissions.includes('studio.manage') ?? false
   const canManageLocations = profile?.permissions.includes('locations.manage') ?? false
   const canViewPolicies = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'

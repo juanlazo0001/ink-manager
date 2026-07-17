@@ -4,7 +4,7 @@ import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
 import { apiFetch } from '../lib/api'
 import { formatDateTime, formatStatus } from '../lib/format'
-import { useAuth } from '../context/useAuth'
+import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useMarkSectionSeen } from '../lib/useMarkSectionSeen'
 
 interface Inquiry {
@@ -53,7 +53,7 @@ const EMPTY_APPROVE_FORM = {
 }
 
 export default function MyInquiries() {
-  const { user } = useAuth()
+  const user = useEffectiveUser()
   useMarkSectionSeen('inquiries')
 
   const [inquiries, setInquiries] = useState<Inquiry[] | null>(null)

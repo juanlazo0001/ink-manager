@@ -8,7 +8,7 @@ import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatStatus } from '../lib/format'
 import { ArrowLeftIcon, MessageIcon, PencilIcon, PlusIcon } from '../components/icons'
 import { useUserProfile } from '../context/useUserProfile'
-import { useAuth } from '../context/useAuth'
+import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useConversationPanel } from '../context/useConversationPanel'
 import { clientsQueryKey } from '../lib/queryKeys'
 
@@ -106,7 +106,7 @@ const EMPTY_GIFT_CARD_FORM = { amountDollars: '', expiresAt: '' }
 export default function ClientDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { user } = useAuth()
+  const user = useEffectiveUser()
   const { profile } = useUserProfile()
   const canManage = profile?.permissions.includes('clients.manage') ?? false
   const canIssueGiftCards = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'

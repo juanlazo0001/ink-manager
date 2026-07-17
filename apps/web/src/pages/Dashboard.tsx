@@ -1,4 +1,4 @@
-import { useAuth } from '../context/useAuth'
+import { useEffectiveUser } from '../context/useEffectiveUser'
 import Sidebar from '../components/Sidebar'
 import StatCard from '../components/StatCard'
 import TodaysAppointmentsTable from '../components/TodaysAppointmentsTable'
@@ -25,7 +25,7 @@ const STATS = [
 ]
 
 export default function Dashboard() {
-  const { user } = useAuth()
+  const user = useEffectiveUser()
 
   return (
     <div className="flex min-h-screen bg-neutral-900 text-white">
