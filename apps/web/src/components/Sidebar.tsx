@@ -1,12 +1,10 @@
 import { useState, type ComponentType } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { AppointmentsIcon, ClientsIcon, DashboardIcon, DocumentIcon, LogoutIcon, MenuIcon, SearchIcon, TeamIcon } from './icons'
-import { useAuth } from '../context/useAuth'
+import { AppointmentsIcon, ClientsIcon, DashboardIcon, DocumentIcon, MenuIcon, SearchIcon, TeamIcon } from './icons'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useViewAs } from '../context/useViewAs'
 import { useStudio } from '../context/useStudio'
-import { useUserProfile } from '../context/useUserProfile'
 import { apiFetch } from '../lib/api'
 import { appointmentsQueryKey, clientsQueryKey, inquiriesQueryKey } from '../lib/queryKeys'
 import { useNavCounts, formatBubbleCount } from '../lib/useNavCounts'
@@ -35,12 +33,9 @@ const NAV_ITEMS: NavItem[] = [
 
 export default function Sidebar() {
   const location = useLocation()
-  const { logout } = useAuth()
   const user = useEffectiveUser()
   const { target: viewAsTarget } = useViewAs()
   const { studio } = useStudio()
-  const { profile } = useUserProfile()
-  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [mobileOpen, setMobileOpen] = useState(false)
 
@@ -55,11 +50,6 @@ export default function Sidebar() {
   if (location.pathname !== lastPathname) {
     setLastPathname(location.pathname)
     setMobileOpen(false)
-  }
-
-  function handleLogout() {
-    logout()
-    navigate('/login')
   }
 
   // Only nav targets converted to react-query have a cache worth warming;
@@ -170,34 +160,6 @@ export default function Sidebar() {
             },
           )}
         </nav>
-
-        <div className="mt-auto flex items-center gap-3 rounded-xl border border-border bg-surface p-3">
-          <Link to="/profile" className="flex min-w-0 flex-1 items-center gap-3">
-            {profile?.avatarUrl ? (
-              <img
-                src={profile.avatarUrl}
-                alt={profile.name ?? profile.role}
-                className="h-9 w-9 shrink-0 rounded-full object-cover"
-              />
-            ) : (
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-surface-raised text-sm font-semibold text-fg">
-                {(profile?.name ?? user?.role ?? 'U').slice(0, 1)}
-              </span>
-            )}
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-fg">{profile?.name || user?.role}</p>
-              <p className="truncate text-xs text-fg-muted">Studio account</p>
-            </div>
-          </Link>
-          <button
-            type="button"
-            onClick={handleLogout}
-            aria-label="Log out"
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface-raised hover:text-fg"
-          >
-            <LogoutIcon className="h-4 w-4" />
-          </button>
-        </div>
       </aside>
     </>
   )

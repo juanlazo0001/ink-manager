@@ -89,13 +89,19 @@ export default function Calendar() {
 
   // "Book follow-up" from a just-checked-out appointment deep-links here
   // with the same client + project pre-filled, since Phase 3 will demand a
-  // gift card (the rolled one, or a new deposit) either way.
+  // gift card (the rolled one, or a new deposit) either way. The plain
+  // "New Appointment" entry point on Inquiries & Projects uses the same
+  // deep-link mechanism, just without a client/project prefilled.
   useEffect(() => {
     const prefillClientId = searchParams.get('prefillClientId')
     const prefillInquiryId = searchParams.get('prefillInquiryId')
+    const openNew = searchParams.get('new')
 
     if (prefillClientId) {
       setForm((current) => ({ ...current, clientId: prefillClientId, inquiryId: prefillInquiryId ?? '' }))
+      setShowAddModal(true)
+      setSearchParams({}, { replace: true })
+    } else if (openNew) {
       setShowAddModal(true)
       setSearchParams({}, { replace: true })
     }

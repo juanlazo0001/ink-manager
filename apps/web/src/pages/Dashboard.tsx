@@ -5,7 +5,7 @@ import TodaysAppointmentsTable from '../components/TodaysAppointmentsTable'
 import WeeklyAppointmentsChart from '../components/WeeklyAppointmentsChart'
 import ArtistWorkloadCard from '../components/ArtistWorkloadCard'
 import ReminderCard from '../components/ReminderCard'
-import { AppointmentsIcon, BellIcon, CheckIcon, ClientsIcon, DocumentIcon, PlusIcon } from '../components/icons'
+import { AppointmentsIcon, CheckIcon, ClientsIcon, DocumentIcon } from '../components/icons'
 
 const STATS = [
   {
@@ -47,28 +47,9 @@ export default function Dashboard() {
 
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-7xl px-6 py-6 sm:px-10 sm:py-8">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <h1 className="text-2xl font-bold text-fg sm:text-3xl">Welcome, {user?.role}</h1>
-              <p className="mt-1 text-sm text-fg-secondary">Here's what's happening at your studio today.</p>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover"
-              >
-                <PlusIcon className="h-4 w-4" />
-                New Appointment
-              </button>
-              <button
-                type="button"
-                aria-label="Notifications"
-                className="flex h-10 w-10 items-center justify-center rounded-full border border-border text-fg-secondary transition hover:text-fg"
-              >
-                <BellIcon className="h-4 w-4" />
-              </button>
-            </div>
+          <div>
+            <h1 className="text-2xl font-bold text-fg sm:text-3xl">Welcome, {user?.role}</h1>
+            <p className="mt-1 text-sm text-fg-secondary">Here's what's happening at your studio today.</p>
           </div>
 
           <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">

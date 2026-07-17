@@ -6,8 +6,9 @@ import { SkeletonTableRows } from '../components/Skeleton'
 import StatusPill from '../components/StatusPill'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatStatus } from '../lib/format'
-import { PhotoIcon } from '../components/icons'
+import { PhotoIcon, PlusIcon } from '../components/icons'
 import { useAuth } from '../context/useAuth'
+import { useUserProfile } from '../context/useUserProfile'
 import { inquiriesQueryKey } from '../lib/queryKeys'
 import { useMarkSectionSeen } from '../lib/useMarkSectionSeen'
 
@@ -62,6 +63,8 @@ function truncate(text: string, max: number) {
 export default function Inquiries() {
   const navigate = useNavigate()
   const { user } = useAuth()
+  const { profile } = useUserProfile()
+  const canCreateAppointment = profile?.permissions.includes('appointments.create') ?? false
   const [searchParams, setSearchParams] = useSearchParams()
   const activeTab: PipelineTab = searchParams.get('tab') === 'projects' ? 'projects' : 'inquiries'
   const [bucketFilter, setBucketFilter] = useState<StatusBucket>('All')
@@ -105,13 +108,26 @@ export default function Inquiries() {
 
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-7xl px-6 py-6 sm:px-10 sm:py-8">
-          <div>
-            <h1 className="text-2xl font-bold text-fg sm:text-3xl">Inquiries &amp; Projects</h1>
-            <p className="mt-1 text-sm text-fg-secondary">
-              {activeTab === 'projects'
-                ? 'Confirmed work: deposit paid through completed.'
-                : 'Tattoo requests submitted through your intake form, up through a paid deposit.'}
-            </p>
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h1 className="text-2xl font-bold text-fg sm:text-3xl">Inquiries &amp; Projects</h1>
+              <p className="mt-1 text-sm text-fg-secondary">
+                {activeTab === 'projects'
+                  ? 'Confirmed work: deposit paid through completed.'
+                  : 'Tattoo requests submitted through your intake form, up through a paid deposit.'}
+              </p>
+            </div>
+
+            {canCreateAppointment && (
+              <button
+                type="button"
+                onClick={() => navigate('/calendar?new=1')}
+                className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover"
+              >
+                <PlusIcon className="h-4 w-4" />
+                New Appointment
+              </button>
+            )}
           </div>
 
           <div className="mt-6 flex gap-1 border-b border-border">

@@ -91,3 +91,15 @@
     padding-top: 3.5rem;
   }
 }
+
+/* TopBar is likewise fixed (top-4, ~h-11 tall), independent of each page's
+   own in-flow header. Below md the header row wraps under it, so there's
+   no collision -- but at md+ widths, a page whose own header has a
+   right-aligned action button (New Appointment, Add Team Member, etc.)
+   sits in the same top-right corner and visually collides with it. Same
+   fix as the mobile rule above, just for the desktop-width culprit. */
+@media (min-width: 768px) {
+  aside + div {
+    padding-top: 4rem;
+  }
+}
