@@ -1,6 +1,6 @@
 import { formatStatus } from '../lib/format'
 
-type Tone = 'success' | 'info' | 'warning' | 'danger' | 'neutral'
+export type Tone = 'success' | 'info' | 'warning' | 'danger' | 'neutral'
 
 // Single source of truth for status -> semantic tone across the whole app.
 // Every status pill everywhere renders through this component so the
@@ -48,6 +48,12 @@ const TONE_CLASSES: Record<Tone, string> = {
   warning: 'bg-warning/15 text-warning',
   danger: 'bg-danger/15 text-danger',
   neutral: 'bg-neutral/15 text-neutral',
+}
+
+// Exported so other components (e.g. the Conversations list's avatar rings)
+// can key off the same status -> tone mapping without duplicating it.
+export function getStatusTone(status: string): Tone {
+  return STATUS_TONE[status] ?? 'neutral'
 }
 
 interface StatusPillProps {

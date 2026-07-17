@@ -2,7 +2,7 @@ import { Router } from "express";
 import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "../lib/prisma";
 import type { Prisma } from "../../generated/prisma/client";
-import { ConversationType, MessageChannel, MessageDirection, Role } from "../../generated/prisma/enums";
+import { ConversationType, InquiryStatus, MessageChannel, MessageDirection, Role } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
 import {
@@ -83,8 +83,37 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
+// Lightweight per-conversation inquiry summary for the conversation list
+// row and thread header (status pill + one-line tattoo summary) -- NOT the
+// same as the fuller detail the /context endpoint returns for the drawer,
+// which needs more fields but is only fetched on demand.
+const PRIMARY_INQUIRY_SELECT = {
+  select: { id: true, status: true, description: true, placement: true, closedReason: true },
+  orderBy: { createdAt: "desc" as const },
+};
+
+const CLOSED_INQUIRY_STATUSES: InquiryStatus[] = [InquiryStatus.CLOSED_LOST, InquiryStatus.COLD_LEAD];
+
+// A client can have multiple inquiries over time (leads, past projects);
+// the list/thread views only have room to feature one. Prefer the most
+// recent one that's still active, falling back to the most recent overall
+// (so a cold lead / closed-lost client still shows *something*, matching
+// the reference's "Cold lead" row) -- inquiries is already createdAt desc.
+function pickPrimaryInquiry<T extends { status: InquiryStatus }>(inquiries: T[] | undefined): T | null {
+  if (!inquiries || inquiries.length === 0) return null;
+  return inquiries.find((i) => !CLOSED_INQUIRY_STATUSES.includes(i.status)) ?? inquiries[0];
+}
+
 const COUNTERPART_SELECT = {
-  client: { select: { id: true, firstName: true, lastName: true, mergedIntoId: true } },
+  client: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      mergedIntoId: true,
+      inquiries: PRIMARY_INQUIRY_SELECT,
+    },
+  },
   staffUser: { select: { id: true, name: true, email: true, role: true } },
 } as const;
 
@@ -159,6 +188,8 @@ router.get("/", async (req, res) => {
       staffUserId: conversation.staffUserId,
       lastMessageAt: conversation.lastMessageAt,
       counterpart: toCounterpart(conversation),
+      primaryInquiry:
+        conversation.type === ConversationType.CLIENT ? pickPrimaryInquiry(conversation.client?.inquiries) : null,
       lastMessage: conversation.messages[0]
         ? {
             body: conversation.messages[0].body,
@@ -347,6 +378,8 @@ router.get("/:id/messages", async (req, res) => {
       clientId: conversation.clientId,
       staffUserId: conversation.staffUserId,
       counterpart: toCounterpart(conversation),
+      primaryInquiry:
+        conversation.type === ConversationType.CLIENT ? pickPrimaryInquiry(conversation.client?.inquiries) : null,
       tags,
     },
     messages,
@@ -536,8 +569,14 @@ router.get("/:id/context", requireRole(Role.OWNER, Role.FRONT_DESK), async (req,
           id: true,
           description: true,
           status: true,
+          closedReason: true,
+          placement: true,
+          colorOrBlackGrey: true,
+          estimatedSize: true,
+          budget: true,
           priceEstimateLow: true,
           priceEstimateHigh: true,
+          assignedArtist: { select: { user: { select: { name: true, email: true } } } },
           depositForm: { select: { id: true, totalCharged: true, signedAt: true, paidManually: true } },
         },
         orderBy: { createdAt: "desc" },

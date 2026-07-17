@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '../lib/api'
-import StatusPill from './StatusPill'
+import StatusPill, { getStatusTone, type Tone } from './StatusPill'
+import InquiryPipeline from './InquiryPipeline'
 import { formatDateTime, formatRelativeTime } from '../lib/format'
 import { uploadImageToCloudinary } from '../lib/cloudinary'
 import { useEffectiveUser } from '../context/useEffectiveUser'
@@ -40,6 +41,14 @@ const DRAFT_FIELD_LABELS: Record<string, string> = {
 }
 const DRAFT_FIELD_ORDER = Object.keys(DRAFT_FIELD_LABELS)
 
+interface PrimaryInquirySummary {
+  id: string
+  status: string
+  description: string
+  placement: string
+  closedReason: string | null
+}
+
 interface ConversationSummary {
   id: string
   type: Tab
@@ -47,6 +56,7 @@ interface ConversationSummary {
   staffUserId: string | null
   lastMessageAt: string | null
   counterpart: { id: string; name: string } | null
+  primaryInquiry: PrimaryInquirySummary | null
   lastMessage: { body: string; channel: string; direction: string; createdAt: string } | null
   unreadCount: number
 }
@@ -96,22 +106,31 @@ interface ThreadResponse {
     clientId: string | null
     staffUserId: string | null
     counterpart: { id: string; name: string } | null
+    primaryInquiry: PrimaryInquirySummary | null
     tags: ConversationTag[]
   }
   messages: MessageItem[]
   nextCursor: string | null
 }
 
+interface ContextInquiry {
+  id: string
+  description: string
+  status: string
+  closedReason: string | null
+  placement: string
+  colorOrBlackGrey: string
+  estimatedSize: string
+  budget: string | null
+  priceEstimateLow: number | null
+  priceEstimateHigh: number | null
+  assignedArtist: { user: { name: string | null; email: string } } | null
+  depositForm: { id: string; totalCharged: number; signedAt: string | null; paidManually: boolean } | null
+}
+
 interface ConversationContext {
   client: { id: string; firstName: string; lastName: string; email: string | null; phone: string | null }
-  inquiries: {
-    id: string
-    description: string
-    status: string
-    priceEstimateLow: number | null
-    priceEstimateHigh: number | null
-    depositForm: { id: string; totalCharged: number; signedAt: string | null; paidManually: boolean } | null
-  }[]
+  inquiries: ContextInquiry[]
   giftCards: { id: string; amountCents: number; status: string; expiresAt: string | null }[]
   nextAppointment: {
     id: string
@@ -120,6 +139,54 @@ interface ConversationContext {
     waiverId: string | null
     waiverStatus: string | null
   } | null
+}
+
+// A client can have several inquiries over time; the panel only has room to
+// feature one prominently. Mirrors the backend's own pick (most recent
+// still-active one, else most recent overall) so the list pill, thread
+// header, and context panel always agree on which inquiry is "the" one.
+const CLOSED_INQUIRY_STATUSES = ['CLOSED_LOST', 'COLD_LEAD']
+function pickPrimaryInquiry<T extends { status: string }>(inquiries: T[] | undefined): T | null {
+  if (!inquiries || inquiries.length === 0) return null
+  return inquiries.find((i) => !CLOSED_INQUIRY_STATUSES.includes(i.status)) ?? inquiries[0]
+}
+
+// What the single quick-action button in the context panel should say and
+// where it should go, based on the featured inquiry's pipeline stage --
+// always the real InquiryDetail page (single source of truth for the
+// assign/estimate/deposit/schedule forms), just with a next-step label.
+function clientRoleLabel(status: string): string {
+  switch (status) {
+    case 'SCHEDULING':
+    case 'WAITLISTED':
+    case 'CONFIRMED':
+      return 'Active client'
+    case 'CLOSED_LOST':
+      return 'Past lead'
+    case 'COLD_LEAD':
+      return 'Cold lead'
+    default:
+      return 'Prospective client'
+  }
+}
+
+function nextActionLabel(status: string): string {
+  switch (status) {
+    case 'NEW':
+      return 'Assign artist'
+    case 'ARTIST_ASSIGNED':
+    case 'AWAITING_CLIENT_RESPONSE':
+    case 'BUDGET_NEGOTIATION':
+      return 'Manage estimate'
+    case 'DEPOSIT_PENDING':
+      return 'View deposit'
+    case 'SCHEDULING':
+    case 'WAITLISTED':
+    case 'CONFIRMED':
+      return 'View appointment'
+    default:
+      return 'View inquiry'
+  }
 }
 
 interface MessageTemplate {
@@ -155,6 +222,30 @@ function channelLabel(channel: string): string {
     OTHER: 'Other',
   }
   return labels[channel] ?? channel
+}
+
+// Avatar-ring color per status tone, for the conversation list's colored
+// rings (chat-example.png). Literal strings, not built from a template, so
+// Tailwind's scanner can find them.
+const TONE_RING_CLASSES: Record<Tone, string> = {
+  success: 'ring-success/60',
+  info: 'ring-info/60',
+  warning: 'ring-warning/60',
+  danger: 'ring-danger/60',
+  neutral: 'ring-border-strong',
+}
+
+function truncateText(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max).trimEnd()}…` : text
+}
+
+function initials(name: string): string {
+  return name
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join('')
 }
 
 function dayKey(iso: string): string {
@@ -338,6 +429,7 @@ function ConversationListView({
   const [artistIdFilter, setArtistIdFilter] = useState('')
   const [search, setSearch] = useState('')
   const [showFilters, setShowFilters] = useState(false)
+  const [quickFilter, setQuickFilter] = useState<'all' | 'unread' | 'needs-action'>('all')
 
   const params = new URLSearchParams({ type: tab })
   if (tab === 'CLIENT' && entityTypeFilter) params.set('entityType', entityTypeFilter)
@@ -365,33 +457,33 @@ function ConversationListView({
   const rosterWithoutThread = (roster ?? []).filter((member) => !member.conversationId)
   const hasActiveFilter = !!(entityTypeFilter || artistIdFilter || search.trim())
 
+  // "Needs action" = something's waiting on the studio: an unread message,
+  // or the featured inquiry sitting in a stage where the studio (not the
+  // client) is the one expected to move it forward next.
+  const NEEDS_ACTION_STATUSES = ['NEW', 'BUDGET_NEGOTIATION']
+  const visibleConversations = (conversations ?? []).filter((conversation) => {
+    if (quickFilter === 'unread') return conversation.unreadCount > 0
+    if (quickFilter === 'needs-action') {
+      return (
+        conversation.unreadCount > 0 ||
+        (conversation.primaryInquiry != null && NEEDS_ACTION_STATUSES.includes(conversation.primaryInquiry.status))
+      )
+    }
+    return true
+  })
+
   return (
     <>
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <h2 className="text-sm font-semibold text-fg">Conversations</h2>
-        <div className="flex items-center gap-1">
-          {tab === 'CLIENT' && (
-            <button
-              type="button"
-              onClick={() => setShowFilters((v) => !v)}
-              aria-label="Filter conversations"
-              className={[
-                'flex h-7 w-7 items-center justify-center rounded-full transition hover:bg-surface hover:text-fg',
-                hasActiveFilter ? 'text-fg' : 'text-fg-muted',
-              ].join(' ')}
-            >
-              <TagIcon className="h-4 w-4" />
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="flex h-7 w-7 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
-          >
-            <CloseIcon className="h-4 w-4" />
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="flex h-7 w-7 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
+        >
+          <CloseIcon className="h-4 w-4" />
+        </button>
       </div>
 
       {showTabs && (
@@ -412,15 +504,59 @@ function ConversationListView({
         </div>
       )}
 
-      {tab === 'CLIENT' && showFilters && (
-        <div className="space-y-2 border-b border-border px-3 py-3">
+      {tab === 'CLIENT' && (
+        <div className="border-b border-border px-3 pt-3">
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by client name…"
+            placeholder="Search inquiries…"
             className="w-full rounded-lg border border-border bg-surface-inset px-2.5 py-1.5 text-xs text-fg focus:border-accent focus:outline-none"
           />
+        </div>
+      )}
+
+      <div className="flex items-center gap-1.5 border-b border-border px-3 py-2.5">
+        {(
+          [
+            ['all', 'All'],
+            ['unread', 'Unread'],
+            ['needs-action', 'Needs action'],
+          ] as const
+        ).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setQuickFilter(value)}
+            className={[
+              'rounded-full px-2.5 py-1 text-xs font-medium transition',
+              quickFilter === value
+                ? 'bg-accent text-bg'
+                : 'border border-border text-fg-secondary hover:bg-surface hover:text-fg',
+            ].join(' ')}
+          >
+            {label}
+          </button>
+        ))}
+
+        {tab === 'CLIENT' && (
+          <button
+            type="button"
+            onClick={() => setShowFilters((v) => !v)}
+            aria-label="More filters"
+            aria-pressed={showFilters}
+            className={[
+              'ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition hover:bg-surface hover:text-fg',
+              hasActiveFilter ? 'text-accent' : 'text-fg-muted',
+            ].join(' ')}
+          >
+            <TagIcon className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+
+      {tab === 'CLIENT' && showFilters && (
+        <div className="space-y-2 border-b border-border px-3 py-3">
           <div className="flex gap-2">
             <select
               value={entityTypeFilter}
@@ -466,46 +602,68 @@ function ConversationListView({
       <div className="min-h-0 flex-1 overflow-y-auto">
         {isLoading && <p className="p-4 text-sm text-fg-secondary">Loading…</p>}
 
-        {!isLoading && conversations?.length === 0 && rosterWithoutThread.length === 0 && (
+        {!isLoading && visibleConversations.length === 0 && rosterWithoutThread.length === 0 && (
           <p className="p-4 text-sm text-fg-secondary">
-            {tab === 'CLIENT' ? 'No client conversations yet.' : 'No team conversations yet.'}
+            {conversations && conversations.length > 0
+              ? 'Nothing matches this filter.'
+              : tab === 'CLIENT'
+                ? 'No client conversations yet.'
+                : 'No team conversations yet.'}
           </p>
         )}
 
         <ul className="divide-y divide-border">
-          {conversations?.map((conversation) => (
-            <li key={conversation.id}>
-              <button
-                type="button"
-                onClick={() => onSelect(conversation.id)}
-                className="flex w-full items-start gap-2 px-4 py-3 text-left transition hover:bg-surface/60"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="truncate text-sm font-medium text-fg">
-                      {conversation.counterpart?.name ?? 'Unknown'}
-                    </p>
-                    {conversation.lastMessageAt && (
-                      <span className="shrink-0 text-[11px] text-fg-muted">
-                        {formatRelativeTime(conversation.lastMessageAt)}
-                      </span>
+          {visibleConversations.map((conversation) => {
+            const tone = conversation.primaryInquiry ? getStatusTone(conversation.primaryInquiry.status) : null
+            const name = conversation.counterpart?.name ?? 'Unknown'
+            return (
+              <li key={conversation.id}>
+                <button
+                  type="button"
+                  onClick={() => onSelect(conversation.id)}
+                  className="flex w-full items-start gap-3 px-4 py-3 text-left transition hover:bg-surface/60"
+                >
+                  <span
+                    className={[
+                      'relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-surface-raised text-xs font-semibold text-fg ring-2',
+                      tone ? TONE_RING_CLASSES[tone] : 'ring-border-strong',
+                    ].join(' ')}
+                  >
+                    {initials(name)}
+                    {conversation.unreadCount > 0 && (
+                      <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-warning ring-2 ring-surface-raised" />
                     )}
-                  </div>
-                  {conversation.lastMessage && (
-                    <p className="mt-0.5 truncate text-xs text-fg-secondary">
-                      {conversation.lastMessage.direction === 'OUTBOUND' ? 'You: ' : ''}
-                      {conversation.lastMessage.body || '📷 Image'}
-                    </p>
-                  )}
-                </div>
-                {conversation.unreadCount > 0 && (
-                  <span className="mt-0.5 flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-danger px-1.5 text-[11px] font-semibold text-fg">
-                    {conversation.unreadCount}
                   </span>
-                )}
-              </button>
-            </li>
-          ))}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="truncate text-sm font-medium text-fg">{name}</p>
+                      {conversation.lastMessageAt && (
+                        <span className="shrink-0 text-[11px] text-fg-muted">
+                          {formatRelativeTime(conversation.lastMessageAt)}
+                        </span>
+                      )}
+                    </div>
+                    {conversation.lastMessage && (
+                      <p className="mt-0.5 truncate text-xs text-fg-secondary">
+                        {conversation.lastMessage.direction === 'OUTBOUND' ? 'You: ' : ''}
+                        {conversation.lastMessage.body || '📷 Image'}
+                      </p>
+                    )}
+                    <div className="mt-1.5 flex items-center gap-1.5">
+                      {conversation.primaryInquiry && (
+                        <StatusPill status={conversation.primaryInquiry.status} className="px-2 py-0.5 text-[11px]" />
+                      )}
+                      {conversation.unreadCount > 0 && (
+                        <span className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-semibold text-bg">
+                          {conversation.unreadCount}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </button>
+              </li>
+            )
+          })}
 
           {tab === 'STAFF' &&
             rosterWithoutThread.map((member) => (
@@ -638,6 +796,12 @@ function ThreadView({
 
   const existingTagKeys = new Set((data?.conversation.tags ?? []).map((t) => `${t.entityType}:${t.entityId}`))
 
+  // The context drawer only has room to feature one inquiry prominently
+  // (pipeline + detail grid); everything else surfaces as a "+N other" link
+  // through to the client's full profile instead of being silently dropped.
+  const featuredInquiry = pickPrimaryInquiry(context?.inquiries)
+  const otherInquiries = (context?.inquiries ?? []).filter((i) => i.id !== featuredInquiry?.id)
+
   async function handleAddTag(entityType: string, entityId: string) {
     setTagError(null)
     try {
@@ -754,6 +918,8 @@ function ThreadView({
   }
 
   const counterpartName = data?.conversation.counterpart?.name ?? 'Conversation'
+  const primaryInquiry = data?.conversation.primaryInquiry ?? null
+  const headerTone = primaryInquiry ? getStatusTone(primaryInquiry.status) : null
 
   let lastDay = ''
 
@@ -770,7 +936,27 @@ function ThreadView({
             <ArrowLeftIcon className="h-4 w-4" />
           </button>
         )}
-        <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-fg">{counterpartName}</h2>
+        {isClientThread && (
+          <span
+            className={[
+              'flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-raised text-xs font-semibold text-fg ring-2',
+              headerTone ? TONE_RING_CLASSES[headerTone] : 'ring-border-strong',
+            ].join(' ')}
+          >
+            {initials(counterpartName)}
+          </span>
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <h2 className="truncate text-sm font-semibold text-fg">{counterpartName}</h2>
+            {primaryInquiry && <StatusPill status={primaryInquiry.status} className="px-2 py-0.5 text-[11px]" />}
+          </div>
+          {primaryInquiry && (
+            <p className="truncate text-xs text-fg-muted">
+              {truncateText(primaryInquiry.description, 40)} · {primaryInquiry.placement}
+            </p>
+          )}
+        </div>
         {isClientThread && (
           <>
             <button
@@ -943,75 +1129,125 @@ function ThreadView({
           // Desktop (sm:): docks as a second column instead -- sm:order-last
           // visually places it after the thread without needing to move it
           // in the DOM, sm:static drops it out of the overlay positioning.
-          <div className="absolute inset-0 z-20 overflow-y-auto bg-bg px-4 py-4 sm:static sm:z-auto sm:order-last sm:w-72 sm:shrink-0 sm:border-l sm:border-border">
-            {!context && <p className="text-sm text-fg-secondary">Loading…</p>}
+          <div className="absolute inset-0 z-20 flex min-h-0 flex-col bg-bg sm:static sm:z-auto sm:order-last sm:w-72 sm:shrink-0 sm:border-l sm:border-border">
+            {!context && <p className="p-4 text-sm text-fg-secondary">Loading…</p>}
             {context && (
-              <div className="space-y-4 text-sm">
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Contact</p>
-                  <p className="mt-1 text-fg">
-                    {context.client.firstName} {context.client.lastName}
-                  </p>
-                  <p className="text-xs text-fg-secondary">{context.client.email ?? 'No email'}</p>
-                  <p className="text-xs text-fg-secondary">{context.client.phone ?? 'No phone'}</p>
-                </div>
+              <>
+                <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 text-sm">
+                  <div>
+                    <p className="text-lg font-bold text-fg">
+                      {context.client.firstName} {context.client.lastName}
+                    </p>
+                    <p className="text-xs text-fg-muted">
+                      {featuredInquiry ? clientRoleLabel(featuredInquiry.status) : 'Client'}
+                    </p>
+                  </div>
 
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Inquiries</p>
-                  {context.inquiries.length === 0 && <p className="mt-1 text-xs text-fg-muted">None</p>}
-                  {context.inquiries.map((inquiry) => (
-                    <Link
-                      key={inquiry.id}
-                      to={`/inquiries/${inquiry.id}`}
-                      className="mt-1 block rounded-lg border border-border px-2.5 py-2 hover:bg-surface/60"
-                    >
-                      <p className="truncate text-xs text-fg">{inquiry.description}</p>
-                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                        <StatusPill status={inquiry.status} />
-                        {inquiry.priceEstimateLow != null && inquiry.priceEstimateHigh != null && (
-                          <span className="text-[11px] text-fg-muted">
-                            ${inquiry.priceEstimateLow}-${inquiry.priceEstimateHigh}
-                          </span>
-                        )}
+                  <dl className="space-y-2.5 border-t border-border pt-4">
+                    {[
+                      ['Phone', context.client.phone ?? 'Not provided'],
+                      ['Email', context.client.email ?? 'Not provided'],
+                      ...(featuredInquiry
+                        ? [
+                            ['Placement', featuredInquiry.placement],
+                            ['Size', featuredInquiry.estimatedSize],
+                            ['Style', featuredInquiry.colorOrBlackGrey],
+                            [
+                              'Budget',
+                              featuredInquiry.budget ??
+                                (featuredInquiry.priceEstimateLow != null && featuredInquiry.priceEstimateHigh != null
+                                  ? `$${featuredInquiry.priceEstimateLow}-$${featuredInquiry.priceEstimateHigh}`
+                                  : 'Not provided'),
+                            ],
+                            [
+                              'Artist',
+                              featuredInquiry.assignedArtist?.user.name ??
+                                featuredInquiry.assignedArtist?.user.email ??
+                                'Unassigned',
+                            ],
+                          ]
+                        : []),
+                    ].map(([label, value]) => (
+                      <div key={label} className="flex items-start justify-between gap-3">
+                        <dt className="shrink-0 text-xs text-fg-muted">{label}</dt>
+                        <dd className="truncate text-right text-xs font-medium text-fg">{value}</dd>
                       </div>
-                    </Link>
-                  ))}
-                </div>
+                    ))}
+                  </dl>
 
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Next appointment</p>
-                  {!context.nextAppointment && <p className="mt-1 text-xs text-fg-muted">None scheduled</p>}
-                  {context.nextAppointment && (
+                  {featuredInquiry && (
+                    <div className="border-t border-border pt-4">
+                      <InquiryPipeline
+                        status={featuredInquiry.status}
+                        closedReason={featuredInquiry.closedReason}
+                        orientation="vertical"
+                      />
+                    </div>
+                  )}
+
+                  {otherInquiries.length > 0 && (
                     <Link
-                      to={`/appointments/${context.nextAppointment.id}`}
-                      className="mt-1 block rounded-lg border border-border px-2.5 py-2 hover:bg-surface/60"
+                      to={`/clients/${context.client.id}`}
+                      className="block text-xs font-medium text-fg-secondary hover:text-fg"
                     >
-                      <p className="text-xs text-fg">{formatDateTime(context.nextAppointment.startTime)}</p>
-                      <p className="mt-0.5 text-[11px] text-fg-muted">
-                        with {context.nextAppointment.artistName}
-                        {context.nextAppointment.waiverStatus ? ` · Waiver: ${context.nextAppointment.waiverStatus}` : ''}
-                      </p>
+                      + {otherInquiries.length} other {otherInquiries.length === 1 ? 'inquiry' : 'inquiries'}
                     </Link>
                   )}
+
+                  <div className="border-t border-border pt-4">
+                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Next appointment</p>
+                    {!context.nextAppointment && <p className="mt-1 text-xs text-fg-muted">None scheduled</p>}
+                    {context.nextAppointment && (
+                      <Link
+                        to={`/appointments/${context.nextAppointment.id}`}
+                        className="mt-1 block rounded-lg border border-border px-2.5 py-2 hover:bg-surface/60"
+                      >
+                        <p className="text-xs text-fg">{formatDateTime(context.nextAppointment.startTime)}</p>
+                        <p className="mt-0.5 text-[11px] text-fg-muted">
+                          with {context.nextAppointment.artistName}
+                          {context.nextAppointment.waiverStatus
+                            ? ` · Waiver: ${context.nextAppointment.waiverStatus}`
+                            : ''}
+                        </p>
+                      </Link>
+                    )}
+                  </div>
+
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Gift cards</p>
+                    {context.giftCards.length === 0 && <p className="mt-1 text-xs text-fg-muted">None</p>}
+                    {context.giftCards.map((card) => (
+                      <Link
+                        key={card.id}
+                        to={`/gift-cards/${card.id}`}
+                        className="mt-1 block rounded-lg border border-border px-2.5 py-2 hover:bg-surface/60"
+                      >
+                        <p className="text-xs text-fg">${(card.amountCents / 100).toFixed(2)}</p>
+                        <div className="mt-1">
+                          <StatusPill status={card.status} />
+                        </div>
+                      </Link>
+                    ))}
+                  </div>
                 </div>
 
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Gift cards</p>
-                  {context.giftCards.length === 0 && <p className="mt-1 text-xs text-fg-muted">None</p>}
-                  {context.giftCards.map((card) => (
+                <div className="space-y-2 border-t border-border p-4">
+                  {featuredInquiry && (
                     <Link
-                      key={card.id}
-                      to={`/gift-cards/${card.id}`}
-                      className="mt-1 block rounded-lg border border-border px-2.5 py-2 hover:bg-surface/60"
+                      to={`/inquiries/${featuredInquiry.id}`}
+                      className="block w-full rounded-full bg-accent px-4 py-2 text-center text-sm font-semibold text-bg transition hover:bg-accent-hover"
                     >
-                      <p className="text-xs text-fg">${(card.amountCents / 100).toFixed(2)}</p>
-                      <div className="mt-1">
-                        <StatusPill status={card.status} />
-                      </div>
+                      {nextActionLabel(featuredInquiry.status)}
                     </Link>
-                  ))}
+                  )}
+                  <Link
+                    to={`/clients/${context.client.id}`}
+                    className="block w-full rounded-full border border-border px-4 py-2 text-center text-sm font-medium text-fg transition hover:bg-surface"
+                  >
+                    View client profile
+                  </Link>
                 </div>
-              </div>
+              </>
             )}
           </div>
         )}

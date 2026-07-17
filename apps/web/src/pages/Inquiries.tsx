@@ -69,6 +69,7 @@ export default function Inquiries() {
   const activeTab: PipelineTab = searchParams.get('tab') === 'projects' ? 'projects' : 'inquiries'
   const [bucketFilter, setBucketFilter] = useState<StatusBucket>('All')
   const [projectStatusFilter, setProjectStatusFilter] = useState<ProjectStatusFilter>('All')
+  const [groupByStatus, setGroupByStatus] = useState(false)
   useMarkSectionSeen('inquiries')
 
   function setTab(tab: PipelineTab) {
@@ -101,6 +102,47 @@ export default function Inquiries() {
       : tabFilteredInquiries?.filter(
           (inquiry) => bucketFilter === 'All' || bucketFor(inquiry.status) === bucketFilter,
         )
+
+  // Groups follow the same pipeline order as the tab's own status list, so
+  // "New" always appears above "Assigned" above "Closed", etc. -- not
+  // alphabetical, and not insertion order from the API response.
+  const groupedInquiries = groupByStatus
+    ? tabStatuses
+        .map((status) => ({
+          status,
+          items: (filteredInquiries ?? []).filter((inquiry) => inquiry.status === status),
+        }))
+        .filter((group) => group.items.length > 0)
+    : null
+
+  function renderRow(inquiry: Inquiry) {
+    return (
+      <tr
+        key={inquiry.id}
+        onClick={() => navigate(`/inquiries/${inquiry.id}`)}
+        className="cursor-pointer hover:bg-surface-raised/60"
+      >
+        <td className="py-3 pl-3">
+          {inquiry.referenceImages[0] ? (
+            <img src={inquiry.referenceImages[0]} alt="" className="h-10 w-10 rounded-lg object-cover" />
+          ) : (
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-border text-fg-muted">
+              <PhotoIcon className="h-5 w-5" />
+            </div>
+          )}
+        </td>
+        <td className="py-3 text-fg">
+          {inquiry.client.firstName} {inquiry.client.lastName}
+        </td>
+        <td className="hidden py-3 text-fg-secondary md:table-cell">{formatStatus(inquiry.channel)}</td>
+        <td className="hidden py-3 text-fg-secondary md:table-cell">{truncate(inquiry.description, 60)}</td>
+        <td className="py-3 text-fg-secondary">{formatDateTime(inquiry.createdAt)}</td>
+        <td className="py-3 pr-3">
+          <StatusPill status={inquiry.status} />
+        </td>
+      </tr>
+    )
+  }
 
   return (
     <div className="flex min-h-screen bg-bg text-fg">
@@ -151,33 +193,49 @@ export default function Inquiries() {
             ))}
           </div>
 
-          <div className="mt-6 flex items-center gap-2 sm:max-w-xs">
-            {activeTab === 'projects' ? (
-              <select
-                value={projectStatusFilter}
-                onChange={(event) => setProjectStatusFilter(event.target.value as ProjectStatusFilter)}
-                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-              >
-                <option value="All">All statuses</option>
-                {PROJECTS_TAB_STATUSES.map((status) => (
-                  <option key={status} value={status}>
-                    {formatStatus(status)}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <select
-                value={bucketFilter}
-                onChange={(event) => setBucketFilter(event.target.value as StatusBucket)}
-                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-              >
-                {STATUS_BUCKETS.map((bucket) => (
-                  <option key={bucket} value={bucket}>
-                    {bucket === 'All' ? 'All statuses' : bucket}
-                  </option>
-                ))}
-              </select>
-            )}
+          <div className="mt-6 flex flex-wrap items-center gap-3">
+            <div className="w-full sm:max-w-xs">
+              {activeTab === 'projects' ? (
+                <select
+                  value={projectStatusFilter}
+                  onChange={(event) => setProjectStatusFilter(event.target.value as ProjectStatusFilter)}
+                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                >
+                  <option value="All">All statuses</option>
+                  {PROJECTS_TAB_STATUSES.map((status) => (
+                    <option key={status} value={status}>
+                      {formatStatus(status)}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <select
+                  value={bucketFilter}
+                  onChange={(event) => setBucketFilter(event.target.value as StatusBucket)}
+                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                >
+                  {STATUS_BUCKETS.map((bucket) => (
+                    <option key={bucket} value={bucket}>
+                      {bucket === 'All' ? 'All statuses' : bucket}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setGroupByStatus((v) => !v)}
+              aria-pressed={groupByStatus}
+              className={[
+                'shrink-0 rounded-full border px-3 py-2 text-sm font-medium transition',
+                groupByStatus
+                  ? 'border-accent/40 bg-accent/15 text-accent'
+                  : 'border-border text-fg-secondary hover:bg-surface hover:text-fg',
+              ].join(' ')}
+            >
+              Group by status
+            </button>
           </div>
 
           <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
@@ -215,43 +273,22 @@ export default function Inquiries() {
                   </thead>
                   {isLoading ? (
                     <SkeletonTableRows rows={6} columns={6} />
-                  ) : (
-                    <tbody className="divide-y divide-border">
-                      {filteredInquiries!.map((inquiry) => (
-                        <tr
-                          key={inquiry.id}
-                          onClick={() => navigate(`/inquiries/${inquiry.id}`)}
-                          className="cursor-pointer hover:bg-surface-raised/60"
-                        >
-                          <td className="py-3 pl-3">
-                            {inquiry.referenceImages[0] ? (
-                              <img
-                                src={inquiry.referenceImages[0]}
-                                alt=""
-                                className="h-10 w-10 rounded-lg object-cover"
-                              />
-                            ) : (
-                              <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-border text-fg-muted">
-                                <PhotoIcon className="h-5 w-5" />
-                              </div>
-                            )}
-                          </td>
-                          <td className="py-3 text-fg">
-                            {inquiry.client.firstName} {inquiry.client.lastName}
-                          </td>
-                          <td className="hidden py-3 text-fg-secondary md:table-cell">
-                            {formatStatus(inquiry.channel)}
-                          </td>
-                          <td className="hidden py-3 text-fg-secondary md:table-cell">
-                            {truncate(inquiry.description, 60)}
-                          </td>
-                          <td className="py-3 text-fg-secondary">{formatDateTime(inquiry.createdAt)}</td>
-                          <td className="py-3 pr-3">
-                            <StatusPill status={inquiry.status} />
+                  ) : groupedInquiries ? (
+                    groupedInquiries.map((group) => (
+                      <tbody key={group.status} className="divide-y divide-border">
+                        <tr>
+                          <td
+                            colSpan={6}
+                            className="bg-surface-inset px-3 py-2 text-xs font-semibold uppercase tracking-wider text-fg-muted"
+                          >
+                            {formatStatus(group.status)} ({group.items.length})
                           </td>
                         </tr>
-                      ))}
-                    </tbody>
+                        {group.items.map(renderRow)}
+                      </tbody>
+                    ))
+                  ) : (
+                    <tbody className="divide-y divide-border">{filteredInquiries!.map(renderRow)}</tbody>
                   )}
                 </table>
               </div>

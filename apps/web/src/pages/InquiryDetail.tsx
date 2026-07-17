@@ -5,6 +5,7 @@ import Sidebar from '../components/Sidebar'
 import AuditTrail from '../components/AuditTrail'
 import Modal from '../components/Modal'
 import StatusPill from '../components/StatusPill'
+import InquiryPipeline from '../components/InquiryPipeline'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatDuration, formatStatus } from '../lib/format'
 import { ArrowLeftIcon, MessageIcon, PencilIcon, PlusIcon } from '../components/icons'
@@ -628,6 +629,10 @@ export default function InquiryDetail() {
                     Tagged on this client's conversation — open thread
                   </button>
                 )}
+              </div>
+
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                <InquiryPipeline status={inquiry.status} closedReason={inquiry.closedReason} orientation="horizontal" />
               </div>
 
               <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
