@@ -15,13 +15,28 @@ import {
   CloseIcon,
   InfoIcon,
   MessageIcon,
+  MoreIcon,
   PlusIcon,
+  SparkleIcon,
   TagIcon,
 } from './icons'
 
 type Tab = 'CLIENT' | 'STAFF'
 
 const TAGGABLE_ENTITY_TYPES = ['Inquiry', 'Appointment', 'GiftCard', 'DepositForm', 'LiabilityWaiver'] as const
+
+const DRAFT_FIELD_LABELS: Record<string, string> = {
+  firstName: 'First name',
+  lastName: 'Last name',
+  email: 'Email',
+  phone: 'Phone',
+  description: 'Tattoo description',
+  placement: 'Placement',
+  estimatedSize: 'Estimated size',
+  budget: 'Budget',
+  desiredTiming: 'Desired timing',
+}
+const DRAFT_FIELD_ORDER = Object.keys(DRAFT_FIELD_LABELS)
 
 interface ConversationSummary {
   id: string
@@ -490,6 +505,12 @@ function ThreadView({
   const [tagError, setTagError] = useState<string | null>(null)
   const [imagePickerFor, setImagePickerFor] = useState<string | null>(null)
   const [imageAttachError, setImageAttachError] = useState<string | null>(null)
+  const [showMoreMenu, setShowMoreMenu] = useState(false)
+  const [showDraftModal, setShowDraftModal] = useState(false)
+  const [draftLoading, setDraftLoading] = useState(false)
+  const [draftError, setDraftError] = useState<string | null>(null)
+  const [draftFields, setDraftFields] = useState<Record<string, string>>({})
+  const [creatingPrefillLink, setCreatingPrefillLink] = useState(false)
 
   const isClientThread = data?.conversation.type === 'CLIENT'
 
@@ -580,6 +601,41 @@ function ThreadView({
     }
   }
 
+  async function handleOpenDraftModal() {
+    setShowMoreMenu(false)
+    setShowDraftModal(true)
+    setDraftLoading(true)
+    setDraftError(null)
+    setDraftFields({})
+    try {
+      const result = await apiFetch<{ fields: Record<string, string> }>(`/conversations/${conversationId}/draft-inquiry`, {
+        method: 'POST',
+      })
+      setDraftFields(result.fields)
+    } catch (err) {
+      setDraftError(err instanceof Error ? err.message : 'AI drafting is temporarily unavailable.')
+    } finally {
+      setDraftLoading(false)
+    }
+  }
+
+  async function handleCreatePrefillLink() {
+    setCreatingPrefillLink(true)
+    setDraftError(null)
+    try {
+      const result = await apiFetch<{ prefillUrl: string }>('/prefill-drafts', {
+        method: 'POST',
+        body: JSON.stringify({ payload: draftFields, conversationId }),
+      })
+      setBody((current) => (current ? `${current}\n${result.prefillUrl}` : result.prefillUrl))
+      setShowDraftModal(false)
+    } catch (err) {
+      setDraftError(err instanceof Error ? err.message : 'Failed to create prefill link')
+    } finally {
+      setCreatingPrefillLink(false)
+    }
+  }
+
   async function handleAttach(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
     event.target.value = ''
@@ -666,6 +722,28 @@ function ThreadView({
             >
               <InfoIcon className="h-4 w-4" />
             </button>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowMoreMenu((v) => !v)}
+                aria-label="More actions"
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-neutral-500 transition hover:bg-neutral-800 hover:text-white"
+              >
+                <MoreIcon className="h-4 w-4" />
+              </button>
+              {showMoreMenu && (
+                <div className="absolute right-0 top-8 z-20 w-56 rounded-lg border border-neutral-700 bg-neutral-900 p-1 shadow-xl">
+                  <button
+                    type="button"
+                    onClick={handleOpenDraftModal}
+                    className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-neutral-300 hover:bg-neutral-800"
+                  >
+                    <SparkleIcon className="h-3.5 w-3.5" />
+                    Draft inquiry from conversation
+                  </button>
+                </div>
+              )}
+            </div>
           </>
         )}
         <button
@@ -1110,6 +1188,80 @@ function ThreadView({
           {sending ? 'Sending…' : 'Send'}
         </button>
       </div>
+
+      {showDraftModal && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 px-4"
+          onClick={() => setShowDraftModal(false)}
+        >
+          <div
+            className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-2xl border border-neutral-800 bg-neutral-900 p-6"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-white">Draft inquiry from conversation</h2>
+              <button
+                type="button"
+                onClick={() => setShowDraftModal(false)}
+                aria-label="Close"
+                className="flex h-8 w-8 items-center justify-center rounded-full text-neutral-500 transition hover:bg-neutral-800 hover:text-white"
+              >
+                <CloseIcon className="h-4 w-4" />
+              </button>
+            </div>
+
+            <p className="mt-3 text-xs text-neutral-500">
+              AI-drafted from this conversation — review before sending.
+            </p>
+
+            {draftLoading && <p className="mt-4 text-sm text-neutral-400">Extracting fields…</p>}
+            {draftError && <p className="mt-4 text-sm text-red-400">{draftError}</p>}
+
+            {!draftLoading && (
+              <div className="mt-4 space-y-3">
+                {DRAFT_FIELD_ORDER.map((field) => (
+                  <div key={field}>
+                    <label className="mb-1 block text-xs font-medium text-neutral-400">{DRAFT_FIELD_LABELS[field]}</label>
+                    {field === 'description' ? (
+                      <textarea
+                        rows={3}
+                        value={draftFields[field] ?? ''}
+                        onChange={(e) => setDraftFields((current) => ({ ...current, [field]: e.target.value }))}
+                        className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                      />
+                    ) : (
+                      <input
+                        type="text"
+                        value={draftFields[field] ?? ''}
+                        onChange={(e) => setDraftFields((current) => ({ ...current, [field]: e.target.value }))}
+                        className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                      />
+                    )}
+                  </div>
+                ))}
+
+                <div className="flex gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={handleCreatePrefillLink}
+                    disabled={creatingPrefillLink || Object.values(draftFields).every((v) => !v)}
+                    className="flex-1 rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                  >
+                    {creatingPrefillLink ? 'Creating…' : 'Create prefill link'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowDraftModal(false)}
+                    className="rounded-full border border-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-800"
+                  >
+                    Discard
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </>
   )
 }

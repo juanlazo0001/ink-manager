@@ -40,6 +40,22 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
+// Public: the intake form fetches a prefill draft by its capability token
+// (never PII in the URL, just this opaque token) to populate matching
+// fields before the client has typed anything. Invalid/expired/used tokens
+// return a plain 404 -- the form falls back to loading empty, no error
+// banner drama (this is a quiet nice-to-have, not a broken link).
+router.get("/prefill/:token", async (req, res) => {
+  const token = req.params.token as string;
+
+  const draft = await prisma.prefillDraft.findUnique({ where: { token } });
+  if (!draft || draft.usedAt || draft.expiresAt < new Date()) {
+    return res.status(404).json({ error: "Not found" });
+  }
+
+  res.json({ payload: draft.payload });
+});
+
 // Public: the intake form is unauthenticated. Creates the Client (or reuses
 // an existing one, matched by email within the studio) and the Inquiry
 // together, so the studio's pipeline sees a single lead rather than a
@@ -85,11 +101,23 @@ router.post("/", async (req, res) => {
     preferredArtistId,
     referenceImages,
     placementImages,
+    draftToken,
   } = body;
 
   const studio = await prisma.studio.findUnique({ where: { slug: studioSlug } });
   if (!studio) {
     return res.status(404).json({ error: "Studio not found" });
+  }
+
+  // A draft token riding along is optional and best-effort -- an invalid/
+  // stale one (already used, expired, wrong studio) never blocks a real
+  // submission, it's just not marked used.
+  let draft: { id: string } | null = null;
+  if (typeof draftToken === "string" && draftToken.length > 0) {
+    const found = await prisma.prefillDraft.findUnique({ where: { token: draftToken } });
+    if (found && found.studioId === studio.id && !found.usedAt && found.expiresAt >= new Date()) {
+      draft = found;
+    }
   }
 
   if (preferredArtistId) {
@@ -130,6 +158,10 @@ router.post("/", async (req, res) => {
       placementImages: placementImages ?? [],
     },
   });
+
+  if (draft) {
+    await prisma.prefillDraft.update({ where: { id: draft.id }, data: { usedAt: new Date() } });
+  }
 
   res.status(201).json(inquiry);
 });

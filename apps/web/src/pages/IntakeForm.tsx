@@ -1,7 +1,19 @@
 import { useEffect, useRef, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useSearchParams } from 'react-router-dom'
 import { apiFetch, ApiError } from '../lib/api'
 import { uploadImageToCloudinary } from '../lib/cloudinary'
+
+interface PrefillPayload {
+  firstName?: string
+  lastName?: string
+  email?: string
+  phone?: string
+  description?: string
+  placement?: string
+  estimatedSize?: string
+  budget?: string
+  desiredTiming?: string
+}
 
 const INPUT_CLASS =
   'mt-1 w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600'
@@ -134,6 +146,8 @@ type StudioCheck = 'loading' | 'valid' | 'invalid'
 
 export default function IntakeForm() {
   const { studioSlug } = useParams<{ studioSlug: string }>()
+  const [searchParams] = useSearchParams()
+  const draftToken = searchParams.get('draft')
 
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
@@ -187,6 +201,36 @@ export default function IntakeForm() {
     }
   }, [studioSlug])
 
+  // Prefill data never rides in the URL as field values -- just this
+  // opaque, single-use token. An invalid/expired token quietly falls back
+  // to an empty form, no error banner drama.
+  useEffect(() => {
+    if (!draftToken) return
+
+    let ignore = false
+
+    apiFetch<{ payload: PrefillPayload }>(`/inquiries/prefill/${encodeURIComponent(draftToken)}`)
+      .then(({ payload }) => {
+        if (ignore) return
+        if (payload.firstName) setFirstName(payload.firstName)
+        if (payload.lastName) setLastName(payload.lastName)
+        if (payload.email) setEmail(payload.email)
+        if (payload.phone) setPhone(payload.phone)
+        if (payload.description) setDescription(payload.description)
+        if (payload.placement) setPlacement(payload.placement)
+        if (payload.estimatedSize) setEstimatedSize(payload.estimatedSize)
+        if (payload.budget) setBudget(payload.budget)
+        if (payload.desiredTiming) setDesiredTiming(payload.desiredTiming)
+      })
+      .catch(() => {
+        // Invalid/expired/used token -- form just loads empty.
+      })
+
+    return () => {
+      ignore = true
+    }
+  }, [draftToken])
+
   const imagesUploading = referenceImages.uploading || placementImages.uploading
 
   async function handleSubmit(e: React.FormEvent) {
@@ -235,6 +279,7 @@ export default function IntakeForm() {
           preferredArtistId: preferredArtistId || undefined,
           referenceImages: referenceImages.urls,
           placementImages: placementImages.urls,
+          draftToken: draftToken || undefined,
         }),
       })
 

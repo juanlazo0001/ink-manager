@@ -103,6 +103,7 @@ model Studio {
   conversations Conversation[]
   messages      Message[]
   conversationTags ConversationTag[]
+  prefillDrafts    PrefillDraft[]
 }
 
 model RolePermission {
@@ -162,6 +163,7 @@ model User {
   authoredMessages       Message[]          @relation("MessageAuthor")
   conversationReads      ConversationRead[]
   createdConversationTags ConversationTag[]
+  createdPrefillDrafts    PrefillDraft[]
 
   locationId String?
   location   Location? @relation(fields: [locationId], references: [id])
@@ -538,6 +540,7 @@ model Conversation {
   messages Message[]
   reads    ConversationRead[]
   tags     ConversationTag[]
+  prefillDrafts PrefillDraft[]
 
   @@index([studioId, type, lastMessageAt])
 }
@@ -596,6 +599,37 @@ model Message {
   author       User?   @relation("MessageAuthor", fields: [authorUserId], references: [id])
 
   @@index([conversationId, createdAt])
+  @@index([studioId])
+}
+
+// A server-stored draft of intake-form field values, handed to the public
+// intake form via a capability token in the URL -- never the field values
+// themselves, so no PII ever rides in a query string. Populated either
+// manually by staff (POST /prefill-drafts) or from the Claude-assisted
+// draft-inquiry flow. One-time use: usedAt is set on the inquiry submission
+// that consumes it, same expire-and-single-use shape as the deposit/waiver
+// tokens elsewhere in this app.
+model PrefillDraft {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  // Intake-form field values only (contact + tattoo fields) -- shape
+  // mirrors a subset of Inquiry's own fields, validated at the route layer.
+  payload   Json
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  createdById String
+  createdBy   User   @relation(fields: [createdById], references: [id])
+
+  // Set when generated from a specific conversation (the Claude-assisted
+  // flow); null for a plain manual prefill link with no originating thread.
+  conversationId String?
+  conversation   Conversation? @relation(fields: [conversationId], references: [id])
+
   @@index([studioId])
 }
 
