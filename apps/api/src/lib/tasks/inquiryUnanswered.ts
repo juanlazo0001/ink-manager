@@ -6,7 +6,7 @@ import { truncate, type SystemTask, type TaskSource } from "./types";
 // without changing this source's shape.
 const STALE_HOURS = 24;
 
-async function fetch(studioId: string): Promise<SystemTask[]> {
+async function fetch(studioId: string, _userId: string): Promise<SystemTask[]> {
   const cutoff = new Date(Date.now() - STALE_HOURS * 60 * 60 * 1000);
 
   const inquiries = await prisma.inquiry.findMany({

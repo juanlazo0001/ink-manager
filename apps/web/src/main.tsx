@@ -6,6 +6,7 @@ import App from './App.tsx'
 import { AuthProvider } from './context/AuthContext'
 import { StudioProvider } from './context/StudioContext'
 import { UserProfileProvider } from './context/UserProfileContext'
+import { ConversationPanelProvider } from './context/ConversationPanelContext'
 import { queryClient } from './lib/queryClient'
 
 createRoot(document.getElementById('root')!).render(
@@ -14,7 +15,9 @@ createRoot(document.getElementById('root')!).render(
       <AuthProvider>
         <StudioProvider>
           <UserProfileProvider>
-            <App />
+            <ConversationPanelProvider>
+              <App />
+            </ConversationPanelProvider>
           </UserProfileProvider>
         </StudioProvider>
       </AuthProvider>

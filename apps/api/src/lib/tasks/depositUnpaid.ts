@@ -1,7 +1,7 @@
 import { prisma } from "../prisma";
 import { truncate, type SystemTask, type TaskSource } from "./types";
 
-async function fetch(studioId: string): Promise<SystemTask[]> {
+async function fetch(studioId: string, _userId: string): Promise<SystemTask[]> {
   const deposits = await prisma.depositForm.findMany({
     where: { paidManually: false, signedAt: { not: null }, inquiry: { studioId } },
     select: { id: true, signedAt: true, inquiry: { select: { id: true, description: true } } },

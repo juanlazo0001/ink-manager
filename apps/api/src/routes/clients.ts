@@ -104,6 +104,99 @@ router.get("/:id", async (req, res) => {
   res.json(client);
 });
 
+// Backs the conversation composer's "+" form-link menu: every shareable
+// public link this client already has, plus disabled placeholders (with a
+// hint) for entities that exist but have no active link yet. Deliberately
+// does NOT generate/rotate any token -- that stays on the inquiry/
+// appointment pages, this is read-only.
+router.get("/:id/shareable-links", async (req, res) => {
+  const id = req.params.id as string;
+  const now = new Date();
+
+  const client = await prisma.client.findUnique({
+    where: { id },
+    include: {
+      studio: { select: { slug: true } },
+      inquiries: {
+        select: {
+          id: true,
+          description: true,
+          estimateToken: true,
+          estimateTokenExpiresAt: true,
+          depositForm: { select: { token: true, tokenExpiresAt: true, signedAt: true } },
+        },
+        orderBy: { createdAt: "desc" },
+      },
+      giftCards: { select: { id: true, code: true, amountCents: true }, orderBy: { createdAt: "desc" } },
+      appointments: {
+        select: {
+          id: true,
+          startTime: true,
+          liabilityWaiver: { select: { token: true, tokenExpiresAt: true, status: true } },
+        },
+        orderBy: { startTime: "desc" },
+      },
+    },
+  });
+
+  if (!client || client.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Client not found" });
+  }
+
+  const estimateLinks = client.inquiries.map((inquiry) => {
+    const active = inquiry.estimateToken && inquiry.estimateTokenExpiresAt && inquiry.estimateTokenExpiresAt > now;
+    return {
+      inquiryId: inquiry.id,
+      label: `Estimate — ${inquiry.description.slice(0, 40)}`,
+      url: active ? `${FRONTEND_URL}/estimate/${inquiry.estimateToken}` : null,
+      hint: active ? null : "Generate from the inquiry page",
+    };
+  });
+
+  const depositLinks = client.inquiries
+    .filter((inquiry) => inquiry.depositForm)
+    .map((inquiry) => {
+      const form = inquiry.depositForm!;
+      const active = !form.signedAt && form.tokenExpiresAt > now;
+      return {
+        inquiryId: inquiry.id,
+        label: `Deposit form — ${inquiry.description.slice(0, 40)}`,
+        url: active ? `${FRONTEND_URL}/deposit/${form.token}` : null,
+        hint: active ? null : form.signedAt ? "Already signed" : "Generate from the inquiry page",
+      };
+    });
+
+  const waiverLinks = client.appointments
+    .filter((appointment) => appointment.liabilityWaiver)
+    .map((appointment) => {
+      const waiver = appointment.liabilityWaiver!;
+      const active = waiver.status === "PENDING" && waiver.token && waiver.tokenExpiresAt && waiver.tokenExpiresAt > now;
+      return {
+        appointmentId: appointment.id,
+        label: `Waiver — ${new Date(appointment.startTime).toLocaleDateString()}`,
+        url: active ? `${FRONTEND_URL}/waiver/${waiver.token}` : null,
+        hint: active ? null : "Generate from the appointment page",
+      };
+    });
+
+  // Gift card public pages never expire (the code is a permanent bearer
+  // token -- Phase 3), so every gift card the client has is always active.
+  const giftCardLinks = client.giftCards.map((card) => ({
+    giftCardId: card.id,
+    label: `Gift card — $${(card.amountCents / 100).toFixed(2)}`,
+    url: `${FRONTEND_URL}/gift-card/${card.code}`,
+    hint: null,
+  }));
+
+  res.json({
+    intakeFormUrl: `${FRONTEND_URL}/inquiry/${client.studio.slug}`,
+    estimateLinks,
+    depositLinks,
+    waiverLinks,
+    giftCardLinks,
+  });
+});
+
 function normalizePhone(phone: string): string {
   const digits = phone.replace(/\D/g, "");
   return digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
@@ -206,6 +299,72 @@ async function repointClientRelations(tx: Prisma.TransactionClient, sourceId: st
   };
 }
 
+// Conversation.clientId is unique (one thread per client, ever) so it
+// can't be handled by the blind updateMany in repointClientRelations above
+// -- if the survivor already has its own thread, re-pointing the source's
+// thread onto the same clientId would violate that constraint and blow up
+// the whole merge transaction. Handled as its own step instead:
+//   - source has no thread: nothing to do.
+//   - only source has a thread: simple re-point.
+//   - both have one: fold the source thread's messages into the survivor's
+//     thread (so nothing is lost), merge per-user read state (keep the
+//     more recent lastReadAt), then delete the now-empty source thread.
+async function mergeConversations(
+  tx: Prisma.TransactionClient,
+  sourceClientId: string,
+  survivorClientId: string,
+): Promise<{ merged: boolean; movedMessages: number }> {
+  const [sourceConversation, survivorConversation] = await Promise.all([
+    tx.conversation.findUnique({ where: { clientId: sourceClientId } }),
+    tx.conversation.findUnique({ where: { clientId: survivorClientId } }),
+  ]);
+
+  if (!sourceConversation) {
+    return { merged: false, movedMessages: 0 };
+  }
+
+  if (!survivorConversation) {
+    await tx.conversation.update({ where: { id: sourceConversation.id }, data: { clientId: survivorClientId } });
+    return { merged: false, movedMessages: 0 };
+  }
+
+  const movedMessages = await tx.message.updateMany({
+    where: { conversationId: sourceConversation.id },
+    data: { conversationId: survivorConversation.id },
+  });
+
+  const newestLastMessageAt =
+    [sourceConversation.lastMessageAt, survivorConversation.lastMessageAt]
+      .filter((d): d is Date => d !== null)
+      .sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
+
+  await tx.conversation.update({
+    where: { id: survivorConversation.id },
+    data: { lastMessageAt: newestLastMessageAt },
+  });
+
+  const sourceReads = await tx.conversationRead.findMany({ where: { conversationId: sourceConversation.id } });
+
+  for (const read of sourceReads) {
+    const survivorRead = await tx.conversationRead.findUnique({
+      where: { conversationId_userId: { conversationId: survivorConversation.id, userId: read.userId } },
+    });
+
+    if (survivorRead) {
+      if (read.lastReadAt > survivorRead.lastReadAt) {
+        await tx.conversationRead.update({ where: { id: survivorRead.id }, data: { lastReadAt: read.lastReadAt } });
+      }
+      await tx.conversationRead.delete({ where: { id: read.id } });
+    } else {
+      await tx.conversationRead.update({ where: { id: read.id }, data: { conversationId: survivorConversation.id } });
+    }
+  }
+
+  await tx.conversation.delete({ where: { id: sourceConversation.id } });
+
+  return { merged: true, movedMessages: movedMessages.count };
+}
+
 // Soft-merge: the source client survives (marked via mergedIntoId) rather
 // than being deleted, so its history stays inspectable. Every FK the
 // source held moves to the survivor; nothing about the survivor's own
@@ -244,10 +403,11 @@ router.post("/:id/merge", async (req, res) => {
     return res.status(400).json({ error: "The source client has already been merged" });
   }
 
-  const counts = await prisma.$transaction(async (tx) => {
+  const { repointCounts, conversationResult } = await prisma.$transaction(async (tx) => {
     const repointCounts = await repointClientRelations(tx, sourceClientId, id);
+    const conversationResult = await mergeConversations(tx, sourceClientId, id);
     await tx.client.update({ where: { id: sourceClientId }, data: { mergedIntoId: id } });
-    return repointCounts;
+    return { repointCounts, conversationResult };
   });
 
   await logAudit({
@@ -256,7 +416,7 @@ router.post("/:id/merge", async (req, res) => {
     entityType: "Client",
     entityId: id,
     action: "merge",
-    changes: { sourceClientId, survivorId: id, repointed: counts },
+    changes: { sourceClientId, survivorId: id, repointed: repointCounts, conversation: conversationResult },
   });
 
   const merged = await prisma.client.findUnique({ where: { id } });

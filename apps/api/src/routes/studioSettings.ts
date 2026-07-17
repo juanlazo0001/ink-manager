@@ -55,6 +55,23 @@ function isValidClauses(value: unknown): value is string[] {
   return Array.isArray(value) && value.length > 0 && value.every((c) => typeof c === "string" && c.trim().length > 0);
 }
 
+function isValidMessageTemplates(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+
+  return value.every((entry) => {
+    if (typeof entry !== "object" || entry === null) return false;
+    const t = entry as Record<string, unknown>;
+    return (
+      typeof t.id === "string" &&
+      t.id.trim().length > 0 &&
+      typeof t.name === "string" &&
+      t.name.trim().length > 0 &&
+      typeof t.body === "string" &&
+      t.body.trim().length > 0
+    );
+  });
+}
+
 router.patch("/", requireRole(Role.OWNER), async (req, res) => {
   const body = req.body ?? {};
   const existing = await getOrCreateSettings(req.user!.studioId);
@@ -99,6 +116,13 @@ router.patch("/", requireRole(Role.OWNER), async (req, res) => {
     data.waiverClauses = body.waiverClauses;
   }
 
+  if (body.messageTemplates !== undefined) {
+    if (body.messageTemplates !== null && !isValidMessageTemplates(body.messageTemplates)) {
+      return res.status(400).json({ error: "messageTemplates must be an array of { id, name, body }" });
+    }
+    data.messageTemplates = body.messageTemplates;
+  }
+
   const updated = await prisma.studioSettings.update({ where: { studioId: req.user!.studioId }, data });
 
   await logAudit({
@@ -113,6 +137,7 @@ router.patch("/", requireRole(Role.OWNER), async (req, res) => {
       "giftCardDefaultExpirationDays",
       "waiverHealthQuestions",
       "waiverClauses",
+      "messageTemplates",
     ] as (keyof typeof existing)[]),
   });
 

@@ -5,8 +5,9 @@ import Sidebar from '../components/Sidebar'
 import AuditTrail from '../components/AuditTrail'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatDuration, formatStatus } from '../lib/format'
-import { ArrowLeftIcon, PencilIcon } from '../components/icons'
+import { ArrowLeftIcon, MessageIcon, PencilIcon } from '../components/icons'
 import { useAuth } from '../context/useAuth'
+import { useConversationPanel } from '../context/useConversationPanel'
 import { artistsQueryKey, inquiriesQueryKey, inquiryQueryKey } from '../lib/queryKeys'
 
 interface Inquiry {
@@ -107,6 +108,25 @@ export default function InquiryDetail() {
   const { id } = useParams<{ id: string }>()
   const { user } = useAuth()
   const queryClient = useQueryClient()
+  const { openPanel } = useConversationPanel()
+  const canMessage = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
+  const [startingConversation, setStartingConversation] = useState(false)
+
+  async function handleMessage() {
+    if (!inquiry) return
+    setStartingConversation(true)
+    try {
+      const conversation = await apiFetch<{ id: string }>('/conversations', {
+        method: 'POST',
+        body: JSON.stringify({ clientId: inquiry.clientId }),
+      })
+      openPanel(conversation.id)
+    } catch {
+      // Non-critical -- the floating button still works if this fails.
+    } finally {
+      setStartingConversation(false)
+    }
+  }
 
   const {
     data: inquiry,
@@ -436,9 +456,22 @@ export default function InquiryDetail() {
                       Submitted {formatDateTime(inquiry.createdAt)} via {formatStatus(inquiry.channel)}
                     </p>
                   </div>
-                  <span className="inline-flex items-center rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-300">
-                    {formatStatus(inquiry.status)}
-                  </span>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {canMessage && (
+                      <button
+                        type="button"
+                        onClick={handleMessage}
+                        disabled={startingConversation}
+                        className="flex items-center gap-2 rounded-full border border-neutral-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800 disabled:opacity-60"
+                      >
+                        <MessageIcon className="h-3.5 w-3.5" />
+                        Message
+                      </button>
+                    )}
+                    <span className="inline-flex items-center rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-300">
+                      {formatStatus(inquiry.status)}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">

@@ -7,6 +7,7 @@ import { estimateFollowupSource } from "./estimateFollowup";
 import { depositUnpaidSource } from "./depositUnpaid";
 import { readyToScheduleSource } from "./readyToSchedule";
 import { waiverToVerifySource } from "./waiverToVerify";
+import { newConversationSource } from "./newConversation";
 import type { TaskSource } from "./types";
 
 export const TASK_SOURCE_REGISTRY: TaskSource[] = [
@@ -15,6 +16,7 @@ export const TASK_SOURCE_REGISTRY: TaskSource[] = [
   depositUnpaidSource,
   readyToScheduleSource,
   waiverToVerifySource,
+  newConversationSource,
 ];
 
 export type { SystemTask, TaskSource } from "./types";

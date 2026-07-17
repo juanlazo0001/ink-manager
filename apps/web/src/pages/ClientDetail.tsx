@@ -6,9 +6,10 @@ import Modal from '../components/Modal'
 import AuditTrail from '../components/AuditTrail'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatStatus } from '../lib/format'
-import { ArrowLeftIcon, PencilIcon, PlusIcon } from '../components/icons'
+import { ArrowLeftIcon, MessageIcon, PencilIcon, PlusIcon } from '../components/icons'
 import { useUserProfile } from '../context/useUserProfile'
 import { useAuth } from '../context/useAuth'
+import { useConversationPanel } from '../context/useConversationPanel'
 import { clientsQueryKey } from '../lib/queryKeys'
 
 interface ConsentForm {
@@ -109,6 +110,25 @@ export default function ClientDetail() {
   const { profile } = useUserProfile()
   const canManage = profile?.permissions.includes('clients.manage') ?? false
   const canIssueGiftCards = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
+  const canMessage = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
+  const { openPanel } = useConversationPanel()
+  const [startingConversation, setStartingConversation] = useState(false)
+
+  async function handleMessage() {
+    if (!id) return
+    setStartingConversation(true)
+    try {
+      const conversation = await apiFetch<{ id: string }>('/conversations', {
+        method: 'POST',
+        body: JSON.stringify({ clientId: id }),
+      })
+      openPanel(conversation.id)
+    } catch {
+      // Non-critical -- the floating button still works if this fails.
+    } finally {
+      setStartingConversation(false)
+    }
+  }
   const queryClient = useQueryClient()
   const [client, setClient] = useState<Client | null>(null)
   const [appointments, setAppointments] = useState<Appointment[] | null>(null)
@@ -449,16 +469,29 @@ export default function ClientDetail() {
                       </div>
                     </div>
 
-                    {canManage && !client.mergedIntoId && (
-                      <button
-                        type="button"
-                        onClick={startEditing}
-                        className="flex items-center gap-2 rounded-full border border-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-800"
-                      >
-                        <PencilIcon className="h-4 w-4" />
-                        Edit
-                      </button>
-                    )}
+                    <div className="flex shrink-0 gap-2">
+                      {canMessage && !client.mergedIntoId && (
+                        <button
+                          type="button"
+                          onClick={handleMessage}
+                          disabled={startingConversation}
+                          className="flex items-center gap-2 rounded-full border border-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-800 disabled:opacity-60"
+                        >
+                          <MessageIcon className="h-4 w-4" />
+                          Message
+                        </button>
+                      )}
+                      {canManage && !client.mergedIntoId && (
+                        <button
+                          type="button"
+                          onClick={startEditing}
+                          className="flex items-center gap-2 rounded-full border border-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-800"
+                        >
+                          <PencilIcon className="h-4 w-4" />
+                          Edit
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>

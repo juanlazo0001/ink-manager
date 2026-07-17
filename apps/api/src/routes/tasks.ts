@@ -28,7 +28,7 @@ router.get("/", async (req, res) => {
   }
 
   const [sourceResults, dismissals] = await Promise.all([
-    Promise.all(TASK_SOURCE_REGISTRY.map((source) => source.fetch(studioId))),
+    Promise.all(TASK_SOURCE_REGISTRY.map((source) => source.fetch(studioId, userId))),
     prisma.taskDismissal.findMany({ where: { studioId, userId }, select: { taskType: true, entityId: true } }),
   ]);
 

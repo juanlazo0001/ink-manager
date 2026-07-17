@@ -11,7 +11,16 @@ import "dotenv/config";
 import bcrypt from "bcrypt";
 import crypto from "node:crypto";
 import { prisma } from "../src/lib/prisma";
-import { Role, Channel, InquiryStatus, AppointmentStatus, GiftCardStatus } from "../generated/prisma/enums";
+import {
+  Role,
+  Channel,
+  InquiryStatus,
+  AppointmentStatus,
+  GiftCardStatus,
+  ConversationType,
+  MessageChannel,
+  MessageDirection,
+} from "../generated/prisma/enums";
 
 const DEV_PASSWORD = "password123"; // obviously fake, dev-only
 
@@ -331,6 +340,64 @@ async function main() {
       });
       await tx.giftCard.update({ where: { id: giftCard3.id }, data: { appointmentId: appointment.id } });
     });
+  }
+
+  // A client conversation (IG DM logged by front desk, with a reply) and a
+  // staff conversation (artist1's in-app thread), for Phase 6A testing.
+  const existingClientConversation = await prisma.conversation.findUnique({ where: { clientId: client1.id } });
+  if (!existingClientConversation) {
+    const conversation = await prisma.conversation.create({
+      data: { studioId: studio.id, type: ConversationType.CLIENT, clientId: client1.id },
+    });
+
+    const inboundAt = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    const outboundAt = new Date(Date.now() - 1 * 60 * 60 * 1000);
+
+    await prisma.message.create({
+      data: {
+        studioId: studio.id,
+        conversationId: conversation.id,
+        channel: MessageChannel.INSTAGRAM,
+        direction: MessageDirection.INBOUND,
+        body: "[DEV SEED] Hi! Just checking on the status of my forearm piece inquiry.",
+        authorUserId: owner.id,
+        createdAt: inboundAt,
+      },
+    });
+    await prisma.message.create({
+      data: {
+        studioId: studio.id,
+        conversationId: conversation.id,
+        channel: MessageChannel.INSTAGRAM,
+        direction: MessageDirection.OUTBOUND,
+        body: "[DEV SEED] Hi Alex! We're reviewing it now and will have an estimate to you shortly.",
+        authorUserId: owner.id,
+        createdAt: outboundAt,
+      },
+    });
+    await prisma.conversation.update({ where: { id: conversation.id }, data: { lastMessageAt: outboundAt } });
+  }
+
+  const existingStaffConversation = await prisma.conversation.findUnique({ where: { staffUserId: artistUser1.id } });
+  if (!existingStaffConversation) {
+    const conversation = await prisma.conversation.create({
+      data: { studioId: studio.id, type: ConversationType.STAFF, staffUserId: artistUser1.id },
+    });
+
+    const messageAt = new Date(Date.now() - 30 * 60 * 1000);
+
+    await prisma.message.create({
+      data: {
+        studioId: studio.id,
+        conversationId: conversation.id,
+        channel: MessageChannel.IN_APP,
+        direction: MessageDirection.OUTBOUND,
+        body: "[DEV SEED] Heads up, your 3pm on Friday moved the buffer slightly -- check the schedule.",
+        authorUserId: owner.id,
+        createdAt: messageAt,
+      },
+    });
+    await prisma.conversation.update({ where: { id: conversation.id }, data: { lastMessageAt: messageAt } });
   }
 
   console.log("Seed complete:");

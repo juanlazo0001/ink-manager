@@ -2,59 +2,98 @@ import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { Role } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
+import { getUnreadConversationCount } from "../lib/conversations";
 
 const router = Router();
 router.use(requireAuth);
 router.use(requireRole(Role.OWNER, Role.FRONT_DESK, Role.ARTIST));
 
-const SECTIONS = ["inquiries", "appointments", "clients"] as const;
-type Section = (typeof SECTIONS)[number];
-
-async function getSeenMap(userId: string): Promise<Record<Section, Date | null>> {
-  const rows = await prisma.sectionSeen.findMany({ where: { userId, section: { in: [...SECTIONS] } } });
-  const map: Record<Section, Date | null> = { inquiries: null, appointments: null, clients: null };
-  for (const row of rows) {
-    map[row.section as Section] = row.lastSeenAt;
-  }
-  return map;
+interface CountContext {
+  studioId: string;
+  userId: string;
+  role: Role;
+  seenAt: Date | null;
 }
 
-// Cheap by design: each count is a single indexed createdAt-range query, no
-// joins beyond the scoping the index already covers.
+// Each section supplies its own counting strategy. Most are "created after
+// I last looked" (seenAt, from SectionSeen); a section can opt out of that
+// and compute unread-ness its own way instead -- see "conversations" below.
+interface NavCountSection {
+  name: string;
+  // Whether this section is driven by SectionSeen at all (and therefore a
+  // valid target for POST /seen). Cheap by design: every created-after
+  // section query below is a single indexed createdAt-range count, no
+  // joins beyond the scoping the index already covers.
+  usesSeenAt: boolean;
+  count(ctx: CountContext): Promise<number>;
+}
+
+const inquiriesSection: NavCountSection = {
+  name: "inquiries",
+  usesSeenAt: true,
+  async count({ studioId, userId, role, seenAt }) {
+    if (role === Role.ARTIST) {
+      const artist = await prisma.artist.findUnique({ where: { userId } });
+      if (!artist) return 0;
+      return prisma.inquiry.count({ where: { assignedArtistId: artist.id, ...(seenAt ? { createdAt: { gt: seenAt } } : {}) } });
+    }
+    return prisma.inquiry.count({ where: { studioId, ...(seenAt ? { createdAt: { gt: seenAt } } : {}) } });
+  },
+};
+
+const appointmentsSection: NavCountSection = {
+  name: "appointments",
+  usesSeenAt: true,
+  async count({ studioId, userId, role, seenAt }) {
+    if (role === Role.ARTIST) {
+      const artist = await prisma.artist.findUnique({ where: { userId } });
+      if (!artist) return 0;
+      return prisma.appointment.count({ where: { artistId: artist.id, ...(seenAt ? { createdAt: { gt: seenAt } } : {}) } });
+    }
+    return prisma.appointment.count({ where: { studioId, ...(seenAt ? { createdAt: { gt: seenAt } } : {}) } });
+  },
+};
+
+const clientsSection: NavCountSection = {
+  name: "clients",
+  usesSeenAt: true,
+  async count({ studioId, role, seenAt }) {
+    // ARTIST has no Clients nav item -- not worth a query.
+    if (role === Role.ARTIST) return 0;
+    return prisma.client.count({ where: { studioId, mergedIntoId: null, ...(seenAt ? { createdAt: { gt: seenAt } } : {}) } });
+  },
+};
+
+const conversationsSection: NavCountSection = {
+  name: "conversations",
+  // Deliberately NOT seenAt-driven: "unread" here means "has at least one
+  // message after my ConversationRead.lastReadAt for that specific
+  // conversation" (see getUnreadConversationCount), which is cleared by
+  // opening the thread (POST /conversations/:id/read), not by a generic
+  // "mark section seen." POST /nav-counts/seen rejects this section name.
+  usesSeenAt: false,
+  async count({ studioId, userId, role }) {
+    return getUnreadConversationCount(studioId, userId, role);
+  },
+};
+
+const SECTIONS: NavCountSection[] = [inquiriesSection, appointmentsSection, clientsSection, conversationsSection];
+const SEEN_SECTION_NAMES = SECTIONS.filter((s) => s.usesSeenAt).map((s) => s.name);
+
 router.get("/", async (req, res) => {
   const { studioId, userId, role } = req.user!;
-  const seen = await getSeenMap(userId);
 
-  if (role === Role.ARTIST) {
-    const artist = await prisma.artist.findUnique({ where: { userId } });
-    if (!artist) {
-      return res.json({ inquiries: 0, appointments: 0, clients: 0 });
-    }
+  const seenRows = await prisma.sectionSeen.findMany({ where: { userId, section: { in: SEEN_SECTION_NAMES } } });
+  const seenMap = new Map(seenRows.map((row) => [row.section, row.lastSeenAt]));
 
-    const [inquiries, appointments] = await Promise.all([
-      prisma.inquiry.count({
-        where: { assignedArtistId: artist.id, ...(seen.inquiries ? { createdAt: { gt: seen.inquiries } } : {}) },
-      }),
-      prisma.appointment.count({
-        where: { artistId: artist.id, ...(seen.appointments ? { createdAt: { gt: seen.appointments } } : {}) },
-      }),
-    ]);
-
-    // ARTIST has no Clients nav item -- not worth a query.
-    return res.json({ inquiries, appointments, clients: 0 });
-  }
-
-  const [inquiries, appointments, clients] = await Promise.all([
-    prisma.inquiry.count({ where: { studioId, ...(seen.inquiries ? { createdAt: { gt: seen.inquiries } } : {}) } }),
-    prisma.appointment.count({
-      where: { studioId, ...(seen.appointments ? { createdAt: { gt: seen.appointments } } : {}) },
+  const entries = await Promise.all(
+    SECTIONS.map(async (section) => {
+      const count = await section.count({ studioId, userId, role, seenAt: seenMap.get(section.name) ?? null });
+      return [section.name, count] as const;
     }),
-    prisma.client.count({
-      where: { studioId, mergedIntoId: null, ...(seen.clients ? { createdAt: { gt: seen.clients } } : {}) },
-    }),
-  ]);
+  );
 
-  res.json({ inquiries, appointments, clients });
+  res.json(Object.fromEntries(entries));
 });
 
 // Deliberately NOT audited: marking a nav section seen happens on every
@@ -64,8 +103,8 @@ router.post("/seen", async (req, res) => {
   const { userId, studioId } = req.user!;
   const { section } = req.body ?? {};
 
-  if (typeof section !== "string" || !SECTIONS.includes(section as Section)) {
-    return res.status(400).json({ error: `section must be one of: ${SECTIONS.join(", ")}` });
+  if (typeof section !== "string" || !SEEN_SECTION_NAMES.includes(section)) {
+    return res.status(400).json({ error: `section must be one of: ${SEEN_SECTION_NAMES.join(", ")}` });
   }
 
   await prisma.sectionSeen.upsert({

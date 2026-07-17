@@ -184,6 +184,22 @@ export function TasksIcon({ className }: IconProps) {
   )
 }
 
+export function MessageIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <path d="M3 4.5h14a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H8l-4 3v-3H3a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1Z" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+export function AttachmentIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <path d="M14 6.5v7a4 4 0 0 1-8 0v-8a2.5 2.5 0 0 1 5 0v7.5a1 1 0 0 1-2 0v-7" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 export function PencilIcon({ className }: IconProps) {
   return (
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>

@@ -39,6 +39,7 @@ const TASK_TYPE_LABELS: Record<string, string> = {
   DEPOSIT_UNPAID: 'Deposits signed but unpaid',
   READY_TO_SCHEDULE: 'Ready to schedule',
   WAIVER_TO_VERIFY: 'Waivers to verify',
+  NEW_CONVERSATION: 'New client messages',
 }
 
 function groupByType(tasks: SystemTask[]): [string, SystemTask[]][] {

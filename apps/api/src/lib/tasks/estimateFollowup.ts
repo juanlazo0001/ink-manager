@@ -4,7 +4,7 @@ import { truncate, type SystemTask, type TaskSource } from "./types";
 // Actionable when either:
 //  - opened, no response yet, and it's been > followUpHours since opening, or
 //  - never opened, and it's been > 2x followUpHours since sending.
-async function fetch(studioId: string): Promise<SystemTask[]> {
+async function fetch(studioId: string, _userId: string): Promise<SystemTask[]> {
   const settings = await prisma.studioSettings.findUnique({ where: { studioId } });
   const followUpHours = settings?.estimateFollowUpHours ?? 24;
   const openedThresholdMs = followUpHours * 60 * 60 * 1000;

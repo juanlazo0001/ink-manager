@@ -7,6 +7,7 @@ export interface NavCounts {
   inquiries: number
   appointments: number
   clients: number
+  conversations: number
 }
 
 const POLL_MS = 60_000

@@ -2,7 +2,7 @@ import { prisma } from "../prisma";
 import { LiabilityWaiverStatus } from "../../../generated/prisma/enums";
 import { type SystemTask, type TaskSource } from "./types";
 
-async function fetch(studioId: string): Promise<SystemTask[]> {
+async function fetch(studioId: string, _userId: string): Promise<SystemTask[]> {
   const waivers = await prisma.liabilityWaiver.findMany({
     where: { studioId, status: LiabilityWaiverStatus.SIGNED },
     select: { id: true, signedAt: true, appointmentId: true, client: { select: { firstName: true, lastName: true } } },

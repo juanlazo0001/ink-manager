@@ -46,6 +46,26 @@ enum LiabilityWaiverStatus {
   VERIFIED
 }
 
+enum ConversationType {
+  CLIENT
+  STAFF
+}
+
+enum MessageChannel {
+  IN_APP
+  SMS
+  EMAIL
+  INSTAGRAM
+  FACEBOOK
+  PHONE
+  OTHER
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
 enum InquiryStatus {
   NEW
   ARTIST_ASSIGNED
@@ -80,6 +100,8 @@ model Studio {
   taskDismissals   TaskDismissal[]
   personalTasks    PersonalTask[]
   sectionSeens     SectionSeen[]
+  conversations Conversation[]
+  messages      Message[]
 }
 
 model RolePermission {
@@ -135,6 +157,9 @@ model User {
   taskDismissals         TaskDismissal[]
   personalTasks          PersonalTask[]
   sectionSeens           SectionSeen[]
+  staffConversation      Conversation?      @relation("StaffConversation")
+  authoredMessages       Message[]          @relation("MessageAuthor")
+  conversationReads      ConversationRead[]
 
   locationId String?
   location   Location? @relation(fields: [locationId], references: [id])
@@ -187,6 +212,7 @@ model Client {
   inquiries    Inquiry[]
   giftCards    GiftCard[]
   liabilityWaivers LiabilityWaiver[]
+  conversation     Conversation?
 
   @@index([studioId])
   @@index([studioId, createdAt])
@@ -331,7 +357,7 @@ model StudioSettings {
   estimateTerms                 String?
   giftCardDefaultExpirationDays Int?
   calendarInviteTemplate        String?
-  // Reserved for later phases (e.g. per-channel message copy).
+  // Conversation composer templates (Phase 6A). Array<{ id: string, name: string, body: string }>.
   messageTemplates              Json?
   // Liability waiver template (Phase 4), editable by OWNER from Settings.
   // Array<{ question: string, type: "yes_no" | "yes_no_explain", explainPrompt?: string }>
@@ -480,6 +506,82 @@ model LiabilityWaiver {
 
   @@index([studioId])
   @@index([clientId])
+}
+
+// Phase 6A: exactly one of clientId/staffUserId is set, matching `type`.
+// Prisma can't express "exactly one of two nullable FKs" as a real
+// constraint, so this is validated in the route layer (POST /conversations)
+// -- noted there too.
+model Conversation {
+  id            String           @id @default(cuid())
+  type          ConversationType
+  // Denormalized for list sorting/preview without joining every message.
+  lastMessageAt DateTime?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  // Set iff type CLIENT. Unique: one thread per client, ever (see the
+  // Client-merge handling in clients.ts for what happens when two clients
+  // -- each possibly with their own thread -- become one).
+  clientId String? @unique
+  client   Client? @relation(fields: [clientId], references: [id])
+
+  // Set iff type STAFF. Unique: one thread per staff member.
+  staffUserId String? @unique
+  staffUser   User?   @relation("StaffConversation", fields: [staffUserId], references: [id])
+
+  messages Message[]
+  reads    ConversationRead[]
+
+  @@index([studioId, type, lastMessageAt])
+}
+
+// Immutable once created -- a communications record, not an editable
+// document. No PATCH/DELETE route exists for this model, deliberately.
+model Message {
+  id        String            @id @default(cuid())
+  channel   MessageChannel
+  direction MessageDirection
+  body      String
+  // Array<string> of Cloudinary URLs, reusing the existing upload flow.
+  attachments Json?
+  createdAt DateTime          @default(now())
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+
+  // The staff member who wrote/logged this message. Null is reserved for a
+  // future auto-ingested inbound message (e.g. a real IG/SMS webhook) --
+  // in this phase every message is logged by a staff member, so it's
+  // always set.
+  authorUserId String?
+  author       User?   @relation("MessageAuthor", fields: [authorUserId], references: [id])
+
+  @@index([conversationId, createdAt])
+  @@index([studioId])
+}
+
+// One row per (conversation, user) tracking when that user last read it.
+// Missing row means "never read" -- every message counts as unread. Not
+// audited: same deliberate noise-exception as SectionSeen (Phase 5) --
+// reading a thread happens on every open and carries no business meaning.
+model ConversationRead {
+  id         String   @id @default(cuid())
+  lastReadAt DateTime @default(now())
+
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@unique([conversationId, userId])
 }
 
 // Phase 5: system tasks are DERIVED live from current data state (see

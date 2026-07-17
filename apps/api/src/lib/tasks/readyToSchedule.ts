@@ -2,7 +2,7 @@ import { prisma } from "../prisma";
 import { InquiryStatus } from "../../../generated/prisma/enums";
 import { truncate, type SystemTask, type TaskSource } from "./types";
 
-async function fetch(studioId: string): Promise<SystemTask[]> {
+async function fetch(studioId: string, _userId: string): Promise<SystemTask[]> {
   const inquiries = await prisma.inquiry.findMany({
     // status SCHEDULING is itself only reachable once the deposit's paid
     // (Phase 3) -- appointmentId null is a belt-and-suspenders check that

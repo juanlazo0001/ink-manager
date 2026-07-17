@@ -22,6 +22,8 @@ import GiftCardResponse from './pages/GiftCardResponse'
 import GiftCardDetail from './pages/GiftCardDetail'
 import WaiverSign from './pages/WaiverSign'
 import Tasks from './pages/Tasks'
+import ConversationDeepLink from './pages/ConversationDeepLink'
+import ConversationsPanel from './components/ConversationsPanel'
 
 function App() {
   return (
@@ -155,7 +157,16 @@ function App() {
             </ProtectedRoute>
           }
         />
+        <Route
+          path="/conversations/:id"
+          element={
+            <ProtectedRoute>
+              <ConversationDeepLink />
+            </ProtectedRoute>
+          }
+        />
       </Routes>
+      <ConversationsPanel />
     </BrowserRouter>
   )
 }

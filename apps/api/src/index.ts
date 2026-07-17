@@ -19,6 +19,7 @@ import { publicRouter as giftCardsPublicRouter, staffRouter as giftCardsStaffRou
 import { publicRouter as waiversPublicRouter, staffRouter as waiversStaffRouter } from "./routes/waivers";
 import tasksRouter from "./routes/tasks";
 import navCountsRouter from "./routes/navCounts";
+import conversationsRouter from "./routes/conversations";
 import { requireAuth } from "./middleware/auth";
 
 const app = express();
@@ -69,6 +70,7 @@ app.use("/waivers", waiversPublicRouter);
 app.use("/waivers", waiversStaffRouter);
 app.use("/tasks", tasksRouter);
 app.use("/nav-counts", navCountsRouter);
+app.use("/conversations", conversationsRouter);
 
 app.get("/me", requireAuth, (req, res) => {
   res.json(req.user);

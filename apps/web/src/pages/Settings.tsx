@@ -12,6 +12,12 @@ interface HealthQuestion {
   explainPrompt?: string
 }
 
+interface MessageTemplate {
+  id: string
+  name: string
+  body: string
+}
+
 interface StudioSettingsData {
   refundPolicy: string | null
   depositPolicy: string | null
@@ -25,6 +31,7 @@ interface StudioSettingsData {
   waiverClauses: string[] | null
   waiverAcknowledgment: string | null
   waiverPhotoRelease: string | null
+  messageTemplates: MessageTemplate[] | null
 }
 
 const EMPTY_POLICIES_FORM = {
@@ -110,6 +117,7 @@ export default function Settings() {
   const [waiverClauses, setWaiverClauses] = useState<string[]>([])
   const [waiverAcknowledgment, setWaiverAcknowledgment] = useState('')
   const [waiverPhotoRelease, setWaiverPhotoRelease] = useState('')
+  const [messageTemplates, setMessageTemplates] = useState<MessageTemplate[]>([])
 
   useEffect(() => {
     if (!canViewPolicies) return
@@ -134,6 +142,7 @@ export default function Settings() {
         setWaiverClauses(data.waiverClauses ?? [])
         setWaiverAcknowledgment(data.waiverAcknowledgment ?? '')
         setWaiverPhotoRelease(data.waiverPhotoRelease ?? '')
+        setMessageTemplates(data.messageTemplates ?? [])
       })
       .catch(() => {
         // Section just stays empty if this fails; not critical page content.
@@ -166,6 +175,10 @@ export default function Settings() {
       return
     }
 
+    const cleanedTemplates = messageTemplates
+      .map((t) => ({ id: t.id, name: t.name.trim(), body: t.body.trim() }))
+      .filter((t) => t.name.length > 0 && t.body.length > 0)
+
     try {
       const updated = await apiFetch<StudioSettingsData>('/studio-settings', {
         method: 'PATCH',
@@ -184,12 +197,14 @@ export default function Settings() {
           waiverClauses: cleanedClauses,
           waiverAcknowledgment: waiverAcknowledgment || null,
           waiverPhotoRelease: waiverPhotoRelease || null,
+          messageTemplates: cleanedTemplates,
         }),
       })
 
       setPolicies(updated)
       setWaiverHealthQuestions(updated.waiverHealthQuestions ?? [])
       setWaiverClauses(updated.waiverClauses ?? [])
+      setMessageTemplates(updated.messageTemplates ?? [])
       setEditingPolicies(false)
       setPoliciesSuccess(true)
       setTimeout(() => setPoliciesSuccess(false), 2000)
@@ -222,6 +237,18 @@ export default function Settings() {
 
   function removeClause(index: number) {
     setWaiverClauses((current) => current.filter((_, i) => i !== index))
+  }
+
+  function updateTemplate(index: number, patch: Partial<MessageTemplate>) {
+    setMessageTemplates((current) => current.map((t, i) => (i === index ? { ...t, ...patch } : t)))
+  }
+
+  function addTemplate() {
+    setMessageTemplates((current) => [...current, { id: crypto.randomUUID(), name: '', body: '' }])
+  }
+
+  function removeTemplate(index: number) {
+    setMessageTemplates((current) => current.filter((_, i) => i !== index))
   }
 
   const [editing, setEditing] = useState(false)
@@ -863,6 +890,55 @@ export default function Settings() {
                     />
                   </div>
 
+                  <div className="border-t border-neutral-800 pt-4">
+                    <div className="flex items-center justify-between">
+                      <label className="text-sm font-medium text-neutral-300">Message templates</label>
+                      <button
+                        type="button"
+                        onClick={addTemplate}
+                        className="rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-white transition hover:bg-neutral-800"
+                      >
+                        Add template
+                      </button>
+                    </div>
+                    <p className="mt-1 text-xs text-neutral-500">
+                      Available in the conversation composer's template picker.
+                    </p>
+
+                    <div className="mt-3 space-y-3">
+                      {messageTemplates.map((template, i) => (
+                        <div key={template.id} className="rounded-lg border border-neutral-800 p-3">
+                          <div className="flex items-start gap-2">
+                            <input
+                              type="text"
+                              placeholder="Template name (e.g. 'Booking confirmation')"
+                              value={template.name}
+                              onChange={(e) => updateTemplate(i, { name: e.target.value })}
+                              className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => removeTemplate(i)}
+                              className="shrink-0 rounded-full border border-neutral-700 px-2 py-1 text-xs text-neutral-400 transition hover:bg-neutral-800 hover:text-white"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                          <textarea
+                            rows={3}
+                            placeholder="Template body"
+                            value={template.body}
+                            onChange={(e) => updateTemplate(i, { body: e.target.value })}
+                            className="mt-2 w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                          />
+                        </div>
+                      ))}
+                      {messageTemplates.length === 0 && (
+                        <p className="text-sm text-neutral-400">No templates yet.</p>
+                      )}
+                    </div>
+                  </div>
+
                   {policiesError && <p className="text-sm text-red-400">{policiesError}</p>}
 
                   <div className="flex gap-3">
@@ -939,6 +1015,14 @@ export default function Settings() {
                     <p className="mt-1 text-sm text-neutral-300">
                       {waiverHealthQuestions.length} health question{waiverHealthQuestions.length === 1 ? '' : 's'},{' '}
                       {waiverClauses.length} clause{waiverClauses.length === 1 ? '' : 's'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                      Message templates
+                    </p>
+                    <p className="mt-1 text-sm text-neutral-300">
+                      {messageTemplates.length} template{messageTemplates.length === 1 ? '' : 's'}
                     </p>
                   </div>
                 </div>

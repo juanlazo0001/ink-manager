@@ -20,7 +20,12 @@ export interface SystemTask {
 export interface TaskSource {
   type: string;
   label: string;
-  fetch(studioId: string): Promise<SystemTask[]>;
+  // userId is unused by most sources (they're purely studio-scoped), but
+  // a user-specific source (e.g. NEW_CONVERSATION, whose "actionable" state
+  // depends on the requester's own read state) needs it -- widened here so
+  // every source shares one signature rather than the route special-casing
+  // per-source.
+  fetch(studioId: string, userId: string): Promise<SystemTask[]>;
 }
 
 export function truncate(text: string, max = 60): string {
