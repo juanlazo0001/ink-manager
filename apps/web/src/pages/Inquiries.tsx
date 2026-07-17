@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import { SkeletonTableRows } from '../components/Skeleton'
@@ -20,6 +20,28 @@ interface Inquiry {
   client: { firstName: string; lastName: string }
 }
 
+type PipelineTab = 'inquiries' | 'projects'
+
+// UI-1 §3: one Inquiry table, one nav item, two status-filtered tabs. The
+// conversion moment is deposit PAID (the mark-paid transition in
+// deposits.ts that issues the gift card and flips the inquiry to
+// SCHEDULING) -- an inquiry whose client accepted the estimate but hasn't
+// paid yet is still DEPOSIT_PENDING, i.e. still a lead, not a project.
+// WAITLISTED is reachable only from SCHEDULING (see inquiries.ts's
+// /waitlist route), so it's already-converted work waiting on a time
+// slot -- a Projects status, not a lead status, even though the plan's
+// prose didn't explicitly place it.
+const INQUIRIES_TAB_STATUSES = [
+  'NEW',
+  'ARTIST_ASSIGNED',
+  'AWAITING_CLIENT_RESPONSE',
+  'BUDGET_NEGOTIATION',
+  'DEPOSIT_PENDING',
+  'CLOSED_LOST',
+  'COLD_LEAD',
+] as const
+const PROJECTS_TAB_STATUSES = ['SCHEDULING', 'WAITLISTED', 'CONFIRMED'] as const
+
 type StatusBucket = 'All' | 'New' | 'Assigned' | 'Closed'
 
 const STATUS_BUCKETS: StatusBucket[] = ['All', 'New', 'Assigned', 'Closed']
@@ -30,6 +52,8 @@ function bucketFor(status: string): Exclude<StatusBucket, 'All'> {
   return 'Assigned'
 }
 
+type ProjectStatusFilter = 'All' | (typeof PROJECTS_TAB_STATUSES)[number]
+
 function truncate(text: string, max: number) {
   return text.length > max ? `${text.slice(0, max).trimEnd()}…` : text
 }
@@ -37,8 +61,15 @@ function truncate(text: string, max: number) {
 export default function Inquiries() {
   const navigate = useNavigate()
   const { user } = useAuth()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const activeTab: PipelineTab = searchParams.get('tab') === 'projects' ? 'projects' : 'inquiries'
   const [bucketFilter, setBucketFilter] = useState<StatusBucket>('All')
+  const [projectStatusFilter, setProjectStatusFilter] = useState<ProjectStatusFilter>('All')
   useMarkSectionSeen('inquiries')
+
+  function setTab(tab: PipelineTab) {
+    setSearchParams(tab === 'inquiries' ? {} : { tab })
+  }
 
   const {
     data: inquiries,
@@ -55,9 +86,17 @@ export default function Inquiries() {
       : error.message
     : null
 
-  const filteredInquiries = inquiries?.filter(
-    (inquiry) => bucketFilter === 'All' || bucketFor(inquiry.status) === bucketFilter,
-  )
+  const tabStatuses: readonly string[] = activeTab === 'projects' ? PROJECTS_TAB_STATUSES : INQUIRIES_TAB_STATUSES
+  const tabFilteredInquiries = inquiries?.filter((inquiry) => tabStatuses.includes(inquiry.status))
+
+  const filteredInquiries =
+    activeTab === 'projects'
+      ? tabFilteredInquiries?.filter(
+          (inquiry) => projectStatusFilter === 'All' || inquiry.status === projectStatusFilter,
+        )
+      : tabFilteredInquiries?.filter(
+          (inquiry) => bucketFilter === 'All' || bucketFor(inquiry.status) === bucketFilter,
+        )
 
   return (
     <div className="flex min-h-screen bg-neutral-900 text-white">
@@ -66,22 +105,62 @@ export default function Inquiries() {
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-7xl px-6 py-6 sm:px-10 sm:py-8">
           <div>
-            <h1 className="text-2xl font-bold text-white sm:text-3xl">Inquiries</h1>
-            <p className="mt-1 text-sm text-neutral-400">Tattoo requests submitted through your intake form.</p>
+            <h1 className="text-2xl font-bold text-white sm:text-3xl">Inquiries &amp; Projects</h1>
+            <p className="mt-1 text-sm text-neutral-400">
+              {activeTab === 'projects'
+                ? 'Confirmed work: deposit paid through completed.'
+                : 'Tattoo requests submitted through your intake form, up through a paid deposit.'}
+            </p>
+          </div>
+
+          <div className="mt-6 flex gap-1 border-b border-neutral-800">
+            {(
+              [
+                ['inquiries', 'Inquiries'],
+                ['projects', 'Projects'],
+              ] as const
+            ).map(([tab, label]) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setTab(tab)}
+                className={[
+                  'rounded-t-lg px-4 py-2 text-sm font-medium transition',
+                  activeTab === tab ? 'border-b-2 border-white text-white' : 'text-neutral-500 hover:text-white',
+                ].join(' ')}
+              >
+                {label}
+              </button>
+            ))}
           </div>
 
           <div className="mt-6 flex items-center gap-2 sm:max-w-xs">
-            <select
-              value={bucketFilter}
-              onChange={(event) => setBucketFilter(event.target.value as StatusBucket)}
-              className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
-            >
-              {STATUS_BUCKETS.map((bucket) => (
-                <option key={bucket} value={bucket}>
-                  {bucket === 'All' ? 'All statuses' : bucket}
-                </option>
-              ))}
-            </select>
+            {activeTab === 'projects' ? (
+              <select
+                value={projectStatusFilter}
+                onChange={(event) => setProjectStatusFilter(event.target.value as ProjectStatusFilter)}
+                className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+              >
+                <option value="All">All statuses</option>
+                {PROJECTS_TAB_STATUSES.map((status) => (
+                  <option key={status} value={status}>
+                    {formatStatus(status)}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <select
+                value={bucketFilter}
+                onChange={(event) => setBucketFilter(event.target.value as StatusBucket)}
+                className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+              >
+                {STATUS_BUCKETS.map((bucket) => (
+                  <option key={bucket} value={bucket}>
+                    {bucket === 'All' ? 'All statuses' : bucket}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
 
           <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
@@ -89,7 +168,13 @@ export default function Inquiries() {
 
             {!errorMessage && !isLoading && filteredInquiries?.length === 0 && (
               <p className="text-sm text-neutral-400">
-                {bucketFilter !== 'All' ? 'No inquiries match this filter.' : 'No inquiries yet.'}
+                {activeTab === 'projects'
+                  ? projectStatusFilter !== 'All'
+                    ? 'No projects match this filter.'
+                    : 'No projects yet -- projects appear here once a deposit is paid.'
+                  : bucketFilter !== 'All'
+                    ? 'No inquiries match this filter.'
+                    : 'No inquiries yet.'}
               </p>
             )}
 

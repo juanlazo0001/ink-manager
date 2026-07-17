@@ -6,7 +6,7 @@ import AuditTrail from '../components/AuditTrail'
 import Modal from '../components/Modal'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatDuration, formatStatus } from '../lib/format'
-import { ArrowLeftIcon, MessageIcon, PencilIcon } from '../components/icons'
+import { ArrowLeftIcon, MessageIcon, PencilIcon, PlusIcon } from '../components/icons'
 import { useAuth } from '../context/useAuth'
 import { useConversationPanel } from '../context/useConversationPanel'
 import { artistsQueryKey, inquiriesQueryKey, inquiryQueryKey } from '../lib/queryKeys'
@@ -42,6 +42,13 @@ interface Inquiry {
   preferredArtist: { id: string; user: { name: string | null } } | null
   assignedArtist: { id: string; user: { name: string | null } } | null
   appointment: { id: string; startTime: string; endTime: string; status: string } | null
+  sessions: {
+    id: string
+    startTime: string
+    endTime: string
+    status: string
+    artist: { id: string; user: { name: string | null; email: string } }
+  }[]
   depositForm: {
     id: string
     token: string
@@ -265,6 +272,23 @@ export default function InquiryDetail() {
   const [markingPaid, setMarkingPaid] = useState(false)
   const [markPaidError, setMarkPaidError] = useState<string | null>(null)
 
+  // UI-1 §3: appointments/sessions nested inside their project. Distinct
+  // from scheduleForm above (which drives the special first-scheduling-slot
+  // flow via /inquiries/:id/schedule) -- this is the generic
+  // POST /appointments route, pre-scoped to this project's client +
+  // inquiry, for booking an additional session under a project already
+  // underway.
+  const [showAppointmentModal, setShowAppointmentModal] = useState(false)
+  const [appointmentForm, setAppointmentForm] = useState({
+    artistId: '',
+    giftCardId: '',
+    startTime: '',
+    endTime: '',
+    notes: '',
+  })
+  const [creatingAppointment, setCreatingAppointment] = useState(false)
+  const [appointmentError, setAppointmentError] = useState<string | null>(null)
+
   // Seeds the editable estimate fields from the inquiry once per inquiry id
   // (not on every refetch), so an in-progress edit doesn't get clobbered by
   // an unrelated refresh. Adjusted during render rather than an effect, per
@@ -424,6 +448,37 @@ export default function InquiryDetail() {
     }
   }
 
+  async function handleCreateAppointment() {
+    if (!inquiry || !appointmentForm.artistId || !appointmentForm.giftCardId) return
+    if (!appointmentForm.startTime || !appointmentForm.endTime) return
+
+    setCreatingAppointment(true)
+    setAppointmentError(null)
+
+    try {
+      await apiFetch('/appointments', {
+        method: 'POST',
+        body: JSON.stringify({
+          clientId: inquiry.clientId,
+          inquiryId: inquiry.id,
+          artistId: appointmentForm.artistId,
+          giftCardId: appointmentForm.giftCardId,
+          startTime: new Date(appointmentForm.startTime).toISOString(),
+          endTime: new Date(appointmentForm.endTime).toISOString(),
+          notes: appointmentForm.notes || undefined,
+        }),
+      })
+
+      setShowAppointmentModal(false)
+      setAppointmentForm({ artistId: '', giftCardId: '', startTime: '', endTime: '', notes: '' })
+      invalidateInquiry()
+    } catch (err) {
+      setAppointmentError(err instanceof Error ? err.message : 'Failed to create appointment')
+    } finally {
+      setCreatingAppointment(false)
+    }
+  }
+
   async function handleWaitlist() {
     if (!id) return
 
@@ -489,9 +544,16 @@ export default function InquiryDetail() {
 
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-5xl px-6 py-6 sm:px-10 sm:py-8">
-          <Link to="/inquiries" className="inline-flex items-center gap-2 text-sm text-neutral-400 hover:text-white">
+          <Link
+            to={
+              inquiry && ['SCHEDULING', 'WAITLISTED', 'CONFIRMED'].includes(inquiry.status)
+                ? '/inquiries?tab=projects'
+                : '/inquiries'
+            }
+            className="inline-flex items-center gap-2 text-sm text-neutral-400 hover:text-white"
+          >
             <ArrowLeftIcon className="h-4 w-4" />
-            Back to Inquiries
+            Back to {inquiry && ['SCHEDULING', 'WAITLISTED', 'CONFIRMED'].includes(inquiry.status) ? 'Projects' : 'Inquiries'}
           </Link>
 
           {error && (
@@ -894,6 +956,48 @@ export default function InquiryDetail() {
                 </div>
               )}
 
+              <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-base font-semibold text-white">Appointments</h2>
+                  {canMessage && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAppointmentModal(true)}
+                      className="flex items-center gap-2 rounded-full border border-neutral-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-800"
+                    >
+                      <PlusIcon className="h-3.5 w-3.5" />
+                      New Appointment
+                    </button>
+                  )}
+                </div>
+
+                {inquiry.sessions.length === 0 && (
+                  <p className="mt-4 text-sm text-neutral-400">No appointments booked for this project yet.</p>
+                )}
+
+                {inquiry.sessions.length > 0 && (
+                  <div className="mt-4 divide-y divide-neutral-800">
+                    {inquiry.sessions.map((session) => (
+                      <Link
+                        key={session.id}
+                        to={`/appointments/${session.id}`}
+                        className="flex flex-wrap items-center justify-between gap-2 py-3 first:pt-0 last:pb-0 hover:bg-neutral-800/40"
+                      >
+                        <div>
+                          <p className="text-sm text-white">{formatDateTime(session.startTime)}</p>
+                          <p className="mt-0.5 text-xs text-neutral-500">
+                            with {session.artist.user.name ?? session.artist.user.email}
+                          </p>
+                        </div>
+                        <span className="inline-flex items-center rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-300">
+                          {formatStatus(session.status)}
+                        </span>
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               {(inquiry.status === 'DEPOSIT_PENDING' || inquiry.depositForm) && (
                 <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
                   <h2 className="text-base font-semibold text-white">Deposit</h2>
@@ -1162,6 +1266,109 @@ export default function InquiryDetail() {
                       </button>
                     </div>
                   )}
+                </Modal>
+              )}
+
+              {showAppointmentModal && (
+                <Modal title="New Appointment" onClose={() => setShowAppointmentModal(false)}>
+                  <div className="space-y-4">
+                    <p className="text-xs text-neutral-500">
+                      Booking another appointment for {inquiry.client.firstName} {inquiry.client.lastName} under this
+                      project.
+                    </p>
+
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-neutral-300">Artist</label>
+                      <select
+                        value={appointmentForm.artistId}
+                        onChange={(e) => setAppointmentForm({ ...appointmentForm, artistId: e.target.value })}
+                        className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                      >
+                        <option value="" disabled>
+                          {artistOptions === undefined ? 'Loading artists…' : 'Select an artist'}
+                        </option>
+                        {artistOptions?.map((artist) => (
+                          <option key={artist.id} value={artist.id}>
+                            {artist.user.email}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-neutral-300">Start</label>
+                        <input
+                          type="datetime-local"
+                          value={appointmentForm.startTime}
+                          onChange={(e) => setAppointmentForm({ ...appointmentForm, startTime: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-neutral-300">End</label>
+                        <input
+                          type="datetime-local"
+                          value={appointmentForm.endTime}
+                          onChange={(e) => setAppointmentForm({ ...appointmentForm, endTime: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-neutral-300">
+                        Gift card (deposit) to attach
+                      </label>
+                      {clientGiftCards && clientGiftCards.length === 0 ? (
+                        <p className="text-sm text-neutral-400">
+                          No available gift card for this client yet — collect a deposit or issue one first.
+                        </p>
+                      ) : (
+                        <select
+                          value={appointmentForm.giftCardId}
+                          onChange={(e) => setAppointmentForm({ ...appointmentForm, giftCardId: e.target.value })}
+                          className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                        >
+                          <option value="" disabled>
+                            {clientGiftCards === undefined ? 'Loading…' : 'Select a gift card'}
+                          </option>
+                          {clientGiftCards?.map((card) => (
+                            <option key={card.id} value={card.id}>
+                              ${(card.amountCents / 100).toFixed(2)} — {card.code.slice(0, 8)}…
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-neutral-300">Notes (optional)</label>
+                      <textarea
+                        rows={2}
+                        value={appointmentForm.notes}
+                        onChange={(e) => setAppointmentForm({ ...appointmentForm, notes: e.target.value })}
+                        className="w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                      />
+                    </div>
+
+                    {appointmentError && <p className="text-sm text-red-400">{appointmentError}</p>}
+
+                    <button
+                      type="button"
+                      onClick={handleCreateAppointment}
+                      disabled={
+                        creatingAppointment ||
+                        !appointmentForm.artistId ||
+                        !appointmentForm.giftCardId ||
+                        !appointmentForm.startTime ||
+                        !appointmentForm.endTime
+                      }
+                      className="w-full rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600 disabled:opacity-60"
+                    >
+                      {creatingAppointment ? 'Creating…' : 'Create Appointment'}
+                    </button>
+                  </div>
                 </Modal>
               )}
             </>

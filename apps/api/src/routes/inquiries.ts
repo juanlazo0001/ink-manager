@@ -171,6 +171,20 @@ const INQUIRY_INCLUDE = {
   preferredArtist: { select: { id: true, user: { select: { name: true } } } },
   assignedArtist: { select: { id: true, user: { select: { name: true } } } },
   appointment: { select: { id: true, startTime: true, endTime: true, status: true } },
+  // UI-1 §3: every appointment/session under this project (1:many via
+  // Appointment.inquiryId), for the project detail page's nested
+  // Appointments section -- distinct from the singular `appointment`
+  // above, which is only the original scheduling-flow slot.
+  sessions: {
+    select: {
+      id: true,
+      startTime: true,
+      endTime: true,
+      status: true,
+      artist: { select: { id: true, user: { select: { name: true, email: true } } } },
+    },
+    orderBy: { startTime: "asc" },
+  },
   depositForm: {
     select: {
       id: true,

@@ -230,7 +230,10 @@ export default function ArtistDetail() {
 
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-4xl px-6 py-6 sm:px-10 sm:py-8">
-          <Link to="/artists" className="inline-flex items-center gap-2 text-sm text-neutral-400 hover:text-white">
+          <Link
+            to="/team?tab=artists"
+            className="inline-flex items-center gap-2 text-sm text-neutral-400 hover:text-white"
+          >
             <ArrowLeftIcon className="h-4 w-4" />
             Back to Artists
           </Link>

@@ -18,8 +18,12 @@ const VALID_TASK_TYPES = new Set(TASK_SOURCE_REGISTRY.map((s) => s.type));
 router.get("/", async (req, res) => {
   const { studioId, userId, role } = req.user!;
 
+  // "Assigned to Me": userId is always the assignee, regardless of who
+  // created it -- a self-created task and one a FRONT_DESK assigned to
+  // this user both land here, with no separate "claiming" step.
   const personal = await prisma.personalTask.findMany({
     where: { studioId, userId },
+    include: { createdBy: { select: { id: true, name: true, email: true } } },
     orderBy: [{ completedAt: "asc" }, { dueAt: "asc" }, { createdAt: "asc" }],
   });
 
@@ -76,8 +80,10 @@ router.post("/dismiss", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, re
 });
 
 router.post("/personal", async (req, res) => {
-  const { studioId, userId } = req.user!;
-  const { title, notes, dueAt } = req.body ?? {};
+  const { studioId, userId, role } = req.user!;
+  // Renamed on destructure -- req.body's userId is the intended ASSIGNEE,
+  // never to be confused with req.user's own id.
+  const { title, notes, dueAt, userId: assigneeUserId } = req.body ?? {};
 
   if (typeof title !== "string" || title.trim().length === 0) {
     return res.status(400).json({ error: "title is required" });
@@ -95,8 +101,30 @@ router.post("/personal", async (req, res) => {
     }
   }
 
+  // Assigning to someone else is OWNER/FRONT_DESK only; everyone else can
+  // only create a task for themselves (assigneeUserId omitted or equal to
+  // their own id).
+  let assigneeId = userId;
+  if (typeof assigneeUserId === "string" && assigneeUserId !== userId) {
+    if (role !== Role.OWNER && role !== Role.FRONT_DESK) {
+      return res.status(403).json({ error: "Only OWNER/FRONT_DESK can assign a task to someone else" });
+    }
+    const assignee = await prisma.user.findUnique({ where: { id: assigneeUserId } });
+    if (!assignee || assignee.studioId !== studioId || assignee.role === Role.CUSTOMER) {
+      return res.status(400).json({ error: "userId must be a staff member in your studio" });
+    }
+    assigneeId = assigneeUserId;
+  }
+
   const task = await prisma.personalTask.create({
-    data: { studioId, userId, title: title.trim(), notes: notes?.trim() || null, dueAt: parsedDueAt },
+    data: {
+      studioId,
+      userId: assigneeId,
+      createdById: userId,
+      title: title.trim(),
+      notes: notes?.trim() || null,
+      dueAt: parsedDueAt,
+    },
   });
 
   await logAudit({
@@ -105,7 +133,7 @@ router.post("/personal", async (req, res) => {
     entityType: "PersonalTask",
     entityId: task.id,
     action: "create",
-    changes: { title: task.title },
+    changes: { title: task.title, ...(assigneeId !== userId ? { assignedTo: assigneeId } : {}) },
   });
 
   res.status(201).json(task);
@@ -181,12 +209,15 @@ router.patch("/personal/:id", async (req, res) => {
   res.json(updated);
 });
 
+// Assignee-only completion (see PATCH above, unchanged); delete is looser
+// -- the creator (who may have assigned this to someone else) or the
+// assignee can both remove it.
 router.delete("/personal/:id", async (req, res) => {
   const id = req.params.id as string;
   const { studioId, userId } = req.user!;
 
   const task = await prisma.personalTask.findUnique({ where: { id } });
-  if (!task || task.studioId !== studioId || task.userId !== userId) {
+  if (!task || task.studioId !== studioId || (task.userId !== userId && task.createdById !== userId)) {
     return res.status(404).json({ error: "Personal task not found" });
   }
 

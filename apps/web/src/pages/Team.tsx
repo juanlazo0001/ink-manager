@@ -1,13 +1,26 @@
 import { Fragment, useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
-import { apiFetch } from '../lib/api'
+import { SkeletonCards } from '../components/Skeleton'
+import { apiFetch, ApiError } from '../lib/api'
 import { formatStatus, readFileAsDataUrl, MAX_IMAGE_FILE_BYTES } from '../lib/format'
 import { PERMISSION_GROUPS, CONFIGURABLE_ROLES } from '../lib/permissions'
+import { artistsQueryKey } from '../lib/queryKeys'
 import { useAuth } from '../context/useAuth'
 import { PlusIcon } from '../components/icons'
 
 type PermissionMatrix = Record<string, Record<string, boolean>>
+type TeamTab = 'staff' | 'artists' | 'permissions'
+
+interface ArtistCard {
+  id: string
+  bio: string | null
+  specialties: string[]
+  portfolioImages: string[]
+  user: { id: string; email: string; name: string | null; avatarUrl: string | null }
+}
 
 interface PermissionsResponse {
   permissionKeys: string[]
@@ -61,6 +74,35 @@ function emptyEditForm(teamUser: TeamUser) {
 export default function Team() {
   const { user } = useAuth()
   const isOwner = user?.role === 'OWNER'
+  const navigate = useNavigate()
+
+  // Staff/Permissions are OWNER-only (unchanged); Artists is open to
+  // whoever has the 'artists.view' permission (a configurable per-role
+  // permission, same as the old standalone Artists page -- so a
+  // non-owner landing here via /team?tab=artists still gets in, they just
+  // won't see the Staff/Permissions tabs).
+  const [searchParams, setSearchParams] = useSearchParams()
+  const requestedTab = searchParams.get('tab') as TeamTab | null
+  const activeTab: TeamTab = requestedTab && (isOwner || requestedTab === 'artists') ? requestedTab : isOwner ? 'staff' : 'artists'
+
+  function setTab(tab: TeamTab) {
+    setSearchParams(tab === 'staff' ? {} : { tab })
+  }
+
+  const {
+    data: artists,
+    isLoading: artistsLoading,
+    error: artistsError,
+  } = useQuery({
+    queryKey: artistsQueryKey(user!.studioId),
+    queryFn: () => apiFetch<ArtistCard[]>('/artists'),
+  })
+
+  const artistsErrorMessage = artistsError
+    ? artistsError instanceof ApiError && artistsError.status === 403
+      ? "You don't have permission to view artists."
+      : artistsError.message
+    : null
 
   const [users, setUsers] = useState<TeamUser[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -272,20 +314,6 @@ export default function Team() {
     }
   }
 
-  if (!isOwner) {
-    return (
-      <div className="flex min-h-screen bg-neutral-900 text-white">
-        <Sidebar />
-        <div className="min-w-0 flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-2xl px-6 py-6 sm:px-10 sm:py-8">
-            <h1 className="text-2xl font-bold text-white sm:text-3xl">Team</h1>
-            <p className="mt-4 text-sm text-neutral-400">Only the studio owner can manage the team.</p>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div className="flex min-h-screen bg-neutral-900 text-white">
       <Sidebar />
@@ -298,16 +326,45 @@ export default function Team() {
               <p className="mt-1 text-sm text-neutral-400">Everyone with access to your studio's portal.</p>
             </div>
 
-            <button
-              type="button"
-              onClick={() => setShowAddModal(true)}
-              className="flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600"
-            >
-              <PlusIcon className="h-4 w-4" />
-              Add team member
-            </button>
+            {activeTab === 'staff' && isOwner && (
+              <button
+                type="button"
+                onClick={() => setShowAddModal(true)}
+                className="flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-600"
+              >
+                <PlusIcon className="h-4 w-4" />
+                Add team member
+              </button>
+            )}
           </div>
 
+          <div className="mt-6 flex gap-1 border-b border-neutral-800">
+            {(
+              [
+                ['staff', 'Staff'],
+                ['artists', 'Artists'],
+                ['permissions', 'Permissions'],
+              ] as const
+            )
+              .filter(([tab]) => tab === 'artists' || isOwner)
+              .map(([tab, label]) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setTab(tab)}
+                  className={[
+                    'rounded-t-lg px-4 py-2 text-sm font-medium transition',
+                    activeTab === tab
+                      ? 'border-b-2 border-white text-white'
+                      : 'text-neutral-500 hover:text-white',
+                  ].join(' ')}
+                >
+                  {label}
+                </button>
+              ))}
+          </div>
+
+          {activeTab === 'staff' && isOwner && (
           <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
             {error && <p className="text-sm text-red-400">{error}</p>}
 
@@ -372,7 +429,94 @@ export default function Team() {
               </div>
             )}
           </div>
+          )}
 
+          {activeTab === 'artists' && (
+            <div className="mt-6">
+              {artistsErrorMessage && (
+                <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
+                  <p className="text-sm text-red-400">{artistsErrorMessage}</p>
+                </div>
+              )}
+
+              {!artistsErrorMessage && artistsLoading && <SkeletonCards count={6} />}
+
+              {!artistsErrorMessage && !artistsLoading && artists?.length === 0 && (
+                <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
+                  <p className="text-sm text-neutral-400">
+                    No artists yet.{' '}
+                    {isOwner
+                      ? "Add one from the Staff tab (role: Artist) — their profile here is created automatically."
+                      : 'Ask a studio owner to add one from the Staff tab.'}
+                  </p>
+                </div>
+              )}
+
+              {!artistsErrorMessage && artists && artists.length > 0 && (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {artists.map((artist) => (
+                    <div
+                      key={artist.id}
+                      onClick={() => navigate(`/artists/${artist.id}`)}
+                      className="cursor-pointer rounded-2xl border border-neutral-800 bg-neutral-900 p-5 transition hover:border-neutral-700"
+                    >
+                      <div className="flex items-center gap-3">
+                        {artist.user.avatarUrl ? (
+                          <img
+                            src={artist.user.avatarUrl}
+                            alt={artist.user.name ?? artist.user.email}
+                            className="h-12 w-12 shrink-0 rounded-full object-cover"
+                          />
+                        ) : (
+                          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-neutral-800 text-lg font-semibold text-white">
+                            {(artist.user.name ?? artist.user.email).slice(0, 1).toUpperCase()}
+                          </span>
+                        )}
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-white">
+                            {artist.user.name || artist.user.email}
+                          </p>
+                          <p className="truncate text-xs text-neutral-500">{artist.user.email}</p>
+                        </div>
+                      </div>
+
+                      {artist.bio && <p className="mt-3 line-clamp-2 text-sm text-neutral-400">{artist.bio}</p>}
+
+                      {artist.specialties.length > 0 && (
+                        <div className="mt-3 flex flex-wrap gap-1.5">
+                          {artist.specialties.slice(0, 4).map((specialty) => (
+                            <span
+                              key={specialty}
+                              className="inline-flex items-center rounded-full border border-neutral-700 px-2.5 py-1 text-xs font-medium text-neutral-300"
+                            >
+                              {specialty}
+                            </span>
+                          ))}
+                          {artist.specialties.length > 4 && (
+                            <span className="inline-flex items-center px-1 text-xs text-neutral-500">
+                              +{artist.specialties.length - 4} more
+                            </span>
+                          )}
+                        </div>
+                      )}
+
+                      {artist.portfolioImages.length > 0 && (
+                        <div className="mt-3 grid grid-cols-4 gap-1.5">
+                          {artist.portfolioImages.slice(0, 4).map((url) => (
+                            <div key={url} className="aspect-square overflow-hidden rounded-lg border border-neutral-800">
+                              <img src={url} alt="" className="h-full w-full object-cover" />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'permissions' && isOwner && (
           <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
@@ -449,6 +593,7 @@ export default function Team() {
               </div>
             )}
           </div>
+          )}
         </div>
       </div>
 
@@ -561,7 +706,7 @@ export default function Team() {
               </select>
               {addForm.role === 'ARTIST' && (
                 <p className="mt-1 text-xs text-neutral-500">
-                  This also creates their profile on the Artists page — specialties and portfolio can be added there.
+                  This also creates their profile on the Artists tab — specialties and portfolio can be added there.
                 </p>
               )}
             </div>

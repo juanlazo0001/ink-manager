@@ -8,6 +8,11 @@ export interface NavCounts {
   appointments: number
   clients: number
   conversations: number
+  // UI-1 §7: OWNER-controlled Settings toggle (default off). Rides along
+  // on this response rather than a separate /studio-settings call, since
+  // ARTIST can't call that route but still needs to know whether to render
+  // bubbles.
+  showSidebarBadges: boolean
 }
 
 const POLL_MS = 60_000

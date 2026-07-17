@@ -123,6 +123,13 @@ router.patch("/", requireRole(Role.OWNER), async (req, res) => {
     data.messageTemplates = body.messageTemplates;
   }
 
+  if (body.showSidebarBadges !== undefined) {
+    if (typeof body.showSidebarBadges !== "boolean") {
+      return res.status(400).json({ error: "showSidebarBadges must be a boolean" });
+    }
+    data.showSidebarBadges = body.showSidebarBadges;
+  }
+
   const updated = await prisma.studioSettings.update({ where: { studioId: req.user!.studioId }, data });
 
   await logAudit({
@@ -138,6 +145,7 @@ router.patch("/", requireRole(Role.OWNER), async (req, res) => {
       "waiverHealthQuestions",
       "waiverClauses",
       "messageTemplates",
+      "showSidebarBadges",
     ] as (keyof typeof existing)[]),
   });
 

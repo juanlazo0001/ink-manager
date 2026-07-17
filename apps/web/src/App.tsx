@@ -4,9 +4,8 @@ import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Clients from './pages/Clients'
 import ClientDetail from './pages/ClientDetail'
-import Appointments from './pages/Appointments'
+import Calendar from './pages/Calendar'
 import AppointmentDetail from './pages/AppointmentDetail'
-import Artists from './pages/Artists'
 import ArtistDetail from './pages/ArtistDetail'
 import Settings from './pages/Settings'
 import Profile from './pages/Profile'
@@ -24,6 +23,7 @@ import WaiverSign from './pages/WaiverSign'
 import Tasks from './pages/Tasks'
 import ConversationDeepLink from './pages/ConversationDeepLink'
 import ConversationsPanel from './components/ConversationsPanel'
+import TopBar from './components/TopBar'
 
 function App() {
   return (
@@ -70,13 +70,16 @@ function App() {
           }
         />
         <Route
-          path="/appointments"
+          path="/calendar"
           element={
             <ProtectedRoute>
-              <Appointments />
+              <Calendar />
             </ProtectedRoute>
           }
         />
+        {/* UI-1: Appointments was renamed Calendar (sidebar consolidation) --
+            redirect so old bookmarks/links survive. */}
+        <Route path="/appointments" element={<Navigate to="/calendar" replace />} />
         <Route
           path="/appointments/:id"
           element={
@@ -85,14 +88,10 @@ function App() {
             </ProtectedRoute>
           }
         />
-        <Route
-          path="/artists"
-          element={
-            <ProtectedRoute>
-              <Artists />
-            </ProtectedRoute>
-          }
-        />
+        {/* UI-1: the standalone Artists list page folded into Team's Artists
+            tab -- redirect so old bookmarks/links survive. Per-artist detail
+            (below) is unaffected. */}
+        <Route path="/artists" element={<Navigate to="/team?tab=artists" replace />} />
         <Route
           path="/artists/:id"
           element={
@@ -166,6 +165,7 @@ function App() {
           }
         />
       </Routes>
+      <TopBar />
       <ConversationsPanel />
     </BrowserRouter>
   )

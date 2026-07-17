@@ -1,50 +1,35 @@
 import { useState, type ComponentType } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
-import {
-  AppointmentsIcon,
-  ArtistsIcon,
-  ClientsIcon,
-  DashboardIcon,
-  DocumentIcon,
-  LogoutIcon,
-  MenuIcon,
-  SearchIcon,
-  SettingsIcon,
-  TasksIcon,
-  TeamIcon,
-} from './icons'
+import { useQueryClient } from '@tanstack/react-query'
+import { AppointmentsIcon, ClientsIcon, DashboardIcon, DocumentIcon, LogoutIcon, MenuIcon, SearchIcon, TeamIcon } from './icons'
 import { useAuth } from '../context/useAuth'
 import { useStudio } from '../context/useStudio'
 import { useUserProfile } from '../context/useUserProfile'
 import { apiFetch } from '../lib/api'
-import { appointmentsQueryKey, artistsQueryKey, clientsQueryKey, inquiriesQueryKey, tasksQueryKey } from '../lib/queryKeys'
-import { useNavCounts, formatBubbleCount, type NavCounts } from '../lib/useNavCounts'
+import { appointmentsQueryKey, clientsQueryKey, inquiriesQueryKey } from '../lib/queryKeys'
+import { useNavCounts, formatBubbleCount } from '../lib/useNavCounts'
+
+type NavCountSection = 'inquiries' | 'appointments' | 'clients' | 'conversations'
 
 interface NavItem {
   label: string
   to?: string
   icon: ComponentType<{ className?: string }>
   roles?: string[]
-  section?: keyof NavCounts
+  section?: NavCountSection
 }
 
+// UI-1: consolidated to four items. Artists moved into Team's Artists tab;
+// Appointments was renamed Calendar (same page); Tasks and Settings moved
+// to the top-bar personal cluster / account menu.
 const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', to: '/dashboard', icon: DashboardIcon },
-  { label: 'Clients', to: '/clients', icon: ClientsIcon, section: 'clients' },
-  { label: 'Appointments', to: '/appointments', icon: AppointmentsIcon, section: 'appointments' },
-  { label: 'Artists', to: '/artists', icon: ArtistsIcon },
-  { label: 'Inquiries', to: '/inquiries', icon: DocumentIcon, roles: ['OWNER', 'FRONT_DESK'], section: 'inquiries' },
+  { label: 'Inquiries & Projects', to: '/inquiries', icon: DocumentIcon, roles: ['OWNER', 'FRONT_DESK'], section: 'inquiries' },
   { label: 'My Inquiries', to: '/my-inquiries', icon: DocumentIcon, roles: ['ARTIST'], section: 'inquiries' },
-  { label: 'Tasks', to: '/tasks', icon: TasksIcon, roles: ['OWNER', 'FRONT_DESK', 'ARTIST'] },
+  { label: 'Calendar', to: '/calendar', icon: AppointmentsIcon, section: 'appointments' },
+  { label: 'Clients', to: '/clients', icon: ClientsIcon, section: 'clients' },
   { label: 'Team', to: '/team', icon: TeamIcon, roles: ['OWNER'] },
-  { label: 'Settings', to: '/settings', icon: SettingsIcon },
 ]
-
-interface TasksBadgeResponse {
-  system: unknown[]
-  personal: { completedAt: string | null }[]
-}
 
 export default function Sidebar() {
   const location = useLocation()
@@ -56,16 +41,7 @@ export default function Sidebar() {
   const [mobileOpen, setMobileOpen] = useState(false)
 
   const { data: navCounts } = useNavCounts()
-
-  const canSeeTasks = user?.role === 'OWNER' || user?.role === 'FRONT_DESK' || user?.role === 'ARTIST'
-  const { data: tasksBadgeData } = useQuery({
-    queryKey: user ? tasksQueryKey(user.userId) : ['tasks', 'anonymous'],
-    queryFn: () => apiFetch<TasksBadgeResponse>('/tasks'),
-    enabled: !!user && canSeeTasks,
-    refetchInterval: 60_000,
-  })
-  const taskBadgeCount =
-    (tasksBadgeData?.system.length ?? 0) + (tasksBadgeData?.personal.filter((t) => !t.completedAt).length ?? 0)
+  const showBadges = navCounts?.showSidebarBadges ?? false
 
   // Closing on route change covers both nav-link clicks and logout's
   // redirect, so the drawer never stays open covering the next page. Adjusted
@@ -90,8 +66,7 @@ export default function Sidebar() {
     const studioId = user.studioId
     const queries: Record<string, { queryKey: readonly unknown[]; queryFn: () => Promise<unknown> }> = {
       '/clients': { queryKey: clientsQueryKey(studioId), queryFn: () => apiFetch('/clients') },
-      '/appointments': { queryKey: appointmentsQueryKey(studioId), queryFn: () => apiFetch('/appointments') },
-      '/artists': { queryKey: artistsQueryKey(studioId), queryFn: () => apiFetch('/artists') },
+      '/calendar': { queryKey: appointmentsQueryKey(studioId), queryFn: () => apiFetch('/appointments') },
       '/inquiries': { queryKey: inquiriesQueryKey(studioId), queryFn: () => apiFetch('/inquiries') },
     }
 
@@ -156,7 +131,7 @@ export default function Sidebar() {
                 isActive ? 'bg-neutral-800 text-white' : 'text-neutral-400 hover:bg-neutral-800/60 hover:text-white',
               ].join(' ')
 
-              const bubbleCount = section ? navCounts?.[section] ?? 0 : label === 'Tasks' ? taskBadgeCount : 0
+              const bubbleCount = showBadges && section ? navCounts?.[section] ?? 0 : 0
 
               const bubble =
                 bubbleCount > 0 ? (

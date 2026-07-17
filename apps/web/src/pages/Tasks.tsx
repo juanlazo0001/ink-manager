@@ -26,11 +26,19 @@ interface PersonalTask {
   completedAt: string | null
   createdAt: string
   updatedAt: string
+  createdBy: { id: string; name: string | null; email: string }
 }
 
 interface TasksResponse {
   system: SystemTask[]
   personal: PersonalTask[]
+}
+
+interface StaffRosterEntry {
+  id: string
+  name: string
+  email: string
+  role: string
 }
 
 const TASK_TYPE_LABELS: Record<string, string> = {
@@ -52,12 +60,13 @@ function groupByType(tasks: SystemTask[]): [string, SystemTask[]][] {
   return [...groups.entries()]
 }
 
-const EMPTY_FORM = { title: '', dueAt: '' }
+const EMPTY_FORM = { title: '', dueAt: '', assigneeUserId: '' }
 
 export default function Tasks() {
   const { user } = useAuth()
   const queryClient = useQueryClient()
   const queryKey = tasksQueryKey(user!.userId)
+  const canAssign = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
 
   const [showCompleted, setShowCompleted] = useState(false)
   const [form, setForm] = useState(EMPTY_FORM)
@@ -70,6 +79,15 @@ export default function Tasks() {
     queryFn: () => apiFetch<TasksResponse>('/tasks'),
   })
 
+  // Reuses the same OWNER/FRONT_DESK staff roster the conversations panel
+  // uses to start a new Team thread -- no dedicated endpoint needed for
+  // the "Assign to" picker.
+  const { data: staffRoster } = useQuery({
+    queryKey: ['conversations-staff-roster'],
+    queryFn: () => apiFetch<StaffRosterEntry[]>('/conversations/staff'),
+    enabled: canAssign,
+  })
+
   const dismissMutation = useMutation({
     mutationFn: (task: SystemTask) =>
       apiFetch('/tasks/dismiss', { method: 'POST', body: JSON.stringify({ taskType: task.type, dismissalKey: task.dismissalKey }) }),
@@ -80,7 +98,11 @@ export default function Tasks() {
     mutationFn: (payload: typeof EMPTY_FORM) =>
       apiFetch('/tasks/personal', {
         method: 'POST',
-        body: JSON.stringify({ title: payload.title, dueAt: payload.dueAt ? new Date(payload.dueAt).toISOString() : undefined }),
+        body: JSON.stringify({
+          title: payload.title,
+          dueAt: payload.dueAt ? new Date(payload.dueAt).toISOString() : undefined,
+          userId: payload.assigneeUserId || undefined,
+        }),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey })
@@ -143,8 +165,12 @@ export default function Tasks() {
 
           {data && (
             <>
+              {user?.role !== 'ARTIST' && (
               <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-                <h2 className="text-base font-semibold text-white">Needs attention</h2>
+                <h2 className="text-base font-semibold text-white">Studio Queue</h2>
+                <p className="mt-1 text-sm text-neutral-400">
+                  Shared and unassigned -- anyone can act on an item; it disappears once resolved.
+                </p>
 
                 {data.system.length === 0 && (
                   <p className="mt-4 text-sm text-neutral-400">Nothing needs attention right now.</p>
@@ -183,9 +209,10 @@ export default function Tasks() {
                   </div>
                 ))}
               </div>
+              )}
 
               <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-5">
-                <h2 className="text-base font-semibold text-white">My tasks</h2>
+                <h2 className="text-base font-semibold text-white">Assigned to Me</h2>
 
                 <form onSubmit={handleAddTask} className="mt-4 flex flex-wrap gap-2">
                   <input
@@ -195,6 +222,22 @@ export default function Tasks() {
                     onChange={(e) => setForm({ ...form, title: e.target.value })}
                     className="min-w-0 flex-1 rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
                   />
+                  {canAssign && (
+                    <select
+                      value={form.assigneeUserId}
+                      onChange={(e) => setForm({ ...form, assigneeUserId: e.target.value })}
+                      className="rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-white focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-600"
+                    >
+                      <option value="">Assign to myself</option>
+                      {staffRoster
+                        ?.filter((member) => member.id !== user?.userId)
+                        .map((member) => (
+                          <option key={member.id} value={member.id}>
+                            {member.name}
+                          </option>
+                        ))}
+                    </select>
+                  )}
                   <input
                     type="date"
                     value={form.dueAt}
@@ -240,13 +283,20 @@ export default function Tasks() {
                             className="min-w-0 flex-1 rounded-lg border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-white focus:outline-none"
                           />
                         ) : (
-                          <button
-                            type="button"
-                            onClick={() => startEdit(task)}
-                            className="min-w-0 flex-1 truncate text-left text-white hover:underline"
-                          >
-                            {task.title}
-                          </button>
+                          <div className="min-w-0 flex-1">
+                            <button
+                              type="button"
+                              onClick={() => startEdit(task)}
+                              className="block w-full truncate text-left text-white hover:underline"
+                            >
+                              {task.title}
+                            </button>
+                            {task.createdBy.id !== user?.userId && (
+                              <p className="mt-0.5 text-xs text-neutral-500">
+                                Assigned by {task.createdBy.name ?? task.createdBy.email}
+                              </p>
+                            )}
+                          </div>
                         )}
 
                         {task.dueAt && (

@@ -69,7 +69,7 @@ const EMPTY_FORM = {
   notes: '',
 }
 
-export default function Appointments() {
+export default function Calendar() {
   const { user } = useAuth()
   const { profile } = useUserProfile()
   const navigate = useNavigate()
@@ -209,7 +209,7 @@ export default function Appointments() {
         <div className="mx-auto max-w-7xl px-6 py-6 sm:px-10 sm:py-8">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-bold text-white sm:text-3xl">Appointments</h1>
+              <h1 className="text-2xl font-bold text-white sm:text-3xl">Calendar</h1>
               <p className="mt-1 text-sm text-neutral-400">
                 {canManage || canCreate ? 'Every booking across your studio.' : 'Your upcoming and past appointments.'}
               </p>

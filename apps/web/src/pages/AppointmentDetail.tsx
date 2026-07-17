@@ -276,9 +276,12 @@ export default function AppointmentDetail() {
 
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl px-6 py-6 sm:px-10 sm:py-8">
-          <Link to="/appointments" className="inline-flex items-center gap-2 text-sm text-neutral-400 hover:text-white">
+          <Link
+            to={appointment ? `/inquiries/${appointment.inquiry.id}` : '/calendar'}
+            className="inline-flex items-center gap-2 text-sm text-neutral-400 hover:text-white"
+          >
             <ArrowLeftIcon className="h-4 w-4" />
-            Back to Appointments
+            Back to {appointment ? 'Project' : 'Calendar'}
           </Link>
 
           {error && (
@@ -679,7 +682,7 @@ export default function AppointmentDetail() {
                         type="button"
                         onClick={() =>
                           navigate(
-                            `/appointments?prefillClientId=${appointment.client.id}&prefillInquiryId=${appointment.inquiry.id}`,
+                            `/calendar?prefillClientId=${appointment.client.id}&prefillInquiryId=${appointment.inquiry.id}`,
                           )
                         }
                         className="rounded-full border border-neutral-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-800"

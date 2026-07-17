@@ -1,7 +1,9 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import { apiFetch } from '../lib/api'
 import { formatPhoneInput, readFileAsDataUrl, MAX_IMAGE_FILE_BYTES } from '../lib/format'
+import { navCountsQueryKey } from '../lib/queryKeys'
 import { useStudio } from '../context/useStudio'
 import { useUserProfile } from '../context/useUserProfile'
 import { useAuth } from '../context/useAuth'
@@ -32,6 +34,7 @@ interface StudioSettingsData {
   waiverAcknowledgment: string | null
   waiverPhotoRelease: string | null
   messageTemplates: MessageTemplate[] | null
+  showSidebarBadges: boolean
 }
 
 const EMPTY_POLICIES_FORM = {
@@ -105,6 +108,7 @@ export default function Settings() {
   const canManageLocations = profile?.permissions.includes('locations.manage') ?? false
   const canViewPolicies = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
   const canEditPolicies = user?.role === 'OWNER'
+  const queryClient = useQueryClient()
 
   const [policies, setPolicies] = useState<StudioSettingsData | null>(null)
   const [policiesForm, setPoliciesForm] = useState(EMPTY_POLICIES_FORM)
@@ -112,6 +116,7 @@ export default function Settings() {
   const [policiesSuccess, setPoliciesSuccess] = useState(false)
   const [policiesSubmitting, setPoliciesSubmitting] = useState(false)
   const [editingPolicies, setEditingPolicies] = useState(false)
+  const [showSidebarBadges, setShowSidebarBadges] = useState(false)
 
   const [waiverHealthQuestions, setWaiverHealthQuestions] = useState<HealthQuestion[]>([])
   const [waiverClauses, setWaiverClauses] = useState<string[]>([])
@@ -143,6 +148,7 @@ export default function Settings() {
         setWaiverAcknowledgment(data.waiverAcknowledgment ?? '')
         setWaiverPhotoRelease(data.waiverPhotoRelease ?? '')
         setMessageTemplates(data.messageTemplates ?? [])
+        setShowSidebarBadges(data.showSidebarBadges)
       })
       .catch(() => {
         // Section just stays empty if this fails; not critical page content.
@@ -198,6 +204,7 @@ export default function Settings() {
           waiverAcknowledgment: waiverAcknowledgment || null,
           waiverPhotoRelease: waiverPhotoRelease || null,
           messageTemplates: cleanedTemplates,
+          showSidebarBadges,
         }),
       })
 
@@ -205,9 +212,14 @@ export default function Settings() {
       setWaiverHealthQuestions(updated.waiverHealthQuestions ?? [])
       setWaiverClauses(updated.waiverClauses ?? [])
       setMessageTemplates(updated.messageTemplates ?? [])
+      setShowSidebarBadges(updated.showSidebarBadges)
       setEditingPolicies(false)
       setPoliciesSuccess(true)
       setTimeout(() => setPoliciesSuccess(false), 2000)
+      // The sidebar/badge behavior everywhere reads this off /nav-counts
+      // (see useNavCounts) -- invalidate so it picks up the new value
+      // immediately instead of waiting for the next poll.
+      if (user) queryClient.invalidateQueries({ queryKey: navCountsQueryKey(user.userId) })
     } catch (err) {
       setPoliciesError(err instanceof Error ? err.message : 'Failed to update policies')
     } finally {
@@ -939,6 +951,23 @@ export default function Settings() {
                     </div>
                   </div>
 
+                  <div className="border-t border-neutral-800 pt-4">
+                    <label className="text-sm font-medium text-neutral-300">Interface</label>
+                    <label className="mt-2 flex items-center gap-2 text-sm text-neutral-300">
+                      <input
+                        type="checkbox"
+                        checked={showSidebarBadges}
+                        onChange={(e) => setShowSidebarBadges(e.target.checked)}
+                        className="h-4 w-4 rounded border-neutral-700 bg-neutral-900"
+                      />
+                      Show new-item count badges on sidebar navigation
+                    </label>
+                    <p className="mt-1 text-xs text-neutral-500">
+                      Off by default. Doesn't affect the conversations unread badge or the Tasks icon's count, both
+                      of which always show.
+                    </p>
+                  </div>
+
                   {policiesError && <p className="text-sm text-red-400">{policiesError}</p>}
 
                   <div className="flex gap-3">
@@ -1024,6 +1053,12 @@ export default function Settings() {
                     <p className="mt-1 text-sm text-neutral-300">
                       {messageTemplates.length} template{messageTemplates.length === 1 ? '' : 's'}
                     </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                      Sidebar badges
+                    </p>
+                    <p className="mt-1 text-sm text-neutral-300">{showSidebarBadges ? 'On' : 'Off'}</p>
                   </div>
                 </div>
               )}

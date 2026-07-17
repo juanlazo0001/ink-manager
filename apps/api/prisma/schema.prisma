@@ -158,6 +158,7 @@ model User {
   checkedOutAppointments Appointment[]     @relation("AppointmentCheckedOutBy")
   taskDismissals         TaskDismissal[]
   personalTasks          PersonalTask[]
+  createdPersonalTasks    PersonalTask[]     @relation("PersonalTaskCreatedBy")
   sectionSeens           SectionSeen[]
   staffConversation      Conversation?      @relation("StaffConversation")
   authoredMessages       Message[]          @relation("MessageAuthor")
@@ -370,6 +371,12 @@ model StudioSettings {
   waiverClauses         Json?
   waiverAcknowledgment  String?
   waiverPhotoRelease    String?
+  // UI-1 §7: sidebar new-item count bubbles (Phase 5's SectionSeen-driven
+  // badges) are opt-in, default off. When false, the frontend neither
+  // renders bubbles nor fires POST /nav-counts/seen -- doesn't affect the
+  // conversations unread badge (ConversationRead-driven) or the Tasks
+  // top-bar badge, both unconditional.
+  showSidebarBadges Boolean  @default(false)
   createdAt                     DateTime @default(now())
   updatedAt                     DateTime @updatedAt
 
@@ -678,7 +685,9 @@ model TaskDismissal {
 }
 
 // Real rows (unlike system tasks) -- a personal to-do belongs to exactly
-// one user and nobody else can see or touch it.
+// one user (the assignee, userId) but may have been created BY someone
+// else (UI-1: OWNER/FRONT_DESK assigning a task to a teammate). Assignee-
+// only completion; creator or assignee can delete.
 model PersonalTask {
   id          String    @id @default(cuid())
   title       String
@@ -691,8 +700,14 @@ model PersonalTask {
   studioId String
   studio   Studio @relation(fields: [studioId], references: [id])
 
+  // The assignee -- whoever's "Assigned to Me" list this shows up in.
   userId String
   user   User   @relation(fields: [userId], references: [id])
+
+  // Who created it. Equal to userId for a self-created task; different
+  // when OWNER/FRONT_DESK assigned it to a teammate.
+  createdById String
+  createdBy   User   @relation("PersonalTaskCreatedBy", fields: [createdById], references: [id])
 
   @@index([studioId])
   @@index([userId])

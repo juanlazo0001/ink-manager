@@ -193,6 +193,16 @@ export default function ConversationsPanel() {
     if (activeConversationId) setSelectedId(activeConversationId)
   }, [activeConversationId])
 
+  // UI-1 §8: Esc dismisses the slide-over, same as the scrim/close button.
+  useEffect(() => {
+    if (!isOpen) return
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') closePanel()
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isOpen, closePanel])
+
   // Conversations bubble uses unread-logic (see navCounts.ts); refetch it
   // whenever something here might have changed it. Shares its cache key
   // with useNavCounts (Sidebar) so the two never double-fetch.
@@ -225,34 +235,53 @@ export default function ConversationsPanel() {
         )}
       </button>
 
-      {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-end justify-end sm:inset-auto sm:bottom-24 sm:right-6">
-          <div
-            className="absolute inset-0 bg-black/60 sm:hidden"
-            onClick={closePanel}
-            aria-hidden="true"
-          />
-          <div className="relative flex h-full w-full flex-col border border-neutral-800 bg-neutral-900 shadow-2xl sm:h-[32rem] sm:w-96 sm:rounded-2xl">
-            {selectedId ? (
-              <ThreadView
-                conversationId={selectedId}
-                canGoBack={!isArtist}
-                onBack={() => setSelectedId(null)}
-                onClose={closePanel}
-                onMessageSent={refreshNavCounts}
-              />
-            ) : (
-              <ConversationListView
-                tab={tab}
-                onTabChange={setTab}
-                showTabs={!isArtist}
-                onSelect={(id) => setSelectedId(id)}
-                onClose={closePanel}
-              />
-            )}
-          </div>
-        </div>
-      )}
+      {/* Scrim -- always mounted (even closed) so its opacity can transition
+          instead of popping; pointer-events-none while closed so it never
+          blocks the rest of the page. */}
+      <div
+        className={[
+          'fixed inset-0 z-50 bg-black/60 transition-opacity duration-200 ease-in-out',
+          isOpen ? 'opacity-100' : 'pointer-events-none opacity-0',
+        ].join(' ')}
+        onClick={closePanel}
+        aria-hidden="true"
+      />
+
+      {/* Full-height right-side slide-over. Always mounted (translated
+          off-screen when closed) so the open/close transform actually
+          animates; content inside only renders while open, so a closed
+          panel does no background polling. Desktop gets real working
+          width (~560px) rather than a cramped floating card; mobile is a
+          full-screen takeover. Rendered once at the app root (see App.tsx),
+          so it -- and whichever thread is open -- survives route changes
+          while open. */}
+      <div
+        className={[
+          'fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-neutral-800 bg-neutral-900 shadow-2xl transition-transform duration-200 ease-in-out',
+          isOpen ? 'translate-x-0' : 'translate-x-full',
+          'sm:w-[560px]',
+        ].join(' ')}
+        aria-hidden={!isOpen}
+      >
+        {isOpen &&
+          (selectedId ? (
+            <ThreadView
+              conversationId={selectedId}
+              canGoBack={!isArtist}
+              onBack={() => setSelectedId(null)}
+              onClose={closePanel}
+              onMessageSent={refreshNavCounts}
+            />
+          ) : (
+            <ConversationListView
+              tab={tab}
+              onTabChange={setTab}
+              showTabs={!isArtist}
+              onSelect={(id) => setSelectedId(id)}
+              onClose={closePanel}
+            />
+          ))}
+      </div>
     </>
   )
 }
@@ -864,9 +893,13 @@ function ThreadView({
         </div>
       )}
 
-      <div className="relative min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-1 overflow-hidden">
         {isClientThread && showContext && (
-          <div className="absolute inset-0 z-20 overflow-y-auto bg-neutral-900 px-4 py-4">
+          // Mobile: full overlay covering the thread (absolute inset-0).
+          // Desktop (sm:): docks as a second column instead -- sm:order-last
+          // visually places it after the thread without needing to move it
+          // in the DOM, sm:static drops it out of the overlay positioning.
+          <div className="absolute inset-0 z-20 overflow-y-auto bg-neutral-900 px-4 py-4 sm:static sm:z-auto sm:order-last sm:w-72 sm:shrink-0 sm:border-l sm:border-neutral-800">
             {!context && <p className="text-sm text-neutral-400">Loading…</p>}
             {context && (
               <div className="space-y-4 text-sm">
@@ -935,7 +968,7 @@ function ThreadView({
           </div>
         )}
 
-        <div ref={scrollRef} className="h-full space-y-1 overflow-y-auto px-3 py-3">
+        <div ref={scrollRef} className="h-full min-w-0 flex-1 space-y-1 overflow-y-auto px-3 py-3">
           {isLoading && <p className="text-sm text-neutral-400">Loading…</p>}
 
           {data?.messages.map((message) => {

@@ -83,7 +83,10 @@ const SEEN_SECTION_NAMES = SECTIONS.filter((s) => s.usesSeenAt).map((s) => s.nam
 router.get("/", async (req, res) => {
   const { studioId, userId, role } = req.user!;
 
-  const seenRows = await prisma.sectionSeen.findMany({ where: { userId, section: { in: SEEN_SECTION_NAMES } } });
+  const [seenRows, studioSettings] = await Promise.all([
+    prisma.sectionSeen.findMany({ where: { userId, section: { in: SEEN_SECTION_NAMES } } }),
+    prisma.studioSettings.findUnique({ where: { studioId }, select: { showSidebarBadges: true } }),
+  ]);
   const seenMap = new Map(seenRows.map((row) => [row.section, row.lastSeenAt]));
 
   const entries = await Promise.all(
@@ -93,7 +96,11 @@ router.get("/", async (req, res) => {
     }),
   );
 
-  res.json(Object.fromEntries(entries));
+  // showSidebarBadges rides along here (rather than requiring a separate
+  // /studio-settings call, which ARTIST can't make -- that route is
+  // OWNER/FRONT_DESK only) so every role that can see the sidebar can also
+  // see whether bubbles are turned on, from a request they already make.
+  res.json({ ...Object.fromEntries(entries), showSidebarBadges: studioSettings?.showSidebarBadges ?? false });
 });
 
 // Deliberately NOT audited: marking a nav section seen happens on every
