@@ -9,6 +9,7 @@ import { formatDateTime, formatStatus } from '../lib/format'
 import { useUserProfile } from '../context/useUserProfile'
 import { useAuth } from '../context/useAuth'
 import { appointmentsQueryKey, clientsQueryKey, artistsQueryKey } from '../lib/queryKeys'
+import { useMarkSectionSeen } from '../lib/useMarkSectionSeen'
 import { PlusIcon } from '../components/icons'
 
 const APPOINTMENT_STATUSES = ['REQUESTED', 'CONFIRMED', 'COMPLETED', 'CANCELLED', 'NO_SHOW'] as const
@@ -75,6 +76,7 @@ export default function Appointments() {
   const [searchParams, setSearchParams] = useSearchParams()
   const canCreate = profile?.permissions.includes('appointments.create') ?? false
   const canManage = profile?.permissions.includes('appointments.manage') ?? false
+  useMarkSectionSeen('appointments')
 
   const [actionError, setActionError] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState('ALL')

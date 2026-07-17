@@ -8,6 +8,7 @@ import { formatDateTime, formatStatus } from '../lib/format'
 import { PhotoIcon } from '../components/icons'
 import { useAuth } from '../context/useAuth'
 import { inquiriesQueryKey } from '../lib/queryKeys'
+import { useMarkSectionSeen } from '../lib/useMarkSectionSeen'
 
 interface Inquiry {
   id: string
@@ -37,6 +38,7 @@ export default function Inquiries() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const [bucketFilter, setBucketFilter] = useState<StatusBucket>('All')
+  useMarkSectionSeen('inquiries')
 
   const {
     data: inquiries,

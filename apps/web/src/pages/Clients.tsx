@@ -9,6 +9,7 @@ import { PlusIcon, SearchIcon } from '../components/icons'
 import { useUserProfile } from '../context/useUserProfile'
 import { useAuth } from '../context/useAuth'
 import { clientsQueryKey } from '../lib/queryKeys'
+import { useMarkSectionSeen } from '../lib/useMarkSectionSeen'
 
 interface Client {
   id: string
@@ -26,6 +27,7 @@ export default function Clients() {
   const { profile } = useUserProfile()
   const canManage = profile?.permissions.includes('clients.manage') ?? false
   const [search, setSearch] = useState('')
+  useMarkSectionSeen('clients')
 
   const [showAddModal, setShowAddModal] = useState(false)
   const [form, setForm] = useState(EMPTY_FORM)

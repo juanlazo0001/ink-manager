@@ -1,6 +1,6 @@
 import { useState, type ComponentType } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AppointmentsIcon,
   ArtistsIcon,
@@ -11,31 +11,40 @@ import {
   MenuIcon,
   SearchIcon,
   SettingsIcon,
+  TasksIcon,
   TeamIcon,
 } from './icons'
 import { useAuth } from '../context/useAuth'
 import { useStudio } from '../context/useStudio'
 import { useUserProfile } from '../context/useUserProfile'
 import { apiFetch } from '../lib/api'
-import { appointmentsQueryKey, artistsQueryKey, clientsQueryKey, inquiriesQueryKey } from '../lib/queryKeys'
+import { appointmentsQueryKey, artistsQueryKey, clientsQueryKey, inquiriesQueryKey, tasksQueryKey } from '../lib/queryKeys'
+import { useNavCounts, formatBubbleCount, type NavCounts } from '../lib/useNavCounts'
 
 interface NavItem {
   label: string
   to?: string
   icon: ComponentType<{ className?: string }>
   roles?: string[]
+  section?: keyof NavCounts
 }
 
 const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', to: '/dashboard', icon: DashboardIcon },
-  { label: 'Clients', to: '/clients', icon: ClientsIcon },
-  { label: 'Appointments', to: '/appointments', icon: AppointmentsIcon },
+  { label: 'Clients', to: '/clients', icon: ClientsIcon, section: 'clients' },
+  { label: 'Appointments', to: '/appointments', icon: AppointmentsIcon, section: 'appointments' },
   { label: 'Artists', to: '/artists', icon: ArtistsIcon },
-  { label: 'Inquiries', to: '/inquiries', icon: DocumentIcon, roles: ['OWNER', 'FRONT_DESK'] },
-  { label: 'My Inquiries', to: '/my-inquiries', icon: DocumentIcon, roles: ['ARTIST'] },
+  { label: 'Inquiries', to: '/inquiries', icon: DocumentIcon, roles: ['OWNER', 'FRONT_DESK'], section: 'inquiries' },
+  { label: 'My Inquiries', to: '/my-inquiries', icon: DocumentIcon, roles: ['ARTIST'], section: 'inquiries' },
+  { label: 'Tasks', to: '/tasks', icon: TasksIcon, roles: ['OWNER', 'FRONT_DESK', 'ARTIST'] },
   { label: 'Team', to: '/team', icon: TeamIcon, roles: ['OWNER'] },
   { label: 'Settings', to: '/settings', icon: SettingsIcon },
 ]
+
+interface TasksBadgeResponse {
+  system: unknown[]
+  personal: { completedAt: string | null }[]
+}
 
 export default function Sidebar() {
   const location = useLocation()
@@ -45,6 +54,18 @@ export default function Sidebar() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [mobileOpen, setMobileOpen] = useState(false)
+
+  const { data: navCounts } = useNavCounts()
+
+  const canSeeTasks = user?.role === 'OWNER' || user?.role === 'FRONT_DESK' || user?.role === 'ARTIST'
+  const { data: tasksBadgeData } = useQuery({
+    queryKey: user ? tasksQueryKey(user.userId) : ['tasks', 'anonymous'],
+    queryFn: () => apiFetch<TasksBadgeResponse>('/tasks'),
+    enabled: !!user && canSeeTasks,
+    refetchInterval: 60_000,
+  })
+  const taskBadgeCount =
+    (tasksBadgeData?.system.length ?? 0) + (tasksBadgeData?.personal.filter((t) => !t.completedAt).length ?? 0)
 
   // Closing on route change covers both nav-link clicks and logout's
   // redirect, so the drawer never stays open covering the next page. Adjusted
@@ -128,12 +149,21 @@ export default function Sidebar() {
 
         <nav className="mt-2 flex flex-col gap-1">
           {NAV_ITEMS.filter((item) => !item.roles || (user?.role && item.roles.includes(user.role))).map(
-            ({ label, to, icon: Icon }) => {
+            ({ label, to, icon: Icon, section }) => {
               const isActive = to != null && (location.pathname === to || location.pathname.startsWith(`${to}/`))
               const itemClassName = [
                 'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition',
                 isActive ? 'bg-neutral-800 text-white' : 'text-neutral-400 hover:bg-neutral-800/60 hover:text-white',
               ].join(' ')
+
+              const bubbleCount = section ? navCounts?.[section] ?? 0 : label === 'Tasks' ? taskBadgeCount : 0
+
+              const bubble =
+                bubbleCount > 0 ? (
+                  <span className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-red-600 px-1.5 text-[11px] font-semibold text-white">
+                    {formatBubbleCount(bubbleCount)}
+                  </span>
+                ) : null
 
               if (to) {
                 return (
@@ -146,6 +176,7 @@ export default function Sidebar() {
                   >
                     <Icon className="h-5 w-5" />
                     {label}
+                    {bubble}
                   </Link>
                 )
               }
@@ -154,6 +185,7 @@ export default function Sidebar() {
                 <span key={label} className={`${itemClassName} cursor-default opacity-60`}>
                   <Icon className="h-5 w-5" />
                   {label}
+                  {bubble}
                 </span>
               )
             },

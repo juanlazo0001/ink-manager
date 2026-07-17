@@ -5,6 +5,7 @@ import Modal from '../components/Modal'
 import { apiFetch } from '../lib/api'
 import { formatDateTime, formatStatus } from '../lib/format'
 import { useAuth } from '../context/useAuth'
+import { useMarkSectionSeen } from '../lib/useMarkSectionSeen'
 
 interface Inquiry {
   id: string
@@ -53,6 +54,7 @@ const EMPTY_APPROVE_FORM = {
 
 export default function MyInquiries() {
   const { user } = useAuth()
+  useMarkSectionSeen('inquiries')
 
   const [inquiries, setInquiries] = useState<Inquiry[] | null>(null)
   const [error, setError] = useState<string | null>(null)

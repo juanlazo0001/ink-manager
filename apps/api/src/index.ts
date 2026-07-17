@@ -17,6 +17,8 @@ import auditRouter from "./routes/audit";
 import studioSettingsRouter from "./routes/studioSettings";
 import { publicRouter as giftCardsPublicRouter, staffRouter as giftCardsStaffRouter } from "./routes/giftCards";
 import { publicRouter as waiversPublicRouter, staffRouter as waiversStaffRouter } from "./routes/waivers";
+import tasksRouter from "./routes/tasks";
+import navCountsRouter from "./routes/navCounts";
 import { requireAuth } from "./middleware/auth";
 
 const app = express();
@@ -65,6 +67,8 @@ app.use("/gift-cards", giftCardsStaffRouter);
 // must match before the staff router's /waivers/:id would swallow them.
 app.use("/waivers", waiversPublicRouter);
 app.use("/waivers", waiversStaffRouter);
+app.use("/tasks", tasksRouter);
+app.use("/nav-counts", navCountsRouter);
 
 app.get("/me", requireAuth, (req, res) => {
   res.json(req.user);

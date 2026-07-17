@@ -175,6 +175,15 @@ export function PhotoIcon({ className }: IconProps) {
   )
 }
 
+export function TasksIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <rect x="3" y="3" width="14" height="14" rx="2" />
+      <polyline points="6.5 10 8.5 12 13.5 7" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 export function PencilIcon({ className }: IconProps) {
   return (
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>

@@ -77,6 +77,9 @@ model Studio {
   giftCards       GiftCard[]
   settings        StudioSettings?
   liabilityWaivers LiabilityWaiver[]
+  taskDismissals   TaskDismissal[]
+  personalTasks    PersonalTask[]
+  sectionSeens     SectionSeen[]
 }
 
 model RolePermission {
@@ -129,6 +132,9 @@ model User {
   issuedGiftCards GiftCard[]
   verifiedWaivers        LiabilityWaiver[] @relation("WaiverVerifiedBy")
   checkedOutAppointments Appointment[]     @relation("AppointmentCheckedOutBy")
+  taskDismissals         TaskDismissal[]
+  personalTasks          PersonalTask[]
+  sectionSeens           SectionSeen[]
 
   locationId String?
   location   Location? @relation(fields: [locationId], references: [id])
@@ -183,6 +189,7 @@ model Client {
   liabilityWaivers LiabilityWaiver[]
 
   @@index([studioId])
+  @@index([studioId, createdAt])
 }
 
 model Appointment {
@@ -229,6 +236,8 @@ model Appointment {
 
   @@index([studioId, startTime])
   @@index([inquiryId])
+  @@index([studioId, createdAt])
+  @@index([artistId, createdAt])
 }
 
 model ConsentForm {
@@ -308,6 +317,8 @@ model Inquiry {
   @@index([studioId])
   @@index([studioId, status])
   @@index([clientId])
+  @@index([studioId, createdAt])
+  @@index([assignedArtistId, createdAt])
 }
 
 model StudioSettings {
@@ -469,4 +480,68 @@ model LiabilityWaiver {
 
   @@index([studioId])
   @@index([clientId])
+}
+
+// Phase 5: system tasks are DERIVED live from current data state (see
+// apps/api/src/lib/tasks/), never materialized into rows. This is the only
+// row that exists per system task, and only once a user dismisses it --
+// absence of a row means "not dismissed," not "doesn't exist."
+//
+// entityId is normally just the underlying record's id, but for task types
+// whose "identity" can be refreshed by a real business event (e.g.
+// ESTIMATE_FOLLOWUP after a resend), the source encodes that event's
+// timestamp into entityId (e.g. "{inquiryId}:{estimateSentAt}") so a fresh
+// send produces a fresh, undismissed key rather than staying silently
+// dismissed forever. See apps/api/src/lib/tasks/estimateFollowup.ts.
+model TaskDismissal {
+  id          String   @id @default(cuid())
+  taskType    String
+  entityId    String
+  dismissedAt DateTime @default(now())
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@unique([userId, taskType, entityId])
+  @@index([studioId])
+}
+
+// Real rows (unlike system tasks) -- a personal to-do belongs to exactly
+// one user and nobody else can see or touch it.
+model PersonalTask {
+  id          String    @id @default(cuid())
+  title       String
+  notes       String?
+  dueAt       DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([studioId])
+  @@index([userId])
+}
+
+// One row per (user, nav section) tracking when that user last looked.
+// Missing row / null lastSeenAt means "never seen" -- count everything.
+model SectionSeen {
+  id         String   @id @default(cuid())
+  section    String
+  lastSeenAt DateTime @default(now())
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@unique([userId, section])
 }

@@ -21,6 +21,7 @@ import DepositResponse from './pages/DepositResponse'
 import GiftCardResponse from './pages/GiftCardResponse'
 import GiftCardDetail from './pages/GiftCardDetail'
 import WaiverSign from './pages/WaiverSign'
+import Tasks from './pages/Tasks'
 
 function App() {
   return (
@@ -143,6 +144,14 @@ function App() {
           element={
             <ProtectedRoute>
               <Team />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/tasks"
+          element={
+            <ProtectedRoute>
+              <Tasks />
             </ProtectedRoute>
           }
         />
