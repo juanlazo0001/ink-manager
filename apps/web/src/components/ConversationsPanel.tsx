@@ -273,6 +273,35 @@ function dayLabel(iso: string): string {
   return date.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })
 }
 
+// Consecutive same-side messages within the same minute are treated as one
+// visual "burst" -- grouped under a single meta row instead of each bubble
+// repeating its own timestamp/channel line.
+function sameMinute(a: string, b: string): boolean {
+  return Math.floor(new Date(a).getTime() / 60_000) === Math.floor(new Date(b).getTime() / 60_000)
+}
+
+// Per-channel dot colors for the thread's meta row and the composer's
+// channel switcher. Instagram is its brand gradient; everything else is a
+// flat swatch -- literal classes (not built from a template) so Tailwind's
+// scanner can find them.
+const CHANNEL_DOT_CLASSES: Record<string, string> = {
+  INSTAGRAM: 'bg-gradient-to-br from-[#f9ce34] via-[#ee2a7b] to-[#6228d7]',
+  SMS: 'bg-[#2fb35c]',
+  EMAIL: 'bg-[#4a90d9]',
+  FACEBOOK: 'bg-[#1877f2]',
+  PHONE: 'bg-[#8a8a92]',
+  OTHER: 'bg-[#5a5a62]',
+}
+
+function ChannelDot({ channel, className = '' }: { channel: string; className?: string }) {
+  return (
+    <span
+      className={`h-3.5 w-3.5 shrink-0 rounded-[4px] ${CHANNEL_DOT_CLASSES[channel] ?? CHANNEL_DOT_CLASSES.OTHER} ${className}`}
+      aria-hidden="true"
+    />
+  )
+}
+
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
@@ -1404,7 +1433,41 @@ function ThreadView({
   const primaryInquiry = data?.conversation.primaryInquiry ?? null
   const headerTone = primaryInquiry ? getStatusTone(primaryInquiry.status) : null
 
-  let lastDay = ''
+  // Precomputed once per render (not derived during JSX evaluation) so a
+  // "group" -- a burst of consecutive same-side messages within the same
+  // minute -- is a single render unit with one meta row, instead of
+  // recomputing lookback/lookahead state inline per bubble. Shared-inquiry
+  // cards never join a group; they're a distinct one-off card, not a chat
+  // bubble.
+  const messageGroups: { messages: MessageItem[]; isOutboundSide: boolean; showDaySeparator: boolean }[] = []
+  {
+    let lastDayForGrouping = ''
+    for (const message of data?.messages ?? []) {
+      const isOutboundSide = isClientThread
+        ? message.direction === 'OUTBOUND'
+        : message.authorUserId === user?.userId
+      const isSharedInquiry = message.metadata?.kind === 'shared_inquiry'
+      const showDaySeparator = dayKey(message.createdAt) !== lastDayForGrouping
+      lastDayForGrouping = dayKey(message.createdAt)
+
+      const prevGroup = messageGroups[messageGroups.length - 1]
+      const prevMessage = prevGroup?.messages[prevGroup.messages.length - 1]
+      const canJoinPrevGroup =
+        !showDaySeparator &&
+        !isSharedInquiry &&
+        prevGroup != null &&
+        prevMessage != null &&
+        prevMessage.metadata?.kind !== 'shared_inquiry' &&
+        prevGroup.isOutboundSide === isOutboundSide &&
+        sameMinute(prevMessage.createdAt, message.createdAt)
+
+      if (canJoinPrevGroup && prevGroup) {
+        prevGroup.messages.push(message)
+      } else {
+        messageGroups.push({ messages: [message], isOutboundSide, showDaySeparator })
+      }
+    }
+  }
 
   return (
     <>
@@ -1743,100 +1806,140 @@ function ThreadView({
           </div>
         )}
 
-        <div ref={scrollRef} className="h-full min-w-0 flex-1 space-y-2.5 overflow-y-auto px-3 py-3">
+        <div ref={scrollRef} className="h-full min-w-0 flex-1 space-y-2 overflow-y-auto px-3 py-3">
           {isLoading && <p className="text-sm text-fg-secondary">Loading…</p>}
 
-          {data?.messages.map((message) => {
-            const isOutboundSide = isClientThread
-              ? message.direction === 'OUTBOUND'
-              : message.authorUserId === user?.userId
-            const showDaySeparator = dayKey(message.createdAt) !== lastDay
-            lastDay = dayKey(message.createdAt)
-            const sharedInquiryId = message.metadata?.kind === 'shared_inquiry' ? message.metadata.inquiryId : null
+          {messageGroups.map((group) => {
+            const firstMessage = group.messages[0]
+            const lastMessage = group.messages[group.messages.length - 1]
+            const sharedInquiryId =
+              firstMessage.metadata?.kind === 'shared_inquiry' ? firstMessage.metadata.inquiryId : null
             const sharedInquiryLink =
               sharedInquiryId && user?.role === 'ARTIST' && assignedInquiryIds.has(sharedInquiryId)
                 ? '/my-inquiries'
                 : null
 
             return (
-              <div key={message.id}>
-                {showDaySeparator && (
+              <div key={firstMessage.id}>
+                {group.showDaySeparator && (
                   <p className="my-2 text-center text-[11px] uppercase tracking-wider text-fg-muted">
-                    {dayLabel(message.createdAt)}
+                    {dayLabel(firstMessage.createdAt)}
                   </p>
                 )}
-                <div className={`flex ${isOutboundSide ? 'justify-end' : 'justify-start'}`}>
-                  <div
-                    className={[
-                      'max-w-[75%] rounded-[1.25rem] px-4 py-2.5 text-sm',
-                      sharedInquiryId
-                        ? 'border border-border bg-surface-raised/80 text-fg'
-                        : isOutboundSide
-                          ? 'border border-accent/30 bg-accent/15 text-fg'
-                          : 'bg-surface text-fg',
-                    ].join(' ')}
-                  >
-                    {!isClientThread && (
-                      <p className="mb-0.5 text-[11px] font-medium text-fg-secondary">
-                        {message.author?.name ?? message.author?.email ?? 'Unknown'}
-                      </p>
+
+                <div className={`flex ${group.isOutboundSide ? 'justify-end' : 'justify-start'}`}>
+                  <div className="flex max-w-[75%] items-end gap-2">
+                    {!group.isOutboundSide && (
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface-raised text-[10px] font-semibold text-fg">
+                        {initials(counterpartName)}
+                      </span>
                     )}
-                    {sharedInquiryId && (
-                      <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-fg-secondary">
-                        Shared inquiry
-                      </p>
-                    )}
-                    {message.body && <p className="whitespace-pre-wrap">{message.body}</p>}
-                    {message.attachments && message.attachments.length > 0 && (
-                      <div className={sharedInquiryId ? 'mt-1 grid grid-cols-2 gap-1' : undefined}>
-                        {message.attachments.map((url) => (
-                          <div key={url} className="group relative mt-1">
-                            <img src={url} alt="Attachment" className="max-h-48 rounded-lg" />
-                            {isClientThread && !sharedInquiryId && (
-                              <button
-                                type="button"
-                                onClick={() => setImagePickerFor(imagePickerFor === url ? null : url)}
-                                className="absolute bottom-1 right-1 rounded-full bg-black/70 px-2 py-1 text-[10px] font-medium text-fg opacity-0 transition group-hover:opacity-100"
-                              >
-                                Add to inquiry
-                              </button>
+
+                    <div className={`flex min-w-0 flex-col ${group.isOutboundSide ? 'items-end' : 'items-start'}`}>
+                      {!isClientThread && (
+                        <p className="mb-1 px-1 text-[11px] font-medium text-fg-secondary">
+                          {firstMessage.author?.name ?? firstMessage.author?.email ?? 'Unknown'}
+                        </p>
+                      )}
+
+                      {group.messages.map((message, i) => {
+                        const isLastInGroup = i === group.messages.length - 1
+                        const cornerClass = sharedInquiryId
+                          ? 'rounded-[1.25rem]'
+                          : !isLastInGroup
+                            ? 'rounded-[18px]'
+                            : group.isOutboundSide
+                              ? 'rounded-tl-[18px] rounded-tr-[18px] rounded-bl-[18px] rounded-br-[5px]'
+                              : 'rounded-tl-[18px] rounded-tr-[18px] rounded-br-[18px] rounded-bl-[5px]'
+
+                        return (
+                          <div
+                            key={message.id}
+                            className={[
+                              i === 0 ? '' : 'mt-[3px]',
+                              'max-w-full px-4 py-2.5 text-sm text-[#f2f2f0]',
+                              cornerClass,
+                              sharedInquiryId
+                                ? 'border border-border bg-surface-raised/80'
+                                : group.isOutboundSide
+                                  ? 'border border-[#3d461f] bg-[#23281a]'
+                                  : 'border border-[#26262c] bg-[#1c1c21]',
+                            ].join(' ')}
+                          >
+                            {sharedInquiryId && i === 0 && (
+                              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-fg-secondary">
+                                Shared inquiry
+                              </p>
                             )}
-                            {imagePickerFor === url && (
-                              <div className="absolute bottom-full right-0 z-10 mb-1 w-48 rounded-xl border border-border bg-surface-raised p-1.5 shadow-xl">
-                                {imageAttachError && <p className="px-1 pb-1 text-[10px] text-danger">{imageAttachError}</p>}
-                                {!context && <p className="px-1 py-1 text-[10px] text-fg-muted">Loading…</p>}
-                                {context && context.inquiries.length === 0 && (
-                                  <p className="px-1 py-1 text-[10px] text-fg-muted">No inquiries for this client.</p>
-                                )}
-                                {context?.inquiries.map((inquiry) => (
-                                  <button
-                                    key={inquiry.id}
-                                    type="button"
-                                    onClick={() => handleAttachImageToInquiry(url, inquiry.id)}
-                                    className="block w-full truncate rounded-md px-2 py-1 text-left text-[11px] text-fg-secondary hover:bg-surface"
-                                  >
-                                    {inquiry.description}
-                                  </button>
+                            {message.body && <p className="whitespace-pre-wrap">{message.body}</p>}
+                            {message.attachments && message.attachments.length > 0 && (
+                              <div className={sharedInquiryId ? 'mt-1.5 grid grid-cols-2 gap-1' : 'mt-1.5 space-y-1.5'}>
+                                {message.attachments.map((url) => (
+                                  <div key={url} className="group relative">
+                                    <img
+                                      src={url}
+                                      alt="Attachment"
+                                      className={sharedInquiryId ? 'max-h-48 rounded-lg' : 'w-full rounded-[12px]'}
+                                    />
+                                    {isClientThread && !sharedInquiryId && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setImagePickerFor(imagePickerFor === url ? null : url)}
+                                        className="absolute bottom-1 right-1 rounded-full bg-black/70 px-2 py-1 text-[10px] font-medium text-fg opacity-0 transition group-hover:opacity-100"
+                                      >
+                                        Add to inquiry
+                                      </button>
+                                    )}
+                                    {imagePickerFor === url && (
+                                      <div className="absolute bottom-full right-0 z-10 mb-1 w-48 rounded-xl border border-border bg-surface-raised p-1.5 shadow-xl">
+                                        {imageAttachError && (
+                                          <p className="px-1 pb-1 text-[10px] text-danger">{imageAttachError}</p>
+                                        )}
+                                        {!context && <p className="px-1 py-1 text-[10px] text-fg-muted">Loading…</p>}
+                                        {context && context.inquiries.length === 0 && (
+                                          <p className="px-1 py-1 text-[10px] text-fg-muted">
+                                            No inquiries for this client.
+                                          </p>
+                                        )}
+                                        {context?.inquiries.map((inquiry) => (
+                                          <button
+                                            key={inquiry.id}
+                                            type="button"
+                                            onClick={() => handleAttachImageToInquiry(url, inquiry.id)}
+                                            className="block w-full truncate rounded-md px-2 py-1 text-left text-[11px] text-fg-secondary hover:bg-surface"
+                                          >
+                                            {inquiry.description}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
                                 ))}
                               </div>
                             )}
+                            {sharedInquiryLink && isLastInGroup && (
+                              <Link
+                                to={sharedInquiryLink}
+                                onClick={onClose}
+                                className="mt-1 flex items-center gap-1 text-[11px] font-medium text-fg-secondary hover:text-fg"
+                              >
+                                View in My Inquiries <ArrowUpRightIcon className="h-3 w-3" />
+                              </Link>
+                            )}
                           </div>
-                        ))}
-                      </div>
-                    )}
-                    {sharedInquiryLink && (
-                      <Link
-                        to={sharedInquiryLink}
-                        onClick={onClose}
-                        className="mt-1 flex items-center gap-1 text-[11px] font-medium text-fg-secondary hover:text-fg"
-                      >
-                        View in My Inquiries <ArrowUpRightIcon className="h-3 w-3" />
-                      </Link>
-                    )}
-                    <p className="mt-1 flex items-center gap-1 text-[10px] text-fg-secondary">
-                      {isClientThread && <span className="rounded-full bg-black/20 px-1.5 py-0.5">{channelLabel(message.channel)}</span>}
-                      {formatDateTime(message.createdAt)}
-                    </p>
+                        )
+                      })}
+
+                      {isClientThread ? (
+                        <div className="mt-1 flex items-center gap-1.5 px-1 text-[10.5px] text-[#8a8a92]">
+                          <ChannelDot channel={lastMessage.channel} />
+                          <span>{channelLabel(lastMessage.channel)}</span>
+                          <span>{formatDateTime(lastMessage.createdAt)}</span>
+                        </div>
+                      ) : (
+                        <p className="mt-1 px-1 text-[10.5px] text-[#8a8a92]">{formatDateTime(lastMessage.createdAt)}</p>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1848,17 +1951,25 @@ function ThreadView({
       <div className="border-t border-border p-3">
         {isClientThread && (
           <div className="mb-2 flex flex-wrap items-center gap-2">
-            <select
-              value={channel}
-              onChange={(e) => setChannel(e.target.value)}
-              className="rounded-lg border border-border bg-surface-inset px-2.5 py-1.5 text-sm text-fg focus:border-accent focus:outline-none"
-            >
+            <div className="flex flex-wrap items-center gap-1.5">
               {CLIENT_CHANNELS.map((c) => (
-                <option key={c} value={c}>
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => setChannel(c)}
+                  aria-pressed={channel === c}
+                  className={[
+                    'flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition',
+                    channel === c
+                      ? 'border-[#c8e04a] bg-[#3a4118] text-[#c8e04a]'
+                      : 'border-border text-fg-secondary hover:bg-surface hover:text-fg',
+                  ].join(' ')}
+                >
+                  <ChannelDot channel={c} />
                   {channelLabel(c)}
-                </option>
+                </button>
               ))}
-            </select>
+            </div>
             <div className="flex items-center gap-1 rounded-full border border-border p-0.5 text-sm">
               <button
                 type="button"
