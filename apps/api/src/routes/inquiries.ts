@@ -769,16 +769,33 @@ router.post("/:id/deposit-form", requireAuth, requireRole(Role.OWNER, Role.FRONT
 // accident as new Inquiry fields get added later.
 function buildSharedInquiryProjection(inquiry: {
   description: string;
+  colorOrBlackGrey: string;
   placement: string;
   estimatedSize: string;
+  hasBeenTattooedBefore: boolean;
+  budget: string | null;
+  desiredTiming: string | null;
   timeEstimateHoursMin: number | null;
   timeEstimateHoursMax: number | null;
   priceEstimateLow: number | null;
   priceEstimateHigh: number | null;
   referenceImages: string[];
+  placementImages: string[];
+  preferredArtist: { user: { name: string | null; email: string } } | null;
 }): { body: string; attachments: string[] } {
-  const lines = [`Tattoo: ${inquiry.description}`, `Placement: ${inquiry.placement}`, `Size: ${inquiry.estimatedSize}`];
+  const lines = [
+    `Tattoo: ${inquiry.description}`,
+    `Style: ${inquiry.colorOrBlackGrey}`,
+    `Placement: ${inquiry.placement}`,
+    `Size: ${inquiry.estimatedSize}`,
+    `Previously tattooed: ${inquiry.hasBeenTattooedBefore ? "Yes" : "No"}`,
+  ];
 
+  if (inquiry.budget) lines.push(`Budget: ${inquiry.budget}`);
+  if (inquiry.desiredTiming) lines.push(`Desired timing: ${inquiry.desiredTiming}`);
+  if (inquiry.preferredArtist) {
+    lines.push(`Preferred artist: ${inquiry.preferredArtist.user.name ?? inquiry.preferredArtist.user.email}`);
+  }
   if (inquiry.timeEstimateHoursMin != null && inquiry.timeEstimateHoursMax != null) {
     lines.push(`Estimated time: ${inquiry.timeEstimateHoursMin}-${inquiry.timeEstimateHoursMax} hours`);
   }
@@ -786,8 +803,15 @@ function buildSharedInquiryProjection(inquiry: {
     lines.push(`Estimated price: $${inquiry.priceEstimateLow}-$${inquiry.priceEstimateHigh}`);
   }
 
-  return { body: lines.join("\n"), attachments: inquiry.referenceImages };
+  return { body: lines.join("\n"), attachments: [...inquiry.referenceImages, ...inquiry.placementImages] };
 }
+
+// Both share-to-artist routes need the same non-PII fields plus the
+// preferred-artist name (resolved via join so the message never shows a raw
+// id) -- kept as a Prisma include shape shared between them.
+const SHARE_TO_ARTIST_INCLUDE = {
+  preferredArtist: { include: { user: { select: { name: true, email: true } } } },
+} as const;
 
 // Preview: exactly what would be composed into the artist's thread, before
 // an artist is even picked -- the projection never depends on who receives
@@ -795,7 +819,7 @@ function buildSharedInquiryProjection(inquiry: {
 router.get("/:id/share-to-artist/preview", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
   const id = req.params.id as string;
 
-  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  const inquiry = await prisma.inquiry.findUnique({ where: { id }, include: SHARE_TO_ARTIST_INCLUDE });
   if (!inquiry || inquiry.studioId !== req.user!.studioId) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
@@ -817,7 +841,7 @@ router.post("/:id/share-to-artist", requireAuth, requireRole(Role.OWNER, Role.FR
     return res.status(400).json({ error: "artistUserId is required" });
   }
 
-  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  const inquiry = await prisma.inquiry.findUnique({ where: { id }, include: SHARE_TO_ARTIST_INCLUDE });
   if (!inquiry || inquiry.studioId !== studioId) {
     return res.status(404).json({ error: "Inquiry not found" });
   }

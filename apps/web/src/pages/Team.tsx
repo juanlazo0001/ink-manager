@@ -346,7 +346,7 @@ export default function Team() {
               <p className="mt-1 text-sm text-fg-secondary">Everyone with access to your studio's portal.</p>
             </div>
 
-            {activeTab === 'staff' && isOwner && (
+            {isOwner && (
               <button
                 type="button"
                 onClick={() => setShowAddModal(true)}

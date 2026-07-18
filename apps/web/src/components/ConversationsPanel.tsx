@@ -8,7 +8,9 @@ import { formatDateTime, formatRelativeTime } from '../lib/format'
 import { uploadImageToCloudinary } from '../lib/cloudinary'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useViewAs } from '../context/useViewAs'
+import { useUserProfile } from '../context/useUserProfile'
 import { useConversationPanel } from '../context/useConversationPanel'
+import Modal from './Modal'
 import { navCountsQueryKey } from '../lib/queryKeys'
 import type { NavCounts } from '../lib/useNavCounts'
 import {
@@ -463,6 +465,15 @@ function ConversationListView({
   const [showNewChat, setShowNewChat] = useState(false)
   const [newChatSearch, setNewChatSearch] = useState('')
   const [newChatError, setNewChatError] = useState<string | null>(null)
+  const [showAddClientModal, setShowAddClientModal] = useState(false)
+  const [newClientForm, setNewClientForm] = useState({ firstName: '', lastName: '', email: '', phone: '' })
+  const [newClientError, setNewClientError] = useState<string | null>(null)
+  const [addingClient, setAddingClient] = useState(false)
+
+  const { profile } = useUserProfile()
+  const { target: viewAsTarget } = useViewAs()
+  const canAddClients = (profile?.permissions.includes('clients.manage') ?? false) && !viewAsTarget
+  const queryClient = useQueryClient()
 
   const params = new URLSearchParams({ type: tab })
   if (tab === 'CLIENT' && entityTypeFilter) params.set('entityType', entityTypeFilter)
@@ -535,6 +546,32 @@ function ConversationListView({
       setNewChatSearch('')
     } catch (err) {
       setNewChatError(err instanceof Error ? err.message : 'Failed to start conversation')
+    }
+  }
+
+  async function handleAddNewClient(event: React.FormEvent) {
+    event.preventDefault()
+    setNewClientError(null)
+    setAddingClient(true)
+    try {
+      const client = await apiFetch<{ id: string }>('/clients', {
+        method: 'POST',
+        body: JSON.stringify({
+          firstName: newClientForm.firstName,
+          lastName: newClientForm.lastName,
+          email: newClientForm.email || undefined,
+          phone: newClientForm.phone || undefined,
+        }),
+      })
+      setShowAddClientModal(false)
+      setNewClientForm({ firstName: '', lastName: '', email: '', phone: '' })
+      queryClient.invalidateQueries({ queryKey: ['clients-for-new-chat'] })
+      queryClient.invalidateQueries({ queryKey: ['clients'] })
+      await startClientChat(client.id)
+    } catch (err) {
+      setNewClientError(err instanceof Error ? err.message : 'Failed to create client')
+    } finally {
+      setAddingClient(false)
     }
   }
 
@@ -619,6 +656,23 @@ function ConversationListView({
             {tab === 'CLIENT' && newChatClientResults.length === 0 && (
               <li className="px-2.5 py-2 text-xs text-fg-muted">No clients match.</li>
             )}
+            {tab === 'CLIENT' && canAddClients && (
+              <li className="mt-1 border-t border-border pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const [firstName = '', ...rest] = newChatSearch.trim().split(/\s+/)
+                    setNewClientForm({ firstName, lastName: rest.join(' '), email: '', phone: '' })
+                    setNewClientError(null)
+                    setShowAddClientModal(true)
+                  }}
+                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-accent hover:bg-surface"
+                >
+                  <PlusIcon className="h-3.5 w-3.5 shrink-0" />
+                  Add new client
+                </button>
+              </li>
+            )}
             {tab === 'STAFF' &&
               newChatStaffResults.map((member) => (
                 <li key={member.id}>
@@ -665,7 +719,7 @@ function ConversationListView({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search inquiries…"
-            className="w-full rounded-lg border border-border bg-surface-inset px-2.5 py-1.5 text-xs text-fg focus:border-accent focus:outline-none"
+            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none"
           />
         </div>
       )}
@@ -683,7 +737,7 @@ function ConversationListView({
             type="button"
             onClick={() => setQuickFilter(value)}
             className={[
-              'rounded-full px-2.5 py-1 text-xs font-medium transition',
+              'rounded-full px-3 py-1.5 text-sm font-medium transition',
               quickFilter === value
                 ? 'bg-accent text-bg'
                 : 'border border-border text-fg-secondary hover:bg-surface hover:text-fg',
@@ -715,7 +769,7 @@ function ConversationListView({
             <select
               value={entityTypeFilter}
               onChange={(e) => setEntityTypeFilter(e.target.value)}
-              className="min-w-0 flex-1 rounded-lg border border-border bg-surface-inset px-2 py-1.5 text-xs text-fg focus:border-accent focus:outline-none"
+              className="min-w-0 flex-1 rounded-lg border border-border bg-surface-inset px-2.5 py-2 text-sm text-fg focus:border-accent focus:outline-none"
             >
               <option value="">Any tagged type</option>
               {TAGGABLE_ENTITY_TYPES.map((t) => (
@@ -727,7 +781,7 @@ function ConversationListView({
             <select
               value={artistIdFilter}
               onChange={(e) => setArtistIdFilter(e.target.value)}
-              className="min-w-0 flex-1 rounded-lg border border-border bg-surface-inset px-2 py-1.5 text-xs text-fg focus:border-accent focus:outline-none"
+              className="min-w-0 flex-1 rounded-lg border border-border bg-surface-inset px-2.5 py-2 text-sm text-fg focus:border-accent focus:outline-none"
             >
               <option value="">Any artist</option>
               {artistOptions?.map((artist) => (
@@ -840,6 +894,82 @@ function ConversationListView({
             ))}
         </ul>
       </div>
+
+      {showAddClientModal && (
+        <Modal title="Add Client" onClose={() => setShowAddClientModal(false)}>
+          <form onSubmit={handleAddNewClient}>
+            {newClientError && (
+              <div className="mb-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+                {newClientError}
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label htmlFor="new-chat-firstName" className="mb-1 block text-sm font-medium text-fg-secondary">
+                  First Name
+                </label>
+                <input
+                  id="new-chat-firstName"
+                  type="text"
+                  required
+                  value={newClientForm.firstName}
+                  onChange={(e) => setNewClientForm((f) => ({ ...f, firstName: e.target.value }))}
+                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="new-chat-lastName" className="mb-1 block text-sm font-medium text-fg-secondary">
+                  Last Name
+                </label>
+                <input
+                  id="new-chat-lastName"
+                  type="text"
+                  required
+                  value={newClientForm.lastName}
+                  onChange={(e) => setNewClientForm((f) => ({ ...f, lastName: e.target.value }))}
+                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                />
+              </div>
+            </div>
+
+            <div className="mt-3">
+              <label htmlFor="new-chat-email" className="mb-1 block text-sm font-medium text-fg-secondary">
+                Email
+              </label>
+              <input
+                id="new-chat-email"
+                type="email"
+                value={newClientForm.email}
+                onChange={(e) => setNewClientForm((f) => ({ ...f, email: e.target.value }))}
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+            </div>
+
+            <div className="mt-3">
+              <label htmlFor="new-chat-phone" className="mb-1 block text-sm font-medium text-fg-secondary">
+                Phone
+              </label>
+              <input
+                id="new-chat-phone"
+                type="tel"
+                value={newClientForm.phone}
+                onChange={(e) => setNewClientForm((f) => ({ ...f, phone: e.target.value }))}
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={addingClient}
+              className="mt-5 w-full rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+            >
+              {addingClient ? 'Adding…' : 'Add Client & Start Chat'}
+            </button>
+          </form>
+        </Modal>
+      )}
     </>
   )
 }
@@ -1722,7 +1852,7 @@ function ThreadView({
             <select
               value={channel}
               onChange={(e) => setChannel(e.target.value)}
-              className="rounded-lg border border-border bg-surface-inset px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none"
+              className="rounded-lg border border-border bg-surface-inset px-2.5 py-1.5 text-sm text-fg focus:border-accent focus:outline-none"
             >
               {CLIENT_CHANNELS.map((c) => (
                 <option key={c} value={c}>
@@ -1730,18 +1860,18 @@ function ThreadView({
                 </option>
               ))}
             </select>
-            <div className="flex items-center gap-1 rounded-full border border-border p-0.5 text-xs">
+            <div className="flex items-center gap-1 rounded-full border border-border p-0.5 text-sm">
               <button
                 type="button"
                 onClick={() => setDirection('INBOUND')}
-                className={`rounded-full px-2 py-1 ${direction === 'INBOUND' ? 'bg-accent text-bg' : 'text-fg-muted'}`}
+                className={`rounded-full px-2.5 py-1 ${direction === 'INBOUND' ? 'bg-accent text-bg' : 'text-fg-muted'}`}
               >
                 Their message
               </button>
               <button
                 type="button"
                 onClick={() => setDirection('OUTBOUND')}
-                className={`rounded-full px-2 py-1 ${direction === 'OUTBOUND' ? 'bg-accent text-bg' : 'text-fg-muted'}`}
+                className={`rounded-full px-2.5 py-1 ${direction === 'OUTBOUND' ? 'bg-accent text-bg' : 'text-fg-muted'}`}
               >
                 Our reply
               </button>
@@ -1922,7 +2052,7 @@ function ThreadView({
           type="button"
           onClick={handleSend}
           disabled={sending || uploading || !!viewAsTarget || (body.trim().length === 0 && attachments.length === 0)}
-          className="mt-2 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
+          className="mt-2 w-full rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
         >
           {sending ? 'Sending…' : 'Send'}
         </button>
