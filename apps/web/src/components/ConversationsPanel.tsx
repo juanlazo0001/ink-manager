@@ -70,6 +70,13 @@ interface StaffRosterEntry {
   conversationId: string | null
 }
 
+interface NewChatClient {
+  id: string
+  firstName: string
+  lastName: string
+  email: string | null
+}
+
 interface ArtistFilterOption {
   id: string
   user: { name: string | null; email: string }
@@ -453,6 +460,9 @@ function ConversationListView({
   const [search, setSearch] = useState('')
   const [showFilters, setShowFilters] = useState(false)
   const [quickFilter, setQuickFilter] = useState<'all' | 'unread' | 'needs-action'>('all')
+  const [showNewChat, setShowNewChat] = useState(false)
+  const [newChatSearch, setNewChatSearch] = useState('')
+  const [newChatError, setNewChatError] = useState<string | null>(null)
 
   const params = new URLSearchParams({ type: tab })
   if (tab === 'CLIENT' && entityTypeFilter) params.set('entityType', entityTypeFilter)
@@ -478,8 +488,55 @@ function ConversationListView({
     enabled: isOpen && tab === 'CLIENT' && showFilters,
   })
 
+  // Only fetched once "New chat" is actually opened on the Clients tab --
+  // lazy like the other on-demand pickers in this panel. POST /conversations
+  // {clientId} is get-or-create, so picking any client here (not just ones
+  // without a thread yet) safely resolves to their existing conversation.
+  const { data: allClients } = useQuery({
+    queryKey: ['clients-for-new-chat'],
+    queryFn: () => apiFetch<NewChatClient[]>('/clients'),
+    enabled: isOpen && tab === 'CLIENT' && showNewChat,
+  })
+
   const rosterWithoutThread = (roster ?? []).filter((member) => !member.conversationId)
   const hasActiveFilter = !!(entityTypeFilter || artistIdFilter || search.trim())
+
+  const newChatClientResults = (allClients ?? [])
+    .filter((client) => `${client.firstName} ${client.lastName}`.toLowerCase().includes(newChatSearch.toLowerCase()))
+    .slice(0, 20)
+  const newChatStaffResults = rosterWithoutThread.filter((member) =>
+    member.name.toLowerCase().includes(newChatSearch.toLowerCase()),
+  )
+
+  async function startClientChat(clientId: string) {
+    setNewChatError(null)
+    try {
+      const conversation = await apiFetch<ConversationSummary>('/conversations', {
+        method: 'POST',
+        body: JSON.stringify({ clientId }),
+      })
+      onSelect(conversation.id)
+      setShowNewChat(false)
+      setNewChatSearch('')
+    } catch (err) {
+      setNewChatError(err instanceof Error ? err.message : 'Failed to start conversation')
+    }
+  }
+
+  async function startStaffChat(staffUserId: string) {
+    setNewChatError(null)
+    try {
+      const conversation = await apiFetch<ConversationSummary>('/conversations', {
+        method: 'POST',
+        body: JSON.stringify({ staffUserId }),
+      })
+      onSelect(conversation.id)
+      setShowNewChat(false)
+      setNewChatSearch('')
+    } catch (err) {
+      setNewChatError(err instanceof Error ? err.message : 'Failed to start conversation')
+    }
+  }
 
   // "Needs action" = something's waiting on the studio: an unread message,
   // or the featured inquiry sitting in a stage where the studio (not the
@@ -500,15 +557,88 @@ function ConversationListView({
     <>
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <h2 className="text-sm font-semibold text-fg">Conversations</h2>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close"
-          className="flex h-8 w-8 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
-        >
-          <CloseIcon className="h-4 w-4" />
-        </button>
+        <div className="flex items-center gap-1">
+          {/* Artists only ever have their own single Team thread (see the
+              staffUserId auto-resolve effect above) -- no roster to browse,
+              so starting a new chat isn't a meaningful action for them. */}
+          {showTabs && (
+            <button
+              type="button"
+              onClick={() => {
+                setShowNewChat((v) => !v)
+                setNewChatSearch('')
+                setNewChatError(null)
+              }}
+              aria-label="New conversation"
+              aria-pressed={showNewChat}
+              className={[
+                'flex h-8 w-8 items-center justify-center rounded-full transition hover:bg-surface hover:text-fg',
+                showNewChat ? 'text-accent' : 'text-fg-muted',
+              ].join(' ')}
+            >
+              <PlusIcon className="h-4 w-4" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="flex h-8 w-8 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
+          >
+            <CloseIcon className="h-4 w-4" />
+          </button>
+        </div>
       </div>
+
+      {showNewChat && (
+        <div className="border-b border-border px-3 py-3">
+          <input
+            type="text"
+            autoFocus
+            value={newChatSearch}
+            onChange={(e) => setNewChatSearch(e.target.value)}
+            placeholder={tab === 'CLIENT' ? 'Search clients…' : 'Search teammates…'}
+            className="w-full rounded-lg border border-border bg-surface-inset px-2.5 py-1.5 text-sm text-fg focus:border-accent focus:outline-none"
+          />
+          {newChatError && <p className="mt-1.5 text-xs text-danger">{newChatError}</p>}
+          <ul className="mt-2 max-h-48 overflow-y-auto">
+            {tab === 'CLIENT' &&
+              newChatClientResults.map((client) => (
+                <li key={client.id}>
+                  <button
+                    type="button"
+                    onClick={() => startClientChat(client.id)}
+                    className="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
+                  >
+                    <span className="truncate">
+                      {client.firstName} {client.lastName}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            {tab === 'CLIENT' && newChatClientResults.length === 0 && (
+              <li className="px-2.5 py-2 text-xs text-fg-muted">No clients match.</li>
+            )}
+            {tab === 'STAFF' &&
+              newChatStaffResults.map((member) => (
+                <li key={member.id}>
+                  <button
+                    type="button"
+                    onClick={() => startStaffChat(member.id)}
+                    className="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
+                  >
+                    <span className="truncate">{member.name}</span>
+                  </button>
+                </li>
+              ))}
+            {tab === 'STAFF' && newChatStaffResults.length === 0 && (
+              <li className="px-2.5 py-2 text-xs text-fg-muted">
+                Everyone already has a conversation with you.
+              </li>
+            )}
+          </ul>
+        </div>
+      )}
 
       {showTabs && (
         <div className="flex gap-1 border-b border-border px-3 pt-2">
@@ -1246,7 +1376,7 @@ function ThreadView({
               key={tag.id}
               className="flex items-center gap-1 rounded-full border border-border bg-surface/60 px-2 py-0.5 text-[11px] text-fg-secondary"
             >
-              <Link to={tag.deepLink} className="hover:text-fg">
+              <Link to={tag.deepLink} onClick={onClose} className="hover:text-fg">
                 {tag.entityType}: {tag.label}
               </Link>
               <button
@@ -1415,6 +1545,7 @@ function ThreadView({
                   {otherInquiries.length > 0 && (
                     <Link
                       to={`/clients/${context.client.id}`}
+                      onClick={onClose}
                       className="block text-xs font-medium text-fg-secondary hover:text-fg"
                     >
                       + {otherInquiries.length} other {otherInquiries.length === 1 ? 'inquiry' : 'inquiries'}
@@ -1427,6 +1558,7 @@ function ThreadView({
                     {context.nextAppointment && (
                       <Link
                         to={`/appointments/${context.nextAppointment.id}`}
+                        onClick={onClose}
                         className="mt-1 block rounded-lg border border-border px-2.5 py-2 hover:bg-surface/60"
                       >
                         <p className="text-xs text-fg">{formatDateTime(context.nextAppointment.startTime)}</p>
@@ -1447,6 +1579,7 @@ function ThreadView({
                       <Link
                         key={card.id}
                         to={`/gift-cards/${card.id}`}
+                        onClick={onClose}
                         className="mt-1 block rounded-lg border border-border px-2.5 py-2 hover:bg-surface/60"
                       >
                         <p className="text-xs text-fg">${(card.amountCents / 100).toFixed(2)}</p>
@@ -1462,6 +1595,7 @@ function ThreadView({
                   {featuredInquiry && (
                     <Link
                       to={`/inquiries/${featuredInquiry.id}`}
+                      onClick={onClose}
                       className="block w-full rounded-full bg-accent px-4 py-2 text-center text-sm font-semibold text-bg transition hover:bg-accent-hover"
                     >
                       {nextActionLabel(featuredInquiry.status)}
@@ -1469,6 +1603,7 @@ function ThreadView({
                   )}
                   <Link
                     to={`/clients/${context.client.id}`}
+                    onClick={onClose}
                     className="block w-full rounded-full border border-border px-4 py-2 text-center text-sm font-medium text-fg transition hover:bg-surface"
                   >
                     View client profile
@@ -1563,6 +1698,7 @@ function ThreadView({
                     {sharedInquiryLink && (
                       <Link
                         to={sharedInquiryLink}
+                        onClick={onClose}
                         className="mt-1 flex items-center gap-1 text-[11px] font-medium text-fg-secondary hover:text-fg"
                       >
                         View in My Inquiries <ArrowUpRightIcon className="h-3 w-3" />
