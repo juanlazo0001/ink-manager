@@ -132,12 +132,16 @@ export default function Clients() {
                   <thead>
                     <tr className="bg-surface-inset text-xs text-fg-muted">
                       <th className="pb-3 font-medium">Name</th>
-                      <th className="pb-3 font-medium">Email</th>
-                      <th className="pb-3 font-medium">Phone</th>
+                      <th className="hidden pb-3 font-medium md:table-cell">Email</th>
+                      <th className="hidden pb-3 font-medium sm:table-cell">Phone</th>
                     </tr>
                   </thead>
                   {isLoading ? (
-                    <SkeletonTableRows rows={6} columns={3} />
+                    <SkeletonTableRows
+                      rows={6}
+                      columns={3}
+                      columnClassNames={['', 'hidden md:table-cell', 'hidden sm:table-cell']}
+                    />
                   ) : (
                     <tbody className="divide-y divide-border">
                       {filteredClients!.map((client) => (
@@ -149,8 +153,8 @@ export default function Clients() {
                           <td className="py-3 text-fg">
                             {client.firstName} {client.lastName}
                           </td>
-                          <td className="py-3 text-fg-secondary">{client.email ?? '—'}</td>
-                          <td className="py-3 text-fg-secondary">{client.phone ?? '—'}</td>
+                          <td className="hidden py-3 text-fg-secondary md:table-cell">{client.email ?? '—'}</td>
+                          <td className="hidden py-3 text-fg-secondary sm:table-cell">{client.phone ?? '—'}</td>
                         </tr>
                       ))}
                     </tbody>

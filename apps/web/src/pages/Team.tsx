@@ -398,7 +398,7 @@ export default function Team() {
                     <tr className="bg-surface-inset text-xs text-fg-muted">
                       <th className="pb-3 font-medium">Name</th>
                       <th className="hidden pb-3 font-medium md:table-cell">Email</th>
-                      <th className="pb-3 font-medium">Role</th>
+                      <th className="hidden pb-3 font-medium sm:table-cell">Role</th>
                       <th className="pb-3 font-medium">Status</th>
                       <th className="pb-3 font-medium"></th>
                     </tr>
@@ -425,7 +425,7 @@ export default function Team() {
                             </div>
                           </td>
                           <td className="hidden py-3 text-fg-secondary md:table-cell">{teamUser.email}</td>
-                          <td className="py-3 text-fg-secondary">{formatStatus(teamUser.role)}</td>
+                          <td className="hidden py-3 text-fg-secondary sm:table-cell">{formatStatus(teamUser.role)}</td>
                           <td className="py-3">
                             <StatusPill
                               status={teamUser.isActive ? 'ACTIVE' : 'DEACTIVATED'}

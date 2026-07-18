@@ -8,6 +8,7 @@ import { useStudio } from '../context/useStudio'
 import { apiFetch } from '../lib/api'
 import { appointmentsQueryKey, clientsQueryKey, inquiriesQueryKey } from '../lib/queryKeys'
 import { useNavCounts, formatBubbleCount } from '../lib/useNavCounts'
+import { Skeleton } from './Skeleton'
 
 type NavCountSection = 'inquiries' | 'appointments' | 'clients' | 'conversations'
 
@@ -35,7 +36,7 @@ export default function Sidebar() {
   const location = useLocation()
   const user = useEffectiveUser()
   const { target: viewAsTarget } = useViewAs()
-  const { studio } = useStudio()
+  const { studio, loading: studioLoading } = useStudio()
   const queryClient = useQueryClient()
   const [mobileOpen, setMobileOpen] = useState(false)
 
@@ -97,7 +98,12 @@ export default function Sidebar() {
         ].join(' ')}
       >
         <div className="px-2">
-          {studio?.logoUrl ? (
+          {studioLoading ? (
+            // Reserve the logo's space with a neutral placeholder rather
+            // than the Ink Manager wordmark -- showing that while the
+            // studio's own logo is still loading reads as a branding flash.
+            <Skeleton className="h-16 w-full" />
+          ) : studio?.logoUrl ? (
             <img src={studio.logoUrl} alt={studio.name} className="h-auto max-h-32 w-full object-contain" />
           ) : (
             <img

@@ -6,11 +6,16 @@ import { apiFetch } from '../lib/api'
 export function StudioProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth()
   const [studio, setStudio] = useState<Studio | null>(null)
-  const [loading, setLoading] = useState(false)
+  // Starts true (rather than flipping true once the effect below fires) so
+  // the very first render already reports "loading" -- otherwise there's a
+  // one-frame window where loading=false and studio=null, which reads
+  // identically to "no studio logo configured" and flashes the fallback logo.
+  const [loading, setLoading] = useState(true)
 
   const refresh = useCallback(async () => {
     if (!user?.studioId) {
       setStudio(null)
+      setLoading(false)
       return
     }
 

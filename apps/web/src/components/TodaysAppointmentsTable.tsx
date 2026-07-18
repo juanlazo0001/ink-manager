@@ -27,7 +27,7 @@ export default function TodaysAppointmentsTable() {
           <thead>
             <tr className="bg-surface-inset text-xs text-fg-muted">
               <th className="rounded-l-lg py-2 pl-3 font-medium">Client Name</th>
-              <th className="py-2 font-medium">Artist</th>
+              <th className="hidden py-2 font-medium sm:table-cell">Artist</th>
               <th className="py-2 font-medium">Time</th>
               <th className="rounded-r-lg py-2 pr-3 font-medium">Status</th>
             </tr>
@@ -43,7 +43,7 @@ export default function TodaysAppointmentsTable() {
                     {appointment.client}
                   </div>
                 </td>
-                <td className="py-3 text-fg-secondary">{appointment.artist}</td>
+                <td className="hidden py-3 text-fg-secondary sm:table-cell">{appointment.artist}</td>
                 <td className="py-3 text-fg-secondary">{appointment.time}</td>
                 <td className="py-3 pr-3">
                   <StatusPill status={appointment.status} />

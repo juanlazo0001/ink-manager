@@ -2,13 +2,24 @@ export function Skeleton({ className = '' }: { className?: string }) {
   return <div className={`animate-pulse rounded-md bg-surface ${className}`} />
 }
 
-export function SkeletonTableRows({ rows = 6, columns = 5 }: { rows?: number; columns?: number }) {
+export function SkeletonTableRows({
+  rows = 6,
+  columns = 5,
+  columnClassNames,
+}: {
+  rows?: number
+  columns?: number
+  /** Per-column extra classes (e.g. `hidden md:table-cell`) to mirror the real
+   *  header's responsive hiding, so loading rows don't show columns the
+   *  loaded rows will immediately hide once data arrives. */
+  columnClassNames?: string[]
+}) {
   return (
     <tbody className="divide-y divide-border">
       {Array.from({ length: rows }).map((_, rowIndex) => (
         <tr key={rowIndex}>
           {Array.from({ length: columns }).map((_, colIndex) => (
-            <td key={colIndex} className="py-3">
+            <td key={colIndex} className={['py-3', columnClassNames?.[colIndex] ?? ''].join(' ')}>
               <Skeleton className="h-4 w-full max-w-40" />
             </td>
           ))}

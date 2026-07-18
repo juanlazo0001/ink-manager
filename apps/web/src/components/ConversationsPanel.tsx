@@ -275,6 +275,10 @@ export default function ConversationsPanel() {
   const isArtist = user?.role === 'ARTIST'
   const [tab, setTab] = useState<Tab>(isArtist ? 'STAFF' : 'CLIENT')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  // Widens the whole slide-over (rather than squeezing the thread) when the
+  // client-details panel opens, so opening it doesn't cramp the message
+  // list -- panel grows to the left since the slide-over is right-anchored.
+  const [contextOpen, setContextOpen] = useState(false)
 
   // Artists only ever have their own single Team thread -- no tab UI, no
   // list, just resolve it and go straight there. Resolve-only GET, never a
@@ -294,6 +298,11 @@ export default function ConversationsPanel() {
   useEffect(() => {
     if (activeConversationId) setSelectedId(activeConversationId)
   }, [activeConversationId])
+
+  // Don't carry the widened layout into a different thread or the list view.
+  useEffect(() => {
+    setContextOpen(false)
+  }, [selectedId])
 
   // UI-1 §8: Esc dismisses the slide-over, same as the scrim/close button.
   // UI-2 accessibility floor: Tab/Shift+Tab wrap within the panel instead of
@@ -383,9 +392,9 @@ export default function ConversationsPanel() {
         aria-modal="true"
         aria-label="Conversations"
         className={[
-          'fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-border bg-surface-raised shadow-2xl transition-transform duration-200 ease-in-out',
+          'fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-border bg-surface-raised shadow-2xl transition-[transform,width] duration-200 ease-in-out',
           isOpen ? 'translate-x-0' : 'translate-x-full',
-          'sm:w-[560px]',
+          contextOpen ? 'sm:w-[848px]' : 'sm:w-[560px]',
         ].join(' ')}
         aria-hidden={!isOpen}
       >
@@ -397,6 +406,7 @@ export default function ConversationsPanel() {
               onBack={() => setSelectedId(null)}
               onClose={closePanel}
               onMessageSent={refreshNavCounts}
+              onContextOpenChange={setContextOpen}
             />
           ) : (
             <ConversationListView
@@ -696,12 +706,14 @@ function ThreadView({
   onBack,
   onClose,
   onMessageSent,
+  onContextOpenChange,
 }: {
   conversationId: string
   canGoBack: boolean
   onBack: () => void
   onClose: () => void
   onMessageSent: () => void
+  onContextOpenChange: (open: boolean) => void
 }) {
   const user = useEffectiveUser()
   const { target: viewAsTarget } = useViewAs()
@@ -734,8 +746,20 @@ function ThreadView({
   const [draftError, setDraftError] = useState<string | null>(null)
   const [draftFields, setDraftFields] = useState<Record<string, string>>({})
   const [creatingPrefillLink, setCreatingPrefillLink] = useState(false)
+  // @-mention autocomplete: mentionQuery is the text typed after "@" (null
+  // when no mention is in progress); mentionStart is the index of the "@"
+  // itself, used to splice the picked name back into `body`.
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null)
+  const [mentionStart, setMentionStart] = useState<number | null>(null)
+  const [mentionActiveIndex, setMentionActiveIndex] = useState(0)
+  const bodyInputRef = useRef<HTMLTextAreaElement>(null)
 
   const isClientThread = data?.conversation.type === 'CLIENT'
+
+  useEffect(() => {
+    onContextOpenChange(isClientThread && showContext)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isClientThread, showContext])
 
   useEffect(() => {
     // Marking read is itself a mutation (ConversationRead.lastReadAt) that
@@ -774,6 +798,25 @@ function ThreadView({
     queryFn: () => apiFetch<ShareableLinksResponse>(`/clients/${data!.conversation.clientId}/shareable-links`),
     enabled: isClientThread && showLinkMenu && !!data?.conversation.clientId,
   })
+
+  // Only fetched once the user actually types "@" -- lazy like the other
+  // composer popovers above, and shares its cache key with the roster query
+  // in ConversationListView. /conversations/staff is OWNER/FRONT_DESK only
+  // (artists only ever have their single Team thread, per that route's own
+  // comment), so mention autocomplete is simply unavailable for artists --
+  // they can still type "@name" by hand.
+  const { data: mentionRoster } = useQuery({
+    queryKey: ['conversations-staff-roster'],
+    queryFn: () => apiFetch<StaffRosterEntry[]>('/conversations/staff'),
+    enabled: mentionQuery !== null && user?.role !== 'ARTIST',
+  })
+
+  const mentionCandidates =
+    mentionQuery === null
+      ? []
+      : (mentionRoster ?? [])
+          .filter((u) => u.name.toLowerCase().includes(mentionQuery.toLowerCase()))
+          .slice(0, 6)
 
   // Backs both the quick-details drawer and the "add tag" / "add to inquiry"
   // pickers -- all three need the same "what does this client have going on"
@@ -887,6 +930,60 @@ function ThreadView({
       setSendError(err instanceof Error ? err.message : 'Image upload failed')
     } finally {
       setUploading(false)
+    }
+  }
+
+  function handleBodyChange(event: React.ChangeEvent<HTMLTextAreaElement>) {
+    const value = event.target.value
+    setBody(value)
+
+    const caret = event.target.selectionStart ?? value.length
+    // Allows one extra space-separated word so "First Last" names keep
+    // matching after the space, without letting the query run away and
+    // swallow the rest of the message.
+    const match = value.slice(0, caret).match(/(?:^|\s)@(\w*(?:\s\w*)?)$/)
+    if (match) {
+      setMentionQuery(match[1])
+      setMentionStart(caret - match[1].length - 1)
+      setMentionActiveIndex(0)
+    } else {
+      setMentionQuery(null)
+      setMentionStart(null)
+    }
+  }
+
+  function selectMention(candidate: StaffRosterEntry) {
+    if (mentionStart === null) return
+    const caret = bodyInputRef.current?.selectionStart ?? body.length
+    const insertion = `@${candidate.name} `
+    const nextBody = `${body.slice(0, mentionStart)}${insertion}${body.slice(caret)}`
+    setBody(nextBody)
+    setMentionQuery(null)
+    setMentionStart(null)
+
+    const nextCaret = mentionStart + insertion.length
+    requestAnimationFrame(() => {
+      bodyInputRef.current?.focus()
+      bodyInputRef.current?.setSelectionRange(nextCaret, nextCaret)
+    })
+  }
+
+  function handleComposerKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (mentionQuery === null || mentionCandidates.length === 0) return
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      setMentionActiveIndex((i) => (i + 1) % mentionCandidates.length)
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      setMentionActiveIndex((i) => (i - 1 + mentionCandidates.length) % mentionCandidates.length)
+    } else if (event.key === 'Enter' || event.key === 'Tab') {
+      event.preventDefault()
+      selectMention(mentionCandidates[mentionActiveIndex])
+    } else if (event.key === 'Escape') {
+      event.preventDefault()
+      setMentionQuery(null)
+      setMentionStart(null)
     }
   }
 
@@ -1125,10 +1222,13 @@ function ThreadView({
 
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
         {isClientThread && showContext && (
-          // Mobile: full overlay covering the thread (absolute inset-0).
+          // Mobile: full overlay covering the thread (absolute inset-0) --
+          // there's no spare width to dock into, so it stays an overlay.
           // Desktop (sm:): docks as a second column instead -- sm:order-last
           // visually places it after the thread without needing to move it
           // in the DOM, sm:static drops it out of the overlay positioning.
+          // The slide-over itself grows wider (see onContextOpenChange) so
+          // this column adds new space rather than squeezing the thread.
           <div className="absolute inset-0 z-20 flex min-h-0 flex-col bg-bg sm:static sm:z-auto sm:order-last sm:w-72 sm:shrink-0 sm:border-l sm:border-border">
             {!context && <p className="p-4 text-sm text-fg-secondary">Loading…</p>}
             {context && (
@@ -1454,12 +1554,38 @@ function ThreadView({
 
         {sendError && <p className="mb-2 text-xs text-danger">{sendError}</p>}
 
+        {mentionQuery !== null && mentionCandidates.length > 0 && (
+          <div className="mb-2 max-h-40 overflow-y-auto rounded-lg border border-border p-1">
+            {mentionCandidates.map((candidate, index) => (
+              <button
+                key={candidate.id}
+                type="button"
+                onMouseDown={(e) => {
+                  // Prevent the textarea from losing focus/selection before
+                  // selectMention reads its caret position.
+                  e.preventDefault()
+                  selectMention(candidate)
+                }}
+                className={[
+                  'block w-full rounded-lg px-2 py-1.5 text-left text-xs',
+                  index === mentionActiveIndex ? 'bg-surface text-fg' : 'text-fg-secondary hover:bg-surface',
+                ].join(' ')}
+              >
+                <span className="font-medium">{candidate.name}</span>
+                <span className="ml-1.5 text-fg-muted">{candidate.email}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="flex items-end gap-2">
           <textarea
+            ref={bodyInputRef}
             rows={2}
             value={body}
-            onChange={(e) => setBody(e.target.value)}
-            placeholder="Type a message…"
+            onChange={handleBodyChange}
+            onKeyDown={handleComposerKeyDown}
+            placeholder="Type a message… (@ to mention)"
             className="min-w-0 flex-1 resize-none rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
           />
           <div className="flex shrink-0 flex-col gap-1">

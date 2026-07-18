@@ -136,7 +136,7 @@ export default function Inquiries() {
         </td>
         <td className="hidden py-3 text-fg-secondary md:table-cell">{formatStatus(inquiry.channel)}</td>
         <td className="hidden py-3 text-fg-secondary md:table-cell">{truncate(inquiry.description, 60)}</td>
-        <td className="py-3 text-fg-secondary">{formatDateTime(inquiry.createdAt)}</td>
+        <td className="hidden py-3 text-fg-secondary sm:table-cell">{formatDateTime(inquiry.createdAt)}</td>
         <td className="py-3 pr-3">
           <StatusPill status={inquiry.status} />
         </td>
@@ -267,12 +267,16 @@ export default function Inquiries() {
                       <th className="py-2 font-medium">Client</th>
                       <th className="hidden py-2 font-medium md:table-cell">Channel</th>
                       <th className="hidden py-2 font-medium md:table-cell">Description</th>
-                      <th className="py-2 font-medium">Submitted</th>
+                      <th className="hidden py-2 font-medium sm:table-cell">Submitted</th>
                       <th className="rounded-r-lg py-2 pr-3 font-medium">Status</th>
                     </tr>
                   </thead>
                   {isLoading ? (
-                    <SkeletonTableRows rows={6} columns={6} />
+                    <SkeletonTableRows
+                      rows={6}
+                      columns={6}
+                      columnClassNames={['', '', 'hidden md:table-cell', 'hidden md:table-cell', 'hidden sm:table-cell', '']}
+                    />
                   ) : groupedInquiries ? (
                     groupedInquiries.map((group) => (
                       <tbody key={group.status} className="divide-y divide-border">

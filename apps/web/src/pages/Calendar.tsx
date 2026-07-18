@@ -270,14 +270,18 @@ export default function Calendar() {
                   <thead>
                     <tr className="bg-surface-inset text-xs text-fg-muted">
                       <th className="pb-3 font-medium">Client Name</th>
-                      <th className="pb-3 font-medium">Artist</th>
+                      <th className="hidden pb-3 font-medium sm:table-cell">Artist</th>
                       <th className="pb-3 font-medium">Start Time</th>
-                      <th className="pb-3 font-medium">End Time</th>
+                      <th className="hidden pb-3 font-medium md:table-cell">End Time</th>
                       <th className="pb-3 font-medium">Status</th>
                     </tr>
                   </thead>
                   {isLoading ? (
-                    <SkeletonTableRows rows={6} columns={5} />
+                    <SkeletonTableRows
+                      rows={6}
+                      columns={5}
+                      columnClassNames={['', 'hidden sm:table-cell', '', 'hidden md:table-cell', '']}
+                    />
                   ) : (
                   <tbody className="divide-y divide-border">
                     {filteredAppointments!.map((appointment) => (
@@ -291,9 +295,13 @@ export default function Calendar() {
                             ? `${appointment.client.firstName} ${appointment.client.lastName}`
                             : '—'}
                         </td>
-                        <td className="py-3 text-fg-secondary">{appointment.artist?.user.email ?? '—'}</td>
+                        <td className="hidden py-3 text-fg-secondary sm:table-cell">
+                          {appointment.artist?.user.email ?? '—'}
+                        </td>
                         <td className="py-3 text-fg-secondary">{formatDateTime(appointment.startTime)}</td>
-                        <td className="py-3 text-fg-secondary">{formatDateTime(appointment.endTime)}</td>
+                        <td className="hidden py-3 text-fg-secondary md:table-cell">
+                          {formatDateTime(appointment.endTime)}
+                        </td>
                         <td className="py-3" onClick={(event) => event.stopPropagation()}>
                           {canManage ? (
                             <select

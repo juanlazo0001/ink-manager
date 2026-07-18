@@ -537,8 +537,8 @@ export default function ClientDetail() {
                       <thead>
                         <tr className="bg-surface-inset text-xs text-fg-muted">
                           <th className="pb-3 font-medium">Description</th>
-                          <th className="pb-3 font-medium">Channel</th>
-                          <th className="pb-3 font-medium">Submitted</th>
+                          <th className="hidden pb-3 font-medium md:table-cell">Channel</th>
+                          <th className="hidden pb-3 font-medium sm:table-cell">Submitted</th>
                           <th className="pb-3 font-medium">Status</th>
                         </tr>
                       </thead>
@@ -552,8 +552,12 @@ export default function ClientDetail() {
                                   : inquiry.description}
                               </Link>
                             </td>
-                            <td className="py-3 text-fg-secondary">{formatStatus(inquiry.channel)}</td>
-                            <td className="py-3 text-fg-secondary">{formatDateTime(inquiry.createdAt)}</td>
+                            <td className="hidden py-3 text-fg-secondary md:table-cell">
+                              {formatStatus(inquiry.channel)}
+                            </td>
+                            <td className="hidden py-3 text-fg-secondary sm:table-cell">
+                              {formatDateTime(inquiry.createdAt)}
+                            </td>
                             <td className="py-3">
                               <StatusPill status={inquiry.status} />
                             </td>
@@ -579,10 +583,10 @@ export default function ClientDetail() {
                     <table className="w-full text-left text-sm">
                       <thead>
                         <tr className="bg-surface-inset text-xs text-fg-muted">
-                          <th className="pb-3 font-medium">Artist</th>
+                          <th className="hidden pb-3 font-medium sm:table-cell">Artist</th>
                           <th className="pb-3 font-medium">Date &amp; Time</th>
                           <th className="pb-3 font-medium">Status</th>
-                          <th className="pb-3 font-medium">Final Cost</th>
+                          <th className="hidden pb-3 font-medium md:table-cell">Final Cost</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-border">
@@ -592,12 +596,14 @@ export default function ClientDetail() {
                             onClick={() => navigate(`/appointments/${appointment.id}`)}
                             className="cursor-pointer hover:bg-surface/40"
                           >
-                            <td className="py-3 text-fg">{appointment.artist?.user.email ?? '—'}</td>
+                            <td className="hidden py-3 text-fg sm:table-cell">
+                              {appointment.artist?.user.email ?? '—'}
+                            </td>
                             <td className="py-3 text-fg-secondary">{formatDateTime(appointment.startTime)}</td>
                             <td className="py-3">
                               <StatusPill status={appointment.status} />
                             </td>
-                            <td className="py-3 text-fg-secondary">
+                            <td className="hidden py-3 text-fg-secondary md:table-cell">
                               {appointment.finalCostCents != null ? formatCents(appointment.finalCostCents) : '—'}
                             </td>
                           </tr>
@@ -633,8 +639,8 @@ export default function ClientDetail() {
                           <th className="pb-3 font-medium">Code</th>
                           <th className="pb-3 font-medium">Amount</th>
                           <th className="pb-3 font-medium">Status</th>
-                          <th className="pb-3 font-medium">Expires</th>
-                          <th className="pb-3 font-medium">Attached</th>
+                          <th className="hidden pb-3 font-medium sm:table-cell">Expires</th>
+                          <th className="hidden pb-3 font-medium md:table-cell">Attached</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-border">
@@ -649,10 +655,12 @@ export default function ClientDetail() {
                             <td className="py-3">
                               <StatusPill status={card.status} />
                             </td>
-                            <td className="py-3 text-fg-secondary">
+                            <td className="hidden py-3 text-fg-secondary sm:table-cell">
                               {card.expiresAt ? formatDateTime(card.expiresAt) : 'No expiration'}
                             </td>
-                            <td className="py-3 text-fg-secondary">{card.appointmentId ? 'Yes' : 'Unattached'}</td>
+                            <td className="hidden py-3 text-fg-secondary md:table-cell">
+                              {card.appointmentId ? 'Yes' : 'Unattached'}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -672,8 +680,8 @@ export default function ClientDetail() {
                       <thead>
                         <tr className="bg-surface-inset text-xs text-fg-muted">
                           <th className="pb-3 font-medium">Deposit</th>
-                          <th className="pb-3 font-medium">Total</th>
-                          <th className="pb-3 font-medium">Signed</th>
+                          <th className="hidden pb-3 font-medium sm:table-cell">Total</th>
+                          <th className="hidden pb-3 font-medium md:table-cell">Signed</th>
                           <th className="pb-3 font-medium">Paid</th>
                         </tr>
                       </thead>
@@ -681,8 +689,10 @@ export default function ClientDetail() {
                         {depositForms.map((inquiry) => (
                           <tr key={inquiry.id}>
                             <td className="py-3 text-fg">${inquiry.depositForm!.depositAmount}</td>
-                            <td className="py-3 text-fg-secondary">${inquiry.depositForm!.totalCharged}</td>
-                            <td className="py-3 text-fg-secondary">
+                            <td className="hidden py-3 text-fg-secondary sm:table-cell">
+                              ${inquiry.depositForm!.totalCharged}
+                            </td>
+                            <td className="hidden py-3 text-fg-secondary md:table-cell">
                               {inquiry.depositForm!.signedAt ? formatDateTime(inquiry.depositForm!.signedAt) : 'Pending'}
                             </td>
                             <td className="py-3 text-fg-secondary">
