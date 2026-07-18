@@ -606,14 +606,11 @@ function ConversationListView({
                 setNewChatSearch('')
                 setNewChatError(null)
               }}
-              aria-label="New conversation"
               aria-pressed={showNewChat}
-              className={[
-                'flex h-8 w-8 items-center justify-center rounded-full transition hover:bg-surface hover:text-fg',
-                showNewChat ? 'text-accent' : 'text-fg-muted',
-              ].join(' ')}
+              className="flex items-center gap-1.5 rounded-full bg-accent px-3 py-1.5 text-sm font-semibold text-bg transition hover:bg-accent-hover"
             >
-              <PlusIcon className="h-4 w-4" />
+              <PlusIcon className="h-3.5 w-3.5" />
+              New Chat
             </button>
           )}
           <button
@@ -724,7 +721,11 @@ function ConversationListView({
         </div>
       )}
 
-      <div className="flex items-center gap-1.5 border-b border-border px-3 py-2.5">
+      {/* Kept lightweight on purpose -- neither iMessage nor WhatsApp puts
+          filter chips this prominently above the chat list, so these are
+          plain text toggles tucked next to search rather than a bordered,
+          filled-pill row competing with it. */}
+      <div className="flex items-center gap-3 border-b border-border px-3 py-2">
         {(
           [
             ['all', 'All'],
@@ -737,10 +738,8 @@ function ConversationListView({
             type="button"
             onClick={() => setQuickFilter(value)}
             className={[
-              'rounded-full px-3 py-1.5 text-sm font-medium transition',
-              quickFilter === value
-                ? 'bg-accent text-bg'
-                : 'border border-border text-fg-secondary hover:bg-surface hover:text-fg',
+              'rounded-md px-1.5 py-1 text-xs font-medium transition',
+              quickFilter === value ? 'text-accent' : 'text-fg-muted hover:text-fg',
             ].join(' ')}
           >
             {label}
@@ -829,35 +828,35 @@ function ConversationListView({
                 <button
                   type="button"
                   onClick={() => onSelect(conversation.id)}
-                  className="flex w-full items-start gap-3 px-4 py-3 text-left transition hover:bg-surface/60"
+                  className="flex w-full items-center gap-3.5 px-4 py-4 text-left transition hover:bg-surface/60"
                 >
                   <span
                     className={[
-                      'relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-surface-raised text-xs font-semibold text-fg ring-2',
+                      'relative flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-surface-raised text-base font-semibold text-fg ring-2',
                       tone ? TONE_RING_CLASSES[tone] : 'ring-border-strong',
                     ].join(' ')}
                   >
                     {initials(name)}
                     {conversation.unreadCount > 0 && (
-                      <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-warning ring-2 ring-surface-raised" />
+                      <span className="absolute -right-0.5 -top-0.5 h-3.5 w-3.5 rounded-full bg-warning ring-2 ring-surface-raised" />
                     )}
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
-                      <p className="truncate text-sm font-medium text-fg">{name}</p>
+                      <p className="truncate text-base font-medium text-fg">{name}</p>
                       {conversation.lastMessageAt && (
-                        <span className="shrink-0 text-[11px] text-fg-muted">
+                        <span className="shrink-0 text-xs text-fg-muted">
                           {formatRelativeTime(conversation.lastMessageAt)}
                         </span>
                       )}
                     </div>
                     {conversation.lastMessage && (
-                      <p className="mt-0.5 truncate text-xs text-fg-secondary">
+                      <p className="mt-1 truncate text-sm text-fg-secondary">
                         {conversation.lastMessage.direction === 'OUTBOUND' ? 'You: ' : ''}
                         {conversation.lastMessage.body || '📷 Image'}
                       </p>
                     )}
-                    <div className="mt-1.5 flex items-center gap-1.5">
+                    <div className="mt-2 flex items-center gap-1.5">
                       {conversation.primaryInquiry && (
                         <StatusPill status={conversation.primaryInquiry.status} className="px-2 py-0.5 text-[11px]" />
                       )}
@@ -885,10 +884,10 @@ function ConversationListView({
                     })
                     onSelect(conversation.id)
                   }}
-                  className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left transition hover:bg-surface/60"
+                  className="flex w-full items-center justify-between gap-2 px-4 py-4 text-left transition hover:bg-surface/60"
                 >
-                  <span className="truncate text-sm text-fg-secondary">{member.name}</span>
-                  <span className="shrink-0 text-[11px] text-fg-muted">Start</span>
+                  <span className="truncate text-base text-fg-secondary">{member.name}</span>
+                  <span className="shrink-0 text-xs text-fg-muted">Start</span>
                 </button>
               </li>
             ))}
@@ -1744,7 +1743,7 @@ function ThreadView({
           </div>
         )}
 
-        <div ref={scrollRef} className="h-full min-w-0 flex-1 space-y-1 overflow-y-auto px-3 py-3">
+        <div ref={scrollRef} className="h-full min-w-0 flex-1 space-y-2.5 overflow-y-auto px-3 py-3">
           {isLoading && <p className="text-sm text-fg-secondary">Loading…</p>}
 
           {data?.messages.map((message) => {
@@ -1769,7 +1768,7 @@ function ThreadView({
                 <div className={`flex ${isOutboundSide ? 'justify-end' : 'justify-start'}`}>
                   <div
                     className={[
-                      'max-w-[75%] rounded-2xl px-3 py-2 text-sm',
+                      'max-w-[75%] rounded-[1.25rem] px-4 py-2.5 text-sm',
                       sharedInquiryId
                         ? 'border border-border bg-surface-raised/80 text-fg'
                         : isOutboundSide
