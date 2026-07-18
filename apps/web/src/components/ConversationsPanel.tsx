@@ -65,6 +65,7 @@ interface StaffRosterEntry {
   id: string
   name: string
   email: string
+  avatarUrl: string | null
   role: string
   conversationId: string | null
 }
@@ -279,6 +280,16 @@ export default function ConversationsPanel() {
   // client-details panel opens, so opening it doesn't cramp the message
   // list -- panel grows to the left since the slide-over is right-anchored.
   const [contextOpen, setContextOpen] = useState(false)
+  // Mounted lazily on first open (so a panel never opened at all never
+  // fetches anything), then kept mounted forever after -- closing just
+  // slides it off-screen. That's what lets the thread/list remember its
+  // draft text, scroll position, and open popovers exactly as the user left
+  // them; each side still pauses its own polling via the `isOpen` prop while
+  // hidden instead of relying on unmount to stop background fetches.
+  const [hasOpenedOnce, setHasOpenedOnce] = useState(isOpen)
+  useEffect(() => {
+    if (isOpen) setHasOpenedOnce(true)
+  }, [isOpen])
 
   // Artists only ever have their own single Team thread -- no tab UI, no
   // list, just resolve it and go straight there. Resolve-only GET, never a
@@ -380,12 +391,10 @@ export default function ConversationsPanel() {
 
       {/* Full-height right-side slide-over. Always mounted (translated
           off-screen when closed) so the open/close transform actually
-          animates; content inside only renders while open, so a closed
-          panel does no background polling. Desktop gets real working
-          width (~560px) rather than a cramped floating card; mobile is a
-          full-screen takeover. Rendered once at the app root (see App.tsx),
-          so it -- and whichever thread is open -- survives route changes
-          while open. */}
+          animates. Desktop gets real working width (~560px) rather than a
+          cramped floating card; mobile is a full-screen takeover. Rendered
+          once at the app root (see App.tsx), so it -- and whichever thread
+          is open -- survives route changes while open. */}
       <div
         ref={panelRef}
         role="dialog"
@@ -398,10 +407,11 @@ export default function ConversationsPanel() {
         ].join(' ')}
         aria-hidden={!isOpen}
       >
-        {isOpen &&
+        {hasOpenedOnce &&
           (selectedId ? (
             <ThreadView
               conversationId={selectedId}
+              isOpen={isOpen}
               canGoBack={!isArtist}
               onBack={() => setSelectedId(null)}
               onClose={closePanel}
@@ -411,6 +421,7 @@ export default function ConversationsPanel() {
           ) : (
             <ConversationListView
               tab={tab}
+              isOpen={isOpen}
               onTabChange={setTab}
               showTabs={!isArtist}
               onSelect={(id) => setSelectedId(id)}
@@ -424,12 +435,14 @@ export default function ConversationsPanel() {
 
 function ConversationListView({
   tab,
+  isOpen,
   onTabChange,
   showTabs,
   onSelect,
   onClose,
 }: {
   tab: Tab
+  isOpen: boolean
   onTabChange: (tab: Tab) => void
   showTabs: boolean
   onSelect: (id: string) => void
@@ -450,18 +463,19 @@ function ConversationListView({
     queryKey: ['conversations', tab, entityTypeFilter, artistIdFilter, search.trim()],
     queryFn: () => apiFetch<ConversationSummary[]>(`/conversations?${params.toString()}`),
     refetchInterval: 30_000,
+    enabled: isOpen,
   })
 
   const { data: roster } = useQuery({
     queryKey: ['conversations-staff-roster'],
     queryFn: () => apiFetch<StaffRosterEntry[]>('/conversations/staff'),
-    enabled: tab === 'STAFF',
+    enabled: isOpen && tab === 'STAFF',
   })
 
   const { data: artistOptions } = useQuery({
     queryKey: ['artists-for-conversation-filter'],
     queryFn: () => apiFetch<ArtistFilterOption[]>('/artists'),
-    enabled: tab === 'CLIENT' && showFilters,
+    enabled: isOpen && tab === 'CLIENT' && showFilters,
   })
 
   const rosterWithoutThread = (roster ?? []).filter((member) => !member.conversationId)
@@ -490,7 +504,7 @@ function ConversationListView({
           type="button"
           onClick={onClose}
           aria-label="Close"
-          className="flex h-7 w-7 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
+          className="flex h-8 w-8 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
         >
           <CloseIcon className="h-4 w-4" />
         </button>
@@ -504,7 +518,7 @@ function ConversationListView({
               type="button"
               onClick={() => onTabChange(t)}
               className={[
-                'rounded-t-lg px-3 py-1.5 text-xs font-medium transition',
+                'rounded-t-lg px-4 py-2 text-sm font-medium transition',
                 tab === t ? 'bg-surface text-fg' : 'text-fg-muted hover:text-fg',
               ].join(' ')}
             >
@@ -702,6 +716,7 @@ function ConversationListView({
 
 function ThreadView({
   conversationId,
+  isOpen,
   canGoBack,
   onBack,
   onClose,
@@ -709,6 +724,7 @@ function ThreadView({
   onContextOpenChange,
 }: {
   conversationId: string
+  isOpen: boolean
   canGoBack: boolean
   onBack: () => void
   onClose: () => void
@@ -724,6 +740,7 @@ function ThreadView({
     queryKey: ['conversation-thread', conversationId],
     queryFn: () => apiFetch<ThreadResponse>(`/conversations/${conversationId}/messages`),
     refetchInterval: 15_000,
+    enabled: isOpen,
   })
 
   const [body, setBody] = useState('')
@@ -752,6 +769,13 @@ function ThreadView({
   const [mentionQuery, setMentionQuery] = useState<string | null>(null)
   const [mentionStart, setMentionStart] = useState<number | null>(null)
   const [mentionActiveIndex, setMentionActiveIndex] = useState(0)
+  // "/" tag shortcut: same trigger/splice mechanics as "@" mentions above,
+  // but picking a candidate calls handleAddTag (a conversation-level action)
+  // instead of inserting text, so the "/query" is removed rather than
+  // replaced -- it's a command, not something to leave visible in the message.
+  const [slashQuery, setSlashQuery] = useState<string | null>(null)
+  const [slashStart, setSlashStart] = useState<number | null>(null)
+  const [slashActiveIndex, setSlashActiveIndex] = useState(0)
   const bodyInputRef = useRef<HTMLTextAreaElement>(null)
 
   const isClientThread = data?.conversation.type === 'CLIENT'
@@ -768,13 +792,13 @@ function ThreadView({
     // thread read because the admin happened to look at it. Read-only mode
     // already blocks it server-side (403); skip the call entirely here so
     // opening a thread while impersonating doesn't spam blocked requests.
-    if (viewAsTarget) return
+    if (!isOpen || viewAsTarget) return
 
     apiFetch(`/conversations/${conversationId}/read`, { method: 'POST' })
       .then(onMessageSent)
       .catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversationId, viewAsTarget])
+  }, [conversationId, isOpen, viewAsTarget])
 
   useEffect(() => {
     if (data?.messages.length) {
@@ -790,13 +814,13 @@ function ThreadView({
   const { data: templatesData } = useQuery({
     queryKey: ['studio-settings-templates'],
     queryFn: () => apiFetch<{ messageTemplates: MessageTemplate[] | null }>('/studio-settings'),
-    enabled: isClientThread && showTemplates,
+    enabled: isOpen && isClientThread && showTemplates,
   })
 
   const { data: linksData } = useQuery({
     queryKey: ['client-shareable-links', data?.conversation.clientId],
     queryFn: () => apiFetch<ShareableLinksResponse>(`/clients/${data!.conversation.clientId}/shareable-links`),
-    enabled: isClientThread && showLinkMenu && !!data?.conversation.clientId,
+    enabled: isOpen && isClientThread && showLinkMenu && !!data?.conversation.clientId,
   })
 
   // Only fetched once the user actually types "@" -- lazy like the other
@@ -808,7 +832,7 @@ function ThreadView({
   const { data: mentionRoster } = useQuery({
     queryKey: ['conversations-staff-roster'],
     queryFn: () => apiFetch<StaffRosterEntry[]>('/conversations/staff'),
-    enabled: mentionQuery !== null && user?.role !== 'ARTIST',
+    enabled: isOpen && mentionQuery !== null && user?.role !== 'ARTIST',
   })
 
   const mentionCandidates =
@@ -824,7 +848,7 @@ function ThreadView({
   const { data: context } = useQuery({
     queryKey: ['conversation-context', conversationId],
     queryFn: () => apiFetch<ConversationContext>(`/conversations/${conversationId}/context`),
-    enabled: isClientThread && (showContext || showTagPicker || imagePickerFor !== null),
+    enabled: isOpen && isClientThread && (showContext || showTagPicker || imagePickerFor !== null || slashQuery !== null),
   })
 
   // Only relevant for a STAFF thread being viewed by an artist: used to
@@ -838,6 +862,60 @@ function ThreadView({
   const assignedInquiryIds = new Set((assignedInquiries ?? []).map((i) => i.id))
 
   const existingTagKeys = new Set((data?.conversation.tags ?? []).map((t) => `${t.entityType}:${t.entityId}`))
+
+  // Same taggable-entity set as the tag picker below (context.inquiries /
+  // giftCards / depositForms / nextAppointment / waiver), flattened into one
+  // list for the "/" composer shortcut and filtered down to whatever's
+  // typed after the slash. Already-tagged items are left out entirely --
+  // nothing useful to do with them from a quick command palette.
+  const slashCandidates =
+    slashQuery === null || !context
+      ? []
+      : [
+          ...context.inquiries.map((inquiry) => ({
+            key: `Inquiry:${inquiry.id}`,
+            entityType: 'Inquiry',
+            entityId: inquiry.id,
+            label: `Inquiry: ${inquiry.description}`,
+          })),
+          ...context.giftCards.map((card) => ({
+            key: `GiftCard:${card.id}`,
+            entityType: 'GiftCard',
+            entityId: card.id,
+            label: `Gift card: $${(card.amountCents / 100).toFixed(2)}`,
+          })),
+          ...context.inquiries
+            .filter((i) => i.depositForm)
+            .map((inquiry) => ({
+              key: `DepositForm:${inquiry.depositForm!.id}`,
+              entityType: 'DepositForm',
+              entityId: inquiry.depositForm!.id,
+              label: `Deposit: $${inquiry.depositForm!.totalCharged}`,
+            })),
+          ...(context.nextAppointment
+            ? [
+                {
+                  key: `Appointment:${context.nextAppointment.id}`,
+                  entityType: 'Appointment',
+                  entityId: context.nextAppointment.id,
+                  label: `Appointment: ${formatDateTime(context.nextAppointment.startTime)}`,
+                },
+              ]
+            : []),
+          ...(context.nextAppointment?.waiverId
+            ? [
+                {
+                  key: `LiabilityWaiver:${context.nextAppointment.waiverId}`,
+                  entityType: 'LiabilityWaiver',
+                  entityId: context.nextAppointment.waiverId,
+                  label: `Waiver: ${context.nextAppointment.waiverStatus}`,
+                },
+              ]
+            : []),
+        ]
+          .filter((candidate) => !existingTagKeys.has(candidate.key))
+          .filter((candidate) => candidate.label.toLowerCase().includes(slashQuery.toLowerCase()))
+          .slice(0, 6)
 
   // The context drawer only has room to feature one inquiry prominently
   // (pipeline + detail grid); everything else surfaces as a "+N other" link
@@ -856,6 +934,21 @@ function ThreadView({
     } catch (err) {
       setTagError(err instanceof Error ? err.message : 'Failed to add tag')
     }
+  }
+
+  function selectSlashTag(candidate: { entityType: string; entityId: string }) {
+    if (slashStart === null) return
+    const caret = bodyInputRef.current?.selectionStart ?? body.length
+    const nextBody = `${body.slice(0, slashStart)}${body.slice(caret)}`
+    setBody(nextBody)
+    setSlashQuery(null)
+    setSlashStart(null)
+    handleAddTag(candidate.entityType, candidate.entityId)
+
+    requestAnimationFrame(() => {
+      bodyInputRef.current?.focus()
+      bodyInputRef.current?.setSelectionRange(slashStart, slashStart)
+    })
   }
 
   async function handleRemoveTag(tagId: string) {
@@ -938,17 +1031,33 @@ function ThreadView({
     setBody(value)
 
     const caret = event.target.selectionStart ?? value.length
+    const uptoCaret = value.slice(0, caret)
+
     // Allows one extra space-separated word so "First Last" names keep
     // matching after the space, without letting the query run away and
     // swallow the rest of the message.
-    const match = value.slice(0, caret).match(/(?:^|\s)@(\w*(?:\s\w*)?)$/)
-    if (match) {
-      setMentionQuery(match[1])
-      setMentionStart(caret - match[1].length - 1)
+    const mentionMatch = uptoCaret.match(/(?:^|\s)@(\w*(?:\s\w*)?)$/)
+    if (mentionMatch) {
+      setMentionQuery(mentionMatch[1])
+      setMentionStart(caret - mentionMatch[1].length - 1)
       setMentionActiveIndex(0)
+      setSlashQuery(null)
+      setSlashStart(null)
+      return
+    }
+    setMentionQuery(null)
+    setMentionStart(null)
+
+    // "/" tagging shortcut only makes sense for client threads -- staff
+    // threads have no inquiry/gift-card/appointment context to tag.
+    const slashMatch = isClientThread ? uptoCaret.match(/(?:^|\s)\/(\w*(?:\s\w*)?)$/) : null
+    if (slashMatch) {
+      setSlashQuery(slashMatch[1])
+      setSlashStart(caret - slashMatch[1].length - 1)
+      setSlashActiveIndex(0)
     } else {
-      setMentionQuery(null)
-      setMentionStart(null)
+      setSlashQuery(null)
+      setSlashStart(null)
     }
   }
 
@@ -969,21 +1078,39 @@ function ThreadView({
   }
 
   function handleComposerKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (mentionQuery === null || mentionCandidates.length === 0) return
+    if (mentionQuery !== null && mentionCandidates.length > 0) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        setMentionActiveIndex((i) => (i + 1) % mentionCandidates.length)
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        setMentionActiveIndex((i) => (i - 1 + mentionCandidates.length) % mentionCandidates.length)
+      } else if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault()
+        selectMention(mentionCandidates[mentionActiveIndex])
+      } else if (event.key === 'Escape') {
+        event.preventDefault()
+        setMentionQuery(null)
+        setMentionStart(null)
+      }
+      return
+    }
 
-    if (event.key === 'ArrowDown') {
-      event.preventDefault()
-      setMentionActiveIndex((i) => (i + 1) % mentionCandidates.length)
-    } else if (event.key === 'ArrowUp') {
-      event.preventDefault()
-      setMentionActiveIndex((i) => (i - 1 + mentionCandidates.length) % mentionCandidates.length)
-    } else if (event.key === 'Enter' || event.key === 'Tab') {
-      event.preventDefault()
-      selectMention(mentionCandidates[mentionActiveIndex])
-    } else if (event.key === 'Escape') {
-      event.preventDefault()
-      setMentionQuery(null)
-      setMentionStart(null)
+    if (slashQuery !== null && slashCandidates.length > 0) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        setSlashActiveIndex((i) => (i + 1) % slashCandidates.length)
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        setSlashActiveIndex((i) => (i - 1 + slashCandidates.length) % slashCandidates.length)
+      } else if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault()
+        selectSlashTag(slashCandidates[slashActiveIndex])
+      } else if (event.key === 'Escape') {
+        event.preventDefault()
+        setSlashQuery(null)
+        setSlashStart(null)
+      }
     }
   }
 
@@ -1028,7 +1155,7 @@ function ThreadView({
             type="button"
             onClick={onBack}
             aria-label="Back"
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
           >
             <ArrowLeftIcon className="h-4 w-4" />
           </button>
@@ -1063,7 +1190,7 @@ function ThreadView({
                 setShowContext(false)
               }}
               aria-label="Add tag"
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
             >
               <TagIcon className="h-4 w-4" />
             </button>
@@ -1074,7 +1201,7 @@ function ThreadView({
                 setShowTagPicker(false)
               }}
               aria-label="Client details"
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
             >
               <InfoIcon className="h-4 w-4" />
             </button>
@@ -1083,7 +1210,7 @@ function ThreadView({
                 type="button"
                 onClick={() => setShowMoreMenu((v) => !v)}
                 aria-label="More actions"
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
               >
                 <MoreIcon className="h-4 w-4" />
               </button>
@@ -1092,7 +1219,7 @@ function ThreadView({
                   <button
                     type="button"
                     onClick={handleOpenDraftModal}
-                    className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-fg-secondary hover:bg-surface"
+                    className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
                   >
                     <SparkleIcon className="h-3.5 w-3.5" />
                     Draft inquiry from conversation
@@ -1106,7 +1233,7 @@ function ThreadView({
           type="button"
           onClick={onClose}
           aria-label="Close"
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
         >
           <CloseIcon className="h-4 w-4" />
         </button>
@@ -1149,7 +1276,7 @@ function ThreadView({
                     type="button"
                     disabled={existingTagKeys.has(key)}
                     onClick={() => handleAddTag('Inquiry', inquiry.id)}
-                    className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-fg-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
+                    className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <span className="truncate">Inquiry: {inquiry.description}</span>
                     {!existingTagKeys.has(key) && <PlusIcon className="h-3 w-3 shrink-0" />}
@@ -1164,7 +1291,7 @@ function ThreadView({
                     type="button"
                     disabled={existingTagKeys.has(key)}
                     onClick={() => handleAddTag('GiftCard', card.id)}
-                    className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-fg-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
+                    className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <span className="truncate">Gift card: ${(card.amountCents / 100).toFixed(2)}</span>
                     {!existingTagKeys.has(key) && <PlusIcon className="h-3 w-3 shrink-0" />}
@@ -1181,7 +1308,7 @@ function ThreadView({
                       type="button"
                       disabled={existingTagKeys.has(key)}
                       onClick={() => handleAddTag('DepositForm', inquiry.depositForm!.id)}
-                      className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-fg-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
+                      className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       <span className="truncate">Deposit: ${inquiry.depositForm!.totalCharged}</span>
                       {!existingTagKeys.has(key) && <PlusIcon className="h-3 w-3 shrink-0" />}
@@ -1516,7 +1643,7 @@ function ThreadView({
                   setBody((current) => (current ? `${current}\n${template.body}` : template.body))
                   setShowTemplates(false)
                 }}
-                className="block w-full rounded-lg px-2 py-1 text-left text-xs text-fg-secondary hover:bg-surface"
+                className="block w-full rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
               >
                 <span className="font-medium text-fg">{template.name}</span>
               </button>
@@ -1525,7 +1652,7 @@ function ThreadView({
         )}
 
         {showLinkMenu && isClientThread && (
-          <div className="mb-2 max-h-48 overflow-y-auto rounded-lg border border-border p-2 text-xs">
+          <div className="mb-2 max-h-48 overflow-y-auto rounded-lg border border-border p-2 text-sm">
             {[
               { label: 'Intake form', url: linksData?.intakeFormUrl ?? null, hint: null },
               ...(linksData?.estimateLinks ?? []),
@@ -1543,7 +1670,7 @@ function ThreadView({
                   setBody((current) => (current ? `${current}\n${url}` : url))
                   setShowLinkMenu(false)
                 }}
-                className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-fg-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
+                className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-fg-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <span>{link.label}</span>
                 {link.hint && <span className="shrink-0 text-fg-muted">{link.hint}</span>}
@@ -1567,12 +1694,45 @@ function ThreadView({
                   selectMention(candidate)
                 }}
                 className={[
-                  'block w-full rounded-lg px-2 py-1.5 text-left text-xs',
+                  'flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm',
                   index === mentionActiveIndex ? 'bg-surface text-fg' : 'text-fg-secondary hover:bg-surface',
                 ].join(' ')}
               >
-                <span className="font-medium">{candidate.name}</span>
-                <span className="ml-1.5 text-fg-muted">{candidate.email}</span>
+                {candidate.avatarUrl ? (
+                  <img src={candidate.avatarUrl} alt="" className="h-6 w-6 shrink-0 rounded-full object-cover" />
+                ) : (
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface-raised text-[11px] font-semibold text-fg">
+                    {candidate.name.slice(0, 1).toUpperCase()}
+                  </span>
+                )}
+                <span className="min-w-0 flex-1 truncate">
+                  <span className="font-medium">{candidate.name}</span>
+                  <span className="ml-1.5 text-fg-muted">{candidate.email}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {slashQuery !== null && slashCandidates.length > 0 && (
+          <div className="mb-2 max-h-40 overflow-y-auto rounded-lg border border-border p-1">
+            {slashCandidates.map((candidate, index) => (
+              <button
+                key={candidate.key}
+                type="button"
+                onMouseDown={(e) => {
+                  // Prevent the textarea from losing focus/selection before
+                  // selectSlashTag reads its caret position.
+                  e.preventDefault()
+                  selectSlashTag(candidate)
+                }}
+                className={[
+                  'flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm',
+                  index === slashActiveIndex ? 'bg-surface text-fg' : 'text-fg-secondary hover:bg-surface',
+                ].join(' ')}
+              >
+                <TagIcon className="h-3.5 w-3.5 shrink-0 text-fg-muted" />
+                <span className="min-w-0 flex-1 truncate">{candidate.label}</span>
               </button>
             ))}
           </div>
@@ -1585,7 +1745,7 @@ function ThreadView({
             value={body}
             onChange={handleBodyChange}
             onKeyDown={handleComposerKeyDown}
-            placeholder="Type a message… (@ to mention)"
+            placeholder={isClientThread ? 'Type a message… (@ to mention, / to tag)' : 'Type a message… (@ to mention)'}
             className="min-w-0 flex-1 resize-none rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
           />
           <div className="flex shrink-0 flex-col gap-1">

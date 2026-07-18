@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { apiFetch } from '../lib/api'
-import { formatDateTime } from '../lib/format'
+import { formatDateTime, formatStatus } from '../lib/format'
 
 interface AuditLogEntry {
   id: string
@@ -10,8 +10,61 @@ interface AuditLogEntry {
   actorUser: { id: string; name: string | null; email: string } | null
 }
 
-function formatValue(value: unknown): string {
-  if (value === null || value === undefined) return '—'
+// Raw field names as tracked by apps/api's diffObjects calls -- shown instead
+// of the camelCase key so the feed reads as prose, not a database dump.
+const FIELD_LABELS: Record<string, string> = {
+  description: 'Description',
+  colorOrBlackGrey: 'Color / black & grey',
+  placement: 'Placement',
+  estimatedSize: 'Estimated size',
+  budget: 'Budget',
+  desiredTiming: 'Desired timing',
+  priceEstimateLow: 'Price estimate (low)',
+  priceEstimateHigh: 'Price estimate (high)',
+  timeEstimateHoursMin: 'Time estimate (min hours)',
+  timeEstimateHoursMax: 'Time estimate (max hours)',
+  status: 'Status',
+  assignedArtistId: 'Assigned artist',
+  assignedAt: 'Assigned at',
+  declineNote: 'Decline reason',
+  appointmentId: 'Appointment',
+  estimateSentAt: 'Estimate sent',
+  estimateOpenedAt: 'Estimate opened',
+  estimateRespondedAt: 'Estimate responded',
+  completedAt: 'Completed at',
+  expiresAt: 'Expires',
+  locationId: 'Location',
+  preferredSchedule: 'Preferred schedule',
+  firstName: 'First name',
+  lastName: 'Last name',
+  email: 'Email',
+  phone: 'Phone',
+  showSidebarBadges: 'Sidebar badges',
+  giftCardDefaultExpirationDays: 'Gift card expiration (days)',
+  estimateFollowUpHours: 'Estimate follow-up (hours)',
+  waiverHealthQuestions: 'Waiver health questions',
+  waiverClauses: 'Waiver clauses',
+  messageTemplates: 'Message templates',
+}
+
+// Fallback for anything not in the map above -- "someFieldName" -> "Some field name" --
+// so a field added on the backend later never regresses to showing raw camelCase.
+function humanizeField(field: string): string {
+  if (FIELD_LABELS[field]) return FIELD_LABELS[field]
+  const spaced = field.replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1).toLowerCase()
+}
+
+// Values that look like an ISO date get run through formatDateTime; the
+// server already resolves assignedArtistId/appointmentId to a name/ISO date
+// respectively, so those pass straight through here.
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/
+
+function formatValue(field: string, value: unknown): string {
+  if (value === null || value === undefined || value === '') return '—'
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No'
+  if (field === 'status' && typeof value === 'string') return formatStatus(value)
+  if (typeof value === 'string' && ISO_DATE_RE.test(value)) return formatDateTime(value)
   if (typeof value === 'object') return JSON.stringify(value)
   return String(value)
 }
@@ -68,13 +121,14 @@ export default function AuditTrail({ entityType, entityId }: { entityType: strin
                 <ul className="mt-2 space-y-1 text-xs text-fg-secondary">
                   {Object.entries(log.changes).map(([field, value]) => (
                     <li key={field}>
-                      <span className="font-medium text-fg-secondary">{field}:</span>{' '}
+                      <span className="font-medium text-fg-secondary">{humanizeField(field)}:</span>{' '}
                       {isFromToShape(value) ? (
                         <>
-                          {formatValue(value.from)} <span className="text-fg-muted">→</span> {formatValue(value.to)}
+                          {formatValue(field, value.from)} <span className="text-fg-muted">→</span>{' '}
+                          {formatValue(field, value.to)}
                         </>
                       ) : (
-                        formatValue(value)
+                        formatValue(field, value)
                       )}
                     </li>
                   ))}

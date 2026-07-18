@@ -212,7 +212,7 @@ router.get("/", async (req, res) => {
 router.get("/staff", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
   const staff = await prisma.user.findMany({
     where: { studioId: req.user!.studioId, isActive: true, role: { not: Role.CUSTOMER } },
-    select: { id: true, name: true, email: true, role: true, staffConversation: { select: { id: true } } },
+    select: { id: true, name: true, email: true, avatarUrl: true, role: true, staffConversation: { select: { id: true } } },
     orderBy: { name: "asc" },
   });
 
@@ -221,6 +221,7 @@ router.get("/staff", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) 
       id: u.id,
       name: u.name ?? u.email,
       email: u.email,
+      avatarUrl: u.avatarUrl,
       role: u.role,
       conversationId: u.staffConversation?.id ?? null,
     })),

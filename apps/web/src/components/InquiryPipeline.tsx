@@ -51,43 +51,7 @@ export default function InquiryPipeline({
     )
   }
 
-  if (orientation === 'horizontal') {
-    return (
-      <div className={`flex items-start ${className}`}>
-        {PIPELINE_STEPS.map((step, index) => {
-          const done = index < activeIndex
-          const current = index === activeIndex
-          return (
-            <div key={step.label} className="flex flex-1 items-center last:flex-none">
-              <div className="flex flex-col items-center gap-1.5">
-                <span
-                  className={[
-                    'flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold',
-                    done || current ? 'bg-accent text-bg' : 'border border-border bg-surface-inset text-fg-muted',
-                  ].join(' ')}
-                >
-                  {done ? <CheckIcon className="h-3 w-3" /> : index + 1}
-                </span>
-                <span
-                  className={[
-                    'whitespace-nowrap text-[11px] font-medium',
-                    current ? 'text-fg' : done ? 'text-fg-secondary' : 'text-fg-muted',
-                  ].join(' ')}
-                >
-                  {step.label}
-                </span>
-              </div>
-              {index < PIPELINE_STEPS.length - 1 && (
-                <div className={`mx-1.5 h-0.5 flex-1 rounded-full ${done ? 'bg-accent' : 'bg-border'}`} />
-              )}
-            </div>
-          )
-        })}
-      </div>
-    )
-  }
-
-  return (
+  const vertical = (
     <div className={className}>
       <p className="text-xs font-semibold uppercase tracking-wider text-fg-muted">Pipeline</p>
       <ol className="mt-3">
@@ -125,4 +89,48 @@ export default function InquiryPipeline({
       </ol>
     </div>
   )
+
+  if (orientation === 'horizontal') {
+    // Steps + labels need real width to lay out side by side; below md
+    // there isn't room, so it drops to the same vertical list the narrow
+    // chat context panel uses instead of squeezing/wrapping horizontally.
+    return (
+      <>
+        <div className="md:hidden">{vertical}</div>
+        <div className={`hidden items-start md:flex ${className}`}>
+          {PIPELINE_STEPS.map((step, index) => {
+            const done = index < activeIndex
+            const current = index === activeIndex
+            return (
+              <div key={step.label} className="flex flex-1 items-center last:flex-none">
+                <div className="flex flex-col items-center gap-1.5">
+                  <span
+                    className={[
+                      'flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold',
+                      done || current ? 'bg-accent text-bg' : 'border border-border bg-surface-inset text-fg-muted',
+                    ].join(' ')}
+                  >
+                    {done ? <CheckIcon className="h-3 w-3" /> : index + 1}
+                  </span>
+                  <span
+                    className={[
+                      'whitespace-nowrap text-[11px] font-medium',
+                      current ? 'text-fg' : done ? 'text-fg-secondary' : 'text-fg-muted',
+                    ].join(' ')}
+                  >
+                    {step.label}
+                  </span>
+                </div>
+                {index < PIPELINE_STEPS.length - 1 && (
+                  <div className={`mx-1.5 h-0.5 flex-1 rounded-full ${done ? 'bg-accent' : 'bg-border'}`} />
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </>
+    )
+  }
+
+  return vertical
 }
