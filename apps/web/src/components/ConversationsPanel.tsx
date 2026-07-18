@@ -22,6 +22,7 @@ import {
   MessageIcon,
   MoreIcon,
   PlusIcon,
+  SendIcon,
   SparkleIcon,
   TagIcon,
 } from './icons'
@@ -1504,7 +1505,7 @@ function ThreadView({
           )}
         </div>
         {isClientThread && (
-          <>
+          <div className="flex items-center gap-3.5">
             <button
               type="button"
               onClick={() => {
@@ -1512,9 +1513,9 @@ function ThreadView({
                 setShowContext(false)
               }}
               aria-label="Add tag"
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
             >
-              <TagIcon className="h-4 w-4" />
+              <TagIcon className="h-[18px] w-[18px]" />
             </button>
             <button
               type="button"
@@ -1523,21 +1524,21 @@ function ThreadView({
                 setShowTagPicker(false)
               }}
               aria-label="Client details"
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
             >
-              <InfoIcon className="h-4 w-4" />
+              <InfoIcon className="h-[18px] w-[18px]" />
             </button>
             <div className="relative">
               <button
                 type="button"
                 onClick={() => setShowMoreMenu((v) => !v)}
                 aria-label="More actions"
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
               >
-                <MoreIcon className="h-4 w-4" />
+                <MoreIcon className="h-[18px] w-[18px]" />
               </button>
               {showMoreMenu && (
-                <div className="absolute right-0 top-8 z-20 w-56 rounded-xl border border-border bg-surface-raised p-1 shadow-xl">
+                <div className="absolute right-0 top-9 z-20 w-56 rounded-xl border border-border bg-surface-raised p-1 shadow-xl">
                   <button
                     type="button"
                     onClick={handleOpenDraftModal}
@@ -1549,16 +1550,8 @@ function ThreadView({
                 </div>
               )}
             </div>
-          </>
+          </div>
         )}
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close"
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
-        >
-          <CloseIcon className="h-4 w-4" />
-        </button>
       </div>
 
       {isClientThread && data.conversation.tags.length > 0 && (
@@ -2114,58 +2107,59 @@ function ThreadView({
           </div>
         )}
 
-        <div className="flex items-end gap-2">
+        {isClientThread && (
+          <div className="mb-2 flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                setShowTemplates((v) => !v)
+                setShowLinkMenu(false)
+              }}
+              aria-label="Templates"
+              className="flex h-8 w-8 items-center justify-center rounded-full border border-border text-xs font-semibold text-fg-secondary transition hover:bg-surface hover:text-fg"
+            >
+              T
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowLinkMenu((v) => !v)
+                setShowTemplates(false)
+              }}
+              aria-label="Insert link"
+              className="flex h-8 w-8 items-center justify-center rounded-full border border-border text-fg-secondary transition hover:bg-surface hover:text-fg"
+            >
+              <PlusIcon className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+
+        <div className="flex items-end gap-2.5">
+          <label className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full bg-transparent text-fg-muted transition hover:bg-surface hover:text-fg">
+            <AttachmentIcon className="h-[18px] w-[18px]" />
+            <input type="file" accept="image/*" onChange={handleAttach} className="hidden" disabled={uploading} />
+          </label>
+
           <textarea
             ref={bodyInputRef}
-            rows={2}
+            rows={1}
             value={body}
             onChange={handleBodyChange}
             onKeyDown={handleComposerKeyDown}
             placeholder={isClientThread ? 'Type a message… (@ to mention, / to tag)' : 'Type a message… (@ to mention)'}
-            className="min-w-0 flex-1 resize-none rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+            className="h-10 min-w-0 flex-1 resize-none rounded-full border border-border bg-surface-inset px-4 py-2.5 text-sm leading-5 text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
           />
-          <div className="flex shrink-0 flex-col gap-1">
-            <label className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border border-border text-fg-secondary transition hover:bg-surface hover:text-fg">
-              <AttachmentIcon className="h-4 w-4" />
-              <input type="file" accept="image/*" onChange={handleAttach} className="hidden" disabled={uploading} />
-            </label>
-            {isClientThread && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowTemplates((v) => !v)
-                    setShowLinkMenu(false)
-                  }}
-                  aria-label="Templates"
-                  className="flex h-8 w-8 items-center justify-center rounded-full border border-border text-xs font-semibold text-fg-secondary transition hover:bg-surface hover:text-fg"
-                >
-                  T
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowLinkMenu((v) => !v)
-                    setShowTemplates(false)
-                  }}
-                  aria-label="Insert link"
-                  className="flex h-8 w-8 items-center justify-center rounded-full border border-border text-fg-secondary transition hover:bg-surface hover:text-fg"
-                >
-                  <PlusIcon className="h-4 w-4" />
-                </button>
-              </>
-            )}
-          </div>
-        </div>
 
-        <button
-          type="button"
-          onClick={handleSend}
-          disabled={sending || uploading || !!viewAsTarget || (body.trim().length === 0 && attachments.length === 0)}
-          className="mt-2 w-full rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
-        >
-          {sending ? 'Sending…' : 'Send'}
-        </button>
+          <button
+            type="button"
+            onClick={handleSend}
+            disabled={sending || uploading || !!viewAsTarget || (body.trim().length === 0 && attachments.length === 0)}
+            aria-label="Send"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent text-bg transition hover:bg-accent-hover disabled:opacity-60"
+          >
+            <SendIcon className="h-[18px] w-[18px]" />
+          </button>
+        </div>
       </div>
 
       {showDraftModal && (

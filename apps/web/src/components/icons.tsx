@@ -200,6 +200,14 @@ export function AttachmentIcon({ className }: IconProps) {
   )
 }
 
+export function SendIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="currentColor" className={className}>
+      <path d="M17.5 2.5 2.5 8.8l5.8 2.4 2.4 5.8L17.5 2.5Z" />
+    </svg>
+  )
+}
+
 export function InfoIcon({ className }: IconProps) {
   return (
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
