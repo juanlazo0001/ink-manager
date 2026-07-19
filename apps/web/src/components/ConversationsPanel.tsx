@@ -553,7 +553,6 @@ export default function ConversationsPanel() {
               onTabChange={setTab}
               showTabs={!isArtist}
               onSelect={(id) => setSelectedId(id)}
-              onClose={closePanel}
             />
           ))}
       </div>
@@ -567,14 +566,12 @@ function ConversationListView({
   onTabChange,
   showTabs,
   onSelect,
-  onClose,
 }: {
   tab: Tab
   isOpen: boolean
   onTabChange: (tab: Tab) => void
   showTabs: boolean
   onSelect: (id: string) => void
-  onClose: () => void
 }) {
   const [entityTypeFilter, setEntityTypeFilter] = useState('')
   const [artistIdFilter, setArtistIdFilter] = useState('')
@@ -713,34 +710,28 @@ function ConversationListView({
     <>
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <h2 className="text-sm font-semibold text-fg">Conversations</h2>
-        <div className="flex items-center gap-1">
-          {/* Artists only ever have their own single Team thread (see the
-              staffUserId auto-resolve effect above) -- no roster to browse,
-              so starting a new chat isn't a meaningful action for them. */}
-          {showTabs && (
-            <button
-              type="button"
-              onClick={() => {
-                setShowNewChat((v) => !v)
-                setNewChatSearch('')
-                setNewChatError(null)
-              }}
-              aria-pressed={showNewChat}
-              className="flex items-center gap-1.5 rounded-full bg-accent px-3 py-1.5 text-sm font-semibold text-bg transition hover:bg-accent-hover"
-            >
-              <PlusIcon className="h-3.5 w-3.5" />
-              New Chat
-            </button>
-          )}
+        {/* No explicit close button here, matching ThreadView's header --
+            closing happens via the panel's own backdrop click or Escape
+            (see ConversationsPanel's keydown handler), same as the thread
+            view relies on.
+            Artists only ever have their own single Team thread (see the
+            staffUserId auto-resolve effect above) -- no roster to browse,
+            so starting a new chat isn't a meaningful action for them. */}
+        {showTabs && (
           <button
             type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="flex h-8 w-8 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
+            onClick={() => {
+              setShowNewChat((v) => !v)
+              setNewChatSearch('')
+              setNewChatError(null)
+            }}
+            aria-pressed={showNewChat}
+            className="flex items-center gap-1.5 rounded-full bg-accent px-3 py-1.5 text-sm font-semibold text-bg transition hover:bg-accent-hover"
           >
-            <CloseIcon className="h-4 w-4" />
+            <PlusIcon className="h-3.5 w-3.5" />
+            New Chat
           </button>
-        </div>
+        )}
       </div>
 
       {showNewChat && (
@@ -761,8 +752,11 @@ function ConversationListView({
                   <button
                     type="button"
                     onClick={() => startClientChat(client.id)}
-                    className="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
+                    className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
                   >
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-raised text-xs font-semibold text-fg">
+                      {initials(`${client.firstName} ${client.lastName}`)}
+                    </span>
                     <span className="truncate">
                       {client.firstName} {client.lastName}
                     </span>
@@ -795,8 +789,11 @@ function ConversationListView({
                   <button
                     type="button"
                     onClick={() => startStaffChat(member.id)}
-                    className="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
+                    className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
                   >
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-raised text-xs font-semibold text-fg">
+                      {initials(member.name)}
+                    </span>
                     <span className="truncate">{member.name}</span>
                   </button>
                 </li>
