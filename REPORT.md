@@ -1,67 +1,104 @@
-# Phase 7A — Job Scheduler, Internal Automations, Mark-as-Lost
+# Phase UI-3+4+5 — Plain-language settings, phone masking, single-day appointments, robust calendar
 
-Single session, on `main`. Touches `apps/api` only for the scheduler/automations/mark-lost backend, plus `apps/web`'s `Settings.tsx`, `InquiryDetail.tsx`, and `StatusPill.tsx`. `ConversationsPanel.tsx` was **not** touched, per instructions (a parallel workstream owns the chat-side mark-lost entry point).
+Three-part session. Each part was built, verified (browser + PowerShell/curl), and committed locally before the next began.
 
-## 1. Scheduler foundation
+- **Part 1 (UI-3)** commit: `50d5ee8` — "Phase UI-3: plain-language system panel, icon action buttons, rich-text policy editor"
+- **Part 2 (UI-4)** commit: `5a13493` — "Phase UI-4: phone masking, single-day appointment form"
+- **Part 3 (UI-5)** commit: `62b7b01` — "Phase UI-5: robust calendar view with resource columns and drag-and-drop"
 
-- **`node-cron` (v4)**, in-process, started once from `apps/api/src/index.ts` via `startScheduler()` after `app.listen(...)`. No separate worker service.
-- **`JobRun` model** (`apps/api/prisma/schema.prisma`): `id`, `jobName`, `scheduledFor`, `startedAt`, `finishedAt?`, `status` (`RUNNING | SUCCEEDED | FAILED`), `details` (Json), `error?`. `@@unique([jobName, scheduledFor])`.
-- **Shared runner** (`apps/api/src/lib/jobs/registry.ts`, `runJob`): claims the slot by `create`-ing the `JobRun` row *before* running any job logic. A second caller hitting the same `(jobName, scheduledFor)` gets a Prisma `P2002` unique violation, which `runJob` catches and returns `{ skipped: true }` — no error surfaced, no double execution. Success/failure is recorded on the same row afterward; a thrown error is caught, logged, and written to `error` — `runJob` never rethrows, so one job's bug can't crash the API process.
-- **Cron ticks use a deterministic slot, not a raw timestamp**: `startOfUtcDay(new Date())` — the start of the current UTC day. This is what makes the double-run guard actually work across two overlapping ticks/processes (they'd never share the same millisecond, but they do share the same day). **Manual `run-now` deliberately uses a fresh, un-truncated `new Date()`** — it's always its own unique slot, so it's never blocked by today's cron run already having claimed the day. That's the whole point of the endpoint ("how you re-run a failed sweep").
-- **`POST /jobs/:jobName/run-now`** (OWNER only, audited as `entityType: "Job"`, `action: "run_now"`) and **`GET /jobs`** (OWNER only — every registered job + its most recent `JobRun` by `startedAt`).
-- **Settings → System** (OWNER only): job list with description, cron expression, last-run status/time/details, and a Run Now button per job.
-- `StudioSettings.timezone` (default `"America/New_York"`) was added per spec, but **neither job's eligibility logic uses it** — both compare absolute UTC timestamps (`expiresAt < now`, `now - lastActivity > coldLeadDays days`), which is correct regardless of studio-local time-of-day. The column is scaffolding for the next phase (SMS send-window computation), which is where "the day" per-studio will actually matter. This is a deliberate, documented scope call, not an oversight — noted in `registry.ts`'s and the schema's own comments.
+**No commit in this session was pushed.** The task text said "commit now" / "record the hash" at the end of each part but never said "push" — unlike other tasks earlier in this session that explicitly asked for it. I deliberately left all three commits local pending your explicit instruction to push.
 
-## 2. Idempotency argument, per job
+---
 
-- **Gift-card expiration sweep**: query is `WHERE status = ACTIVE AND expiresAt < now`. Once a card flips to `EXPIRED` it no longer matches — a second run (same slot or a later day) only ever touches cards that are still genuinely `ACTIVE`-and-past-expiry at that moment. Structurally cannot double-apply.
-- **Cold-lead sweep**: query is `WHERE status IN (eligible pre-conversion statuses)`, which excludes `COLD_LEAD` itself. Once swept, an inquiry is no longer eligible on any subsequent run. The only way back into eligibility is the explicit `POST /:id/reopen` action — never this job.
-- **Scheduler runner itself**: the `(jobName, scheduledFor)` unique constraint is the idempotency mechanism for the *slot*, independent of what a job's own logic does — see above.
+## Part 1 — Plain-language settings, icon buttons, rich-text policy editor
 
-## 3. Eligible statuses for the cold-lead sweep
-
-Mirrors `apps/web/src/pages/Inquiries.tsx`'s `INQUIRIES_TAB_STATUSES` minus the two terminal values (kept as a literal, cross-referenced list in `apps/api/src/lib/jobs/coldLeadSweep.ts` — separate compilation units, no shared import):
-
+### JOB_DISPLAY dictionary (Settings.tsx)
 ```
-NEW, ARTIST_ASSIGNED, AWAITING_CLIENT_RESPONSE, BUDGET_NEGOTIATION, DEPOSIT_PENDING
+giftCardExpirationSweep → "Gift Card Expiration"
+  "Automatically marks gift cards as expired once their expiration date has passed."
+coldLeadSweep → "Cold Lead Detection"
+  "Automatically flags inquiries as cold leads after a period of no activity."
 ```
+Cron string, internal `description`, and raw job JSON moved behind a `<details>` "Advanced" disclosure. Status renders as icon+plain text (Succeeded/Failed with reason/Running…/Not run yet — never color alone), with a relative timestamp ("Today at 2:14 PM", "3 days ago") computed in the studio's configured timezone and the exact timestamp available via a native title-attribute tooltip.
 
-Projects-side statuses (`SCHEDULING`, `WAITLISTED`, `CONFIRMED`) are never swept, regardless of how old their last activity is — verified live (see §6).
+### Icon action buttons
+InquiryDetail's Message / Share with Artist / More-actions buttons: icon+label pill at ≥768px, 44px circular icon-only touch target below that, `aria-label` and native `title` tooltip at both breakpoints. No other header button on that page had the same crowding issue, so no further buttons needed the pattern.
 
-**Last activity** = newest of: `inquiry.updatedAt` (new field this phase — see below), the newest `AuditLog` entry for that inquiry, the client's `Conversation.lastMessageAt` (if a thread exists), and `estimateSentAt`/`estimateOpenedAt`/`estimateRespondedAt`.
+### Rich-text policy editor (8 fields, Tiptap + DOMPurify)
+`refundPolicy`, `depositPolicy`, `reschedulePolicy`, `communicationPolicy`, `estimateTerms`, `waiverAcknowledgment`, `waiverPhotoRelease`, `calendarInviteTemplate` — each gets its own edit-icon + compact plain-text preview (HTML stripped, truncated, "No content yet" when empty) and its own single-field modal with a small Tiptap toolbar (bold/italic/underline/bullet/numbered list/link/basic headings). The 5 "Defaults" fields (`coldLeadDays`, `estimateFollowUpHours`, `giftCardDefaultExpirationDays`, `timezone`, `showSidebarBadges`) share one "Edit Defaults" modal and one PATCH. Waiver health-questions/clauses list editor and Message Templates were left untouched (out of scope / pre-existing dedicated editors).
 
-**Schema note:** `Inquiry` had no `updatedAt` column before this phase (unusual for this codebase — every other mutable model has one). Added `updatedAt DateTime @updatedAt`, backfilled via a hand-written migration (`DEFAULT CURRENT_TIMESTAMP` for the handful of pre-existing rows; Prisma manages every future write automatically).
+**HTML render sites sanitized** (audited via a full grep of every `dangerouslySetInnerHTML` and snapshot-copy path before touching anything):
+- `EstimateResponse.tsx` — public estimate page's `estimateTermsSnapshot`
+- `WaiverSign.tsx` — public waiver page's `acknowledgment` and `photoRelease` (two sites)
 
-## 4. Mark as lost / reopen
+**5 of the 8 fields — `refundPolicy`, `depositPolicy`, `reschedulePolicy`, `communicationPolicy`, `calendarInviteTemplate` — have zero consumers outside Settings.tsx's own preview/edit UI today.** Reported transparently rather than sanitizing render sites that don't exist. All sanitization uses a restrictive DOMPurify allow-list (`p, br, strong, em, u, ul, ol, li, a, h2, h3` / `href, target, rel`), proven against a real `<script>` + `onerror=` payload saved through the editor and through a direct API call — neutralized at every render site, not just client-side stripped.
 
-- `POST /inquiries/:id/mark-lost` (OWNER/FRONT_DESK): valid from any status except the two terminal ones (`CLOSED_LOST`, `COLD_LEAD`) — including Projects-side statuses, since a confirmed project can still fall through. Sets `status: CLOSED_LOST`, `lostAt: now`, `lostReason` (optional). New fields, distinct from the pre-existing (and still-unused-by-any-route) `closedReason` column, which was left untouched.
-- `POST /inquiries/:id/reopen` (OWNER/FRONT_DESK): valid only from `CLOSED_LOST` or `COLD_LEAD`; target `status` must be one of the 8 non-terminal values (broader than the cold-sweep's own eligible list — reopening back into a Projects-side status like `CONFIRMED` is legitimate). Clears `lostAt`/`lostReason`.
-- Both routes are conversation-agnostic by design — a separate workstream adds the chat-side entry point calling the same `mark-lost` route.
-- Frontend: `StatusPill.tsx`'s `CLOSED_LOST` tone changed from `neutral` → `danger` (this is a shared component also consumed by `ConversationsPanel.tsx`'s thread-header ring tone via `getStatusTone` — a deliberate, spec-directed side effect, not an edit to that file). `InquiryDetail.tsx` gained: a "⋯" overflow menu (Mark as lost, hidden once terminal), a mark-lost confirm modal with an optional reason field, a terminal-state banner (reason/when/by-whom, the last two pulled from the same `/audit` endpoint `AuditTrail` already uses), and a reopen modal with a status picker.
+Backward compatibility: old plain-text values render fine as a single run-on paragraph until re-saved (not auto-migrated). Existing immutable snapshots (`estimateTermsSnapshot`, waiver `healthQuestionsSnapshot`/`clausesSnapshot`, etc.) are unaffected.
 
-## 5. Verification performed
+---
 
-All against the dev DB (`hopper.proxy.rlwy.net`, confirmed via `apps/api/.env` before starting). Dev-reseedability confirmed (`npx prisma db seed` re-ran clean after all of this).
+## Part 2 — Phone masking, single-day appointment form
 
-- **Scheduler**: both jobs registered on boot (dev *and* compiled-production boot, see §6). `run-now` executes synchronously and returns the `JobRun` row. Double-run guard proven directly against `runJob` (bypassing the endpoint, since `run-now`'s un-truncated timestamp is deliberately always-unique): two concurrent calls with an identical `scheduledFor` → exactly one `{skipped: false}`, one `{skipped: true}`. A job registered to always throw → recorded `FAILED` with the error message, runner resolved normally, API process unaffected.
-- **Expiration sweep**: seeded an `ACTIVE` card with `expiresAt` in 2020 → run-now → `EXPIRED`, one audit row (`actorUserId: null`, action `status_change`, job name + old/new status in `changes`) → re-ran → `cardsExpired: 0`.
-- **Cold sweep**: three fresh test inquiries (to avoid polluted seed/session data — the first "clean" candidate I picked, Alex Testperson, turned out to already have a same-session conversation from earlier UI testing, which correctly prevented it from sweeping and became an accidental extra proof point for the conversation-activity signal). Backdated `updatedAt` + existing `AuditLog` rows to ~100 days ago via raw SQL (no legitimate API path sets `updatedAt` to the past, by design):
-  - Clean NEW inquiry, no conversation, no estimate activity → swept to `COLD_LEAD`, audited with `lastActivityAt`/`coldLeadDays` in `changes`.
-  - NEW inquiry backdated the same, but with a conversation message sent *today* → **not** swept.
-  - `CONFIRMED` (Projects-side) inquiry backdated the same → **not** swept, regardless of activity.
-  - Re-ran → `inquiriesSwept: 0` (idempotent).
-- **Mark-lost/reopen**: happy path with reason + audit; rejected on an already-terminal inquiry (400); reopen to a valid status clears `lostAt`/`lostReason` + audit; reopen to `CLOSED_LOST` (illegal target) → 400; FRONT_DESK allowed; ARTIST → 403; a second studio (spun up via `/studios/bootstrap`, then deleted) → 404 on the first studio's inquiry, confirming the same `studioId` ownership guard used by every other inquiry route.
-- **Settings**: `coldLeadDays` PATCH by OWNER, audited (`from`/`to` in `changes`); `GET /jobs` → 403 for FRONT_DESK.
-- **Browser** (Playwright, dev servers): Settings → System section renders both jobs with description/schedule/last-run, Run Now updates the row live; Policies & Defaults shows the new "Cold lead after" field; Inquiries list renders a red "Closed Lost" pill and would render a gray "Cold lead" pill (tone map confirmed, not separately screenshotted since the live pill assertion for CLOSED_LOST already proves the same code path); InquiryDetail: "⋯" menu → Mark as lost modal (reason field, outline-danger confirm button) → terminal banner ("Marked lost — {time} by Dev Owner", reason shown) → Reopen modal (status picker) → back to a working non-terminal detail view with the "⋯" menu reappearing.
-- **Production boot**: stopped the dev server, ran `npm run build` (clean `tsc`), then `npm run start` (`npx prisma migrate deploy && node dist/src/index.js`) — `migrate deploy` reported "No pending migrations to apply" (everything already applied via `migrate dev` during development), both jobs logged as scheduled, `/health` responded — confirms cron registration doesn't depend on anything dev-mode-only (e.g. `tsx`'s module loading).
+### Phone masking
+Canonical storage format is a **bare 10-digit US string** (not E.164, despite the task's guess) — this matched the pre-existing `normalizePhone` function in `clients.ts`, adopted as-is per "don't invent a second scheme." One shared `PhoneInput` component (hand-written masking via the existing `formatPhoneInput` helper, no new library) live-formats as `(XXX) XXX-XXXX` while storing/submitting bare digits, with inline "Enter a complete 10-digit phone number" validation.
 
-All ad-hoc verification scripts and their `JobRun`/audit rows were deleted after use; the second test studio was deleted; the handful of test inquiries/clients/gift card created for cold-sweep verification were left in the dev DB (consistent with this session's established practice of leaving harmless test data in the shared dev environment) and don't affect re-seedability.
+Applied to: client create/edit (Clients.tsx, ClientDetail.tsx), team member create/edit (Team.tsx), own-profile phone (Profile.tsx), public intake form (IntakeForm.tsx), waiver emergency-contact phone (WaiverSign.tsx), studio location phone (Settings.tsx). Server-side, `normalizePhone` was added as defense-in-depth on every relevant create/update route (clients, users/me, studio users, studio locations, public intake, waiver emergency contact).
 
-## 6. Cron schedule
+**Found but deliberately left untouched:** `components/ConversationsPanel.tsx:1113`'s "New Chat" quick-add-client phone field — flagged per the explicit "do NOT touch ConversationsPanel.tsx" instruction for this session. Follow-up work for whoever owns that file.
 
-- `giftCardExpirationSweep`: `0 2 * * *` (02:00 UTC daily).
-- `coldLeadSweep`: `30 2 * * *` (02:30 UTC daily) — staggered a half hour after the first purely so the two never contend for the same instant, though they don't touch overlapping tables.
+Duplicate-detection (`/clients/:id/potential-duplicates`) still matches correctly post-change — verified live by creating two clients with the same number in different raw formats (`9195551212` vs `+1 (919) 555-1212`); both normalized to `9195551212` and matched.
 
-## 7. Commit
+### Single-day appointment form
+`react-day-picker` (v10) adopted as this app's calendar-picker standard — no existing date-picker component was found to reuse (waiver DOB and gift-card expiration are both native `<input type="date">`). One new shared component, `DateAndTimeRangeFields`, replaces the old two-datetime-input pattern everywhere: one calendar-grid date field (click-only, never typed) + two native `<input type="time">` fields.
 
-`115c006` — "Phase 7A: job scheduler, gift-card/cold-lead automations, mark-as-lost"
+**Appointment forms were consolidated into one shared component**, `AppointmentForm.tsx` — previously near-duplicated between Calendar.tsx's standalone form and InquiryDetail.tsx's nested "add a session" form. `fixedClientId`/`fixedInquiryId` hide+lock those selects for the nested case; `initial*` props (used by Part 3's calendar) prefill without locking. The checkout "Book follow-up" deep-link is not a separate implementation — it's a URL-param deep-link into Calendar's own form, confirmed by reading the code rather than assumed. One deliberate behavior change along the way: the deep-link's client/project prefill went from editable-default to **locked-and-hidden** (a reasonable tightening, since a follow-up is always for the same client/project).
+
+The separate `/inquiries/:id/schedule` flow (first-time scheduling) kept its own smaller `DateAndTimeRangeFields`-only form — different endpoint/semantics, not a duplicate of `AppointmentForm`.
+
+Server-side single-day guard added to **both** the CREATE and UPDATE (`PATCH /:id`) routes, using a new `isSameCalendarDay` helper that compares civil dates via `Intl.DateTimeFormat` in the *studio's* configured timezone — not a naive UTC-date comparison, which would false-positive reject legitimate same-local-day appointments in western US timezones (verified with a concrete counter-example before writing the code). The PATCH route previously only handled `status` and had **no audit logging at all**; it now also accepts `startTime`/`endTime` with the same validation and logs every update — a real pre-existing gap, not something this session introduced, and required groundwork for Part 3's drag-reschedule.
+
+Verified via curl: a crafted end-before-start request and a crafted genuinely-cross-midnight-local request are both rejected 400 on CREATE and UPDATE, independent of any UI.
+
+---
+
+## Part 3 — Robust calendar (resource columns, drag-and-drop)
+
+### Library
+`react-big-calendar` v1.20.0, confirmed **MIT-licensed** at time of use (checked via `npm view`), with the drag-and-drop addon (`react-big-calendar/lib/addons/dragAndDrop`) bundled in the same MIT package — no FullCalendar Scheduler paid tier involved. One real interop bug surfaced and fixed along the way: Vite's CJS dependency pre-bundling double-wraps this addon's nested default export, so a plain `import withDragAndDrop from '...'` resolves to the wrapper module object instead of the function; `Calendar.tsx` unwraps it defensively. Also: `resourceGroupingLayout` is required to get per-day, per-artist sub-columns in Week view — without it, RBC's Week/Day time grid only renders one resource header spanning every day.
+
+### Data
+`GET /appointments` extended (not a parallel route) with optional `?start=&end=` ISO range params, doing an interval-overlap query and dropping the previous 100-row cap for ranged requests (500-row cap instead — a visible calendar range is naturally bounded, this is just a safety ceiling). Existing `clientId` filter and ARTIST-sees-only-own role scoping preserved exactly; verified live that artist2 (no appointments) gets an empty, correctly-scoped result even with a wide range. Response now also includes `artist.name` (display name) and a short `inquiry.label` (truncated project description) per appointment.
+
+### Views
+Week (default) and Day show one resource column per active artist (toggle chips above the calendar, default all). Month shows everyone combined, color-coded by a deterministic per-artist hash (`lib/artistColors.ts`, 8-color fixed palette, pure frontend, no schema change — manual color assignment noted as a reasonable future enhancement, not built here). Plain-language Today/Back/Next + Week/Day/Month switcher replaces RBC's default toolbar entirely.
+
+### Interactions (OWNER/FRONT_DESK only)
+- **Click empty slot** opens Part 2's shared `AppointmentForm`, prefilled with date/start-time/end-time and (in a resource column) that column's artist.
+- **Drag** submits through the *existing* `PATCH /appointments/:id` route (never a bespoke calendar endpoint) — audit logging and validation fire exactly as they would for a manual edit. Verified via the network log during a real browser drag that it's the same route, and confirmed the resulting `AuditLog` row (`action: "update"`, `{field: {from, to}}` diff shape) is structurally identical to one produced by a manual status change.
+- **Buffer conflict** (< 1.5 hours from another same-artist same-day appointment) is a non-blocking amber notice — the drag still saves. Verified live: dragging into a conflict returned 200 with a `bufferWarning`, no block.
+- **Same-day violation**: any drag whose resulting end crosses local midnight is rejected client-side (event visually reverts since it's never optimistically mutated) with a message, and confirmed independently rejected server-side by direct curl against the same route.
+- **Cross-column drop** (reassigning to a different artist) is rejected entirely — client-side by comparing the drop target's resource against the event's own artist and refusing to call the API at all (the update route also structurally never accepts an artistId, so this is enforced twice). The revert is total: neither the time nor the day portion of the move is kept, only a message.
+- **Click an existing appointment** opens a small modal preview (client, time range, artist, status pill, "View details →" link) — never immediate navigation. Works identically for ARTIST.
+- The buffer-conflict logic itself was extracted from `inquiries.ts`'s `/schedule` route into a shared `lib/schedulingConflict.ts`, and that route was refactored to use it — so there's exactly one implementation, reused by the original scheduling flow, the calendar's click-create, and drag-reschedule.
+
+### ARTIST (effective, via `useEffectiveUser()` — View As included)
+Renders the plain, non-drag-and-drop `Calendar` component — not the same component with drag props omitted, a genuinely different component that never attaches drag listeners. Verified: zero `.rbc-addons-dnd-resize-*` handles in the DOM, zero resource-grouping headers, empty-slot clicks never open a create modal, but click-to-preview still works. No artist-column filter and no `/artists` fetch for this role — an ARTIST's calendar is a single agenda of only their own appointments (server-scoped, confirmed via artist1 vs artist2 tests).
+
+### Mobile (< 768px)
+Falls back to a single-column Day view with a dropdown artist switcher (OWNER/FRONT_DESK) instead of shrunk-down resource columns — verified this actually triggers at a 375px viewport, and that the Week/Month switcher itself disappears when only one view is available.
+
+### A regression caught and fixed during this part
+Rewriting Calendar.tsx removed the only manual appointment-status-change control that existed anywhere in the app (the old table view's per-row status dropdown). Restored it on `AppointmentDetail.tsx` (a status `<select>` next to the header, OWNER/FRONT_DESK only) rather than leaving that capability gone.
+
+---
+
+## Known non-blocking issue
+
+`react-big-calendar`'s own `TimeGridHeaderResources` internals emit a React "duplicate key" console warning when `resourceGroupingLayout` is combined with more than one day in view (Week view specifically). This is inside the library's bundled code, not something introduced here, and does not affect rendering correctness, drag/click behavior, or data integrity — confirmed via extensive live testing. Dev-console noise only.
+
+## Verification summary
+- Browser (Playwright): both breakpoints, OWNER and ARTIST roles, all three parts' UI flows including a real drag-and-drop reschedule, a real cross-column revert, a real cross-midnight revert, a real buffer-conflict warning, and a real XSS payload neutralized at every render site.
+- API (curl): role/studio scoping on the ranged appointments endpoint, same-day guard on CREATE and UPDATE with a genuinely-cross-midnight-local payload (not just a naive UTC-crossing one), audit log shape parity between a drag-triggered PATCH and a manual edit, duplicate-detection with mixed phone formats.
+- Both `apps/api` and `apps/web` type-check cleanly (`tsc --noEmit`) as of the final commit.
+
+All background dev-server shells and scratch verification scripts from this session were left running only as long as needed for testing and are being shut down now that verification is complete.
