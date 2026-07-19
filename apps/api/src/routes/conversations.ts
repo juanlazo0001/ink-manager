@@ -112,21 +112,33 @@ const COUNTERPART_SELECT = {
       lastName: true,
       mergedIntoId: true,
       inquiries: PRIMARY_INQUIRY_SELECT,
+      // Only present if the client has actually registered a portal account
+      // -- most haven't, so this is frequently null and falls back to
+      // initials, same as a staff member with no avatarUrl set.
+      user: { select: { avatarUrl: true } },
     },
   },
-  staffUser: { select: { id: true, name: true, email: true, role: true } },
+  staffUser: { select: { id: true, name: true, email: true, role: true, avatarUrl: true } },
 } as const;
 
 function toCounterpart(conversation: {
   type: ConversationType;
-  client: { id: string; firstName: string; lastName: string } | null;
-  staffUser: { id: string; name: string | null; email: string; role: Role } | null;
+  client: { id: string; firstName: string; lastName: string; user: { avatarUrl: string | null } | null } | null;
+  staffUser: { id: string; name: string | null; email: string; role: Role; avatarUrl: string | null } | null;
 }) {
   if (conversation.type === ConversationType.CLIENT && conversation.client) {
-    return { id: conversation.client.id, name: `${conversation.client.firstName} ${conversation.client.lastName}` };
+    return {
+      id: conversation.client.id,
+      name: `${conversation.client.firstName} ${conversation.client.lastName}`,
+      avatarUrl: conversation.client.user?.avatarUrl ?? null,
+    };
   }
   if (conversation.type === ConversationType.STAFF && conversation.staffUser) {
-    return { id: conversation.staffUser.id, name: conversation.staffUser.name ?? conversation.staffUser.email };
+    return {
+      id: conversation.staffUser.id,
+      name: conversation.staffUser.name ?? conversation.staffUser.email,
+      avatarUrl: conversation.staffUser.avatarUrl,
+    };
   }
   return null;
 }

@@ -58,7 +58,7 @@ interface ConversationSummary {
   clientId: string | null
   staffUserId: string | null
   lastMessageAt: string | null
-  counterpart: { id: string; name: string } | null
+  counterpart: { id: string; name: string; avatarUrl: string | null } | null
   primaryInquiry: PrimaryInquirySummary | null
   lastMessage: { body: string; channel: string; direction: string; createdAt: string } | null
   unreadCount: number
@@ -116,7 +116,7 @@ interface ThreadResponse {
     type: Tab
     clientId: string | null
     staffUserId: string | null
-    counterpart: { id: string; name: string } | null
+    counterpart: { id: string; name: string; avatarUrl: string | null } | null
     primaryInquiry: PrimaryInquirySummary | null
     tags: ConversationTag[]
   }
@@ -347,10 +347,12 @@ function badgeClasses(status: string): string {
 // avatar with no ring at all.
 function ProgressRingAvatar({
   name,
+  avatarUrl,
   status,
   unread,
 }: {
   name: string
+  avatarUrl?: string | null
   status: string | null
   unread: boolean
 }) {
@@ -382,9 +384,18 @@ function ProgressRingAvatar({
           )}
         </svg>
       )}
-      <div className="absolute inset-[6px] flex items-center justify-center rounded-full bg-surface-raised text-sm font-semibold text-fg">
-        {initials(name)}
-      </div>
+      {avatarUrl ? (
+        <img
+          src={avatarUrl}
+          alt=""
+          className="absolute inset-[6px] rounded-full object-cover"
+          style={{ width: size - 12, height: size - 12 }}
+        />
+      ) : (
+        <div className="absolute inset-[6px] flex items-center justify-center rounded-full bg-surface-raised text-sm font-semibold text-fg">
+          {initials(name)}
+        </div>
+      )}
       {unread && (
         <span className="absolute -right-px -top-px h-[15px] w-[15px] rounded-full border-[2.5px] border-surface-raised bg-accent" />
       )}
@@ -948,6 +959,7 @@ function ConversationListView({
                 >
                   <ProgressRingAvatar
                     name={name}
+                    avatarUrl={conversation.counterpart?.avatarUrl}
                     status={conversation.primaryInquiry?.status ?? null}
                     unread={isUnread}
                   />
