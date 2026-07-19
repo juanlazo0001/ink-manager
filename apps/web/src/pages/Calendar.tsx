@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ComponentType } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -6,8 +6,10 @@ import {
   dayjsLocalizer,
   Views,
   type View,
-  type NavigateAction,
   type SlotInfo,
+  type CalendarProps,
+  type ToolbarProps,
+  type ViewsProps,
 } from 'react-big-calendar'
 // Vite's CJS dep pre-bundling double-wraps this addon's nested default
 // export (its own index.js re-exports withDragAndDrop.js's default), so a
@@ -30,11 +32,6 @@ import { useMarkSectionSeen } from '../lib/useMarkSectionSeen'
 import { colorForArtistId } from '../lib/artistColors'
 
 const localizer = dayjsLocalizer(dayjs)
-const withDragAndDrop = (
-  typeof dragAndDropModule === 'function' ? dragAndDropModule : (dragAndDropModule as { default: typeof dragAndDropModule }).default
-) as typeof dragAndDropModule
-const DnDCalendar = withDragAndDrop(BigCalendar)
-const MOBILE_BREAKPOINT = 768
 
 interface ArtistOption {
   id: string
@@ -60,6 +57,26 @@ interface CalEvent {
   resourceId: string
   appointment: AppointmentApi
 }
+
+// The shape passed as `resources` (resourceIdAccessor: 'id', resourceTitleAccessor: 'title').
+interface ArtistResource {
+  id: string
+  title: string
+}
+
+const withDragAndDropUnwrapped = (
+  typeof dragAndDropModule === 'function' ? dragAndDropModule : (dragAndDropModule as { default: typeof dragAndDropModule }).default
+) as typeof dragAndDropModule
+// Without explicit generics here, the wrapped component's event/resource
+// types default to a bare `object`, which is what made onEventDrop/
+// onEventResize's handler signatures mismatch CalEvent downstream (TS2769).
+// BigCalendar is a generic class component; referencing it bare gives it
+// the library's own defaults, so it's cast to the concrete shape this app
+// actually uses before being threaded through the wrapper's generics.
+const DnDCalendar = withDragAndDropUnwrapped<CalEvent, ArtistResource>(
+  BigCalendar as unknown as ComponentType<CalendarProps<CalEvent, ArtistResource>>,
+)
+const MOBILE_BREAKPOINT = 768
 
 function artistDisplayName(artist: ArtistOption): string {
   return artist.user.name ?? artist.user.email
@@ -96,15 +113,19 @@ function isSameLocalDay(a: Date, b: Date): boolean {
   return a.toDateString() === b.toDateString()
 }
 
-interface CalendarToolbarProps {
-  label: string
-  view: View
-  views: View[]
-  onNavigate: (action: NavigateAction) => void
-  onView: (view: View) => void
+// RBC's real `views` prop type is a union: either a plain View[] (what this
+// app always actually passes) or an object of per-view booleans/components
+// (`{ month?: boolean, week?: boolean, ... }`) -- the toolbar's declared
+// prop type has to accept the full union to satisfy Components.toolbar's
+// type, so this normalizes either shape back down to a plain array.
+function viewsAsArray(views: ViewsProps<CalEvent, ArtistResource>): View[] {
+  if (Array.isArray(views)) return views
+  return (Object.keys(views) as View[]).filter((key) => Boolean(views[key]))
 }
 
-function CalendarToolbar({ label, view, views, onNavigate, onView }: CalendarToolbarProps) {
+function CalendarToolbar({ label, view, views, onNavigate, onView }: ToolbarProps<CalEvent, ArtistResource>) {
+  const viewList = viewsAsArray(views)
+
   return (
     <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
       <div className="flex items-center gap-2">
@@ -132,9 +153,9 @@ function CalendarToolbar({ label, view, views, onNavigate, onView }: CalendarToo
         <span className="ml-2 text-sm font-semibold text-fg">{label}</span>
       </div>
 
-      {views.length > 1 && (
+      {viewList.length > 1 && (
         <div className="flex gap-1 rounded-full border border-border p-1">
-          {views.map((v) => (
+          {viewList.map((v) => (
             <button
               key={v}
               type="button"
