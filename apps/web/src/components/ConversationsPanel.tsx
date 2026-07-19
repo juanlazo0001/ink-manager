@@ -558,8 +558,8 @@ export default function ConversationsPanel() {
           blocks the rest of the page. */}
       <div
         className={[
-          'fixed inset-0 z-50 bg-black/60 transition-opacity duration-200 ease-in-out',
-          isOpen ? 'opacity-100' : 'pointer-events-none opacity-0',
+          'fixed inset-0 z-50 bg-black/60 transition-opacity duration-base',
+          isOpen ? 'opacity-100 ease-out' : 'pointer-events-none opacity-0 ease-in',
         ].join(' ')}
         onClick={closePanel}
         aria-hidden="true"
@@ -577,8 +577,8 @@ export default function ConversationsPanel() {
         aria-modal="true"
         aria-label="Conversations"
         className={[
-          'fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-border bg-surface-raised shadow-2xl transition-[transform,width] duration-200 ease-in-out',
-          isOpen ? 'translate-x-0' : 'translate-x-full',
+          'fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-border bg-surface-raised shadow-2xl transition-[transform,width] duration-base',
+          isOpen ? 'translate-x-0 ease-out' : 'translate-x-full ease-in',
           contextOpen ? 'sm:w-[848px]' : 'sm:w-[560px]',
         ].join(' ')}
         aria-hidden={!isOpen}
@@ -882,7 +882,7 @@ function ConversationListView({
                 type="button"
                 onClick={() => onTabChange(t)}
                 className={[
-                  'rounded-full px-4 py-1.5 text-[13.5px] font-semibold transition',
+                  'rounded-full px-4 py-1.5 text-[13.5px] font-semibold transition-colors duration-fast ease-out',
                   tab === t ? 'bg-surface-raised text-fg' : 'text-fg-muted hover:text-fg',
                 ].join(' ')}
               >
@@ -919,7 +919,7 @@ function ConversationListView({
               type="button"
               onClick={() => setQuickFilter(value)}
               className={[
-                'rounded-full px-3.5 py-1.5 text-[12.5px] font-semibold transition',
+                'rounded-full px-3.5 py-1.5 text-[12.5px] font-semibold transition-colors duration-fast ease-out',
                 quickFilter === value ? 'bg-[#3a4118] text-[#c8e04a]' : 'text-fg-muted hover:text-fg',
               ].join(' ')}
             >
@@ -1242,6 +1242,34 @@ function ThreadView({
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
   }, [data?.messages])
+
+  // Tracks which message ids should play the insert animation (fade+
+  // slight-slide-up), so it fires only for messages that actually just
+  // arrived -- not the initial history load for a thread, and not on
+  // every re-render while an already-seen message stays on screen (typing
+  // a reply re-renders this whole view on every keystroke). seenIdsRef is
+  // the running baseline; anything in a fresh data.messages batch that
+  // isn't in it yet is new. Newly-new ids go into state for a fixed window
+  // (rather than just one render pass) so the animation has time to finish
+  // regardless of how many unrelated re-renders happen while it plays.
+  const seenMessageIdsRef = useRef<{ conversationId: string | null; ids: Set<string> }>({
+    conversationId: null,
+    ids: new Set(),
+  })
+  const [recentlyAddedIds, setRecentlyAddedIds] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    if (!data?.messages) return
+    const isFirstLoadForThisThread = seenMessageIdsRef.current.conversationId !== conversationId
+    const priorIds = isFirstLoadForThisThread ? new Set<string>() : seenMessageIdsRef.current.ids
+    const newIds = data.messages.filter((m) => !priorIds.has(m.id)).map((m) => m.id)
+
+    seenMessageIdsRef.current = { conversationId, ids: new Set(data.messages.map((m) => m.id)) }
+
+    if (isFirstLoadForThisThread || newIds.length === 0) return
+    setRecentlyAddedIds(new Set(newIds))
+    const timer = setTimeout(() => setRecentlyAddedIds(new Set()), 400)
+    return () => clearTimeout(timer)
+  }, [data?.messages, conversationId])
 
   // Auto-expanding composer textarea, per the mockup: grows with content
   // (up to a max height, then scrolls) instead of staying a fixed size.
@@ -1704,7 +1732,7 @@ function ThreadView({
               {showMoreMenu && (
                 <>
                   <div className="fixed inset-0 z-10" onClick={() => setShowMoreMenu(false)} aria-hidden="true" />
-                  <div className="absolute right-0 top-9 z-20 w-56 rounded-xl border border-border bg-surface-raised p-1 shadow-xl">
+                  <div className="absolute right-0 top-9 z-20 w-56 origin-top-right animate-scale-fade-in rounded-xl border border-border bg-surface-raised p-1 shadow-xl">
                     <button
                       type="button"
                       onClick={handleOpenDraftModal}
@@ -2026,6 +2054,7 @@ function ThreadView({
                                 : group.isOutboundSide
                                   ? 'border border-[#3d461f] bg-[#23281a]'
                                   : 'border border-[#26262c] bg-[#1c1c21]',
+                              recentlyAddedIds.has(message.id) ? 'animate-fade-slide-up' : '',
                             ].join(' ')}
                           >
                             {sharedInquiryId && i === 0 && (
@@ -2268,7 +2297,7 @@ function ThreadView({
                   {showComposerMenu && (
                     <>
                       <div className="fixed inset-0 z-10" onClick={() => setShowComposerMenu(false)} aria-hidden="true" />
-                      <div className="absolute bottom-full left-0 z-20 mb-2 w-48 rounded-xl border border-border bg-surface-raised p-1 shadow-xl">
+                      <div className="absolute bottom-full left-0 z-20 mb-2 w-48 origin-bottom-left animate-scale-fade-in rounded-xl border border-border bg-surface-raised p-1 shadow-xl">
                         <button
                           type="button"
                           onClick={() => {
@@ -2335,7 +2364,7 @@ function ThreadView({
                         onClick={() => setShowChannelModeMenu(false)}
                         aria-hidden="true"
                       />
-                      <div className="absolute bottom-full right-0 z-20 mb-2 w-[210px] rounded-[14px] border border-border bg-surface-raised p-2.5 shadow-xl">
+                      <div className="absolute bottom-full right-0 z-20 mb-2 w-[210px] origin-bottom-right animate-scale-fade-in rounded-[14px] border border-border bg-surface-raised p-2.5 shadow-xl">
                         <p className="px-1.5 pb-1.5 pt-1 text-[10.5px] font-semibold uppercase tracking-wider text-[#5a5a62]">
                           Channel
                         </p>
