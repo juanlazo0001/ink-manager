@@ -1,8 +1,9 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
+import StatusPill from '../components/StatusPill'
 import { apiFetch } from '../lib/api'
-import { formatPhoneInput, readFileAsDataUrl, MAX_IMAGE_FILE_BYTES } from '../lib/format'
+import { formatDateTime, formatPhoneInput, readFileAsDataUrl, MAX_IMAGE_FILE_BYTES } from '../lib/format'
 import { navCountsQueryKey } from '../lib/queryKeys'
 import { useStudio } from '../context/useStudio'
 import { useUserProfile } from '../context/useUserProfile'
@@ -20,6 +21,24 @@ interface MessageTemplate {
   body: string
 }
 
+// Phase 7A: Settings -> System section (job scheduler observability).
+interface JobRunInfo {
+  id: string
+  scheduledFor: string
+  startedAt: string
+  finishedAt: string | null
+  status: 'RUNNING' | 'SUCCEEDED' | 'FAILED'
+  details: Record<string, unknown> | null
+  error: string | null
+}
+
+interface JobInfo {
+  jobName: string
+  description: string
+  schedule: string
+  lastRun: JobRunInfo | null
+}
+
 interface StudioSettingsData {
   refundPolicy: string | null
   depositPolicy: string | null
@@ -28,6 +47,7 @@ interface StudioSettingsData {
   estimateTerms: string | null
   estimateFollowUpHours: number
   giftCardDefaultExpirationDays: number | null
+  coldLeadDays: number
   calendarInviteTemplate: string | null
   waiverHealthQuestions: HealthQuestion[] | null
   waiverClauses: string[] | null
@@ -45,6 +65,7 @@ const EMPTY_POLICIES_FORM = {
   estimateTerms: '',
   estimateFollowUpHours: '24',
   giftCardDefaultExpirationDays: '',
+  coldLeadDays: '90',
   calendarInviteTemplate: '',
 }
 
@@ -108,7 +129,45 @@ export default function Settings() {
   const canManageLocations = profile?.permissions.includes('locations.manage') ?? false
   const canViewPolicies = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
   const canEditPolicies = user?.role === 'OWNER'
+  // OWNER only, matching GET/POST /jobs's own requireRole(Role.OWNER) --
+  // stricter than canViewPolicies above, which also lets FRONT_DESK in.
+  const canViewSystem = user?.role === 'OWNER'
   const queryClient = useQueryClient()
+
+  const [jobs, setJobs] = useState<JobInfo[] | null>(null)
+  const [jobsError, setJobsError] = useState<string | null>(null)
+  const [runningJob, setRunningJob] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!canViewSystem) return
+    let ignore = false
+
+    apiFetch<JobInfo[]>('/jobs')
+      .then((data) => {
+        if (!ignore) setJobs(data)
+      })
+      .catch((err) => {
+        if (!ignore) setJobsError(err instanceof Error ? err.message : 'Failed to load jobs')
+      })
+
+    return () => {
+      ignore = true
+    }
+  }, [canViewSystem])
+
+  async function handleRunNow(jobName: string) {
+    setRunningJob(jobName)
+    setJobsError(null)
+    try {
+      await apiFetch(`/jobs/${jobName}/run-now`, { method: 'POST' })
+      const refreshed = await apiFetch<JobInfo[]>('/jobs')
+      setJobs(refreshed)
+    } catch (err) {
+      setJobsError(err instanceof Error ? err.message : 'Failed to run job')
+    } finally {
+      setRunningJob(null)
+    }
+  }
 
   const [policies, setPolicies] = useState<StudioSettingsData | null>(null)
   const [policiesForm, setPoliciesForm] = useState(EMPTY_POLICIES_FORM)
@@ -141,6 +200,7 @@ export default function Settings() {
           estimateTerms: data.estimateTerms ?? '',
           estimateFollowUpHours: String(data.estimateFollowUpHours),
           giftCardDefaultExpirationDays: data.giftCardDefaultExpirationDays?.toString() ?? '',
+          coldLeadDays: String(data.coldLeadDays),
           calendarInviteTemplate: data.calendarInviteTemplate ?? '',
         })
         setWaiverHealthQuestions(data.waiverHealthQuestions ?? [])
@@ -198,6 +258,7 @@ export default function Settings() {
           giftCardDefaultExpirationDays: policiesForm.giftCardDefaultExpirationDays
             ? Number(policiesForm.giftCardDefaultExpirationDays)
             : null,
+          coldLeadDays: Number(policiesForm.coldLeadDays) || 90,
           calendarInviteTemplate: policiesForm.calendarInviteTemplate || null,
           waiverHealthQuestions: cleanedQuestions,
           waiverClauses: cleanedClauses,
@@ -746,7 +807,7 @@ export default function Settings() {
                     </div>
                   ))}
 
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                     <div>
                       <label className="mb-1 block text-sm font-medium text-fg-secondary">
                         Estimate follow-up (hours)
@@ -770,6 +831,18 @@ export default function Settings() {
                         onChange={(e) =>
                           setPoliciesForm({ ...policiesForm, giftCardDefaultExpirationDays: e.target.value })
                         }
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-fg-secondary">
+                        Cold lead after (days of no activity)
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={policiesForm.coldLeadDays}
+                        onChange={(e) => setPoliciesForm({ ...policiesForm, coldLeadDays: e.target.value })}
                         className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                       />
                     </div>
@@ -1040,6 +1113,10 @@ export default function Settings() {
                     </p>
                   </div>
                   <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Cold lead after</p>
+                    <p className="mt-1 text-sm text-fg-secondary">{policies.coldLeadDays} days of no activity</p>
+                  </div>
+                  <div>
                     <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Waiver template</p>
                     <p className="mt-1 text-sm text-fg-secondary">
                       {waiverHealthQuestions.length} health question{waiverHealthQuestions.length === 1 ? '' : 's'},{' '}
@@ -1064,6 +1141,63 @@ export default function Settings() {
               )}
 
               {policiesSuccess && <p className="mt-3 text-sm text-success">Saved.</p>}
+            </div>
+          )}
+
+          {canViewSystem && (
+            <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
+              <h2 className="text-lg font-semibold text-fg">System</h2>
+              <p className="mt-1 text-sm text-fg-secondary">
+                Scheduled background jobs and their most recent run.
+              </p>
+
+              {jobsError && <p className="mt-4 text-sm text-danger">{jobsError}</p>}
+              {!jobsError && jobs === null && <p className="mt-4 text-sm text-fg-secondary">Loading…</p>}
+              {!jobsError && jobs !== null && jobs.length === 0 && (
+                <p className="mt-4 text-sm text-fg-secondary">No jobs registered.</p>
+              )}
+
+              {jobs && jobs.length > 0 && (
+                <ul className="mt-4 space-y-3">
+                  {jobs.map((job) => (
+                    <li key={job.jobName} className="rounded-xl border border-border p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-fg">{job.description}</p>
+                          <p className="mt-0.5 text-xs text-fg-muted">
+                            {job.jobName} &middot; cron: {job.schedule}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRunNow(job.jobName)}
+                          disabled={runningJob === job.jobName}
+                          className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                        >
+                          {runningJob === job.jobName ? 'Running…' : 'Run Now'}
+                        </button>
+                      </div>
+
+                      {job.lastRun ? (
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          <StatusPill status={job.lastRun.status} />
+                          <span className="text-xs text-fg-secondary">
+                            {formatDateTime(job.lastRun.startedAt)}
+                          </span>
+                          {job.lastRun.details && Object.keys(job.lastRun.details).length > 0 && (
+                            <span className="text-xs text-fg-muted">{JSON.stringify(job.lastRun.details)}</span>
+                          )}
+                          {job.lastRun.error && (
+                            <span className="text-xs text-danger">{job.lastRun.error}</span>
+                          )}
+                        </div>
+                      ) : (
+                        <p className="mt-3 text-xs text-fg-muted">Never run.</p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           )}
         </div>

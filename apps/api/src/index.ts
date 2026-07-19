@@ -22,6 +22,8 @@ import navCountsRouter from "./routes/navCounts";
 import conversationsRouter from "./routes/conversations";
 import prefillDraftsRouter from "./routes/prefillDrafts";
 import viewAsRouter from "./routes/viewAs";
+import jobsRouter from "./routes/jobs";
+import { startScheduler } from "./lib/jobs";
 import { requireAuth } from "./middleware/auth";
 
 const app = express();
@@ -75,6 +77,7 @@ app.use("/nav-counts", navCountsRouter);
 app.use("/conversations", conversationsRouter);
 app.use("/prefill-drafts", prefillDraftsRouter);
 app.use("/view-as", viewAsRouter);
+app.use("/jobs", jobsRouter);
 
 app.get("/me", requireAuth, (req, res) => {
   res.json(req.user);
@@ -103,3 +106,5 @@ app.use(errorHandler);
 app.listen(port, () => {
   console.log(`Ink Manager API listening on port ${port}`);
 });
+
+startScheduler();

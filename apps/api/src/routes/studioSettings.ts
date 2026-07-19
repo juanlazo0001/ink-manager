@@ -100,6 +100,13 @@ router.patch("/", requireRole(Role.OWNER), async (req, res) => {
     data.giftCardDefaultExpirationDays = body.giftCardDefaultExpirationDays;
   }
 
+  if (body.coldLeadDays !== undefined) {
+    if (typeof body.coldLeadDays !== "number" || body.coldLeadDays <= 0) {
+      return res.status(400).json({ error: "coldLeadDays must be a positive number" });
+    }
+    data.coldLeadDays = body.coldLeadDays;
+  }
+
   if (body.waiverHealthQuestions !== undefined) {
     if (body.waiverHealthQuestions !== null && !isValidHealthQuestions(body.waiverHealthQuestions)) {
       return res.status(400).json({
@@ -142,6 +149,7 @@ router.patch("/", requireRole(Role.OWNER), async (req, res) => {
       ...TEXT_FIELDS,
       "estimateFollowUpHours",
       "giftCardDefaultExpirationDays",
+      "coldLeadDays",
       "waiverHealthQuestions",
       "waiverClauses",
       "messageTemplates",

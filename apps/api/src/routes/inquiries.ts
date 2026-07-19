@@ -166,6 +166,15 @@ router.post("/", async (req, res) => {
   res.status(201).json(inquiry);
 });
 
+// Phase 7A: everything except the two terminal enum values. Used by
+// mark-lost (valid FROM any of these) and reopen (valid target TO any of
+// these) -- broader than coldLeadSweep.ts's own eligible-statuses list,
+// since reopening a lost Projects-side inquiry (e.g. back to CONFIRMED) is
+// legitimate and isn't the sweep's concern.
+const NON_TERMINAL_STATUSES: InquiryStatus[] = (Object.values(InquiryStatus) as InquiryStatus[]).filter(
+  (s) => s !== InquiryStatus.CLOSED_LOST && s !== InquiryStatus.COLD_LEAD,
+);
+
 const INQUIRY_INCLUDE = {
   client: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
   preferredArtist: { select: { id: true, user: { select: { name: true } } } },
@@ -717,6 +726,85 @@ router.post("/:id/waitlist", requireAuth, requireRole(Role.OWNER, Role.FRONT_DES
     entityId: id,
     action: "status_change",
     changes: diffObjects(inquiry, waitlistData, ["status", "declineNote"]),
+  });
+
+  res.json(updated);
+});
+
+// The missing workflow action: marks an inquiry lost. Valid from any
+// non-terminal status (Inquiries-side or Projects-side alike -- a
+// confirmed project can still fall through). Deliberately conversation-
+// agnostic: a separate workstream adds a chat-side entry point that calls
+// this same route, so nothing here assumes it was reached from a thread.
+router.post("/:id/mark-lost", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+  const { reason } = req.body ?? {};
+
+  if (reason !== undefined && reason !== null && typeof reason !== "string") {
+    return res.status(400).json({ error: "reason must be a string" });
+  }
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  if (!NON_TERMINAL_STATUSES.includes(inquiry.status)) {
+    return res.status(400).json({ error: "This inquiry is already in a terminal state (CLOSED_LOST or COLD_LEAD)" });
+  }
+
+  const lostData = {
+    status: InquiryStatus.CLOSED_LOST,
+    lostAt: new Date(),
+    lostReason: typeof reason === "string" && reason.trim().length > 0 ? reason.trim() : null,
+  };
+
+  const updated = await prisma.inquiry.update({ where: { id }, data: lostData, include: INQUIRY_INCLUDE });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Inquiry",
+    entityId: id,
+    action: "status_change",
+    changes: diffObjects(inquiry, lostData, ["status", "lostAt", "lostReason"]),
+  });
+
+  res.json(updated);
+});
+
+// Reverses mark-lost OR the cold-lead sweep -- both terminal states share
+// one reopen path. status is an explicit target rather than a fixed
+// "back to NEW": staff know best where an inquiry should resume (one that
+// was CONFIRMED before going cold shouldn't have to restart the pipeline).
+router.post("/:id/reopen", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+  const { status } = req.body ?? {};
+
+  if (typeof status !== "string" || !NON_TERMINAL_STATUSES.includes(status as InquiryStatus)) {
+    return res.status(400).json({ error: `status must be one of: ${NON_TERMINAL_STATUSES.join(", ")}` });
+  }
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  if (inquiry.status !== InquiryStatus.CLOSED_LOST && inquiry.status !== InquiryStatus.COLD_LEAD) {
+    return res.status(400).json({ error: "Only a CLOSED_LOST or COLD_LEAD inquiry can be reopened" });
+  }
+
+  const reopenData = { status: status as InquiryStatus, lostAt: null, lostReason: null };
+
+  const updated = await prisma.inquiry.update({ where: { id }, data: reopenData, include: INQUIRY_INCLUDE });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Inquiry",
+    entityId: id,
+    action: "status_change",
+    changes: diffObjects(inquiry, reopenData, ["status", "lostAt", "lostReason"]),
   });
 
   res.json(updated);

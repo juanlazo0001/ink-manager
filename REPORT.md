@@ -1,111 +1,67 @@
-# Phase UI-2 — Visual Redesign Report
+# Phase 7A — Job Scheduler, Internal Automations, Mark-as-Lost
 
-Branch: `ui/visual-redesign`, cut from `main` at `40204f5`. Frontend-only (`apps/web`); zero schema/migration changes, zero backend route changes.
+Single session, on `main`. Touches `apps/api` only for the scheduler/automations/mark-lost backend, plus `apps/web`'s `Settings.tsx`, `InquiryDetail.tsx`, and `StatusPill.tsx`. `ConversationsPanel.tsx` was **not** touched, per instructions (a parallel workstream owns the chat-side mark-lost entry point).
 
-Reference image used: `public/desktop/screenshots/layout v3.jpg` (only copy present in the repo; no `.webp` duplicate existed).
+## 1. Scheduler foundation
 
-## 1. Final design tokens
+- **`node-cron` (v4)**, in-process, started once from `apps/api/src/index.ts` via `startScheduler()` after `app.listen(...)`. No separate worker service.
+- **`JobRun` model** (`apps/api/prisma/schema.prisma`): `id`, `jobName`, `scheduledFor`, `startedAt`, `finishedAt?`, `status` (`RUNNING | SUCCEEDED | FAILED`), `details` (Json), `error?`. `@@unique([jobName, scheduledFor])`.
+- **Shared runner** (`apps/api/src/lib/jobs/registry.ts`, `runJob`): claims the slot by `create`-ing the `JobRun` row *before* running any job logic. A second caller hitting the same `(jobName, scheduledFor)` gets a Prisma `P2002` unique violation, which `runJob` catches and returns `{ skipped: true }` — no error surfaced, no double execution. Success/failure is recorded on the same row afterward; a thrown error is caught, logged, and written to `error` — `runJob` never rethrows, so one job's bug can't crash the API process.
+- **Cron ticks use a deterministic slot, not a raw timestamp**: `startOfUtcDay(new Date())` — the start of the current UTC day. This is what makes the double-run guard actually work across two overlapping ticks/processes (they'd never share the same millisecond, but they do share the same day). **Manual `run-now` deliberately uses a fresh, un-truncated `new Date()`** — it's always its own unique slot, so it's never blocked by today's cron run already having claimed the day. That's the whole point of the endpoint ("how you re-run a failed sweep").
+- **`POST /jobs/:jobName/run-now`** (OWNER only, audited as `entityType: "Job"`, `action: "run_now"`) and **`GET /jobs`** (OWNER only — every registered job + its most recent `JobRun` by `startedAt`).
+- **Settings → System** (OWNER only): job list with description, cron expression, last-run status/time/details, and a Run Now button per job.
+- `StudioSettings.timezone` (default `"America/New_York"`) was added per spec, but **neither job's eligibility logic uses it** — both compare absolute UTC timestamps (`expiresAt < now`, `now - lastActivity > coldLeadDays days`), which is correct regardless of studio-local time-of-day. The column is scaffolding for the next phase (SMS send-window computation), which is where "the day" per-studio will actually matter. This is a deliberate, documented scope call, not an oversight — noted in `registry.ts`'s and the schema's own comments.
 
-Defined once in `apps/web/src/index.css`'s `@theme` block (Tailwind v4 is CSS-native in this project — there is no `tailwind.config.js`/`.ts` to extend, so the token layer lives here instead of the literal "tailwind.config theme extension" the prompt described). Every component consumes these via generated utilities (`bg-surface`, `text-fg-secondary`, `border-border`, `bg-success/15`, etc.) — no hardcoded hex values remain in component files.
+## 2. Idempotency argument, per job
 
-| Token | Value | Utility |
-|---|---|---|
-| `--color-bg` | `#0a0a0b` | `bg-bg` / `text-bg` |
-| `--color-surface` | `#17171a` | `bg-surface` |
-| `--color-surface-raised` | `#1e1e22` | `bg-surface-raised` |
-| `--color-surface-inset` | `#121214` | `bg-surface-inset` |
-| `--color-border` | `#ffffff14` (~8%) | `border-border` |
-| `--color-border-strong` | `#ffffff26` (~15%) | `border-border-strong` |
-| `--color-fg` | `#f4f4f5` | `text-fg` |
-| `--color-fg-secondary` | `#a1a1aa` | `text-fg-secondary` |
-| `--color-fg-muted` | `#8b8b94` | `text-fg-muted` |
-| `--color-accent` | `#c9f031` | `bg-accent` / `text-accent` |
-| `--color-accent-fg` | `#0a0a0b` | `text-accent-fg` (dark text on accent fills) |
-| `--color-accent-hover` | `#b8dd25` | `hover:bg-accent-hover` |
-| `--color-success` | `#4ade80` | `bg-success/15 text-success` |
-| `--color-info` | `#60a5fa` | `bg-info/15 text-info` |
-| `--color-warning` | `#fbbf24` | `bg-warning/15 text-warning` |
-| `--color-danger` | `#f87171` | `bg-danger/15 text-danger` |
-| `--color-neutral` | `#b4b4bd` | `bg-neutral/15 text-neutral` |
+- **Gift-card expiration sweep**: query is `WHERE status = ACTIVE AND expiresAt < now`. Once a card flips to `EXPIRED` it no longer matches — a second run (same slot or a later day) only ever touches cards that are still genuinely `ACTIVE`-and-past-expiry at that moment. Structurally cannot double-apply.
+- **Cold-lead sweep**: query is `WHERE status IN (eligible pre-conversion statuses)`, which excludes `COLD_LEAD` itself. Once swept, an inquiry is no longer eligible on any subsequent run. The only way back into eligibility is the explicit `POST /:id/reopen` action — never this job.
+- **Scheduler runner itself**: the `(jobName, scheduledFor)` unique constraint is the idempotency mechanism for the *slot*, independent of what a job's own logic does — see above.
 
-**Naming deviation from the prompt's literal names:** text tokens are `fg`/`fg-secondary`/`fg-muted`, not `text-primary`/`text-secondary`/`text-muted` — Tailwind auto-generates the `text-*` utility from the token name, so `--color-text-primary` would have produced the doubled-up class `text-text-primary`. Same values, cleaner name.
+## 3. Eligible statuses for the cold-lead sweep
 
-**Radius/type/spacing:** no new tokens needed — the codebase already used Tailwind's stock scale consistently (`rounded-2xl` cards, `rounded-full` pills, `rounded-xl`/`rounded-lg` inputs; `text-2xl`/`3xl` titles, `text-sm` body, `text-xs` labels), matching the spec's scale exactly. Inter is self-hosted via `@fontsource/inter` (400/500/600/700), already wired before this phase — no font work needed.
+Mirrors `apps/web/src/pages/Inquiries.tsx`'s `INQUIRIES_TAB_STATUSES` minus the two terminal values (kept as a literal, cross-referenced list in `apps/api/src/lib/jobs/coldLeadSweep.ts` — separate compilation units, no shared import):
 
-**Native `<select>` fix:** Windows/Chromium ignores `background-color` on the native dropdown-arrow region regardless of className, leaving a pale swatch on every select in the app. Fixed once, globally, in `index.css`'s base layer (`appearance: none` + a custom SVG chevron) rather than touching each of the 8 files with selects.
+```
+NEW, ARTIST_ASSIGNED, AWAITING_CLIENT_RESPONSE, BUDGET_NEGOTIATION, DEPOSIT_PENDING
+```
 
-## 2. Status → semantic mapping
+Projects-side statuses (`SCHEDULING`, `WAITLISTED`, `CONFIRMED`) are never swept, regardless of how old their last activity is — verified live (see §6).
 
-Single source of truth: `apps/web/src/components/StatusPill.tsx`. Every status pill in the app (inquiries, appointments, gift cards, waivers, team active/inactive, ad hoc synthetic statuses like consent-form pending/signed) renders through this one component.
+**Last activity** = newest of: `inquiry.updatedAt` (new field this phase — see below), the newest `AuditLog` entry for that inquiry, the client's `Conversation.lastMessageAt` (if a thread exists), and `estimateSentAt`/`estimateOpenedAt`/`estimateRespondedAt`.
 
-- **Inquiry pipeline:** `NEW`/`ARTIST_ASSIGNED` → info · `AWAITING_CLIENT_RESPONSE`/`BUDGET_NEGOTIATION`/`DEPOSIT_PENDING`/`WAITLISTED` → warning · `SCHEDULING`/`CONFIRMED` → success · `CLOSED_LOST`/`COLD_LEAD` → neutral
-- **Appointments:** `REQUESTED` → info · `CONFIRMED`/`COMPLETED` → success · `CANCELLED` → neutral · `NO_SHOW` → danger
-- **Gift cards:** `ACTIVE` → success · `REDEEMED` → neutral · `EXPIRED` → warning · `VOID` → danger
-- **Waivers:** `PENDING` → warning · `SIGNED` → info · `VERIFIED` → success
-- **Team status / synthetic:** `ACTIVE` → success, `DEACTIVATED` → neutral (reuses the gift-card `ACTIVE` tone); consent-form "Signed {date}" / "Pending" reuses the waiver `SIGNED`/`PENDING` tones via `StatusPill`'s `label` override prop.
+**Schema note:** `Inquiry` had no `updatedAt` column before this phase (unusual for this codebase — every other mutable model has one). Added `updatedAt DateTime @updatedAt`, backfilled via a hand-written migration (`DEFAULT CURRENT_TIMESTAMP` for the handful of pre-existing rows; Prisma manages every future write automatically).
 
-`WAITLISTED` and `BUDGET_NEGOTIATION` weren't explicit in the phase brief's mapping prose; both were placed under warning as "still waiting on an action," consistent with `DEPOSIT_PENDING`.
+## 4. Mark as lost / reopen
 
-## 3. AA-contrast adjustments made vs. the written spec
+- `POST /inquiries/:id/mark-lost` (OWNER/FRONT_DESK): valid from any status except the two terminal ones (`CLOSED_LOST`, `COLD_LEAD`) — including Projects-side statuses, since a confirmed project can still fall through. Sets `status: CLOSED_LOST`, `lostAt: now`, `lostReason` (optional). New fields, distinct from the pre-existing (and still-unused-by-any-route) `closedReason` column, which was left untouched.
+- `POST /inquiries/:id/reopen` (OWNER/FRONT_DESK): valid only from `CLOSED_LOST` or `COLD_LEAD`; target `status` must be one of the 8 non-terminal values (broader than the cold-sweep's own eligible list — reopening back into a Projects-side status like `CONFIRMED` is legitimate). Clears `lostAt`/`lostReason`.
+- Both routes are conversation-agnostic by design — a separate workstream adds the chat-side entry point calling the same `mark-lost` route.
+- Frontend: `StatusPill.tsx`'s `CLOSED_LOST` tone changed from `neutral` → `danger` (this is a shared component also consumed by `ConversationsPanel.tsx`'s thread-header ring tone via `getStatusTone` — a deliberate, spec-directed side effect, not an edit to that file). `InquiryDetail.tsx` gained: a "⋯" overflow menu (Mark as lost, hidden once terminal), a mark-lost confirm modal with an optional reason field, a terminal-state banner (reason/when/by-whom, the last two pulled from the same `/audit` endpoint `AuditTrail` already uses), and a reopen modal with a status picker.
 
-Computed sRGB relative luminance / contrast ratio for every text-on-background pairing actually used, per the accessibility floor's instruction to verify computed pairs rather than assume:
+## 5. Verification performed
 
-- **`fg-muted` bumped from the spec's suggested `~#6B6B74` to `#8b8b94`.** `#6B6B74` on `--color-surface` computes to **~3.4:1** — fails WCAG AA's 4.5:1 for normal text. `#8b8b94` computes to **~5.3:1** — passes comfortably. This is the only token value changed from the spec's literal suggestion.
-- `fg-secondary` (`#a1a1aa`) on surface: **~7.0:1** — passes.
-- `fg` (`#f4f4f5`) on `bg`/`surface`: >19:1 — no concern.
-- `accent-fg` (`#0a0a0b`) on `accent` (`#c9f031`) — used for every filled accent button/pill: **~15:1** — passes AAA even at small sizes, confirming dark-text-on-accent is safe everywhere it's used.
-- Semantic status text-on-tinted-background (the actual rendered pair, i.e. the status color blended at 15% over `surface`, not the flat token): success **~7.6:1**, danger **~5.2:1**, calculated the same way for info/warning — all clear AA for normal text. The spec's own caution ("lime on near-black... check small text usage") turned out to be a non-issue once computed: accent-as-text on `bg`/`surface` is >15:1 regardless of size.
+All against the dev DB (`hopper.proxy.rlwy.net`, confirmed via `apps/api/.env` before starting). Dev-reseedability confirmed (`npx prisma db seed` re-ran clean after all of this).
 
-## 4. Where usability won over the reference aesthetic
+- **Scheduler**: both jobs registered on boot (dev *and* compiled-production boot, see §6). `run-now` executes synchronously and returns the `JobRun` row. Double-run guard proven directly against `runJob` (bypassing the endpoint, since `run-now`'s un-truncated timestamp is deliberately always-unique): two concurrent calls with an identical `scheduledFor` → exactly one `{skipped: false}`, one `{skipped: true}`. A job registered to always throw → recorded `FAILED` with the error message, runner resolved normally, API process unaffected.
+- **Expiration sweep**: seeded an `ACTIVE` card with `expiresAt` in 2020 → run-now → `EXPIRED`, one audit row (`actorUserId: null`, action `status_change`, job name + old/new status in `changes`) → re-ran → `cardsExpired: 0`.
+- **Cold sweep**: three fresh test inquiries (to avoid polluted seed/session data — the first "clean" candidate I picked, Alex Testperson, turned out to already have a same-session conversation from earlier UI testing, which correctly prevented it from sweeping and became an accidental extra proof point for the conversation-activity signal). Backdated `updatedAt` + existing `AuditLog` rows to ~100 days ago via raw SQL (no legitimate API path sets `updatedAt` to the past, by design):
+  - Clean NEW inquiry, no conversation, no estimate activity → swept to `COLD_LEAD`, audited with `lastActivityAt`/`coldLeadDays` in `changes`.
+  - NEW inquiry backdated the same, but with a conversation message sent *today* → **not** swept.
+  - `CONFIRMED` (Projects-side) inquiry backdated the same → **not** swept, regardless of activity.
+  - Re-ran → `inquiriesSwept: 0` (idempotent).
+- **Mark-lost/reopen**: happy path with reason + audit; rejected on an already-terminal inquiry (400); reopen to a valid status clears `lostAt`/`lostReason` + audit; reopen to `CLOSED_LOST` (illegal target) → 400; FRONT_DESK allowed; ARTIST → 403; a second studio (spun up via `/studios/bootstrap`, then deleted) → 404 on the first studio's inquiry, confirming the same `studioId` ownership guard used by every other inquiry route.
+- **Settings**: `coldLeadDays` PATCH by OWNER, audited (`from`/`to` in `changes`); `GET /jobs` → 403 for FRONT_DESK.
+- **Browser** (Playwright, dev servers): Settings → System section renders both jobs with description/schedule/last-run, Run Now updates the row live; Policies & Defaults shows the new "Cold lead after" field; Inquiries list renders a red "Closed Lost" pill and would render a gray "Cold lead" pill (tone map confirmed, not separately screenshotted since the live pill assertion for CLOSED_LOST already proves the same code path); InquiryDetail: "⋯" menu → Mark as lost modal (reason field, outline-danger confirm button) → terminal banner ("Marked lost — {time} by Dev Owner", reason shown) → Reopen modal (status picker) → back to a working non-terminal detail view with the "⋯" menu reappearing.
+- **Production boot**: stopped the dev server, ran `npm run build` (clean `tsc`), then `npm run start` (`npx prisma migrate deploy && node dist/src/index.js`) — `migrate deploy` reported "No pending migrations to apply" (everything already applied via `migrate dev` during development), both jobs logged as scheduled, `/health` responded — confirms cron registration doesn't depend on anything dev-mode-only (e.g. `tsx`'s module loading).
 
-- **No KPI donut/line charts, vehicle illustration, or embedded map** were replicated from the reference — per the brief, only the reference's surface/pill/type/spacing *language* was taken. The pre-existing Dashboard widgets (stat cards, weekly bar chart, artist workload bars, today's-appointments table) were reskinned in place, not replaced or extended with new chart types.
-- **Status is never color-only**: every `StatusPill` always renders its text label alongside the tint, per the accessibility floor, even where the reference's own dashboard leans more heavily on color/iconography alone.
-- **Focus-visible ring** added as a base-layer default (`:focus-visible { outline: 2px solid accent }`) so every interactive element gets a visible keyboard focus state even where no component author had added a bespoke one.
-- **Modal focus behavior**: neither the shared `Modal` component nor `ConversationsPanel`'s slide-over trapped focus or auto-focused on open before this phase (the panel already had Esc-to-close from UI-1, but no Tab trap). Both now trap Tab/Shift+Tab within the dialog and restore focus to the trigger on close — a functional (not just cosmetic) accessibility addition, made because the phase's own accessibility floor explicitly requires it ("keyboard-reachable modals/slide-over — Esc closes, focus trapped").
-- **Touch targets**: `TopBar`'s three circular icon buttons and the mobile sidebar hamburger were bumped from 40px (`h-10 w-10`) to 44px (`h-11 w-11`) to clear the accessibility floor's minimum. Smaller secondary icon buttons inside `ConversationsPanel`'s already-dense header row (28–32px) were **not** bumped — doing so risked visibly breaking that row's layout on mobile, and they're tertiary actions, not primary navigation. Flagged here rather than silently left as a gap.
+All ad-hoc verification scripts and their `JobRun`/audit rows were deleted after use; the second test studio was deleted; the handful of test inquiries/clients/gift card created for cold-sweep verification were left in the dev DB (consistent with this session's established practice of leaving harmless test data in the shared dev environment) and don't affect re-seedability.
 
-## 5. Deviations from the reference image
+## 6. Cron schedule
 
-- The reference's bottom-left Light/Dark segmented toggle was **not** built — explicitly out of scope this session ("dark is the brand default").
-- The reference's active-nav chevron (small arrow inside the lime pill) was **not** added — the written spec asks for "the accent pill (rounded-full, dark text)" only; the chevron was a decorative flourish noted from the image but not requested, and skipping it keeps the change scoped to what was asked.
-- No other hex/spacing values in the final tokens meaningfully diverge from the reference image — the written spec was already a faithful reading of it.
+- `giftCardExpirationSweep`: `0 2 * * *` (02:00 UTC daily).
+- `coldLeadSweep`: `30 2 * * *` (02:30 UTC daily) — staggered a half hour after the first purely so the two never contend for the same instant, though they don't touch overlapping tables.
 
-## 6. Known pre-existing issue found during verification (not fixed — out of scope)
+## 7. Commit
 
-**Desktop-width header collision:** on `Dashboard`, `Calendar`, `Clients`, and `Team` (and likely other pages with a primary action button in the top-right of their own in-page header), that button visually overlaps the app-wide fixed `TopBar` cluster at viewport widths where the page's flex header doesn't wrap (roughly ≥1280px). This is a **structural/positioning** defect that predates this phase — confirmed by checking that none of my edits touched positioning/layout classes for these elements, only color tokens. It became more visually obvious after the restyle because the affected buttons are now bright accent-lime rather than muted gray, but the underlying DOM overlap is unchanged. Since this phase's mandate is "restyle... must not move, add, or remove functionality, routes, or backend anything," it was **not** touched. Recommend a small follow-up (e.g. reserving top-clearance or right-margin on these specific page headers) in a future structural session. Does not occur on mobile widths, since the header row wraps below the fixed top bar there.
-
-## 7. Verification performed
-
-Both dev servers run against the dev DB (`hopper.proxy.rlwy.net`, confirmed via `apps/api/.env`). Clicked through, via Playwright, at desktop (1440×900) and phone (iPhone 12 viewport) widths:
-
-- **As OWNER:** Dashboard, Inquiries & Projects (list + detail, including a live create → assign → artist-approve → send-estimate pipeline run against a fresh test inquiry — zero regressions, zero console errors), Calendar, Clients, Team (Staff/Artists/Permissions tabs), Tasks, Settings, Conversations (list + thread + quick-details drawer), Gift Card detail + QR, View As activation → banner → client-side navigation while impersonating → Exit.
-- **As ARTIST:** Dashboard, My Inquiries, Calendar (role-scoped sidebar and top bar confirmed correct, no regressions from `useEffectiveUser()`).
-- **All five public pages**, each fetched live (fresh tokens generated via the real API flows, not mocked): intake form (mobile), estimate response (mobile, live token), deposit form (mobile — hit the real "already signed" expired-link state, which renders correctly), waiver signing (mobile, live token, full clause list with per-clause initials), gift card view (mobile, live QR).
-- Zero console/page errors across every check.
-- Screenshots of the above are in `ui-screenshots/` (gitignored, not part of this commit).
-
-## 8. Owner's options
-
-1. **Review locally:**
-   ```
-   git fetch && git checkout ui/visual-redesign
-   ```
-   Run the dev servers as usual and click around against the dev DB.
-   ```
-   git checkout main
-   ```
-   returns you to the current design instantly.
-
-2. **Approve** — merge the branch into main and push (this deploys it):
-   ```
-   git checkout main
-   git merge ui/visual-redesign
-   git push
-   ```
-
-3. **Discard** — production and main never knew this branch existed:
-   ```
-   git checkout main
-   git branch -D ui/visual-redesign
-   git push origin --delete ui/visual-redesign
-   ```
+`<filled in after commit — see git log>`

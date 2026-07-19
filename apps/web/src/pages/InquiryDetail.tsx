@@ -8,7 +8,7 @@ import StatusPill from '../components/StatusPill'
 import InquiryPipeline from '../components/InquiryPipeline'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatDuration, formatStatus } from '../lib/format'
-import { ArrowLeftIcon, MessageIcon, PencilIcon, PlusIcon } from '../components/icons'
+import { ArrowLeftIcon, MessageIcon, MoreIcon, PencilIcon, PlusIcon } from '../components/icons'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useViewAs } from '../context/useViewAs'
 import { useConversationPanel } from '../context/useConversationPanel'
@@ -40,6 +40,8 @@ interface Inquiry {
   estimateRespondedAt: string | null
   clientStatedBudget: string | null
   closedReason: string | null
+  lostReason: string | null
+  lostAt: string | null
   clientId: string
   client: { firstName: string; lastName: string; email: string | null; phone: string | null }
   preferredArtist: { id: string; user: { name: string | null } } | null
@@ -87,6 +89,29 @@ interface GiftCardOption {
 function isCardAvailable(card: GiftCardOption): boolean {
   if (card.status !== 'ACTIVE' || card.appointmentId) return false
   return !card.expiresAt || new Date(card.expiresAt) > new Date()
+}
+
+// Phase 7A: mirrors apps/api/src/routes/inquiries.ts's NON_TERMINAL_STATUSES
+// (every InquiryStatus except CLOSED_LOST/COLD_LEAD) -- the reopen picker's
+// valid targets. Kept as a literal list for the same reason the backend's
+// own copy is: separate compilation units, no shared import.
+const REOPEN_TARGET_STATUSES = [
+  'NEW',
+  'ARTIST_ASSIGNED',
+  'AWAITING_CLIENT_RESPONSE',
+  'BUDGET_NEGOTIATION',
+  'DEPOSIT_PENDING',
+  'SCHEDULING',
+  'WAITLISTED',
+  'CONFIRMED',
+] as const
+
+interface AuditLogEntry {
+  id: string
+  action: string
+  changes: Record<string, { from: unknown; to: unknown }> | null
+  createdAt: string
+  actorUser: { id: string; name: string | null; email: string } | null
 }
 
 function DetailField({ label, value }: { label: string; value: string }) {
@@ -185,6 +210,22 @@ export default function InquiryDetail() {
     enabled: !!id,
   })
 
+  // Phase 7A: lostReason/lostAt on the inquiry itself cover CLOSED_LOST's
+  // "reason" and "when" -- but "by whom" (and COLD_LEAD's own "when", which
+  // has no dedicated column since that path is fully automated) only lives
+  // in the audit trail, so the terminal-state banner below pulls the most
+  // recent matching status_change entry from the same endpoint AuditTrail
+  // already uses.
+  const isTerminal = inquiry?.status === 'CLOSED_LOST' || inquiry?.status === 'COLD_LEAD'
+  const { data: inquiryAuditLogs } = useQuery({
+    queryKey: ['inquiry-audit', id],
+    queryFn: () => apiFetch<AuditLogEntry[]>(`/audit?entityType=Inquiry&entityId=${id}`),
+    enabled: !!id && isTerminal,
+  })
+  const terminalAuditEntry = inquiryAuditLogs?.find(
+    (log) => log.action === 'status_change' && log.changes?.status?.to === inquiry?.status,
+  )
+
   const error = queryError
     ? queryError instanceof ApiError && queryError.status === 404
       ? 'Inquiry not found.'
@@ -274,6 +315,20 @@ export default function InquiryDetail() {
   const [waitlistNote, setWaitlistNote] = useState('')
   const [waitlisting, setWaitlisting] = useState(false)
   const [waitlistError, setWaitlistError] = useState<string | null>(null)
+
+  // Phase 7A: mark-as-lost / reopen. canMessage (OWNER/FRONT_DESK) is the
+  // same permission level as these two actions, so it's reused directly
+  // rather than defining a second identical role check.
+  const [showMoreMenu, setShowMoreMenu] = useState(false)
+  const [showMarkLostModal, setShowMarkLostModal] = useState(false)
+  const [lostReasonInput, setLostReasonInput] = useState('')
+  const [markingLost, setMarkingLost] = useState(false)
+  const [markLostError, setMarkLostError] = useState<string | null>(null)
+
+  const [showReopenModal, setShowReopenModal] = useState(false)
+  const [reopenStatus, setReopenStatus] = useState('')
+  const [reopening, setReopening] = useState(false)
+  const [reopenError, setReopenError] = useState<string | null>(null)
 
   const [sendingDeposit, setSendingDeposit] = useState(false)
   const [sendDepositError, setSendDepositError] = useState<string | null>(null)
@@ -508,6 +563,49 @@ export default function InquiryDetail() {
     }
   }
 
+  async function handleMarkLost() {
+    if (!id) return
+
+    setMarkingLost(true)
+    setMarkLostError(null)
+
+    try {
+      await apiFetch(`/inquiries/${id}/mark-lost`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: lostReasonInput.trim() || undefined }),
+      })
+
+      setShowMarkLostModal(false)
+      setLostReasonInput('')
+      invalidateInquiry()
+    } catch (err) {
+      setMarkLostError(err instanceof Error ? err.message : 'Failed to mark inquiry lost')
+    } finally {
+      setMarkingLost(false)
+    }
+  }
+
+  async function handleReopen() {
+    if (!id || !reopenStatus) return
+
+    setReopening(true)
+    setReopenError(null)
+
+    try {
+      await apiFetch(`/inquiries/${id}/reopen`, {
+        method: 'POST',
+        body: JSON.stringify({ status: reopenStatus }),
+      })
+
+      setShowReopenModal(false)
+      invalidateInquiry()
+    } catch (err) {
+      setReopenError(err instanceof Error ? err.message : 'Failed to reopen inquiry')
+    } finally {
+      setReopening(false)
+    }
+  }
+
   async function handleSendDepositForm() {
     if (!id) return
 
@@ -611,8 +709,77 @@ export default function InquiryDetail() {
                       </button>
                     )}
                     <StatusPill status={inquiry.status} />
+                    {canMessage && !isTerminal && (
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => setShowMoreMenu((v) => !v)}
+                          aria-label="More actions"
+                          aria-pressed={showMoreMenu}
+                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
+                        >
+                          <MoreIcon className="h-4 w-4" />
+                        </button>
+                        {showMoreMenu && (
+                          <>
+                            <div
+                              className="fixed inset-0 z-10"
+                              onClick={() => setShowMoreMenu(false)}
+                              aria-hidden="true"
+                            />
+                            <div className="absolute right-0 top-9 z-20 w-48 rounded-xl border border-border bg-surface-raised p-1 shadow-xl">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setShowMoreMenu(false)
+                                  setLostReasonInput('')
+                                  setMarkLostError(null)
+                                  setShowMarkLostModal(true)
+                                }}
+                                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-danger hover:bg-danger/10"
+                              >
+                                Mark as lost
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
+
+                {isTerminal && (
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface-inset px-4 py-3">
+                    <div>
+                      <p className="text-sm font-medium text-fg-secondary">
+                        {inquiry.status === 'CLOSED_LOST' ? 'Marked lost' : 'Cold lead'}
+                        {(inquiry.lostAt || terminalAuditEntry) &&
+                          ` — ${formatDateTime(inquiry.lostAt ?? terminalAuditEntry!.createdAt)}`}
+                        {terminalAuditEntry &&
+                          ` by ${terminalAuditEntry.actorUser?.name || terminalAuditEntry.actorUser?.email || 'System'}`}
+                      </p>
+                      {inquiry.status === 'CLOSED_LOST' && inquiry.lostReason && (
+                        <p className="mt-1 text-sm text-fg-muted">{inquiry.lostReason}</p>
+                      )}
+                      {inquiry.status === 'COLD_LEAD' && (
+                        <p className="mt-1 text-sm text-fg-muted">No activity for a while -- automatically marked cold.</p>
+                      )}
+                    </div>
+                    {canMessage && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setReopenStatus('')
+                          setReopenError(null)
+                          setShowReopenModal(true)
+                        }}
+                        className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                      >
+                        Reopen
+                      </button>
+                    )}
+                  </div>
+                )}
 
                 <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <DetailField label="Email" value={inquiry.client.email ?? 'Not provided'} />
@@ -1274,6 +1441,84 @@ export default function InquiryDetail() {
                       </button>
                     </div>
                   )}
+                </Modal>
+              )}
+
+              {showMarkLostModal && (
+                <Modal title="Mark as lost" onClose={() => setShowMarkLostModal(false)}>
+                  <div className="space-y-4">
+                    <p className="text-sm text-fg-secondary">
+                      This marks the inquiry as lost. You can reopen it later if the client comes back.
+                    </p>
+
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-fg-secondary">Reason (optional)</label>
+                      <textarea
+                        rows={3}
+                        value={lostReasonInput}
+                        onChange={(e) => setLostReasonInput(e.target.value)}
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                      />
+                    </div>
+
+                    {markLostError && <p className="text-sm text-danger">{markLostError}</p>}
+
+                    <div className="flex gap-3">
+                      <button
+                        type="button"
+                        onClick={handleMarkLost}
+                        disabled={markingLost}
+                        className="flex-1 rounded-full border border-danger/40 px-4 py-2 text-sm font-medium text-danger transition hover:bg-danger/10 disabled:opacity-60"
+                      >
+                        {markingLost ? 'Marking lost…' : 'Mark as lost'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowMarkLostModal(false)}
+                        disabled={markingLost}
+                        className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                </Modal>
+              )}
+
+              {showReopenModal && (
+                <Modal title="Reopen inquiry" onClose={() => setShowReopenModal(false)}>
+                  <div className="space-y-4">
+                    <p className="text-sm text-fg-secondary">Choose where this inquiry should resume.</p>
+
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-fg-secondary">Status</label>
+                      <select
+                        value={reopenStatus}
+                        onChange={(e) => setReopenStatus(e.target.value)}
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                      >
+                        <option value="" disabled>
+                          Select a status
+                        </option>
+                        {REOPEN_TARGET_STATUSES.map((status) => (
+                          <option key={status} value={status}>
+                            {formatStatus(status)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {reopenError && <p className="text-sm text-danger">{reopenError}</p>}
+
+                    <button
+                      type="button"
+                      onClick={handleReopen}
+                      disabled={!reopenStatus || reopening}
+                      className="w-full rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                    >
+                      {reopening ? 'Reopening…' : 'Reopen'}
+                    </button>
+                  </div>
                 </Modal>
               )}
 

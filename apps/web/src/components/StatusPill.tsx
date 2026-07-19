@@ -19,7 +19,13 @@ const STATUS_TONE: Record<string, Tone> = {
   SCHEDULING: 'success',
   WAITLISTED: 'warning',
   CONFIRMED: 'success',
-  CLOSED_LOST: 'neutral',
+  // Phase 7A: CLOSED_LOST is a deliberate staff action (or the missing-
+  // workflow mark-lost route) and reads as danger/red; COLD_LEAD is the
+  // automated sweep's quieter outcome and stays neutral/gray -- consistent
+  // with the progress-ring terminal colors (#e05252 / #6b6b73) already
+  // established in ConversationsPanel.tsx's own RING_TERMINAL_COLORS
+  // (a separate, hardcoded map there -- unaffected by this change).
+  CLOSED_LOST: 'danger',
   COLD_LEAD: 'neutral',
 
   // Appointments
@@ -38,6 +44,11 @@ const STATUS_TONE: Record<string, Tone> = {
   PENDING: 'warning',
   SIGNED: 'info',
   VERIFIED: 'success',
+
+  // Phase 7A: scheduled job runs (Settings -> System)
+  RUNNING: 'info',
+  SUCCEEDED: 'success',
+  FAILED: 'danger',
 }
 
 // Tone -> className must stay as literal strings (not built from a

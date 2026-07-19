@@ -67,6 +67,12 @@ enum MessageDirection {
   OUTBOUND
 }
 
+enum JobStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
 enum InquiryStatus {
   NEW
   ARTIST_ASSIGNED
@@ -312,6 +318,11 @@ model Inquiry {
   timeEstimateHoursMax  Float?
   declineNote           String?
   createdAt             DateTime      @default(now())
+  // Phase 7A: didn't exist before this phase. Added specifically as one of
+  // the four last-activity signals the cold-lead sweep considers (see
+  // lib/jobs/coldLeadSweep.ts) -- Prisma maintains it automatically on
+  // every update() call, no route needs to set it explicitly.
+  updatedAt             DateTime      @updatedAt
   assignedAt            DateTime?
 
   estimateToken          String?   @unique
@@ -325,6 +336,12 @@ model Inquiry {
   estimateTermsSnapshot  String?
   clientStatedBudget     String?
   closedReason           String?
+  // Phase 7A: set only by POST /:id/mark-lost (a deliberate staff action),
+  // distinct from closedReason above which predates this phase and is left
+  // untouched. Cleared by /:id/reopen. Not set by the cold-lead sweep --
+  // that path is fully automated and has no human-entered reason.
+  lostReason             String?
+  lostAt                 DateTime?
 
   studioId String
   studio   Studio @relation(fields: [studioId], references: [id])
@@ -364,6 +381,14 @@ model StudioSettings {
   estimateTerms                 String?
   giftCardDefaultExpirationDays Int?
   calendarInviteTemplate        String?
+  // Phase 7A: daily jobs (gift-card expiration, cold-lead sweep) compute
+  // "the day" per-studio using this rather than the server process's own
+  // TZ. IANA identifier (e.g. "America/New_York"). Also reserved for the
+  // next phase's SMS send-window computation.
+  timezone                      String   @default("America/New_York")
+  // Phase 7A: days of no activity (see coldLeadSweep.ts's last-activity
+  // definition) before a pre-conversion inquiry is auto-marked COLD_LEAD.
+  coldLeadDays                  Int      @default(90)
   // Conversation composer templates (Phase 6A). Array<{ id: string, name: string, body: string }>.
   messageTemplates              Json?
   // Liability waiver template (Phase 4), editable by OWNER from Settings.
@@ -752,4 +777,28 @@ model SectionSeen {
   user   User   @relation(fields: [userId], references: [id])
 
   @@unique([userId, section])
+}
+
+// Phase 7A scheduler foundation. One row per (jobName, scheduledFor) slot --
+// deliberately studio-agnostic (a job iterates every studio internally; see
+// each job's own comments in apps/api/src/lib/jobs/). The unique constraint
+// IS the double-run guard: a job claims its slot with a `create` before
+// doing any work, so a second process (or a manual run-now landing on the
+// same instant another tick already claimed) hits a unique violation and
+// is skipped rather than re-running the work -- see runJob in
+// apps/api/src/lib/jobs/registry.ts.
+model JobRun {
+  id           String    @id @default(cuid())
+  jobName      String
+  scheduledFor DateTime
+  startedAt    DateTime  @default(now())
+  finishedAt   DateTime?
+  status       JobStatus @default(RUNNING)
+  // Counts of what the run did (e.g. { cardsExpired: 3 }) -- shape is
+  // per-job, not modeled here.
+  details      Json?
+  error        String?
+
+  @@unique([jobName, scheduledFor])
+  @@index([jobName, scheduledFor])
 }
