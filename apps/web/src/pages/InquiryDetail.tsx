@@ -6,8 +6,15 @@ import AuditTrail from '../components/AuditTrail'
 import Modal from '../components/Modal'
 import StatusPill from '../components/StatusPill'
 import InquiryPipeline from '../components/InquiryPipeline'
+import AppointmentForm from '../components/AppointmentForm'
+import DateAndTimeRangeFields, {
+  combineDateAndTime,
+  isCompleteTimeRange,
+  isValidTimeRange,
+  type DateAndTimeRangeValue,
+} from '../components/DateAndTimeRangeFields'
 import { apiFetch, ApiError } from '../lib/api'
-import { formatDateTime, formatDuration, formatStatus } from '../lib/format'
+import { formatDateTime, formatDuration, formatPhoneInput, formatStatus } from '../lib/format'
 import { ArrowLeftIcon, MessageIcon, MoreIcon, PencilIcon, PlusIcon, ShareIcon } from '../components/icons'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useViewAs } from '../context/useViewAs'
@@ -306,7 +313,12 @@ export default function InquiryDetail() {
   const [savingDetails, setSavingDetails] = useState(false)
   const [detailsError, setDetailsError] = useState<string | null>(null)
 
-  const [scheduleForm, setScheduleForm] = useState({ startTime: '', endTime: '', giftCardId: '' })
+  const [scheduleTimeRange, setScheduleTimeRange] = useState<DateAndTimeRangeValue>({
+    date: '',
+    startTime: '',
+    endTime: '',
+  })
+  const [scheduleGiftCardId, setScheduleGiftCardId] = useState('')
   const [scheduling, setScheduling] = useState(false)
   const [scheduleError, setScheduleError] = useState<string | null>(null)
   const [bufferWarning, setBufferWarning] = useState<string | null>(null)
@@ -338,19 +350,10 @@ export default function InquiryDetail() {
   // UI-1 §3: appointments/sessions nested inside their project. Distinct
   // from scheduleForm above (which drives the special first-scheduling-slot
   // flow via /inquiries/:id/schedule) -- this is the generic
-  // POST /appointments route, pre-scoped to this project's client +
-  // inquiry, for booking an additional session under a project already
-  // underway.
+  // POST /appointments route (via the shared AppointmentForm component,
+  // Phase UI-4), pre-scoped to this project's client + inquiry, for
+  // booking an additional session under a project already underway.
   const [showAppointmentModal, setShowAppointmentModal] = useState(false)
-  const [appointmentForm, setAppointmentForm] = useState({
-    artistId: '',
-    giftCardId: '',
-    startTime: '',
-    endTime: '',
-    notes: '',
-  })
-  const [creatingAppointment, setCreatingAppointment] = useState(false)
-  const [appointmentError, setAppointmentError] = useState<string | null>(null)
 
   // Seeds the editable estimate fields from the inquiry once per inquiry id
   // (not on every refetch), so an in-progress edit doesn't get clobbered by
@@ -486,7 +489,14 @@ export default function InquiryDetail() {
   }
 
   async function handleSchedule() {
-    if (!id || !scheduleForm.startTime || !scheduleForm.endTime || !scheduleForm.giftCardId) return
+    if (!id || !scheduleGiftCardId || !isCompleteTimeRange(scheduleTimeRange)) return
+    if (!isValidTimeRange(scheduleTimeRange)) {
+      setScheduleError('End time must be after start time.')
+      return
+    }
+
+    const start = combineDateAndTime(scheduleTimeRange.date, scheduleTimeRange.startTime)!
+    const end = combineDateAndTime(scheduleTimeRange.date, scheduleTimeRange.endTime)!
 
     setScheduling(true)
     setScheduleError(null)
@@ -496,9 +506,9 @@ export default function InquiryDetail() {
       const result = await apiFetch<{ bufferWarning: string | null }>(`/inquiries/${id}/schedule`, {
         method: 'POST',
         body: JSON.stringify({
-          startTime: new Date(scheduleForm.startTime).toISOString(),
-          endTime: new Date(scheduleForm.endTime).toISOString(),
-          giftCardId: scheduleForm.giftCardId,
+          startTime: start.toISOString(),
+          endTime: end.toISOString(),
+          giftCardId: scheduleGiftCardId,
         }),
       })
 
@@ -511,36 +521,6 @@ export default function InquiryDetail() {
     }
   }
 
-  async function handleCreateAppointment() {
-    if (!inquiry || !appointmentForm.artistId || !appointmentForm.giftCardId) return
-    if (!appointmentForm.startTime || !appointmentForm.endTime) return
-
-    setCreatingAppointment(true)
-    setAppointmentError(null)
-
-    try {
-      await apiFetch('/appointments', {
-        method: 'POST',
-        body: JSON.stringify({
-          clientId: inquiry.clientId,
-          inquiryId: inquiry.id,
-          artistId: appointmentForm.artistId,
-          giftCardId: appointmentForm.giftCardId,
-          startTime: new Date(appointmentForm.startTime).toISOString(),
-          endTime: new Date(appointmentForm.endTime).toISOString(),
-          notes: appointmentForm.notes || undefined,
-        }),
-      })
-
-      setShowAppointmentModal(false)
-      setAppointmentForm({ artistId: '', giftCardId: '', startTime: '', endTime: '', notes: '' })
-      invalidateInquiry()
-    } catch (err) {
-      setAppointmentError(err instanceof Error ? err.message : 'Failed to create appointment')
-    } finally {
-      setCreatingAppointment(false)
-    }
-  }
 
   async function handleWaitlist() {
     if (!id) return
@@ -794,7 +774,10 @@ export default function InquiryDetail() {
 
                 <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <DetailField label="Email" value={inquiry.client.email ?? 'Not provided'} />
-                  <DetailField label="Phone" value={inquiry.client.phone ?? 'Not provided'} />
+                  <DetailField
+                    label="Phone"
+                    value={inquiry.client.phone ? formatPhoneInput(inquiry.client.phone) : 'Not provided'}
+                  />
                 </div>
 
                 {taggedConversation && (
@@ -1045,25 +1028,8 @@ export default function InquiryDetail() {
 
                   {inquiry.status === 'SCHEDULING' && !inquiry.appointment && (
                     <>
-                      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        <div>
-                          <label className="mb-1 block text-xs font-medium text-fg-secondary">Start</label>
-                          <input
-                            type="datetime-local"
-                            value={scheduleForm.startTime}
-                            onChange={(e) => setScheduleForm({ ...scheduleForm, startTime: e.target.value })}
-                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                          />
-                        </div>
-                        <div>
-                          <label className="mb-1 block text-xs font-medium text-fg-secondary">End</label>
-                          <input
-                            type="datetime-local"
-                            value={scheduleForm.endTime}
-                            onChange={(e) => setScheduleForm({ ...scheduleForm, endTime: e.target.value })}
-                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                          />
-                        </div>
+                      <div className="mt-4">
+                        <DateAndTimeRangeFields value={scheduleTimeRange} onChange={setScheduleTimeRange} />
                       </div>
 
                       <div className="mt-3">
@@ -1076,8 +1042,8 @@ export default function InquiryDetail() {
                           </p>
                         ) : (
                           <select
-                            value={scheduleForm.giftCardId}
-                            onChange={(e) => setScheduleForm({ ...scheduleForm, giftCardId: e.target.value })}
+                            value={scheduleGiftCardId}
+                            onChange={(e) => setScheduleGiftCardId(e.target.value)}
                             className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                           >
                             <option value="" disabled>
@@ -1098,12 +1064,7 @@ export default function InquiryDetail() {
                         <button
                           type="button"
                           onClick={handleSchedule}
-                          disabled={
-                            scheduling ||
-                            !scheduleForm.startTime ||
-                            !scheduleForm.endTime ||
-                            !scheduleForm.giftCardId
-                          }
+                          disabled={scheduling || !isCompleteTimeRange(scheduleTimeRange) || !scheduleGiftCardId}
                           className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                         >
                           {scheduling ? 'Scheduling…' : 'Schedule Appointment'}
@@ -1535,104 +1496,19 @@ export default function InquiryDetail() {
 
               {showAppointmentModal && (
                 <Modal title="New Appointment" onClose={() => setShowAppointmentModal(false)}>
-                  <div className="space-y-4">
-                    <p className="text-xs text-fg-muted">
-                      Booking another appointment for {inquiry.client.firstName} {inquiry.client.lastName} under this
-                      project.
-                    </p>
-
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-fg-secondary">Artist</label>
-                      <select
-                        value={appointmentForm.artistId}
-                        onChange={(e) => setAppointmentForm({ ...appointmentForm, artistId: e.target.value })}
-                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                      >
-                        <option value="" disabled>
-                          {artistOptions === undefined ? 'Loading artists…' : 'Select an artist'}
-                        </option>
-                        {artistOptions?.map((artist) => (
-                          <option key={artist.id} value={artist.id}>
-                            {artist.user.email}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <div>
-                        <label className="mb-1 block text-sm font-medium text-fg-secondary">Start</label>
-                        <input
-                          type="datetime-local"
-                          value={appointmentForm.startTime}
-                          onChange={(e) => setAppointmentForm({ ...appointmentForm, startTime: e.target.value })}
-                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-sm font-medium text-fg-secondary">End</label>
-                        <input
-                          type="datetime-local"
-                          value={appointmentForm.endTime}
-                          onChange={(e) => setAppointmentForm({ ...appointmentForm, endTime: e.target.value })}
-                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-fg-secondary">
-                        Gift card (deposit) to attach
-                      </label>
-                      {clientGiftCards && clientGiftCards.length === 0 ? (
-                        <p className="text-sm text-fg-secondary">
-                          No available gift card for this client yet — collect a deposit or issue one first.
-                        </p>
-                      ) : (
-                        <select
-                          value={appointmentForm.giftCardId}
-                          onChange={(e) => setAppointmentForm({ ...appointmentForm, giftCardId: e.target.value })}
-                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                        >
-                          <option value="" disabled>
-                            {clientGiftCards === undefined ? 'Loading…' : 'Select a gift card'}
-                          </option>
-                          {clientGiftCards?.map((card) => (
-                            <option key={card.id} value={card.id}>
-                              ${(card.amountCents / 100).toFixed(2)} — {card.code.slice(0, 8)}…
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                    </div>
-
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-fg-secondary">Notes (optional)</label>
-                      <textarea
-                        rows={2}
-                        value={appointmentForm.notes}
-                        onChange={(e) => setAppointmentForm({ ...appointmentForm, notes: e.target.value })}
-                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                      />
-                    </div>
-
-                    {appointmentError && <p className="text-sm text-danger">{appointmentError}</p>}
-
-                    <button
-                      type="button"
-                      onClick={handleCreateAppointment}
-                      disabled={
-                        creatingAppointment ||
-                        !appointmentForm.artistId ||
-                        !appointmentForm.giftCardId ||
-                        !appointmentForm.startTime ||
-                        !appointmentForm.endTime
-                      }
-                      className="w-full rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
-                    >
-                      {creatingAppointment ? 'Creating…' : 'Create Appointment'}
-                    </button>
-                  </div>
+                  <p className="mb-4 text-xs text-fg-muted">
+                    Booking another appointment for {inquiry.client.firstName} {inquiry.client.lastName} under this
+                    project.
+                  </p>
+                  <AppointmentForm
+                    fixedClientId={inquiry.clientId}
+                    fixedInquiryId={inquiry.id}
+                    onCreated={() => {
+                      setShowAppointmentModal(false)
+                      invalidateInquiry()
+                    }}
+                    onCancel={() => setShowAppointmentModal(false)}
+                  />
                 </Modal>
               )}
             </>

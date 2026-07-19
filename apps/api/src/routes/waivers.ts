@@ -5,6 +5,7 @@ import { LiabilityWaiverStatus, Role } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
 import { isAtLeast18, validateClauseInitials, validateHealthAnswers } from "../lib/waivers";
+import { normalizePhone } from "../lib/phone";
 
 function isExpiredOrInvalid(waiver: { signedAt: Date | null; tokenExpiresAt: Date | null } | null) {
   if (!waiver) {
@@ -93,6 +94,12 @@ publicRouter.patch("/sign/:token", async (req, res) => {
   if (typeof emergencyContactPhone !== "string" || emergencyContactPhone.trim().length === 0) {
     return res.status(400).json({ error: "Emergency contact phone is required", field: "emergencyContactPhone" });
   }
+  const normalizedEmergencyPhone = normalizePhone(emergencyContactPhone);
+  if (normalizedEmergencyPhone.length !== 10) {
+    return res
+      .status(400)
+      .json({ error: "Emergency contact phone must be a complete 10-digit US number", field: "emergencyContactPhone" });
+  }
 
   const dob = new Date(dateOfBirth);
   if (!dateOfBirth || Number.isNaN(dob.getTime())) {
@@ -146,7 +153,7 @@ publicRouter.patch("/sign/:token", async (req, res) => {
       legalName: legalName.trim(),
       dateOfBirth: dob,
       emergencyContactName: emergencyContactName.trim(),
-      emergencyContactPhone: emergencyContactPhone.trim(),
+      emergencyContactPhone: normalizedEmergencyPhone,
       healthAnswers: healthResult.value as unknown as Prisma.InputJsonValue,
       idImageUrl: idImageUrl.trim(),
       clauseInitials: clauseResult.value as unknown as Prisma.InputJsonValue,

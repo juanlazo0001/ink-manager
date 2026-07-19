@@ -1,15 +1,16 @@
-import { useEffect, useState, type FormEvent } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
+import AppointmentForm from '../components/AppointmentForm'
 import { SkeletonTableRows } from '../components/Skeleton'
 import StatusPill from '../components/StatusPill'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatStatus } from '../lib/format'
 import { useUserProfile } from '../context/useUserProfile'
 import { useAuth } from '../context/useAuth'
-import { appointmentsQueryKey, clientsQueryKey, artistsQueryKey } from '../lib/queryKeys'
+import { appointmentsQueryKey } from '../lib/queryKeys'
 import { useMarkSectionSeen } from '../lib/useMarkSectionSeen'
 import { PlusIcon } from '../components/icons'
 
@@ -22,52 +23,6 @@ interface Appointment {
   status: string
   client: { id: string; firstName: string; lastName: string } | null
   artist: { id: string; user: { email: string } } | null
-}
-
-interface ClientOption {
-  id: string
-  firstName: string
-  lastName: string
-}
-
-interface ArtistOption {
-  id: string
-  user: { email: string }
-}
-
-interface InquiryOption {
-  id: string
-  description: string
-  status: string
-}
-
-interface GiftCardOption {
-  id: string
-  code: string
-  amountCents: number
-  status: string
-  expiresAt: string | null
-  appointmentId: string | null
-}
-
-interface ClientWithProjects {
-  inquiries: InquiryOption[]
-  giftCards: GiftCardOption[]
-}
-
-function isCardAvailable(card: GiftCardOption): boolean {
-  if (card.status !== 'ACTIVE' || card.appointmentId) return false
-  return !card.expiresAt || new Date(card.expiresAt) > new Date()
-}
-
-const EMPTY_FORM = {
-  clientId: '',
-  inquiryId: '',
-  giftCardId: '',
-  artistId: '',
-  startTime: '',
-  endTime: '',
-  notes: '',
 }
 
 export default function Calendar() {
@@ -84,8 +39,8 @@ export default function Calendar() {
   const [updatingId, setUpdatingId] = useState<string | null>(null)
 
   const [showAddModal, setShowAddModal] = useState(false)
-  const [form, setForm] = useState(EMPTY_FORM)
-  const [formError, setFormError] = useState<string | null>(null)
+  const [prefillClientId, setPrefillClientId] = useState<string | undefined>(undefined)
+  const [prefillInquiryId, setPrefillInquiryId] = useState<string | undefined>(undefined)
 
   // "Book follow-up" from a just-checked-out appointment deep-links here
   // with the same client + project pre-filled, since Phase 3 will demand a
@@ -93,12 +48,13 @@ export default function Calendar() {
   // "New Appointment" entry point on Inquiries & Projects uses the same
   // deep-link mechanism, just without a client/project prefilled.
   useEffect(() => {
-    const prefillClientId = searchParams.get('prefillClientId')
-    const prefillInquiryId = searchParams.get('prefillInquiryId')
+    const deepLinkClientId = searchParams.get('prefillClientId')
+    const deepLinkInquiryId = searchParams.get('prefillInquiryId')
     const openNew = searchParams.get('new')
 
-    if (prefillClientId) {
-      setForm((current) => ({ ...current, clientId: prefillClientId, inquiryId: prefillInquiryId ?? '' }))
+    if (deepLinkClientId) {
+      setPrefillClientId(deepLinkClientId)
+      setPrefillInquiryId(deepLinkInquiryId ?? undefined)
       setShowAddModal(true)
       setSearchParams({}, { replace: true })
     } else if (openNew) {
@@ -126,66 +82,15 @@ export default function Calendar() {
       : error.message
     : null
 
-  // Shares its cache with the Clients/Artists pages -- if either was
-  // visited recently, these selects populate instantly with no fetch.
-  const { data: clientOptions } = useQuery({
-    queryKey: clientsQueryKey(user!.studioId),
-    queryFn: () => apiFetch<ClientOption[]>('/clients'),
-    enabled: canCreate,
-  })
-
-  const { data: artistOptions } = useQuery({
-    queryKey: artistsQueryKey(user!.studioId),
-    queryFn: () => apiFetch<ArtistOption[]>('/artists'),
-    enabled: canCreate,
-  })
-
-  // The selected client's own projects (inquiries) and available gift
-  // cards -- an appointment needs one of each (Phase 3 enforcement), so
-  // both selectors are scoped to whichever client is picked first.
-  const { data: selectedClientDetail } = useQuery({
-    queryKey: ['client-projects-for-appointment', form.clientId],
-    queryFn: () => apiFetch<ClientWithProjects>(`/clients/${form.clientId}`),
-    enabled: !!form.clientId,
-  })
-
-  const availableInquiries = selectedClientDetail?.inquiries ?? []
-  const availableGiftCards = (selectedClientDetail?.giftCards ?? []).filter(isCardAvailable)
-
-  const createAppointment = useMutation({
-    mutationFn: (payload: typeof EMPTY_FORM) =>
-      apiFetch('/appointments', {
-        method: 'POST',
-        body: JSON.stringify({
-          clientId: payload.clientId,
-          inquiryId: payload.inquiryId,
-          giftCardId: payload.giftCardId,
-          artistId: payload.artistId,
-          startTime: new Date(payload.startTime).toISOString(),
-          endTime: new Date(payload.endTime).toISOString(),
-          notes: payload.notes || undefined,
-        }),
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: appointmentsKey })
-      setShowAddModal(false)
-      setForm(EMPTY_FORM)
-    },
-    onError: (err) => {
-      setFormError(err instanceof Error ? err.message : 'Failed to create appointment')
-    },
-  })
-
-  function handleCreateAppointment(event: FormEvent) {
-    event.preventDefault()
-    setFormError(null)
-    createAppointment.mutate(form)
+  function closeAddModal() {
+    setShowAddModal(false)
+    setPrefillClientId(undefined)
+    setPrefillInquiryId(undefined)
   }
 
-  function handleClientChange(clientId: string) {
-    // A new client means the previously selected inquiry/card (from the old
-    // client) are no longer valid choices.
-    setForm({ ...form, clientId, inquiryId: '', giftCardId: '' })
+  function handleAppointmentCreated() {
+    queryClient.invalidateQueries({ queryKey: appointmentsKey })
+    closeAddModal()
   }
 
   async function handleStatusChange(appointmentId: string, newStatus: string) {
@@ -332,187 +237,13 @@ export default function Calendar() {
       </div>
 
       {showAddModal && (
-        <Modal title="New Appointment" onClose={() => setShowAddModal(false)}>
-          <form onSubmit={handleCreateAppointment}>
-            {formError && (
-              <div className="mb-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
-                {formError}
-              </div>
-            )}
-
-            {clientOptions && clientOptions.length === 0 && (
-              <p className="mb-3 text-sm text-fg-secondary">No clients yet — add one from the Clients page first.</p>
-            )}
-
-            {artistOptions && artistOptions.length === 0 && (
-              <p className="mb-3 text-sm text-fg-secondary">No artists yet — add one first.</p>
-            )}
-
-            <div className="mb-3">
-              <label htmlFor="clientId" className="mb-1 block text-sm font-medium text-fg-secondary">
-                Client
-              </label>
-              <select
-                id="clientId"
-                required
-                value={form.clientId}
-                onChange={(event) => handleClientChange(event.target.value)}
-                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-              >
-                <option value="" disabled>
-                  {clientOptions === undefined ? 'Loading…' : 'Select a client'}
-                </option>
-                {clientOptions?.map((client) => (
-                  <option key={client.id} value={client.id}>
-                    {client.firstName} {client.lastName}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {form.clientId && (
-              <>
-                <div className="mb-3">
-                  <label htmlFor="inquiryId" className="mb-1 block text-sm font-medium text-fg-secondary">
-                    Project (inquiry)
-                  </label>
-                  {availableInquiries.length === 0 ? (
-                    <p className="text-sm text-fg-secondary">This client has no inquiries yet.</p>
-                  ) : (
-                    <select
-                      id="inquiryId"
-                      required
-                      value={form.inquiryId}
-                      onChange={(event) => setForm({ ...form, inquiryId: event.target.value })}
-                      className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                    >
-                      <option value="" disabled>
-                        Select the project this session is for
-                      </option>
-                      {availableInquiries.map((inquiry) => (
-                        <option key={inquiry.id} value={inquiry.id}>
-                          {inquiry.description.length > 50
-                            ? `${inquiry.description.slice(0, 50).trimEnd()}…`
-                            : inquiry.description}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-
-                <div className="mb-3">
-                  <label htmlFor="giftCardId" className="mb-1 block text-sm font-medium text-fg-secondary">
-                    Gift card (deposit)
-                  </label>
-                  {availableGiftCards.length === 0 ? (
-                    <p className="text-sm text-fg-secondary">
-                      This client has no available gift card — collect a deposit or{' '}
-                      <Link to={`/clients/${form.clientId}`} className="underline hover:text-fg">
-                        issue one from their profile
-                      </Link>{' '}
-                      first.
-                    </p>
-                  ) : (
-                    <select
-                      id="giftCardId"
-                      required
-                      value={form.giftCardId}
-                      onChange={(event) => setForm({ ...form, giftCardId: event.target.value })}
-                      className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                    >
-                      <option value="" disabled>
-                        Select a gift card to attach
-                      </option>
-                      {availableGiftCards.map((card) => (
-                        <option key={card.id} value={card.id}>
-                          ${(card.amountCents / 100).toFixed(2)} — {card.code.slice(0, 8)}…
-                          {card.expiresAt ? ` (expires ${new Date(card.expiresAt).toLocaleDateString()})` : ''}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-              </>
-            )}
-
-            <div className="mb-3">
-              <label htmlFor="artistId" className="mb-1 block text-sm font-medium text-fg-secondary">
-                Artist
-              </label>
-              <select
-                id="artistId"
-                required
-                value={form.artistId}
-                onChange={(event) => setForm({ ...form, artistId: event.target.value })}
-                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-              >
-                <option value="" disabled>
-                  {artistOptions === undefined ? 'Loading…' : 'Select an artist'}
-                </option>
-                {artistOptions?.map((artist) => (
-                  <option key={artist.id} value={artist.id}>
-                    {artist.user.email}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label htmlFor="startTime" className="mb-1 block text-sm font-medium text-fg-secondary">
-                  Start
-                </label>
-                <input
-                  id="startTime"
-                  type="datetime-local"
-                  required
-                  value={form.startTime}
-                  onChange={(event) => setForm({ ...form, startTime: event.target.value })}
-                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                />
-              </div>
-
-              <div>
-                <label htmlFor="endTime" className="mb-1 block text-sm font-medium text-fg-secondary">
-                  End
-                </label>
-                <input
-                  id="endTime"
-                  type="datetime-local"
-                  required
-                  value={form.endTime}
-                  onChange={(event) => setForm({ ...form, endTime: event.target.value })}
-                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                />
-              </div>
-            </div>
-
-            <div className="mt-3">
-              <label htmlFor="notes" className="mb-1 block text-sm font-medium text-fg-secondary">
-                Notes
-              </label>
-              <textarea
-                id="notes"
-                rows={3}
-                value={form.notes}
-                onChange={(event) => setForm({ ...form, notes: event.target.value })}
-                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={
-                createAppointment.isPending ||
-                !form.clientId ||
-                availableInquiries.length === 0 ||
-                availableGiftCards.length === 0
-              }
-              className="mt-5 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
-            >
-              {createAppointment.isPending ? 'Scheduling…' : 'Create Appointment'}
-            </button>
-          </form>
+        <Modal title="New Appointment" onClose={closeAddModal}>
+          <AppointmentForm
+            fixedClientId={prefillClientId}
+            fixedInquiryId={prefillInquiryId}
+            onCreated={handleAppointmentCreated}
+            onCancel={closeAddModal}
+          />
         </Modal>
       )}
     </div>

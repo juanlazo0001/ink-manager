@@ -5,7 +5,7 @@ import Sidebar from '../components/Sidebar'
 import AuditTrail from '../components/AuditTrail'
 import StatusPill from '../components/StatusPill'
 import { apiFetch, ApiError } from '../lib/api'
-import { formatDateTime, formatStatus } from '../lib/format'
+import { formatDateTime, formatPhoneInput, formatStatus } from '../lib/format'
 import { formatCents, dollarsToCents } from '../lib/money'
 import { ArrowLeftIcon, MessageIcon } from '../components/icons'
 import { useEffectiveUser } from '../context/useEffectiveUser'
@@ -445,7 +445,10 @@ export default function AppointmentDetail() {
                               Emergency contact
                             </p>
                             <p className="mt-1 text-fg">
-                              {waiverDetail.emergencyContactName} — {waiverDetail.emergencyContactPhone}
+                              {waiverDetail.emergencyContactName} —{' '}
+                              {waiverDetail.emergencyContactPhone
+                                ? formatPhoneInput(waiverDetail.emergencyContactPhone)
+                                : ''}
                             </p>
                           </div>
                           <div>

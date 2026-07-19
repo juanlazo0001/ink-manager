@@ -3,8 +3,10 @@ import { useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
+import PhoneInput from '../components/PhoneInput'
 import { SkeletonTableRows } from '../components/Skeleton'
 import { apiFetch, ApiError } from '../lib/api'
+import { formatPhoneInput, isValidPhoneDigits } from '../lib/format'
 import { PlusIcon, SearchIcon } from '../components/icons'
 import { useUserProfile } from '../context/useUserProfile'
 import { useAuth } from '../context/useAuth'
@@ -75,6 +77,10 @@ export default function Clients() {
   function handleAddClient(event: FormEvent) {
     event.preventDefault()
     setFormError(null)
+    if (!isValidPhoneDigits(form.phone)) {
+      setFormError('Enter a complete 10-digit phone number.')
+      return
+    }
     addClient.mutate(form)
   }
 
@@ -154,7 +160,9 @@ export default function Clients() {
                             {client.firstName} {client.lastName}
                           </td>
                           <td className="hidden py-3 text-fg-secondary md:table-cell">{client.email ?? '—'}</td>
-                          <td className="hidden py-3 text-fg-secondary sm:table-cell">{client.phone ?? '—'}</td>
+                          <td className="hidden py-3 text-fg-secondary sm:table-cell">
+                            {client.phone ? formatPhoneInput(client.phone) : '—'}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -222,11 +230,10 @@ export default function Clients() {
               <label htmlFor="phone" className="mb-1 block text-sm font-medium text-fg-secondary">
                 Phone
               </label>
-              <input
+              <PhoneInput
                 id="phone"
-                type="tel"
                 value={form.phone}
-                onChange={(event) => setForm({ ...form, phone: event.target.value })}
+                onChange={(digits) => setForm({ ...form, phone: digits })}
                 className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               />
             </div>

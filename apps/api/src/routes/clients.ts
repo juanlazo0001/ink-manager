@@ -5,6 +5,7 @@ import type { Prisma } from "../../generated/prisma/client";
 import { requireAuth } from "../middleware/auth";
 import { requirePermission } from "../lib/permissions";
 import { diffObjects, logAudit } from "../lib/audit";
+import { normalizePhone } from "../lib/phone";
 
 const router = Router();
 
@@ -25,7 +26,7 @@ router.post("/", async (req, res) => {
   const { firstName, lastName, email, phone } = body;
 
   const client = await prisma.client.create({
-    data: { firstName, lastName, email, phone, studioId: req.user!.studioId },
+    data: { firstName, lastName, email, phone: phone ? normalizePhone(phone) : phone, studioId: req.user!.studioId },
   });
 
   res.status(201).json(client);
@@ -197,11 +198,6 @@ router.get("/:id/shareable-links", async (req, res) => {
   });
 });
 
-function normalizePhone(phone: string): string {
-  const digits = phone.replace(/\D/g, "");
-  return digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
-}
-
 // Other non-merged clients in this studio sharing an email or phone.
 // Exact-match only (after normalizing phone formatting) -- no fuzzy name
 // matching, keeping false positives at zero.
@@ -257,6 +253,11 @@ router.patch("/:id", async (req, res) => {
         return res.status(400).json({ error: `${field} must be a non-empty string` });
       }
       data[field] = body[field].trim();
+    } else if (field === "phone") {
+      if (body.phone !== null && typeof body.phone !== "string") {
+        return res.status(400).json({ error: "phone must be a string or null" });
+      }
+      data.phone = typeof body.phone === "string" && body.phone.trim() ? normalizePhone(body.phone) : null;
     } else {
       if (body[field] !== null && typeof body[field] !== "string") {
         return res.status(400).json({ error: `${field} must be a string or null` });

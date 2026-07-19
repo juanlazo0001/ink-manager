@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { apiFetch, ApiError } from '../lib/api'
 import { uploadImageToCloudinary } from '../lib/cloudinary'
+import PhoneInput from '../components/PhoneInput'
+import { isValidPhoneDigits } from '../lib/format'
 
 interface PrefillPayload {
   firstName?: string
@@ -215,7 +217,7 @@ export default function IntakeForm() {
         if (payload.firstName) setFirstName(payload.firstName)
         if (payload.lastName) setLastName(payload.lastName)
         if (payload.email) setEmail(payload.email)
-        if (payload.phone) setPhone(payload.phone)
+        if (payload.phone) setPhone(payload.phone.replace(/\D/g, '').slice(0, 10))
         if (payload.description) setDescription(payload.description)
         if (payload.placement) setPlacement(payload.placement)
         if (payload.estimatedSize) setEstimatedSize(payload.estimatedSize)
@@ -249,6 +251,11 @@ export default function IntakeForm() {
       !hasBeenTattooedBefore
     ) {
       setSubmitError('Please fill out all required fields.')
+      return
+    }
+
+    if (!isValidPhoneDigits(phone)) {
+      setSubmitError('Enter a complete 10-digit phone number, or leave it blank.')
       return
     }
 
@@ -373,7 +380,7 @@ export default function IntakeForm() {
             </div>
             <div>
               <label className={LABEL_CLASS}>Phone</label>
-              <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className={INPUT_CLASS} />
+              <PhoneInput value={phone} onChange={setPhone} className={INPUT_CLASS} />
               <p className="mt-1 text-[11px] leading-snug text-fg-muted">
                 By providing your phone number, you consent to receive SMS messages about your inquiry and
                 appointment. Message and data rates may apply. Reply STOP to opt out.

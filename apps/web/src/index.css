@@ -246,3 +246,34 @@
 .tiptap-content :where(p):last-child {
   margin-bottom: 0;
 }
+
+/* Phase UI-4: react-day-picker theming -- the library ships light-mode
+   defaults driven by CSS custom properties (--rdp-*), scoped to .rdp-root.
+   Overriding those (rather than fighting its internal classes) is the
+   supported theming path, so this stays a small, forward-compatible diff
+   instead of a deep override of every generated class name. */
+.rdp-root {
+  --rdp-accent-color: var(--color-accent);
+  --rdp-accent-background-color: color-mix(in srgb, var(--color-accent) 20%, transparent);
+  --rdp-today-color: var(--color-accent);
+  color: var(--color-fg);
+}
+.rdp-day_button {
+  color: var(--color-fg);
+}
+.rdp-day_button:hover:not([disabled]) {
+  background-color: var(--color-surface);
+}
+.rdp-weekday {
+  color: var(--color-fg-muted);
+}
+.rdp-month_caption {
+  color: var(--color-fg);
+}
+.rdp-nav button {
+  color: var(--color-fg-secondary);
+}
+.rdp-selected .rdp-day_button {
+  color: var(--color-accent-fg);
+  background-color: var(--color-accent);
+}

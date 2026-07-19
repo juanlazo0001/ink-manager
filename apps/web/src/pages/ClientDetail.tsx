@@ -5,8 +5,9 @@ import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
 import AuditTrail from '../components/AuditTrail'
 import StatusPill from '../components/StatusPill'
+import PhoneInput from '../components/PhoneInput'
 import { apiFetch, ApiError } from '../lib/api'
-import { formatDateTime, formatStatus } from '../lib/format'
+import { formatDateTime, formatPhoneInput, formatStatus, isValidPhoneDigits } from '../lib/format'
 import { ArrowLeftIcon, MessageIcon, PencilIcon, PlusIcon } from '../components/icons'
 import { useUserProfile } from '../context/useUserProfile'
 import { useEffectiveUser } from '../context/useEffectiveUser'
@@ -214,6 +215,11 @@ export default function ClientDetail() {
   async function handleEditSubmit(event: FormEvent) {
     event.preventDefault()
     if (!id) return
+
+    if (!isValidPhoneDigits(editForm.phone)) {
+      setEditError('Enter a complete 10-digit phone number.')
+      return
+    }
 
     setEditSubmitting(true)
     setEditError(null)
@@ -426,10 +432,9 @@ export default function ClientDetail() {
                       </div>
                       <div>
                         <label className="mb-1 block text-sm font-medium text-fg-secondary">Phone</label>
-                        <input
-                          type="tel"
+                        <PhoneInput
                           value={editForm.phone}
-                          onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
+                          onChange={(digits) => setEditForm({ ...editForm, phone: digits })}
                           className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                         />
                       </div>
@@ -466,7 +471,9 @@ export default function ClientDetail() {
                           {client.firstName} {client.lastName}
                         </h1>
                         <p className="mt-1 text-sm text-fg-secondary">{client.email ?? 'No email on file'}</p>
-                        <p className="text-sm text-fg-secondary">{client.phone ?? 'No phone on file'}</p>
+                        <p className="text-sm text-fg-secondary">
+                          {client.phone ? formatPhoneInput(client.phone) : 'No phone on file'}
+                        </p>
                       </div>
                     </div>
 
@@ -511,7 +518,7 @@ export default function ClientDetail() {
                         <span className="text-warning">
                           {candidate.firstName} {candidate.lastName}
                           {candidate.email ? ` — ${candidate.email}` : ''}
-                          {candidate.phone ? ` — ${candidate.phone}` : ''}
+                          {candidate.phone ? ` — ${formatPhoneInput(candidate.phone)}` : ''}
                         </span>
                         <button
                           type="button"

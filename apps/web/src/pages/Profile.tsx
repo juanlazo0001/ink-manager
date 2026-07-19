@@ -1,7 +1,8 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
 import Sidebar from '../components/Sidebar'
+import PhoneInput from '../components/PhoneInput'
 import { apiFetch } from '../lib/api'
-import { formatPhoneInput, readFileAsDataUrl, MAX_IMAGE_FILE_BYTES } from '../lib/format'
+import { formatPhoneInput, isValidPhoneDigits, readFileAsDataUrl, MAX_IMAGE_FILE_BYTES } from '../lib/format'
 import { useUserProfile } from '../context/useUserProfile'
 
 const EMPTY_FORM = { name: '', phone: '', email: '', bio: '', specialties: '' }
@@ -100,6 +101,11 @@ export default function Profile() {
     setError(null)
     setSuccess(false)
 
+    if (!isValidPhoneDigits(form.phone)) {
+      setError('Enter a complete 10-digit phone number.')
+      return
+    }
+
     const emailChanged = form.email.trim() !== profile.email
     const changingPassword = newPassword.length > 0
 
@@ -193,7 +199,9 @@ export default function Profile() {
                     <div>
                       <p className="text-sm font-medium text-fg">{profile.name || 'Unnamed user'}</p>
                       <p className="mt-1 text-xs text-fg-secondary">{profile.email}</p>
-                      {profile.phone && <p className="mt-1 text-xs text-fg-secondary">{profile.phone}</p>}
+                      {profile.phone && (
+                        <p className="mt-1 text-xs text-fg-secondary">{formatPhoneInput(profile.phone)}</p>
+                      )}
                       <p className="mt-1 text-xs text-fg-muted">{profile.role}</p>
                     </div>
                   </div>
@@ -278,14 +286,10 @@ export default function Profile() {
                   <label htmlFor="profilePhone" className="mb-1 block text-sm font-medium text-fg-secondary">
                     Phone
                   </label>
-                  <input
+                  <PhoneInput
                     id="profilePhone"
-                    type="tel"
-                    inputMode="numeric"
-                    placeholder="(555) 123-4567"
-                    maxLength={14}
                     value={form.phone}
-                    onChange={(event) => setForm((current) => ({ ...current, phone: formatPhoneInput(event.target.value) }))}
+                    onChange={(digits) => setForm((current) => ({ ...current, phone: digits }))}
                     className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                   />
                 </div>

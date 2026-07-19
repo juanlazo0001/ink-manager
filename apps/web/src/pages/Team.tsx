@@ -3,10 +3,11 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
+import PhoneInput from '../components/PhoneInput'
 import { SkeletonCards } from '../components/Skeleton'
 import StatusPill from '../components/StatusPill'
 import { apiFetch, ApiError } from '../lib/api'
-import { formatStatus, readFileAsDataUrl, MAX_IMAGE_FILE_BYTES } from '../lib/format'
+import { formatStatus, isValidPhoneDigits, readFileAsDataUrl, MAX_IMAGE_FILE_BYTES } from '../lib/format'
 import { PERMISSION_GROUPS, CONFIGURABLE_ROLES } from '../lib/permissions'
 import { artistsQueryKey } from '../lib/queryKeys'
 import { useAuth } from '../context/useAuth'
@@ -264,6 +265,11 @@ export default function Team() {
     event.preventDefault()
     if (!user?.studioId) return
 
+    if (!isValidPhoneDigits(addForm.phone)) {
+      setAddFormError('Enter a complete 10-digit phone number.')
+      return
+    }
+
     setAddFormError(null)
     setAddSubmitting(true)
 
@@ -303,6 +309,11 @@ export default function Team() {
   async function handleEditSubmit(event: FormEvent) {
     event.preventDefault()
     if (!user?.studioId || !editingUser) return
+
+    if (!isValidPhoneDigits(editForm.phone)) {
+      setEditFormError('Enter a complete 10-digit phone number.')
+      return
+    }
 
     setEditFormError(null)
     setEditSubmitting(true)
@@ -685,11 +696,10 @@ export default function Team() {
               <label htmlFor="addPhone" className="mb-1 block text-sm font-medium text-fg-secondary">
                 Phone
               </label>
-              <input
+              <PhoneInput
                 id="addPhone"
-                type="text"
                 value={addForm.phone}
-                onChange={(event) => setAddForm({ ...addForm, phone: event.target.value })}
+                onChange={(digits) => setAddForm({ ...addForm, phone: digits })}
                 className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               />
             </div>
@@ -810,11 +820,10 @@ export default function Team() {
               <label htmlFor="editPhone" className="mb-1 block text-sm font-medium text-fg-secondary">
                 Phone
               </label>
-              <input
+              <PhoneInput
                 id="editPhone"
-                type="text"
                 value={editForm.phone}
-                onChange={(event) => setEditForm({ ...editForm, phone: event.target.value })}
+                onChange={(digits) => setEditForm({ ...editForm, phone: digits })}
                 className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               />
             </div>

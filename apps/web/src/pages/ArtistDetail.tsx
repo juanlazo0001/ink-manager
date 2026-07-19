@@ -4,6 +4,7 @@ import Sidebar from '../components/Sidebar'
 import SpecialtiesInput from '../components/SpecialtiesInput'
 import { apiFetch, ApiError } from '../lib/api'
 import { uploadPortfolioImage } from '../lib/cloudinary'
+import { formatPhoneInput } from '../lib/format'
 import { useUserProfile } from '../context/useUserProfile'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { ArrowLeftIcon, CloseIcon } from '../components/icons'
@@ -264,7 +265,9 @@ export default function ArtistDetail() {
                   <div>
                     <h1 className="text-xl font-bold text-fg">{artist.user.name || artist.user.email}</h1>
                     <p className="mt-1 text-sm text-fg-secondary">{artist.user.email}</p>
-                    {artist.user.phone && <p className="text-sm text-fg-secondary">{artist.user.phone}</p>}
+                    {artist.user.phone && (
+                      <p className="text-sm text-fg-secondary">{formatPhoneInput(artist.user.phone)}</p>
+                    )}
                   </div>
                 </div>
                 {canManage && (

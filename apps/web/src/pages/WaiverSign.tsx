@@ -4,6 +4,7 @@ import { apiFetch, ApiError } from '../lib/api'
 import { uploadImageToCloudinary } from '../lib/cloudinary'
 import { formatDateTime } from '../lib/format'
 import { sanitizeHtml } from '../lib/sanitizeHtml'
+import PhoneInput from '../components/PhoneInput'
 
 const INPUT_CLASS =
   'mt-1 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
@@ -121,7 +122,7 @@ export default function WaiverSign() {
     dateOfBirth.length > 0 &&
     isAtLeast18(dateOfBirth) &&
     emergencyContactName.trim().length > 0 &&
-    emergencyContactPhone.trim().length > 0 &&
+    emergencyContactPhone.length === 10 &&
     allHealthAnswered &&
     !!idImageUrl &&
     !idImageUploading &&
@@ -154,7 +155,7 @@ export default function WaiverSign() {
           legalName: legalName.trim(),
           dateOfBirth: new Date(dateOfBirth).toISOString(),
           emergencyContactName: emergencyContactName.trim(),
-          emergencyContactPhone: emergencyContactPhone.trim(),
+          emergencyContactPhone,
           healthAnswers: data.healthQuestions.map((_, i) => ({
             questionIndex: i,
             answer: healthAnswers[i]?.answer,
@@ -250,10 +251,9 @@ export default function WaiverSign() {
 
                 <div>
                   <label className={LABEL_CLASS}>Emergency contact phone *</label>
-                  <input
-                    type="tel"
+                  <PhoneInput
                     value={emergencyContactPhone}
-                    onChange={(e) => setEmergencyContactPhone(e.target.value)}
+                    onChange={setEmergencyContactPhone}
                     required
                     className={INPUT_CLASS}
                   />

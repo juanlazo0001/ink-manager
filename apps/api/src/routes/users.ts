@@ -5,6 +5,7 @@ import { requireAuth } from "../middleware/auth";
 import { Role } from "../../generated/prisma/enums";
 import { getEffectivePermissions } from "../lib/permissions";
 import { validateImageDataUrl } from "../lib/images";
+import { normalizePhone } from "../lib/phone";
 
 const router = Router();
 
@@ -64,7 +65,11 @@ router.patch("/me", async (req, res) => {
       return res.status(400).json({ error: `${field} must be a string or null` });
     }
 
-    data[field] = typeof body[field] === "string" ? body[field].trim() || null : null;
+    if (field === "phone") {
+      data.phone = typeof body.phone === "string" && body.phone.trim() ? normalizePhone(body.phone) : null;
+    } else {
+      data[field] = typeof body[field] === "string" ? body[field].trim() || null : null;
+    }
   }
 
   if (body.avatarUrl !== undefined) {

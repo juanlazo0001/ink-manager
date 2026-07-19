@@ -3,12 +3,14 @@ import { useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
 import RichTextEditor from '../components/RichTextEditor'
+import PhoneInput from '../components/PhoneInput'
 import { CheckIcon, ClockIcon, CloseIcon, PencilIcon, SpinnerIcon } from '../components/icons'
 import { apiFetch } from '../lib/api'
 import {
   formatDateTime,
   formatPhoneInput,
   formatRelativeDateTime,
+  isValidPhoneDigits,
   readFileAsDataUrl,
   MAX_IMAGE_FILE_BYTES,
 } from '../lib/format'
@@ -621,6 +623,11 @@ export default function Settings() {
       return
     }
 
+    if (!isValidPhoneDigits(locationForm.phone)) {
+      setLocationError('Enter a complete 10-digit phone number.')
+      return
+    }
+
     setLocationError(null)
     setLocationSubmitting(true)
 
@@ -851,9 +858,7 @@ export default function Settings() {
                       error={locationError}
                       submitting={locationSubmitting}
                       onFieldChange={updateLocationField}
-                      onPhoneChange={(value) =>
-                        setLocationForm((current) => ({ ...current, phone: formatPhoneInput(value) }))
-                      }
+                      onPhoneChange={(digits) => setLocationForm((current) => ({ ...current, phone: digits }))}
                       onHoursChange={updateLocationHoursDay}
                       onSubmit={handleLocationSubmit}
                       onCancel={handleCancelLocationEdit}
@@ -878,9 +883,7 @@ export default function Settings() {
                     error={locationError}
                     submitting={locationSubmitting}
                     onFieldChange={updateLocationField}
-                    onPhoneChange={(value) =>
-                      setLocationForm((current) => ({ ...current, phone: formatPhoneInput(value) }))
-                    }
+                    onPhoneChange={(digits) => setLocationForm((current) => ({ ...current, phone: digits }))}
                     onHoursChange={updateLocationHoursDay}
                     onSubmit={handleLocationSubmit}
                     onCancel={handleCancelLocationEdit}
@@ -1475,7 +1478,7 @@ function LocationCard({
               {location.address}
             </a>
           )}
-          {location.phone && <p className="mt-1 text-xs text-fg-secondary">{location.phone}</p>}
+          {location.phone && <p className="mt-1 text-xs text-fg-secondary">{formatPhoneInput(location.phone)}</p>}
           {location.email && <p className="mt-1 text-xs text-fg-secondary">{location.email}</p>}
         </div>
 
@@ -1594,14 +1597,10 @@ function LocationForm({
           <label htmlFor="locationPhone" className="mb-1 block text-sm font-medium text-fg-secondary">
             Phone
           </label>
-          <input
+          <PhoneInput
             id="locationPhone"
-            type="tel"
-            inputMode="numeric"
-            placeholder="(555) 123-4567"
-            maxLength={14}
             value={form.phone}
-            onChange={(event) => onPhoneChange(event.target.value)}
+            onChange={onPhoneChange}
             className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
           />
         </div>

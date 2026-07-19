@@ -11,6 +11,7 @@ import { CONFIGURABLE_ROLES, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS, requireP
 import type { PermissionKey } from "../lib/permissions";
 import { validateImageDataUrl } from "../lib/images";
 import { diffObjects, logAudit } from "../lib/audit";
+import { normalizePhone } from "../lib/phone";
 
 const router = Router();
 
@@ -171,7 +172,15 @@ router.post("/:studioId/users", requireAuth, requireRole(Role.OWNER), async (req
   // Artists pages never fall out of sync with each other.
   const user = await prisma.$transaction(async (tx) => {
     const created = await tx.user.create({
-      data: { email, password: passwordHash, role, studioId, avatarUrl, name: name || null, phone: phone || null },
+      data: {
+        email,
+        password: passwordHash,
+        role,
+        studioId,
+        avatarUrl,
+        name: name || null,
+        phone: phone ? normalizePhone(phone) : null,
+      },
     });
 
     if (role === Role.ARTIST) {
@@ -242,7 +251,11 @@ router.patch("/:studioId/users/:userId", requireAuth, requireRole(Role.OWNER), a
     if (body[field] !== null && typeof body[field] !== "string") {
       return res.status(400).json({ error: `${field} must be a string or null` });
     }
-    data[field] = typeof body[field] === "string" ? body[field].trim() || null : null;
+    if (field === "phone") {
+      data.phone = typeof body.phone === "string" && body.phone.trim() ? normalizePhone(body.phone) : null;
+    } else {
+      data[field] = typeof body[field] === "string" ? body[field].trim() || null : null;
+    }
   }
 
   if (body.email !== undefined) {
@@ -511,7 +524,11 @@ router.post("/:studioId/locations", requireAuth, requirePermission("locations.ma
     if (body[field] !== null && typeof body[field] !== "string") {
       return res.status(400).json({ error: `${field} must be a string or null` });
     }
-    data[field] = typeof body[field] === "string" ? body[field].trim() || null : null;
+    if (field === "phone") {
+      data.phone = typeof body.phone === "string" && body.phone.trim() ? normalizePhone(body.phone) : null;
+    } else {
+      data[field] = typeof body[field] === "string" ? body[field].trim() || null : null;
+    }
   }
 
   if (body.hours !== undefined) {
@@ -554,7 +571,11 @@ router.patch("/:studioId/locations/:locationId", requireAuth, requirePermission(
     if (body[field] !== null && typeof body[field] !== "string") {
       return res.status(400).json({ error: `${field} must be a string or null` });
     }
-    data[field] = typeof body[field] === "string" ? body[field].trim() || null : null;
+    if (field === "phone") {
+      data.phone = typeof body.phone === "string" && body.phone.trim() ? normalizePhone(body.phone) : null;
+    } else {
+      data[field] = typeof body[field] === "string" ? body[field].trim() || null : null;
+    }
   }
 
   if (body.hours !== undefined) {

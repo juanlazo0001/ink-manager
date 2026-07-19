@@ -85,6 +85,16 @@ export function formatPhoneInput(value: string): string {
   return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
 }
 
+// Phase UI-4: a phone field is either untouched (blank -- most phone
+// fields in this app are optional) or a genuinely complete 10-digit US
+// number; anything in between (someone typed 6 digits and stopped) is
+// invalid. Whether blank is ACTUALLY acceptable for a given field is the
+// HTML `required` attribute's job, same as any other field -- this only
+// answers "if something was entered, is it complete."
+export function isValidPhoneDigits(digits: string): boolean {
+  return digits.length === 0 || digits.length === 10
+}
+
 // Kept in sync with MAX_IMAGE_SOURCE_MB in apps/api/src/lib/images.ts.
 export const MAX_IMAGE_FILE_BYTES = 5_000_000 // 5MB; base64-encoded this stays under the API's data URL limit
 

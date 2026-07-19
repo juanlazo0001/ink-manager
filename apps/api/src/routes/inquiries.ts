@@ -7,6 +7,7 @@ import { Role } from "../../generated/prisma/enums";
 import { diffObjects, logAudit } from "../lib/audit";
 import { validateGiftCardForAttachment } from "../lib/giftCards";
 import { getOrCreateStaffConversation } from "../lib/conversations";
+import { normalizePhone } from "../lib/phone";
 
 const router = Router();
 
@@ -138,7 +139,7 @@ router.post("/", async (req, res) => {
   const client =
     existingClient ??
     (await prisma.client.create({
-      data: { studioId: studio.id, firstName, lastName, email, phone },
+      data: { studioId: studio.id, firstName, lastName, email, phone: phone ? normalizePhone(phone) : phone },
     }));
 
   const inquiry = await prisma.inquiry.create({

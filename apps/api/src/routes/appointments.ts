@@ -4,8 +4,9 @@ import { prisma } from "../lib/prisma";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { Role, AppointmentStatus, GiftCardStatus } from "../../generated/prisma/enums";
 import { requirePermission } from "../lib/permissions";
-import { logAudit } from "../lib/audit";
+import { diffObjects, logAudit } from "../lib/audit";
 import { validateGiftCardForAttachment } from "../lib/giftCards";
+import { isSameCalendarDay } from "../lib/dateRange";
 
 const WAIVER_TOKEN_TTL_HOURS = 24; // day-of form -- signed in-shop, so a short window is intentional
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
@@ -38,6 +39,14 @@ router.post("/", requirePermission("appointments.create"), async (req, res) => {
   }
 
   const studioId = req.user!.studioId;
+
+  const studioSettingsForDayCheck = await prisma.studioSettings.findUnique({
+    where: { studioId },
+    select: { timezone: true },
+  });
+  if (!isSameCalendarDay(start, end, studioSettingsForDayCheck?.timezone ?? "America/New_York")) {
+    return res.status(400).json({ error: "An appointment cannot span more than one day" });
+  }
 
   const [artist, client, inquiry] = await Promise.all([
     prisma.artist.findUnique({ where: { id: artistId }, include: { user: true } }),
@@ -306,15 +315,20 @@ router.post("/:id/checkout", requireRole(Role.OWNER, Role.FRONT_DESK), async (re
   res.json({ ...updated, amountDueCents, remainderCents });
 });
 
+// Handles both a plain status change (the pre-existing behavior) and a
+// time/day reschedule (Phase UI-4 groundwork -- Phase UI-5's calendar
+// drag-and-drop is the first real caller of the latter, via this same
+// route, never a bespoke calendar-only endpoint). At least one of
+// status/startTime+endTime must be present.
 router.patch("/:id", requirePermission("appointments.manage"), async (req, res) => {
   const id = req.params.id as string;
-  const { status } = req.body ?? {};
+  const { status, startTime, endTime } = req.body ?? {};
 
-  if (!status) {
-    return res.status(400).json({ error: "status is required" });
+  if (status === undefined && startTime === undefined && endTime === undefined) {
+    return res.status(400).json({ error: "status or startTime/endTime is required" });
   }
 
-  if (!Object.values(AppointmentStatus).includes(status)) {
+  if (status !== undefined && !Object.values(AppointmentStatus).includes(status)) {
     return res.status(400).json({ error: `status must be one of: ${Object.values(AppointmentStatus).join(", ")}` });
   }
 
@@ -324,9 +338,47 @@ router.patch("/:id", requirePermission("appointments.manage"), async (req, res) 
     return res.status(404).json({ error: "Appointment not found" });
   }
 
-  const updated = await prisma.appointment.update({
-    where: { id },
-    data: { status },
+  const data: { status?: AppointmentStatus; startTime?: Date; endTime?: Date } = {};
+
+  if (status !== undefined) {
+    data.status = status;
+  }
+
+  if (startTime !== undefined || endTime !== undefined) {
+    if (startTime === undefined || endTime === undefined) {
+      return res.status(400).json({ error: "startTime and endTime must be provided together" });
+    }
+
+    const start = new Date(startTime);
+    const end = new Date(endTime);
+
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start >= end) {
+      return res
+        .status(400)
+        .json({ error: "startTime and endTime must be valid dates, with startTime before endTime" });
+    }
+
+    const studioSettingsForDayCheck = await prisma.studioSettings.findUnique({
+      where: { studioId: req.user!.studioId },
+      select: { timezone: true },
+    });
+    if (!isSameCalendarDay(start, end, studioSettingsForDayCheck?.timezone ?? "America/New_York")) {
+      return res.status(400).json({ error: "An appointment cannot span more than one day" });
+    }
+
+    data.startTime = start;
+    data.endTime = end;
+  }
+
+  const updated = await prisma.appointment.update({ where: { id }, data });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Appointment",
+    entityId: id,
+    action: "update",
+    changes: diffObjects(appointment, data, ["status", "startTime", "endTime"]),
   });
 
   res.json(updated);
