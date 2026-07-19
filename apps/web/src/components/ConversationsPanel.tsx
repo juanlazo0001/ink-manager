@@ -1150,11 +1150,10 @@ function ThreadView({
   const bodyInputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   // Unified composer dropdowns (Claude-style mockup): "+" attach/template/
-  // form menu, and the channel/mode pickers that replace the old
-  // always-visible pill rows.
+  // form menu, and the combined channel+mode popover that replaced the two
+  // separate pickers (see composer-toolbar-v2-mockup.html).
   const [showComposerMenu, setShowComposerMenu] = useState(false)
-  const [showChannelMenu, setShowChannelMenu] = useState(false)
-  const [showModeMenu, setShowModeMenu] = useState(false)
+  const [showChannelModeMenu, setShowChannelModeMenu] = useState(false)
 
   const isClientThread = data?.conversation.type === 'CLIENT'
 
@@ -1636,16 +1635,19 @@ function ThreadView({
                 <MoreIcon className="h-[18px] w-[18px]" />
               </button>
               {showMoreMenu && (
-                <div className="absolute right-0 top-9 z-20 w-56 rounded-xl border border-border bg-surface-raised p-1 shadow-xl">
-                  <button
-                    type="button"
-                    onClick={handleOpenDraftModal}
-                    className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
-                  >
-                    <SparkleIcon className="h-3.5 w-3.5" />
-                    Draft inquiry from conversation
-                  </button>
-                </div>
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setShowMoreMenu(false)} aria-hidden="true" />
+                  <div className="absolute right-0 top-9 z-20 w-56 rounded-xl border border-border bg-surface-raised p-1 shadow-xl">
+                    <button
+                      type="button"
+                      onClick={handleOpenDraftModal}
+                      className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
+                    >
+                      <SparkleIcon className="h-3.5 w-3.5" />
+                      Draft inquiry from conversation
+                    </button>
+                  </div>
+                </>
               )}
             </div>
           </div>
@@ -2182,7 +2184,7 @@ function ThreadView({
           />
 
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1.5">
               {isClientThread && (
                 <div className="relative">
                   <button
@@ -2190,56 +2192,132 @@ function ThreadView({
                     onClick={() => setShowComposerMenu((v) => !v)}
                     aria-label="More options"
                     aria-pressed={showComposerMenu}
-                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
+                    className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-full bg-surface-raised text-fg-muted transition hover:text-fg"
                   >
-                    <PlusIcon className="h-4 w-4" />
+                    <PlusIcon className="h-[17px] w-[17px]" />
                   </button>
                   {showComposerMenu && (
-                    <div className="absolute bottom-full left-0 z-20 mb-2 w-48 rounded-xl border border-border bg-surface-raised p-1 shadow-xl">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          fileInputRef.current?.click()
-                          setShowComposerMenu(false)
-                        }}
-                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
-                      >
-                        <AttachmentIcon className="h-4 w-4" />
-                        Attach photo
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowTemplates((v) => !v)
-                          setShowLinkMenu(false)
-                          setShowComposerMenu(false)
-                        }}
-                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
-                      >
-                        <span className="flex h-4 w-4 shrink-0 items-center justify-center text-xs font-semibold">
-                          T
-                        </span>
-                        Insert template
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowLinkMenu((v) => !v)
-                          setShowTemplates(false)
-                          setShowComposerMenu(false)
-                        }}
-                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
-                      >
-                        <PlusIcon className="h-4 w-4" />
-                        Attach form
-                      </button>
-                    </div>
+                    <>
+                      <div className="fixed inset-0 z-10" onClick={() => setShowComposerMenu(false)} aria-hidden="true" />
+                      <div className="absolute bottom-full left-0 z-20 mb-2 w-48 rounded-xl border border-border bg-surface-raised p-1 shadow-xl">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            fileInputRef.current?.click()
+                            setShowComposerMenu(false)
+                          }}
+                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
+                        >
+                          <AttachmentIcon className="h-4 w-4" />
+                          Attach photo
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowTemplates((v) => !v)
+                            setShowLinkMenu(false)
+                            setShowComposerMenu(false)
+                          }}
+                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
+                        >
+                          <span className="flex h-4 w-4 shrink-0 items-center justify-center text-xs font-semibold">
+                            T
+                          </span>
+                          Insert template
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowLinkMenu((v) => !v)
+                            setShowTemplates(false)
+                            setShowComposerMenu(false)
+                          }}
+                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
+                        >
+                          <PlusIcon className="h-4 w-4" />
+                          Attach form
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              {isClientThread && (
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setShowChannelModeMenu((v) => !v)}
+                    aria-pressed={showChannelModeMenu}
+                    className="flex items-center gap-1.5 rounded-full bg-surface-raised py-1.5 pl-2 pr-3 text-[13px] transition"
+                  >
+                    <ChannelDot channel={channel} />
+                    <span className="font-bold text-fg">{channelLabel(channel)}</span>
+                    <span className="ml-0.5 font-medium text-[#5a5a62]">
+                      {direction === 'OUTBOUND' ? 'Our reply' : 'Their message'}
+                    </span>
+                  </button>
+                  {showChannelModeMenu && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-10"
+                        onClick={() => setShowChannelModeMenu(false)}
+                        aria-hidden="true"
+                      />
+                      <div className="absolute bottom-full right-0 z-20 mb-2 w-[210px] rounded-[14px] border border-border bg-surface-raised p-2.5 shadow-xl">
+                        <p className="px-1.5 pb-1.5 pt-1 text-[10.5px] font-semibold uppercase tracking-wider text-[#5a5a62]">
+                          Channel
+                        </p>
+                        {CLIENT_CHANNELS.map((c) => (
+                          <button
+                            key={c}
+                            type="button"
+                            onClick={() => setChannel(c)}
+                            className={[
+                              'flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium',
+                              c === channel ? 'bg-[#3a4118] text-[#c8e04a]' : 'text-fg-secondary hover:bg-surface',
+                            ].join(' ')}
+                          >
+                            <ChannelDot channel={c} />
+                            {channelLabel(c)}
+                          </button>
+                        ))}
+
+                        <div className="my-1.5 h-px bg-border" />
+
+                        <p className="px-1.5 pb-1.5 pt-1 text-[10.5px] font-semibold uppercase tracking-wider text-[#5a5a62]">
+                          Reply as
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => setDirection('OUTBOUND')}
+                          className={[
+                            'block w-full rounded-lg px-2.5 py-2 text-left text-sm font-medium',
+                            direction === 'OUTBOUND' ? 'bg-[#3a4118] text-[#c8e04a]' : 'text-fg-secondary hover:bg-surface',
+                          ].join(' ')}
+                        >
+                          Our reply
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDirection('INBOUND')}
+                          className={[
+                            'block w-full rounded-lg px-2.5 py-2 text-left text-sm font-medium',
+                            direction === 'INBOUND' ? 'bg-[#3a4118] text-[#c8e04a]' : 'text-fg-secondary hover:bg-surface',
+                          ].join(' ')}
+                        >
+                          Their message (log only)
+                        </button>
+                      </div>
+                    </>
                   )}
                 </div>
               )}
 
-              <label className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg">
-                <AttachmentIcon className="h-4 w-4" />
+              <label className="flex h-[34px] w-[34px] shrink-0 cursor-pointer items-center justify-center rounded-full bg-surface-raised text-fg-muted transition hover:text-fg">
+                <AttachmentIcon className="h-[15px] w-[15px]" />
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -2249,99 +2327,15 @@ function ThreadView({
                   disabled={uploading}
                 />
               </label>
-            </div>
-
-            <div className="flex items-center gap-1">
-              {isClientThread && (
-                <>
-                  <div className="relative">
-                    <button
-                      type="button"
-                      onClick={() => setShowChannelMenu((v) => !v)}
-                      aria-pressed={showChannelMenu}
-                      className="flex items-center gap-1.5 rounded-full px-2 py-1.5 text-xs font-semibold text-fg-muted transition hover:bg-surface hover:text-fg"
-                    >
-                      <ChannelDot channel={channel} />
-                      {channelLabel(channel)}
-                      <span className="text-[9px] text-[#5a5a62]">▾</span>
-                    </button>
-                    {showChannelMenu && (
-                      <div className="absolute bottom-full right-0 z-20 mb-2 w-44 rounded-xl border border-border bg-surface-raised p-1 shadow-xl">
-                        {CLIENT_CHANNELS.map((c) => (
-                          <button
-                            key={c}
-                            type="button"
-                            onClick={() => {
-                              setChannel(c)
-                              setShowChannelMenu(false)
-                            }}
-                            className={[
-                              'flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium',
-                              c === channel ? 'bg-[#3a4118] text-[#c8e04a]' : 'text-fg-secondary hover:bg-surface',
-                            ].join(' ')}
-                          >
-                            <ChannelDot channel={c} />
-                            {channelLabel(c)}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  <span className="h-[3px] w-[3px] shrink-0 rounded-full bg-[#5a5a62]" aria-hidden="true" />
-
-                  <div className="relative">
-                    <button
-                      type="button"
-                      onClick={() => setShowModeMenu((v) => !v)}
-                      aria-pressed={showModeMenu}
-                      className="flex items-center gap-1 rounded-full px-2 py-1.5 text-xs font-medium text-fg-muted transition hover:bg-surface hover:text-fg"
-                    >
-                      {direction === 'OUTBOUND' ? 'Our reply' : 'Their message'}
-                      <span className="text-[9px] text-[#5a5a62]">▾</span>
-                    </button>
-                    {showModeMenu && (
-                      <div className="absolute bottom-full right-0 z-20 mb-2 w-40 rounded-xl border border-border bg-surface-raised p-1 shadow-xl">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setDirection('OUTBOUND')
-                            setShowModeMenu(false)
-                          }}
-                          className={[
-                            'block w-full rounded-lg px-3 py-2 text-left text-sm font-medium',
-                            direction === 'OUTBOUND' ? 'bg-[#3a4118] text-[#c8e04a]' : 'text-fg-secondary hover:bg-surface',
-                          ].join(' ')}
-                        >
-                          Our reply
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setDirection('INBOUND')
-                            setShowModeMenu(false)
-                          }}
-                          className={[
-                            'block w-full rounded-lg px-3 py-2 text-left text-sm font-medium',
-                            direction === 'INBOUND' ? 'bg-[#3a4118] text-[#c8e04a]' : 'text-fg-secondary hover:bg-surface',
-                          ].join(' ')}
-                        >
-                          Their message
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </>
-              )}
 
               <button
                 type="button"
                 onClick={handleSend}
                 disabled={sending || uploading || !!viewAsTarget || (body.trim().length === 0 && attachments.length === 0)}
                 aria-label="Send"
-                className="ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                className="ml-0.5 flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full bg-accent text-bg transition hover:bg-accent-hover disabled:opacity-60"
               >
-                <SendIcon className="h-3.5 w-3.5" />
+                <SendIcon className="h-4 w-4" />
               </button>
             </div>
           </div>

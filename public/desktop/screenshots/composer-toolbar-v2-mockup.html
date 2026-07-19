@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ink Manager — Composer Toolbar v2</title>
+<style>
+  :root {
+    --bg: #0e0e11;
+    --bg-elevated: #16161a;
+    --bg-raised: #1c1c21;
+    --border: #26262c;
+    --text: #f2f2f0;
+    --text-muted: #8a8a92;
+    --text-faint: #5a5a62;
+    --accent: #c8e04a;
+    --sms: #2fb35c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+    color: var(--text);
+    display: flex;
+    justify-content: center;
+    padding: 40px 12px;
+  }
+  .phone { width: 390px; }
+
+  .composer-box {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 22px;
+    padding: 12px 10px 8px;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+  .text-area { font-size: 16px; color: var(--text-muted); padding: 2px 6px 10px; }
+
+  .toolbar-row { display: flex; align-items: center; justify-content: space-between; }
+  .toolbar-left, .toolbar-right { display: flex; align-items: center; gap: 6px; }
+
+  .icon-btn {
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-muted);
+    font-size: 17px;
+    flex-shrink: 0;
+    background: var(--bg-raised);
+  }
+
+  /* combined pill: channel + mode, one button, one popover */
+  .combo-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px 7px 8px;
+    border-radius: 17px;
+    background: var(--bg-raised);
+    font-size: 13px;
+  }
+  .combo-pill .channel-dot { width: 12px; height: 12px; border-radius: 4px; background: var(--sms); flex-shrink: 0; }
+  .combo-pill .primary { font-weight: 700; color: var(--text); }
+  .combo-pill .secondary { font-weight: 500; color: var(--text-faint); margin-left: 2px; }
+
+  /* send button - larger, filled, distinct from other icon buttons */
+  .send-btn {
+    width: 38px; height: 38px;
+    border-radius: 50%;
+    background: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    color: #14170a;
+    flex-shrink: 0;
+    margin-left: 2px;
+  }
+  .send-btn svg { width: 16px; height: 16px; }
+
+  /* popover, shown open for demo */
+  .popover {
+    position: absolute;
+    bottom: 58px;
+    right: 10px;
+    width: 210px;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 10px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  }
+  .popover-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-faint); font-weight: 600; padding: 4px 6px 6px; }
+  .popover-item { display: flex; align-items: center; gap: 8px; padding: 8px 6px; border-radius: 8px; font-size: 13px; font-weight: 500; }
+  .popover-item.selected { background: #3a4118; color: var(--accent); }
+  .popover-item .channel-dot { width: 12px; height: 12px; border-radius: 4px; }
+  .popover-divider { height: 1px; background: var(--border); margin: 6px 2px; }
+
+  .caption { text-align: center; color: var(--text-faint); font-size: 11.5px; margin-top: 46px; padding: 0 16px; line-height: 1.6; }
+</style>
+</head>
+<body>
+
+<div class="phone">
+  <div class="composer-box">
+    <div class="text-area">Type a message…</div>
+    <div class="toolbar-row">
+      <div class="toolbar-left">
+        <div class="icon-btn">＋</div>
+      </div>
+      <div class="toolbar-right">
+        <div class="combo-pill">
+          <div class="channel-dot"></div>
+          <span class="primary">SMS</span>
+          <span class="secondary">Our reply</span>
+        </div>
+        <div class="icon-btn" style="font-size:15px;">📎</div>
+        <div class="send-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22 11 13 2 9 22 2Z"/></svg>
+        </div>
+      </div>
+    </div>
+
+    <!-- single popover controls BOTH channel and mode, like tapping "Sonnet 5 Medium" opens one sheet with both pickers -->
+    <div class="popover">
+      <div class="popover-label">Channel</div>
+      <div class="popover-item selected"><div class="channel-dot" style="background:#2fb35c;"></div>SMS</div>
+      <div class="popover-item"><div class="channel-dot" style="background:#4a90d9;"></div>Email</div>
+      <div class="popover-item"><div class="channel-dot" style="background:linear-gradient(135deg,#f9ce34,#ee2a7b,#6228d7);"></div>Instagram</div>
+      <div class="popover-divider"></div>
+      <div class="popover-label">Reply as</div>
+      <div class="popover-item selected">Our reply</div>
+      <div class="popover-item">Their message (log only)</div>
+    </div>
+  </div>
+
+  <div class="caption">
+    One combined pill ("SMS · Our reply") replaces the two separate dropdowns — tapping it opens a single popover with both pickers, same as tapping "Sonnet 5 Medium" opens one sheet. Send button is now visually the largest/most prominent element in the row. Text size is 16px to prevent iOS zoom-on-focus.
+  </div>
+</div>
+
+</body>
+</html>
