@@ -1,117 +1,343 @@
-import { useEffect, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  Calendar as BigCalendar,
+  dayjsLocalizer,
+  Views,
+  type View,
+  type NavigateAction,
+  type SlotInfo,
+} from 'react-big-calendar'
+// Vite's CJS dep pre-bundling double-wraps this addon's nested default
+// export (its own index.js re-exports withDragAndDrop.js's default), so a
+// plain `import withDragAndDrop from '...'` resolves to the wrapper module
+// object instead of the function -- unwrap it defensively either way.
+import dragAndDropModule, { type EventInteractionArgs } from 'react-big-calendar/lib/addons/dragAndDrop'
+import dayjs from 'dayjs'
+import 'react-big-calendar/lib/css/react-big-calendar.css'
+import 'react-big-calendar/lib/addons/dragAndDrop/styles.css'
 import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
 import AppointmentForm from '../components/AppointmentForm'
-import { SkeletonTableRows } from '../components/Skeleton'
 import StatusPill from '../components/StatusPill'
 import { apiFetch, ApiError } from '../lib/api'
-import { formatDateTime, formatStatus } from '../lib/format'
-import { useUserProfile } from '../context/useUserProfile'
+import { formatDateTime } from '../lib/format'
 import { useAuth } from '../context/useAuth'
-import { appointmentsQueryKey } from '../lib/queryKeys'
+import { useEffectiveUser } from '../context/useEffectiveUser'
+import { appointmentsQueryKey, appointmentsRangeQueryKey } from '../lib/queryKeys'
 import { useMarkSectionSeen } from '../lib/useMarkSectionSeen'
-import { PlusIcon } from '../components/icons'
+import { colorForArtistId } from '../lib/artistColors'
 
-const APPOINTMENT_STATUSES = ['REQUESTED', 'CONFIRMED', 'COMPLETED', 'CANCELLED', 'NO_SHOW'] as const
+const localizer = dayjsLocalizer(dayjs)
+const withDragAndDrop = (
+  typeof dragAndDropModule === 'function' ? dragAndDropModule : (dragAndDropModule as { default: typeof dragAndDropModule }).default
+) as typeof dragAndDropModule
+const DnDCalendar = withDragAndDrop(BigCalendar)
+const MOBILE_BREAKPOINT = 768
 
-interface Appointment {
+interface ArtistOption {
+  id: string
+  user: { name: string | null; email: string }
+}
+
+interface AppointmentApi {
   id: string
   startTime: string
   endTime: string
   status: string
   client: { id: string; firstName: string; lastName: string } | null
-  artist: { id: string; user: { email: string } } | null
+  artist: { id: string; name: string }
+  inquiry: { id: string; label: string } | null
+  bufferWarning?: string | null
+}
+
+interface CalEvent {
+  id: string
+  title: string
+  start: Date
+  end: Date
+  resourceId: string
+  appointment: AppointmentApi
+}
+
+function artistDisplayName(artist: ArtistOption): string {
+  return artist.user.name ?? artist.user.email
+}
+
+function useIsMobile(): boolean {
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < MOBILE_BREAKPOINT)
+  useEffect(() => {
+    function onResize() {
+      setIsMobile(window.innerWidth < MOBILE_BREAKPOINT)
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+  return isMobile
+}
+
+function rangeForView(date: Date, view: View): { start: Date; end: Date } {
+  if (view === Views.MONTH) {
+    return { start: dayjs(date).startOf('month').startOf('week').toDate(), end: dayjs(date).endOf('month').endOf('week').toDate() }
+  }
+  if (view === Views.DAY) {
+    return { start: dayjs(date).startOf('day').toDate(), end: dayjs(date).endOf('day').toDate() }
+  }
+  return { start: dayjs(date).startOf('week').toDate(), end: dayjs(date).endOf('week').toDate() }
+}
+
+// A same-local-day pre-check using the browser's own timezone -- a fast
+// client-side guard, not the authority. The API re-validates in the
+// studio's configured timezone (Phase UI-4's isSameCalendarDay) regardless,
+// so a rare mismatch between browser and studio timezone can only ever
+// make this pre-check slightly too strict or too lax, never unsafe.
+function isSameLocalDay(a: Date, b: Date): boolean {
+  return a.toDateString() === b.toDateString()
+}
+
+interface CalendarToolbarProps {
+  label: string
+  view: View
+  views: View[]
+  onNavigate: (action: NavigateAction) => void
+  onView: (view: View) => void
+}
+
+function CalendarToolbar({ label, view, views, onNavigate, onView }: CalendarToolbarProps) {
+  return (
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onNavigate('TODAY')}
+          className="rounded-full border border-border px-3 py-1.5 text-sm font-medium text-fg transition hover:bg-surface"
+        >
+          Today
+        </button>
+        <button
+          type="button"
+          onClick={() => onNavigate('PREV')}
+          className="rounded-full border border-border px-3 py-1.5 text-sm font-medium text-fg transition hover:bg-surface"
+        >
+          Back
+        </button>
+        <button
+          type="button"
+          onClick={() => onNavigate('NEXT')}
+          className="rounded-full border border-border px-3 py-1.5 text-sm font-medium text-fg transition hover:bg-surface"
+        >
+          Next
+        </button>
+        <span className="ml-2 text-sm font-semibold text-fg">{label}</span>
+      </div>
+
+      {views.length > 1 && (
+        <div className="flex gap-1 rounded-full border border-border p-1">
+          {views.map((v) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => onView(v)}
+              className={`rounded-full px-3 py-1 text-xs font-medium capitalize transition ${
+                v === view ? 'bg-accent text-bg' : 'text-fg-secondary hover:bg-surface'
+              }`}
+            >
+              {v}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default function Calendar() {
   const { user } = useAuth()
-  const { profile } = useUserProfile()
-  const navigate = useNavigate()
-  const [searchParams, setSearchParams] = useSearchParams()
-  const canCreate = profile?.permissions.includes('appointments.create') ?? false
-  const canManage = profile?.permissions.includes('appointments.manage') ?? false
+  const effectiveUser = useEffectiveUser()
+  const isArtist = effectiveUser?.role === 'ARTIST'
+  const canManageCalendar = !isArtist
+  const queryClient = useQueryClient()
+  const isMobile = useIsMobile()
   useMarkSectionSeen('appointments')
 
-  const [actionError, setActionError] = useState<string | null>(null)
-  const [statusFilter, setStatusFilter] = useState('ALL')
-  const [updatingId, setUpdatingId] = useState<string | null>(null)
+  const [view, setView] = useState<View>(Views.WEEK)
+  const [date, setDate] = useState(new Date())
+  // null = "all artists" (the default); once staff toggle a chip, an
+  // explicit array takes over.
+  const [selectedArtistIds, setSelectedArtistIds] = useState<string[] | null>(null)
+  const [mobileArtistId, setMobileArtistId] = useState<string | undefined>(undefined)
+  const [previewAppointment, setPreviewAppointment] = useState<AppointmentApi | null>(null)
+  const [createSlot, setCreateSlot] = useState<{
+    date: string
+    startTime: string
+    endTime: string
+    artistId?: string
+  } | null>(null)
+  const [dragError, setDragError] = useState<string | null>(null)
+  const [bufferNotice, setBufferNotice] = useState<string | null>(null)
 
-  const [showAddModal, setShowAddModal] = useState(false)
-  const [prefillClientId, setPrefillClientId] = useState<string | undefined>(undefined)
-  const [prefillInquiryId, setPrefillInquiryId] = useState<string | undefined>(undefined)
+  // Resource columns don't fit at phone widths -- fall back to a single
+  // day view regardless of the desktop view state (which is preserved so
+  // resizing back to desktop restores it).
+  const effectiveView = isMobile ? Views.DAY : view
+  const availableViews = useMemo<View[]>(() => (isMobile ? [Views.DAY] : [Views.MONTH, Views.WEEK, Views.DAY]), [isMobile])
 
-  // "Book follow-up" from a just-checked-out appointment deep-links here
-  // with the same client + project pre-filled, since Phase 3 will demand a
-  // gift card (the rolled one, or a new deposit) either way. The plain
-  // "New Appointment" entry point on Inquiries & Projects uses the same
-  // deep-link mechanism, just without a client/project prefilled.
+  const { start: rangeStart, end: rangeEnd } = useMemo(() => rangeForView(date, effectiveView), [date, effectiveView])
+
+  const { data: artistOptions } = useQuery({
+    queryKey: ['artists-for-calendar', user!.studioId],
+    queryFn: () => apiFetch<ArtistOption[]>('/artists'),
+    enabled: !isArtist,
+  })
+
   useEffect(() => {
-    const deepLinkClientId = searchParams.get('prefillClientId')
-    const deepLinkInquiryId = searchParams.get('prefillInquiryId')
-    const openNew = searchParams.get('new')
-
-    if (deepLinkClientId) {
-      setPrefillClientId(deepLinkClientId)
-      setPrefillInquiryId(deepLinkInquiryId ?? undefined)
-      setShowAddModal(true)
-      setSearchParams({}, { replace: true })
-    } else if (openNew) {
-      setShowAddModal(true)
-      setSearchParams({}, { replace: true })
+    if (!mobileArtistId && artistOptions && artistOptions.length > 0) {
+      setMobileArtistId(artistOptions[0].id)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [artistOptions, mobileArtistId])
 
-  const queryClient = useQueryClient()
-  const appointmentsKey = appointmentsQueryKey(user!.studioId)
+  const rangeKey = appointmentsRangeQueryKey(user!.studioId, rangeStart.toISOString(), rangeEnd.toISOString())
 
   const {
     data: appointments,
     isLoading,
     error,
   } = useQuery({
-    queryKey: appointmentsKey,
-    queryFn: () => apiFetch<Appointment[]>('/appointments'),
+    queryKey: rangeKey,
+    queryFn: () =>
+      apiFetch<AppointmentApi[]>(
+        `/appointments?start=${encodeURIComponent(rangeStart.toISOString())}&end=${encodeURIComponent(rangeEnd.toISOString())}`,
+      ),
   })
 
   const errorMessage = error
     ? error instanceof ApiError && error.status === 403
-      ? "You don't have permission to view appointments."
+      ? "You don't have permission to view the calendar."
       : error.message
     : null
 
-  function closeAddModal() {
-    setShowAddModal(false)
-    setPrefillClientId(undefined)
-    setPrefillInquiryId(undefined)
+  const events = useMemo<CalEvent[]>(
+    () =>
+      (appointments ?? []).map((appt) => ({
+        id: appt.id,
+        title: appt.client ? `${appt.client.firstName} ${appt.client.lastName}` : 'Unknown client',
+        start: new Date(appt.startTime),
+        end: new Date(appt.endTime),
+        resourceId: appt.artist.id,
+        appointment: appt,
+      })),
+    [appointments],
+  )
+
+  const showResourceColumns = canManageCalendar && !isMobile && effectiveView !== Views.MONTH
+
+  const activeArtistIds = useMemo(
+    () => selectedArtistIds ?? artistOptions?.map((a) => a.id) ?? [],
+    [selectedArtistIds, artistOptions],
+  )
+
+  const displayEvents = useMemo(() => {
+    if (isArtist) return events
+    if (isMobile) return mobileArtistId ? events.filter((e) => e.resourceId === mobileArtistId) : events
+    if (effectiveView === Views.MONTH) return events
+    return events.filter((e) => activeArtistIds.includes(e.resourceId))
+  }, [events, isArtist, isMobile, mobileArtistId, effectiveView, activeArtistIds])
+
+  const resources = useMemo(() => {
+    if (!showResourceColumns || !artistOptions) return undefined
+    return artistOptions
+      .filter((a) => activeArtistIds.includes(a.id))
+      .map((a) => ({ id: a.id, title: artistDisplayName(a) }))
+  }, [showResourceColumns, artistOptions, activeArtistIds])
+
+  function toggleArtistFilter(id: string) {
+    setSelectedArtistIds((current) => {
+      const base = current ?? artistOptions?.map((a) => a.id) ?? []
+      return base.includes(id) ? base.filter((x) => x !== id) : [...base, id]
+    })
+  }
+
+  function invalidateAppointments() {
+    queryClient.invalidateQueries({ queryKey: appointmentsQueryKey(user!.studioId) })
   }
 
   function handleAppointmentCreated() {
-    queryClient.invalidateQueries({ queryKey: appointmentsKey })
-    closeAddModal()
+    setCreateSlot(null)
+    invalidateAppointments()
   }
 
-  async function handleStatusChange(appointmentId: string, newStatus: string) {
-    setActionError(null)
-    setUpdatingId(appointmentId)
+  function handleSelectSlot(slotInfo: SlotInfo) {
+    if (!canManageCalendar) return
+    const start = slotInfo.start as Date
+    const end = slotInfo.end as Date
+    setCreateSlot({
+      date: dayjs(start).format('YYYY-MM-DD'),
+      startTime: dayjs(start).format('HH:mm'),
+      endTime: dayjs(end > start ? end : dayjs(start).add(1, 'hour').toDate()).format('HH:mm'),
+      artistId: typeof slotInfo.resourceId === 'string' ? slotInfo.resourceId : undefined,
+    })
+  }
+
+  async function handleEventDrop(args: EventInteractionArgs<CalEvent>) {
+    setDragError(null)
+    setBufferNotice(null)
+
+    const { event, start, end, resourceId } = args
+    const newStart = start instanceof Date ? start : new Date(start)
+    const newEnd = end instanceof Date ? end : new Date(end)
+
+    // Dragging only moves time/day within the SAME artist's column -- cross-
+    // column drops are a reassignment, which this feature deliberately
+    // doesn't do via drag. The update route also never accepts an artistId
+    // change, so this is enforced twice (see appointments.ts PATCH route).
+    if (showResourceColumns && typeof resourceId === 'string' && resourceId !== event.appointment.artist.id) {
+      setDragError("Reassigning to a different artist isn't done by dragging — open the appointment to change the artist.")
+      return
+    }
+
+    if (!isSameLocalDay(newStart, newEnd)) {
+      setDragError("Appointments can't span more than one day — try a shorter session or a different time.")
+      return
+    }
 
     try {
-      await apiFetch(`/appointments/${appointmentId}`, {
+      const updated = await apiFetch<AppointmentApi>(`/appointments/${event.id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ status: newStatus }),
+        body: JSON.stringify({ startTime: newStart.toISOString(), endTime: newEnd.toISOString() }),
       })
-
-      queryClient.invalidateQueries({ queryKey: appointmentsKey })
+      invalidateAppointments()
+      if (updated.bufferWarning) setBufferNotice(updated.bufferWarning)
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Failed to update status')
-    } finally {
-      setUpdatingId(null)
+      setDragError(err instanceof Error ? err.message : 'Failed to reschedule appointment')
     }
   }
 
-  const filteredAppointments = appointments?.filter((a) => statusFilter === 'ALL' || a.status === statusFilter)
+  const commonCalendarProps = {
+    localizer,
+    events: displayEvents,
+    startAccessor: 'start' as const,
+    endAccessor: 'end' as const,
+    resourceIdAccessor: 'id' as const,
+    resourceTitleAccessor: 'title' as const,
+    resources,
+    // Without this, RBC's Week/Day time grid only ever renders one
+    // resource header spanning every day column. With it, each day column
+    // is itself subdivided into one sub-column per active artist -- the
+    // "resource columns" the spec calls for.
+    resourceGroupingLayout: showResourceColumns,
+    view: effectiveView,
+    views: availableViews,
+    date,
+    onNavigate: (next: Date) => setDate(next),
+    onView: (next: View) => setView(next),
+    onSelectEvent: (event: CalEvent) => setPreviewAppointment(event.appointment),
+    eventPropGetter: (event: CalEvent) => ({
+      style: { backgroundColor: colorForArtistId(event.appointment.artist.id), borderColor: 'transparent' },
+    }),
+    components: { toolbar: CalendarToolbar },
+    style: { height: isMobile ? 560 : 680 },
+  }
 
   return (
     <div className="flex min-h-screen bg-bg text-fg">
@@ -123,127 +349,138 @@ export default function Calendar() {
             <div>
               <h1 className="text-2xl font-bold text-fg sm:text-3xl">Calendar</h1>
               <p className="mt-1 text-sm text-fg-secondary">
-                {canManage || canCreate ? 'Every booking across your studio.' : 'Your upcoming and past appointments.'}
+                {canManageCalendar
+                  ? 'Every booking across your studio. Click a slot to book, drag to reschedule.'
+                  : 'Your upcoming and past appointments.'}
               </p>
             </div>
+          </div>
 
-            {canCreate && (
-              <button
-                type="button"
-                onClick={() => setShowAddModal(true)}
-                className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover"
+          {canManageCalendar && !isMobile && artistOptions && artistOptions.length > 0 && (
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <span className="text-xs font-medium uppercase tracking-wide text-fg-muted">Artists</span>
+              {artistOptions.map((artist) => {
+                const active = activeArtistIds.includes(artist.id)
+                return (
+                  <button
+                    key={artist.id}
+                    type="button"
+                    onClick={() => toggleArtistFilter(artist.id)}
+                    className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
+                      active
+                        ? 'border-accent bg-accent/10 text-accent'
+                        : 'border-border text-fg-muted hover:bg-surface'
+                    }`}
+                  >
+                    {artistDisplayName(artist)}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+
+          {isMobile && !isArtist && artistOptions && artistOptions.length > 0 && (
+            <div className="mt-4">
+              <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-fg-muted">Artist</label>
+              <select
+                value={mobileArtistId ?? ''}
+                onChange={(event) => setMobileArtistId(event.target.value)}
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               >
-                <PlusIcon className="h-4 w-4" />
-                New Appointment
-              </button>
-            )}
-          </div>
+                {artistOptions.map((artist) => (
+                  <option key={artist.id} value={artist.id}>
+                    {artistDisplayName(artist)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
-          <div className="mt-6 flex items-center gap-2 sm:max-w-xs">
-            <select
-              value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value)}
-              className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-            >
-              <option value="ALL">All statuses</option>
-              {APPOINTMENT_STATUSES.map((status) => (
-                <option key={status} value={status}>
-                  {formatStatus(status)}
-                </option>
-              ))}
-            </select>
-          </div>
+          {dragError && (
+            <div className="mt-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+              {dragError}
+            </div>
+          )}
+          {bufferNotice && (
+            <div className="mt-4 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
+              {bufferNotice}
+            </div>
+          )}
+          {errorMessage && (
+            <div className="mt-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+              {errorMessage}
+            </div>
+          )}
 
-          <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-            {actionError && (
-              <div className="mb-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
-                {actionError}
-              </div>
-            )}
-
-            {errorMessage && <p className="text-sm text-danger">{errorMessage}</p>}
-
-            {!errorMessage && !isLoading && filteredAppointments?.length === 0 && (
-              <p className="text-sm text-fg-secondary">
-                {statusFilter !== 'ALL' ? 'No appointments match this filter.' : 'No appointments yet.'}
-              </p>
-            )}
-
-            {!errorMessage && (isLoading || (filteredAppointments && filteredAppointments.length > 0)) && (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead>
-                    <tr className="bg-surface-inset text-xs text-fg-muted">
-                      <th className="pb-3 font-medium">Client Name</th>
-                      <th className="hidden pb-3 font-medium sm:table-cell">Artist</th>
-                      <th className="pb-3 font-medium">Start Time</th>
-                      <th className="hidden pb-3 font-medium md:table-cell">End Time</th>
-                      <th className="pb-3 font-medium">Status</th>
-                    </tr>
-                  </thead>
-                  {isLoading ? (
-                    <SkeletonTableRows
-                      rows={6}
-                      columns={5}
-                      columnClassNames={['', 'hidden sm:table-cell', '', 'hidden md:table-cell', '']}
-                    />
-                  ) : (
-                  <tbody className="divide-y divide-border">
-                    {filteredAppointments!.map((appointment) => (
-                      <tr
-                        key={appointment.id}
-                        onClick={() => navigate(`/appointments/${appointment.id}`)}
-                        className="cursor-pointer hover:bg-surface/40"
-                      >
-                        <td className="py-3 text-fg">
-                          {appointment.client
-                            ? `${appointment.client.firstName} ${appointment.client.lastName}`
-                            : '—'}
-                        </td>
-                        <td className="hidden py-3 text-fg-secondary sm:table-cell">
-                          {appointment.artist?.user.email ?? '—'}
-                        </td>
-                        <td className="py-3 text-fg-secondary">{formatDateTime(appointment.startTime)}</td>
-                        <td className="hidden py-3 text-fg-secondary md:table-cell">
-                          {formatDateTime(appointment.endTime)}
-                        </td>
-                        <td className="py-3" onClick={(event) => event.stopPropagation()}>
-                          {canManage ? (
-                            <select
-                              value={appointment.status}
-                              disabled={updatingId === appointment.id}
-                              onChange={(event) => handleStatusChange(appointment.id, event.target.value)}
-                              className="rounded-full border border-border bg-bg px-3 py-1 text-xs font-medium text-fg-secondary focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-50"
-                            >
-                              {APPOINTMENT_STATUSES.map((status) => (
-                                <option key={status} value={status}>
-                                  {formatStatus(status)}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            <StatusPill status={appointment.status} />
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  )}
-                </table>
-              </div>
+          <div className="mt-4 rounded-2xl border border-border bg-surface p-4 sm:p-5">
+            {isLoading ? (
+              <p className="text-sm text-fg-secondary">Loading…</p>
+            ) : canManageCalendar ? (
+              <DnDCalendar
+                {...commonCalendarProps}
+                selectable
+                resizable={false}
+                onSelectSlot={handleSelectSlot}
+                onEventDrop={handleEventDrop}
+              />
+            ) : (
+              // ARTIST (effective, via useEffectiveUser -- View As included):
+              // the plain, non-drag-and-drop Calendar component, with no
+              // onSelectSlot handler at all. This isn't the DnD-wrapped
+              // component with props merely omitted -- it's a different
+              // component that never attaches drag listeners in the first
+              // place, so there's nothing to disable.
+              <BigCalendar {...commonCalendarProps} />
             )}
           </div>
         </div>
       </div>
 
-      {showAddModal && (
-        <Modal title="New Appointment" onClose={closeAddModal}>
+      {createSlot && (
+        <Modal title="New Appointment" onClose={() => setCreateSlot(null)}>
           <AppointmentForm
-            fixedClientId={prefillClientId}
-            fixedInquiryId={prefillInquiryId}
+            initialArtistId={createSlot.artistId}
+            initialDate={createSlot.date}
+            initialStartTime={createSlot.startTime}
+            initialEndTime={createSlot.endTime}
             onCreated={handleAppointmentCreated}
-            onCancel={closeAddModal}
+            onCancel={() => setCreateSlot(null)}
           />
+        </Modal>
+      )}
+
+      {previewAppointment && (
+        <Modal title="Appointment" onClose={() => setPreviewAppointment(null)}>
+          <div className="space-y-3 text-sm">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-fg-muted">Client</p>
+              <p className="text-fg">
+                {previewAppointment.client
+                  ? `${previewAppointment.client.firstName} ${previewAppointment.client.lastName}`
+                  : 'Unknown client'}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-fg-muted">Time</p>
+              <p className="text-fg">
+                {formatDateTime(previewAppointment.startTime)} – {formatDateTime(previewAppointment.endTime)}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-fg-muted">Artist</p>
+              <p className="text-fg">{previewAppointment.artist.name}</p>
+            </div>
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-fg-muted">Status</p>
+              <StatusPill status={previewAppointment.status} />
+            </div>
+            <Link
+              to={`/appointments/${previewAppointment.id}`}
+              className="inline-block text-sm font-medium text-accent hover:underline"
+            >
+              View details →
+            </Link>
+          </div>
         </Modal>
       )}
     </div>

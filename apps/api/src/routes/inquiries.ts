@@ -8,11 +8,11 @@ import { diffObjects, logAudit } from "../lib/audit";
 import { validateGiftCardForAttachment } from "../lib/giftCards";
 import { getOrCreateStaffConversation } from "../lib/conversations";
 import { normalizePhone } from "../lib/phone";
+import { findBufferConflict, formatBufferWarning } from "../lib/schedulingConflict";
 
 const router = Router();
 
 const ESTIMATE_TOKEN_TTL_DAYS = 7;
-const SCHEDULING_BUFFER_MS = 1.5 * 60 * 60 * 1000;
 const DEPOSIT_TOKEN_TTL_HOURS = 48;
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 
@@ -635,18 +635,7 @@ router.post("/:id/schedule", requireAuth, requireRole(Role.OWNER, Role.FRONT_DES
     return res.status(400).json({ error: giftCardResult.error });
   }
 
-  const dayStart = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
-  const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
-
-  const sameDayAppointments = await prisma.appointment.findMany({
-    where: { artistId: inquiry.assignedArtistId, startTime: { gte: dayStart, lt: dayEnd } },
-  });
-
-  const conflict = sameDayAppointments.find(
-    (appt) =>
-      start.getTime() < appt.endTime.getTime() + SCHEDULING_BUFFER_MS &&
-      appt.startTime.getTime() < end.getTime() + SCHEDULING_BUFFER_MS,
-  );
+  const conflict = await findBufferConflict(inquiry.assignedArtistId, start, end);
 
   const appointment = await prisma.$transaction(async (tx) => {
     const created = await tx.appointment.create({
@@ -685,9 +674,7 @@ router.post("/:id/schedule", requireAuth, requireRole(Role.OWNER, Role.FRONT_DES
 
   res.status(201).json({
     ...updated,
-    bufferWarning: conflict
-      ? `Less than 1.5 hours from another appointment for this artist the same day (${conflict.startTime.toISOString()} – ${conflict.endTime.toISOString()}).`
-      : null,
+    bufferWarning: formatBufferWarning(conflict),
   });
 });
 

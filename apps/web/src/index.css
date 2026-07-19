@@ -277,3 +277,54 @@
   color: var(--color-accent-fg);
   background-color: var(--color-accent);
 }
+
+/* Phase UI-5: react-big-calendar ships a light-mode-only stylesheet with
+   hardcoded colors (no theming hook like react-day-picker's --rdp-*
+   properties), so this overrides its class names directly rather than
+   swapping variables. The toolbar isn't touched here -- Calendar.tsx
+   replaces it entirely with a custom, plain-language component. */
+.rbc-calendar {
+  color: var(--color-fg);
+}
+.rbc-off-range-bg {
+  background-color: var(--color-surface-inset);
+}
+.rbc-today {
+  background-color: color-mix(in srgb, var(--color-accent) 10%, transparent);
+}
+.rbc-header,
+.rbc-time-header-content,
+.rbc-time-gutter,
+.rbc-label,
+.rbc-agenda-date-cell,
+.rbc-agenda-time-cell {
+  color: var(--color-fg-secondary);
+  border-color: var(--color-border) !important;
+}
+.rbc-header + .rbc-header,
+.rbc-day-bg + .rbc-day-bg,
+.rbc-month-row + .rbc-month-row,
+.rbc-month-view,
+.rbc-time-view,
+.rbc-time-content,
+.rbc-time-content > * + * > *,
+.rbc-timeslot-group,
+.rbc-day-slot .rbc-time-slot,
+.rbc-agenda-view table.rbc-agenda-table,
+.rbc-agenda-view table.rbc-agenda-table tbody > tr > td,
+.rbc-agenda-view table.rbc-agenda-table thead > tr > th {
+  border-color: var(--color-border) !important;
+}
+.rbc-off-range {
+  color: var(--color-fg-muted);
+}
+.rbc-event {
+  border: none;
+}
+.rbc-show-more {
+  color: var(--color-accent);
+  background: transparent;
+}
+.rbc-current-time-indicator {
+  background-color: var(--color-danger);
+}

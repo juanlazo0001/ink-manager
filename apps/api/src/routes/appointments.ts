@@ -7,6 +7,7 @@ import { requirePermission } from "../lib/permissions";
 import { diffObjects, logAudit } from "../lib/audit";
 import { validateGiftCardForAttachment } from "../lib/giftCards";
 import { isSameCalendarDay } from "../lib/dateRange";
+import { findBufferConflict, formatBufferWarning } from "../lib/schedulingConflict";
 
 const WAIVER_TOKEN_TTL_HOURS = 24; // day-of form -- signed in-shop, so a short window is intentional
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
@@ -101,12 +102,24 @@ router.post("/", requirePermission("appointments.create"), async (req, res) => {
     changes: { artistId, clientId, inquiryId, giftCardId, startTime: start, endTime: end },
   });
 
-  res.status(201).json(appointment);
+  const conflict = await findBufferConflict(artistId, start, end, appointment.id);
+
+  res.status(201).json({ ...appointment, bufferWarning: formatBufferWarning(conflict) });
 });
 
+// Optional ?start=&end= (ISO) scopes to a visible calendar range (Phase
+// UI-5) via an interval-overlap query, on top of the existing filters --
+// deliberately extending this route rather than adding a parallel one, so
+// role scoping (ARTIST sees only their own) never has two places to get
+// out of sync. Without a range, keeps the pre-Phase-UI-5 "latest 100"
+// behavior (Sidebar's prefetch and any other no-range caller).
 router.get("/", requirePermission("appointments.view"), async (req, res) => {
   const { studioId, role, userId } = req.user!;
   const clientId = typeof req.query.clientId === "string" ? req.query.clientId : undefined;
+  const rangeStartRaw = typeof req.query.start === "string" ? new Date(req.query.start) : undefined;
+  const rangeEndRaw = typeof req.query.end === "string" ? new Date(req.query.end) : undefined;
+  const hasValidRange =
+    rangeStartRaw && rangeEndRaw && !Number.isNaN(rangeStartRaw.getTime()) && !Number.isNaN(rangeEndRaw.getTime());
 
   let artistId: string | undefined;
 
@@ -125,16 +138,32 @@ router.get("/", requirePermission("appointments.view"), async (req, res) => {
       studioId,
       ...(clientId ? { clientId } : {}),
       ...(artistId ? { artistId } : {}),
+      ...(hasValidRange ? { startTime: { lt: rangeEndRaw! }, endTime: { gt: rangeStartRaw! } } : {}),
     },
     include: {
-      artist: { select: { id: true, user: { select: { email: true } } } },
+      artist: { select: { id: true, user: { select: { name: true, email: true } } } },
       client: { select: { id: true, firstName: true, lastName: true } },
+      inquiryProject: { select: { id: true, description: true } },
     },
     orderBy: { startTime: "asc" },
-    take: 100,
+    take: hasValidRange ? 500 : 100,
   });
 
-  res.json(appointments);
+  res.json(
+    appointments.map(({ inquiryProject, artist, ...rest }) => ({
+      ...rest,
+      artist: { id: artist.id, name: artist.user.name ?? artist.user.email },
+      inquiry: inquiryProject
+        ? {
+            id: inquiryProject.id,
+            label:
+              inquiryProject.description.length > 60
+                ? `${inquiryProject.description.slice(0, 60).trimEnd()}…`
+                : inquiryProject.description,
+          }
+        : null,
+    })),
+  );
 });
 
 const APPOINTMENT_DETAIL_INCLUDE = {
@@ -381,7 +410,15 @@ router.patch("/:id", requirePermission("appointments.manage"), async (req, res) 
     changes: diffObjects(appointment, data, ["status", "startTime", "endTime"]),
   });
 
-  res.json(updated);
+  // artistId is never accepted by this route (see comment above) -- a
+  // reassignment can't happen through this call, so the buffer check below
+  // always reflects the appointment's existing, unchanged artist.
+  const conflict =
+    data.startTime && data.endTime
+      ? await findBufferConflict(updated.artistId, data.startTime, data.endTime, id)
+      : null;
+
+  res.json({ ...updated, bufferWarning: formatBufferWarning(conflict) });
 });
 
 export default router;

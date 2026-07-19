@@ -83,6 +83,7 @@ interface WaiverDetail {
 }
 
 const EMPTY_CHECKOUT_FORM = { finalCostDollars: '', depositDecision: 'REDEEM' as 'REDEEM' | 'ROLL', closeoutNotes: '' }
+const APPOINTMENT_STATUSES = ['REQUESTED', 'CONFIRMED', 'COMPLETED', 'CANCELLED', 'NO_SHOW'] as const
 
 export default function AppointmentDetail() {
   const { id } = useParams<{ id: string }>()
@@ -110,6 +111,9 @@ export default function AppointmentDetail() {
   const [checkoutForm, setCheckoutForm] = useState(EMPTY_CHECKOUT_FORM)
   const [checkingOut, setCheckingOut] = useState(false)
   const [checkoutError, setCheckoutError] = useState<string | null>(null)
+
+  const [updatingStatus, setUpdatingStatus] = useState(false)
+  const [statusError, setStatusError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!id) return
@@ -253,6 +257,22 @@ export default function AppointmentDetail() {
     }
   }
 
+  async function handleStatusChange(newStatus: string) {
+    if (!id) return
+    setUpdatingStatus(true)
+    setStatusError(null)
+
+    try {
+      await apiFetch(`/appointments/${id}`, { method: 'PATCH', body: JSON.stringify({ status: newStatus }) })
+      if (user) queryClient.invalidateQueries({ queryKey: appointmentsQueryKey(user.studioId) })
+      setRefreshIndex((i) => i + 1)
+    } catch (err) {
+      setStatusError(err instanceof Error ? err.message : 'Failed to update status')
+    } finally {
+      setUpdatingStatus(false)
+    }
+  }
+
   const checkoutDecision: 'REDEEM' | 'ROLL' | null = appointment?.checkedOutAt
     ? appointment.giftCard && appointment.giftCard.status === 'REDEEMED'
       ? 'REDEEM'
@@ -324,9 +344,26 @@ export default function AppointmentDetail() {
                         Message
                       </button>
                     )}
-                    <StatusPill status={appointment.status} />
+                    {canManage ? (
+                      <select
+                        value={appointment.status}
+                        disabled={updatingStatus}
+                        onChange={(event) => handleStatusChange(event.target.value)}
+                        className="rounded-full border border-border bg-surface-inset px-3 py-1.5 text-xs font-medium text-fg-secondary focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-50"
+                      >
+                        {APPOINTMENT_STATUSES.map((status) => (
+                          <option key={status} value={status}>
+                            {formatStatus(status)}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <StatusPill status={appointment.status} />
+                    )}
                   </div>
                 </div>
+
+                {statusError && <p className="mt-2 text-sm text-danger">{statusError}</p>}
 
                 {appointment.notes && (
                   <p className="mt-4 border-t border-border pt-4 text-sm text-fg-secondary">{appointment.notes}</p>

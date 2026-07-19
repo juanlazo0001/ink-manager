@@ -6,7 +6,7 @@ import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useViewAs } from '../context/useViewAs'
 import { useStudio } from '../context/useStudio'
 import { apiFetch } from '../lib/api'
-import { appointmentsQueryKey, clientsQueryKey, inquiriesQueryKey } from '../lib/queryKeys'
+import { clientsQueryKey, inquiriesQueryKey } from '../lib/queryKeys'
 import { useNavCounts, formatBubbleCount } from '../lib/useNavCounts'
 import { Skeleton } from './Skeleton'
 
@@ -59,9 +59,11 @@ export default function Sidebar() {
     if (!user) return
 
     const studioId = user.studioId
+    // The Calendar page's own query key is range-scoped (Phase UI-5) and
+    // depends on the view/date it lands on, which isn't known here -- so
+    // there's nothing worth warming for '/calendar' anymore.
     const queries: Record<string, { queryKey: readonly unknown[]; queryFn: () => Promise<unknown> }> = {
       '/clients': { queryKey: clientsQueryKey(studioId), queryFn: () => apiFetch('/clients') },
-      '/calendar': { queryKey: appointmentsQueryKey(studioId), queryFn: () => apiFetch('/appointments') },
       '/inquiries': { queryKey: inquiriesQueryKey(studioId), queryFn: () => apiFetch('/inquiries') },
     }
 
