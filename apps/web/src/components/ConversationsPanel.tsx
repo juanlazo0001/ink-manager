@@ -928,7 +928,7 @@ function ConversationListView({
       <div className="min-h-0 flex-1 overflow-y-auto">
         {isLoading && <p className="p-4 text-sm text-fg-secondary">Loading…</p>}
 
-        {!isLoading && visibleConversations.length === 0 && rosterWithoutThread.length === 0 && (
+        {!isLoading && visibleConversations.length === 0 && (
           <p className="p-4 text-sm text-fg-secondary">
             {conversations && conversations.length > 0
               ? 'Nothing matches this filter.'
@@ -983,26 +983,6 @@ function ConversationListView({
               </li>
             )
           })}
-
-          {tab === 'STAFF' &&
-            rosterWithoutThread.map((member) => (
-              <li key={member.id}>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    const conversation = await apiFetch<ConversationSummary>('/conversations', {
-                      method: 'POST',
-                      body: JSON.stringify({ staffUserId: member.id }),
-                    })
-                    onSelect(conversation.id)
-                  }}
-                  className="flex w-full items-center justify-between gap-2 px-4 py-4 text-left transition hover:bg-surface/60"
-                >
-                  <span className="truncate text-base text-fg-secondary">{member.name}</span>
-                  <span className="shrink-0 text-xs text-fg-muted">Start</span>
-                </button>
-              </li>
-            ))}
         </ul>
       </div>
 
