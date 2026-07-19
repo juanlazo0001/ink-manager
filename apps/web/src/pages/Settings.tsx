@@ -1,9 +1,17 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
-import StatusPill from '../components/StatusPill'
+import Modal from '../components/Modal'
+import RichTextEditor from '../components/RichTextEditor'
+import { CheckIcon, ClockIcon, CloseIcon, PencilIcon, SpinnerIcon } from '../components/icons'
 import { apiFetch } from '../lib/api'
-import { formatDateTime, formatPhoneInput, readFileAsDataUrl, MAX_IMAGE_FILE_BYTES } from '../lib/format'
+import {
+  formatDateTime,
+  formatPhoneInput,
+  formatRelativeDateTime,
+  readFileAsDataUrl,
+  MAX_IMAGE_FILE_BYTES,
+} from '../lib/format'
 import { navCountsQueryKey } from '../lib/queryKeys'
 import { useStudio } from '../context/useStudio'
 import { useUserProfile } from '../context/useUserProfile'
@@ -48,6 +56,7 @@ interface StudioSettingsData {
   estimateFollowUpHours: number
   giftCardDefaultExpirationDays: number | null
   coldLeadDays: number
+  timezone: string
   calendarInviteTemplate: string | null
   waiverHealthQuestions: HealthQuestion[] | null
   waiverClauses: string[] | null
@@ -57,16 +66,74 @@ interface StudioSettingsData {
   showSidebarBadges: boolean
 }
 
-const EMPTY_POLICIES_FORM = {
-  refundPolicy: '',
-  depositPolicy: '',
-  reschedulePolicy: '',
-  communicationPolicy: '',
-  estimateTerms: '',
+// Phase UI-3: one row + edit-icon per field, each opening only its own
+// WYSIWYG modal (RichTextEditor.tsx). Kept as a plain array (not a Record)
+// so display order is explicit and matches the page.
+const POLICY_HTML_FIELDS: { key: keyof StudioSettingsData; label: string }[] = [
+  { key: 'refundPolicy', label: 'Refund Policy' },
+  { key: 'depositPolicy', label: 'Deposit Policy' },
+  { key: 'reschedulePolicy', label: 'Reschedule Policy' },
+  { key: 'communicationPolicy', label: 'Communication Policy' },
+  { key: 'estimateTerms', label: 'Estimate Terms & Conditions' },
+  { key: 'waiverAcknowledgment', label: 'Waiver Acknowledgment' },
+  { key: 'waiverPhotoRelease', label: 'Photo/Video Release' },
+  { key: 'calendarInviteTemplate', label: 'Calendar Invite Template' },
+]
+
+// Strips tags for the compact row preview (plain text only, never rendered
+// as HTML -- React text interpolation escapes it same as any other string,
+// so this needs no sanitizer of its own; it's the modal editor and the
+// public-facing render sites that handle real HTML and need one).
+function stripHtmlPreview(html: string | null, maxLen = 140): string {
+  if (!html) return 'No content yet'
+  const text = html
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!text) return 'No content yet'
+  return text.length > maxLen ? `${text.slice(0, maxLen).trimEnd()}…` : text
+}
+
+// Mirrors apps/api/src/routes/studioSettings.ts's VALID_TIMEZONES -- kept
+// as a literal list for the same reason other backend/frontend mirrored
+// lists in this codebase are (separate compilation units, no shared
+// import). Plain-language labels per the standing design mandate: a raw
+// IANA identifier is exactly the kind of thing a non-technical owner
+// shouldn't have to parse.
+const TIMEZONE_OPTIONS: { value: string; label: string }[] = [
+  { value: 'America/New_York', label: 'Eastern Time' },
+  { value: 'America/Chicago', label: 'Central Time' },
+  { value: 'America/Denver', label: 'Mountain Time' },
+  { value: 'America/Phoenix', label: 'Mountain Time (no DST, Arizona)' },
+  { value: 'America/Los_Angeles', label: 'Pacific Time' },
+  { value: 'America/Anchorage', label: 'Alaska Time' },
+  { value: 'Pacific/Honolulu', label: 'Hawaii Time' },
+]
+
+function timezoneLabel(value: string): string {
+  return TIMEZONE_OPTIONS.find((tz) => tz.value === value)?.label ?? value
+}
+
+const EMPTY_DEFAULTS_FORM = {
   estimateFollowUpHours: '24',
   giftCardDefaultExpirationDays: '',
   coldLeadDays: '90',
-  calendarInviteTemplate: '',
+  timezone: 'America/New_York',
+  showSidebarBadges: false,
+}
+
+// Phase 7A jobs are documented here in plain language; extend this
+// dictionary as later phases register more jobs (see apps/api/src/lib/jobs).
+const JOB_DISPLAY: Record<string, { friendlyName: string; plainDescription: string }> = {
+  giftCardExpirationSweep: {
+    friendlyName: 'Gift Card Expiration',
+    plainDescription: 'Automatically marks gift cards as expired once their expiration date has passed.',
+  },
+  coldLeadSweep: {
+    friendlyName: 'Cold Lead Detection',
+    plainDescription: 'Automatically flags inquiries as cold leads after a period of no activity.',
+  },
 }
 
 const EMPTY_HEALTH_QUESTION: HealthQuestion = { question: '', type: 'yes_no', explainPrompt: '' }
@@ -170,18 +237,35 @@ export default function Settings() {
   }
 
   const [policies, setPolicies] = useState<StudioSettingsData | null>(null)
-  const [policiesForm, setPoliciesForm] = useState(EMPTY_POLICIES_FORM)
-  const [policiesError, setPoliciesError] = useState<string | null>(null)
-  const [policiesSuccess, setPoliciesSuccess] = useState(false)
-  const [policiesSubmitting, setPoliciesSubmitting] = useState(false)
-  const [editingPolicies, setEditingPolicies] = useState(false)
-  const [showSidebarBadges, setShowSidebarBadges] = useState(false)
 
+  // Phase UI-3: each of the 8 HTML policy fields edits through its own
+  // modal -- editingField names which POLICY_HTML_FIELDS key is open (or
+  // null), fieldDraft holds that one field's in-progress HTML.
+  const [editingField, setEditingField] = useState<keyof StudioSettingsData | null>(null)
+  const [fieldDraft, setFieldDraft] = useState('')
+  const [fieldSaving, setFieldSaving] = useState(false)
+  const [fieldError, setFieldError] = useState<string | null>(null)
+
+  // The 5 non-HTML "Defaults" fields share one grouped modal instead.
+  const [showDefaultsModal, setShowDefaultsModal] = useState(false)
+  const [defaultsForm, setDefaultsForm] = useState(EMPTY_DEFAULTS_FORM)
+  const [defaultsSaving, setDefaultsSaving] = useState(false)
+  const [defaultsError, setDefaultsError] = useState<string | null>(null)
+
+  // Waiver health-questions/clauses: unchanged dedicated list editor (out
+  // of this phase's WYSIWYG scope), just re-homed under its own edit
+  // toggle now that there's no single mega-form to nest it inside.
   const [waiverHealthQuestions, setWaiverHealthQuestions] = useState<HealthQuestion[]>([])
   const [waiverClauses, setWaiverClauses] = useState<string[]>([])
-  const [waiverAcknowledgment, setWaiverAcknowledgment] = useState('')
-  const [waiverPhotoRelease, setWaiverPhotoRelease] = useState('')
+  const [editingWaiverList, setEditingWaiverList] = useState(false)
+  const [waiverListSaving, setWaiverListSaving] = useState(false)
+  const [waiverListError, setWaiverListError] = useState<string | null>(null)
+
+  // Message templates: same treatment as the waiver list above.
   const [messageTemplates, setMessageTemplates] = useState<MessageTemplate[]>([])
+  const [editingTemplates, setEditingTemplates] = useState(false)
+  const [templatesSaving, setTemplatesSaving] = useState(false)
+  const [templatesError, setTemplatesError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!canViewPolicies) return
@@ -192,23 +276,9 @@ export default function Settings() {
       .then((data) => {
         if (ignore) return
         setPolicies(data)
-        setPoliciesForm({
-          refundPolicy: data.refundPolicy ?? '',
-          depositPolicy: data.depositPolicy ?? '',
-          reschedulePolicy: data.reschedulePolicy ?? '',
-          communicationPolicy: data.communicationPolicy ?? '',
-          estimateTerms: data.estimateTerms ?? '',
-          estimateFollowUpHours: String(data.estimateFollowUpHours),
-          giftCardDefaultExpirationDays: data.giftCardDefaultExpirationDays?.toString() ?? '',
-          coldLeadDays: String(data.coldLeadDays),
-          calendarInviteTemplate: data.calendarInviteTemplate ?? '',
-        })
         setWaiverHealthQuestions(data.waiverHealthQuestions ?? [])
         setWaiverClauses(data.waiverClauses ?? [])
-        setWaiverAcknowledgment(data.waiverAcknowledgment ?? '')
-        setWaiverPhotoRelease(data.waiverPhotoRelease ?? '')
         setMessageTemplates(data.messageTemplates ?? [])
-        setShowSidebarBadges(data.showSidebarBadges)
       })
       .catch(() => {
         // Section just stays empty if this fails; not critical page content.
@@ -219,11 +289,75 @@ export default function Settings() {
     }
   }, [canViewPolicies])
 
-  async function handlePoliciesSubmit(event: FormEvent) {
-    event.preventDefault()
-    setPoliciesSubmitting(true)
-    setPoliciesError(null)
-    setPoliciesSuccess(false)
+  function openFieldModal(key: keyof StudioSettingsData) {
+    setEditingField(key)
+    setFieldDraft((policies?.[key] as string | null) ?? '')
+    setFieldError(null)
+  }
+
+  async function handleFieldSave() {
+    if (!editingField) return
+    setFieldSaving(true)
+    setFieldError(null)
+    try {
+      const updated = await apiFetch<StudioSettingsData>('/studio-settings', {
+        method: 'PATCH',
+        body: JSON.stringify({ [editingField]: fieldDraft }),
+      })
+      setPolicies(updated)
+      setEditingField(null)
+    } catch (err) {
+      setFieldError(err instanceof Error ? err.message : 'Failed to save')
+    } finally {
+      setFieldSaving(false)
+    }
+  }
+
+  function openDefaultsModal() {
+    if (!policies) return
+    setDefaultsForm({
+      estimateFollowUpHours: String(policies.estimateFollowUpHours),
+      giftCardDefaultExpirationDays: policies.giftCardDefaultExpirationDays?.toString() ?? '',
+      coldLeadDays: String(policies.coldLeadDays),
+      timezone: policies.timezone,
+      showSidebarBadges: policies.showSidebarBadges,
+    })
+    setDefaultsError(null)
+    setShowDefaultsModal(true)
+  }
+
+  async function handleDefaultsSave() {
+    setDefaultsSaving(true)
+    setDefaultsError(null)
+    try {
+      const updated = await apiFetch<StudioSettingsData>('/studio-settings', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          estimateFollowUpHours: Number(defaultsForm.estimateFollowUpHours) || 0,
+          giftCardDefaultExpirationDays: defaultsForm.giftCardDefaultExpirationDays
+            ? Number(defaultsForm.giftCardDefaultExpirationDays)
+            : null,
+          coldLeadDays: Number(defaultsForm.coldLeadDays) || 90,
+          timezone: defaultsForm.timezone,
+          showSidebarBadges: defaultsForm.showSidebarBadges,
+        }),
+      })
+      setPolicies(updated)
+      setShowDefaultsModal(false)
+      // The sidebar/badge behavior everywhere reads this off /nav-counts
+      // (see useNavCounts) -- invalidate so it picks up the new value
+      // immediately instead of waiting for the next poll.
+      if (user) queryClient.invalidateQueries({ queryKey: navCountsQueryKey(user.userId) })
+    } catch (err) {
+      setDefaultsError(err instanceof Error ? err.message : 'Failed to save')
+    } finally {
+      setDefaultsSaving(false)
+    }
+  }
+
+  async function handleWaiverListSave() {
+    setWaiverListSaving(true)
+    setWaiverListError(null)
 
     const cleanedQuestions = waiverHealthQuestions
       .filter((q) => q.question.trim().length > 0)
@@ -236,10 +370,30 @@ export default function Settings() {
     const cleanedClauses = waiverClauses.map((c) => c.trim()).filter((c) => c.length > 0)
 
     if (cleanedClauses.length === 0) {
-      setPoliciesError('At least one waiver clause is required.')
-      setPoliciesSubmitting(false)
+      setWaiverListError('At least one waiver clause is required.')
+      setWaiverListSaving(false)
       return
     }
+
+    try {
+      const updated = await apiFetch<StudioSettingsData>('/studio-settings', {
+        method: 'PATCH',
+        body: JSON.stringify({ waiverHealthQuestions: cleanedQuestions, waiverClauses: cleanedClauses }),
+      })
+      setPolicies(updated)
+      setWaiverHealthQuestions(updated.waiverHealthQuestions ?? [])
+      setWaiverClauses(updated.waiverClauses ?? [])
+      setEditingWaiverList(false)
+    } catch (err) {
+      setWaiverListError(err instanceof Error ? err.message : 'Failed to save')
+    } finally {
+      setWaiverListSaving(false)
+    }
+  }
+
+  async function handleTemplatesSave() {
+    setTemplatesSaving(true)
+    setTemplatesError(null)
 
     const cleanedTemplates = messageTemplates
       .map((t) => ({ id: t.id, name: t.name.trim(), body: t.body.trim() }))
@@ -248,43 +402,15 @@ export default function Settings() {
     try {
       const updated = await apiFetch<StudioSettingsData>('/studio-settings', {
         method: 'PATCH',
-        body: JSON.stringify({
-          refundPolicy: policiesForm.refundPolicy || null,
-          depositPolicy: policiesForm.depositPolicy || null,
-          reschedulePolicy: policiesForm.reschedulePolicy || null,
-          communicationPolicy: policiesForm.communicationPolicy || null,
-          estimateTerms: policiesForm.estimateTerms || null,
-          estimateFollowUpHours: Number(policiesForm.estimateFollowUpHours) || 0,
-          giftCardDefaultExpirationDays: policiesForm.giftCardDefaultExpirationDays
-            ? Number(policiesForm.giftCardDefaultExpirationDays)
-            : null,
-          coldLeadDays: Number(policiesForm.coldLeadDays) || 90,
-          calendarInviteTemplate: policiesForm.calendarInviteTemplate || null,
-          waiverHealthQuestions: cleanedQuestions,
-          waiverClauses: cleanedClauses,
-          waiverAcknowledgment: waiverAcknowledgment || null,
-          waiverPhotoRelease: waiverPhotoRelease || null,
-          messageTemplates: cleanedTemplates,
-          showSidebarBadges,
-        }),
+        body: JSON.stringify({ messageTemplates: cleanedTemplates }),
       })
-
       setPolicies(updated)
-      setWaiverHealthQuestions(updated.waiverHealthQuestions ?? [])
-      setWaiverClauses(updated.waiverClauses ?? [])
       setMessageTemplates(updated.messageTemplates ?? [])
-      setShowSidebarBadges(updated.showSidebarBadges)
-      setEditingPolicies(false)
-      setPoliciesSuccess(true)
-      setTimeout(() => setPoliciesSuccess(false), 2000)
-      // The sidebar/badge behavior everywhere reads this off /nav-counts
-      // (see useNavCounts) -- invalidate so it picks up the new value
-      // immediately instead of waiting for the next poll.
-      if (user) queryClient.invalidateQueries({ queryKey: navCountsQueryKey(user.userId) })
+      setEditingTemplates(false)
     } catch (err) {
-      setPoliciesError(err instanceof Error ? err.message : 'Failed to update policies')
+      setTemplatesError(err instanceof Error ? err.message : 'Failed to save')
     } finally {
-      setPoliciesSubmitting(false)
+      setTemplatesSaving(false)
     }
   }
 
@@ -766,218 +892,251 @@ export default function Settings() {
 
           {canViewPolicies && policies && (
             <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <h2 className="text-lg font-semibold text-fg">Policies &amp; Defaults</h2>
-                  <p className="mt-1 text-sm text-fg-secondary">
-                    Wording and defaults used across estimates, deposits, and gift cards.
-                  </p>
-                </div>
-
-                {canEditPolicies && !editingPolicies && (
-                  <button
-                    type="button"
-                    onClick={() => setEditingPolicies(true)}
-                    className="shrink-0 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
-                  >
-                    Edit
-                  </button>
-                )}
+              <div>
+                <h2 className="text-lg font-semibold text-fg">Policies &amp; Defaults</h2>
+                <p className="mt-1 text-sm text-fg-secondary">
+                  Wording and defaults used across estimates, deposits, and gift cards.
+                </p>
               </div>
 
-              {editingPolicies ? (
-                <form onSubmit={handlePoliciesSubmit} className="mt-4 space-y-4">
-                  {(
-                    [
-                      ['refundPolicy', 'Refund policy'],
-                      ['depositPolicy', 'Deposit policy'],
-                      ['reschedulePolicy', 'Reschedule policy'],
-                      ['communicationPolicy', 'Communication policy'],
-                      ['estimateTerms', 'Estimate Terms & Conditions'],
-                    ] as const
-                  ).map(([field, label]) => (
-                    <div key={field}>
-                      <label className="mb-1 block text-sm font-medium text-fg-secondary">{label}</label>
-                      <textarea
-                        rows={3}
-                        value={policiesForm[field]}
-                        onChange={(e) => setPoliciesForm({ ...policiesForm, [field]: e.target.value })}
-                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                      />
+              <div className="mt-4 divide-y divide-border">
+                {POLICY_HTML_FIELDS.map(({ key, label }) => (
+                  <div key={key} className="flex items-center justify-between gap-3 py-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-fg">{label}</p>
+                      <p className="mt-0.5 truncate text-xs text-fg-secondary">
+                        {stripHtmlPreview(policies[key] as string | null)}
+                      </p>
                     </div>
-                  ))}
-
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-fg-secondary">
-                        Estimate follow-up (hours)
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        value={policiesForm.estimateFollowUpHours}
-                        onChange={(e) => setPoliciesForm({ ...policiesForm, estimateFollowUpHours: e.target.value })}
-                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-fg-secondary">
-                        Gift card expiration (days, blank = never)
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        value={policiesForm.giftCardDefaultExpirationDays}
-                        onChange={(e) =>
-                          setPoliciesForm({ ...policiesForm, giftCardDefaultExpirationDays: e.target.value })
-                        }
-                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-fg-secondary">
-                        Cold lead after (days of no activity)
-                      </label>
-                      <input
-                        type="number"
-                        min="1"
-                        value={policiesForm.coldLeadDays}
-                        onChange={(e) => setPoliciesForm({ ...policiesForm, coldLeadDays: e.target.value })}
-                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-fg-secondary">Calendar invite template</label>
-                    <textarea
-                      rows={3}
-                      value={policiesForm.calendarInviteTemplate}
-                      onChange={(e) => setPoliciesForm({ ...policiesForm, calendarInviteTemplate: e.target.value })}
-                      className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                    />
-                  </div>
-
-                  <div className="border-t border-border pt-4">
-                    <div className="flex items-center justify-between">
-                      <label className="text-sm font-medium text-fg-secondary">Waiver health screening questions</label>
+                    {canEditPolicies && (
                       <button
                         type="button"
-                        onClick={addHealthQuestion}
-                        className="rounded-full border border-border px-3 py-1 text-xs font-medium text-fg transition hover:bg-surface"
+                        onClick={() => openFieldModal(key)}
+                        aria-label={`Edit ${label}`}
+                        title={`Edit ${label}`}
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface-inset hover:text-fg"
                       >
-                        Add question
+                        <PencilIcon className="h-4 w-4" />
                       </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-4 rounded-xl border border-border p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-semibold text-fg">Defaults</p>
+                  {canEditPolicies && (
+                    <button
+                      type="button"
+                      onClick={openDefaultsModal}
+                      aria-label="Edit defaults"
+                      title="Edit defaults"
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface-inset hover:text-fg"
+                    >
+                      <PencilIcon className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Estimate follow-up</p>
+                    <p className="mt-1 text-sm text-fg-secondary">{policies.estimateFollowUpHours} hours</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Gift card expiration</p>
+                    <p className="mt-1 text-sm text-fg-secondary">
+                      {policies.giftCardDefaultExpirationDays
+                        ? `${policies.giftCardDefaultExpirationDays} days`
+                        : 'Never expires'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Cold lead after</p>
+                    <p className="mt-1 text-sm text-fg-secondary">{policies.coldLeadDays} days of no activity</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Timezone</p>
+                    <p className="mt-1 text-sm text-fg-secondary">{timezoneLabel(policies.timezone)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Sidebar badges</p>
+                    <p className="mt-1 text-sm text-fg-secondary">{policies.showSidebarBadges ? 'On' : 'Off'}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 rounded-xl border border-border p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-fg">Waiver Questions &amp; Clauses</p>
+                    <p className="mt-0.5 text-xs text-fg-secondary">
+                      {waiverHealthQuestions.length} health question{waiverHealthQuestions.length === 1 ? '' : 's'},{' '}
+                      {waiverClauses.length} clause{waiverClauses.length === 1 ? '' : 's'}
+                    </p>
+                  </div>
+                  {canEditPolicies && !editingWaiverList && (
+                    <button
+                      type="button"
+                      onClick={() => setEditingWaiverList(true)}
+                      className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                    >
+                      Edit
+                    </button>
+                  )}
+                </div>
+
+                {editingWaiverList && (
+                  <div className="mt-4 space-y-4">
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm font-medium text-fg-secondary">Health screening questions</label>
+                        <button
+                          type="button"
+                          onClick={addHealthQuestion}
+                          className="rounded-full border border-border px-3 py-1 text-xs font-medium text-fg transition hover:bg-surface"
+                        >
+                          Add question
+                        </button>
+                      </div>
+
+                      <div className="mt-3 space-y-3">
+                        {waiverHealthQuestions.map((q, i) => (
+                          <div key={i} className="rounded-lg border border-border p-3">
+                            <div className="flex items-start gap-2">
+                              <textarea
+                                rows={2}
+                                value={q.question}
+                                onChange={(e) => updateHealthQuestion(i, { question: e.target.value })}
+                                placeholder="Question text"
+                                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => removeHealthQuestion(i)}
+                                className="shrink-0 rounded-full border border-border px-2 py-1 text-xs text-fg-secondary transition hover:bg-surface hover:text-fg"
+                              >
+                                Remove
+                              </button>
+                            </div>
+                            <div className="mt-2 flex flex-wrap items-center gap-3">
+                              <select
+                                value={q.type}
+                                onChange={(e) =>
+                                  updateHealthQuestion(i, { type: e.target.value as HealthQuestion['type'] })
+                                }
+                                className="rounded-lg border border-border bg-surface-inset px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                              >
+                                <option value="yes_no">Yes/No</option>
+                                <option value="yes_no_explain">Yes/No + explain if yes</option>
+                              </select>
+                              {q.type === 'yes_no_explain' && (
+                                <input
+                                  type="text"
+                                  placeholder="Explain prompt (e.g. 'If yes, please explain')"
+                                  value={q.explainPrompt ?? ''}
+                                  onChange={(e) => updateHealthQuestion(i, { explainPrompt: e.target.value })}
+                                  className="min-w-0 flex-1 rounded-lg border border-border bg-surface-inset px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                                />
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                        {waiverHealthQuestions.length === 0 && (
+                          <p className="text-sm text-fg-secondary">No health questions yet.</p>
+                        )}
+                      </div>
                     </div>
 
-                    <div className="mt-3 space-y-3">
-                      {waiverHealthQuestions.map((q, i) => (
-                        <div key={i} className="rounded-lg border border-border p-3">
-                          <div className="flex items-start gap-2">
+                    <div className="border-t border-border pt-4">
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm font-medium text-fg-secondary">
+                          Clauses (initialed individually)
+                        </label>
+                        <button
+                          type="button"
+                          onClick={addClause}
+                          className="rounded-full border border-border px-3 py-1 text-xs font-medium text-fg transition hover:bg-surface"
+                        >
+                          Add clause
+                        </button>
+                      </div>
+
+                      <div className="mt-3 space-y-3">
+                        {waiverClauses.map((clause, i) => (
+                          <div key={i} className="flex items-start gap-2">
+                            <span className="mt-2 text-xs text-fg-muted">{i + 1}.</span>
                             <textarea
                               rows={2}
-                              value={q.question}
-                              onChange={(e) => updateHealthQuestion(i, { question: e.target.value })}
-                              placeholder="Question text"
+                              value={clause}
+                              onChange={(e) => updateClause(i, e.target.value)}
                               className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                             />
                             <button
                               type="button"
-                              onClick={() => removeHealthQuestion(i)}
-                              className="shrink-0 rounded-full border border-border px-2 py-1 text-xs text-fg-secondary transition hover:bg-surface hover:text-fg"
+                              onClick={() => removeClause(i)}
+                              className="mt-1 shrink-0 rounded-full border border-border px-2 py-1 text-xs text-fg-secondary transition hover:bg-surface hover:text-fg"
                             >
                               Remove
                             </button>
                           </div>
-                          <div className="mt-2 flex flex-wrap items-center gap-3">
-                            <select
-                              value={q.type}
-                              onChange={(e) =>
-                                updateHealthQuestion(i, { type: e.target.value as HealthQuestion['type'] })
-                              }
-                              className="rounded-lg border border-border bg-surface-inset px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                            >
-                              <option value="yes_no">Yes/No</option>
-                              <option value="yes_no_explain">Yes/No + explain if yes</option>
-                            </select>
-                            {q.type === 'yes_no_explain' && (
-                              <input
-                                type="text"
-                                placeholder="Explain prompt (e.g. 'If yes, please explain')"
-                                value={q.explainPrompt ?? ''}
-                                onChange={(e) => updateHealthQuestion(i, { explainPrompt: e.target.value })}
-                                className="min-w-0 flex-1 rounded-lg border border-border bg-surface-inset px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                              />
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                      {waiverHealthQuestions.length === 0 && (
-                        <p className="text-sm text-fg-secondary">No health questions yet.</p>
-                      )}
+                        ))}
+                        {waiverClauses.length === 0 && <p className="text-sm text-fg-secondary">No clauses yet.</p>}
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="border-t border-border pt-4">
-                    <div className="flex items-center justify-between">
-                      <label className="text-sm font-medium text-fg-secondary">Waiver clauses (initialed individually)</label>
+                    {waiverListError && <p className="text-sm text-danger">{waiverListError}</p>}
+
+                    <div className="flex gap-3">
                       <button
                         type="button"
-                        onClick={addClause}
-                        className="rounded-full border border-border px-3 py-1 text-xs font-medium text-fg transition hover:bg-surface"
+                        onClick={handleWaiverListSave}
+                        disabled={waiverListSaving}
+                        className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                       >
-                        Add clause
+                        {waiverListSaving ? 'Saving…' : 'Save'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingWaiverList(false)
+                          setWaiverHealthQuestions(policies.waiverHealthQuestions ?? [])
+                          setWaiverClauses(policies.waiverClauses ?? [])
+                          setWaiverListError(null)
+                        }}
+                        disabled={waiverListSaving}
+                        className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
+                      >
+                        Cancel
                       </button>
                     </div>
-
-                    <div className="mt-3 space-y-3">
-                      {waiverClauses.map((clause, i) => (
-                        <div key={i} className="flex items-start gap-2">
-                          <span className="mt-2 text-xs text-fg-muted">{i + 1}.</span>
-                          <textarea
-                            rows={2}
-                            value={clause}
-                            onChange={(e) => updateClause(i, e.target.value)}
-                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => removeClause(i)}
-                            className="mt-1 shrink-0 rounded-full border border-border px-2 py-1 text-xs text-fg-secondary transition hover:bg-surface hover:text-fg"
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      ))}
-                      {waiverClauses.length === 0 && <p className="text-sm text-fg-secondary">No clauses yet.</p>}
-                    </div>
                   </div>
+                )}
+              </div>
 
-                  <div className="border-t border-border pt-4">
-                    <label className="mb-1 block text-sm font-medium text-fg-secondary">Waiver acknowledgment</label>
-                    <textarea
-                      rows={3}
-                      value={waiverAcknowledgment}
-                      onChange={(e) => setWaiverAcknowledgment(e.target.value)}
-                      className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                    />
-                  </div>
-
+              <div className="mt-4 rounded-xl border border-border p-4">
+                <div className="flex items-center justify-between gap-3">
                   <div>
-                    <label className="mb-1 block text-sm font-medium text-fg-secondary">
-                      Photo/video release text (optional section)
-                    </label>
-                    <textarea
-                      rows={3}
-                      value={waiverPhotoRelease}
-                      onChange={(e) => setWaiverPhotoRelease(e.target.value)}
-                      className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                    />
+                    <p className="text-sm font-semibold text-fg">Message Templates</p>
+                    <p className="mt-0.5 text-xs text-fg-secondary">
+                      {messageTemplates.length} template{messageTemplates.length === 1 ? '' : 's'} &middot; available
+                      in the conversation composer
+                    </p>
                   </div>
+                  {canEditPolicies && !editingTemplates && (
+                    <button
+                      type="button"
+                      onClick={() => setEditingTemplates(true)}
+                      className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                    >
+                      Edit
+                    </button>
+                  )}
+                </div>
 
-                  <div className="border-t border-border pt-4">
-                    <div className="flex items-center justify-between">
-                      <label className="text-sm font-medium text-fg-secondary">Message templates</label>
+                {editingTemplates && (
+                  <div className="mt-4 space-y-4">
+                    <div className="flex justify-end">
                       <button
                         type="button"
                         onClick={addTemplate}
@@ -986,11 +1145,8 @@ export default function Settings() {
                         Add template
                       </button>
                     </div>
-                    <p className="mt-1 text-xs text-fg-muted">
-                      Available in the conversation composer's template picker.
-                    </p>
 
-                    <div className="mt-3 space-y-3">
+                    <div className="space-y-3">
                       {messageTemplates.map((template, i) => (
                         <div key={template.id} className="rounded-lg border border-border p-3">
                           <div className="flex items-start gap-2">
@@ -1022,180 +1178,225 @@ export default function Settings() {
                         <p className="text-sm text-fg-secondary">No templates yet.</p>
                       )}
                     </div>
-                  </div>
 
-                  <div className="border-t border-border pt-4">
-                    <label className="text-sm font-medium text-fg-secondary">Interface</label>
-                    <label className="mt-2 flex items-center gap-2 text-sm text-fg-secondary">
-                      <input
-                        type="checkbox"
-                        checked={showSidebarBadges}
-                        onChange={(e) => setShowSidebarBadges(e.target.checked)}
-                        className="h-4 w-4 rounded border-border bg-surface-inset accent-accent"
-                      />
-                      Show new-item count badges on sidebar navigation
-                    </label>
-                    <p className="mt-1 text-xs text-fg-muted">
-                      Off by default. Doesn't affect the conversations unread badge or the Tasks icon's count, both
-                      of which always show.
-                    </p>
-                  </div>
+                    {templatesError && <p className="text-sm text-danger">{templatesError}</p>}
 
-                  {policiesError && <p className="text-sm text-danger">{policiesError}</p>}
-
-                  <div className="flex gap-3">
-                    <button
-                      type="submit"
-                      disabled={policiesSubmitting}
-                      className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
-                    >
-                      {policiesSubmitting ? 'Saving…' : 'Save'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setEditingPolicies(false)}
-                      className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
-                    >
-                      Cancel
-                    </button>
+                    <div className="flex gap-3">
+                      <button
+                        type="button"
+                        onClick={handleTemplatesSave}
+                        disabled={templatesSaving}
+                        className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                      >
+                        {templatesSaving ? 'Saving…' : 'Save'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingTemplates(false)
+                          setMessageTemplates(policies.messageTemplates ?? [])
+                          setTemplatesError(null)
+                        }}
+                        disabled={templatesSaving}
+                        className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
+                      >
+                        Cancel
+                      </button>
+                    </div>
                   </div>
-                </form>
-              ) : (
-                <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Refund policy</p>
-                    <p className="mt-1 whitespace-pre-wrap text-sm text-fg-secondary">
-                      {policies.refundPolicy || 'Not set'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Deposit policy</p>
-                    <p className="mt-1 whitespace-pre-wrap text-sm text-fg-secondary">
-                      {policies.depositPolicy || 'Not set'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Reschedule policy</p>
-                    <p className="mt-1 whitespace-pre-wrap text-sm text-fg-secondary">
-                      {policies.reschedulePolicy || 'Not set'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
-                      Communication policy
-                    </p>
-                    <p className="mt-1 whitespace-pre-wrap text-sm text-fg-secondary">
-                      {policies.communicationPolicy || 'Not set'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
-                      Estimate Terms &amp; Conditions
-                    </p>
-                    <p className="mt-1 whitespace-pre-wrap text-sm text-fg-secondary">
-                      {policies.estimateTerms || 'Not set'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
-                      Estimate follow-up
-                    </p>
-                    <p className="mt-1 text-sm text-fg-secondary">{policies.estimateFollowUpHours} hours</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
-                      Gift card expiration
-                    </p>
-                    <p className="mt-1 text-sm text-fg-secondary">
-                      {policies.giftCardDefaultExpirationDays
-                        ? `${policies.giftCardDefaultExpirationDays} days`
-                        : 'Never expires'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Cold lead after</p>
-                    <p className="mt-1 text-sm text-fg-secondary">{policies.coldLeadDays} days of no activity</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Waiver template</p>
-                    <p className="mt-1 text-sm text-fg-secondary">
-                      {waiverHealthQuestions.length} health question{waiverHealthQuestions.length === 1 ? '' : 's'},{' '}
-                      {waiverClauses.length} clause{waiverClauses.length === 1 ? '' : 's'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
-                      Message templates
-                    </p>
-                    <p className="mt-1 text-sm text-fg-secondary">
-                      {messageTemplates.length} template{messageTemplates.length === 1 ? '' : 's'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
-                      Sidebar badges
-                    </p>
-                    <p className="mt-1 text-sm text-fg-secondary">{showSidebarBadges ? 'On' : 'Off'}</p>
-                  </div>
-                </div>
-              )}
-
-              {policiesSuccess && <p className="mt-3 text-sm text-success">Saved.</p>}
+                )}
+              </div>
             </div>
+          )}
+
+          {editingField && (
+            <Modal
+              title={`Edit ${POLICY_HTML_FIELDS.find((f) => f.key === editingField)?.label ?? ''}`}
+              onClose={() => setEditingField(null)}
+            >
+              <RichTextEditor value={fieldDraft} onChange={setFieldDraft} />
+              {fieldError && <p className="mt-3 text-sm text-danger">{fieldError}</p>}
+              <div className="mt-4 flex gap-3">
+                <button
+                  type="button"
+                  onClick={handleFieldSave}
+                  disabled={fieldSaving}
+                  className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                >
+                  {fieldSaving ? 'Saving…' : 'Save'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingField(null)}
+                  disabled={fieldSaving}
+                  className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+              </div>
+            </Modal>
+          )}
+
+          {showDefaultsModal && (
+            <Modal title="Edit Defaults" onClose={() => setShowDefaultsModal(false)}>
+              <div className="space-y-4">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-fg-secondary">
+                    Estimate follow-up (hours)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={defaultsForm.estimateFollowUpHours}
+                    onChange={(e) => setDefaultsForm({ ...defaultsForm, estimateFollowUpHours: e.target.value })}
+                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-fg-secondary">
+                    Gift card expiration (days, blank = never)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={defaultsForm.giftCardDefaultExpirationDays}
+                    onChange={(e) =>
+                      setDefaultsForm({ ...defaultsForm, giftCardDefaultExpirationDays: e.target.value })
+                    }
+                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-fg-secondary">
+                    Cold lead after (days of no activity)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={defaultsForm.coldLeadDays}
+                    onChange={(e) => setDefaultsForm({ ...defaultsForm, coldLeadDays: e.target.value })}
+                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-fg-secondary">Timezone</label>
+                  <select
+                    value={defaultsForm.timezone}
+                    onChange={(e) => setDefaultsForm({ ...defaultsForm, timezone: e.target.value })}
+                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                  >
+                    {TIMEZONE_OPTIONS.map((tz) => (
+                      <option key={tz.value} value={tz.value}>
+                        {tz.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="flex items-center gap-2 text-sm text-fg-secondary">
+                    <input
+                      type="checkbox"
+                      checked={defaultsForm.showSidebarBadges}
+                      onChange={(e) => setDefaultsForm({ ...defaultsForm, showSidebarBadges: e.target.checked })}
+                      className="h-4 w-4 rounded border-border bg-surface-inset accent-accent"
+                    />
+                    Show new-item count badges on sidebar navigation
+                  </label>
+                  <p className="mt-1 text-xs text-fg-muted">
+                    Off by default. Doesn't affect the conversations unread badge or the Tasks icon's count, both of
+                    which always show.
+                  </p>
+                </div>
+
+                {defaultsError && <p className="text-sm text-danger">{defaultsError}</p>}
+
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={handleDefaultsSave}
+                    disabled={defaultsSaving}
+                    className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                  >
+                    {defaultsSaving ? 'Saving…' : 'Save'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowDefaultsModal(false)}
+                    disabled={defaultsSaving}
+                    className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </Modal>
           )}
 
           {canViewSystem && (
             <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
               <h2 className="text-lg font-semibold text-fg">System</h2>
               <p className="mt-1 text-sm text-fg-secondary">
-                Scheduled background jobs and their most recent run.
+                These are automatic tasks that run every night to keep your data up to date.
               </p>
 
               {jobsError && <p className="mt-4 text-sm text-danger">{jobsError}</p>}
               {!jobsError && jobs === null && <p className="mt-4 text-sm text-fg-secondary">Loading…</p>}
               {!jobsError && jobs !== null && jobs.length === 0 && (
-                <p className="mt-4 text-sm text-fg-secondary">No jobs registered.</p>
+                <p className="mt-4 text-sm text-fg-secondary">No automatic tasks yet.</p>
               )}
 
               {jobs && jobs.length > 0 && (
                 <ul className="mt-4 space-y-3">
-                  {jobs.map((job) => (
-                    <li key={job.jobName} className="rounded-xl border border-border p-4">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold text-fg">{job.description}</p>
-                          <p className="mt-0.5 text-xs text-fg-muted">
-                            {job.jobName} &middot; cron: {job.schedule}
-                          </p>
+                  {jobs.map((job) => {
+                    const display = JOB_DISPLAY[job.jobName] ?? {
+                      friendlyName: job.jobName,
+                      plainDescription: job.description,
+                    }
+                    return (
+                      <li key={job.jobName} className="rounded-xl border border-border p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold text-fg">{display.friendlyName}</p>
+                            <p className="mt-0.5 text-xs text-fg-secondary">{display.plainDescription}</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleRunNow(job.jobName)}
+                            disabled={runningJob === job.jobName}
+                            className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                          >
+                            {runningJob === job.jobName ? 'Running…' : 'Run Now'}
+                          </button>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => handleRunNow(job.jobName)}
-                          disabled={runningJob === job.jobName}
-                          className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:opacity-60"
-                        >
-                          {runningJob === job.jobName ? 'Running…' : 'Run Now'}
-                        </button>
-                      </div>
 
-                      {job.lastRun ? (
-                        <div className="mt-3 flex flex-wrap items-center gap-2">
-                          <StatusPill status={job.lastRun.status} />
-                          <span className="text-xs text-fg-secondary">
-                            {formatDateTime(job.lastRun.startedAt)}
-                          </span>
-                          {job.lastRun.details && Object.keys(job.lastRun.details).length > 0 && (
-                            <span className="text-xs text-fg-muted">{JSON.stringify(job.lastRun.details)}</span>
-                          )}
-                          {job.lastRun.error && (
-                            <span className="text-xs text-danger">{job.lastRun.error}</span>
+                        <div className="mt-3 flex flex-wrap items-center gap-3">
+                          <JobStatusDisplay lastRun={job.lastRun} />
+                          {job.lastRun && (
+                            <span
+                              className="text-xs text-fg-muted"
+                              title={formatDateTime(job.lastRun.startedAt)}
+                            >
+                              {formatRelativeDateTime(job.lastRun.startedAt, policies?.timezone ?? 'America/New_York')}
+                            </span>
                           )}
                         </div>
-                      ) : (
-                        <p className="mt-3 text-xs text-fg-muted">Never run.</p>
-                      )}
-                    </li>
-                  ))}
+
+                        <details className="mt-2">
+                          <summary className="cursor-pointer text-xs text-fg-muted hover:text-fg-secondary">
+                            Advanced
+                          </summary>
+                          <p className="mt-1 text-xs text-fg-muted">
+                            Internal name: {job.jobName} &middot; Schedule: {job.schedule}
+                          </p>
+                          {job.lastRun?.details && Object.keys(job.lastRun.details).length > 0 && (
+                            <p className="mt-1 text-xs text-fg-muted">
+                              Last run details: {JSON.stringify(job.lastRun.details)}
+                            </p>
+                          )}
+                        </details>
+                      </li>
+                    )
+                  })}
                 </ul>
               )}
             </div>
@@ -1203,6 +1404,40 @@ export default function Settings() {
         </div>
       </div>
     </div>
+  )
+}
+
+function JobStatusDisplay({ lastRun }: { lastRun: JobRunInfo | null }) {
+  if (!lastRun) {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-sm text-fg-muted">
+        <ClockIcon className="h-4 w-4" />
+        Not run yet
+      </span>
+    )
+  }
+  if (lastRun.status === 'RUNNING') {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-sm text-info">
+        <SpinnerIcon className="h-4 w-4 animate-spin" />
+        Running…
+      </span>
+    )
+  }
+  if (lastRun.status === 'FAILED') {
+    const reason = lastRun.error ? (lastRun.error.length > 80 ? `${lastRun.error.slice(0, 80)}…` : lastRun.error) : null
+    return (
+      <span className="inline-flex items-center gap-1.5 text-sm text-danger">
+        <CloseIcon className="h-4 w-4" />
+        Failed{reason ? ` — ${reason}` : ''}
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 text-sm text-success">
+      <CheckIcon className="h-4 w-4" />
+      Succeeded
+    </span>
   )
 }
 

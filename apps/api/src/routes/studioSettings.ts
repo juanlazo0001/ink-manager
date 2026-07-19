@@ -34,6 +34,21 @@ const TEXT_FIELDS = [
   "waiverPhotoRelease",
 ] as const;
 
+// Curated, not the full ~400-zone IANA list -- Settings' timezone control
+// is a plain-language <select>, not a technical picker (Phase UI-3's
+// standing design mandate). Extend this list if a studio outside these
+// zones signs up; each value must remain a real IANA identifier since
+// lib/jobs/coldLeadSweep.ts and formatRelativeDateTime consume it directly.
+const VALID_TIMEZONES = [
+  "America/New_York",
+  "America/Chicago",
+  "America/Denver",
+  "America/Phoenix",
+  "America/Los_Angeles",
+  "America/Anchorage",
+  "Pacific/Honolulu",
+] as const;
+
 const HEALTH_QUESTION_TYPES = ["yes_no", "yes_no_explain"];
 
 function isValidHealthQuestions(value: unknown): boolean {
@@ -107,6 +122,13 @@ router.patch("/", requireRole(Role.OWNER), async (req, res) => {
     data.coldLeadDays = body.coldLeadDays;
   }
 
+  if (body.timezone !== undefined) {
+    if (typeof body.timezone !== "string" || !(VALID_TIMEZONES as readonly string[]).includes(body.timezone)) {
+      return res.status(400).json({ error: `timezone must be one of: ${VALID_TIMEZONES.join(", ")}` });
+    }
+    data.timezone = body.timezone;
+  }
+
   if (body.waiverHealthQuestions !== undefined) {
     if (body.waiverHealthQuestions !== null && !isValidHealthQuestions(body.waiverHealthQuestions)) {
       return res.status(400).json({
@@ -150,6 +172,7 @@ router.patch("/", requireRole(Role.OWNER), async (req, res) => {
       "estimateFollowUpHours",
       "giftCardDefaultExpirationDays",
       "coldLeadDays",
+      "timezone",
       "waiverHealthQuestions",
       "waiverClauses",
       "messageTemplates",

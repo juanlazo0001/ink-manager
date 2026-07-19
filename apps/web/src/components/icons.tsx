@@ -262,3 +262,36 @@ export function PencilIcon({ className }: IconProps) {
     </svg>
   )
 }
+
+// iOS-style "share" glyph -- arrow up out of a box. Used for Share-with-
+// artist actions (Phase UI-3).
+export function ShareIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <path d="M10 2.5v9.5" strokeLinecap="round" />
+      <path d="M6.5 6 10 2.5 13.5 6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4 9.5v6a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+// Neutral clock face -- "not run yet" / generic time-related states.
+export function ClockIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <circle cx="10" cy="10" r="7.5" />
+      <path d="M10 5.5V10l3 2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+// Loading spinner -- pair with Tailwind's animate-spin utility at the call
+// site (e.g. className="h-4 w-4 animate-spin").
+export function SpinnerIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" className={className}>
+      <circle cx="10" cy="10" r="7.5" stroke="currentColor" strokeWidth="1.5" opacity="0.25" />
+      <path d="M17.5 10a7.5 7.5 0 0 0-7.5-7.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  )
+}

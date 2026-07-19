@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom'
 import { apiFetch, ApiError } from '../lib/api'
 import { uploadImageToCloudinary } from '../lib/cloudinary'
 import { formatDateTime } from '../lib/format'
+import { sanitizeHtml } from '../lib/sanitizeHtml'
 
 const INPUT_CLASS =
   'mt-1 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
@@ -344,7 +345,12 @@ export default function WaiverSign() {
               {data.acknowledgment && (
                 <section className="space-y-2 border-t border-border pt-6">
                   <h2 className="text-sm font-semibold text-fg">Acknowledgment</h2>
-                  <p className="text-sm text-fg-secondary">{data.acknowledgment}</p>
+                  {/* acknowledgmentSnapshot may hold rich HTML (Phase UI-3's
+                      WYSIWYG editor) or older plain text -- sanitized either way. */}
+                  <div
+                    className="tiptap-content whitespace-pre-wrap text-sm text-fg-secondary"
+                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(data.acknowledgment) }}
+                  />
                 </section>
               )}
 
@@ -365,7 +371,10 @@ export default function WaiverSign() {
                   <p className="text-xs text-fg-muted">
                     Optional — you may decline without affecting your appointment.
                   </p>
-                  <p className="text-sm text-fg-secondary">{data.photoRelease}</p>
+                  <div
+                    className="tiptap-content whitespace-pre-wrap text-sm text-fg-secondary"
+                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(data.photoRelease) }}
+                  />
 
                   <label className="flex items-start gap-2 text-sm text-fg-secondary">
                     <input

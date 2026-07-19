@@ -43,6 +43,38 @@ export function formatRelativeTime(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
+// The civil (calendar) date of `date` as observed in `timeZone` -- needed
+// because "today"/"yesterday" depend on the studio's own timezone, not the
+// browser's, and not a naive UTC day boundary either.
+function civilDateParts(date: Date, timeZone: string): { y: number; m: number; d: number } {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(
+    date,
+  )
+  const get = (type: string) => Number(parts.find((p) => p.type === type)!.value)
+  return { y: get('year'), m: get('month'), d: get('day') }
+}
+
+// Plain-language timestamp for the Settings -> System panel: "Today at
+// 2:00 AM", "Yesterday at 2:00 AM", "3 days ago", falling back to a short
+// date beyond a week. Computed against the studio's own timezone (not the
+// viewer's browser timezone) so "today" means the studio's today.
+export function formatRelativeDateTime(iso: string, timeZone: string): string {
+  const date = new Date(iso)
+  const target = civilDateParts(date, timeZone)
+  const today = civilDateParts(new Date(), timeZone)
+
+  const targetUtcMidnight = Date.UTC(target.y, target.m - 1, target.d)
+  const todayUtcMidnight = Date.UTC(today.y, today.m - 1, today.d)
+  const dayDiff = Math.round((todayUtcMidnight - targetUtcMidnight) / 86_400_000)
+
+  const time = date.toLocaleTimeString('en-US', { timeZone, hour: 'numeric', minute: '2-digit' })
+
+  if (dayDiff === 0) return `Today at ${time}`
+  if (dayDiff === 1) return `Yesterday at ${time}`
+  if (dayDiff > 1 && dayDiff < 7) return `${dayDiff} days ago`
+  return date.toLocaleDateString('en-US', { timeZone, month: 'short', day: 'numeric', year: 'numeric' })
+}
+
 export function formatPhoneInput(value: string): string {
   const digits = value.replace(/\D/g, '').slice(0, 10)
   const len = digits.length

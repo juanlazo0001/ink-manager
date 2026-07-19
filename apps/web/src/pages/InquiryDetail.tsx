@@ -8,7 +8,7 @@ import StatusPill from '../components/StatusPill'
 import InquiryPipeline from '../components/InquiryPipeline'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatDuration, formatStatus } from '../lib/format'
-import { ArrowLeftIcon, MessageIcon, MoreIcon, PencilIcon, PlusIcon } from '../components/icons'
+import { ArrowLeftIcon, MessageIcon, MoreIcon, PencilIcon, PlusIcon, ShareIcon } from '../components/icons'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useViewAs } from '../context/useViewAs'
 import { useConversationPanel } from '../context/useConversationPanel'
@@ -683,15 +683,22 @@ export default function InquiryDetail() {
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
+                    {/* Icon-only 44px circles below md (768px, Phase UI-3's
+                        breakpoint), icon+label pills at md+ -- aria-label
+                        and title are present at both sizes so an
+                        unfamiliar icon is always identifiable even on
+                        desktop where the label is also visible. */}
                     {canMessage && (
                       <button
                         type="button"
                         onClick={handleMessage}
                         disabled={startingConversation}
-                        className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                        aria-label="Message"
+                        title="Message"
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface disabled:opacity-60 md:h-auto md:w-auto md:gap-2 md:px-3 md:py-1.5"
                       >
-                        <MessageIcon className="h-3.5 w-3.5" />
-                        Message
+                        <MessageIcon className="h-4 w-4 md:h-3.5 md:w-3.5" />
+                        <span className="hidden text-xs font-medium md:inline">Message</span>
                       </button>
                     )}
                     {canMessage && (
@@ -703,9 +710,12 @@ export default function InquiryDetail() {
                           setShareSent(false)
                           setShowShareModal(true)
                         }}
-                        className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                        aria-label="Share with Artist"
+                        title="Share with Artist"
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-3 md:py-1.5"
                       >
-                        Share with artist
+                        <ShareIcon className="h-4 w-4 md:h-3.5 md:w-3.5" />
+                        <span className="hidden text-xs font-medium md:inline">Share with Artist</span>
                       </button>
                     )}
                     <StatusPill status={inquiry.status} />
@@ -716,7 +726,8 @@ export default function InquiryDetail() {
                           onClick={() => setShowMoreMenu((v) => !v)}
                           aria-label="More actions"
                           aria-pressed={showMoreMenu}
-                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
+                          title="More actions"
+                          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg md:h-9 md:w-9"
                         >
                           <MoreIcon className="h-4 w-4" />
                         </button>

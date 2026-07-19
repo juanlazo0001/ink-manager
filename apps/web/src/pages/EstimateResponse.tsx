@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { apiFetch, ApiError } from '../lib/api'
+import { sanitizeHtml } from '../lib/sanitizeHtml'
 
 const INPUT_CLASS =
   'mt-1 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
@@ -154,7 +155,16 @@ export default function EstimateResponse() {
             {verifyData.estimateTermsSnapshot && (
               <div className="mt-3 rounded-lg border border-border bg-surface-inset p-3 text-xs text-fg-secondary">
                 <p className="mb-1 font-medium uppercase tracking-wider text-fg-muted">Terms &amp; Conditions</p>
-                <p className="whitespace-pre-wrap">{verifyData.estimateTermsSnapshot}</p>
+                {/* estimateTermsSnapshot may hold rich HTML (saved through
+                    Settings' WYSIWYG editor) or older plain text (pre-
+                    existing snapshots from before Phase UI-3) -- sanitized
+                    either way; the whitespace-pre-wrap class is a cosmetic
+                    nicety for the plain-text-newline case, harmless for
+                    real HTML content which carries its own block spacing. */}
+                <div
+                  className="tiptap-content whitespace-pre-wrap"
+                  dangerouslySetInnerHTML={{ __html: sanitizeHtml(verifyData.estimateTermsSnapshot) }}
+                />
               </div>
             )}
 
