@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '../lib/api'
 import StatusPill, { getStatusTone, type Tone } from './StatusPill'
 import InquiryPipeline from './InquiryPipeline'
-import { formatDateTime, formatRelativeTime } from '../lib/format'
+import { formatDateTime, formatRelativeTime, formatStatus } from '../lib/format'
 import { uploadImageToCloudinary } from '../lib/cloudinary'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useViewAs } from '../context/useViewAs'
@@ -300,6 +300,95 @@ function ChannelDot({ channel, className = '' }: { channel: string; className?: 
       className={`h-3.5 w-3.5 shrink-0 rounded-[4px] ${CHANNEL_DOT_CLASSES[channel] ?? CHANNEL_DOT_CLASSES.OTHER} ${className}`}
       aria-hidden="true"
     />
+  )
+}
+
+// Same 5-step grouping InquiryPipeline.tsx already uses (Inquiry received /
+// Artist assigned / Estimate sent / Deposit requested / Scheduled) -- kept
+// in sync with that component rather than inventing a separate mapping, so
+// the ring's "how far along" reading matches the pipeline stepper shown
+// elsewhere for the same inquiry. Index is 0-based; the ring fills
+// (index + 1) / 5 to show the current step as reached, not just the ones
+// before it.
+const RING_PHASE_INDEX: Record<string, number> = {
+  NEW: 0,
+  ARTIST_ASSIGNED: 1,
+  AWAITING_CLIENT_RESPONSE: 2,
+  BUDGET_NEGOTIATION: 2,
+  DEPOSIT_PENDING: 3,
+  SCHEDULING: 4,
+  WAITLISTED: 4,
+  CONFIRMED: 4,
+}
+const RING_PHASE_COUNT = 5
+
+// Terminal/branch statuses get a full ring in a distinct color instead of a
+// partial lime fill -- CLOSED_LOST reads as declined/closed, COLD_LEAD as a
+// separate "gone quiet" branch, so neither is confused with active progress.
+const RING_TERMINAL_COLORS: Record<string, string> = {
+  CLOSED_LOST: '#e05252',
+  COLD_LEAD: '#6b6b73',
+}
+
+// Literal, complete class strings per branch (not built from a template) so
+// Tailwind's static scanner can find them -- see ChannelDot above for the
+// same constraint.
+function badgeClasses(status: string): string {
+  if (status === 'CLOSED_LOST') return 'bg-[#e05252]/15 text-[#e05252]'
+  if (status === 'COLD_LEAD') return 'bg-[#6b6b73]/15 text-[#6b6b73]'
+  return 'bg-[#3a4118] text-[#c8e04a]'
+}
+
+// Progress-ring avatar for the conversation list (see
+// public/desktop/screenshots/conversation-list-mockup.html): an SVG ring
+// around the initials circle, filling clockwise from 12 o'clock as the
+// inquiry moves through its pipeline phases. `status` is null for threads
+// with no linked inquiry (or STAFF threads), which just render a plain
+// avatar with no ring at all.
+function ProgressRingAvatar({
+  name,
+  status,
+  unread,
+}: {
+  name: string
+  status: string | null
+  unread: boolean
+}) {
+  const size = 52
+  const radius = 23
+  const circumference = 2 * Math.PI * radius
+  const terminalColor = status ? RING_TERMINAL_COLORS[status] : undefined
+  const phaseIndex = status ? RING_PHASE_INDEX[status] : undefined
+  const fraction = terminalColor ? 1 : phaseIndex != null ? (phaseIndex + 1) / RING_PHASE_COUNT : 0
+  const ringColor = terminalColor ?? '#c8e04a'
+
+  return (
+    <div className="relative h-[52px] w-[52px] shrink-0">
+      {status && (
+        <svg className="absolute inset-0 -rotate-90" width={size} height={size} aria-hidden="true">
+          <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="#2a2a30" strokeWidth={3} />
+          {fraction > 0 && (
+            <circle
+              cx={size / 2}
+              cy={size / 2}
+              r={radius}
+              fill="none"
+              stroke={ringColor}
+              strokeWidth={3}
+              strokeLinecap="round"
+              strokeDasharray={circumference}
+              strokeDashoffset={circumference * (1 - fraction)}
+            />
+          )}
+        </svg>
+      )}
+      <div className="absolute inset-[6px] flex items-center justify-center rounded-full bg-surface-raised text-sm font-semibold text-fg">
+        {initials(name)}
+      </div>
+      {unread && (
+        <span className="absolute -right-px -top-px h-[15px] w-[15px] rounded-full border-[2.5px] border-surface-raised bg-accent" />
+      )}
+    </div>
   )
 }
 
@@ -662,7 +751,7 @@ function ConversationListView({
             value={newChatSearch}
             onChange={(e) => setNewChatSearch(e.target.value)}
             placeholder={tab === 'CLIENT' ? 'Search clients…' : 'Search teammates…'}
-            className="w-full rounded-lg border border-border bg-surface-inset px-2.5 py-1.5 text-sm text-fg focus:border-accent focus:outline-none"
+            className="w-full rounded-lg border border-border bg-surface-inset px-2.5 py-1.5 text-base text-fg focus:border-accent focus:outline-none"
           />
           {newChatError && <p className="mt-1.5 text-xs text-danger">{newChatError}</p>}
           <ul className="mt-2 max-h-48 overflow-y-auto">
@@ -722,20 +811,22 @@ function ConversationListView({
       )}
 
       {showTabs && (
-        <div className="flex gap-1 border-b border-border px-3 pt-2">
-          {(['CLIENT', 'STAFF'] as const).map((t) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => onTabChange(t)}
-              className={[
-                'rounded-t-lg px-4 py-2 text-sm font-medium transition',
-                tab === t ? 'bg-surface text-fg' : 'text-fg-muted hover:text-fg',
-              ].join(' ')}
-            >
-              {t === 'CLIENT' ? 'Clients' : 'Team'}
-            </button>
-          ))}
+        <div className="border-b border-border px-3 py-2.5">
+          <div className="inline-flex items-center gap-0.5 rounded-full bg-surface p-[3px]">
+            {(['CLIENT', 'STAFF'] as const).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => onTabChange(t)}
+                className={[
+                  'rounded-full px-4 py-1.5 text-[13.5px] font-semibold transition',
+                  tab === t ? 'bg-surface-raised text-fg' : 'text-fg-muted hover:text-fg',
+                ].join(' ')}
+              >
+                {t === 'CLIENT' ? 'Clients' : 'Team'}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
@@ -746,35 +837,33 @@ function ConversationListView({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search inquiries…"
-            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none"
+            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-base text-fg focus:border-accent focus:outline-none"
           />
         </div>
       )}
 
-      {/* Kept lightweight on purpose -- neither iMessage nor WhatsApp puts
-          filter chips this prominently above the chat list, so these are
-          plain text toggles tucked next to search rather than a bordered,
-          filled-pill row competing with it. */}
-      <div className="flex items-center gap-3 border-b border-border px-3 py-2">
-        {(
-          [
-            ['all', 'All'],
-            ['unread', 'Unread'],
-            ['needs-action', 'Needs action'],
-          ] as const
-        ).map(([value, label]) => (
-          <button
-            key={value}
-            type="button"
-            onClick={() => setQuickFilter(value)}
-            className={[
-              'rounded-md px-1.5 py-1 text-xs font-medium transition',
-              quickFilter === value ? 'text-accent' : 'text-fg-muted hover:text-fg',
-            ].join(' ')}
-          >
-            {label}
-          </button>
-        ))}
+      <div className="flex items-center justify-between border-b border-border px-3 py-2">
+        <div className="inline-flex items-center gap-0.5 rounded-full bg-surface p-[3px]">
+          {(
+            [
+              ['all', 'All'],
+              ['unread', 'Unread'],
+              ['needs-action', 'Needs action'],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setQuickFilter(value)}
+              className={[
+                'rounded-full px-3.5 py-1.5 text-[12.5px] font-semibold transition',
+                quickFilter === value ? 'bg-[#3a4118] text-[#c8e04a]' : 'text-fg-muted hover:text-fg',
+              ].join(' ')}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
 
         {tab === 'CLIENT' && (
           <button
@@ -783,7 +872,7 @@ function ConversationListView({
             aria-label="More filters"
             aria-pressed={showFilters}
             className={[
-              'ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition hover:bg-surface hover:text-fg',
+              'flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition hover:bg-surface hover:text-fg',
               hasActiveFilter ? 'text-accent' : 'text-fg-muted',
             ].join(' ')}
           >
@@ -798,7 +887,7 @@ function ConversationListView({
             <select
               value={entityTypeFilter}
               onChange={(e) => setEntityTypeFilter(e.target.value)}
-              className="min-w-0 flex-1 rounded-lg border border-border bg-surface-inset px-2.5 py-2 text-sm text-fg focus:border-accent focus:outline-none"
+              className="min-w-0 flex-1 rounded-lg border border-border bg-surface-inset px-2.5 py-2 text-base text-fg focus:border-accent focus:outline-none"
             >
               <option value="">Any tagged type</option>
               {TAGGABLE_ENTITY_TYPES.map((t) => (
@@ -810,7 +899,7 @@ function ConversationListView({
             <select
               value={artistIdFilter}
               onChange={(e) => setArtistIdFilter(e.target.value)}
-              className="min-w-0 flex-1 rounded-lg border border-border bg-surface-inset px-2.5 py-2 text-sm text-fg focus:border-accent focus:outline-none"
+              className="min-w-0 flex-1 rounded-lg border border-border bg-surface-inset px-2.5 py-2 text-base text-fg focus:border-accent focus:outline-none"
             >
               <option value="">Any artist</option>
               {artistOptions?.map((artist) => (
@@ -851,8 +940,8 @@ function ConversationListView({
 
         <ul className="divide-y divide-border">
           {visibleConversations.map((conversation) => {
-            const tone = conversation.primaryInquiry ? getStatusTone(conversation.primaryInquiry.status) : null
             const name = conversation.counterpart?.name ?? 'Unknown'
+            const isUnread = conversation.unreadCount > 0
             return (
               <li key={conversation.id}>
                 <button
@@ -860,20 +949,16 @@ function ConversationListView({
                   onClick={() => onSelect(conversation.id)}
                   className="flex w-full items-center gap-3.5 px-4 py-4 text-left transition hover:bg-surface/60"
                 >
-                  <span
-                    className={[
-                      'relative flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-surface-raised text-base font-semibold text-fg ring-2',
-                      tone ? TONE_RING_CLASSES[tone] : 'ring-border-strong',
-                    ].join(' ')}
-                  >
-                    {initials(name)}
-                    {conversation.unreadCount > 0 && (
-                      <span className="absolute -right-0.5 -top-0.5 h-3.5 w-3.5 rounded-full bg-warning ring-2 ring-surface-raised" />
-                    )}
-                  </span>
+                  <ProgressRingAvatar
+                    name={name}
+                    status={conversation.primaryInquiry?.status ?? null}
+                    unread={isUnread}
+                  />
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="truncate text-base font-medium text-fg">{name}</p>
+                    <div className="flex items-baseline justify-between gap-2">
+                      <p className={`truncate text-base ${isUnread ? 'font-bold text-fg' : 'font-medium text-fg'}`}>
+                        {name}
+                      </p>
                       {conversation.lastMessageAt && (
                         <span className="shrink-0 text-xs text-fg-muted">
                           {formatRelativeTime(conversation.lastMessageAt)}
@@ -881,21 +966,18 @@ function ConversationListView({
                       )}
                     </div>
                     {conversation.lastMessage && (
-                      <p className="mt-1 truncate text-sm text-fg-secondary">
+                      <p className={`mt-1 truncate text-sm ${isUnread ? 'text-fg' : 'text-fg-secondary'}`}>
                         {conversation.lastMessage.direction === 'OUTBOUND' ? 'You: ' : ''}
                         {conversation.lastMessage.body || '📷 Image'}
                       </p>
                     )}
-                    <div className="mt-2 flex items-center gap-1.5">
-                      {conversation.primaryInquiry && (
-                        <StatusPill status={conversation.primaryInquiry.status} className="px-2 py-0.5 text-[11px]" />
-                      )}
-                      {conversation.unreadCount > 0 && (
-                        <span className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-semibold text-bg">
-                          {conversation.unreadCount}
-                        </span>
-                      )}
-                    </div>
+                    {conversation.primaryInquiry && (
+                      <span
+                        className={`mt-1.5 inline-block rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${badgeClasses(conversation.primaryInquiry.status)}`}
+                      >
+                        {formatStatus(conversation.primaryInquiry.status)}
+                      </span>
+                    )}
                   </div>
                 </button>
               </li>
@@ -944,7 +1026,7 @@ function ConversationListView({
                   required
                   value={newClientForm.firstName}
                   onChange={(e) => setNewClientForm((f) => ({ ...f, firstName: e.target.value }))}
-                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-base text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                 />
               </div>
 
@@ -958,7 +1040,7 @@ function ConversationListView({
                   required
                   value={newClientForm.lastName}
                   onChange={(e) => setNewClientForm((f) => ({ ...f, lastName: e.target.value }))}
-                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-base text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                 />
               </div>
             </div>
@@ -972,7 +1054,7 @@ function ConversationListView({
                 type="email"
                 value={newClientForm.email}
                 onChange={(e) => setNewClientForm((f) => ({ ...f, email: e.target.value }))}
-                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-base text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               />
             </div>
 
@@ -985,7 +1067,7 @@ function ConversationListView({
                 type="tel"
                 value={newClientForm.phone}
                 onChange={(e) => setNewClientForm((f) => ({ ...f, phone: e.target.value }))}
-                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-base text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               />
             </div>
 
@@ -2096,7 +2178,7 @@ function ThreadView({
             onChange={handleBodyChange}
             onKeyDown={handleComposerKeyDown}
             placeholder={isClientThread ? 'Type a message… (@ to mention, / to tag)' : 'Type a message… (@ to mention)'}
-            className="max-h-40 min-h-[22px] w-full resize-none overflow-y-auto border-0 bg-transparent px-1 pb-2.5 text-sm text-fg placeholder:text-fg-muted focus:outline-none"
+            className="max-h-40 min-h-[22px] w-full resize-none overflow-y-auto border-0 bg-transparent px-1 pb-2.5 text-base text-fg placeholder:text-fg-muted focus:outline-none"
           />
 
           <div className="flex items-center justify-between">
@@ -2304,14 +2386,14 @@ function ThreadView({
                         rows={3}
                         value={draftFields[field] ?? ''}
                         onChange={(e) => setDraftFields((current) => ({ ...current, [field]: e.target.value }))}
-                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-base text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                       />
                     ) : (
                       <input
                         type="text"
                         value={draftFields[field] ?? ''}
                         onChange={(e) => setDraftFields((current) => ({ ...current, [field]: e.target.value }))}
-                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-base text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                       />
                     )}
                   </div>
