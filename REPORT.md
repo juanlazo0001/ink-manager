@@ -64,4 +64,4 @@ All ad-hoc verification scripts and their `JobRun`/audit rows were deleted after
 
 ## 7. Commit
 
-`<filled in after commit — see git log>`
+`115c006` — "Phase 7A: job scheduler, gift-card/cold-lead automations, mark-as-lost"
