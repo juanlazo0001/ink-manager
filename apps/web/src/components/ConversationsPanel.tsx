@@ -28,6 +28,10 @@ import {
 } from './icons'
 
 type Tab = 'CLIENT' | 'STAFF'
+// Broader than Tab: a conversation's actual type can be GROUP (a STAFF 1:1
+// upgraded via @mention), which still surfaces under the "STAFF" tab -- see
+// POST /:id/messages on the API side for the upgrade trigger.
+type ConversationTypeValue = 'CLIENT' | 'STAFF' | 'GROUP'
 
 const TAGGABLE_ENTITY_TYPES = ['Inquiry', 'Appointment', 'GiftCard', 'DepositForm', 'LiabilityWaiver'] as const
 
@@ -54,7 +58,7 @@ interface PrimaryInquirySummary {
 
 interface ConversationSummary {
   id: string
-  type: Tab
+  type: ConversationTypeValue
   clientId: string | null
   staffUserId: string | null
   lastMessageAt: string | null
@@ -113,7 +117,7 @@ interface ConversationTag {
 interface ThreadResponse {
   conversation: {
     id: string
-    type: Tab
+    type: ConversationTypeValue
     clientId: string | null
     staffUserId: string | null
     counterpart: { id: string; name: string; avatarUrl: string | null } | null
@@ -414,6 +418,14 @@ export default function ConversationsPanel() {
 
   const isArtist = user?.role === 'ARTIST'
   const [tab, setTab] = useState<Tab>(isArtist ? 'STAFF' : 'CLIENT')
+  // useEffectiveUser() can resolve a tick after mount (auth loads
+  // asynchronously), so the useState initializer above can miss isArtist on
+  // the very first render -- without this, an artist who falls through to
+  // the list view (see artistConversations below) would see the CLIENT
+  // tab's "No client conversations yet." copy instead of the Team tab.
+  useEffect(() => {
+    if (isArtist) setTab('STAFF')
+  }, [isArtist])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   // Widens the whole slide-over (rather than squeezing the thread) when the
   // client-details panel opens, so opening it doesn't cramp the message
@@ -430,20 +442,27 @@ export default function ConversationsPanel() {
     if (isOpen) setHasOpenedOnce(true)
   }, [isOpen])
 
-  // Artists only ever have their own single Team thread -- no tab UI, no
-  // list, just resolve it and go straight there. Resolve-only GET, never a
-  // get-or-create POST: this effect fires on every open, not from an
-  // explicit user action, so it must never silently create a Conversation
-  // row (and under View As, a GET here doesn't trip the read-only block a
-  // POST would). If none exists yet (their first message hasn't landed),
-  // selectedId just stays null and the empty STAFF-tab list state shows.
+  // Artists have no tab UI -- historically they only ever had one Team
+  // thread (their own), so this used to be a resolve-only GET straight to
+  // it. Now a mention can pull an artist into a group alongside their own
+  // solo thread, so there may be more than one visible conversation; this
+  // query (same key shape as ConversationListView's own list query below, so
+  // the two share a cache entry rather than double-fetching) auto-selects
+  // only when there's exactly one result -- the common case, unchanged
+  // behavior. With 2+ (or 0, before their first message has ever landed),
+  // selectedId stays null and ConversationListView's existing list/empty
+  // state renders instead (showTabs={false} keeps it tab-less for artists).
+  const { data: artistConversations } = useQuery({
+    queryKey: ['conversations', 'STAFF', '', '', ''],
+    queryFn: () => apiFetch<ConversationSummary[]>('/conversations?type=STAFF'),
+    enabled: isOpen && isArtist,
+    staleTime: 15_000,
+  })
   useEffect(() => {
-    if (!isOpen || !isArtist || !user) return
-    apiFetch<ConversationSummary>(`/conversations/resolve?staffUserId=${user.userId}`)
-      .then((conversation) => setSelectedId(conversation.id))
-      .catch(() => {})
+    if (!isOpen || !isArtist || !artistConversations) return
+    if (artistConversations.length === 1) setSelectedId(artistConversations[0].id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, isArtist])
+  }, [isOpen, isArtist, artistConversations])
 
   useEffect(() => {
     if (activeConversationId) setSelectedId(activeConversationId)
@@ -491,6 +510,22 @@ export default function ConversationsPanel() {
     if (user) queryClient.invalidateQueries({ queryKey: navCountsQueryKey(user.userId) })
   }
 
+  // Warms the cache before the panel ever opens, same hover-prefetch
+  // pattern Sidebar.tsx uses for nav links -- by the time the click lands,
+  // the list (and roster, needed for both the STAFF tab and "+ New Chat")
+  // is usually already there, so the panel opens without a loading flash.
+  function prefetchPanelData() {
+    if (!user) return
+    queryClient.prefetchQuery({
+      queryKey: ['conversations', tab, '', '', ''],
+      queryFn: () => apiFetch<ConversationSummary[]>(`/conversations?type=${tab}`),
+    })
+    queryClient.prefetchQuery({
+      queryKey: ['conversations-staff-roster'],
+      queryFn: () => apiFetch<StaffRosterEntry[]>('/conversations/staff'),
+    })
+  }
+
   const { data: badgeCounts } = useQuery({
     queryKey: user ? navCountsQueryKey(user.userId) : ['nav-counts', 'anonymous'],
     queryFn: () => apiFetch<NavCounts>('/nav-counts'),
@@ -505,6 +540,8 @@ export default function ConversationsPanel() {
       <button
         type="button"
         onClick={() => openPanel()}
+        onMouseEnter={prefetchPanelData}
+        onFocus={prefetchPanelData}
         aria-label="Open conversations"
         className="fixed bottom-6 right-6 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-bg shadow-xl transition hover:bg-accent-hover"
       >
@@ -551,7 +588,7 @@ export default function ConversationsPanel() {
             <ThreadView
               conversationId={selectedId}
               isOpen={isOpen}
-              canGoBack={!isArtist}
+              canGoBack
               onBack={() => setSelectedId(null)}
               onClose={closePanel}
               onMessageSent={refreshNavCounts}
@@ -611,12 +648,17 @@ function ConversationListView({
     queryKey: ['conversations', tab, entityTypeFilter, artistIdFilter, search.trim()],
     queryFn: () => apiFetch<ConversationSummary[]>(`/conversations?${params.toString()}`),
     refetchInterval: 30_000,
+    // Cached data from a prefetch (FAB hover) or a previous open counts as
+    // fresh for a bit, so reopening the panel shows the list instantly
+    // instead of a loading flash while a background refetch catches up.
+    staleTime: 15_000,
     enabled: isOpen,
   })
 
   const { data: roster } = useQuery({
     queryKey: ['conversations-staff-roster'],
     queryFn: () => apiFetch<StaffRosterEntry[]>('/conversations/staff'),
+    staleTime: 60_000,
     enabled: isOpen && tab === 'STAFF',
   })
 
@@ -676,6 +718,16 @@ function ConversationListView({
     }
   }
 
+  // Hover/focus-prefetch a row's messages before the click lands, same
+  // pattern as the FAB's prefetchPanelData -- opens instantly for the
+  // common case of hovering toward a row you're about to click.
+  function prefetchThread(conversationId: string) {
+    queryClient.prefetchQuery({
+      queryKey: ['conversation-thread', conversationId],
+      queryFn: () => apiFetch<ThreadResponse>(`/conversations/${conversationId}/messages`),
+    })
+  }
+
   async function handleAddNewClient(event: React.FormEvent) {
     event.preventDefault()
     setNewClientError(null)
@@ -725,9 +777,12 @@ function ConversationListView({
             closing happens via the panel's own backdrop click or Escape
             (see ConversationsPanel's keydown handler), same as the thread
             view relies on.
-            Artists only ever have their own single Team thread (see the
-            staffUserId auto-resolve effect above) -- no roster to browse,
-            so starting a new chat isn't a meaningful action for them. */}
+            Artists can end up with more than one visible Team conversation
+            (their own thread, plus any group they're @mentioned into --
+            see the artistConversations query above), but /conversations/
+            staff (the roster "+ New Chat" needs) stays OWNER/FRONT_DESK-
+            only, so starting a new chat from scratch still isn't a
+            meaningful action for them. */}
         {showTabs && (
           <button
             type="button"
@@ -955,6 +1010,8 @@ function ConversationListView({
                 <button
                   type="button"
                   onClick={() => onSelect(conversation.id)}
+                  onMouseEnter={() => prefetchThread(conversation.id)}
+                  onFocus={() => prefetchThread(conversation.id)}
                   className="flex w-full items-center gap-3.5 px-4 py-4 text-left transition hover:bg-surface/60"
                 >
                   <ProgressRingAvatar
@@ -1100,6 +1157,10 @@ function ThreadView({
     queryKey: ['conversation-thread', conversationId],
     queryFn: () => apiFetch<ThreadResponse>(`/conversations/${conversationId}/messages`),
     refetchInterval: 15_000,
+    // Matches the row hover-prefetch in ConversationListView -- a thread
+    // opened moments after being prefetched (or re-opened shortly after
+    // being closed) shows instantly instead of a loading flash.
+    staleTime: 10_000,
     enabled: isOpen,
   })
 
@@ -1129,6 +1190,11 @@ function ThreadView({
   const [mentionQuery, setMentionQuery] = useState<string | null>(null)
   const [mentionStart, setMentionStart] = useState<number | null>(null)
   const [mentionActiveIndex, setMentionActiveIndex] = useState(0)
+  // Which staff/artist ids have been @-mentioned into the current draft --
+  // sent alongside a Team-thread message so the server can upgrade the
+  // conversation into a group (see POST /:id/messages). CLIENT threads never
+  // populate or send this; mentions there stay plain text.
+  const [mentionedUserIds, setMentionedUserIds] = useState<string[]>([])
   // "/" tag shortcut: same trigger/splice mechanics as "@" mentions above,
   // but picking a candidate calls handleAddTag (a conversation-level action)
   // instead of inserting text, so the "/query" is removed rather than
@@ -1444,6 +1510,7 @@ function ThreadView({
     setBody(nextBody)
     setMentionQuery(null)
     setMentionStart(null)
+    setMentionedUserIds((ids) => (ids.includes(candidate.id) ? ids : [...ids, candidate.id]))
 
     const nextCaret = mentionStart + insertion.length
     requestAnimationFrame(() => {
@@ -1502,10 +1569,12 @@ function ThreadView({
           body: body.trim(),
           attachments: attachments.length > 0 ? attachments : undefined,
           ...(isClientThread ? { channel, direction } : {}),
+          ...(!isClientThread && mentionedUserIds.length > 0 ? { mentionedUserIds } : {}),
         }),
       })
       setBody('')
       setAttachments([])
+      setMentionedUserIds([])
       queryClient.invalidateQueries({ queryKey: ['conversation-thread', conversationId] })
       queryClient.invalidateQueries({ queryKey: ['conversations'] })
       onMessageSent()
@@ -1569,7 +1638,16 @@ function ThreadView({
             <ArrowLeftIcon className="h-4 w-4" />
           </button>
         )}
-        {isClientThread && (
+        {data?.conversation.counterpart?.avatarUrl ? (
+          <img
+            src={data.conversation.counterpart.avatarUrl}
+            alt=""
+            className={[
+              'h-8 w-8 shrink-0 rounded-full object-cover ring-2',
+              headerTone ? TONE_RING_CLASSES[headerTone] : 'ring-border-strong',
+            ].join(' ')}
+          />
+        ) : (
           <span
             className={[
               'flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-raised text-xs font-semibold text-fg ring-2',
@@ -1913,7 +1991,9 @@ function ThreadView({
                   <div className="flex max-w-[75%] items-end gap-2">
                     {!group.isOutboundSide && (
                       <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface-raised text-[10px] font-semibold text-fg">
-                        {initials(counterpartName)}
+                        {isClientThread
+                          ? initials(counterpartName)
+                          : initials(firstMessage.author?.name ?? firstMessage.author?.email ?? counterpartName)}
                       </span>
                     )}
 

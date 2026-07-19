@@ -8,20 +8,35 @@ import { logAudit } from "./audit";
 // FRONT_DESK see everything in the studio (the shared-inbox decision).
 export function visibleConversationWhere(studioId: string, userId: string, role: Role): Prisma.ConversationWhereInput {
   if (role === Role.ARTIST) {
-    return { studioId, type: ConversationType.STAFF, staffUserId: userId };
+    return {
+      studioId,
+      OR: [
+        { type: ConversationType.STAFF, staffUserId: userId },
+        { type: ConversationType.GROUP, participants: { some: { userId } } },
+      ],
+    };
   }
   return { studioId };
 }
 
 export function canViewConversation(
-  conversation: { studioId: string; type: ConversationType; staffUserId: string | null },
+  conversation: {
+    studioId: string;
+    type: ConversationType;
+    staffUserId: string | null;
+    participants?: { userId: string }[];
+  },
   studioId: string,
   userId: string,
   role: Role,
 ): boolean {
   if (conversation.studioId !== studioId) return false;
   if (role === Role.ARTIST) {
-    return conversation.type === ConversationType.STAFF && conversation.staffUserId === userId;
+    if (conversation.type === ConversationType.STAFF) return conversation.staffUserId === userId;
+    if (conversation.type === ConversationType.GROUP) {
+      return (conversation.participants ?? []).some((p) => p.userId === userId);
+    }
+    return false;
   }
   return true;
 }

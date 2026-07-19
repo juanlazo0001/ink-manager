@@ -119,13 +119,20 @@ const COUNTERPART_SELECT = {
     },
   },
   staffUser: { select: { id: true, name: true, email: true, role: true, avatarUrl: true } },
+  participants: {
+    select: { userId: true, user: { select: { id: true, name: true, email: true, avatarUrl: true } } },
+  },
 } as const;
 
-function toCounterpart(conversation: {
-  type: ConversationType;
-  client: { id: string; firstName: string; lastName: string; user: { avatarUrl: string | null } | null } | null;
-  staffUser: { id: string; name: string | null; email: string; role: Role; avatarUrl: string | null } | null;
-}) {
+function toCounterpart(
+  conversation: {
+    type: ConversationType;
+    client: { id: string; firstName: string; lastName: string; user: { avatarUrl: string | null } | null } | null;
+    staffUser: { id: string; name: string | null; email: string; role: Role; avatarUrl: string | null } | null;
+    participants: { userId: string; user: { id: string; name: string | null; email: string; avatarUrl: string | null } }[];
+  },
+  viewerUserId: string,
+) {
   if (conversation.type === ConversationType.CLIENT && conversation.client) {
     return {
       id: conversation.client.id,
@@ -138,6 +145,14 @@ function toCounterpart(conversation: {
       id: conversation.staffUser.id,
       name: conversation.staffUser.name ?? conversation.staffUser.email,
       avatarUrl: conversation.staffUser.avatarUrl,
+    };
+  }
+  if (conversation.type === ConversationType.GROUP) {
+    const others = conversation.participants.filter((p) => p.userId !== viewerUserId).map((p) => p.user);
+    return {
+      id: conversation.participants.map((p) => p.userId).sort().join(","),
+      name: others.length > 0 ? others.map((u) => u.name ?? u.email).join(", ") : "Just you",
+      avatarUrl: null,
     };
   }
   return null;
@@ -176,9 +191,18 @@ router.get("/", async (req, res) => {
     ];
   }
 
+  // Groups grow out of STAFF 1:1 threads (see POST /:id/messages), so the
+  // Team tab's "STAFF" filter also needs to surface GROUP conversations --
+  // there's no separate group tab in v1.
+  const typeWhere: Prisma.ConversationWhereInput = typeFilter
+    ? typeFilter === ConversationType.STAFF
+      ? { type: { in: [ConversationType.STAFF, ConversationType.GROUP] } }
+      : { type: typeFilter as ConversationType }
+    : {};
+
   const where: Prisma.ConversationWhereInput = {
     ...visibleConversationWhere(studioId, userId, role),
-    ...(typeFilter ? { type: typeFilter as ConversationType } : {}),
+    ...typeWhere,
     ...(entityTypeFilter ? { tags: { some: { entityType: entityTypeFilter } } } : {}),
     ...(Object.keys(clientWhere).length > 0 ? { client: clientWhere } : {}),
   };
@@ -199,7 +223,7 @@ router.get("/", async (req, res) => {
       clientId: conversation.clientId,
       staffUserId: conversation.staffUserId,
       lastMessageAt: conversation.lastMessageAt,
-      counterpart: toCounterpart(conversation),
+      counterpart: toCounterpart(conversation, userId),
       primaryInquiry:
         conversation.type === ConversationType.CLIENT ? pickPrimaryInquiry(conversation.client?.inquiries) : null,
       lastMessage: conversation.messages[0]
@@ -390,7 +414,7 @@ router.get("/:id/messages", async (req, res) => {
       type: conversation.type,
       clientId: conversation.clientId,
       staffUserId: conversation.staffUserId,
-      counterpart: toCounterpart(conversation),
+      counterpart: toCounterpart(conversation, userId),
       primaryInquiry:
         conversation.type === ConversationType.CLIENT ? pickPrimaryInquiry(conversation.client?.inquiries) : null,
       tags,
@@ -485,7 +509,10 @@ router.post("/:id/messages", async (req, res) => {
   const { studioId, userId, role } = req.user!;
   const body = req.body ?? {};
 
-  const conversation = await prisma.conversation.findUnique({ where: { id } });
+  const conversation = await prisma.conversation.findUnique({
+    where: { id },
+    include: { participants: { select: { userId: true } } },
+  });
   if (!conversation || !canViewConversation(conversation, studioId, userId, role)) {
     return res.status(404).json({ error: "Conversation not found" });
   }
@@ -493,9 +520,10 @@ router.post("/:id/messages", async (req, res) => {
   let channel: MessageChannel;
   let direction: MessageDirection;
 
-  if (conversation.type === ConversationType.STAFF) {
-    // Team threads are genuinely two-way in-app -- always IN_APP/OUTBOUND
-    // (authorUserId is what actually distinguishes sides on render).
+  if (conversation.type === ConversationType.STAFF || conversation.type === ConversationType.GROUP) {
+    // Team threads (1:1 or group) are genuinely two-way in-app -- always
+    // IN_APP/OUTBOUND (authorUserId is what actually distinguishes sides on
+    // render).
     if (body.channel !== undefined && body.channel !== MessageChannel.IN_APP) {
       return res.status(400).json({ error: "Staff conversations only support the IN_APP channel" });
     }
@@ -526,6 +554,40 @@ router.post("/:id/messages", async (req, res) => {
     return res.status(400).json({ error: "body or attachments is required" });
   }
 
+  // @mention-to-group: mentioning someone not yet part of a Team thread
+  // upgrades that same conversation in place (STAFF -> GROUP, or adds to an
+  // existing GROUP) rather than forking a new one -- preserves history and
+  // conversationId. CLIENT threads never take this path; a client mentioned
+  // by name is just text, never studio staff to add. Bad/foreign/inactive
+  // ids are silently dropped rather than rejecting the send -- mentions are
+  // best-effort metadata, never a reason to block a message going out.
+  let newParticipantIds: string[] = [];
+  let isFirstUpgrade = false;
+  if (conversation.type !== ConversationType.CLIENT && isStringArray(body.mentionedUserIds) && body.mentionedUserIds.length > 0) {
+    const validMentions = await prisma.user.findMany({
+      where: {
+        id: { in: body.mentionedUserIds.slice(0, 20) },
+        studioId,
+        isActive: true,
+        role: { not: Role.CUSTOMER },
+      },
+      select: { id: true },
+    });
+
+    const currentParticipantIds =
+      conversation.type === ConversationType.GROUP
+        ? conversation.participants.map((p) => p.userId)
+        : [conversation.staffUserId, userId].filter((v): v is string => !!v);
+
+    newParticipantIds = [...new Set(validMentions.map((u) => u.id))].filter(
+      (mentionedId) => !currentParticipantIds.includes(mentionedId),
+    );
+
+    if (newParticipantIds.length > 0) {
+      isFirstUpgrade = conversation.type === ConversationType.STAFF;
+    }
+  }
+
   const now = new Date();
 
   const [message] = await prisma.$transaction([
@@ -542,7 +604,21 @@ router.post("/:id/messages", async (req, res) => {
       },
       include: { author: { select: { id: true, name: true, email: true } } },
     }),
-    prisma.conversation.update({ where: { id }, data: { lastMessageAt: now } }),
+    prisma.conversation.update({
+      where: { id },
+      data: { lastMessageAt: now, ...(isFirstUpgrade ? { type: ConversationType.GROUP } : {}) },
+    }),
+    ...(newParticipantIds.length > 0
+      ? [
+          prisma.conversationParticipant.createMany({
+            data: (isFirstUpgrade
+              ? [...new Set([conversation.staffUserId!, userId, ...newParticipantIds])]
+              : newParticipantIds
+            ).map((participantUserId) => ({ conversationId: id, userId: participantUserId })),
+            skipDuplicates: true,
+          }),
+        ]
+      : []),
   ]);
 
   await logAudit({
@@ -553,6 +629,17 @@ router.post("/:id/messages", async (req, res) => {
     action: "create",
     changes: { conversationId: id, channel, direction },
   });
+
+  if (newParticipantIds.length > 0) {
+    await logAudit({
+      studioId,
+      actorUserId: userId,
+      entityType: "Conversation",
+      entityId: id,
+      action: isFirstUpgrade ? "group_created_from_mention" : "participants_added",
+      changes: { addedUserIds: newParticipantIds },
+    });
+  }
 
   res.status(201).json(message);
 });
@@ -756,7 +843,10 @@ router.post("/:id/read", async (req, res) => {
   const id = req.params.id as string;
   const { studioId, userId, role } = req.user!;
 
-  const conversation = await prisma.conversation.findUnique({ where: { id } });
+  const conversation = await prisma.conversation.findUnique({
+    where: { id },
+    include: { participants: { select: { userId: true } } },
+  });
   if (!conversation || !canViewConversation(conversation, studioId, userId, role)) {
     return res.status(404).json({ error: "Conversation not found" });
   }

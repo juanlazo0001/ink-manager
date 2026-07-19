@@ -49,6 +49,7 @@ enum LiabilityWaiverStatus {
 enum ConversationType {
   CLIENT
   STAFF
+  GROUP
 }
 
 enum MessageChannel {
@@ -163,6 +164,7 @@ model User {
   staffConversation      Conversation?      @relation("StaffConversation")
   authoredMessages       Message[]          @relation("MessageAuthor")
   conversationReads      ConversationRead[]
+  conversationParticipant ConversationParticipant[]
   createdConversationTags ConversationTag[]
   createdPrefillDrafts    PrefillDraft[]
 
@@ -540,7 +542,12 @@ model Conversation {
   clientId String? @unique
   client   Client? @relation(fields: [clientId], references: [id])
 
-  // Set iff type STAFF. Unique: one thread per staff member.
+  // Set iff type STAFF, AND stays set if the thread is later upgraded to
+  // GROUP via an @mention (see ConversationParticipant) -- every GROUP
+  // conversation started life as a 1:1 STAFF thread, so this becomes "which
+  // staff member's original thread this group grew out of," used as a
+  // lookup key by /conversations/resolve and the "+ New Chat" roster.
+  // Never nulled out on upgrade.
   staffUserId String? @unique
   staffUser   User?   @relation("StaffConversation", fields: [staffUserId], references: [id])
 
@@ -548,6 +555,7 @@ model Conversation {
   reads    ConversationRead[]
   tags     ConversationTag[]
   prefillDrafts PrefillDraft[]
+  participants  ConversationParticipant[]
 
   @@index([studioId, type, lastMessageAt])
 }
@@ -647,6 +655,23 @@ model PrefillDraft {
 model ConversationRead {
   id         String   @id @default(cuid())
   lastReadAt DateTime @default(now())
+
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@unique([conversationId, userId])
+}
+
+// Membership for GROUP conversations (a STAFF 1:1 thread upgraded in place
+// when someone @mentions a new person into it -- see POST /:id/messages).
+// CLIENT and un-upgraded STAFF threads have no rows here; identity for
+// those still comes from clientId/staffUserId.
+model ConversationParticipant {
+  id      String   @id @default(cuid())
+  addedAt DateTime @default(now())
 
   conversationId String
   conversation   Conversation @relation(fields: [conversationId], references: [id])
