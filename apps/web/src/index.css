@@ -298,8 +298,25 @@
 .rbc-calendar .rbc-off-range-bg {
   background-color: var(--color-surface-inset);
 }
-.rbc-today {
+/* Same bare-selector-loses-a-load-order-tie bug as .rbc-off-range-bg above,
+   confirmed via computed-style inspection: react-big-calendar's own
+   react-big-calendar.css also ships a same-specificity `.rbc-today` rule
+   (#eaf6ff, its light-mode "today" wash), and since that stylesheet's
+   <style> tag is only injected once Calendar.tsx is first loaded (after
+   this file), it was winning the tie and silently overriding this rule --
+   scoped under .rbc-calendar for the same deterministic specificity fix.
+
+   Two independent properties, deliberately not just one: background-color
+   is the everyday "today" wash, but dayPropGetter/slotPropGetter apply
+   their studio-closed/artist-unavailable grey as an INLINE style on the
+   very same elements RBC marks .rbc-today -- an inline style always wins
+   over any stylesheet background-color rule, specificity fix or not. The
+   box-shadow ring uses a property GREY_STYLE never sets, so it keeps
+   showing even on a day that's both today and fully closed, instead of
+   one signal silently winning and hiding the other. */
+.rbc-calendar .rbc-today {
   background-color: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 55%, transparent);
 }
 .rbc-header,
 .rbc-time-header-content,
