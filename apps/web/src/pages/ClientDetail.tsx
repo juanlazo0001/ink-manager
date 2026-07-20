@@ -8,7 +8,7 @@ import StatusPill from '../components/StatusPill'
 import PhoneInput from '../components/PhoneInput'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatPhoneInput, formatStatus, isValidPhoneDigits } from '../lib/format'
-import { ArrowLeftIcon, MessageIcon, MoreIcon, PencilIcon, PlusIcon } from '../components/icons'
+import { ArrowLeftIcon, CopyIcon, MessageIcon, MoreIcon, PencilIcon, PlusIcon } from '../components/icons'
 import { useUserProfile } from '../context/useUserProfile'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useConversationPanel } from '../context/useConversationPanel'
@@ -152,8 +152,23 @@ export default function ClientDetail() {
   const { openPanel } = useConversationPanel()
   const [startingConversation, setStartingConversation] = useState(false)
   const [copyingPrefillLink, setCopyingPrefillLink] = useState(false)
-  const [prefillLinkCopied, setPrefillLinkCopied] = useState(false)
   const [prefillLinkError, setPrefillLinkError] = useState<string | null>(null)
+  const [showCopyMenu, setShowCopyMenu] = useState(false)
+  const [copyToast, setCopyToast] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!showCopyMenu) return
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setShowCopyMenu(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [showCopyMenu])
+
+  function showCopyToast(message: string) {
+    setCopyToast(message)
+    setTimeout(() => setCopyToast(null), 2000)
+  }
 
   async function handleMessage() {
     if (!id) return
@@ -171,6 +186,32 @@ export default function ClientDetail() {
     }
   }
 
+  // Plain-text block for pasting into a text message, email, or wherever
+  // else staff need it -- primary contact first (already how client.phones/
+  // client.emails come back from the API), each secondary one after with
+  // its label if it has one.
+  function buildCustomerDetailsText(target: Client): string {
+    const lines = [`${target.firstName} ${target.lastName}`]
+    for (const p of target.phones) {
+      lines.push(`${formatPhoneInput(p.phone)}${p.label ? ` (${p.label})` : ''}`)
+    }
+    for (const e of target.emails) {
+      lines.push(`${e.email}${e.label ? ` (${e.label})` : ''}`)
+    }
+    return lines.join('\n')
+  }
+
+  async function handleCopyCustomerDetails() {
+    if (!client) return
+    setShowCopyMenu(false)
+    try {
+      await navigator.clipboard.writeText(buildCustomerDetailsText(client))
+      showCopyToast('Customer details copied')
+    } catch {
+      showCopyToast('Failed to copy — copy manually')
+    }
+  }
+
   // Same PrefillDraft token mechanism as the conversation composer's
   // "Prefilled intake link" menu item -- a standalone entry point for
   // generating one without an active conversation. Whatever contact fields
@@ -180,6 +221,7 @@ export default function ClientDetail() {
   async function handleCopyPrefillLink() {
     if (!id || !client) return
 
+    setShowCopyMenu(false)
     setCopyingPrefillLink(true)
     setPrefillLinkError(null)
     try {
@@ -195,8 +237,7 @@ export default function ClientDetail() {
         }),
       })
       await navigator.clipboard.writeText(draft.prefillUrl)
-      setPrefillLinkCopied(true)
-      setTimeout(() => setPrefillLinkCopied(false), 2000)
+      showCopyToast('Prefilled link copied')
     } catch (err) {
       setPrefillLinkError(err instanceof Error ? err.message : 'Failed to generate link')
     } finally {
@@ -779,21 +820,60 @@ export default function ClientDetail() {
                           type="button"
                           onClick={handleMessage}
                           disabled={startingConversation}
-                          className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
+                          aria-label="Message"
+                          title="Message"
+                          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface disabled:opacity-60 md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                         >
                           <MessageIcon className="h-4 w-4" />
-                          Message
+                          <span className="hidden text-sm font-semibold md:inline">Message</span>
                         </button>
                       )}
                       {canGeneratePrefillLink && !client.mergedIntoId && (
-                        <button
-                          type="button"
-                          onClick={handleCopyPrefillLink}
-                          disabled={copyingPrefillLink}
-                          className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
-                        >
-                          {prefillLinkCopied ? 'Copied!' : copyingPrefillLink ? 'Generating…' : 'Copy prefilled intake link'}
-                        </button>
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={() => setShowCopyMenu((v) => !v)}
+                            aria-label="Copy options"
+                            title="Copy options"
+                            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-9 md:w-9"
+                          >
+                            <CopyIcon className="h-4 w-4" />
+                          </button>
+                          {showCopyMenu && (
+                            <>
+                              <div
+                                className="fixed inset-0 z-10"
+                                onClick={() => setShowCopyMenu(false)}
+                                aria-hidden="true"
+                              />
+                              <div className="absolute right-0 top-12 z-20 w-56 origin-top-right animate-scale-fade-in rounded-xl border border-border bg-surface-raised p-1 shadow-xl md:top-10">
+                                <button
+                                  type="button"
+                                  onClick={handleCopyCustomerDetails}
+                                  className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
+                                >
+                                  Copy customer details
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={handleCopyPrefillLink}
+                                  disabled={copyingPrefillLink}
+                                  className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface disabled:opacity-60"
+                                >
+                                  {copyingPrefillLink ? 'Generating…' : 'Copy prefilled link'}
+                                </button>
+                              </div>
+                            </>
+                          )}
+                          {copyToast && (
+                            <div
+                              role="status"
+                              className="absolute right-0 top-12 z-30 whitespace-nowrap rounded-lg border border-border bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg shadow-xl md:top-10"
+                            >
+                              {copyToast}
+                            </div>
+                          )}
+                        </div>
                       )}
                       {canManage && !client.mergedIntoId && (
                         <button

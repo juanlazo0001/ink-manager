@@ -316,3 +316,12 @@ export function FacebookIcon({ className }: IconProps) {
     </svg>
   )
 }
+
+export function CopyIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <rect x="7.5" y="7.5" width="9" height="9" rx="1.5" />
+      <path d="M5.5 12.5h-1A1.5 1.5 0 0 1 3 11V4.5A1.5 1.5 0 0 1 4.5 3H11a1.5 1.5 0 0 1 1.5 1.5v1" strokeLinecap="round" />
+    </svg>
+  )
+}
