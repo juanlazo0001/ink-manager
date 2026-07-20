@@ -62,7 +62,13 @@ interface ConversationSummary {
   clientId: string | null
   staffUserId: string | null
   lastMessageAt: string | null
-  counterpart: { id: string; name: string; avatarUrl: string | null } | null
+  counterpart: {
+    id: string
+    name: string
+    avatarUrl: string | null
+    // GROUP-only: every other participant, for the stacked-avatar cluster.
+    participants?: { id: string; name: string; avatarUrl: string | null }[]
+  } | null
   primaryInquiry: PrimaryInquirySummary | null
   lastMessage: { body: string; channel: string; direction: string; createdAt: string } | null
   unreadCount: number
@@ -126,7 +132,13 @@ interface ThreadResponse {
     type: ConversationTypeValue
     clientId: string | null
     staffUserId: string | null
-    counterpart: { id: string; name: string; avatarUrl: string | null } | null
+    counterpart: {
+      id: string
+      name: string
+      avatarUrl: string | null
+      // GROUP-only: every other participant, for the stacked-avatar cluster.
+      participants?: { id: string; name: string; avatarUrl: string | null }[]
+    } | null
     primaryInquiry: PrimaryInquirySummary | null
     tags: ConversationTag[]
   }
@@ -355,17 +367,74 @@ function badgeClasses(status: string): string {
 // inquiry moves through its pipeline phases. `status` is null for threads
 // with no linked inquiry (or STAFF threads), which just render a plain
 // avatar with no ring at all.
+interface GroupParticipant {
+  id: string
+  name: string
+  avatarUrl: string | null
+}
+
+// A single small avatar circle (image or initials fallback), used both
+// standalone (nowhere yet) and as a tile inside GroupAvatarCluster below.
+function MiniAvatar({ name, avatarUrl, className }: { name: string; avatarUrl: string | null; className: string }) {
+  return avatarUrl ? (
+    <img src={avatarUrl} alt="" className={`${className} rounded-full object-cover`} />
+  ) : (
+    <div className={`${className} flex items-center justify-center rounded-full bg-surface-raised font-semibold text-fg`}>
+      {initials(name)}
+    </div>
+  )
+}
+
+// GROUP threads have multiple people, not one counterpart -- shows up to
+// two overlapping avatars (Slack/Discord-style cluster) in the same 52x52
+// footprint ProgressRingAvatar's single avatar uses, so list-row/header
+// layout never shifts between CLIENT/STAFF and GROUP threads. A third+
+// participant collapses into a "+N" badge rather than a third overlapping
+// circle, which stops being legible past two.
+function GroupAvatarCluster({ participants, unread }: { participants: GroupParticipant[]; unread: boolean }) {
+  const [first, second] = participants
+  const extra = participants.length - 2
+
+  return (
+    <div className="relative h-[52px] w-[52px] shrink-0">
+      {second && (
+        <div className="absolute bottom-0 right-0 rounded-full ring-2 ring-surface">
+          {extra > 0 ? (
+            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-surface-raised text-[11px] font-semibold text-fg">
+              +{extra}
+            </div>
+          ) : (
+            <MiniAvatar name={second.name} avatarUrl={second.avatarUrl} className="h-6 w-6 text-[10px]" />
+          )}
+        </div>
+      )}
+      <div className="absolute left-0 top-0 rounded-full ring-2 ring-surface">
+        <MiniAvatar name={first?.name ?? 'Unknown'} avatarUrl={first?.avatarUrl ?? null} className="h-9 w-9 text-sm" />
+      </div>
+      {unread && (
+        <span className="absolute -right-px -top-px h-[15px] w-[15px] rounded-full border-[2.5px] border-surface-raised bg-accent" />
+      )}
+    </div>
+  )
+}
+
 function ProgressRingAvatar({
   name,
   avatarUrl,
   status,
   unread,
+  participants,
 }: {
   name: string
   avatarUrl?: string | null
   status: string | null
   unread: boolean
+  participants?: GroupParticipant[]
 }) {
+  if (participants && participants.length > 0) {
+    return <GroupAvatarCluster participants={participants} unread={unread} />
+  }
+
   const size = 52
   const radius = 23
   const circumference = 2 * Math.PI * radius
@@ -1025,6 +1094,7 @@ function ConversationListView({
                     avatarUrl={conversation.counterpart?.avatarUrl}
                     status={conversation.primaryInquiry?.status ?? null}
                     unread={isUnread}
+                    participants={conversation.counterpart?.participants}
                   />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline justify-between gap-2">
@@ -1344,6 +1414,10 @@ function ThreadView({
     enabled: isOpen && isClientThread && showLinkMenu && !!data?.conversation.clientId,
   })
   const [generatingPrefillLink, setGeneratingPrefillLink] = useState(false)
+  const [resendingReceiptId, setResendingReceiptId] = useState<string | null>(null)
+  const [receiptResendResult, setReceiptResendResult] = useState<{ giftCardId: string; error: string | null } | null>(
+    null,
+  )
 
   // Same PrefillDraft token mechanism as the other 6C link types (7-day TTL,
   // single-use, quiet empty-form fallback if invalid/expired) -- just built
@@ -1377,6 +1451,28 @@ function ThreadView({
       // error UI, since this is a convenience insert, not a form submit).
     } finally {
       setGeneratingPrefillLink(false)
+    }
+  }
+
+  // Resends the receipt text via the exact same POST /gift-cards/:id/
+  // text-receipt route GiftCardDetail's own "Text receipt" button uses --
+  // a real send through the client's SMS integration (not a draft-insert
+  // like the other rows in this menu), so it lands as a new message in
+  // this same thread immediately, which is why the thread/list caches get
+  // invalidated the same way a normal composer send does.
+  async function handleResendGiftCardReceipt(giftCardId: string) {
+    setResendingReceiptId(giftCardId)
+    setReceiptResendResult(null)
+    try {
+      await apiFetch(`/gift-cards/${giftCardId}/text-receipt`, { method: 'POST' })
+      setReceiptResendResult({ giftCardId, error: null })
+      queryClient.invalidateQueries({ queryKey: ['conversation-thread', conversationId] })
+      queryClient.invalidateQueries({ queryKey: ['conversations'] })
+      onMessageSent()
+    } catch (err) {
+      setReceiptResendResult({ giftCardId, error: err instanceof Error ? err.message : 'Failed to resend' })
+    } finally {
+      setResendingReceiptId(null)
     }
   }
 
@@ -1754,7 +1850,32 @@ function ThreadView({
             <ArrowLeftIcon className="h-4 w-4" />
           </button>
         )}
-        {data?.conversation.counterpart?.avatarUrl ? (
+        {data?.conversation.counterpart?.participants && data.conversation.counterpart.participants.length > 0 ? (
+          <div className="relative h-8 w-8 shrink-0">
+            {data.conversation.counterpart.participants[1] && (
+              <div className="absolute bottom-0 right-0 rounded-full ring-2 ring-surface">
+                {data.conversation.counterpart.participants.length > 2 ? (
+                  <div className="flex h-4 w-4 items-center justify-center rounded-full bg-surface-raised text-[9px] font-semibold text-fg">
+                    +{data.conversation.counterpart.participants.length - 1}
+                  </div>
+                ) : (
+                  <MiniAvatar
+                    name={data.conversation.counterpart.participants[1].name}
+                    avatarUrl={data.conversation.counterpart.participants[1].avatarUrl}
+                    className="h-4 w-4 text-[8px]"
+                  />
+                )}
+              </div>
+            )}
+            <div className="absolute left-0 top-0 rounded-full ring-2 ring-surface">
+              <MiniAvatar
+                name={data.conversation.counterpart.participants[0].name}
+                avatarUrl={data.conversation.counterpart.participants[0].avatarUrl}
+                className="h-6 w-6 text-[10px]"
+              />
+            </div>
+          </div>
+        ) : data?.conversation.counterpart?.avatarUrl ? (
           <img
             src={data.conversation.counterpart.avatarUrl}
             alt=""
@@ -2289,7 +2410,6 @@ function ThreadView({
               ...(linksData?.estimateLinks ?? []),
               ...(linksData?.depositLinks ?? []),
               ...(linksData?.waiverLinks ?? []),
-              ...(linksData?.giftCardLinks ?? []),
             ].map((link, i) => (
               <button
                 key={i}
@@ -2307,6 +2427,42 @@ function ThreadView({
                 {link.hint && <span className="shrink-0 text-fg-muted">{link.hint}</span>}
               </button>
             ))}
+
+            {/* Gift card receipts get their own action -- "Resend" actually
+                sends the receipt text through the real Twilio path (same
+                as GiftCardDetail's own button), it doesn't just paste the
+                link into the draft the way every other row above does. */}
+            {(linksData?.giftCardLinks ?? []).map((link) => (
+              <div key={link.giftCardId} className="flex items-center justify-between gap-2 rounded-lg px-3 py-2">
+                <button
+                  type="button"
+                  disabled={!link.url}
+                  onClick={() => {
+                    const url = link.url
+                    if (!url) return
+                    setBody((current) => (current ? `${current}\n${url}` : url))
+                    setShowLinkMenu(false)
+                  }}
+                  className="flex-1 text-left text-fg-secondary hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {link.label}
+                  {link.hint && <span className="ml-2 text-fg-muted">{link.hint}</span>}
+                </button>
+                <button
+                  type="button"
+                  disabled={resendingReceiptId === link.giftCardId}
+                  onClick={() => handleResendGiftCardReceipt(link.giftCardId)}
+                  className="shrink-0 rounded-full border border-border px-2.5 py-1 text-xs font-medium text-fg-secondary transition hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {resendingReceiptId === link.giftCardId
+                    ? 'Sending…'
+                    : receiptResendResult?.giftCardId === link.giftCardId && !receiptResendResult.error
+                      ? 'Sent!'
+                      : 'Resend'}
+                </button>
+              </div>
+            ))}
+            {receiptResendResult?.error && <p className="px-3 py-1 text-xs text-danger">{receiptResendResult.error}</p>}
           </div>
         )}
 

@@ -162,6 +162,13 @@ function toCounterpart(
       id: conversation.participants.map((p) => p.userId).sort().join(","),
       name: others.length > 0 ? others.map((u) => u.name ?? u.email).join(", ") : "Just you",
       avatarUrl: null,
+      // The one GROUP-only field: every other participant's own id/name/
+      // avatar, so the frontend can render a stacked-avatar cluster instead
+      // of a single circle -- CLIENT/STAFF threads have exactly one
+      // counterpart already covered by name/avatarUrl above, so this stays
+      // absent (not just empty) for those, letting the frontend branch on
+      // its presence rather than on `type` directly.
+      participants: others.map((u) => ({ id: u.id, name: u.name ?? u.email, avatarUrl: u.avatarUrl })),
     };
   }
   return null;

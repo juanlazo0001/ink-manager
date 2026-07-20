@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { apiFetch } from '../lib/api'
 import { useDebouncedValue } from '../lib/useDebouncedValue'
+import { useViewAs } from '../context/useViewAs'
 import { formatStatus } from '../lib/format'
 import { AppointmentsIcon, ArtistsIcon, ClientsIcon, CloseIcon, DocumentIcon, SearchIcon, SpinnerIcon } from './icons'
 
@@ -49,6 +50,7 @@ interface SearchPaletteProps {
 
 export default function SearchPalette({ onClose }: SearchPaletteProps) {
   const navigate = useNavigate()
+  const { target: viewAsTarget } = useViewAs()
   const inputRef = useRef<HTMLInputElement>(null)
   const [query, setQuery] = useState('')
   const debouncedQuery = useDebouncedValue(query.trim(), 300)
@@ -84,12 +86,20 @@ export default function SearchPalette({ onClose }: SearchPaletteProps) {
     (results.clients.length > 0 || results.inquiries.length > 0 || results.artists.length > 0 || results.appointments.length > 0)
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 px-4 pt-24" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/60" onClick={onClose}>
       <div
         role="dialog"
         aria-modal="true"
         aria-label="Search"
-        className="w-full max-w-2xl rounded-2xl border border-border bg-surface shadow-xl"
+        // Anchored right below the search trigger button in the top bar
+        // (fixed right-4, top-4/top-14) rather than centered on screen --
+        // origin-top-right + animate-scale-fade-in (the same convention
+        // every other trigger-anchored popover in this app uses, e.g. the
+        // composer's channel/attach menus) makes it read as growing out of
+        // that button instead of just appearing mid-screen.
+        className={`fixed right-4 w-[calc(100vw-2rem)] max-w-lg origin-top-right animate-scale-fade-in rounded-2xl border border-border bg-surface shadow-xl ${
+          viewAsTarget ? 'top-28' : 'top-16'
+        }`}
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-center gap-3 border-b border-border px-4 py-3">
