@@ -327,6 +327,22 @@
   color: var(--color-fg-secondary);
   border-color: var(--color-border) !important;
 }
+/* Resource views (Week/Day with artist columns) only -- react-big-calendar
+   ships a hardcoded `background-color: white` on .rbc-time-view-resources
+   .rbc-time-gutter/-header-gutter (needed upstream since that gutter is
+   position: sticky and must occlude the day columns scrolling behind it).
+   slotPropGetter's inline GREY_STYLE for studio-closed hours already beats
+   it (inline always wins, same mechanism as .rbc-today above), which is
+   why only the OPEN hours were left showing this raw white -- there's no
+   inline style to override it there. Three-class selector, not a load-order
+   bet like .rbc-off-range-bg/.rbc-today above: RBC's own rule is already
+   two classes, so matching it at two classes here would just re-run that
+   same tie. --color-surface (not -inset) so open hours read as the
+   calendar's normal surface, not a dimmed one. */
+.rbc-calendar .rbc-time-view-resources .rbc-time-gutter,
+.rbc-calendar .rbc-time-view-resources .rbc-time-header-gutter {
+  background-color: var(--color-surface);
+}
 .rbc-header + .rbc-header,
 .rbc-day-bg + .rbc-day-bg,
 .rbc-month-row + .rbc-month-row,
