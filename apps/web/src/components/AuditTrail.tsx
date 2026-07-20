@@ -79,7 +79,10 @@ interface MergeChanges {
   survivorId: string
   repointed: Record<string, number>
   conversation: { merged: boolean; movedMessages: number }
-  aliasesAdded: { addedPhones: unknown[]; addedEmails: unknown[] }
+  // Optional: merge audit rows logged before this field existed (pre
+  // multi-contact-merge phase) genuinely lack it -- absent, not just
+  // empty, so this can't be typed as always-present.
+  aliasesAdded?: { addedPhones: unknown[]; addedEmails: unknown[] }
 }
 
 function isMergeChanges(action: string, changes: unknown): changes is MergeChanges {
@@ -123,7 +126,7 @@ function formatMergeSummary(changes: MergeChanges): string {
     .filter(([, count]) => count > 0)
     .map(([type, count]) => `${count} ${pluralize(lowerFirst(humanizeField(type)), count)}`)
 
-  const aliasCount = changes.aliasesAdded.addedPhones.length + changes.aliasesAdded.addedEmails.length
+  const aliasCount = (changes.aliasesAdded?.addedPhones.length ?? 0) + (changes.aliasesAdded?.addedEmails.length ?? 0)
 
   const who = changes.sourceClientName ? `"${changes.sourceClientName}"` : 'another client record'
   const sentences = [`Merged ${who} into this client.`]
