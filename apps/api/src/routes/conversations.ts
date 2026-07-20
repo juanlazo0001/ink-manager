@@ -2,7 +2,15 @@ import { Router } from "express";
 import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "../lib/prisma";
 import type { Prisma } from "../../generated/prisma/client";
-import { ConversationType, InquiryStatus, MessageChannel, MessageDirection, Role } from "../../generated/prisma/enums";
+import {
+  ConversationType,
+  InquiryStatus,
+  IntegrationChannel,
+  IntegrationStatus,
+  MessageChannel,
+  MessageDirection,
+  Role,
+} from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
 import {
@@ -13,6 +21,7 @@ import {
 } from "../lib/conversations";
 import { TAGGABLE_ENTITY_TYPES, resolveTagLabel, validateTaggableEntity } from "../lib/conversationTags";
 import { sanitizePrefillPayload } from "../lib/prefill";
+import { sendClientSms } from "../lib/clientSms";
 
 const router = Router();
 router.use(requireAuth);
@@ -552,6 +561,52 @@ router.post("/:id/messages", async (req, res) => {
 
   if (bodyText.length === 0 && (!attachments || attachments.length === 0)) {
     return res.status(400).json({ error: "body or attachments is required" });
+  }
+
+  // Real send: a CLIENT thread's outbound SMS attempts an actual Twilio
+  // send when this studio has SMS connected, persisting the Message only
+  // on provider acceptance -- see lib/clientSms.ts (the same function
+  // Part 7B-2's reminder jobs call). Not connected (or any other channel/
+  // direction/thread type) falls through to the log-only path below,
+  // completely unchanged from before this phase -- zero regression.
+  if (
+    conversation.type === ConversationType.CLIENT &&
+    channel === MessageChannel.SMS &&
+    direction === MessageDirection.OUTBOUND
+  ) {
+    const integration = await prisma.studioIntegration.findUnique({
+      where: { studioId_channel: { studioId, channel: IntegrationChannel.SMS } },
+    });
+
+    if (integration?.status === IntegrationStatus.CONNECTED) {
+      if (bodyText.length === 0) {
+        return res.status(400).json({ error: "A message body is required to send a real SMS" });
+      }
+
+      const result = await sendClientSms({
+        studioId,
+        clientId: conversation.clientId!,
+        conversationId: id,
+        body: bodyText,
+        actorUserId: userId,
+      });
+
+      if (!result.sent) {
+        const errorMessages: Record<string, string> = {
+          not_connected: "SMS is not connected for this studio",
+          no_phone: "This client has no phone number on file",
+          opted_out: "This client has opted out of SMS and cannot be texted",
+          send_failed: result.error ?? "Failed to send the SMS",
+        };
+        return res.status(400).json({ error: errorMessages[result.reason] });
+      }
+
+      const created = await prisma.message.findUnique({
+        where: { id: result.messageId },
+        include: { author: { select: { id: true, name: true, email: true } } },
+      });
+      return res.status(201).json(created);
+    }
   }
 
   // @mention-to-group: mentioning someone not yet part of a Team thread

@@ -23,6 +23,8 @@ import conversationsRouter from "./routes/conversations";
 import prefillDraftsRouter from "./routes/prefillDrafts";
 import viewAsRouter from "./routes/viewAs";
 import jobsRouter from "./routes/jobs";
+import integrationsRouter from "./routes/integrations";
+import webhooksRouter from "./routes/webhooks";
 import { startScheduler } from "./lib/jobs";
 import { requireAuth } from "./middleware/auth";
 
@@ -32,6 +34,11 @@ const port = process.env.PORT || 4000;
 app.use(cors());
 app.use(compression());
 app.use(express.json({ limit: "8mb" })); // logo/avatar uploads (base64, up to 5MB source) exceed Express's 100kb default
+// Twilio POSTs webhooks as application/x-www-form-urlencoded, not JSON --
+// needed so req.body is populated for /webhooks/twilio/* (both the params
+// themselves and X-Twilio-Signature validation, which is computed over
+// these same parsed params).
+app.use(express.urlencoded({ extended: false }));
 
 // Opt-in request timing, for diagnosing slow endpoints. Off by default;
 // set DEBUG_TIMING=true to log method/path/status/duration per request.
@@ -78,6 +85,9 @@ app.use("/conversations", conversationsRouter);
 app.use("/prefill-drafts", prefillDraftsRouter);
 app.use("/view-as", viewAsRouter);
 app.use("/jobs", jobsRouter);
+app.use("/integrations", integrationsRouter);
+// Public: Twilio calls these directly, no requireAuth anywhere in this router.
+app.use("/webhooks", webhooksRouter);
 
 app.get("/me", requireAuth, (req, res) => {
   res.json(req.user);

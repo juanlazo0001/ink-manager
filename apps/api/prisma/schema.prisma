@@ -67,6 +67,24 @@ enum MessageDirection {
   OUTBOUND
 }
 
+// Phase 7B: every channel a studio could eventually self-serve connect.
+// Only SMS (Twilio) is actually wired up to a real provider this phase --
+// the others exist so Settings -> Integrations can show them as "Coming
+// soon" cards on the same chassis rather than a Twilio-shaped one-off.
+enum IntegrationChannel {
+  SMS
+  EMAIL
+  INSTAGRAM
+  FACEBOOK
+  GOOGLE_CALENDAR
+}
+
+enum IntegrationStatus {
+  NOT_CONNECTED
+  CONNECTED
+  ERROR
+}
+
 enum JobStatus {
   RUNNING
   SUCCEEDED
@@ -111,6 +129,33 @@ model Studio {
   messages      Message[]
   conversationTags ConversationTag[]
   prefillDrafts    PrefillDraft[]
+  integrations     StudioIntegration[]
+}
+
+// Self-serve provider connections -- a studio owner connects their OWN
+// Twilio (etc.) account from Settings -> Integrations, rather than the
+// platform holding one shared set of provider credentials for every
+// studio. encryptedSecret is AES-256-GCM ciphertext (see lib/secrets.ts),
+// decrypted only server-side at send/receive time -- no route ever
+// returns it, only masked display values. metadata is deliberately
+// separate from encryptedSecret: non-secret config an inbound webhook
+// needs to route by (e.g. the studio's own Twilio phone number), safe to
+// read back to the client as-is.
+model StudioIntegration {
+  id              String             @id @default(cuid())
+  channel         IntegrationChannel
+  status          IntegrationStatus  @default(NOT_CONNECTED)
+  displayName     String?
+  encryptedSecret String?
+  metadata        Json?
+  lastError       String?
+  connectedAt     DateTime?
+  updatedAt       DateTime           @updatedAt
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  @@unique([studioId, channel])
 }
 
 model RolePermission {
@@ -241,6 +286,12 @@ model Client {
   // Soft, reversible hide -- same exclude-from-list-views pattern as
   // mergedIntoId above, but fully intact and unarchivable, unlike a merge.
   archivedAt DateTime?
+
+  // Phase 7B: set when this client texts STOP/UNSUBSCRIBE/CANCEL/QUIT to
+  // the studio's connected SMS number, cleared on START/UNSTOP. Checked
+  // server-side before every outbound SMS send regardless of what the UI
+  // shows -- this is the actual enforcement point, not just a display flag.
+  smsOptedOutAt DateTime?
 
   appointments Appointment[]
   consentForms ConsentForm[]

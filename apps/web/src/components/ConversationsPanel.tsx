@@ -90,8 +90,14 @@ interface ArtistFilterOption {
 }
 
 interface MessageMetadata {
-  kind: 'shared_inquiry'
-  inquiryId: string
+  kind?: 'shared_inquiry'
+  inquiryId?: string
+  // Phase 7B: set on a real Twilio send/receive -- providerSid identifies
+  // the message with Twilio, deliveryStatus is updated in place (the one
+  // sanctioned exception to Message's otherwise-immutable rule) by the
+  // status-callback webhook as Twilio reports queued -> sent -> delivered/failed.
+  providerSid?: string
+  deliveryStatus?: string
 }
 
 interface MessageItem {
@@ -1286,6 +1292,16 @@ function ThreadView({
     enabled: isOpen && isClientThread && showTemplates,
   })
 
+  // Phase 7B: lets the SMS channel option show whether a send will
+  // actually go out live or just log, without needing OWNER-only access
+  // (GET /integrations/status is intentionally broader than GET /integrations).
+  const { data: smsStatus } = useQuery({
+    queryKey: ['sms-integration-status'],
+    queryFn: () => apiFetch<{ sms: boolean }>('/integrations/status'),
+    enabled: isOpen && isClientThread,
+    staleTime: 60_000,
+  })
+
   const { data: linksData } = useQuery({
     queryKey: ['client-shareable-links', data?.conversation.clientId],
     queryFn: () => apiFetch<ShareableLinksResponse>(`/clients/${data!.conversation.clientId}/shareable-links`),
@@ -2165,6 +2181,11 @@ function ThreadView({
                                 View in My Inquiries <ArrowUpRightIcon className="h-3 w-3" />
                               </Link>
                             )}
+                            {message.channel === 'SMS' &&
+                              (message.metadata?.deliveryStatus === 'failed' ||
+                                message.metadata?.deliveryStatus === 'undelivered') && (
+                                <p className="mt-1 text-[10.5px] font-medium text-danger">Not delivered</p>
+                              )}
                           </div>
                         )
                       })}
@@ -2415,6 +2436,11 @@ function ThreadView({
                     <span className="ml-0.5 font-medium text-[#5a5a62]">
                       {direction === 'OUTBOUND' ? 'Our reply' : 'Their message'}
                     </span>
+                    {channel === 'SMS' && direction === 'OUTBOUND' && (
+                      <span className={`ml-0.5 font-medium ${smsStatus?.sms ? 'text-success' : 'text-[#5a5a62]'}`}>
+                        {smsStatus?.sms ? '· Sends live' : '· Log only'}
+                      </span>
+                    )}
                   </button>
                   {showChannelModeMenu && (
                     <>

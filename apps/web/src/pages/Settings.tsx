@@ -4,7 +4,7 @@ import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
 import RichTextEditor from '../components/RichTextEditor'
 import PhoneInput from '../components/PhoneInput'
-import { CheckIcon, ClockIcon, CloseIcon, PencilIcon, SpinnerIcon } from '../components/icons'
+import { CheckIcon, ClockIcon, CloseIcon, CopyIcon, PencilIcon, SpinnerIcon } from '../components/icons'
 import { apiFetch } from '../lib/api'
 import {
   formatDateTime,
@@ -48,6 +48,29 @@ interface JobInfo {
   schedule: string
   lastRun: JobRunInfo | null
 }
+
+// Phase 7B: Settings -> Integrations (self-serve provider connections).
+type IntegrationChannelValue = 'SMS' | 'EMAIL' | 'INSTAGRAM' | 'FACEBOOK' | 'GOOGLE_CALENDAR'
+type IntegrationStatusValue = 'NOT_CONNECTED' | 'CONNECTED' | 'ERROR'
+
+interface IntegrationInfo {
+  channel: IntegrationChannelValue
+  status: IntegrationStatusValue
+  displayName: string | null
+  connectedAt: string | null
+  lastError: string | null
+  metadata: Record<string, unknown> | null
+}
+
+const CHANNEL_LABELS: Record<IntegrationChannelValue, string> = {
+  SMS: 'SMS (Twilio)',
+  EMAIL: 'Email',
+  INSTAGRAM: 'Instagram',
+  FACEBOOK: 'Facebook',
+  GOOGLE_CALENDAR: 'Google Calendar',
+}
+
+const EMPTY_SMS_CONNECT_FORM = { accountSid: '', authToken: '', fromNumber: '' }
 
 interface StudioSettingsData {
   refundPolicy: string | null
@@ -252,6 +275,110 @@ export default function Settings() {
       setJobsError(err instanceof Error ? err.message : 'Failed to run job')
     } finally {
       setRunningJob(null)
+    }
+  }
+
+  // OWNER only, matching POST /integrations's own requireRole(Role.OWNER).
+  const canViewIntegrations = user?.role === 'OWNER'
+
+  const [integrations, setIntegrations] = useState<IntegrationInfo[] | null>(null)
+  const [smsWebhookUrl, setSmsWebhookUrl] = useState<string | null>(null)
+  const [integrationsError, setIntegrationsError] = useState<string | null>(null)
+  const [integrationsRefreshIndex, setIntegrationsRefreshIndex] = useState(0)
+
+  const [showConnectSms, setShowConnectSms] = useState(false)
+  const [smsConnectForm, setSmsConnectForm] = useState(EMPTY_SMS_CONNECT_FORM)
+  const [smsConnecting, setSmsConnecting] = useState(false)
+  const [smsConnectError, setSmsConnectError] = useState<string | null>(null)
+
+  const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false)
+  const [disconnecting, setDisconnecting] = useState(false)
+
+  const [testMessageTo, setTestMessageTo] = useState('')
+  const [testMessageSending, setTestMessageSending] = useState(false)
+  const [testMessageResult, setTestMessageResult] = useState<string | null>(null)
+
+  const [copiedWebhook, setCopiedWebhook] = useState(false)
+
+  useEffect(() => {
+    if (!canViewIntegrations) return
+    let ignore = false
+
+    apiFetch<{ channels: IntegrationInfo[]; smsWebhookUrl: string }>('/integrations')
+      .then((data) => {
+        if (ignore) return
+        setIntegrations(data.channels)
+        setSmsWebhookUrl(data.smsWebhookUrl)
+      })
+      .catch((err) => {
+        if (!ignore) setIntegrationsError(err instanceof Error ? err.message : 'Failed to load integrations')
+      })
+
+    return () => {
+      ignore = true
+    }
+  }, [canViewIntegrations, integrationsRefreshIndex])
+
+  async function handleConnectSms(event: FormEvent) {
+    event.preventDefault()
+    setSmsConnecting(true)
+    setSmsConnectError(null)
+
+    try {
+      await apiFetch('/integrations/SMS/connect', {
+        method: 'POST',
+        body: JSON.stringify(smsConnectForm),
+      })
+      setShowConnectSms(false)
+      setSmsConnectForm(EMPTY_SMS_CONNECT_FORM)
+      setIntegrationsRefreshIndex((i) => i + 1)
+    } catch (err) {
+      setSmsConnectError(err instanceof Error ? err.message : 'Failed to connect')
+    } finally {
+      setSmsConnecting(false)
+    }
+  }
+
+  async function handleDisconnectSms() {
+    setDisconnecting(true)
+    try {
+      await apiFetch('/integrations/SMS/disconnect', { method: 'POST' })
+      setShowDisconnectConfirm(false)
+      setTestMessageResult(null)
+      setIntegrationsRefreshIndex((i) => i + 1)
+    } catch (err) {
+      setIntegrationsError(err instanceof Error ? err.message : 'Failed to disconnect')
+    } finally {
+      setDisconnecting(false)
+    }
+  }
+
+  async function handleSendTestMessage(event: FormEvent) {
+    event.preventDefault()
+    setTestMessageSending(true)
+    setTestMessageResult(null)
+
+    try {
+      await apiFetch('/integrations/SMS/test-message', {
+        method: 'POST',
+        body: JSON.stringify({ to: testMessageTo }),
+      })
+      setTestMessageResult('Test message sent.')
+    } catch (err) {
+      setTestMessageResult(err instanceof Error ? err.message : 'Failed to send the test message')
+    } finally {
+      setTestMessageSending(false)
+    }
+  }
+
+  async function handleCopyWebhookUrl() {
+    if (!smsWebhookUrl) return
+    try {
+      await navigator.clipboard.writeText(smsWebhookUrl)
+      setCopiedWebhook(true)
+      setTimeout(() => setCopiedWebhook(false), 2000)
+    } catch {
+      // Non-critical -- the URL is also selectable/visible as plain text.
     }
   }
 
@@ -1493,6 +1620,241 @@ export default function Settings() {
                     Cancel
                   </button>
                 </div>
+              </div>
+            </Modal>
+          )}
+
+          {canViewIntegrations && (
+            <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
+              <h2 className="text-lg font-semibold text-fg">Integrations</h2>
+              <p className="mt-1 text-sm text-fg-secondary">
+                Connect your own provider accounts -- your credentials, encrypted, never shared across studios.
+              </p>
+
+              {integrationsError && <p className="mt-4 text-sm text-danger">{integrationsError}</p>}
+
+              <div className="mt-4 space-y-4">
+                {integrations?.map((integration) => {
+                  if (integration.channel !== 'SMS') {
+                    return (
+                      <div key={integration.channel} className="rounded-xl border border-border p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-sm font-semibold text-fg">{CHANNEL_LABELS[integration.channel]}</p>
+                          <span className="rounded-full bg-surface-inset px-3 py-1 text-xs font-medium text-fg-muted">
+                            Coming soon
+                          </span>
+                        </div>
+                      </div>
+                    )
+                  }
+
+                  const metadataPhone =
+                    (integration.metadata as { phoneNumber?: string } | null)?.phoneNumber ?? null
+
+                  return (
+                    <div key={integration.channel} className="rounded-xl border border-border p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-fg">{CHANNEL_LABELS[integration.channel]}</p>
+                          {integration.status === 'CONNECTED' && integration.displayName && (
+                            <p className="mt-0.5 text-xs text-fg-secondary">{integration.displayName}</p>
+                          )}
+                          {integration.status === 'ERROR' && integration.lastError && (
+                            <p className="mt-0.5 text-xs text-danger">Last attempt failed: {integration.lastError}</p>
+                          )}
+                        </div>
+
+                        <div className="flex shrink-0 items-center gap-2">
+                          {integration.status === 'CONNECTED' ? (
+                            <>
+                              <span className="rounded-full bg-success/15 px-3 py-1 text-xs font-medium text-success">
+                                Connected
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setShowDisconnectConfirm(true)}
+                                className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                              >
+                                Disconnect
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSmsConnectError(null)
+                                setShowConnectSms(true)
+                              }}
+                              className="rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-bg transition hover:bg-accent-hover"
+                            >
+                              {integration.status === 'ERROR' ? 'Try again' : 'Connect'}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {integration.status === 'CONNECTED' && (
+                        <div className="mt-4 space-y-4 border-t border-border pt-4">
+                          {integration.connectedAt && (
+                            <p className="text-xs text-fg-muted">
+                              Connected {formatDateTime(integration.connectedAt)}
+                            </p>
+                          )}
+
+                          <form onSubmit={handleSendTestMessage} className="flex flex-wrap items-end gap-2">
+                            <div className="min-w-[200px] flex-1">
+                              <label className="mb-1 block text-xs font-medium text-fg-secondary">
+                                Send test message to
+                              </label>
+                              <PhoneInput
+                                value={testMessageTo}
+                                onChange={setTestMessageTo}
+                                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                              />
+                            </div>
+                            <button
+                              type="submit"
+                              disabled={testMessageSending || !isValidPhoneDigits(testMessageTo)}
+                              className="rounded-full border border-border px-3 py-2 text-xs font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                            >
+                              {testMessageSending ? 'Sending…' : 'Send test message'}
+                            </button>
+                          </form>
+                          {testMessageResult && (
+                            <p className="text-xs text-fg-secondary">{testMessageResult}</p>
+                          )}
+
+                          <div>
+                            <p className="text-xs font-medium text-fg-secondary">Inbound webhook URL</p>
+                            <p className="mt-1 text-xs text-fg-muted">
+                              In your Twilio console, under this number's messaging configuration, set "A message
+                              comes in" to this URL (HTTP POST).
+                            </p>
+                            <div className="mt-2 flex items-center gap-2">
+                              <input
+                                type="text"
+                                readOnly
+                                value={smsWebhookUrl ?? ''}
+                                onFocus={(e) => e.target.select()}
+                                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-xs text-fg focus:outline-none"
+                              />
+                              <button
+                                type="button"
+                                onClick={handleCopyWebhookUrl}
+                                aria-label="Copy webhook URL"
+                                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border text-fg-muted transition hover:bg-surface hover:text-fg"
+                              >
+                                <CopyIcon className="h-4 w-4" />
+                              </button>
+                            </div>
+                            {copiedWebhook && <p className="mt-1 text-xs text-success">Copied.</p>}
+                          </div>
+
+                          {metadataPhone && (
+                            <p className="text-xs text-fg-muted">From number: {metadataPhone}</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {showConnectSms && (
+            <Modal
+              title="Connect SMS (Twilio)"
+              onClose={() => {
+                setShowConnectSms(false)
+                setSmsConnectError(null)
+              }}
+            >
+              <form onSubmit={handleConnectSms}>
+                <p className="mb-4 text-xs text-fg-secondary">
+                  Your own Twilio account credentials -- encrypted at rest, never shared with any other studio.
+                </p>
+
+                <div className="mb-3">
+                  <label htmlFor="twilioAccountSid" className="mb-1 block text-sm font-medium text-fg-secondary">
+                    Account SID
+                  </label>
+                  <input
+                    id="twilioAccountSid"
+                    type="text"
+                    required
+                    value={smsConnectForm.accountSid}
+                    onChange={(e) => setSmsConnectForm({ ...smsConnectForm, accountSid: e.target.value })}
+                    placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                  />
+                </div>
+
+                <div className="mb-3">
+                  <label htmlFor="twilioAuthToken" className="mb-1 block text-sm font-medium text-fg-secondary">
+                    Auth Token
+                  </label>
+                  <input
+                    id="twilioAuthToken"
+                    type="password"
+                    required
+                    value={smsConnectForm.authToken}
+                    onChange={(e) => setSmsConnectForm({ ...smsConnectForm, authToken: e.target.value })}
+                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                  />
+                </div>
+
+                <div className="mb-3">
+                  <label htmlFor="twilioFromNumber" className="mb-1 block text-sm font-medium text-fg-secondary">
+                    From number
+                  </label>
+                  <input
+                    id="twilioFromNumber"
+                    type="text"
+                    required
+                    value={smsConnectForm.fromNumber}
+                    onChange={(e) => setSmsConnectForm({ ...smsConnectForm, fromNumber: e.target.value })}
+                    placeholder="+19195551234"
+                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                  />
+                </div>
+
+                {smsConnectError && <p className="mb-3 text-sm text-danger">{smsConnectError}</p>}
+
+                <button
+                  type="submit"
+                  disabled={smsConnecting}
+                  className="w-full rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                >
+                  {smsConnecting ? 'Connecting…' : 'Connect'}
+                </button>
+              </form>
+            </Modal>
+          )}
+
+          {showDisconnectConfirm && (
+            <Modal title="Disconnect SMS" onClose={() => setShowDisconnectConfirm(false)}>
+              <p className="text-sm text-fg-secondary">
+                Outbound messages will fall back to log-only (no real send) until SMS is reconnected. Inbound texts
+                will no longer be validated or land in threads.
+              </p>
+              <div className="mt-5 flex gap-3">
+                <button
+                  type="button"
+                  onClick={handleDisconnectSms}
+                  disabled={disconnecting}
+                  className="flex-1 rounded-full border border-danger/40 px-4 py-2 text-sm font-medium text-danger transition hover:bg-danger/10 disabled:opacity-60"
+                >
+                  {disconnecting ? 'Disconnecting…' : 'Disconnect'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowDisconnectConfirm(false)}
+                  disabled={disconnecting}
+                  className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                >
+                  Cancel
+                </button>
               </div>
             </Modal>
           )}

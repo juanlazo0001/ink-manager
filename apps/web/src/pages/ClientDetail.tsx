@@ -81,6 +81,7 @@ interface Client {
   mergedIntoId: string | null
   mergedInto: { id: string; firstName: string; lastName: string } | null
   archivedAt: string | null
+  smsOptedOutAt: string | null
   consentForms: ConsentForm[]
   inquiries: InquirySummary[]
   giftCards: GiftCard[]
@@ -931,6 +932,13 @@ export default function ClientDetail() {
 
               <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
                 <h2 className="text-base font-semibold text-fg">Contact Info</h2>
+
+                {client.smsOptedOutAt && (
+                  <p className="mt-2 text-xs font-medium text-warning">
+                    Opted out of SMS {formatDateTime(client.smsOptedOutAt)} — outbound texts to this client are
+                    refused until they text START.
+                  </p>
+                )}
 
                 <div className="mt-4 grid grid-cols-1 gap-6 sm:grid-cols-2">
                   <div>

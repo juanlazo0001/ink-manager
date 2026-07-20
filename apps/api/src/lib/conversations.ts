@@ -119,3 +119,33 @@ export async function getOrCreateStaffConversation(
 
   return { conversation: created, created: true };
 }
+
+// Get-or-create for a CLIENT thread, callable from server-side flows (the
+// inbound Twilio SMS webhook, since there's no browser request to drive
+// POST /conversations for an inbound text) -- same idempotent semantics
+// as that route's own inline clientId branch, extracted here so both share
+// one implementation. actorUserId is null for a system-triggered create
+// (an inbound message from a client isn't "created" by any staff member).
+export async function getOrCreateClientConversation(
+  studioId: string,
+  clientId: string,
+  actorUserId: string | null,
+): Promise<{ conversation: { id: string }; created: boolean }> {
+  const existing = await prisma.conversation.findUnique({ where: { clientId } });
+  if (existing) return { conversation: existing, created: false };
+
+  const created = await prisma.conversation.create({
+    data: { studioId, type: ConversationType.CLIENT, clientId },
+  });
+
+  await logAudit({
+    studioId,
+    actorUserId,
+    entityType: "Conversation",
+    entityId: created.id,
+    action: "create",
+    changes: { type: "CLIENT", clientId },
+  });
+
+  return { conversation: created, created: true };
+}
