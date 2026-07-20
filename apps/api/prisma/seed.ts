@@ -86,6 +86,30 @@ const reschedulePolicy = "[DEV SEED] Please give at least 48 hours notice to res
 const communicationPolicy = "[DEV SEED] We respond to inquiries within one business day.";
 const calendarInviteTemplate = "[DEV SEED] Your appointment at {{studioName}} is confirmed for {{startTime}}.";
 
+// Phase 7B-2: plain-text SMS reminder templates, editable afterward from
+// Settings -> Integrations' reminder-cadence section. artistDayBefore has
+// no {{appointmentTime}}/{{waiverLink}} placeholders -- it's a single
+// consolidated digest per artist per day, so the job appends the actual
+// appointment list as plain lines after this templated header.
+const reminderTemplates = {
+  clientWeekBefore:
+    "Hi {{clientFirstName}}, this is a reminder that your appointment with {{artistName}} at {{studioName}} is coming up on {{appointmentDate}} at {{appointmentTime}}. Please complete your waiver here: {{waiverLink}}",
+  clientNightBefore:
+    "Hi {{clientFirstName}}, see you tomorrow at {{appointmentTime}} for your appointment with {{artistName}} at {{studioName}}! Waiver: {{waiverLink}}",
+  clientMorningOf:
+    "Hi {{clientFirstName}}, today's the day! Your appointment with {{artistName}} at {{studioName}} is at {{appointmentTime}}. Waiver: {{waiverLink}}",
+  artistDayBefore: "Hi {{artistName}}, here's your schedule for tomorrow at {{studioName}}:",
+  estimateFollowUp:
+    "Hi {{clientFirstName}}, just following up on the estimate we sent for your tattoo -- you can view and respond here: {{estimateLink}}. Let us know if you have any questions! - {{studioName}}",
+};
+
+const reminderSendTimes = {
+  weekBeforeTime: "10:00",
+  nightBeforeTime: "18:00",
+  morningOfTime: "08:00",
+  artistDayBeforeTime: "07:00",
+};
+
 async function generateUniqueGiftCardCode(): Promise<string> {
   let code = crypto.randomBytes(16).toString("base64url");
   while (await prisma.giftCard.findUnique({ where: { code } })) {
@@ -120,6 +144,8 @@ async function main() {
       waiverClauses,
       waiverAcknowledgment,
       waiverPhotoRelease,
+      reminderTemplates,
+      reminderSendTimes,
     },
   });
 

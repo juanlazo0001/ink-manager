@@ -99,6 +99,37 @@ function isValidBusinessHours(value: unknown): boolean {
   });
 }
 
+// Phase 7B-2: the automated reminder cadence's own plain-text SMS
+// templates -- a fixed-shape object (one field per reminder type), unlike
+// messageTemplates above (an open-ended array the composer's "insert
+// template" menu lists). All 5 keys are required non-empty strings: the
+// frontend always sends the complete object (merging in whichever one
+// template it just edited), so the ticker job never has to fall back to
+// a hardcoded default at send time.
+const REMINDER_TEMPLATE_KEYS = [
+  "clientWeekBefore",
+  "clientNightBefore",
+  "clientMorningOf",
+  "artistDayBefore",
+  "estimateFollowUp",
+] as const;
+
+function isValidReminderTemplates(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const t = value as Record<string, unknown>;
+  return REMINDER_TEMPLATE_KEYS.every((key) => typeof t[key] === "string" && (t[key] as string).trim().length > 0);
+}
+
+const REMINDER_SEND_TIME_KEYS = ["weekBeforeTime", "nightBeforeTime", "morningOfTime", "artistDayBeforeTime"] as const;
+
+function isValidReminderSendTimes(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const t = value as Record<string, unknown>;
+  return REMINDER_SEND_TIME_KEYS.every(
+    (key) => typeof t[key] === "string" && BUSINESS_HOURS_TIME_PATTERN.test(t[key] as string),
+  );
+}
+
 function isValidMessageTemplates(value: unknown): boolean {
   if (!Array.isArray(value)) return false;
 
@@ -197,6 +228,24 @@ router.patch("/", requireRole(Role.OWNER), async (req, res) => {
     data.businessHours = body.businessHours;
   }
 
+  if (body.reminderTemplates !== undefined) {
+    if (body.reminderTemplates !== null && !isValidReminderTemplates(body.reminderTemplates)) {
+      return res.status(400).json({
+        error: `reminderTemplates must be an object with non-empty string values for: ${REMINDER_TEMPLATE_KEYS.join(", ")}`,
+      });
+    }
+    data.reminderTemplates = body.reminderTemplates;
+  }
+
+  if (body.reminderSendTimes !== undefined) {
+    if (body.reminderSendTimes !== null && !isValidReminderSendTimes(body.reminderSendTimes)) {
+      return res.status(400).json({
+        error: `reminderSendTimes must be an object with 'HH:MM' string values for: ${REMINDER_SEND_TIME_KEYS.join(", ")}`,
+      });
+    }
+    data.reminderSendTimes = body.reminderSendTimes;
+  }
+
   const updated = await prisma.studioSettings.update({ where: { studioId: req.user!.studioId }, data });
 
   await logAudit({
@@ -216,6 +265,8 @@ router.patch("/", requireRole(Role.OWNER), async (req, res) => {
       "messageTemplates",
       "showSidebarBadges",
       "businessHours",
+      "reminderTemplates",
+      "reminderSendTimes",
     ] as (keyof typeof existing)[]),
   });
 

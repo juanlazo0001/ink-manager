@@ -1,5 +1,4 @@
 import { Router } from "express";
-import crypto from "node:crypto";
 import { prisma } from "../lib/prisma";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { Role, AppointmentStatus, GiftCardStatus } from "../../generated/prisma/enums";
@@ -8,9 +7,7 @@ import { diffObjects, logAudit } from "../lib/audit";
 import { validateGiftCardForAttachment } from "../lib/giftCards";
 import { isSameCalendarDay } from "../lib/dateRange";
 import { findBufferConflict, formatBufferWarning } from "../lib/schedulingConflict";
-import { PUBLIC_APP_URL } from "../lib/publicUrl";
-
-const WAIVER_TOKEN_TTL_HOURS = 24; // day-of form -- signed in-shop, so a short window is intentional
+import { ensureLiabilityWaiver } from "../lib/waivers";
 
 const router = Router();
 
@@ -200,49 +197,19 @@ router.post("/:id/waiver", requireRole(Role.OWNER, Role.FRONT_DESK), async (req,
   const id = req.params.id as string;
   const studioId = req.user!.studioId;
 
-  const appointment = await prisma.appointment.findUnique({ where: { id }, include: { liabilityWaiver: true } });
-
-  if (!appointment || appointment.studioId !== studioId) {
-    return res.status(404).json({ error: "Appointment not found" });
-  }
-
-  if (appointment.liabilityWaiver) {
+  const existing = await prisma.appointment.findUnique({ where: { id }, select: { liabilityWaiver: true } });
+  if (existing?.liabilityWaiver) {
     return res.status(400).json({ error: "A waiver already exists for this appointment" });
   }
 
-  const settings = await prisma.studioSettings.findUnique({ where: { studioId } });
+  const result = await ensureLiabilityWaiver(id, studioId, req.user!.userId);
 
-  if (!settings?.waiverHealthQuestions || !settings?.waiverClauses) {
-    return res.status(400).json({ error: "Configure the waiver template in Settings before creating waivers" });
+  if (!result.ok) {
+    const status = result.error === "Appointment not found" ? 404 : 400;
+    return res.status(status).json({ error: result.error });
   }
 
-  const token = crypto.randomBytes(32).toString("hex");
-  const tokenExpiresAt = new Date(Date.now() + WAIVER_TOKEN_TTL_HOURS * 60 * 60 * 1000);
-
-  const waiver = await prisma.liabilityWaiver.create({
-    data: {
-      studioId,
-      clientId: appointment.clientId,
-      appointmentId: appointment.id,
-      token,
-      tokenExpiresAt,
-      healthQuestionsSnapshot: settings.waiverHealthQuestions,
-      clausesSnapshot: settings.waiverClauses,
-      acknowledgmentSnapshot: settings.waiverAcknowledgment,
-      photoReleaseSnapshot: settings.waiverPhotoRelease,
-    },
-  });
-
-  await logAudit({
-    studioId,
-    actorUserId: req.user!.userId,
-    entityType: "LiabilityWaiver",
-    entityId: waiver.id,
-    action: "create",
-    changes: { appointmentId: appointment.id },
-  });
-
-  res.status(201).json({ ...waiver, signingUrl: `${PUBLIC_APP_URL}/waiver/${token}` });
+  res.status(201).json({ ...result.waiver, signingUrl: result.signingUrl });
 });
 
 // Checkout: confirms the final cost with the artist, settles the deposit

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
@@ -90,6 +90,78 @@ interface StudioSettingsData {
   messageTemplates: MessageTemplate[] | null
   showSidebarBadges: boolean
   businessHours: BusinessHoursDay[] | null
+  reminderTemplates: ReminderTemplatesData | null
+  reminderSendTimes: ReminderSendTimesData | null
+}
+
+// Phase 7B-2: the SMS reminder cadence's own editable templates/times --
+// a separate StudioSettings JSON field from messageTemplates above (that
+// one's the Phase 6A composer's canned replies; this is what the
+// reminderTicker jobs render and send automatically).
+interface ReminderTemplatesData {
+  clientWeekBefore: string
+  clientNightBefore: string
+  clientMorningOf: string
+  artistDayBefore: string
+  estimateFollowUp: string
+}
+
+interface ReminderSendTimesData {
+  weekBeforeTime: string
+  nightBeforeTime: string
+  morningOfTime: string
+  artistDayBeforeTime: string
+}
+
+const DEFAULT_REMINDER_SEND_TIMES: ReminderSendTimesData = {
+  weekBeforeTime: '10:00',
+  nightBeforeTime: '18:00',
+  morningOfTime: '08:00',
+  artistDayBeforeTime: '07:00',
+}
+
+// Each template only offers the placeholders it actually has data for --
+// e.g. an artist never has a waiverLink, an estimate follow-up has no
+// appointment at all. Kept as a plain array (not a Record) so display
+// order matches the page, same convention as POLICY_HTML_FIELDS.
+const REMINDER_TEMPLATE_FIELDS: { key: keyof ReminderTemplatesData; label: string; placeholders: string[] }[] = [
+  {
+    key: 'clientWeekBefore',
+    label: 'Client Reminder — 1 Week Before',
+    placeholders: ['clientFirstName', 'appointmentDate', 'appointmentTime', 'artistName', 'waiverLink', 'studioName'],
+  },
+  {
+    key: 'clientNightBefore',
+    label: 'Client Reminder — Night Before',
+    placeholders: ['clientFirstName', 'appointmentDate', 'appointmentTime', 'artistName', 'waiverLink', 'studioName'],
+  },
+  {
+    key: 'clientMorningOf',
+    label: 'Client Reminder — Morning Of',
+    placeholders: ['clientFirstName', 'appointmentDate', 'appointmentTime', 'artistName', 'waiverLink', 'studioName'],
+  },
+  {
+    key: 'artistDayBefore',
+    label: 'Artist Reminder — Day Before',
+    placeholders: ['artistName', 'studioName'],
+  },
+  {
+    key: 'estimateFollowUp',
+    label: 'Estimate Follow-Up',
+    placeholders: ['clientFirstName', 'estimateLink', 'studioName'],
+  },
+]
+
+// Rough GSM-7 segment estimate (160 chars single-segment, 153/segment once
+// concatenated) -- good enough for the live counter's purpose of warning
+// "this got long", not a byte-exact carrier billing calculation (which
+// would also need to detect accented/emoji characters forcing UCS-2's
+// shorter 70/67-char limits).
+function estimateSmsSegments(text: string): { length: number; segments: number } {
+  const length = text.length
+  if (length === 0) return { length, segments: 0 }
+  if (length <= 160) return { length, segments: 1 }
+  return { length, segments: Math.ceil(length / 153) }
 }
 
 interface BusinessHoursDay {
@@ -175,6 +247,19 @@ const JOB_DISPLAY: Record<string, { friendlyName: string; plainDescription: stri
   coldLeadSweep: {
     friendlyName: 'Cold Lead Detection',
     plainDescription: 'Automatically flags inquiries as cold leads after a period of no activity.',
+  },
+  clientAppointmentReminders: {
+    friendlyName: 'Appointment Reminders (Clients)',
+    plainDescription:
+      'Texts clients a week before, the night before, and the morning of their appointment, in the studio’s own local time.',
+  },
+  artistAppointmentReminders: {
+    friendlyName: 'Appointment Reminders (Artists)',
+    plainDescription: 'Sends each artist one consolidated text listing their appointments for the next day.',
+  },
+  estimateFollowUpReminder: {
+    friendlyName: 'Estimate Follow-Up',
+    plainDescription: 'Texts a client who opened an estimate but hasn’t responded within 24 hours.',
   },
 }
 
@@ -421,6 +506,22 @@ export default function Settings() {
   const [businessHoursSaving, setBusinessHoursSaving] = useState(false)
   const [businessHoursError, setBusinessHoursError] = useState<string | null>(null)
 
+  // Reminder templates: each of the 5 fixed keys edits through its own
+  // modal (same edit-icon convention as POLICY_HTML_FIELDS), just a plain
+  // textarea instead of RichTextEditor since these are SMS bodies.
+  const [editingReminderTemplate, setEditingReminderTemplate] = useState<keyof ReminderTemplatesData | null>(null)
+  const [reminderTemplateDraft, setReminderTemplateDraft] = useState('')
+  const [reminderTemplateSaving, setReminderTemplateSaving] = useState(false)
+  const [reminderTemplateError, setReminderTemplateError] = useState<string | null>(null)
+  const reminderTemplateTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+
+  // Reminder send times: same own-card, own-Edit-toggle treatment as
+  // Business Hours above.
+  const [reminderSendTimes, setReminderSendTimes] = useState<ReminderSendTimesData>(DEFAULT_REMINDER_SEND_TIMES)
+  const [editingSendTimes, setEditingSendTimes] = useState(false)
+  const [sendTimesSaving, setSendTimesSaving] = useState(false)
+  const [sendTimesError, setSendTimesError] = useState<string | null>(null)
+
   useEffect(() => {
     if (!canViewPolicies) return
 
@@ -436,6 +537,7 @@ export default function Settings() {
         setBusinessHours(
           data.businessHours && data.businessHours.length > 0 ? data.businessHours : defaultBusinessHours(),
         )
+        setReminderSendTimes(data.reminderSendTimes ?? DEFAULT_REMINDER_SEND_TIMES)
       })
       .catch(() => {
         // Section just stays empty if this fails; not critical page content.
@@ -599,6 +701,75 @@ export default function Settings() {
       setBusinessHoursError(err instanceof Error ? err.message : 'Failed to save')
     } finally {
       setBusinessHoursSaving(false)
+    }
+  }
+
+  function openReminderTemplateModal(key: keyof ReminderTemplatesData) {
+    setEditingReminderTemplate(key)
+    setReminderTemplateDraft(policies?.reminderTemplates?.[key] ?? '')
+    setReminderTemplateError(null)
+  }
+
+  // Inserts at the textarea's current cursor position (falling back to
+  // appending at the end if the ref isn't mounted yet), then restores
+  // focus and moves the cursor past what was just inserted -- so clicking
+  // several chips in a row builds the message left-to-right as expected.
+  function insertReminderPlaceholder(token: string) {
+    const insertText = `{{${token}}}`
+    const textarea = reminderTemplateTextareaRef.current
+    if (!textarea) {
+      setReminderTemplateDraft((current) => current + insertText)
+      return
+    }
+    const start = textarea.selectionStart ?? reminderTemplateDraft.length
+    const end = textarea.selectionEnd ?? reminderTemplateDraft.length
+    const next = reminderTemplateDraft.slice(0, start) + insertText + reminderTemplateDraft.slice(end)
+    setReminderTemplateDraft(next)
+    requestAnimationFrame(() => {
+      textarea.focus()
+      const cursor = start + insertText.length
+      textarea.setSelectionRange(cursor, cursor)
+    })
+  }
+
+  async function handleReminderTemplateSave() {
+    if (!editingReminderTemplate || !policies) return
+    setReminderTemplateSaving(true)
+    setReminderTemplateError(null)
+    try {
+      const nextTemplates = { ...(policies.reminderTemplates as ReminderTemplatesData), [editingReminderTemplate]: reminderTemplateDraft }
+      const updated = await apiFetch<StudioSettingsData>('/studio-settings', {
+        method: 'PATCH',
+        body: JSON.stringify({ reminderTemplates: nextTemplates }),
+      })
+      setPolicies(updated)
+      setEditingReminderTemplate(null)
+    } catch (err) {
+      setReminderTemplateError(err instanceof Error ? err.message : 'Failed to save')
+    } finally {
+      setReminderTemplateSaving(false)
+    }
+  }
+
+  function updateSendTime(field: keyof ReminderSendTimesData, value: string) {
+    setReminderSendTimes((current) => ({ ...current, [field]: value }))
+  }
+
+  async function handleSendTimesSave() {
+    setSendTimesSaving(true)
+    setSendTimesError(null)
+    try {
+      const updated = await apiFetch<StudioSettingsData>('/studio-settings', {
+        method: 'PATCH',
+        body: JSON.stringify({ reminderSendTimes }),
+      })
+      setPolicies(updated)
+      setReminderSendTimes(updated.reminderSendTimes ?? DEFAULT_REMINDER_SEND_TIMES)
+      setEditingSendTimes(false)
+    } catch (err) {
+      setSendTimesError(err instanceof Error ? err.message : 'Failed to save')
+    } finally {
+      setSendTimesSaving(false)
     }
   }
 
@@ -1501,6 +1672,114 @@ export default function Settings() {
             </div>
           )}
 
+          {canViewPolicies && policies && (
+            <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
+              <div>
+                <h2 className="text-lg font-semibold text-fg">Reminder Templates &amp; Send Times</h2>
+                <p className="mt-1 text-sm text-fg-secondary">
+                  Wording and local send times for the automatic client/artist appointment reminders and the estimate
+                  follow-up text.
+                </p>
+              </div>
+
+              <div className="mt-4 divide-y divide-border">
+                {REMINDER_TEMPLATE_FIELDS.map(({ key, label }) => (
+                  <div key={key} className="flex items-center justify-between gap-3 py-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-fg">{label}</p>
+                      <p className="mt-0.5 truncate text-xs text-fg-secondary">
+                        {policies.reminderTemplates?.[key] || 'Not set'}
+                      </p>
+                    </div>
+                    {canEditPolicies && (
+                      <button
+                        type="button"
+                        onClick={() => openReminderTemplateModal(key)}
+                        aria-label={`Edit ${label}`}
+                        title={`Edit ${label}`}
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface-inset hover:text-fg"
+                      >
+                        <PencilIcon className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-4 rounded-xl border border-border p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-semibold text-fg">Send Times</p>
+                  {canEditPolicies && !editingSendTimes && (
+                    <button
+                      type="button"
+                      onClick={() => setEditingSendTimes(true)}
+                      className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                    >
+                      Edit
+                    </button>
+                  )}
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
+                  {(
+                    [
+                      { field: 'weekBeforeTime', label: '1 week before' },
+                      { field: 'nightBeforeTime', label: 'Night before' },
+                      { field: 'morningOfTime', label: 'Morning of' },
+                      { field: 'artistDayBeforeTime', label: 'Artist day-before' },
+                    ] as { field: keyof ReminderSendTimesData; label: string }[]
+                  ).map(({ field, label }) => (
+                    <div key={field}>
+                      <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{label}</p>
+                      {editingSendTimes ? (
+                        <input
+                          type="time"
+                          value={reminderSendTimes[field]}
+                          onChange={(e) => updateSendTime(field, e.target.value)}
+                          className="mt-1 rounded-lg border border-border bg-surface-inset px-2 py-1 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                        />
+                      ) : (
+                        <p className="mt-1 text-sm text-fg-secondary">{reminderSendTimes[field]}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                <p className="mt-3 text-xs text-fg-muted">
+                  Times are in the studio's own timezone ({timezoneLabel(policies.timezone)}), checked every 15
+                  minutes.
+                </p>
+
+                {sendTimesError && <p className="mt-3 text-sm text-danger">{sendTimesError}</p>}
+
+                {editingSendTimes && (
+                  <div className="mt-4 flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={handleSendTimesSave}
+                      disabled={sendTimesSaving}
+                      className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                    >
+                      {sendTimesSaving ? 'Saving…' : 'Save times'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingSendTimes(false)
+                        setSendTimesError(null)
+                        setReminderSendTimes(policies.reminderSendTimes ?? DEFAULT_REMINDER_SEND_TIMES)
+                      }}
+                      disabled={sendTimesSaving}
+                      className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {editingField && (
             <Modal
               title={`Edit ${POLICY_HTML_FIELDS.find((f) => f.key === editingField)?.label ?? ''}`}
@@ -1521,6 +1800,66 @@ export default function Settings() {
                   type="button"
                   onClick={() => setEditingField(null)}
                   disabled={fieldSaving}
+                  className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+              </div>
+            </Modal>
+          )}
+
+          {editingReminderTemplate && (
+            <Modal
+              title={`Edit ${REMINDER_TEMPLATE_FIELDS.find((f) => f.key === editingReminderTemplate)?.label ?? ''}`}
+              onClose={() => setEditingReminderTemplate(null)}
+            >
+              <div className="flex flex-wrap gap-2">
+                {REMINDER_TEMPLATE_FIELDS.find((f) => f.key === editingReminderTemplate)?.placeholders.map(
+                  (token) => (
+                    <button
+                      key={token}
+                      type="button"
+                      onClick={() => insertReminderPlaceholder(token)}
+                      className="rounded-full border border-border bg-surface-inset px-2.5 py-1 text-xs font-medium text-fg-secondary transition hover:bg-surface hover:text-fg"
+                    >
+                      {`{{${token}}}`}
+                    </button>
+                  ),
+                )}
+              </div>
+
+              <textarea
+                ref={reminderTemplateTextareaRef}
+                rows={5}
+                value={reminderTemplateDraft}
+                onChange={(e) => setReminderTemplateDraft(e.target.value)}
+                className="mt-3 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+
+              {(() => {
+                const { length, segments } = estimateSmsSegments(reminderTemplateDraft)
+                return (
+                  <p className="mt-2 text-xs text-fg-muted">
+                    {length}/160 characters &middot; {segments} SMS segment{segments === 1 ? '' : 's'}
+                  </p>
+                )
+              })()}
+
+              {reminderTemplateError && <p className="mt-3 text-sm text-danger">{reminderTemplateError}</p>}
+
+              <div className="mt-4 flex gap-3">
+                <button
+                  type="button"
+                  onClick={handleReminderTemplateSave}
+                  disabled={reminderTemplateSaving}
+                  className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                >
+                  {reminderTemplateSaving ? 'Saving…' : 'Save'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingReminderTemplate(null)}
+                  disabled={reminderTemplateSaving}
                   className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
                 >
                   Cancel
@@ -1863,7 +2202,8 @@ export default function Settings() {
             <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
               <h2 className="text-lg font-semibold text-fg">System</h2>
               <p className="mt-1 text-sm text-fg-secondary">
-                These are automatic tasks that run every night to keep your data up to date.
+                These automatic tasks run on their own schedule (some nightly, some every 15 minutes) to keep your
+                data up to date.
               </p>
 
               {jobsError && <p className="mt-4 text-sm text-danger">{jobsError}</p>}

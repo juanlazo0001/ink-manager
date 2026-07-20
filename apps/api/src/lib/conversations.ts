@@ -93,13 +93,15 @@ export async function getUnreadConversationCount(studioId: string, userId: strin
 }
 
 // Get-or-create for a STAFF thread, callable from server-side flows (like
-// the share-to-artist route) that need to land a message in a staff
-// member's thread without going through the user-facing POST /conversations
-// route -- same idempotent get-or-create semantics, just as a function.
+// the share-to-artist route, and Phase 7B-2's artist reminder digest,
+// which passes null since no staff member drove that creation) that need
+// to land a message in a staff member's thread without going through the
+// user-facing POST /conversations route -- same idempotent get-or-create
+// semantics, just as a function.
 export async function getOrCreateStaffConversation(
   studioId: string,
   staffUserId: string,
-  actorUserId: string,
+  actorUserId: string | null,
 ): Promise<{ conversation: { id: string }; created: boolean }> {
   const existing = await prisma.conversation.findUnique({ where: { staffUserId } });
   if (existing) return { conversation: existing, created: false };

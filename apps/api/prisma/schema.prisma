@@ -130,6 +130,7 @@ model Studio {
   conversationTags ConversationTag[]
   prefillDrafts    PrefillDraft[]
   integrations     StudioIntegration[]
+  artistReminderLogs ArtistReminderLog[]
 }
 
 // Self-serve provider connections -- a studio owner connects their OWN
@@ -260,6 +261,7 @@ model Artist {
   appointments       Appointment[]
   preferredInquiries Inquiry[]     @relation("PreferredArtist")
   assignedInquiries  Inquiry[]     @relation("AssignedArtist")
+  reminderLogs       ArtistReminderLog[]
 }
 
 model Client {
@@ -358,6 +360,14 @@ model Appointment {
   checkedOutById String?
   checkedOutBy   User?     @relation("AppointmentCheckedOutBy", fields: [checkedOutById], references: [id])
 
+  // Phase 7B-2: per-appointment dedup for the client reminder cadence (one
+  // week before, night before, morning of) -- each is set once its own
+  // reminder actually sends, so the ticker never double-sends the same
+  // reminder type for the same appointment across multiple 15-minute ticks.
+  reminderWeekSentAt        DateTime?
+  reminderNightBeforeSentAt DateTime?
+  reminderMorningOfSentAt   DateTime?
+
   studioId String
   studio   Studio @relation(fields: [studioId], references: [id])
 
@@ -437,6 +447,12 @@ model Inquiry {
   estimateSentAt         DateTime?
   estimateOpenedAt       DateTime?
   estimateRespondedAt    DateTime?
+  // Phase 7B-2: set once the 24-hour-after-opened follow-up text actually
+  // sends. Reset to null wherever estimateOpenedAt/estimateRespondedAt
+  // already get reset on a resend (POST /:id/send-estimate) -- a resent
+  // estimate is a new estimate event, and the old follow-up shouldn't
+  // block a fresh one from ever firing again.
+  estimateFollowUpSentAt DateTime?
   // The studio's estimate T&C text exactly as it was when this estimate was
   // sent, so a later edit to StudioSettings.estimateTerms never retroactively
   // changes what a client already saw/agreed to.
@@ -519,6 +535,18 @@ model StudioSettings {
   // Array<{ dayOfWeek: 0-6 (0 = Sunday), isOpen: boolean, openTime?: "HH:MM", closeTime?: "HH:MM" }>
   // Null/missing day = treated as closed (never silently "open all day").
   businessHours Json?
+  // Phase 7B-2: plain-text SMS templates for the automated reminder
+  // cadence -- deliberately separate from messageTemplates above (that's
+  // the composer's own manual "insert template" menu, a different
+  // concept). Shape: { clientWeekBefore, clientNightBefore, clientMorningOf,
+  // artistDayBefore, estimateFollowUp }, each a plain string with
+  // {{placeholder}} tokens filled in at send time.
+  reminderTemplates Json?
+  // Shape: { weekBeforeTime, nightBeforeTime, morningOfTime,
+  // artistDayBeforeTime }, each "HH:MM" in this studio's own timezone
+  // (see the `timezone` field above) -- checked against
+  // isWithinSendWindow (lib/reminderWindow.ts) by the 15-minute ticker.
+  reminderSendTimes Json?
   createdAt                     DateTime @default(now())
   updatedAt                     DateTime @updatedAt
 
@@ -916,4 +944,22 @@ model JobRun {
 
   @@unique([jobName, scheduledFor])
   @@index([jobName, scheduledFor])
+}
+
+// Phase 7B-2: the artist day-before digest is one consolidated message per
+// artist per day (not per-appointment), so its dedup can't live on
+// Appointment the way the client cadence's does -- it needs its own record
+// keyed by (artist, the date being reminded about).
+model ArtistReminderLog {
+  id       String   @id @default(cuid())
+  forDate  DateTime
+  sentAt   DateTime @default(now())
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  artistId String
+  artist   Artist @relation(fields: [artistId], references: [id])
+
+  @@unique([artistId, forDate])
 }

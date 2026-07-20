@@ -16,6 +16,15 @@ export interface JobDefinition {
   // registration: studios can be added/removed at runtime and node-cron
   // has no notion of that, so one global tick iterates every studio.
   schedule: string;
+  // Minutes between this job's own JobRun dedup slots (see computeSlot
+  // below). Defaults to 1440 (one day) -- correct for the original
+  // Phase 7A daily sweeps, but a job that ticks more often than once a
+  // day MUST set this to its own real cadence (e.g. 15 for a 15-minute
+  // ticker), or every tick after the first each day silently collides
+  // with the first tick's already-claimed JobRun row and gets skipped --
+  // a bug this comment exists because it was found the hard way once
+  // already (see Phase 7B-2's reminder ticker).
+  slotMinutes?: number;
   run: (scheduledFor: Date) => Promise<JobDetails>;
 }
 
@@ -102,8 +111,24 @@ export async function runJob(jobName: string, scheduledFor: Date): Promise<RunJo
 // same calendar day compute the identical Date, which is what makes the
 // double-run guard above actually catch them regardless of a few
 // milliseconds' (or even minutes') difference in real fire time.
+//
+// Kept as its own named export (rather than inlining computeSlot(date,
+// 1440) everywhere) since it's the one every existing Phase 7A job
+// implicitly relied on before slotMinutes existed.
 export function startOfUtcDay(date: Date): Date {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+}
+
+// Generalizes startOfUtcDay to an arbitrary slot size: floors the given
+// instant to the nearest slotMinutes boundary since the Unix epoch. For
+// slotMinutes=1440 this produces exactly the same Date startOfUtcDay does
+// (the epoch itself falls on a UTC day boundary), so every existing daily
+// job's behavior is unchanged; a 15-minute job instead gets a fresh,
+// distinct slot every 15 minutes all day long, rather than colliding with
+// its own first successful run until midnight UTC.
+export function computeSlot(date: Date, slotMinutes: number): Date {
+  const slotMs = slotMinutes * 60 * 1000;
+  return new Date(Math.floor(date.getTime() / slotMs) * slotMs);
 }
 
 // Registers a cron.schedule tick for every registered job. Called once at
@@ -112,8 +137,9 @@ export function startOfUtcDay(date: Date): Date {
 // this.
 export function startScheduler(): void {
   for (const job of listJobs()) {
+    const slotMinutes = job.slotMinutes ?? 1440;
     cron.schedule(job.schedule, () => {
-      void runJob(job.name, startOfUtcDay(new Date()));
+      void runJob(job.name, computeSlot(new Date(), slotMinutes));
     });
     console.log(`[jobs] scheduled "${job.name}": ${job.schedule}`);
   }

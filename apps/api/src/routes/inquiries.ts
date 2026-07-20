@@ -2,7 +2,7 @@ import { Router } from "express";
 import crypto from "node:crypto";
 import { prisma } from "../lib/prisma";
 import { AppointmentStatus, Channel, InquiryStatus, MessageChannel, MessageDirection } from "../../generated/prisma/enums";
-import { requireAuth, requireRole } from "../middleware/auth";
+import { optionalAuth, requireAuth, requireRole } from "../middleware/auth";
 import { Role } from "../../generated/prisma/enums";
 import { diffObjects, logAudit } from "../lib/audit";
 import { validateGiftCardForAttachment } from "../lib/giftCards";
@@ -58,14 +58,22 @@ router.get("/prefill/:token", async (req, res) => {
   res.json({ payload: draft.payload });
 });
 
-// Public: the intake form is unauthenticated. Creates the Client (or reuses
-// an existing one, matched by email within the studio) and the Inquiry
-// together, so the studio's pipeline sees a single lead rather than a
-// duplicate client every time the same person submits again.
-router.post("/", async (req, res) => {
+// Public *and* staff: the intake form is unauthenticated and always hits
+// this route with a studioSlug. Front desk logging a walk-in/phone inquiry
+// on a customer's behalf (StaffInquiryForm) hits the same route while
+// authenticated -- optionalAuth populates req.user in that case, which is
+// used below both to skip the studioSlug requirement (the studio is
+// already known from the JWT) and to attribute the create in the audit log.
+// Either way this creates the Client (or reuses an existing one, matched by
+// email within the studio) and the Inquiry together, so the studio's
+// pipeline sees a single lead rather than a duplicate client every time the
+// same person submits again.
+router.post("/", optionalAuth, async (req, res) => {
   const body = req.body ?? {};
+  const isStaffRequest = Boolean(req.user);
 
-  const missing = REQUIRED_FIELDS.filter((field) => !body[field]);
+  const requiredFields = isStaffRequest ? REQUIRED_FIELDS.filter((field) => field !== "studioSlug") : REQUIRED_FIELDS;
+  const missing = requiredFields.filter((field) => !body[field]);
   if (missing.length > 0) {
     return res.status(400).json({ error: `Missing required field(s): ${missing.join(", ")}` });
   }
@@ -106,7 +114,9 @@ router.post("/", async (req, res) => {
     draftToken,
   } = body;
 
-  const studio = await prisma.studio.findUnique({ where: { slug: studioSlug } });
+  const studio = isStaffRequest
+    ? await prisma.studio.findUnique({ where: { id: req.user!.studioId } })
+    : await prisma.studio.findUnique({ where: { slug: studioSlug } });
   if (!studio) {
     return res.status(404).json({ error: "Studio not found" });
   }
@@ -168,6 +178,17 @@ router.post("/", async (req, res) => {
 
   if (draft) {
     await prisma.prefillDraft.update({ where: { id: draft.id }, data: { usedAt: new Date() } });
+  }
+
+  if (isStaffRequest) {
+    await logAudit({
+      studioId: studio.id,
+      actorUserId: req.user!.userId,
+      entityType: "Inquiry",
+      entityId: inquiry.id,
+      action: "create-by-staff",
+      changes: { clientId: client.id, channel },
+    });
   }
 
   res.status(201).json(inquiry);
@@ -570,8 +591,11 @@ router.post("/:id/send-estimate", requireAuth, requireRole(Role.OWNER, Role.FRON
     timeEstimateHoursMax: effective.timeEstimateHoursMax,
     // A resend is a new estimate event -- prior open/response timing no
     // longer describes the estimate the client is about to see. It's still
-    // recoverable from the audit log below if needed.
-    ...(isResend ? { estimateOpenedAt: null, estimateRespondedAt: null } : {}),
+    // recoverable from the audit log below if needed. estimateFollowUpSentAt
+    // resets alongside them (Phase 7B-2) so the 24-hour follow-up text can
+    // fire again for the freshly-resent estimate rather than staying
+    // silently blocked by a follow-up that already went out for the old one.
+    ...(isResend ? { estimateOpenedAt: null, estimateRespondedAt: null, estimateFollowUpSentAt: null } : {}),
   };
 
   const updated = await prisma.inquiry.update({
@@ -591,6 +615,7 @@ router.post("/:id/send-estimate", requireAuth, requireRole(Role.OWNER, Role.FRON
       "estimateSentAt",
       "estimateOpenedAt",
       "estimateRespondedAt",
+      "estimateFollowUpSentAt",
       "priceEstimateLow",
       "priceEstimateHigh",
       "timeEstimateHoursMin",

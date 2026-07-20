@@ -5,5 +5,6 @@
 // GET /jobs, regardless of whether the file exists.
 import "./giftCardExpirationSweep";
 import "./coldLeadSweep";
+import "./reminderTicker";
 
 export { startScheduler, runJob, getJob, listJobs } from "./registry";
