@@ -1,105 +1,96 @@
-# Consolidated Session — Multi-contact merge, client page buttons, calendar "today" fix, comprehensive artist creation
+# Consolidated Phase 7B — Integrations framework + live SMS, then the full reminder cadence
 
-Four parts, one session, on `main`. Each part committed and pushed independently before the next began. `ConversationsPanel.tsx` was not touched at all this session — confirmed up front that none of the four parts required it.
+Two parts, one session, on `main`. Each part committed and pushed independently before the next began.
 
 **Standing rule honored at every checkpoint:** `cd apps/web && npm run build` (zero TS errors) and `cd apps/api && npx tsc --noEmit` (zero TS errors) both clean before every commit below.
 
 ---
 
-## Part 1 — Multi-contact phones/emails + merge carry-over
+## Part 1 — Integrations framework + live SMS (Twilio)
 
-Commit `7a784f8`.
+Commit `dd33f4c`.
 
-`Client.phone`/`Client.email` are untouched in meaning — still the "primary" scalar fields every existing consumer (intake form, waivers, duplicate detection, `PhoneInput` default) keeps reading unchanged. New `ClientPhone`/`ClientEmail` tables are a purely additive secondary-contact layer, kept in sync by one shared helper (`apps/api/src/lib/clientContacts.ts`) called from every path that creates or edits a client: `POST /clients`, the public intake form's client creation, and `PATCH /clients/:id`. Every existing client got a primary alias row backfilled in the same migration.
+Built a self-serve, multi-tenant integrations chassis (`StudioIntegration`, keyed by `studioId`+`channel`) so a studio owner connects their own provider account via Settings → Integrations — no per-studio credentials ever live in a Railway env var. Email/Instagram/Facebook/Google Calendar are defined as channels but show "Coming soon"; SMS via Twilio is fully built.
 
-New endpoints (OWNER/FRONT_DESK, audited): add/remove/make-primary for both phones and emails. A newly added contact always starts as secondary — never auto-promoted, even for a client with no phone/email on file yet — so a client always ends up with the primary its owner actually chose via an explicit "Make primary" action. Removing the current primary is rejected unless it's the only one left, in which case removal also nulls `Client.phone`/`Client.email`.
+- **Encryption**: `lib/secrets.ts`, AES-256-GCM, 32-byte key from `INTEGRATION_ENCRYPTION_KEY` (base64). No route ever returns a decrypted secret — only masked display (`AC…**** · +1XXXXXXXXXX`).
+- **Connect flow**: Account SID/Auth Token/From number are validated against Twilio's real API before anything is stored; on success the studio is `CONNECTED` with an encrypted secret and masked display name; on failure, `ERROR` + `lastError`, nothing half-stored. Connect/disconnect are audited (channel + masked display only, never the secret).
+- **Outbound**: the conversation composer sends a real SMS when the studio is `CONNECTED` and the client has a phone and isn't opted out — a `Message` row is persisted only on Twilio's acceptance, with `metadata.providerSid`/`deliveryStatus`. Any other case (not connected, other channel) is the original log-only behavior — zero regression.
+- **Inbound**: `POST /webhooks/twilio/sms` (public). Studio is resolved by the `To` number matching a `CONNECTED` integration **first**, then that studio's own decrypted Auth Token verifies `X-Twilio-Signature` — verifying the signature before knowing which studio's token to check against is structurally impossible, and this ordering is the multi-tenant security hinge of the whole webhook. Client is matched by phone (including `ClientPhone` aliases) or auto-created; MMS media is re-uploaded server-side to Cloudinary since Twilio's media URLs need Twilio's own Basic Auth to fetch.
+- **Opt-out**: STOP/UNSUBSCRIBE/CANCEL/QUIT sets `Client.smsOptedOutAt` (audited as a system action); START/UNSTOP clears it. Outbound to an opted-out client is refused server-side regardless of what the UI shows.
 
-**Merge behavior — the actual ask.** Merging source into survivor now carries over the source's phone/email (and any secondary aliases it already had, including ones carried over from an earlier merge) onto the survivor as new secondary aliases, skipping anything already identical there. The survivor's own primary is never touched.
+**Real bug found and fixed during live verification**: Twilio's API rejects a `localhost` `StatusCallback` URL outright, which would have silently broken every real outbound send in local dev. `TWILIO_STATUS_CALLBACK_URL` now resolves to `null` whenever `API_PUBLIC_URL` contains `localhost`.
 
-**Merge audit-entry format**, verified live (merged a client with phone `9195550101` into a survivor with phone `9195550102`):
-```json
-{
-  "sourceClientId": "cmrt1uizm0000psi2zpb1vkaj",
-  "survivorId": "cmrt1ujk60003psi2a2x1tn3k",
-  "repointed": { "Appointment": 0, "ConsentForm": 0, "Inquiry": 0, "GiftCard": 0 },
-  "conversation": { "merged": false, "movedMessages": 0 },
-  "aliasesAdded": {
-    "addedPhones": [{ "phone": "9195550101", "label": null }],
-    "addedEmails": [{ "email": "source-p1@example.com", "label": null }]
-  }
-}
-```
+**Webhook URL** (dev): `http://localhost:4000/webhooks/twilio/sms`. **Railway variable to set before going live in production: `API_PUBLIC_URL`** (same loud-fallback pattern as `PUBLIC_APP_URL`).
 
-Duplicate detection (`GET /clients/:id/potential-duplicates`) now matches on any known alias, not just the primary scalar fields — verified live: a client whose only match was a *secondary* alias correctly surfaced as a duplicate. Also had to extend the existing permanent-delete cascade to clean up `ClientPhone`/`ClientEmail` rows first, since both carry a `Restrict` FK to `Client` that the prior session's delete transaction had no way to know about yet — an untouched migration would have silently broken every client delete once the backfill ran.
-
-Phase 7B-1 (SMS inbound webhook) has not landed on main — nothing to wire an alias-aware phone lookup into yet; noted as a follow-up for whenever it does.
+Live Twilio verification used Black Hive's own real (Full, non-trial) Twilio account, connected through the actual running Settings → Integrations form — never seeded into `.env` or the database directly. One real send came back `undelivered` / error 30034, which is Twilio's A2P 10DLC carrier-registration requirement — an external, account-level compliance step, unrelated to any code in this repo.
 
 ---
 
-## Part 2 — Client page icon button + consolidated copy menu
+## Part 2 — Full reminder cadence, estimate follow-up, editable templates, studio-local scheduling
 
-Commit `058e309`. Depended on Part 1 for the alias data behind "Copy customer details."
+Commit `e658e1f`. Depended on Part 1's send path (`sendClientSms`/new `sendStaffSms`) and Phase 7A's job scheduler.
 
-The Message button on the client profile now matches the responsive icon-button pattern already established on Inquiry detail (icon+label at ≥768px, icon-only with `aria-label`/`title` below that) — reuses the existing `MessageIcon`, no second icon for the same action.
+### Studio-local scheduling
+Replaced fixed-UTC-cron scheduling for this cadence with three separately-registered 15-minute-tick jobs — `clientAppointmentReminders`, `artistAppointmentReminders`, `estimateFollowUpReminder` — rather than one combined job, so the System panel shows the three friendly names the task asked for ("Appointment Reminders (Clients)", "Appointment Reminders (Artists)", "Estimate Follow-Up") each with its own Run Now and JobRun history, and one job's failure never taints another's status.
 
-Replaced the standalone "Copy prefilled intake link" button with a single copy-icon button opening a small popover with two items. **Clipboard text format for "Copy customer details"** (verified via actual clipboard read, not just a toast appearing):
+**Real scheduler bug found and fixed**: `startScheduler()` always computed a job's dedup slot as the start of the current UTC day, regardless of that job's own frequency — a 15-minute job would collide with its own first successful run's `JobRun` row and get silently skipped for the rest of the day. Fixed generically via a new `slotMinutes` field on `JobDefinition` (default 1440, so every Phase 7A daily job's behavior is byte-for-byte unchanged) and a `computeSlot(date, slotMinutes)` function.
+
+**Timezone-window function** — `lib/reminderWindow.ts`, pure and dependency-free (no new timezone library; `Intl.DateTimeFormat`, matching the codebase's existing convention):
+```ts
+isWithinSendWindow(studioTimezone: string, targetTime: string, currentUtcInstant: Date, windowMinutes = 15): boolean
+civilDateKey(date: Date, timeZone: string): string          // "YYYY-MM-DD" in that zone
+daysBetweenCivilDates(fromKey: string, toKey: string): number
 ```
-Survivor MergeP1
-(919) 555-9999 (Test Line)
-(919) 555-0101
-survivor-p1@example.com
-source-p1@example.com
+Verified via 23 unit-test assertions in a throwaway script (deleted after use, no permanent test framework introduced — this repo has none): America/New_York and America/Los_Angeles (DST) vs. Pacific/Honolulu (no DST), midnight edge cases, custom window sizes, and civil-date arithmetic. All 23 passed.
+
+### The cadence itself
+- **Client reminders** (1 week before / night before / morning of): each checked against its own configured send time in the studio's local timezone; dedup via `Appointment.reminderWeekSentAt`/`reminderNightBeforeSentAt`/`reminderMorningOfSentAt`; each links to the appointment's waiver, auto-created via a shared `ensureLiabilityWaiver()` (extracted from `POST /appointments/:id/waiver` so both the manual staff route and this job create/reuse the exact same record).
+- **Artist digest** (7 AM day before, confirmed cadence): **one consolidated message per artist** listing all of tomorrow's appointments, not one text per appointment — verified live: an artist with two appointments on the same day received a single message with both listed. Dedup via a new `ArtistReminderLog` (unique on artist+date, since this is one-per-artist-per-day, not per-appointment). Artists with no phone are skipped gracefully.
+- **Estimate follow-up** (24h after opened, no response): `Inquiry.estimateFollowUpSentAt` gates it; **verified resend resets it** — calling `POST /:id/send-estimate` again on an inquiry that already had a follow-up sent set `estimateFollowUpSentAt` back to `null`, live, confirmed via the route's own response.
+- **Skips are counted, never errors**: not-connected / opted-out / no-phone / send-failed each have their own counter in `JobRun.details.perStudio[studioId]`; a `REMINDERS_NOT_SENT` system task (OWNER/FRONT_DESK only, via the existing task-registry pattern) surfaces whenever any of the three jobs' most recent run recorded a not-connected skip.
+
+**Real waiver bug found and fixed this session**: `ensureLiabilityWaiver` extended a *newly created* waiver's expiry to cover `minValidUntil`, but an *already-existing* waiver (e.g. from an earlier day-of use, or simply already on file when a week-before reminder first needs one) was returned completely as-is — meaning an already-expired token could be linked from a brand-new reminder. Fixed: an existing waiver's `tokenExpiresAt` is now also extended (never shortened) when a later `minValidUntil` is passed. Verified directly: a pre-existing waiver with `tokenExpiresAt` in the past had its expiry correctly pushed out to cover a newly-scheduled appointment, same waiver `id`, same token, `created: false`.
+
+### Live verification (real Twilio send, seeded/backdated data, PowerShell)
+Using the studio's own real, already-`CONNECTED` Twilio account (no shortcuts — every send below went through the actual `sendClientSms`/`sendStaffSms` code path):
+- 3 confirmed appointments repointed to a test client with a real receivable phone, dated exactly 7/1/0 days out (civil-date, studio-local) → all 3 client reminders fired as real Twilio sends, correct dedup field set on each, template placeholders rendered correctly, waiver auto-created/linked. Re-running the same job immediately after: **0 sent**, confirming no double-send.
+- Artist digest: fired once for the artist's tomorrow appointment(s), `ArtistReminderLog` row created; re-run: **0 sent**.
+- Opted-out client with an appointment in the window: skipped, counted (`skippedOptedOut`), no message created.
+- No-phone client: skipped, counted (`skippedNoPhone`) — this path also fired naturally on real, pre-existing dev data (an actual inquiry mid-cadence with no client phone), not just constructed test data.
+- SMS temporarily disconnected via the real `POST /integrations/SMS/disconnect` endpoint: all sends skipped and counted as `skippedNotConnected`; `REMINDERS_NOT_SENT` task appeared in `GET /tasks` immediately after. Reconnected via the real `POST /integrations/SMS/connect` endpoint (same real credentials) afterward.
+- Estimate follow-up: fired once for a backdated (25h-old) opened estimate with a phone; re-run: **0 sent**; resending the estimate reset `estimateFollowUpSentAt` to `null` as designed.
+
+All test client/appointment/inquiry rows created for this were deleted afterward; every appointment's original client/dates were restored; the artist's real phone number and the opted-out flag were reverted.
+
+**A mistake made and corrected during cleanup**: my own cleanup script deleted two `LiabilityWaiver` rows that pre-existed my testing (not ones I'd created) — both unsigned/`PENDING`, never completed by a client. One was fully restored byte-for-byte from data already captured earlier in this same conversation (same `id`, token, timestamps, snapshot text). The second's original token had not been captured before deletion, so it was reconstructed with the same `id`/client/appointment/timestamps/snapshot content but a **freshly generated token** — if that original link had ever been sent to a client and not yet used, it no longer resolves (its audit trail showed only a `create` action, never a sign/verify, so this is very unlikely to have mattered in practice). Flagging this plainly rather than glossing over it.
+
+### Editable templates UI (Settings → Reminder Templates & Send Times)
+New card, same edit-icon-opens-modal convention as the Policies section, but a plain `<textarea>` instead of the WYSIWYG editor: 5 templates, each modal has clickable placeholder chips (insert at cursor) and a live counter (`"215/160 characters · 2 SMS segments"`, GSM-7 estimate). Send times (4 `HH:MM` fields) are their own inline-edit block (Business Hours' toggle-in-card convention), labeled with the studio's own timezone. Verified in-browser via Playwright: card renders, modal opens with the right placeholders per template, chip-click inserts correctly, counter updates live, and all three new jobs show their friendly names and real run history in the System panel.
+
+**Exact default template text seeded** (also live-patched onto the existing dev studio, since seed's upsert never overwrites an already-existing studio):
 ```
-Full name, then every phone (primary first — the API already returns them in that order — each with its label in parentheses if set), then every email the same way. "Copy prefilled link" is the exact prior-session behavior, just relocated into this menu. Both actions show a small transient confirmation toast (replacing the old inline "Copied!" text-swap, since one toast now serves both items). Popover closes on click-outside (same fixed-overlay pattern as the existing "More actions" menu) and on Esc — both verified.
-
----
-
-## Part 3 — Calendar "today" highlight fix
-
-Commit `b5ddd05`. Independent of Parts 1–2.
-
-**Confirmed root cause via computed-style inspection**, not assumption: react-big-calendar's own shipped `react-big-calendar.css` has a same-specificity bare `.rbc-today` rule (`#eaf6ff`, its light-mode wash). Since that stylesheet's `<style>` tag is only injected once `Calendar.tsx` first loads — after `index.css` — it was winning the load-order tie and silently overriding this app's own accent-tinted `.rbc-today` rule, which was already correctly written but never actually rendering. Exact same bug shape as `.rbc-off-range-bg` from the prior session; same fix: scope the selector under `.rbc-calendar` for deterministic specificity.
-
-Not just a specificity fix, though. `dayPropGetter`/`slotPropGetter` apply studio-closed/artist-unavailable shading as an **inline** `background-color` on the very same elements RBC marks `.rbc-today`, and an inline style always beats any stylesheet rule for that property regardless of specificity. Added an inset `box-shadow` ring (a property the grey shading never touches) alongside the background tint, so a day that's both today and closed shows both signals at once instead of one silently hiding the other.
-
-Verified across Month/Week/Day views (subtle, not white, not the closed-grey), then verified the overlap case directly: temporarily marked today's weekday closed via `PATCH /studio-settings`, confirmed via computed styles that the background legitimately loses to the grey inline style (`rgb(18,18,20)`, as expected) while the box-shadow ring (`color(srgb 0.79 0.94 0.19 / 0.55) inset`) still renders — both signals present simultaneously — then reverted business hours back to the original seeded values.
-
----
-
-## Part 4 — Comprehensive atomic artist creation
-
-Commit `c1430f8`. Independent of Parts 1–3.
-
-**Investigated first, per the task's own instruction.** Confirmed the "Guest artist" toggle exists only on the artist edit form (`ArtistDetail.tsx`), absent from the old "+ Add Artist" modal. The old modal collected exactly: name, phone, email, temporary password — nothing else. But the premise that creation was "two sequential calls with no recovery path" turned out to be stale: `POST /studios/:studioId/users` already wrapped `User` + an empty `Artist` row creation in one `prisma.$transaction`. The real gap was that bio, specialties, portfolio, social links, preferred schedule, guest window, and location all required a series of separate follow-up `PATCH` calls after creation — each one a place a partial, half-configured artist account could be left behind, which is the same *shape* of risk the task was worried about, just one step later in the flow.
-
-**Judgment call, documented rather than silently deviating**: instead of forking a second, parallel "create atomically" endpoint, the *existing* transaction in `POST /studios/:studioId/users` was extended to accept the full field set. This avoids duplicating email/password/role validation across two endpoints, and the atomicity guarantee the task asked for is identical either way. The three field-shape validators (`isStringArray`, `isValidDateOrNull`, `isValidPreferredSchedule`) were lifted out of `artists.ts` into `apps/api/src/lib/artistValidation.ts` so this route, `PATCH /artists/:id`, and `PATCH /artists/:id/preferred-schedule` all validate the exact same shapes one way, not three.
-
-**Judgment call #2 — page instead of modal**, exactly as anticipated in the task: a new dedicated page (`apps/web/src/pages/ArtistCreate.tsx`, route `/artists/new`) replaces the modal for this flow specifically, since the schedule editor especially makes this a much richer form than a modal comfortably holds — consistent with how other rich flows in this app (checkout, waiver signing) are already full pages. The Staff-side "Add team member" modal is untouched and still modal-based; reverting Artist creation back to a modal later would just mean deleting this page and restoring the two removed branches in `Team.tsx`.
-
-Also extracted `ArtistDetail.tsx`'s inline preferred-schedule editor into a shared `ScheduleEditor` component (`apps/web/src/components/ScheduleEditor.tsx`), since no such reusable component actually existed yet (contrary to the task's phrasing) — the new creation page and the existing edit page now render the identical interaction pattern instead of a third divergent copy; `ArtistDetail.tsx` itself was refactored to use it too.
-
-**Atomicity proof — not just claimed:**
-- Created an artist with every field populated in one call (name, phone, email, password, avatar, bio, specialties, portfolio image, Instagram/Facebook, preferred schedule, guest window with dates) → succeeded, `201`, and `GET /artists/:id` confirmed every field persisted exactly as sent.
-- Forced a failure: created a second artist with an email that already existed → `409 {"error":"A record with that value already exists"}`.
-- **Queried Postgres directly** (not just the API's error response) after the forced failure:
-  ```
-  Users with dupfail-p4@example.com: [ { id: '...', email: 'dupfail-p4@example.com', name: 'First' } ]   -- exactly one, the first successful attempt
-  Artist rows with the never-should-exist bio: []                                                          -- the failed attempt's data never touched the DB
-  Artist rows with no matching User at all: { count: '0' }                                                 -- no orphaned Artist row from the rolled-back attempt
-  ```
-- Browser: filled out the full creation form (name/phone/email/password, avatar photo, bio, Instagram/Facebook, one specialty, Tuesday 9–5 on the schedule editor, guest toggle checked), submitted, and was redirected straight to the new artist's detail page — showing the "Guest" badge, the populated schedule, bio, and social links immediately, zero follow-up edits. Confirmed the same artist's card on the Artists tab grid shows the guest badge, bio, specialty chips, social icons, and portfolio thumbnail with no additional load-bearing state anywhere else.
+clientWeekBefore: "Hi {{clientFirstName}}, this is a reminder that your appointment with {{artistName}} at {{studioName}} is coming up on {{appointmentDate}} at {{appointmentTime}}. Please complete your waiver here: {{waiverLink}}"
+clientNightBefore: "Hi {{clientFirstName}}, see you tomorrow at {{appointmentTime}} for your appointment with {{artistName}} at {{studioName}}! Waiver: {{waiverLink}}"
+clientMorningOf: "Hi {{clientFirstName}}, today's the day! Your appointment with {{artistName}} at {{studioName}} is at {{appointmentTime}}. Waiver: {{waiverLink}}"
+artistDayBefore: "Hi {{artistName}}, here's your schedule for tomorrow at {{studioName}}:"
+estimateFollowUp: "Hi {{clientFirstName}}, just following up on the estimate we sent for your tattoo -- you can view and respond here: {{estimateLink}}. Let us know if you have any questions! - {{studioName}}"
+```
+Default send times: `weekBeforeTime: "10:00"`, `nightBeforeTime: "18:00"`, `morningOfTime: "08:00"`, `artistDayBeforeTime: "07:00"` — all in the studio's own timezone.
 
 ---
 
 ## Final typecheck state
-`cd apps/web && npm run build` — clean. `cd apps/api && npx tsc --noEmit` — clean. Confirmed clean after every part above, most recently after Part 4.
+`cd apps/web && npm run build` — clean. `cd apps/api && npx tsc --noEmit` — clean. Confirmed clean before both commits.
 
 ## Commits
 | Part | Hash | Message |
 |---|---|---|
-| 1 | `7a784f8` | Multi-contact phones/emails + merge carry-over |
-| 2 | `058e309` | Client page icon button + consolidated copy menu |
-| 3 | `b5ddd05` | Calendar today-highlight fix |
-| 4 | `c1430f8` | Comprehensive atomic artist creation |
+| 1 | `dd33f4c` | Integrations framework + live SMS |
+| 2 | `e658e1f` | Full reminder cadence, estimate follow-up, editable templates, studio-local scheduling |
 
-All four pushed to `origin/main`. Both dev-server shells (API port 4000, web port 5173) killed after this final verification pass.
+Both pushed to `origin/main`.
+
+## Going live in production — read this before assuming a Railway config step is all that's needed
+Two genuinely different things:
+- **`API_PUBLIC_URL`** (and `INTEGRATION_ENCRYPTION_KEY`) are Railway environment variables — platform-level, set once, apply to every studio.
+- **Connecting Black Hive's real Twilio account is not a Railway step at all.** It's an in-app action: an OWNER logging into the deployed app and filling out the real Settings → Integrations → SMS connect form with Black Hive's own Account SID/Auth Token/phone number, exactly the same self-serve flow verified live in Part 1. There is no environment variable for a studio's Twilio credentials, by design — don't look for one in Railway's config when setting this up for real.
