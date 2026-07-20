@@ -115,8 +115,12 @@ export default function ClientDetail() {
   const canManage = profile?.permissions.includes('clients.manage') ?? false
   const canIssueGiftCards = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
   const canMessage = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
+  const canGeneratePrefillLink = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
   const { openPanel } = useConversationPanel()
   const [startingConversation, setStartingConversation] = useState(false)
+  const [copyingPrefillLink, setCopyingPrefillLink] = useState(false)
+  const [prefillLinkCopied, setPrefillLinkCopied] = useState(false)
+  const [prefillLinkError, setPrefillLinkError] = useState<string | null>(null)
 
   async function handleMessage() {
     if (!id) return
@@ -131,6 +135,39 @@ export default function ClientDetail() {
       // Non-critical -- the floating button still works if this fails.
     } finally {
       setStartingConversation(false)
+    }
+  }
+
+  // Same PrefillDraft token mechanism as the conversation composer's
+  // "Prefilled intake link" menu item -- a standalone entry point for
+  // generating one without an active conversation. Whatever contact fields
+  // are populated on this client record go in; missing ones (no email on
+  // file, etc.) are simply omitted, still producing a usable, mostly-empty
+  // link rather than erroring.
+  async function handleCopyPrefillLink() {
+    if (!id || !client) return
+
+    setCopyingPrefillLink(true)
+    setPrefillLinkError(null)
+    try {
+      const draft = await apiFetch<{ prefillUrl: string }>('/prefill-drafts', {
+        method: 'POST',
+        body: JSON.stringify({
+          payload: {
+            firstName: client.firstName,
+            lastName: client.lastName,
+            email: client.email || undefined,
+            phone: client.phone || undefined,
+          },
+        }),
+      })
+      await navigator.clipboard.writeText(draft.prefillUrl)
+      setPrefillLinkCopied(true)
+      setTimeout(() => setPrefillLinkCopied(false), 2000)
+    } catch (err) {
+      setPrefillLinkError(err instanceof Error ? err.message : 'Failed to generate link')
+    } finally {
+      setCopyingPrefillLink(false)
     }
   }
   const queryClient = useQueryClient()
@@ -491,6 +528,16 @@ export default function ClientDetail() {
                           Message
                         </button>
                       )}
+                      {canGeneratePrefillLink && !client.mergedIntoId && (
+                        <button
+                          type="button"
+                          onClick={handleCopyPrefillLink}
+                          disabled={copyingPrefillLink}
+                          className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
+                        >
+                          {prefillLinkCopied ? 'Copied!' : copyingPrefillLink ? 'Generating…' : 'Copy prefilled intake link'}
+                        </button>
+                      )}
                       {canManage && !client.mergedIntoId && (
                         <button
                           type="button"
@@ -504,6 +551,7 @@ export default function ClientDetail() {
                     </div>
                   </div>
                 )}
+                {prefillLinkError && <p className="mt-2 text-sm text-danger">{prefillLinkError}</p>}
               </div>
 
               {canManage && !client.mergedIntoId && duplicates && duplicates.length > 0 && (

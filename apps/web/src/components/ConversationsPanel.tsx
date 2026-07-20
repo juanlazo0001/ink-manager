@@ -1292,6 +1292,54 @@ function ThreadView({
     enabled: isOpen && isClientThread && showLinkMenu && !!data?.conversation.clientId,
   })
 
+  // Contact fields only, for the "Prefilled intake link" menu item below --
+  // a different fetch from linksData above (that route never returns
+  // firstName/lastName/phone/email, only pre-existing token-based links).
+  const { data: clientContact } = useQuery({
+    queryKey: ['client-contact-for-prefill', data?.conversation.clientId],
+    queryFn: () =>
+      apiFetch<{ firstName: string; lastName: string; email: string | null; phone: string | null }>(
+        `/clients/${data!.conversation.clientId}`,
+      ),
+    enabled: isOpen && isClientThread && showLinkMenu && !!data?.conversation.clientId,
+  })
+  const [generatingPrefillLink, setGeneratingPrefillLink] = useState(false)
+
+  // Same PrefillDraft token mechanism as the other 6C link types (7-day TTL,
+  // single-use, quiet empty-form fallback if invalid/expired) -- just built
+  // from whatever contact info the client record already has instead of an
+  // AI-drafted extraction. Deliberately not raw query-string params: a
+  // client's name/phone sitting in a plain URL lands in browser history,
+  // referrer headers, and server logs in cleartext, which is exactly what
+  // the token design exists to avoid.
+  async function handleInsertPrefillLink() {
+    if (!data?.conversation.clientId || !clientContact) return
+
+    setGeneratingPrefillLink(true)
+    try {
+      const draft = await apiFetch<{ prefillUrl: string }>('/prefill-drafts', {
+        method: 'POST',
+        body: JSON.stringify({
+          payload: {
+            firstName: clientContact.firstName,
+            lastName: clientContact.lastName,
+            email: clientContact.email || undefined,
+            phone: clientContact.phone || undefined,
+          },
+          conversationId: data.conversation.id,
+        }),
+      })
+      setBody((current) => (current ? `${current}\n${draft.prefillUrl}` : draft.prefillUrl))
+      setShowLinkMenu(false)
+    } catch {
+      // Non-critical -- the menu just stays open, matching how the other
+      // link types in this same menu handle a failed fetch (no dedicated
+      // error UI, since this is a convenience insert, not a form submit).
+    } finally {
+      setGeneratingPrefillLink(false)
+    }
+  }
+
   // Only fetched once the user actually types "@" -- lazy like the other
   // composer popovers above, and shares its cache key with the roster query
   // in ConversationListView. /conversations/staff is OWNER/FRONT_DESK only
@@ -2180,6 +2228,17 @@ function ThreadView({
 
         {showLinkMenu && isClientThread && (
           <div className="mb-2 max-h-48 overflow-y-auto rounded-lg border border-border p-2 text-sm">
+            <button
+              type="button"
+              disabled={!clientContact || generatingPrefillLink}
+              onClick={handleInsertPrefillLink}
+              className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-fg-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <span>Prefilled intake link</span>
+              <span className="shrink-0 text-fg-muted">
+                {generatingPrefillLink ? 'Generating…' : 'From this client’s info on file'}
+              </span>
+            </button>
             {[
               { label: 'Intake form', url: linksData?.intakeFormUrl ?? null, hint: null },
               ...(linksData?.estimateLinks ?? []),
