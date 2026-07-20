@@ -12,6 +12,7 @@ import type { PermissionKey } from "../lib/permissions";
 import { validateImageDataUrl } from "../lib/images";
 import { diffObjects, logAudit } from "../lib/audit";
 import { normalizePhone } from "../lib/phone";
+import { isStringArray, isValidDateOrNull, isValidPreferredSchedule } from "../lib/artistValidation";
 
 const router = Router();
 
@@ -174,11 +175,73 @@ router.post("/:studioId/users", requireAuth, requireRole(Role.OWNER), async (req
     avatarUrl = result.value;
   }
 
+  if (body.locationId !== undefined && body.locationId !== null && typeof body.locationId !== "string") {
+    return res.status(400).json({ error: "locationId must be a string or null" });
+  }
+  if (body.locationId) {
+    const location = await prisma.location.findUnique({ where: { id: body.locationId } });
+    if (!location || location.studioId !== studioId) {
+      return res.status(400).json({ error: "locationId must belong to your studio" });
+    }
+  }
+
+  // The comprehensive artist-creation page collects the full profile up
+  // front (bio, specialties, portfolio, social links, preferred schedule,
+  // guest window) rather than the bare name/email/password this endpoint
+  // used to accept -- all optional, and only meaningful when role is
+  // ARTIST, but validated here (not just silently accepted) since they end
+  // up in the same all-or-nothing transaction as the User/Artist rows
+  // below. This closes the gap that used to force a series of separate
+  // PATCH calls after creation to fill in a new artist's profile, each one
+  // a place a partial, half-configured account could be left behind.
+  const {
+    bio,
+    specialties,
+    portfolioImages,
+    instagramHandle,
+    facebookProfileUrl,
+    preferredSchedule,
+    isGuest,
+    guestStartDate,
+    guestEndDate,
+  } = body;
+
+  if (bio !== undefined && bio !== null && typeof bio !== "string") {
+    return res.status(400).json({ error: "bio must be a string or null" });
+  }
+  if (specialties !== undefined && !isStringArray(specialties)) {
+    return res.status(400).json({ error: "specialties must be an array of strings" });
+  }
+  if (portfolioImages !== undefined && !isStringArray(portfolioImages)) {
+    return res.status(400).json({ error: "portfolioImages must be an array of strings" });
+  }
+  if (instagramHandle !== undefined && instagramHandle !== null && typeof instagramHandle !== "string") {
+    return res.status(400).json({ error: "instagramHandle must be a string or null" });
+  }
+  if (facebookProfileUrl !== undefined && facebookProfileUrl !== null && typeof facebookProfileUrl !== "string") {
+    return res.status(400).json({ error: "facebookProfileUrl must be a string or null" });
+  }
+  if (preferredSchedule !== undefined && preferredSchedule !== null && !isValidPreferredSchedule(preferredSchedule)) {
+    return res.status(400).json({
+      error: "preferredSchedule must be null or an array of { dayOfWeek: 0-6, startTime: 'HH:MM', endTime: 'HH:MM' }",
+    });
+  }
+  if (isGuest !== undefined && typeof isGuest !== "boolean") {
+    return res.status(400).json({ error: "isGuest must be a boolean" });
+  }
+  if (guestStartDate !== undefined && !isValidDateOrNull(guestStartDate)) {
+    return res.status(400).json({ error: "guestStartDate must be a valid date or null" });
+  }
+  if (guestEndDate !== undefined && !isValidDateOrNull(guestEndDate)) {
+    return res.status(400).json({ error: "guestEndDate must be a valid date or null" });
+  }
+
   const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
 
-  // An ARTIST-role account always gets an Artist profile (bio/specialties/
-  // portfolio) in the same transaction it's created in, so the Team and
-  // Artists pages never fall out of sync with each other.
+  // An ARTIST-role account always gets an Artist profile in the same
+  // transaction it's created in, so the Team and Artists pages never fall
+  // out of sync with each other -- and now that profile can arrive fully
+  // populated, not just an empty shell waiting on follow-up edits.
   const user = await prisma.$transaction(async (tx) => {
     const created = await tx.user.create({
       data: {
@@ -189,14 +252,37 @@ router.post("/:studioId/users", requireAuth, requireRole(Role.OWNER), async (req
         avatarUrl,
         name: name || null,
         phone: phone ? normalizePhone(phone) : null,
+        locationId: body.locationId || null,
       },
     });
 
     if (role === Role.ARTIST) {
-      await tx.artist.create({ data: { userId: created.id, specialties: [], portfolioImages: [] } });
+      await tx.artist.create({
+        data: {
+          userId: created.id,
+          bio: bio?.trim() || null,
+          specialties: specialties ?? [],
+          portfolioImages: portfolioImages ?? [],
+          instagramHandle: instagramHandle?.trim().replace(/^@/, "") || null,
+          facebookProfileUrl: facebookProfileUrl?.trim() || null,
+          preferredSchedule: preferredSchedule ?? undefined,
+          isGuest: isGuest ?? false,
+          guestStartDate: guestStartDate ? new Date(guestStartDate) : null,
+          guestEndDate: guestEndDate ? new Date(guestEndDate) : null,
+        },
+      });
     }
 
-    return created;
+    return tx.user.findUniqueOrThrow({ where: { id: created.id }, include: { artist: { select: { id: true } } } });
+  });
+
+  await logAudit({
+    studioId,
+    actorUserId: req.user!.userId,
+    entityType: "User",
+    entityId: user.id,
+    action: "create",
+    changes: { email, role, name: name || null },
   });
 
   const { password: _userPassword, ...userWithoutPassword } = user;

@@ -9,12 +9,12 @@ import { useUserProfile } from '../context/useUserProfile'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { ArrowLeftIcon, CloseIcon, InstagramIcon, FacebookIcon } from '../components/icons'
 import DatePickerField from '../components/DatePickerField'
-
-interface ScheduleBlock {
-  dayOfWeek: number
-  startTime: string
-  endTime: string
-}
+import ScheduleEditor, {
+  defaultScheduleDays,
+  scheduleBlocksToDays,
+  scheduleDaysToBlocks,
+  type ScheduleBlock,
+} from '../components/ScheduleEditor'
 
 interface Artist {
   id: string
@@ -30,30 +30,11 @@ interface Artist {
   user: { id: string; email: string; name: string | null; phone: string | null; avatarUrl: string | null }
 }
 
-const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-
 interface UploadItem {
   id: string
   previewUrl: string
   status: 'uploading' | 'error'
   error?: string
-}
-
-// Every day disabled by default; enabling one seeds a sensible 9-5 block.
-function defaultSchedule(): (ScheduleBlock | null)[] {
-  return Array.from({ length: 7 }, () => null)
-}
-
-function scheduleToBlocks(days: (ScheduleBlock | null)[]): ScheduleBlock[] {
-  return days.filter((day): day is ScheduleBlock => day !== null)
-}
-
-function blocksToDays(blocks: ScheduleBlock[] | null): (ScheduleBlock | null)[] {
-  const days = defaultSchedule()
-  for (const block of blocks ?? []) {
-    if (block.dayOfWeek >= 0 && block.dayOfWeek <= 6) days[block.dayOfWeek] = block
-  }
-  return days
 }
 
 export default function ArtistDetail() {
@@ -80,7 +61,7 @@ export default function ArtistDetail() {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saveSuccess, setSaveSuccess] = useState(false)
 
-  const [scheduleDays, setScheduleDays] = useState<(ScheduleBlock | null)[]>(defaultSchedule())
+  const [scheduleDays, setScheduleDays] = useState<(ScheduleBlock | null)[]>(defaultScheduleDays())
   const [scheduleSaving, setScheduleSaving] = useState(false)
   const [scheduleError, setScheduleError] = useState<string | null>(null)
   const [scheduleSuccess, setScheduleSuccess] = useState(false)
@@ -138,7 +119,7 @@ export default function ArtistDetail() {
     // hypothetical -- e.g. New_York showed "Jun 30" for a saved "Jul 1").
     setGuestStartDate(artist.guestStartDate ? artist.guestStartDate.slice(0, 10) : '')
     setGuestEndDate(artist.guestEndDate ? artist.guestEndDate.slice(0, 10) : '')
-    setScheduleDays(blocksToDays(artist.preferredSchedule))
+    setScheduleDays(scheduleBlocksToDays(artist.preferredSchedule))
   }
 
   const canEditSchedule =
@@ -147,23 +128,6 @@ export default function ArtistDetail() {
   const isEndedGuest =
     !!artist?.isGuest && !!artist.guestEndDate && new Date(artist.guestEndDate) < new Date()
 
-  function toggleScheduleDay(dayOfWeek: number, enabled: boolean) {
-    setScheduleDays((prev) => {
-      const next = [...prev]
-      next[dayOfWeek] = enabled ? { dayOfWeek, startTime: '09:00', endTime: '17:00' } : null
-      return next
-    })
-  }
-
-  function updateScheduleTime(dayOfWeek: number, field: 'startTime' | 'endTime', value: string) {
-    setScheduleDays((prev) => {
-      const next = [...prev]
-      const day = next[dayOfWeek]
-      if (day) next[dayOfWeek] = { ...day, [field]: value }
-      return next
-    })
-  }
-
   async function handleSaveSchedule() {
     if (!id) return
 
@@ -171,7 +135,7 @@ export default function ArtistDetail() {
     setScheduleError(null)
     setScheduleSuccess(false)
 
-    const blocks = scheduleToBlocks(scheduleDays)
+    const blocks = scheduleDaysToBlocks(scheduleDays)
 
     try {
       await apiFetch(`/artists/${id}/preferred-schedule`, {
@@ -470,54 +434,8 @@ export default function ArtistDetail() {
                   Advisory availability only — doesn't block scheduling, just informs staff.
                 </p>
 
-                <div className="mt-4 space-y-2">
-                  {DAY_NAMES.map((dayName, dayOfWeek) => {
-                    const day = scheduleDays[dayOfWeek]
-                    return (
-                      <div
-                        key={dayOfWeek}
-                        className="flex flex-wrap items-center gap-3 rounded-lg border border-border px-3 py-2"
-                      >
-                        <label className="flex w-32 shrink-0 items-center gap-2 text-sm text-fg-secondary">
-                          {canEditSchedule ? (
-                            <input
-                              type="checkbox"
-                              checked={day !== null}
-                              onChange={(e) => toggleScheduleDay(dayOfWeek, e.target.checked)}
-                              className="h-4 w-4 rounded border-border bg-surface-inset accent-accent"
-                            />
-                          ) : null}
-                          {dayName}
-                        </label>
-
-                        {day ? (
-                          canEditSchedule ? (
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="time"
-                                value={day.startTime}
-                                onChange={(e) => updateScheduleTime(dayOfWeek, 'startTime', e.target.value)}
-                                className="rounded-lg border border-border bg-surface-inset px-2 py-1 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                              />
-                              <span className="text-fg-muted">to</span>
-                              <input
-                                type="time"
-                                value={day.endTime}
-                                onChange={(e) => updateScheduleTime(dayOfWeek, 'endTime', e.target.value)}
-                                className="rounded-lg border border-border bg-surface-inset px-2 py-1 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                              />
-                            </div>
-                          ) : (
-                            <span className="text-sm text-fg-secondary">
-                              {day.startTime} – {day.endTime}
-                            </span>
-                          )
-                        ) : (
-                          <span className="text-sm text-fg-muted">Not available</span>
-                        )}
-                      </div>
-                    )
-                  })}
+                <div className="mt-4">
+                  <ScheduleEditor days={scheduleDays} onChange={setScheduleDays} editable={canEditSchedule} />
                 </div>
 
                 {canEditSchedule && (

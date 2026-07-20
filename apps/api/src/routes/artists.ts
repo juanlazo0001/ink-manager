@@ -5,6 +5,7 @@ import { Role } from "../../generated/prisma/enums";
 import type { Prisma } from "../../generated/prisma/client";
 import { requirePermission } from "../lib/permissions";
 import { diffObjects, logAudit } from "../lib/audit";
+import { isStringArray, isValidDateOrNull, isValidPreferredSchedule } from "../lib/artistValidation";
 
 const router = Router();
 
@@ -136,16 +137,6 @@ router.get("/:id", requirePermission("artists.view"), async (req, res) => {
   res.json(artist);
 });
 
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string");
-}
-
-function isValidDateOrNull(value: unknown): value is string | null {
-  if (value === null) return true;
-  if (typeof value !== "string") return false;
-  return !Number.isNaN(new Date(value).getTime());
-}
-
 router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
   const id = req.params.id as string;
   const { bio, specialties, portfolioImages, instagramHandle, facebookProfileUrl, isGuest, guestStartDate, guestEndDate } =
@@ -226,26 +217,6 @@ router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
 
   res.json(updated);
 });
-
-const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
-
-function isValidPreferredSchedule(value: unknown): value is Array<{ dayOfWeek: number; startTime: string; endTime: string }> {
-  if (!Array.isArray(value)) return false;
-
-  return value.every(
-    (block) =>
-      block &&
-      typeof block === "object" &&
-      typeof block.dayOfWeek === "number" &&
-      Number.isInteger(block.dayOfWeek) &&
-      block.dayOfWeek >= 0 &&
-      block.dayOfWeek <= 6 &&
-      typeof block.startTime === "string" &&
-      TIME_PATTERN.test(block.startTime) &&
-      typeof block.endTime === "string" &&
-      TIME_PATTERN.test(block.endTime),
-  );
-}
 
 // Advisory weekly availability -- editable by OWNER/FRONT_DESK for any
 // artist, or by the artist themselves for their own profile only (checked

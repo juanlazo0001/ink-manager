@@ -7,6 +7,7 @@ import ClientDetail from './pages/ClientDetail'
 import Calendar from './pages/Calendar'
 import AppointmentDetail from './pages/AppointmentDetail'
 import ArtistDetail from './pages/ArtistDetail'
+import ArtistCreate from './pages/ArtistCreate'
 import Settings from './pages/Settings'
 import Profile from './pages/Profile'
 import Team from './pages/Team'
@@ -97,6 +98,14 @@ function App() {
             tab -- redirect so old bookmarks/links survive. Per-artist detail
             (below) is unaffected. */}
         <Route path="/artists" element={<Navigate to="/team?tab=artists" replace />} />
+        <Route
+          path="/artists/new"
+          element={
+            <ProtectedRoute>
+              <ArtistCreate />
+            </ProtectedRoute>
+          }
+        />
         <Route
           path="/artists/:id"
           element={

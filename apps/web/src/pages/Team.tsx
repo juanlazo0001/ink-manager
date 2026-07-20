@@ -140,23 +140,13 @@ export default function Team() {
   const [refreshIndex, setRefreshIndex] = useState(0)
 
   const [showAddModal, setShowAddModal] = useState(false)
-  const [addContext, setAddContext] = useState<'staff' | 'artist'>('staff')
   const [addForm, setAddForm] = useState(EMPTY_ADD_FORM)
   const [addAvatarUrl, setAddAvatarUrl] = useState<string | null>(null)
   const [addFormError, setAddFormError] = useState<string | null>(null)
   const [addSubmitting, setAddSubmitting] = useState(false)
 
   function openAddStaff() {
-    setAddContext('staff')
     setAddForm(EMPTY_ADD_FORM)
-    setAddAvatarUrl(null)
-    setAddFormError(null)
-    setShowAddModal(true)
-  }
-
-  function openAddArtist() {
-    setAddContext('artist')
-    setAddForm({ ...EMPTY_ADD_FORM, role: 'ARTIST' })
     setAddAvatarUrl(null)
     setAddFormError(null)
     setShowAddModal(true)
@@ -325,7 +315,6 @@ export default function Team() {
       setAddForm(EMPTY_ADD_FORM)
       setAddAvatarUrl(null)
       setRefreshIndex((index) => index + 1)
-      if (addContext === 'artist') queryClient.invalidateQueries({ queryKey: artistsQueryKey(user.studioId) })
     } catch (err) {
       setAddFormError(err instanceof Error ? err.message : 'Failed to add team member')
     } finally {
@@ -416,7 +405,7 @@ export default function Team() {
             {isOwner && activeTab === 'artists' && (
               <button
                 type="button"
-                onClick={openAddArtist}
+                onClick={() => navigate('/artists/new')}
                 className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover"
               >
                 <PlusIcon className="h-4 w-4" />
@@ -772,7 +761,7 @@ export default function Team() {
       </div>
 
       {showAddModal && (
-        <Modal title={addContext === 'artist' ? 'Add artist' : 'Add team member'} onClose={() => setShowAddModal(false)}>
+        <Modal title="Add team member" onClose={() => setShowAddModal(false)}>
           <form onSubmit={handleAddSubmit}>
             {addFormError && (
               <div className="mb-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
@@ -861,37 +850,30 @@ export default function Team() {
               />
             </div>
 
-            {addContext === 'artist' ? (
-              <p className="text-xs text-fg-muted">
-                Role: Artist. Their profile on this tab — bio, specialties, portfolio, guest window — can be filled in
-                afterward.
-              </p>
-            ) : (
-              <div>
-                <label htmlFor="addRole" className="mb-1 block text-sm font-medium text-fg-secondary">
-                  Role
-                </label>
-                <select
-                  id="addRole"
-                  value={addForm.role}
-                  onChange={(event) => setAddForm({ ...addForm, role: event.target.value })}
-                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                >
-                  {STAFF_ROLE_OPTIONS.map((role) => (
-                    <option key={role} value={role}>
-                      {formatStatus(role)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
+            <div>
+              <label htmlFor="addRole" className="mb-1 block text-sm font-medium text-fg-secondary">
+                Role
+              </label>
+              <select
+                id="addRole"
+                value={addForm.role}
+                onChange={(event) => setAddForm({ ...addForm, role: event.target.value })}
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+              >
+                {STAFF_ROLE_OPTIONS.map((role) => (
+                  <option key={role} value={role}>
+                    {formatStatus(role)}
+                  </option>
+                ))}
+              </select>
+            </div>
 
             <button
               type="submit"
               disabled={addSubmitting}
               className="mt-5 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
             >
-              {addSubmitting ? 'Adding…' : addContext === 'artist' ? 'Add artist' : 'Add team member'}
+              {addSubmitting ? 'Adding…' : 'Add team member'}
             </button>
           </form>
         </Modal>
