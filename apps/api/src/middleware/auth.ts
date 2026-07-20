@@ -80,6 +80,29 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   next();
 }
 
+// For routes that serve both an unauthenticated public flow and an
+// authenticated staff flow from the same handler (e.g. POST /inquiries,
+// submitted either by the public intake form or by front desk logging a
+// walk-in/phone inquiry) -- populates req.user when a valid bearer token is
+// present, but never rejects the request when one isn't. No View-As
+// support here (that's a staff-only concept that doesn't apply to a route
+// half of whose callers are anonymous).
+export async function optionalAuth(req: Request, _res: Response, next: NextFunction) {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.startsWith("Bearer ") ? authHeader.slice("Bearer ".length) : undefined;
+
+  if (token) {
+    try {
+      req.user = jwt.verify(token, JWT_SECRET) as AuthPayload;
+    } catch {
+      // Invalid/expired token on this route just means "treat as anonymous"
+      // -- unlike requireAuth, there's no protected resource to guard here.
+    }
+  }
+
+  next();
+}
+
 export function requireRole(...allowedRoles: Role[]) {
   return (req: Request, res: Response, next: NextFunction) => {
     if (!req.user || !allowedRoles.includes(req.user.role)) {

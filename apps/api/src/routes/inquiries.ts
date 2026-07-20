@@ -72,6 +72,15 @@ router.post("/", optionalAuth, async (req, res) => {
   const body = req.body ?? {};
   const isStaffRequest = Boolean(req.user);
 
+  // optionalAuth only distinguishes "was there a valid token" -- it doesn't
+  // restrict which role that token belongs to. Every other staff-mutation
+  // route in this file is OWNER/FRONT_DESK only (matching StaffInquiryForm's
+  // own frontend gate), so an authenticated ARTIST hitting this route
+  // directly must be rejected the same way, not silently allowed through.
+  if (isStaffRequest && req.user!.role !== Role.OWNER && req.user!.role !== Role.FRONT_DESK) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
   const requiredFields = isStaffRequest ? REQUIRED_FIELDS.filter((field) => field !== "studioSlug") : REQUIRED_FIELDS;
   const missing = requiredFields.filter((field) => !body[field]);
   if (missing.length > 0) {

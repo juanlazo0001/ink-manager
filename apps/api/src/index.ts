@@ -25,6 +25,7 @@ import viewAsRouter from "./routes/viewAs";
 import jobsRouter from "./routes/jobs";
 import integrationsRouter from "./routes/integrations";
 import webhooksRouter from "./routes/webhooks";
+import searchRouter from "./routes/search";
 import { startScheduler } from "./lib/jobs";
 import { requireAuth } from "./middleware/auth";
 
@@ -86,6 +87,7 @@ app.use("/prefill-drafts", prefillDraftsRouter);
 app.use("/view-as", viewAsRouter);
 app.use("/jobs", jobsRouter);
 app.use("/integrations", integrationsRouter);
+app.use("/search", searchRouter);
 // Public: Twilio calls these directly, no requireAuth anywhere in this router.
 app.use("/webhooks", webhooksRouter);
 

@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import { SkeletonTableRows } from '../components/Skeleton'
 import StatusPill from '../components/StatusPill'
+import StaffInquiryForm from '../components/StaffInquiryForm'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatStatus } from '../lib/format'
 import { PhotoIcon, PlusIcon } from '../components/icons'
@@ -66,7 +67,12 @@ export default function Inquiries() {
   const { user } = useAuth()
   const { profile } = useUserProfile()
   const canCreateAppointment = profile?.permissions.includes('appointments.create') ?? false
+  // Matches the backend's requireRole(OWNER, FRONT_DESK) gate on the staff
+  // inquiries routes -- there's no dedicated permission key for inquiries.
+  const canCreateInquiry = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
   const [searchParams, setSearchParams] = useSearchParams()
+  const [showNewInquiry, setShowNewInquiry] = useState(false)
+  const queryClient = useQueryClient()
 
   // Set by InquiryDetail's permanent-delete flow on redirect -- read once,
   // then cleared from history so a refresh doesn't keep showing it.
@@ -87,6 +93,12 @@ export default function Inquiries() {
 
   function setTab(tab: PipelineTab) {
     setSearchParams(tab === 'inquiries' ? {} : { tab })
+  }
+
+  function handleInquiryCreated(inquiryId: string) {
+    setShowNewInquiry(false)
+    queryClient.invalidateQueries({ queryKey: inquiriesQueryKey(user!.studioId) })
+    navigate(`/inquiries/${inquiryId}`)
   }
 
   const {
@@ -182,7 +194,7 @@ export default function Inquiries() {
               </p>
             </div>
 
-            {canCreateAppointment && (
+            {activeTab === 'projects' && canCreateAppointment && (
               <button
                 type="button"
                 onClick={() => navigate('/calendar?new=1')}
@@ -192,7 +204,22 @@ export default function Inquiries() {
                 New Appointment
               </button>
             )}
+
+            {activeTab === 'inquiries' && canCreateInquiry && (
+              <button
+                type="button"
+                onClick={() => setShowNewInquiry(true)}
+                className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover"
+              >
+                <PlusIcon className="h-4 w-4" />
+                New Inquiry
+              </button>
+            )}
           </div>
+
+          {showNewInquiry && (
+            <StaffInquiryForm onClose={() => setShowNewInquiry(false)} onCreated={handleInquiryCreated} />
+          )}
 
           <div className="mt-6 flex gap-1 border-b border-border">
             {(

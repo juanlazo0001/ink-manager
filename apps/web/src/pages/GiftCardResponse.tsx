@@ -7,6 +7,7 @@ import StatusPill from '../components/StatusPill'
 
 interface GiftCardView {
   studioName: string
+  code: string
   amountCents: number
   status: string
   expiresAt: string | null
@@ -51,11 +52,16 @@ export default function GiftCardResponse() {
           <>
             <p className="text-sm text-fg-secondary">{data.studioName}</p>
             <h1 className="mt-1 text-3xl font-bold text-fg">${(data.amountCents / 100).toFixed(2)}</h1>
-            <p className="mt-1 text-sm text-fg-secondary">Gift Card</p>
+            <p className="mt-1 text-sm text-fg-secondary">Gift Card Receipt</p>
 
             <div className="mt-4 flex justify-center">
               <QrCode value={window.location.href} />
             </div>
+
+            <p className="mt-4 select-all rounded-lg border border-border bg-surface-inset px-3 py-2 font-mono text-sm tracking-wider text-fg">
+              {data.code}
+            </p>
+            <p className="mt-1 text-xs text-fg-muted">Present this code or QR at checkout to redeem</p>
 
             <div className="mt-5 flex justify-center gap-6 text-sm">
               <div>

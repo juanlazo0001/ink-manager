@@ -729,6 +729,7 @@ router.post("/:id/merge", async (req, res) => {
     action: "merge",
     changes: {
       sourceClientId,
+      sourceClientName: `${source.firstName} ${source.lastName}`.trim(),
       survivorId: id,
       repointed: repointCounts,
       conversation: conversationResult,

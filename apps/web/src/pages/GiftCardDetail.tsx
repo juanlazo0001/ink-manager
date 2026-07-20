@@ -35,6 +35,10 @@ export default function GiftCardDetail() {
   const [voiding, setVoiding] = useState(false)
   const [voidError, setVoidError] = useState<string | null>(null)
 
+  const [sendingReceipt, setSendingReceipt] = useState(false)
+  const [receiptSent, setReceiptSent] = useState(false)
+  const [receiptError, setReceiptError] = useState<string | null>(null)
+
   const [editingExpiry, setEditingExpiry] = useState(false)
   const [expiryForm, setExpiryForm] = useState('')
   const [savingExpiry, setSavingExpiry] = useState(false)
@@ -91,6 +95,24 @@ export default function GiftCardDetail() {
       setVoidError(err instanceof Error ? err.message : 'Failed to void gift card')
     } finally {
       setVoiding(false)
+    }
+  }
+
+  async function handleTextReceipt() {
+    if (!id) return
+
+    setSendingReceipt(true)
+    setReceiptError(null)
+    setReceiptSent(false)
+
+    try {
+      await apiFetch(`/gift-cards/${id}/text-receipt`, { method: 'POST' })
+      setReceiptSent(true)
+      setTimeout(() => setReceiptSent(false), 4000)
+    } catch (err) {
+      setReceiptError(err instanceof Error ? err.message : 'Failed to send receipt')
+    } finally {
+      setSendingReceipt(false)
     }
   }
 
@@ -184,6 +206,17 @@ export default function GiftCardDetail() {
                     {copied ? 'Copied!' : 'Copy link'}
                   </button>
 
+                  {canManage && card.status === 'ACTIVE' && (
+                    <button
+                      type="button"
+                      onClick={handleTextReceipt}
+                      disabled={sendingReceipt}
+                      className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                    >
+                      {sendingReceipt ? 'Sending…' : receiptSent ? 'Receipt sent!' : 'Text receipt'}
+                    </button>
+                  )}
+
                   {canVoidOrEditExpiry && card.status !== 'VOID' && (
                     <button
                       type="button"
@@ -207,6 +240,7 @@ export default function GiftCardDetail() {
                 </div>
 
                 {voidError && <p className="mt-3 text-sm text-danger">{voidError}</p>}
+                {receiptError && <p className="mt-3 text-sm text-danger">{receiptError}</p>}
 
                 {editingExpiry && (
                   <div className="mt-4 rounded-lg border border-border p-3">

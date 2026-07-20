@@ -4,6 +4,9 @@ import { GiftCardStatus, Role } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { diffObjects, logAudit } from "../lib/audit";
 import { computeGiftCardExpiration, generateUniqueGiftCardCode, isExpired, syncExpiredStatus } from "../lib/giftCards";
+import { getOrCreateClientConversation } from "../lib/conversations";
+import { sendClientSms } from "../lib/clientSms";
+import { PUBLIC_APP_URL } from "../lib/publicUrl";
 
 const GIFT_CARD_DETAIL_INCLUDE = {
   appointment: { select: { id: true, startTime: true, endTime: true } },
@@ -33,6 +36,7 @@ publicRouter.get("/view/:code", async (req, res) => {
 
   res.json({
     studioName: card.studio.name,
+    code: card.code,
     amountCents: synced.amountCents,
     status: synced.status,
     expiresAt: synced.expiresAt,
@@ -123,6 +127,60 @@ router.get("/:id", async (req, res) => {
 
   const synced = await syncExpiredStatus(card);
   res.json({ ...card, status: synced.status });
+});
+
+const TEXT_RECEIPT_ERROR_MESSAGES: Record<string, string> = {
+  not_connected: "This studio's SMS integration isn't connected -- connect it in Settings to send text receipts.",
+  no_phone: "This client has no phone number on file.",
+  opted_out: "This client has opted out of text messages.",
+  send_failed: "The text failed to send -- try again in a moment.",
+};
+
+router.post("/:id/text-receipt", async (req, res) => {
+  const id = req.params.id as string;
+  const studioId = req.user!.studioId;
+
+  const card = await prisma.giftCard.findUnique({
+    where: { id },
+    include: { studio: { select: { name: true } } },
+  });
+  if (!card || card.studioId !== studioId) {
+    return res.status(404).json({ error: "Gift card not found" });
+  }
+
+  const synced = await syncExpiredStatus(card);
+  if (synced.status !== GiftCardStatus.ACTIVE) {
+    return res.status(400).json({ error: `Only an ACTIVE card can have a receipt texted (this one is ${synced.status})` });
+  }
+
+  const publicUrl = `${PUBLIC_APP_URL}/gift-card/${card.code}`;
+  const amount = (card.amountCents / 100).toFixed(2);
+  const body = `Thanks for your purchase! Here's your $${amount} gift card from ${card.studio.name}: ${publicUrl} (code ${card.code})`;
+
+  const { conversation } = await getOrCreateClientConversation(studioId, card.clientId, req.user!.userId);
+
+  const result = await sendClientSms({
+    studioId,
+    clientId: card.clientId,
+    conversationId: conversation.id,
+    body,
+    actorUserId: req.user!.userId,
+  });
+
+  if (!result.sent) {
+    return res.status(400).json({ error: TEXT_RECEIPT_ERROR_MESSAGES[result.reason] ?? "The receipt could not be sent." });
+  }
+
+  await logAudit({
+    studioId,
+    actorUserId: req.user!.userId,
+    entityType: "GiftCard",
+    entityId: id,
+    action: "text-receipt",
+    changes: { conversationId: conversation.id, messageId: result.messageId },
+  });
+
+  res.json({ sent: true });
 });
 
 router.patch("/:id/attachment", async (req, res) => {

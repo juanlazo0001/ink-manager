@@ -31,6 +31,10 @@ enum Channel {
   EMAIL
   INSTAGRAM
   FACEBOOK
+  // Front desk logging a walk-in or phone-call inquiry on the customer's
+  // behalf (see StaffInquiryForm) -- never selectable on the public intake
+  // form, which is always self-reported by the customer.
+  PHONE
 }
 
 enum GiftCardStatus {
