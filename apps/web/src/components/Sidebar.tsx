@@ -1,7 +1,7 @@
-import { useEffect, useState, type ComponentType } from 'react'
+import { useState, type ComponentType } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { AppointmentsIcon, ClientsIcon, DashboardIcon, DocumentIcon, MenuIcon, SearchIcon, TeamIcon } from './icons'
+import { AppointmentsIcon, ClientsIcon, DashboardIcon, DocumentIcon, MenuIcon, TeamIcon } from './icons'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useViewAs } from '../context/useViewAs'
 import { useStudio } from '../context/useStudio'
@@ -9,7 +9,6 @@ import { apiFetch } from '../lib/api'
 import { clientsQueryKey, inquiriesQueryKey } from '../lib/queryKeys'
 import { useNavCounts, formatBubbleCount } from '../lib/useNavCounts'
 import { Skeleton } from './Skeleton'
-import SearchPalette from './SearchPalette'
 
 type NavCountSection = 'inquiries' | 'appointments' | 'clients' | 'conversations'
 
@@ -40,29 +39,9 @@ export default function Sidebar() {
   const { studio, loading: studioLoading } = useStudio()
   const queryClient = useQueryClient()
   const [mobileOpen, setMobileOpen] = useState(false)
-  const [searchOpen, setSearchOpen] = useState(false)
 
   const { data: navCounts } = useNavCounts()
   const showBadges = navCounts?.showSidebarBadges ?? false
-
-  // Matches the backend's own gate on GET /search (OWNER/FRONT_DESK only) --
-  // ARTIST keeps using its existing scoped views (My Inquiries, own
-  // Calendar) instead of a global search that would just 403 for them.
-  const canSearch = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
-
-  useEffect(() => {
-    if (!canSearch) return
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
-        event.preventDefault()
-        setSearchOpen(true)
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [canSearch])
 
   // Closing on route change covers both nav-link clicks and logout's
   // redirect, so the drawer never stays open covering the next page. Adjusted
@@ -137,17 +116,6 @@ export default function Sidebar() {
           )}
         </div>
 
-        <button
-          type="button"
-          onClick={() => setSearchOpen(true)}
-          disabled={!canSearch}
-          className="mt-6 flex items-center gap-2 rounded-xl border border-border bg-surface-inset px-3 py-2 text-left text-sm text-fg-secondary transition enabled:hover:bg-surface disabled:cursor-default disabled:opacity-60"
-        >
-          <SearchIcon className="h-4 w-4" />
-          <span className="flex-1">Search</span>
-          <span className="rounded-md border border-border px-1.5 py-0.5 text-[10px] font-medium">⌘K</span>
-        </button>
-
         <p className="mt-6 px-3 text-xs font-semibold uppercase tracking-wider text-fg-muted">Main</p>
 
         <nav className="mt-2 flex flex-col gap-1">
@@ -195,8 +163,6 @@ export default function Sidebar() {
           )}
         </nav>
       </aside>
-
-      {searchOpen && canSearch && <SearchPalette onClose={() => setSearchOpen(false)} />}
     </>
   )
 }

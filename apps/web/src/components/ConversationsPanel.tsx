@@ -1173,7 +1173,7 @@ function ThreadView({
   const [body, setBody] = useState('')
   const [attachments, setAttachments] = useState<string[]>([])
   const [uploading, setUploading] = useState(false)
-  const [channel, setChannel] = useState<string>('INSTAGRAM')
+  const [channel, setChannel] = useState<string>('SMS')
   const [direction, setDirection] = useState<'INBOUND' | 'OUTBOUND'>('OUTBOUND')
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
@@ -1292,15 +1292,39 @@ function ThreadView({
     enabled: isOpen && isClientThread && showTemplates,
   })
 
-  // Phase 7B: lets the SMS channel option show whether a send will
-  // actually go out live or just log, without needing OWNER-only access
-  // (GET /integrations/status is intentionally broader than GET /integrations).
-  const { data: smsStatus } = useQuery({
+  // Phase 7B: lets the channel picker grey out any channel with no live
+  // integration connected (PHONE/OTHER aren't real integrations -- no
+  // connect/disconnect flow exists for either -- so they're always
+  // available regardless of this data, same as the backend's own
+  // GET /integrations/status shape). Broader than OWNER-only access (any
+  // staff role sending a message needs this).
+  const { data: integrationStatus } = useQuery({
     queryKey: ['sms-integration-status'],
-    queryFn: () => apiFetch<{ sms: boolean }>('/integrations/status'),
+    queryFn: () => apiFetch<{ sms: boolean; email: boolean; instagram: boolean; facebook: boolean }>('/integrations/status'),
     enabled: isOpen && isClientThread,
     staleTime: 60_000,
   })
+  const CHANNEL_AVAILABILITY: Partial<Record<(typeof CLIENT_CHANNELS)[number], boolean>> = {
+    SMS: integrationStatus?.sms ?? true,
+    EMAIL: integrationStatus?.email ?? true,
+    INSTAGRAM: integrationStatus?.instagram ?? true,
+    FACEBOOK: integrationStatus?.facebook ?? true,
+  }
+  function isChannelAvailable(c: string): boolean {
+    return CHANNEL_AVAILABILITY[c as (typeof CLIENT_CHANNELS)[number]] ?? true
+  }
+
+  // If the channel that's currently selected (e.g. from the last message's
+  // own channel, or the SMS default) turns out to have no live integration
+  // once the real status loads, fall back to PHONE -- the one channel
+  // that's always selectable, since it was never a real integration to
+  // begin with.
+  useEffect(() => {
+    if (integrationStatus && !isChannelAvailable(channel)) {
+      setChannel('PHONE')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [integrationStatus])
 
   const { data: linksData } = useQuery({
     queryKey: ['client-shareable-links', data?.conversation.clientId],
@@ -2436,10 +2460,8 @@ function ThreadView({
                     <span className="ml-0.5 font-medium text-[#5a5a62]">
                       {direction === 'OUTBOUND' ? 'Our reply' : 'Their message'}
                     </span>
-                    {channel === 'SMS' && direction === 'OUTBOUND' && (
-                      <span className={`ml-0.5 font-medium ${smsStatus?.sms ? 'text-success' : 'text-[#5a5a62]'}`}>
-                        {smsStatus?.sms ? '· Sends live' : '· Log only'}
-                      </span>
+                    {channel === 'SMS' && direction === 'OUTBOUND' && integrationStatus?.sms && (
+                      <span className="ml-0.5 font-medium text-success">· Sends live</span>
                     )}
                   </button>
                   {showChannelModeMenu && (
@@ -2453,20 +2475,30 @@ function ThreadView({
                         <p className="px-1.5 pb-1.5 pt-1 text-[10.5px] font-semibold uppercase tracking-wider text-[#5a5a62]">
                           Channel
                         </p>
-                        {CLIENT_CHANNELS.map((c) => (
-                          <button
-                            key={c}
-                            type="button"
-                            onClick={() => setChannel(c)}
-                            className={[
-                              'flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium',
-                              c === channel ? 'bg-[#3a4118] text-[#c8e04a]' : 'text-fg-secondary hover:bg-surface',
-                            ].join(' ')}
-                          >
-                            <ChannelDot channel={c} />
-                            {channelLabel(c)}
-                          </button>
-                        ))}
+                        {CLIENT_CHANNELS.map((c) => {
+                          const available = isChannelAvailable(c)
+                          return (
+                            <button
+                              key={c}
+                              type="button"
+                              onClick={() => available && setChannel(c)}
+                              disabled={!available}
+                              title={available ? undefined : 'Not connected -- connect this in Settings > Integrations'}
+                              className={[
+                                'flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium',
+                                !available
+                                  ? 'cursor-not-allowed text-fg-muted opacity-50'
+                                  : c === channel
+                                    ? 'bg-[#3a4118] text-[#c8e04a]'
+                                    : 'text-fg-secondary hover:bg-surface',
+                              ].join(' ')}
+                            >
+                              <ChannelDot channel={c} />
+                              {channelLabel(c)}
+                              {!available && <span className="ml-auto text-[10.5px]">Not connected</span>}
+                            </button>
+                          )
+                        })}
 
                         <div className="my-1.5 h-px bg-border" />
 

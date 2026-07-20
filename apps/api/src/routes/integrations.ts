@@ -13,14 +13,32 @@ const router = Router();
 router.use(requireAuth);
 
 // Broader than the OWNER-only routes below: the composer (any staff role)
-// needs to know whether SMS is connected to show an accurate send hint,
-// but never needs the masked credential details GET / below exposes.
+// needs to know which channels are actually connected -- to show an
+// accurate SMS send hint, and to grey out channels with no live
+// integration (Instagram/Facebook/Email) in the channel picker -- but
+// never needs the masked credential details GET / below exposes. PHONE/
+// OTHER aren't real IntegrationChannel values (no connect/disconnect flow
+// exists for either), so they're deliberately absent here and always
+// stay selectable on the frontend regardless of this response.
 router.get("/status", requireRole(Role.OWNER, Role.FRONT_DESK, Role.ARTIST), async (req, res) => {
-  const integration = await prisma.studioIntegration.findUnique({
-    where: { studioId_channel: { studioId: req.user!.studioId, channel: IntegrationChannel.SMS } },
+  const rows = await prisma.studioIntegration.findMany({
+    where: {
+      studioId: req.user!.studioId,
+      channel: {
+        in: [IntegrationChannel.SMS, IntegrationChannel.EMAIL, IntegrationChannel.INSTAGRAM, IntegrationChannel.FACEBOOK],
+      },
+    },
   });
+  const connected = new Set(
+    rows.filter((row) => row.status === IntegrationStatus.CONNECTED).map((row) => row.channel),
+  );
 
-  res.json({ sms: integration?.status === IntegrationStatus.CONNECTED });
+  res.json({
+    sms: connected.has(IntegrationChannel.SMS),
+    email: connected.has(IntegrationChannel.EMAIL),
+    instagram: connected.has(IntegrationChannel.INSTAGRAM),
+    facebook: connected.has(IntegrationChannel.FACEBOOK),
+  });
 });
 
 router.use(requireRole(Role.OWNER));

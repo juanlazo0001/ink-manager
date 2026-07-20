@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { apiFetch } from '../lib/api'
@@ -9,8 +9,9 @@ import { useUserProfile } from '../context/useUserProfile'
 import { formatStatus } from '../lib/format'
 import { tasksQueryKey } from '../lib/queryKeys'
 import { formatBubbleCount } from '../lib/useNavCounts'
-import { BellIcon, ChevronDownIcon, LogoutIcon, SettingsIcon, TasksIcon, ViewIcon } from './icons'
+import { BellIcon, ChevronDownIcon, LogoutIcon, SearchIcon, SettingsIcon, TasksIcon, ViewIcon } from './icons'
 import ViewAsPicker from './ViewAsPicker'
+import SearchPalette from './SearchPalette'
 
 interface TasksBadgeResponse {
   system: unknown[]
@@ -30,8 +31,13 @@ export default function TopBar() {
   const [showMentions, setShowMentions] = useState(false)
   const [showAccountMenu, setShowAccountMenu] = useState(false)
   const [showViewAsPicker, setShowViewAsPicker] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
 
   const canSeeTasks = user?.role === 'OWNER' || user?.role === 'FRONT_DESK' || user?.role === 'ARTIST'
+  // Matches the backend's own gate on GET /search (OWNER/FRONT_DESK only) --
+  // ARTIST keeps using its existing scoped views (My Inquiries, own
+  // Calendar) instead of a global search that would just 403 for them.
+  const canSearch = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
   // The entry point itself must reflect who's REALLY logged in (not the
   // impersonated target) -- and is hidden entirely while already viewing
   // as someone, since switching targets mid-session isn't a supported flow
@@ -60,10 +66,35 @@ export default function TopBar() {
     setShowAccountMenu(false)
   }
 
+  useEffect(() => {
+    if (!canSearch) return
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setSearchOpen(true)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [canSearch])
+
   if (!user) return null
 
   return (
     <div className={`fixed right-4 z-30 flex items-center gap-2 ${viewAsTarget ? 'top-14' : 'top-4'}`}>
+      {canSearch && (
+        <button
+          type="button"
+          onClick={() => setSearchOpen(true)}
+          aria-label="Search"
+          className="flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface text-fg-secondary shadow-lg transition hover:text-fg"
+        >
+          <SearchIcon className="h-5 w-5" />
+        </button>
+      )}
+
       {canSeeTasks && (
         <Link
           to="/tasks"
@@ -175,6 +206,7 @@ export default function TopBar() {
       </div>
 
       {showViewAsPicker && <ViewAsPicker onClose={() => setShowViewAsPicker(false)} />}
+      {searchOpen && canSearch && <SearchPalette onClose={() => setSearchOpen(false)} />}
     </div>
   )
 }

@@ -154,6 +154,14 @@
     transform: scale(0.98);
   }
 
+  /* Tailwind Preflight resets buttons to cursor: default -- override
+     globally so every clickable button reads as clickable, rather than
+     relying on each component to add cursor-pointer itself. */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+
   /* Respect the OS-level reduced-motion preference globally rather than
      adding a motion-reduce: variant to every transition/animation utility
      across every component -- one rule guarantees the floor is met

@@ -52,11 +52,21 @@ function isEndedGuest(artist: ArtistOption): boolean {
   return artist.isGuest && !!artist.guestEndDate && new Date(artist.guestEndDate) < new Date()
 }
 
-interface BusinessHoursDay {
-  dayOfWeek: number
-  isOpen: boolean
-  openTime?: string
-  closeTime?: string
+// Matches Settings.tsx's per-location hours editor shape exactly (Location.
+// hours Json field) -- business hours moved from one studio-wide setting to
+// each Location's own hours, so this reads whichever location is currently
+// selected in the picker below rather than a single global value.
+interface LocationHoursDay {
+  day: number
+  closed: boolean
+  open: string | null
+  close: string | null
+}
+
+interface LocationOption {
+  id: string
+  name: string
+  hours: LocationHoursDay[] | null
 }
 
 function timeToMinutes(time: string): number {
@@ -68,23 +78,23 @@ function minutesOfDay(date: Date): number {
   return date.getHours() * 60 + date.getMinutes()
 }
 
-// Studio-closed shading source. No businessHours configured at all yet
-// (undefined -- distinct from an empty/all-closed array) never greys
+// Location-closed shading source. No hours configured at all yet
+// (undefined/null -- distinct from an empty/all-closed array) never greys
 // anything, matching every other "advisory, not yet set up" field in this
-// app (e.g. Artist.preferredSchedule) -- a studio that's never touched
+// app (e.g. Artist.preferredSchedule) -- a location that's never touched
 // this setting shouldn't suddenly see its whole calendar greyed out.
-function isStudioClosed(date: Date, businessHours: BusinessHoursDay[] | undefined): boolean {
-  if (!businessHours || businessHours.length === 0) return false
-  const day = businessHours.find((d) => d.dayOfWeek === date.getDay())
-  if (!day || !day.isOpen || !day.openTime || !day.closeTime) return true
+function isStudioClosed(date: Date, hours: LocationHoursDay[] | undefined): boolean {
+  if (!hours || hours.length === 0) return false
+  const day = hours.find((d) => d.day === date.getDay())
+  if (!day || day.closed || !day.open || !day.close) return true
   const minutes = minutesOfDay(date)
-  return minutes < timeToMinutes(day.openTime) || minutes >= timeToMinutes(day.closeTime)
+  return minutes < timeToMinutes(day.open) || minutes >= timeToMinutes(day.close)
 }
 
-function isStudioClosedAllDay(dayOfWeek: number, businessHours: BusinessHoursDay[] | undefined): boolean {
-  if (!businessHours || businessHours.length === 0) return false
-  const day = businessHours.find((d) => d.dayOfWeek === dayOfWeek)
-  return !day || !day.isOpen
+function isStudioClosedAllDay(dayOfWeek: number, hours: LocationHoursDay[] | undefined): boolean {
+  if (!hours || hours.length === 0) return false
+  const day = hours.find((d) => d.day === dayOfWeek)
+  return !day || day.closed
 }
 
 // Artist-unavailable shading source -- only within that artist's own
@@ -296,13 +306,18 @@ export default function Calendar() {
   })
 
   // Studio-closed shading applies everywhere, including the ARTIST-effective
-  // single-agenda view, so this is fetched regardless of role (the route
-  // itself is readable by OWNER/FRONT_DESK/ARTIST as of this feature).
-  const { data: studioSettings } = useQuery({
-    queryKey: ['studio-settings-for-calendar', user!.studioId],
-    queryFn: () => apiFetch<{ businessHours: BusinessHoursDay[] | null }>('/studio-settings'),
+  // single-agenda view, so this is fetched regardless of role (GET
+  // /studios/:studioId/locations is readable by any authenticated studio
+  // member, not gated behind locations.manage -- that permission only
+  // covers creating/editing/deleting).
+  const { data: locations } = useQuery({
+    queryKey: ['locations-for-calendar', user!.studioId],
+    queryFn: () => apiFetch<LocationOption[]>(`/studios/${user!.studioId}/locations`),
   })
-  const businessHours = studioSettings?.businessHours ?? undefined
+  const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null)
+  const activeLocation =
+    locations?.find((l) => l.id === selectedLocationId) ?? locations?.[0] ?? null
+  const businessHours = activeLocation?.hours ?? undefined
 
   // Ended guests are excluded from every column/filter/switcher below by
   // default -- "Include past guests" brings them back without ever hiding
@@ -537,6 +552,23 @@ export default function Calendar() {
                   Include past guests
                 </label>
               )}
+            </div>
+          )}
+
+          {locations && locations.length > 1 && (
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <span className="text-xs font-medium uppercase tracking-wide text-fg-muted">Hours for</span>
+              <select
+                value={activeLocation?.id ?? ''}
+                onChange={(event) => setSelectedLocationId(event.target.value)}
+                className="rounded-full border border-border bg-surface-inset px-3 py-1 text-xs font-medium text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+              >
+                {locations.map((location) => (
+                  <option key={location.id} value={location.id}>
+                    {location.name}
+                  </option>
+                ))}
+              </select>
             </div>
           )}
 
