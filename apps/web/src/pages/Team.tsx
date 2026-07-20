@@ -13,7 +13,7 @@ import { artistsQueryKey } from '../lib/queryKeys'
 import { useAuth } from '../context/useAuth'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useViewAs } from '../context/useViewAs'
-import { PlusIcon, ViewIcon } from '../components/icons'
+import { PlusIcon, ViewIcon, InstagramIcon, FacebookIcon } from '../components/icons'
 
 type PermissionMatrix = Record<string, Record<string, boolean>>
 type TeamTab = 'staff' | 'artists' | 'permissions'
@@ -23,6 +23,8 @@ interface ArtistCard {
   bio: string | null
   specialties: string[]
   portfolioImages: string[]
+  instagramHandle: string | null
+  facebookProfileUrl: string | null
   user: { id: string; email: string; name: string | null; avatarUrl: string | null }
 }
 
@@ -49,7 +51,13 @@ interface LocationOption {
   name: string
 }
 
-const ROLE_OPTIONS = ['OWNER', 'FRONT_DESK', 'ARTIST', 'CUSTOMER']
+// CUSTOMER is not a real staff role -- no CUSTOMER-role user can ever
+// authenticate into any staff route (confirmed during the View As
+// permissions audit) -- so it's never offered here. It's intentionally
+// still present in CONFIGURABLE_ROLES (lib/permissions.ts) for the
+// separate Permissions-matrix tab, which is a distinct, deliberately
+// unrelated system -- not touched by this.
+const ROLE_OPTIONS = ['OWNER', 'FRONT_DESK', 'ARTIST']
 
 const EMPTY_ADD_FORM = { name: '', phone: '', email: '', password: '', role: 'FRONT_DESK' }
 
@@ -526,6 +534,37 @@ export default function Team() {
                       </div>
 
                       {artist.bio && <p className="mt-3 line-clamp-2 text-sm text-fg-secondary">{artist.bio}</p>}
+
+                      {(artist.instagramHandle || artist.facebookProfileUrl) && (
+                        <div className="mt-3 flex items-center gap-2">
+                          {artist.instagramHandle && (
+                            <a
+                              href={`https://instagram.com/${artist.instagramHandle}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              aria-label="Instagram"
+                              title="Instagram"
+                              className="flex h-7 w-7 items-center justify-center rounded-full border border-border text-fg-secondary transition hover:bg-surface-raised hover:text-fg"
+                            >
+                              <InstagramIcon className="h-3.5 w-3.5" />
+                            </a>
+                          )}
+                          {artist.facebookProfileUrl && (
+                            <a
+                              href={artist.facebookProfileUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              aria-label="Facebook"
+                              title="Facebook"
+                              className="flex h-7 w-7 items-center justify-center rounded-full border border-border text-fg-secondary transition hover:bg-surface-raised hover:text-fg"
+                            >
+                              <FacebookIcon className="h-3.5 w-3.5" />
+                            </a>
+                          )}
+                        </div>
+                      )}
 
                       {artist.specialties.length > 0 && (
                         <div className="mt-3 flex flex-wrap gap-1.5">

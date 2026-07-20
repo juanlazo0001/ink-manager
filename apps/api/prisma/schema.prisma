@@ -186,6 +186,15 @@ model Artist {
   specialties     String[]
   portfolioImages String[]
 
+  // Manual, staff-entered links only -- no automatic profile/photo/bio
+  // import from Instagram or Facebook this pass. That would need the same
+  // Meta Business API + App Review process already planned for the
+  // client-facing channel integration (Phase 7B); doing it here ahead of
+  // that would mean either a scraper (unreliable, likely ToS-violating) or
+  // duplicate integration work later.
+  instagramHandle    String?
+  facebookProfileUrl String?
+
   // Advisory weekly availability, not enforced (same philosophy as the
   // scheduling buffer warning -- it informs staff, doesn't block them).
   // Shape: Array<{ dayOfWeek: 0-6 (0 = Sunday), startTime: "HH:MM", endTime: "HH:MM" }>

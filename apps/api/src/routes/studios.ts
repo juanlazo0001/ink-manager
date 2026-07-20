@@ -17,6 +17,15 @@ const router = Router();
 
 const SALT_ROUNDS = 10;
 
+// CUSTOMER is not a real staff role -- no CUSTOMER-role user can ever
+// authenticate into any staff route (confirmed during the View As
+// permissions audit). Team member create/update accepts a role for a
+// person who logs into the studio portal, so it validates against this
+// list rather than every Role enum value. CONFIGURABLE_ROLES (lib/
+// permissions.ts) intentionally still includes CUSTOMER -- that's the
+// separate Permissions-matrix tab, unrelated to who can be a team member.
+const STAFF_ROLES = [Role.OWNER, Role.FRONT_DESK, Role.ARTIST] as const;
+
 function slugify(value: string): string {
   return value
     .toLowerCase()
@@ -152,8 +161,8 @@ router.post("/:studioId/users", requireAuth, requireRole(Role.OWNER), async (req
 
   const { email, password, role, name, phone } = body;
 
-  if (!Object.values(Role).includes(role)) {
-    return res.status(400).json({ error: `role must be one of: ${Object.values(Role).join(", ")}` });
+  if (!STAFF_ROLES.includes(role)) {
+    return res.status(400).json({ error: `role must be one of: ${STAFF_ROLES.join(", ")}` });
   }
 
   let avatarUrl: string | null = null;
@@ -265,8 +274,8 @@ router.patch("/:studioId/users/:userId", requireAuth, requireRole(Role.OWNER), a
     data.email = body.email.trim();
   }
 
-  if (body.role !== undefined && !Object.values(Role).includes(body.role)) {
-    return res.status(400).json({ error: `role must be one of: ${Object.values(Role).join(", ")}` });
+  if (body.role !== undefined && !STAFF_ROLES.includes(body.role)) {
+    return res.status(400).json({ error: `role must be one of: ${STAFF_ROLES.join(", ")}` });
   }
 
   if (body.isActive !== undefined && typeof body.isActive !== "boolean") {

@@ -8,9 +8,9 @@ import { diffObjects, logAudit } from "../lib/audit";
 import { validateGiftCardForAttachment } from "../lib/giftCards";
 import { isSameCalendarDay } from "../lib/dateRange";
 import { findBufferConflict, formatBufferWarning } from "../lib/schedulingConflict";
+import { PUBLIC_APP_URL } from "../lib/publicUrl";
 
 const WAIVER_TOKEN_TTL_HOURS = 24; // day-of form -- signed in-shop, so a short window is intentional
-const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 
 const router = Router();
 
@@ -242,7 +242,7 @@ router.post("/:id/waiver", requireRole(Role.OWNER, Role.FRONT_DESK), async (req,
     changes: { appointmentId: appointment.id },
   });
 
-  res.status(201).json({ ...waiver, signingUrl: `${FRONTEND_URL}/waiver/${token}` });
+  res.status(201).json({ ...waiver, signingUrl: `${PUBLIC_APP_URL}/waiver/${token}` });
 });
 
 // Checkout: confirms the final cost with the artist, settles the deposit

@@ -5,11 +5,11 @@ import { Role } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
 import { PREFILLABLE_FIELDS, sanitizePrefillPayload } from "../lib/prefill";
+import { PUBLIC_APP_URL } from "../lib/publicUrl";
 
 const router = Router();
 
 const PREFILL_TOKEN_TTL_DAYS = 7;
-const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 
 // Staff-side creation -- used directly as a manual prefill mechanism, and
 // internally by the Claude-assisted draft-inquiry flow (6C-2) once staff
@@ -58,7 +58,7 @@ router.post("/", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (r
 
   const studio = await prisma.studio.findUnique({ where: { id: studioId }, select: { slug: true } });
 
-  res.status(201).json({ ...draft, prefillUrl: `${FRONTEND_URL}/inquiry/${studio!.slug}?draft=${token}` });
+  res.status(201).json({ ...draft, prefillUrl: `${PUBLIC_APP_URL}/inquiry/${studio!.slug}?draft=${token}` });
 });
 
 export default router;

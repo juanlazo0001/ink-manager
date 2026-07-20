@@ -79,7 +79,9 @@ interface Appointment {
   status: string
   finalCostCents: number | null
   closeoutNotes: string | null
-  artist: { id: string; user: { email: string } } | null
+  // Matches GET /appointments's response shape (Phase UI-5) -- a display
+  // name, not a nested user/email chain.
+  artist: { id: string; name: string } | null
 }
 
 interface DuplicateCandidate {
@@ -604,7 +606,7 @@ export default function ClientDetail() {
                             className="cursor-pointer hover:bg-surface/40"
                           >
                             <td className="hidden py-3 text-fg sm:table-cell">
-                              {appointment.artist?.user.email ?? '—'}
+                              {appointment.artist?.name ?? '—'}
                             </td>
                             <td className="py-3 text-fg-secondary">{formatDateTime(appointment.startTime)}</td>
                             <td className="py-3">

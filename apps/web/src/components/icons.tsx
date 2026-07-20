@@ -295,3 +295,24 @@ export function SpinnerIcon({ className }: IconProps) {
     </svg>
   )
 }
+
+// Artist social links (Phase: artist social profile links) -- simple line
+// glyphs matching this file's convention, not brand-mark logos.
+export function InstagramIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <rect x="3" y="3" width="14" height="14" rx="4" />
+      <circle cx="10" cy="10" r="3.25" />
+      <circle cx="14.25" cy="5.75" r="0.75" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
+export function FacebookIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <circle cx="10" cy="10" r="7.5" />
+      <path d="M11.75 7.25h-1a1.25 1.25 0 0 0-1.25 1.25v1h2.25l-.3 1.75h-1.95V15" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}

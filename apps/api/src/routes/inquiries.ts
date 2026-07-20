@@ -9,12 +9,12 @@ import { validateGiftCardForAttachment } from "../lib/giftCards";
 import { getOrCreateStaffConversation } from "../lib/conversations";
 import { normalizePhone } from "../lib/phone";
 import { findBufferConflict, formatBufferWarning } from "../lib/schedulingConflict";
+import { PUBLIC_APP_URL } from "../lib/publicUrl";
 
 const router = Router();
 
 const ESTIMATE_TOKEN_TTL_DAYS = 7;
 const DEPOSIT_TOKEN_TTL_HOURS = 48;
-const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 
 // $0-200 -> $50 deposit / $60 total, $201-599 -> $100/$110, $600+ -> $200/$210.
 // Fee is a flat $10 in every tier, but derived (not hardcoded) from the two
@@ -588,7 +588,7 @@ router.post("/:id/send-estimate", requireAuth, requireRole(Role.OWNER, Role.FRON
     ]),
   });
 
-  res.status(201).json({ ...updated, estimateUrl: `${FRONTEND_URL}/estimate/${estimateToken}` });
+  res.status(201).json({ ...updated, estimateUrl: `${PUBLIC_APP_URL}/estimate/${estimateToken}` });
 });
 
 // Creates the real Appointment once the deposit's been paid (SCHEDULING is
@@ -835,7 +835,7 @@ router.post("/:id/deposit-form", requireAuth, requireRole(Role.OWNER, Role.FRONT
     update: { token, tokenExpiresAt, depositAmount, feeAmount, totalCharged },
   });
 
-  res.status(201).json({ ...depositForm, depositUrl: `${FRONTEND_URL}/deposit/${token}` });
+  res.status(201).json({ ...depositForm, depositUrl: `${PUBLIC_APP_URL}/deposit/${token}` });
 });
 
 // Explicit allowlist projection for the sanitized artist share -- named

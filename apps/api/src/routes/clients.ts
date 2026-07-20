@@ -6,11 +6,11 @@ import { requireAuth } from "../middleware/auth";
 import { requirePermission } from "../lib/permissions";
 import { diffObjects, logAudit } from "../lib/audit";
 import { normalizePhone } from "../lib/phone";
+import { PUBLIC_APP_URL } from "../lib/publicUrl";
 
 const router = Router();
 
 const CONSENT_FORM_TOKEN_TTL_HOURS = 48;
-const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 
 router.use(requireAuth);
 router.use(requirePermission("clients.manage"));
@@ -149,7 +149,7 @@ router.get("/:id/shareable-links", async (req, res) => {
     return {
       inquiryId: inquiry.id,
       label: `Estimate — ${inquiry.description.slice(0, 40)}`,
-      url: active ? `${FRONTEND_URL}/estimate/${inquiry.estimateToken}` : null,
+      url: active ? `${PUBLIC_APP_URL}/estimate/${inquiry.estimateToken}` : null,
       hint: active ? null : "Generate from the inquiry page",
     };
   });
@@ -162,7 +162,7 @@ router.get("/:id/shareable-links", async (req, res) => {
       return {
         inquiryId: inquiry.id,
         label: `Deposit form — ${inquiry.description.slice(0, 40)}`,
-        url: active ? `${FRONTEND_URL}/deposit/${form.token}` : null,
+        url: active ? `${PUBLIC_APP_URL}/deposit/${form.token}` : null,
         hint: active ? null : form.signedAt ? "Already signed" : "Generate from the inquiry page",
       };
     });
@@ -175,7 +175,7 @@ router.get("/:id/shareable-links", async (req, res) => {
       return {
         appointmentId: appointment.id,
         label: `Waiver — ${new Date(appointment.startTime).toLocaleDateString()}`,
-        url: active ? `${FRONTEND_URL}/waiver/${waiver.token}` : null,
+        url: active ? `${PUBLIC_APP_URL}/waiver/${waiver.token}` : null,
         hint: active ? null : "Generate from the appointment page",
       };
     });
@@ -185,12 +185,12 @@ router.get("/:id/shareable-links", async (req, res) => {
   const giftCardLinks = client.giftCards.map((card) => ({
     giftCardId: card.id,
     label: `Gift card — $${(card.amountCents / 100).toFixed(2)}`,
-    url: `${FRONTEND_URL}/gift-card/${card.code}`,
+    url: `${PUBLIC_APP_URL}/gift-card/${card.code}`,
     hint: null,
   }));
 
   res.json({
-    intakeFormUrl: `${FRONTEND_URL}/inquiry/${client.studio.slug}`,
+    intakeFormUrl: `${PUBLIC_APP_URL}/inquiry/${client.studio.slug}`,
     estimateLinks,
     depositLinks,
     waiverLinks,
@@ -440,7 +440,7 @@ router.post("/:clientId/consent-forms", async (req, res) => {
     data: { clientId, signingToken, tokenExpiresAt },
   });
 
-  res.status(201).json({ ...consentForm, signingUrl: `${FRONTEND_URL}/sign/${signingToken}` });
+  res.status(201).json({ ...consentForm, signingUrl: `${PUBLIC_APP_URL}/sign/${signingToken}` });
 });
 
 export default router;

@@ -7,7 +7,7 @@ import { uploadPortfolioImage } from '../lib/cloudinary'
 import { formatPhoneInput } from '../lib/format'
 import { useUserProfile } from '../context/useUserProfile'
 import { useEffectiveUser } from '../context/useEffectiveUser'
-import { ArrowLeftIcon, CloseIcon } from '../components/icons'
+import { ArrowLeftIcon, CloseIcon, InstagramIcon, FacebookIcon } from '../components/icons'
 
 interface ScheduleBlock {
   dayOfWeek: number
@@ -20,6 +20,8 @@ interface Artist {
   bio: string | null
   specialties: string[]
   portfolioImages: string[]
+  instagramHandle: string | null
+  facebookProfileUrl: string | null
   preferredSchedule: ScheduleBlock[] | null
   user: { id: string; email: string; name: string | null; phone: string | null; avatarUrl: string | null }
 }
@@ -63,6 +65,8 @@ export default function ArtistDetail() {
   const [bio, setBio] = useState('')
   const [specialties, setSpecialties] = useState<string[]>([])
   const [portfolioImages, setPortfolioImages] = useState<string[]>([])
+  const [instagramHandle, setInstagramHandle] = useState('')
+  const [facebookProfileUrl, setFacebookProfileUrl] = useState('')
   const [uploadingItems, setUploadingItems] = useState<UploadItem[]>([])
 
   const [saving, setSaving] = useState(false)
@@ -115,6 +119,8 @@ export default function ArtistDetail() {
     setBio(artist.bio ?? '')
     setSpecialties(artist.specialties)
     setPortfolioImages(artist.portfolioImages)
+    setInstagramHandle(artist.instagramHandle ?? '')
+    setFacebookProfileUrl(artist.facebookProfileUrl ?? '')
     setScheduleDays(blocksToDays(artist.preferredSchedule))
   }
 
@@ -211,7 +217,13 @@ export default function ArtistDetail() {
     try {
       await apiFetch(`/artists/${id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ bio: bio || null, specialties, portfolioImages }),
+        body: JSON.stringify({
+          bio: bio || null,
+          specialties,
+          portfolioImages,
+          instagramHandle: instagramHandle || null,
+          facebookProfileUrl: facebookProfileUrl || null,
+        }),
       })
 
       setSaveSuccess(true)
@@ -293,6 +305,69 @@ export default function ArtistDetail() {
                   />
                 ) : (
                   <p className="mt-3 whitespace-pre-wrap text-sm text-fg-secondary">{artist.bio || 'No bio yet.'}</p>
+                )}
+              </div>
+
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                <h2 className="text-base font-semibold text-fg">Social Links</h2>
+                {canManage ? (
+                  <div className="mt-3 space-y-3">
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-fg-secondary">Instagram handle</label>
+                      <div className="flex items-center gap-2">
+                        <InstagramIcon className="h-4 w-4 shrink-0 text-fg-muted" />
+                        <input
+                          type="text"
+                          value={instagramHandle}
+                          onChange={(e) => setInstagramHandle(e.target.value)}
+                          placeholder="studioname"
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-fg-secondary">Facebook profile URL</label>
+                      <div className="flex items-center gap-2">
+                        <FacebookIcon className="h-4 w-4 shrink-0 text-fg-muted" />
+                        <input
+                          type="text"
+                          value={facebookProfileUrl}
+                          onChange={(e) => setFacebookProfileUrl(e.target.value)}
+                          placeholder="https://facebook.com/studioname"
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ) : artist.instagramHandle || artist.facebookProfileUrl ? (
+                  <div className="mt-3 flex items-center gap-3">
+                    {artist.instagramHandle && (
+                      <a
+                        href={`https://instagram.com/${artist.instagramHandle}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label="Instagram"
+                        title="Instagram"
+                        className="flex h-9 w-9 items-center justify-center rounded-full border border-border text-fg-secondary transition hover:bg-surface-raised hover:text-fg"
+                      >
+                        <InstagramIcon className="h-4 w-4" />
+                      </a>
+                    )}
+                    {artist.facebookProfileUrl && (
+                      <a
+                        href={artist.facebookProfileUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label="Facebook"
+                        title="Facebook"
+                        className="flex h-9 w-9 items-center justify-center rounded-full border border-border text-fg-secondary transition hover:bg-surface-raised hover:text-fg"
+                      >
+                        <FacebookIcon className="h-4 w-4" />
+                      </a>
+                    )}
+                  </div>
+                ) : (
+                  <p className="mt-3 text-sm text-fg-secondary">No social links yet.</p>
                 )}
               </div>
 

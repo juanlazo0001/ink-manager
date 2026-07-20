@@ -25,10 +25,12 @@ import ConversationDeepLink from './pages/ConversationDeepLink'
 import ConversationsPanel from './components/ConversationsPanel'
 import TopBar from './components/TopBar'
 import ViewAsBanner from './components/ViewAsBanner'
+import ErrorBoundary from './components/ErrorBoundary'
 
 function App() {
   return (
     <BrowserRouter>
+      <ErrorBoundary label="App">
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/login" element={<Login />} />
@@ -66,7 +68,9 @@ function App() {
           path="/clients/:id"
           element={
             <ProtectedRoute>
-              <ClientDetail />
+              <ErrorBoundary label="ClientDetail">
+                <ClientDetail />
+              </ErrorBoundary>
             </ProtectedRoute>
           }
         />
@@ -166,6 +170,7 @@ function App() {
           }
         />
       </Routes>
+      </ErrorBoundary>
       <ViewAsBanner />
       <TopBar />
       <ConversationsPanel />

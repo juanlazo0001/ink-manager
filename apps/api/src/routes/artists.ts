@@ -72,6 +72,8 @@ const ARTIST_LIST_SELECT = {
   bio: true,
   specialties: true,
   portfolioImages: true,
+  instagramHandle: true,
+  facebookProfileUrl: true,
   user: { select: { id: true, email: true, name: true, avatarUrl: true } },
 } as const;
 
@@ -133,7 +135,7 @@ function isStringArray(value: unknown): value is string[] {
 
 router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
   const id = req.params.id as string;
-  const { bio, specialties, portfolioImages } = req.body ?? {};
+  const { bio, specialties, portfolioImages, instagramHandle, facebookProfileUrl } = req.body ?? {};
 
   const artist = await prisma.artist.findUnique({ where: { id }, include: { user: true } });
   if (!artist || artist.user.studioId !== req.user!.studioId) {
@@ -152,14 +154,36 @@ router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
     return res.status(400).json({ error: "portfolioImages must be an array of strings" });
   }
 
-  const updated = await prisma.artist.update({
-    where: { id },
-    data: {
-      ...(bio !== undefined ? { bio: bio?.trim() || null } : {}),
-      ...(specialties !== undefined ? { specialties } : {}),
-      ...(portfolioImages !== undefined ? { portfolioImages } : {}),
-    },
-    include: ARTIST_INCLUDE,
+  // Loose validation on purpose -- a handle (not a URL) for Instagram, a
+  // full URL for Facebook, both optional. No format enforcement beyond
+  // "it's a string" -- staff can paste whatever they were given.
+  if (instagramHandle !== undefined && instagramHandle !== null && typeof instagramHandle !== "string") {
+    return res.status(400).json({ error: "instagramHandle must be a string or null" });
+  }
+
+  if (facebookProfileUrl !== undefined && facebookProfileUrl !== null && typeof facebookProfileUrl !== "string") {
+    return res.status(400).json({ error: "facebookProfileUrl must be a string or null" });
+  }
+
+  const data = {
+    ...(bio !== undefined ? { bio: bio?.trim() || null } : {}),
+    ...(specialties !== undefined ? { specialties } : {}),
+    ...(portfolioImages !== undefined ? { portfolioImages } : {}),
+    ...(instagramHandle !== undefined
+      ? { instagramHandle: instagramHandle?.trim().replace(/^@/, "") || null }
+      : {}),
+    ...(facebookProfileUrl !== undefined ? { facebookProfileUrl: facebookProfileUrl?.trim() || null } : {}),
+  };
+
+  const updated = await prisma.artist.update({ where: { id }, data, include: ARTIST_INCLUDE });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Artist",
+    entityId: id,
+    action: "update",
+    changes: diffObjects(artist, data, ["bio", "specialties", "portfolioImages", "instagramHandle", "facebookProfileUrl"]),
   });
 
   res.json(updated);
