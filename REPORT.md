@@ -1,96 +1,69 @@
-# Consolidated Phase 7B — Integrations framework + live SMS, then the full reminder cadence
+# Post-merge verification — three parallel sessions landed close together
 
-Two parts, one session, on `main`. Each part committed and pushed independently before the next began.
-
-**Standing rule honored at every checkpoint:** `cd apps/web && npm run build` (zero TS errors) and `cd apps/api && npx tsc --noEmit` (zero TS errors) both clean before every commit below.
+Single session, read-mostly, on `main`. Re-verifies (rather than trusts) three sessions that ran in parallel: (A) global search + gift card receipts + contextual New Appointment/Inquiry button + a `PHONE` channel enum value, (B) the 7B Part 2 reminder cadence, (C) a calendar CSS fix (`0176297`, already clean, not touched). Checklist below is pass/fail per item, per the task's own instruction — findings and fixes are called out separately.
 
 ---
 
-## Part 1 — Integrations framework + live SMS (Twilio)
+## 1. Uncommitted work check — DONE
+Session A's work was still fully sitting uncommitted in the working tree at session start (nothing lost). Reviewed every file's diff for coherence before committing (all of it was complete, working code, not half-finished). Committed as its own commit, separate from this session's fixes: **`0657246`** — "Global search, gift card receipts, contextual inquiry button, staff-entered inquiries".
 
-Commit `dd33f4c`.
+## 2. Migration integrity — **PASS**
+`npx prisma migrate status`: 21 migrations found, **database schema is up to date**, zero drift. Confirmed both before and after committing session A's work (migrations are independent of git staging state).
 
-Built a self-serve, multi-tenant integrations chassis (`StudioIntegration`, keyed by `studioId`+`channel`) so a studio owner connects their own provider account via Settings → Integrations — no per-studio credentials ever live in a Railway env var. Email/Instagram/Facebook/Google Calendar are defined as channels but show "Coming soon"; SMS via Twilio is fully built.
+## 3. Commit sweep verification (`e658e1f`) — **PASS, with one finding**
+Read the actual diff (`git diff e658e1f^ e658e1f`), not just the prior report. Confirmed `apps/api/src/routes/inquiries.ts` in that commit genuinely contains **both**: session A's `optionalAuth`/`isStaffRequest`/`PHONE`-channel staff-inquiry logic, and session B's own `estimateFollowUpSentAt` reset-on-resend logic. Nothing missing or reverted.
 
-- **Encryption**: `lib/secrets.ts`, AES-256-GCM, 32-byte key from `INTEGRATION_ENCRYPTION_KEY` (base64). No route ever returns a decrypted secret — only masked display (`AC…**** · +1XXXXXXXXXX`).
-- **Connect flow**: Account SID/Auth Token/From number are validated against Twilio's real API before anything is stored; on success the studio is `CONNECTED` with an encrypted secret and masked display name; on failure, `ERROR` + `lastError`, nothing half-stored. Connect/disconnect are audited (channel + masked display only, never the secret).
-- **Outbound**: the conversation composer sends a real SMS when the studio is `CONNECTED` and the client has a phone and isn't opted out — a `Message` row is persisted only on Twilio's acceptance, with `metadata.providerSid`/`deliveryStatus`. Any other case (not connected, other channel) is the original log-only behavior — zero regression.
-- **Inbound**: `POST /webhooks/twilio/sms` (public). Studio is resolved by the `To` number matching a `CONNECTED` integration **first**, then that studio's own decrypted Auth Token verifies `X-Twilio-Signature` — verifying the signature before knowing which studio's token to check against is structurally impossible, and this ordering is the multi-tenant security hinge of the whole webhook. Client is matched by phone (including `ClientPhone` aliases) or auto-created; MMS media is re-uploaded server-side to Cloudinary since Twilio's media URLs need Twilio's own Basic Auth to fetch.
-- **Opt-out**: STOP/UNSUBSCRIBE/CANCEL/QUIT sets `Client.smsOptedOutAt` (audited as a system action); START/UNSTOP clears it. Outbound to an opted-out client is refused server-side regardless of what the UI shows.
+**Finding — main had a broken build window.** `inquiries.ts` at `e658e1f` imports `optionalAuth` from `../middleware/auth`, but `middleware/auth.ts` didn't export it in git history until this session's `0657246` (it only existed as an uncommitted file on session A's disk). Proved this with a real compile, not just a grep: checked out `e658e1f` in an isolated worktree, ran `npx prisma generate` + `npx tsc --noEmit` fresh — **`error TS2305: Module '"../middleware/auth"' has no exported member 'optionalAuth'`**. This means `main` would not have built for anyone pulling fresh (CI, a new clone, a Railway deploy from git) from commit `e658e1f` through `0176297` inclusive (3 commits). **Already fixed** — current HEAD builds clean. Worktree removed after the test.
 
-**Real bug found and fixed during live verification**: Twilio's API rejects a `localhost` `StatusCallback` URL outright, which would have silently broken every real outbound send in local dev. `TWILIO_STATUS_CALLBACK_URL` now resolves to `null` whenever `API_PUBLIC_URL` contains `localhost`.
+## 4. Waiver row integrity — **PASS**
+- `cmrp92dy00008nsi2hbot388z` (byte-for-byte restore target): confirmed identical to its pre-deletion state — same `id`, token, `tokenExpiresAt` (2026-07-18, in the past — correctly, since it was never re-extended after the earlier restore), `clientId`, `appointmentId`, `status: PENDING`, `signedAt`/`verifiedAt` both still `null`.
+- `cmrsjb6w70004qsi203wnomdn` (new-token restore target): its **new token resolves correctly** on the live `GET /waivers/verify/:token` endpoint (full signing payload returned). Searched the codebase and the database for any prior reference to the old (unrecoverable) token: zero `Message` rows contain any waiver link for this appointment/studio from before this session's testing, and the waiver's only audit-log entry is its original `create` — no `sign`/`verify` action ever followed. **The old link was never sent to anyone, so nothing is actually broken by the token having changed.**
 
-**Webhook URL** (dev): `http://localhost:4000/webhooks/twilio/sms`. **Railway variable to set before going live in production: `API_PUBLIC_URL`** (same loud-fallback pattern as `PUBLIC_APP_URL`).
+## 5. Feature re-verification — **all PASS** (one real bug found and fixed along the way)
 
-Live Twilio verification used Black Hive's own real (Full, non-trial) Twilio account, connected through the actual running Settings → Integrations form — never seeded into `.env` or the database directly. One real send came back `undelivered` / error 30034, which is Twilio's A2P 10DLC carrier-registration requirement — an external, account-level compliance step, unrelated to any code in this repo.
+| Item | Result |
+|---|---|
+| Global search via ⌘K | PASS |
+| Global search via sidebar click | PASS |
+| Search matches: client | PASS |
+| Search matches: inquiry | PASS |
+| Search matches: artist | PASS (first check raced the 300ms debounce and looked like a miss; re-run with a longer wait confirmed it works) |
+| Search matches: appointment | PASS (route target confirmed to exist, `/appointments/:id`) |
+| Search result click navigates correctly | PASS |
+| Cross-studio isolation | **Verified by code review, not a live cross-tenant browser test** — only one studio exists in dev data. `routes/search.ts` scopes every one of its four queries by `studioId: req.user!.studioId`, sourced only from the authenticated JWT, never from any client-supplied parameter — there is no code path for a request to search another studio's data. |
+| Gift card public page shows code + QR | PASS |
+| Staff "Text receipt" button sends real SMS | PASS — real Twilio send, accepted |
+| Contextual button: Projects tab → "New Appointment" | PASS |
+| Contextual button: Inquiries tab → "New Inquiry" | PASS |
+| Staff inquiry form saves, PHONE channel persists | **Initially FAILED** — see finding below. PASS after the fix. |
+| PHONE channel displays correctly (inquiry list, inquiry detail) | PASS — renders as "Phone" via the existing generic `formatStatus` formatter; no channel-specific icon map elsewhere needed updating |
+| Reminder cadence: 3 jobs show friendly names + working Run Now | PASS |
+| Slot-collision fix re-test | **PASS** — see below |
+| Template editor: placeholder chips insert at cursor | PASS |
+| Template editor: live SMS character/segment counter | PASS |
+| `ensureLiabilityWaiver` extends an already-existing waiver's expiry | PASS — re-verified live on the same waiver row (past expiry pushed to cover a new 30-day-out date, same `id`/token, `created: false`), then restored back to its original expiry afterward |
 
----
+**Finding — real, currently-live bug: staff-created inquiries had no server-side role check.** `POST /inquiries`'s `optionalAuth` path only checked *whether* a valid token was present, not *which role* it belonged to — meaning an authenticated ARTIST could call the route directly and create inquiries attributed as staff-created, bypassing both the frontend's own OWNER/FRONT_DESK gate and the pattern every other staff-mutation route in that same file enforces. **Fixed**: added an explicit `requireRole`-equivalent check on the authenticated branch (403 for any role other than OWNER/FRONT_DESK).
 
-## Part 2 — Full reminder cadence, estimate follow-up, editable templates, studio-local scheduling
+**Finding — real, currently-live bug: `PHONE` channel was rejected by the running API.** The `Channel` enum was correctly added to `schema.prisma` and migrated into the actual Postgres database (confirmed via `migrate status`), but the **generated Prisma client on this machine had never been regenerated** since before that migration — so `Object.values(Channel).includes(body.channel)` didn't recognize `"PHONE"` at all, and every attempt to log a walk-in/phone inquiry failed with `400 channel must be one of: EMAIL, INSTAGRAM, FACEBOOK`. **Fixed** by running `npx prisma generate`; this is a local build-artifact fix only (that directory is gitignored, regenerated automatically by the `postinstall` script on any fresh install, e.g. Railway's deploy) — the *committed code* was always correct, only this dev machine's stale generated client was wrong. Re-verified end-to-end through the actual browser form afterward: PASS.
 
-Commit `e658e1f`. Depended on Part 1's send path (`sendClientSms`/new `sendStaffSms`) and Phase 7A's job scheduler.
+**Finding — real, currently-live crash bug: `AuditTrail` crashed the whole `ClientDetail` page for clients with older merge history.** `formatMergeSummary` unconditionally read `changes.aliasesAdded.addedPhones`, but merge audit-log rows written before that field existed (a real row already in the database, from before this session) have no `aliasesAdded` key at all — `TypeError: Cannot read properties of undefined (reading 'addedPhones')`, caught only by the page's `ErrorBoundary`, breaking the entire client page (not just the audit section). Found while re-verifying the AuditTrail merge-summary rendering, not something the task explicitly asked to check — but a real, live, currently-reachable bug. **Fixed**: `aliasesAdded` is now optional on the type, and the alias-count line falls back to zero when absent. Verified live on the exact client that had been crashing: renders correctly now ("Merged another client record into this client.").
 
-### Studio-local scheduling
-Replaced fixed-UTC-cron scheduling for this cadence with three separately-registered 15-minute-tick jobs — `clientAppointmentReminders`, `artistAppointmentReminders`, `estimateFollowUpReminder` — rather than one combined job, so the System panel shows the three friendly names the task asked for ("Appointment Reminders (Clients)", "Appointment Reminders (Artists)", "Estimate Follow-Up") each with its own Run Now and JobRun history, and one job's failure never taints another's status.
-
-**Real scheduler bug found and fixed**: `startScheduler()` always computed a job's dedup slot as the start of the current UTC day, regardless of that job's own frequency — a 15-minute job would collide with its own first successful run's `JobRun` row and get silently skipped for the rest of the day. Fixed generically via a new `slotMinutes` field on `JobDefinition` (default 1440, so every Phase 7A daily job's behavior is byte-for-byte unchanged) and a `computeSlot(date, slotMinutes)` function.
-
-**Timezone-window function** — `lib/reminderWindow.ts`, pure and dependency-free (no new timezone library; `Intl.DateTimeFormat`, matching the codebase's existing convention):
-```ts
-isWithinSendWindow(studioTimezone: string, targetTime: string, currentUtcInstant: Date, windowMinutes = 15): boolean
-civilDateKey(date: Date, timeZone: string): string          // "YYYY-MM-DD" in that zone
-daysBetweenCivilDates(fromKey: string, toKey: string): number
-```
-Verified via 23 unit-test assertions in a throwaway script (deleted after use, no permanent test framework introduced — this repo has none): America/New_York and America/Los_Angeles (DST) vs. Pacific/Honolulu (no DST), midnight edge cases, custom window sizes, and civil-date arithmetic. All 23 passed.
-
-### The cadence itself
-- **Client reminders** (1 week before / night before / morning of): each checked against its own configured send time in the studio's local timezone; dedup via `Appointment.reminderWeekSentAt`/`reminderNightBeforeSentAt`/`reminderMorningOfSentAt`; each links to the appointment's waiver, auto-created via a shared `ensureLiabilityWaiver()` (extracted from `POST /appointments/:id/waiver` so both the manual staff route and this job create/reuse the exact same record).
-- **Artist digest** (7 AM day before, confirmed cadence): **one consolidated message per artist** listing all of tomorrow's appointments, not one text per appointment — verified live: an artist with two appointments on the same day received a single message with both listed. Dedup via a new `ArtistReminderLog` (unique on artist+date, since this is one-per-artist-per-day, not per-appointment). Artists with no phone are skipped gracefully.
-- **Estimate follow-up** (24h after opened, no response): `Inquiry.estimateFollowUpSentAt` gates it; **verified resend resets it** — calling `POST /:id/send-estimate` again on an inquiry that already had a follow-up sent set `estimateFollowUpSentAt` back to `null`, live, confirmed via the route's own response.
-- **Skips are counted, never errors**: not-connected / opted-out / no-phone / send-failed each have their own counter in `JobRun.details.perStudio[studioId]`; a `REMINDERS_NOT_SENT` system task (OWNER/FRONT_DESK only, via the existing task-registry pattern) surfaces whenever any of the three jobs' most recent run recorded a not-connected skip.
-
-**Real waiver bug found and fixed this session**: `ensureLiabilityWaiver` extended a *newly created* waiver's expiry to cover `minValidUntil`, but an *already-existing* waiver (e.g. from an earlier day-of use, or simply already on file when a week-before reminder first needs one) was returned completely as-is — meaning an already-expired token could be linked from a brand-new reminder. Fixed: an existing waiver's `tokenExpiresAt` is now also extended (never shortened) when a later `minValidUntil` is passed. Verified directly: a pre-existing waiver with `tokenExpiresAt` in the past had its expiry correctly pushed out to cover a newly-scheduled appointment, same waiver `id`, same token, `created: false`.
-
-### Live verification (real Twilio send, seeded/backdated data, PowerShell)
-Using the studio's own real, already-`CONNECTED` Twilio account (no shortcuts — every send below went through the actual `sendClientSms`/`sendStaffSms` code path):
-- 3 confirmed appointments repointed to a test client with a real receivable phone, dated exactly 7/1/0 days out (civil-date, studio-local) → all 3 client reminders fired as real Twilio sends, correct dedup field set on each, template placeholders rendered correctly, waiver auto-created/linked. Re-running the same job immediately after: **0 sent**, confirming no double-send.
-- Artist digest: fired once for the artist's tomorrow appointment(s), `ArtistReminderLog` row created; re-run: **0 sent**.
-- Opted-out client with an appointment in the window: skipped, counted (`skippedOptedOut`), no message created.
-- No-phone client: skipped, counted (`skippedNoPhone`) — this path also fired naturally on real, pre-existing dev data (an actual inquiry mid-cadence with no client phone), not just constructed test data.
-- SMS temporarily disconnected via the real `POST /integrations/SMS/disconnect` endpoint: all sends skipped and counted as `skippedNotConnected`; `REMINDERS_NOT_SENT` task appeared in `GET /tasks` immediately after. Reconnected via the real `POST /integrations/SMS/connect` endpoint (same real credentials) afterward.
-- Estimate follow-up: fired once for a backdated (25h-old) opened estimate with a phone; re-run: **0 sent**; resending the estimate reset `estimateFollowUpSentAt` to `null` as designed.
-
-All test client/appointment/inquiry rows created for this were deleted afterward; every appointment's original client/dates were restored; the artist's real phone number and the opted-out flag were reverted.
-
-**A mistake made and corrected during cleanup**: my own cleanup script deleted two `LiabilityWaiver` rows that pre-existed my testing (not ones I'd created) — both unsigned/`PENDING`, never completed by a client. One was fully restored byte-for-byte from data already captured earlier in this same conversation (same `id`, token, timestamps, snapshot text). The second's original token had not been captured before deletion, so it was reconstructed with the same `id`/client/appointment/timestamps/snapshot content but a **freshly generated token** — if that original link had ever been sent to a client and not yet used, it no longer resolves (its audit trail showed only a `create` action, never a sign/verify, so this is very unlikely to have mattered in practice). Flagging this plainly rather than glossing over it.
-
-### Editable templates UI (Settings → Reminder Templates & Send Times)
-New card, same edit-icon-opens-modal convention as the Policies section, but a plain `<textarea>` instead of the WYSIWYG editor: 5 templates, each modal has clickable placeholder chips (insert at cursor) and a live counter (`"215/160 characters · 2 SMS segments"`, GSM-7 estimate). Send times (4 `HH:MM` fields) are their own inline-edit block (Business Hours' toggle-in-card convention), labeled with the studio's own timezone. Verified in-browser via Playwright: card renders, modal opens with the right placeholders per template, chip-click inserts correctly, counter updates live, and all three new jobs show their friendly names and real run history in the System panel.
-
-**Exact default template text seeded** (also live-patched onto the existing dev studio, since seed's upsert never overwrites an already-existing studio):
-```
-clientWeekBefore: "Hi {{clientFirstName}}, this is a reminder that your appointment with {{artistName}} at {{studioName}} is coming up on {{appointmentDate}} at {{appointmentTime}}. Please complete your waiver here: {{waiverLink}}"
-clientNightBefore: "Hi {{clientFirstName}}, see you tomorrow at {{appointmentTime}} for your appointment with {{artistName}} at {{studioName}}! Waiver: {{waiverLink}}"
-clientMorningOf: "Hi {{clientFirstName}}, today's the day! Your appointment with {{artistName}} at {{studioName}} is at {{appointmentTime}}. Waiver: {{waiverLink}}"
-artistDayBefore: "Hi {{artistName}}, here's your schedule for tomorrow at {{studioName}}:"
-estimateFollowUp: "Hi {{clientFirstName}}, just following up on the estimate we sent for your tattoo -- you can view and respond here: {{estimateLink}}. Let us know if you have any questions! - {{studioName}}"
-```
-Default send times: `weekBeforeTime: "10:00"`, `nightBeforeTime: "18:00"`, `morningOfTime: "08:00"`, `artistDayBeforeTime: "07:00"` — all in the studio's own timezone.
+## 6. Combined sanity pass — **PASS**
+- Fresh `cd apps/web && npm run build` — clean, zero errors.
+- Fresh `cd apps/api && npx tsc --noEmit` — clean, zero errors.
+- Both run after all fixes above (auth role-check, Prisma client regen, AuditTrail crash fix) were in place together.
+- One full browser click-through in the same running instance, in this order: global search (⌘K + sidebar) → gift card detail + text receipt → public gift card page → Inquiries page contextual button (both tabs) → staff inquiry creation with PHONE channel → Settings → System (all three reminder jobs) → Settings template editor → client detail page with older merge history. No interaction issues found between features; the AuditTrail crash above is the only cross-feature problem surfaced, and it's fixed.
 
 ---
 
-## Final typecheck state
-`cd apps/web && npm run build` — clean. `cd apps/api && npx tsc --noEmit` — clean. Confirmed clean before both commits.
+## Commits made this session
+| Hash | What |
+|---|---|
+| `0657246` | Session A's previously-uncommitted work (global search, gift card receipts, contextual button, staff inquiries, `PHONE` channel), plus the missing role check on `POST /inquiries`'s staff path |
+| `ae40505` | Fix `AuditTrail` crash on merge audit rows missing `aliasesAdded` |
 
-## Commits
-| Part | Hash | Message |
-|---|---|---|
-| 1 | `dd33f4c` | Integrations framework + live SMS |
-| 2 | `e658e1f` | Full reminder cadence, estimate follow-up, editable templates, studio-local scheduling |
+Both pushed to `origin/main`. No destructive actions taken; all test data created during this session's re-verification (one gift card, two throwaway inquiries + their auto-created clients) was deleted afterward. The dev API server's generated Prisma client was regenerated (`npx prisma generate`) — a local artifact, not a commit.
 
-Both pushed to `origin/main`.
-
-## Going live in production — read this before assuming a Railway config step is all that's needed
-Two genuinely different things:
-- **`API_PUBLIC_URL`** (and `INTEGRATION_ENCRYPTION_KEY`) are Railway environment variables — platform-level, set once, apply to every studio.
-- **Connecting Black Hive's real Twilio account is not a Railway step at all.** It's an in-app action: an OWNER logging into the deployed app and filling out the real Settings → Integrations → SMS connect form with Black Hive's own Account SID/Auth Token/phone number, exactly the same self-serve flow verified live in Part 1. There is no environment variable for a studio's Twilio credentials, by design — don't look for one in Railway's config when setting this up for real.
+## Bottom line
+Everything on the checklist above ultimately passes. Three real, currently-live bugs were found and fixed in the process (none were in the two sessions' own self-reports): the missing `optionalAuth` export causing a multi-commit build-breakage window on `main`, the missing role check on staff-created inquiries, and the `AuditTrail` crash on older merge rows — plus one local-only stale-generated-client issue (the `PHONE` enum) that would not have affected a real deploy but did block verification on this machine until regenerated. All are confirmed fixed at current `HEAD`.
