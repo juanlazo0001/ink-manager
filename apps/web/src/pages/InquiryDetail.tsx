@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import AuditTrail from '../components/AuditTrail'
@@ -49,6 +49,7 @@ interface Inquiry {
   closedReason: string | null
   lostReason: string | null
   lostAt: string | null
+  archivedAt: string | null
   clientId: string
   client: { firstName: string; lastName: string; email: string | null; phone: string | null }
   preferredArtist: { id: string; user: { name: string | null } } | null
@@ -130,6 +131,21 @@ interface AuditLogEntry {
   actorUser: { id: string; name: string | null; email: string } | null
 }
 
+interface DeletePreview {
+  appointments: number
+  waivers: number
+  depositForms: number
+  giftCardsToDetach: { id: string; code: string; amountCents: number; status: string }[]
+  consentFormsToDetach: number
+  conversationTags: number
+}
+
+const DELETE_CONFIRM_TEXT = 'DELETE'
+
+function formatCents(cents: number): string {
+  return `$${(cents / 100).toFixed(2)}`
+}
+
 function DetailField({ label, value }: { label: string; value: string }) {
   return (
     <div>
@@ -163,11 +179,13 @@ function ImageGrid({ images }: { images: string[] }) {
 
 export default function InquiryDetail() {
   const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
   const user = useEffectiveUser()
   const { target: viewAsTarget } = useViewAs()
   const queryClient = useQueryClient()
   const { openPanel } = useConversationPanel()
   const canMessage = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
+  const isOwner = user?.role === 'OWNER'
   const [startingConversation, setStartingConversation] = useState(false)
 
   async function handleMessage() {
@@ -355,6 +373,17 @@ export default function InquiryDetail() {
   const [reopenStatus, setReopenStatus] = useState('')
   const [reopening, setReopening] = useState(false)
   const [reopenError, setReopenError] = useState<string | null>(null)
+
+  const [archiving, setArchiving] = useState(false)
+  const [archiveError, setArchiveError] = useState<string | null>(null)
+
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [deletePreview, setDeletePreview] = useState<DeletePreview | null>(null)
+  const [deletePreviewLoading, setDeletePreviewLoading] = useState(false)
+  const [deletePreviewError, setDeletePreviewError] = useState<string | null>(null)
+  const [deleteConfirmText, setDeleteConfirmText] = useState('')
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   const [sendingDeposit, setSendingDeposit] = useState(false)
   const [sendDepositError, setSendDepositError] = useState<string | null>(null)
@@ -600,6 +629,70 @@ export default function InquiryDetail() {
     }
   }
 
+  async function handleArchive() {
+    if (!id) return
+    setArchiving(true)
+    setArchiveError(null)
+    try {
+      await apiFetch(`/inquiries/${id}/archive`, { method: 'POST' })
+      invalidateInquiry()
+    } catch (err) {
+      setArchiveError(err instanceof Error ? err.message : 'Failed to archive inquiry')
+    } finally {
+      setArchiving(false)
+    }
+  }
+
+  async function handleUnarchive() {
+    if (!id) return
+    setArchiving(true)
+    setArchiveError(null)
+    try {
+      await apiFetch(`/inquiries/${id}/unarchive`, { method: 'POST' })
+      invalidateInquiry()
+    } catch (err) {
+      setArchiveError(err instanceof Error ? err.message : 'Failed to unarchive inquiry')
+    } finally {
+      setArchiving(false)
+    }
+  }
+
+  async function openDeleteModal() {
+    if (!id) return
+    setShowDeleteModal(true)
+    setDeleteConfirmText('')
+    setDeleteError(null)
+    setDeletePreview(null)
+    setDeletePreviewError(null)
+    setDeletePreviewLoading(true)
+    try {
+      const preview = await apiFetch<DeletePreview>(`/inquiries/${id}/delete-preview`)
+      setDeletePreview(preview)
+    } catch (err) {
+      setDeletePreviewError(err instanceof Error ? err.message : 'Failed to load what will be deleted')
+    } finally {
+      setDeletePreviewLoading(false)
+    }
+  }
+
+  async function handleConfirmDelete() {
+    if (!id) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await apiFetch(`/inquiries/${id}`, {
+        method: 'DELETE',
+        body: JSON.stringify({ confirm: deleteConfirmText }),
+      })
+      queryClient.invalidateQueries({ queryKey: inquiriesQueryKey(user!.studioId) })
+      navigate('/inquiries', { state: { flash: 'Inquiry was permanently deleted.' } })
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Failed to delete inquiry')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   async function handleSendDepositForm() {
     if (!id) return
 
@@ -713,7 +806,7 @@ export default function InquiryDetail() {
                       </button>
                     )}
                     <StatusPill status={inquiry.status} />
-                    {canMessage && !isTerminal && (
+                    {(canMessage || isOwner) && (
                       <div className="relative">
                         <button
                           type="button"
@@ -733,18 +826,49 @@ export default function InquiryDetail() {
                               aria-hidden="true"
                             />
                             <div className="absolute right-0 top-9 z-20 w-48 rounded-xl border border-border bg-surface-raised p-1 shadow-xl">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setShowMoreMenu(false)
-                                  setLostReasonInput('')
-                                  setMarkLostError(null)
-                                  setShowMarkLostModal(true)
-                                }}
-                                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-danger hover:bg-danger/10"
-                              >
-                                Mark as lost
-                              </button>
+                              {canMessage && !isTerminal && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setShowMoreMenu(false)
+                                    setLostReasonInput('')
+                                    setMarkLostError(null)
+                                    setShowMarkLostModal(true)
+                                  }}
+                                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-danger hover:bg-danger/10"
+                                >
+                                  Mark as lost
+                                </button>
+                              )}
+                              {canMessage && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setShowMoreMenu(false)
+                                    if (inquiry.archivedAt) {
+                                      handleUnarchive()
+                                    } else {
+                                      handleArchive()
+                                    }
+                                  }}
+                                  disabled={archiving}
+                                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface disabled:opacity-60"
+                                >
+                                  {inquiry.archivedAt ? 'Unarchive' : 'Archive'}
+                                </button>
+                              )}
+                              {isOwner && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setShowMoreMenu(false)
+                                    openDeleteModal()
+                                  }}
+                                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-danger hover:bg-danger/10"
+                                >
+                                  Delete Permanently
+                                </button>
+                              )}
                             </div>
                           </>
                         )}
@@ -785,6 +909,23 @@ export default function InquiryDetail() {
                     )}
                   </div>
                 )}
+
+                {inquiry.archivedAt && (
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
+                    <span>Archived {formatDateTime(inquiry.archivedAt)}. Hidden from the inbox, but fully intact.</span>
+                    {canMessage && (
+                      <button
+                        type="button"
+                        onClick={handleUnarchive}
+                        disabled={archiving}
+                        className="shrink-0 rounded-full border border-warning/40 px-3 py-1.5 text-xs font-medium text-warning transition hover:bg-warning/10 disabled:opacity-60"
+                      >
+                        {archiving ? 'Unarchiving…' : 'Unarchive'}
+                      </button>
+                    )}
+                  </div>
+                )}
+                {archiveError && <p className="mt-2 text-sm text-danger">{archiveError}</p>}
 
                 <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <DetailField label="Email" value={inquiry.client.email ?? 'Not provided'} />
@@ -1504,6 +1645,91 @@ export default function InquiryDetail() {
                     >
                       {reopening ? 'Reopening…' : 'Reopen'}
                     </button>
+                  </div>
+                </Modal>
+              )}
+
+              {showDeleteModal && (
+                <Modal
+                  title="Delete Inquiry Permanently"
+                  onClose={() => {
+                    setShowDeleteModal(false)
+                    setDeletePreview(null)
+                    setDeletePreviewError(null)
+                    setDeleteError(null)
+                  }}
+                >
+                  <div className="space-y-4">
+                    <p className="text-sm text-fg-secondary">
+                      Permanently delete this inquiry for{' '}
+                      <span className="font-semibold">
+                        {inquiry.client.firstName} {inquiry.client.lastName}
+                      </span>
+                      ? This cannot be undone.
+                    </p>
+
+                    {deletePreviewLoading && (
+                      <p className="text-sm text-fg-secondary">Checking what will be destroyed…</p>
+                    )}
+                    {deletePreviewError && <p className="text-sm text-danger">{deletePreviewError}</p>}
+
+                    {deletePreview && (
+                      <div className="rounded-lg border border-danger/30 bg-danger/10 p-3 text-sm">
+                        <p className="mb-2 text-xs font-medium uppercase tracking-wider text-danger">
+                          This will permanently destroy
+                        </p>
+                        <ul className="space-y-1 text-fg-secondary">
+                          <li>{deletePreview.appointments} appointment{deletePreview.appointments === 1 ? '' : 's'}</li>
+                          <li>{deletePreview.waivers} signed waiver{deletePreview.waivers === 1 ? '' : 's'}</li>
+                          <li>{deletePreview.depositForms} deposit form{deletePreview.depositForms === 1 ? '' : 's'}</li>
+                        </ul>
+                        {deletePreview.consentFormsToDetach > 0 && (
+                          <p className="mt-2 text-fg-secondary">
+                            {deletePreview.consentFormsToDetach} consent form
+                            {deletePreview.consentFormsToDetach === 1 ? '' : 's'} will be unlinked from the deleted
+                            appointment(s), not destroyed.
+                          </p>
+                        )}
+                        {deletePreview.giftCardsToDetach.length > 0 && (
+                          <p className="mt-2 font-semibold text-danger">
+                            {deletePreview.giftCardsToDetach.length} gift card
+                            {deletePreview.giftCardsToDetach.length === 1 ? '' : 's'} (
+                            {formatCents(
+                              deletePreview.giftCardsToDetach.reduce((sum, c) => sum + c.amountCents, 0),
+                            )}
+                            ) will be detached and kept active — not destroyed. It's the client's money,
+                            independent of this project.
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {deletePreview && (
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-fg-secondary">
+                          Type <span className="font-mono font-semibold text-fg">DELETE</span> to confirm
+                        </label>
+                        <input
+                          type="text"
+                          value={deleteConfirmText}
+                          onChange={(e) => setDeleteConfirmText(e.target.value)}
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-danger focus:outline-none focus:ring-1 focus:ring-danger"
+                        />
+                      </div>
+                    )}
+
+                    {deleteError && <p className="text-sm text-danger">{deleteError}</p>}
+
+                    {deletePreview && (
+                      <button
+                        type="button"
+                        onClick={handleConfirmDelete}
+                        disabled={deleting || deleteConfirmText !== DELETE_CONFIRM_TEXT}
+                        className="w-full rounded-full bg-danger px-4 py-2 text-sm font-medium text-bg transition hover:bg-danger/90 disabled:opacity-50"
+                      >
+                        {deleting ? 'Deleting…' : 'Delete Permanently'}
+                      </button>
+                    )}
                   </div>
                 </Modal>
               )}

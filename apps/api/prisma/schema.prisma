@@ -238,6 +238,10 @@ model Client {
   mergedInto   Client?  @relation("ClientMerge", fields: [mergedIntoId], references: [id])
   mergedFrom   Client[] @relation("ClientMerge")
 
+  // Soft, reversible hide -- same exclude-from-list-views pattern as
+  // mergedIntoId above, but fully intact and unarchivable, unlike a merge.
+  archivedAt DateTime?
+
   appointments Appointment[]
   consentForms ConsentForm[]
   inquiries    Inquiry[]
@@ -360,6 +364,9 @@ model Inquiry {
   // that path is fully automated and has no human-entered reason.
   lostReason             String?
   lostAt                 DateTime?
+
+  // Soft, reversible hide -- same pattern as Client.archivedAt.
+  archivedAt DateTime?
 
   studioId String
   studio   Studio @relation(fields: [studioId], references: [id])

@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import { SkeletonTableRows } from '../components/Skeleton'
@@ -62,10 +62,23 @@ function truncate(text: string, max: number) {
 
 export default function Inquiries() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { user } = useAuth()
   const { profile } = useUserProfile()
   const canCreateAppointment = profile?.permissions.includes('appointments.create') ?? false
   const [searchParams, setSearchParams] = useSearchParams()
+
+  // Set by InquiryDetail's permanent-delete flow on redirect -- read once,
+  // then cleared from history so a refresh doesn't keep showing it.
+  const [flash, setFlash] = useState<string | null>(null)
+  useEffect(() => {
+    const state = location.state as { flash?: string } | null
+    if (state?.flash) {
+      setFlash(state.flash)
+      window.history.replaceState({}, '')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const activeTab: PipelineTab = searchParams.get('tab') === 'projects' ? 'projects' : 'inquiries'
   const [bucketFilter, setBucketFilter] = useState<StatusBucket>('All')
   const [projectStatusFilter, setProjectStatusFilter] = useState<ProjectStatusFilter>('All')
@@ -150,6 +163,15 @@ export default function Inquiries() {
 
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-7xl px-6 py-6 sm:px-10 sm:py-8">
+          {flash && (
+            <div className="mb-6 flex items-center justify-between gap-3 rounded-2xl border border-success/30 bg-success/10 p-4 text-sm text-success">
+              <span>{flash}</span>
+              <button type="button" onClick={() => setFlash(null)} className="text-xs font-medium underline">
+                Dismiss
+              </button>
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <h1 className="text-2xl font-bold text-fg sm:text-3xl">Inquiries &amp; Projects</h1>

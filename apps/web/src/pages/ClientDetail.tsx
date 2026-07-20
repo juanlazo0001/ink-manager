@@ -8,7 +8,7 @@ import StatusPill from '../components/StatusPill'
 import PhoneInput from '../components/PhoneInput'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatPhoneInput, formatStatus, isValidPhoneDigits } from '../lib/format'
-import { ArrowLeftIcon, MessageIcon, PencilIcon, PlusIcon } from '../components/icons'
+import { ArrowLeftIcon, MessageIcon, MoreIcon, PencilIcon, PlusIcon } from '../components/icons'
 import { useUserProfile } from '../context/useUserProfile'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useConversationPanel } from '../context/useConversationPanel'
@@ -66,6 +66,7 @@ interface Client {
   phone: string | null
   mergedIntoId: string | null
   mergedInto: { id: string; firstName: string; lastName: string } | null
+  archivedAt: string | null
   consentForms: ConsentForm[]
   inquiries: InquirySummary[]
   giftCards: GiftCard[]
@@ -99,6 +100,21 @@ interface MergePreview {
   giftCards: number
 }
 
+interface DeletePreview {
+  inquiries: number
+  appointments: number
+  waivers: number
+  consentForms: number
+  giftCards: { id: string; code: string; amountCents: number; status: string }[]
+  activeGiftCardCents: number
+  depositForms: number
+  conversations: number
+  messages: number
+  blockedByMerge: boolean
+}
+
+const DELETE_CONFIRM_TEXT = 'DELETE'
+
 function formatCents(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`
 }
@@ -113,6 +129,7 @@ export default function ClientDetail() {
   const user = useEffectiveUser()
   const { profile } = useUserProfile()
   const canManage = profile?.permissions.includes('clients.manage') ?? false
+  const isOwner = user?.role === 'OWNER'
   const canIssueGiftCards = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
   const canMessage = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
   const canGeneratePrefillLink = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
@@ -197,6 +214,18 @@ export default function ClientDetail() {
   const [mergePreviewLoading, setMergePreviewLoading] = useState(false)
   const [merging, setMerging] = useState(false)
   const [mergeError, setMergeError] = useState<string | null>(null)
+
+  const [showMoreMenu, setShowMoreMenu] = useState(false)
+  const [archiving, setArchiving] = useState(false)
+  const [archiveError, setArchiveError] = useState<string | null>(null)
+
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [deletePreview, setDeletePreview] = useState<DeletePreview | null>(null)
+  const [deletePreviewLoading, setDeletePreviewLoading] = useState(false)
+  const [deletePreviewError, setDeletePreviewError] = useState<string | null>(null)
+  const [deleteConfirmText, setDeleteConfirmText] = useState('')
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!id) return
@@ -363,6 +392,76 @@ export default function ClientDetail() {
     }
   }
 
+  async function handleArchive() {
+    if (!id) return
+    setArchiving(true)
+    setArchiveError(null)
+    try {
+      const updated = await apiFetch<Client>(`/clients/${id}/archive`, { method: 'POST' })
+      setClient((prev) => (prev ? { ...prev, ...updated } : prev))
+      if (user) queryClient.invalidateQueries({ queryKey: clientsQueryKey(user.studioId) })
+      setShowMoreMenu(false)
+    } catch (err) {
+      setArchiveError(err instanceof Error ? err.message : 'Failed to archive client')
+    } finally {
+      setArchiving(false)
+    }
+  }
+
+  async function handleUnarchive() {
+    if (!id) return
+    setArchiving(true)
+    setArchiveError(null)
+    try {
+      const updated = await apiFetch<Client>(`/clients/${id}/unarchive`, { method: 'POST' })
+      setClient((prev) => (prev ? { ...prev, ...updated } : prev))
+      if (user) queryClient.invalidateQueries({ queryKey: clientsQueryKey(user.studioId) })
+      setShowMoreMenu(false)
+    } catch (err) {
+      setArchiveError(err instanceof Error ? err.message : 'Failed to unarchive client')
+    } finally {
+      setArchiving(false)
+    }
+  }
+
+  async function openDeleteModal() {
+    if (!id) return
+    setShowMoreMenu(false)
+    setShowDeleteModal(true)
+    setDeleteConfirmText('')
+    setDeleteError(null)
+    setDeletePreview(null)
+    setDeletePreviewLoading(true)
+    try {
+      const preview = await apiFetch<DeletePreview>(`/clients/${id}/delete-preview`)
+      setDeletePreview(preview)
+    } catch (err) {
+      setDeletePreviewError(err instanceof Error ? err.message : 'Failed to load what will be deleted')
+    } finally {
+      setDeletePreviewLoading(false)
+    }
+  }
+
+  async function handleConfirmDelete() {
+    if (!id) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await apiFetch(`/clients/${id}`, {
+        method: 'DELETE',
+        body: JSON.stringify({ confirm: deleteConfirmText }),
+      })
+      if (user) queryClient.invalidateQueries({ queryKey: clientsQueryKey(user.studioId) })
+      navigate('/clients', {
+        state: { flash: `${client?.firstName} ${client?.lastName} was permanently deleted.` },
+      })
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Failed to delete client')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   async function handleSendConsentForm() {
     if (!id) return
 
@@ -435,6 +534,23 @@ export default function ClientDetail() {
                   . It's kept for history but is no longer an active record.
                 </div>
               )}
+
+              {client.archivedAt && (
+                <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-warning/30 bg-warning/10 p-4 text-sm text-warning">
+                  <span>Archived {formatDateTime(client.archivedAt)}. Hidden from the client list, but fully intact.</span>
+                  {canManage && (
+                    <button
+                      type="button"
+                      onClick={handleUnarchive}
+                      disabled={archiving}
+                      className="rounded-full border border-warning/40 px-3 py-1 text-xs font-semibold text-warning transition hover:bg-warning/10 disabled:opacity-60"
+                    >
+                      {archiving ? 'Unarchiving…' : 'Unarchive'}
+                    </button>
+                  )}
+                </div>
+              )}
+              {archiveError && <p className="mt-2 text-sm text-danger">{archiveError}</p>}
 
               <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
                 {editing ? (
@@ -547,6 +663,44 @@ export default function ClientDetail() {
                           <PencilIcon className="h-4 w-4" />
                           Edit
                         </button>
+                      )}
+                      {(canManage || isOwner) && (
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={() => setShowMoreMenu((v) => !v)}
+                            aria-label="More actions"
+                            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border text-fg-muted transition hover:bg-surface hover:text-fg"
+                          >
+                            <MoreIcon className="h-4 w-4" />
+                          </button>
+                          {showMoreMenu && (
+                            <>
+                              <div className="fixed inset-0 z-10" onClick={() => setShowMoreMenu(false)} aria-hidden="true" />
+                              <div className="absolute right-0 top-10 z-20 w-56 origin-top-right animate-scale-fade-in rounded-xl border border-border bg-surface-raised p-1 shadow-xl">
+                                {canManage && (
+                                  <button
+                                    type="button"
+                                    onClick={client.archivedAt ? handleUnarchive : handleArchive}
+                                    disabled={archiving}
+                                    className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface disabled:opacity-60"
+                                  >
+                                    {client.archivedAt ? 'Unarchive' : 'Archive'}
+                                  </button>
+                                )}
+                                {isOwner && (
+                                  <button
+                                    type="button"
+                                    onClick={openDeleteModal}
+                                    className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-danger hover:bg-danger/10"
+                                  >
+                                    Delete Permanently
+                                  </button>
+                                )}
+                              </div>
+                            </>
+                          )}
+                        </div>
                       )}
                     </div>
                   </div>
@@ -958,6 +1112,84 @@ export default function ClientDetail() {
           >
             {merging ? 'Merging…' : 'Confirm Merge'}
           </button>
+        </Modal>
+      )}
+
+      {showDeleteModal && (
+        <Modal
+          title="Delete Client Permanently"
+          onClose={() => {
+            setShowDeleteModal(false)
+            setDeletePreview(null)
+            setDeletePreviewError(null)
+            setDeleteError(null)
+          }}
+        >
+          <p className="text-sm text-fg-secondary">
+            Permanently delete <span className="font-semibold">{client?.firstName} {client?.lastName}</span>? This
+            cannot be undone.
+          </p>
+
+          {deletePreviewLoading && <p className="mt-4 text-sm text-fg-secondary">Checking what will be destroyed…</p>}
+          {deletePreviewError && <p className="mt-3 text-sm text-danger">{deletePreviewError}</p>}
+
+          {deletePreview && deletePreview.blockedByMerge && (
+            <div className="mt-4 rounded-lg border border-danger/30 bg-danger/10 p-3 text-sm text-danger">
+              One or more other client records were merged into this one. Those would be left dangling, so this
+              client cannot be permanently deleted.
+            </div>
+          )}
+
+          {deletePreview && !deletePreview.blockedByMerge && (
+            <div className="mt-4 rounded-lg border border-danger/30 bg-danger/10 p-3 text-sm">
+              <p className="mb-2 text-xs font-medium uppercase tracking-wider text-danger">
+                This will permanently destroy
+              </p>
+              <ul className="space-y-1 text-fg-secondary">
+                <li>{deletePreview.inquiries} inquir{deletePreview.inquiries === 1 ? 'y' : 'ies'}</li>
+                <li>{deletePreview.appointments} appointment{deletePreview.appointments === 1 ? '' : 's'}</li>
+                <li>{deletePreview.waivers} signed waiver{deletePreview.waivers === 1 ? '' : 's'}</li>
+                <li>{deletePreview.consentForms} consent form{deletePreview.consentForms === 1 ? '' : 's'}</li>
+                <li>{deletePreview.depositForms} deposit form{deletePreview.depositForms === 1 ? '' : 's'}</li>
+                <li>{deletePreview.messages} message{deletePreview.messages === 1 ? '' : 's'}</li>
+                {deletePreview.giftCards.length > 0 && (
+                  <li className="font-semibold text-danger">
+                    {deletePreview.giftCards.length} gift card{deletePreview.giftCards.length === 1 ? '' : 's'}
+                    {deletePreview.activeGiftCardCents > 0 && (
+                      <> — {formatCents(deletePreview.activeGiftCardCents)} in active gift card value</>
+                    )}
+                  </li>
+                )}
+              </ul>
+            </div>
+          )}
+
+          {deletePreview && !deletePreview.blockedByMerge && (
+            <div className="mt-4">
+              <label className="mb-1 block text-sm font-medium text-fg-secondary">
+                Type <span className="font-mono font-semibold text-fg">DELETE</span> to confirm
+              </label>
+              <input
+                type="text"
+                value={deleteConfirmText}
+                onChange={(e) => setDeleteConfirmText(e.target.value)}
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-danger focus:outline-none focus:ring-1 focus:ring-danger"
+              />
+            </div>
+          )}
+
+          {deleteError && <p className="mt-3 text-sm text-danger">{deleteError}</p>}
+
+          {deletePreview && !deletePreview.blockedByMerge && (
+            <button
+              type="button"
+              onClick={handleConfirmDelete}
+              disabled={deleting || deleteConfirmText !== DELETE_CONFIRM_TEXT}
+              className="mt-5 w-full rounded-full bg-danger px-4 py-2 text-sm font-medium text-bg transition hover:bg-danger/90 disabled:opacity-50"
+            >
+              {deleting ? 'Deleting…' : 'Delete Permanently'}
+            </button>
+          )}
         </Modal>
       )}
     </div>

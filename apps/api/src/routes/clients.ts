@@ -2,7 +2,8 @@ import { Router } from "express";
 import crypto from "node:crypto";
 import { prisma } from "../lib/prisma";
 import type { Prisma } from "../../generated/prisma/client";
-import { requireAuth } from "../middleware/auth";
+import { requireAuth, requireRole } from "../middleware/auth";
+import { Role } from "../../generated/prisma/enums";
 import { requirePermission } from "../lib/permissions";
 import { diffObjects, logAudit } from "../lib/audit";
 import { normalizePhone } from "../lib/phone";
@@ -37,9 +38,14 @@ router.post("/", async (req, res) => {
 // were a separate active client.
 const NOT_MERGED = { mergedIntoId: null } as const;
 
+// Same exclude-from-default-list-views treatment as NOT_MERGED, but the
+// underlying record is otherwise fully intact and directly reachable via
+// GET /:id -- see Client.archivedAt.
+const NOT_ARCHIVED = { archivedAt: null } as const;
+
 router.get("/", async (req, res) => {
   const clients = await prisma.client.findMany({
-    where: { studioId: req.user!.studioId, ...NOT_MERGED },
+    where: { studioId: req.user!.studioId, ...NOT_MERGED, ...NOT_ARCHIVED },
     orderBy: { createdAt: "desc" },
     take: 100,
   });
@@ -422,6 +428,174 @@ router.post("/:id/merge", async (req, res) => {
 
   const merged = await prisma.client.findUnique({ where: { id } });
   res.json(merged);
+});
+
+// Archive: soft, reversible hide -- same exclude-from-list-views treatment
+// as a merge, but nothing is repointed/destroyed and it can be undone.
+router.post("/:id/archive", async (req, res) => {
+  const id = req.params.id as string;
+  const client = await prisma.client.findUnique({ where: { id } });
+  if (!client || client.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Client not found" });
+  }
+  if (client.archivedAt) {
+    return res.json(client);
+  }
+
+  const updated = await prisma.client.update({ where: { id }, data: { archivedAt: new Date() } });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Client",
+    entityId: id,
+    action: "archive",
+    changes: { archivedAt: updated.archivedAt },
+  });
+
+  res.json(updated);
+});
+
+router.post("/:id/unarchive", async (req, res) => {
+  const id = req.params.id as string;
+  const client = await prisma.client.findUnique({ where: { id } });
+  if (!client || client.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Client not found" });
+  }
+  if (!client.archivedAt) {
+    return res.json(client);
+  }
+
+  const updated = await prisma.client.update({ where: { id }, data: { archivedAt: null } });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Client",
+    entityId: id,
+    action: "unarchive",
+    changes: { archivedAt: null },
+  });
+
+  res.json(updated);
+});
+
+// Shared between the delete-preview (so the confirmation UI can show what
+// will be destroyed) and the audit snapshot written just before the actual
+// DELETE below -- both need the exact same full picture of this client's
+// history.
+async function gatherClientDeletionSummary(clientId: string) {
+  const [inquiries, appointments, waivers, consentForms, giftCards, depositForms, conversation] = await Promise.all([
+    prisma.inquiry.count({ where: { clientId } }),
+    prisma.appointment.count({ where: { clientId } }),
+    prisma.liabilityWaiver.count({ where: { clientId } }),
+    prisma.consentForm.count({ where: { clientId } }),
+    prisma.giftCard.findMany({ where: { clientId }, select: { id: true, code: true, amountCents: true, status: true } }),
+    prisma.depositForm.count({ where: { inquiry: { clientId } } }),
+    prisma.conversation.findUnique({ where: { clientId }, select: { id: true } }),
+  ]);
+
+  const messages = conversation ? await prisma.message.count({ where: { conversationId: conversation.id } }) : 0;
+  const activeGiftCardCents = giftCards
+    .filter((card) => card.status === "ACTIVE")
+    .reduce((sum, card) => sum + card.amountCents, 0);
+
+  return {
+    inquiries,
+    appointments,
+    waivers,
+    consentForms,
+    giftCards: giftCards.map((card) => ({ id: card.id, code: card.code, amountCents: card.amountCents, status: card.status })),
+    activeGiftCardCents,
+    depositForms,
+    conversations: conversation ? 1 : 0,
+    messages,
+  };
+}
+
+// OWNER only, always available regardless of attached history -- the
+// strong in-app confirmation (exact-match "DELETE" text input) is the
+// safeguard, not a history-based restriction. Powers the confirmation
+// modal's plain-language breakdown before the real DELETE is sent.
+router.get("/:id/delete-preview", requireRole(Role.OWNER), async (req, res) => {
+  const id = req.params.id as string;
+  const client = await prisma.client.findUnique({ where: { id } });
+  if (!client || client.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Client not found" });
+  }
+
+  const mergedFromCount = await prisma.client.count({ where: { mergedIntoId: id } });
+  const summary = await gatherClientDeletionSummary(id);
+
+  res.json({ ...summary, blockedByMerge: mergedFromCount > 0 });
+});
+
+// True permanent delete -- OWNER only, no restriction based on attached
+// history. Every model with a clientId (direct or via inquiry/appointment)
+// is destroyed in one transaction, children before parents; the audit
+// entry written right after is the only surviving trace (AuditLog has no
+// FK to Client). Gift cards are NOT detached here the way inquiry-delete
+// detaches them -- deleting the client destroys their money along with
+// everything else, which is exactly what "permanent" means at this level.
+router.delete("/:id", requireRole(Role.OWNER), async (req, res) => {
+  const id = req.params.id as string;
+  const { confirm } = req.body ?? {};
+
+  if (confirm !== "DELETE") {
+    return res.status(400).json({ error: 'Type "DELETE" to confirm this action.' });
+  }
+
+  const client = await prisma.client.findUnique({ where: { id } });
+  if (!client || client.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Client not found" });
+  }
+
+  const mergedFromCount = await prisma.client.count({ where: { mergedIntoId: id } });
+  if (mergedFromCount > 0) {
+    return res.status(400).json({
+      error: `${mergedFromCount} other client record(s) were merged into this one and would be left dangling. Cannot delete.`,
+    });
+  }
+
+  const summary = await gatherClientDeletionSummary(id);
+
+  await prisma.$transaction(async (tx) => {
+    const conversation = await tx.conversation.findUnique({ where: { clientId: id } });
+    if (conversation) {
+      await tx.prefillDraft.deleteMany({ where: { conversationId: conversation.id } });
+      await tx.message.deleteMany({ where: { conversationId: conversation.id } });
+      await tx.conversationRead.deleteMany({ where: { conversationId: conversation.id } });
+      await tx.conversationTag.deleteMany({ where: { conversationId: conversation.id } });
+      await tx.conversationParticipant.deleteMany({ where: { conversationId: conversation.id } });
+      await tx.conversation.delete({ where: { id: conversation.id } });
+    }
+
+    await tx.liabilityWaiver.deleteMany({ where: { clientId: id } });
+    await tx.consentForm.deleteMany({ where: { clientId: id } });
+    // DepositForm before GiftCard: DepositForm.giftCardId optionally points
+    // at a gift card, so it must go first or the gift card delete below
+    // would be blocked by that reference.
+    await tx.depositForm.deleteMany({ where: { inquiry: { clientId: id } } });
+    await tx.giftCard.deleteMany({ where: { clientId: id } });
+    // Inquiry.appointmentId is an optional back-reference to a specific
+    // appointment -- null it before deleting appointments, or that FK
+    // blocks the appointment delete below.
+    await tx.inquiry.updateMany({ where: { clientId: id }, data: { appointmentId: null } });
+    await tx.appointment.deleteMany({ where: { clientId: id } });
+    await tx.inquiry.deleteMany({ where: { clientId: id } });
+    await tx.client.delete({ where: { id } });
+  });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Client",
+    entityId: id,
+    action: "permanently_deleted",
+    changes: { client: { firstName: client.firstName, lastName: client.lastName, email: client.email, phone: client.phone }, ...summary },
+  });
+
+  res.json({ success: true });
 });
 
 router.post("/:clientId/consent-forms", async (req, res) => {

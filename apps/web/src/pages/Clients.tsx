@@ -1,5 +1,5 @@
-import { useState, type FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useState, type FormEvent } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
@@ -25,11 +25,25 @@ const EMPTY_FORM = { firstName: '', lastName: '', email: '', phone: '' }
 
 export default function Clients() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { user } = useAuth()
   const { profile } = useUserProfile()
   const canManage = profile?.permissions.includes('clients.manage') ?? false
   const [search, setSearch] = useState('')
   useMarkSectionSeen('clients')
+
+  // Set by ClientDetail's permanent-delete flow on redirect -- read once,
+  // then cleared from history so a refresh (or back navigation) doesn't
+  // keep showing it.
+  const [flash, setFlash] = useState<string | null>(null)
+  useEffect(() => {
+    const state = location.state as { flash?: string } | null
+    if (state?.flash) {
+      setFlash(state.flash)
+      window.history.replaceState({}, '')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const [showAddModal, setShowAddModal] = useState(false)
   const [form, setForm] = useState(EMPTY_FORM)
@@ -94,6 +108,15 @@ export default function Clients() {
 
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-7xl px-6 py-6 sm:px-10 sm:py-8">
+          {flash && (
+            <div className="mb-6 flex items-center justify-between gap-3 rounded-2xl border border-success/30 bg-success/10 p-4 text-sm text-success">
+              <span>{flash}</span>
+              <button type="button" onClick={() => setFlash(null)} className="text-xs font-medium underline">
+                Dismiss
+              </button>
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <h1 className="text-2xl font-bold text-fg sm:text-3xl">Clients</h1>

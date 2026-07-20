@@ -222,10 +222,14 @@ const INQUIRY_LIST_SELECT = {
   client: { select: { firstName: true, lastName: true } },
 } as const;
 
+// Excluded from the default inbox the same way merged clients are excluded
+// from the client list -- fully intact, still reachable via GET /:id.
+const NOT_ARCHIVED = { archivedAt: null } as const;
+
 // Staff-facing inbox: every inquiry submitted for this studio, newest first.
 router.get("/", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
   const inquiries = await prisma.inquiry.findMany({
-    where: { studioId: req.user!.studioId },
+    where: { studioId: req.user!.studioId, ...NOT_ARCHIVED },
     select: INQUIRY_LIST_SELECT,
     orderBy: { createdAt: "desc" },
     take: 100,
@@ -961,6 +965,166 @@ router.post("/:id/share-to-artist", requireAuth, requireRole(Role.OWNER, Role.FR
   });
 
   res.status(201).json({ conversationId: conversation.id, messageId: message.id });
+});
+
+// Archive: soft, reversible hide -- same treatment as Client.archivedAt.
+router.post("/:id/archive", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+  if (inquiry.archivedAt) {
+    return res.json(inquiry);
+  }
+
+  const updated = await prisma.inquiry.update({ where: { id }, data: { archivedAt: new Date() } });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Inquiry",
+    entityId: id,
+    action: "archive",
+    changes: { archivedAt: updated.archivedAt },
+  });
+
+  res.json(updated);
+});
+
+router.post("/:id/unarchive", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+  if (!inquiry.archivedAt) {
+    return res.json(inquiry);
+  }
+
+  const updated = await prisma.inquiry.update({ where: { id }, data: { archivedAt: null } });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Inquiry",
+    entityId: id,
+    action: "unarchive",
+    changes: { archivedAt: null },
+  });
+
+  res.json(updated);
+});
+
+// Shared between the delete-preview and the audit snapshot written just
+// before the real DELETE below.
+async function gatherInquiryDeletionSummary(inquiryId: string) {
+  const appointments = await prisma.appointment.findMany({ where: { inquiryId }, select: { id: true } });
+  const appointmentIds = appointments.map((a) => a.id);
+
+  const [waivers, depositForm, attachedGiftCards, consentFormsToDetachCount, conversationTagCount] = await Promise.all([
+    prisma.liabilityWaiver.count({ where: { appointmentId: { in: appointmentIds } } }),
+    prisma.depositForm.findUnique({ where: { inquiryId }, select: { id: true, giftCardId: true } }),
+    prisma.giftCard.findMany({
+      where: { appointmentId: { in: appointmentIds } },
+      select: { id: true, code: true, amountCents: true, status: true },
+    }),
+    prisma.consentForm.count({ where: { appointmentId: { in: appointmentIds } } }),
+    prisma.conversationTag.count({
+      where: {
+        OR: [
+          { entityType: "Inquiry", entityId: inquiryId },
+          { entityType: "Appointment", entityId: { in: appointmentIds } },
+        ],
+      },
+    }),
+  ]);
+
+  return {
+    appointments: appointmentIds.length,
+    waivers,
+    depositForms: depositForm ? 1 : 0,
+    giftCardsToDetach: attachedGiftCards.map((card) => ({ id: card.id, code: card.code, amountCents: card.amountCents, status: card.status })),
+    consentFormsToDetach: consentFormsToDetachCount,
+    conversationTags: conversationTagCount,
+  };
+}
+
+// OWNER only, always available regardless of attached history. Scoped to
+// this inquiry's own tree -- unlike client-delete, any gift card attached
+// to one of this inquiry's appointments is DETACHED (appointmentId ->
+// null), never destroyed: it's the client's money, independent of this
+// one project. Consent forms on these appointments are likewise unlinked
+// (appointmentId -> null) rather than deleted, since they're optionally
+// attached and represent a signed legal document that outlives the
+// session it was originally tied to.
+router.delete("/:id", requireAuth, requireRole(Role.OWNER), async (req, res) => {
+  const id = req.params.id as string;
+  const { confirm } = req.body ?? {};
+
+  if (confirm !== "DELETE") {
+    return res.status(400).json({ error: 'Type "DELETE" to confirm this action.' });
+  }
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  const summary = await gatherInquiryDeletionSummary(id);
+
+  await prisma.$transaction(async (tx) => {
+    const appointments = await tx.appointment.findMany({ where: { inquiryId: id }, select: { id: true } });
+    const appointmentIds = appointments.map((a) => a.id);
+
+    // Detach, don't destroy -- the client's money survives this delete.
+    await tx.giftCard.updateMany({ where: { appointmentId: { in: appointmentIds } }, data: { appointmentId: null } });
+    // Unlink, don't destroy -- a signed consent form outlives the session.
+    await tx.consentForm.updateMany({ where: { appointmentId: { in: appointmentIds } }, data: { appointmentId: null } });
+
+    await tx.liabilityWaiver.deleteMany({ where: { appointmentId: { in: appointmentIds } } });
+    await tx.conversationTag.deleteMany({
+      where: {
+        OR: [
+          { entityType: "Inquiry", entityId: id },
+          { entityType: "Appointment", entityId: { in: appointmentIds } },
+        ],
+      },
+    });
+    await tx.depositForm.deleteMany({ where: { inquiryId: id } });
+
+    // Inquiry.appointmentId is an optional back-reference to one of these
+    // same appointments -- null it before deleting them, or that FK blocks
+    // the appointment delete below.
+    await tx.inquiry.update({ where: { id }, data: { appointmentId: null } });
+    await tx.appointment.deleteMany({ where: { inquiryId: id } });
+    await tx.inquiry.delete({ where: { id } });
+  });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Inquiry",
+    entityId: id,
+    action: "permanently_deleted",
+    changes: {
+      inquiry: { description: inquiry.description, status: inquiry.status, clientId: inquiry.clientId },
+      ...summary,
+    },
+  });
+
+  res.json({ success: true, detachedGiftCards: summary.giftCardsToDetach });
+});
+
+router.get("/:id/delete-preview", requireAuth, requireRole(Role.OWNER), async (req, res) => {
+  const id = req.params.id as string;
+  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  const summary = await gatherInquiryDeletionSummary(id);
+  res.json(summary);
 });
 
 export default router;
