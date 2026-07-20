@@ -1,104 +1,118 @@
-# Phase UI-3+4+5 — Plain-language settings, phone masking, single-day appointments, robust calendar
+# Fix bundle — public link URLs, client-detail crash, Customer role cleanup, artist social links
 
-Three-part session. Each part was built, verified (browser + PowerShell/curl), and committed locally before the next began.
+Single session, on `main`. `ConversationsPanel.tsx` was **not** touched — the composer's link-insert bug traced back to a server-side issue (see §1), not anything in that file.
 
-- **Part 1 (UI-3)** commit: `50d5ee8` — "Phase UI-3: plain-language system panel, icon action buttons, rich-text policy editor"
-- **Part 2 (UI-4)** commit: `5a13493` — "Phase UI-4: phone masking, single-day appointment form"
-- **Part 3 (UI-5)** commit: `62b7b01` — "Phase UI-5: robust calendar view with resource columns and drag-and-drop"
-
-**No commit in this session was pushed.** The task text said "commit now" / "record the hash" at the end of each part but never said "push" — unlike other tasks earlier in this session that explicitly asked for it. I deliberately left all three commits local pending your explicit instruction to push.
+**New standing rule, adopted for this and every future frontend session:** `cd apps/web && npm run build` must complete with ZERO TypeScript errors before any commit. This was already how the previous session's build-fix ended; this session confirms it as permanent, not a one-off.
 
 ---
 
-## Part 1 — Plain-language settings, icon buttons, rich-text policy editor
+## 1. Public links were pointing at localhost (URGENT)
 
-### JOB_DISPLAY dictionary (Settings.tsx)
+### Every hardcoded `localhost` instance found
 ```
-giftCardExpirationSweep → "Gift Card Expiration"
-  "Automatically marks gift cards as expired once their expiration date has passed."
-coldLeadSweep → "Cold Lead Detection"
-  "Automatically flags inquiries as cold leads after a period of no activity."
+apps/api/src/routes/appointments.ts:13   const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
+apps/api/src/routes/clients.ts:13        const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
+apps/api/src/routes/inquiries.ts:17      const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
+apps/api/src/routes/prefillDrafts.ts:12  const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 ```
-Cron string, internal `description`, and raw job JSON moved behind a `<details>` "Advanced" disclosure. Status renders as icon+plain text (Succeeded/Failed with reason/Running…/Not run yet — never color alone), with a relative timestamp ("Today at 2:14 PM", "3 days ago") computed in the studio's configured timezone and the exact timestamp available via a native title-attribute tooltip.
+Each file independently defined the same fallback constant. Grepped both `apps/api/src` and `apps/web/src` for the literal string — nothing else matched, and `req.headers.host`/`req.hostname` (the other named risk, trusting Railway's proxy) is not used anywhere in the codebase.
 
-### Icon action buttons
-InquiryDetail's Message / Share with Artist / More-actions buttons: icon+label pill at ≥768px, 44px circular icon-only touch target below that, `aria-label` and native `title` tooltip at both breakpoints. No other header button on that page had the same crowding issue, so no further buttons needed the pattern.
+**The conversations composer's "+ menu" link-insert isn't a frontend hardcode.** `ConversationsPanel.tsx` calls `POST /prefill-drafts` and inserts the returned `prefillUrl` verbatim — it never constructs a URL itself. The bug was entirely server-side, in `prefillDrafts.ts`'s own `FRONTEND_URL` fallback, so `ConversationsPanel.tsx` needed zero changes.
 
-### Rich-text policy editor (8 fields, Tiptap + DOMPurify)
-`refundPolicy`, `depositPolicy`, `reschedulePolicy`, `communicationPolicy`, `estimateTerms`, `waiverAcknowledgment`, `waiverPhotoRelease`, `calendarInviteTemplate` — each gets its own edit-icon + compact plain-text preview (HTML stripped, truncated, "No content yet" when empty) and its own single-field modal with a small Tiptap toolbar (bold/italic/underline/bullet/numbered list/link/basic headings). The 5 "Defaults" fields (`coldLeadDays`, `estimateFollowUpHours`, `giftCardDefaultExpirationDays`, `timezone`, `showSidebarBadges`) share one "Edit Defaults" modal and one PATCH. Waiver health-questions/clauses list editor and Message Templates were left untouched (out of scope / pre-existing dedicated editors).
+### The fix
+One shared helper, `apps/api/src/lib/publicUrl.ts`, exporting `PUBLIC_APP_URL` (resolved once at module load):
+- If `PUBLIC_APP_URL` is set, use it (trailing slash stripped).
+- Else, in dev (`NODE_ENV !== "production"`), fall back to `http://localhost:5173`.
+- Else (production, unset): log a loud `console.error` naming every affected link type, and only then fall back to localhost — so the misconfiguration is visibly broken in the response rather than silently wrong.
 
-**HTML render sites sanitized** (audited via a full grep of every `dangerouslySetInnerHTML` and snapshot-copy path before touching anything):
-- `EstimateResponse.tsx` — public estimate page's `estimateTermsSnapshot`
-- `WaiverSign.tsx` — public waiver page's `acknowledgment` and `photoRelease` (two sites)
+All four route files now import `PUBLIC_APP_URL` instead of defining their own constant. Every call site (`estimateUrl`, `depositUrl`, `signingUrl` ×2 (waiver + consent form), `intakeFormUrl`, gift-card `url`, `prefillUrl`) migrated.
 
-**5 of the 8 fields — `refundPolicy`, `depositPolicy`, `reschedulePolicy`, `communicationPolicy`, `calendarInviteTemplate` — have zero consumers outside Settings.tsx's own preview/edit UI today.** Reported transparently rather than sanitizing render sites that don't exist. All sanitization uses a restrictive DOMPurify allow-list (`p, br, strong, em, u, ul, ol, li, a, h2, h3` / `href, target, rel`), proven against a real `<script>` + `onerror=` payload saved through the editor and through a direct API call — neutralized at every render site, not just client-side stripped.
+**The env var is named `PUBLIC_APP_URL`, not `FRONTEND_URL`** — deliberately renamed to make the "this is what every public link is built from" contract explicit, and because the task asked for `.env.example` to document it under that exact name. Updated `.env.example` (with the dev/production fallback behavior spelled out) and local `.env`.
 
-Backward compatibility: old plain-text values render fine as a single run-on paragraph until re-saved (not auto-migrated). Existing immutable snapshots (`estimateTermsSnapshot`, waiver `healthQuestionsSnapshot`/`clausesSnapshot`, etc.) are unaffected.
+### ⚠️ Action needed from you
+**Set `PUBLIC_APP_URL` in Railway's API service environment variables to your real deployed frontend domain** (no trailing slash) — e.g. `https://your-app.up.railway.app`, or your custom domain if one is configured. I have no visibility into what that URL actually is from inside this repo (grepped for `railway.app`/`vercel.app`/`netlify`/any custom-domain reference — nothing committed anywhere), so I'm not guessing it. Until this is set, production will keep logging the loud startup warning added above and every public link will still point at localhost.
 
----
+### Verification
+Restarted the API with `NODE_ENV=production PUBLIC_APP_URL="https://app.inkmanager-prod-simulation.com"` and hit every link-generating route live:
 
-## Part 2 — Phone masking, single-day appointment form
+| Link type | Route | Result |
+|---|---|---|
+| Intake form | `GET /clients/:id/shareable-links` | `https://app.inkmanager-prod-simulation.com/inquiry/dev-studio` |
+| Gift card | `GET /clients/:id/shareable-links` | `https://app.inkmanager-prod-simulation.com/gift-card/...` |
+| Consent form | `POST /clients/:id/consent-forms` | `https://app.inkmanager-prod-simulation.com/sign/...` |
+| Prefill draft | `POST /prefill-drafts` | `https://app.inkmanager-prod-simulation.com/inquiry/dev-studio?draft=...` |
+| Estimate | `POST /inquiries/:id/send-estimate` | `https://app.inkmanager-prod-simulation.com/estimate/...` |
+| Waiver | `POST /appointments/:id/waiver` | `https://app.inkmanager-prod-simulation.com/waiver/...` |
+| Deposit form | `POST /inquiries/:id/deposit-form` | Not live-tested (no seed inquiry was in `DEPOSIT_PENDING` at the time without forcing state) — uses the identical one-line `${PUBLIC_APP_URL}/deposit/${token}` pattern as every other route above, confirmed by direct code read |
 
-### Phone masking
-Canonical storage format is a **bare 10-digit US string** (not E.164, despite the task's guess) — this matched the pre-existing `normalizePhone` function in `clients.ts`, adopted as-is per "don't invent a second scheme." One shared `PhoneInput` component (hand-written masking via the existing `formatPhoneInput` helper, no new library) live-formats as `(XXX) XXX-XXXX` while storing/submitting bare digits, with inline "Enter a complete 10-digit phone number" validation.
-
-Applied to: client create/edit (Clients.tsx, ClientDetail.tsx), team member create/edit (Team.tsx), own-profile phone (Profile.tsx), public intake form (IntakeForm.tsx), waiver emergency-contact phone (WaiverSign.tsx), studio location phone (Settings.tsx). Server-side, `normalizePhone` was added as defense-in-depth on every relevant create/update route (clients, users/me, studio users, studio locations, public intake, waiver emergency contact).
-
-**Found but deliberately left untouched:** `components/ConversationsPanel.tsx:1113`'s "New Chat" quick-add-client phone field — flagged per the explicit "do NOT touch ConversationsPanel.tsx" instruction for this session. Follow-up work for whoever owns that file.
-
-Duplicate-detection (`/clients/:id/potential-duplicates`) still matches correctly post-change — verified live by creating two clients with the same number in different raw formats (`9195551212` vs `+1 (919) 555-1212`); both normalized to `9195551212` and matched.
-
-### Single-day appointment form
-`react-day-picker` (v10) adopted as this app's calendar-picker standard — no existing date-picker component was found to reuse (waiver DOB and gift-card expiration are both native `<input type="date">`). One new shared component, `DateAndTimeRangeFields`, replaces the old two-datetime-input pattern everywhere: one calendar-grid date field (click-only, never typed) + two native `<input type="time">` fields.
-
-**Appointment forms were consolidated into one shared component**, `AppointmentForm.tsx` — previously near-duplicated between Calendar.tsx's standalone form and InquiryDetail.tsx's nested "add a session" form. `fixedClientId`/`fixedInquiryId` hide+lock those selects for the nested case; `initial*` props (used by Part 3's calendar) prefill without locking. The checkout "Book follow-up" deep-link is not a separate implementation — it's a URL-param deep-link into Calendar's own form, confirmed by reading the code rather than assumed. One deliberate behavior change along the way: the deep-link's client/project prefill went from editable-default to **locked-and-hidden** (a reasonable tightening, since a follow-up is always for the same client/project).
-
-The separate `/inquiries/:id/schedule` flow (first-time scheduling) kept its own smaller `DateAndTimeRangeFields`-only form — different endpoint/semantics, not a duplicate of `AppointmentForm`.
-
-Server-side single-day guard added to **both** the CREATE and UPDATE (`PATCH /:id`) routes, using a new `isSameCalendarDay` helper that compares civil dates via `Intl.DateTimeFormat` in the *studio's* configured timezone — not a naive UTC-date comparison, which would false-positive reject legitimate same-local-day appointments in western US timezones (verified with a concrete counter-example before writing the code). The PATCH route previously only handled `status` and had **no audit logging at all**; it now also accepts `startTime`/`endTime` with the same validation and logs every update — a real pre-existing gap, not something this session introduced, and required groundwork for Part 3's drag-reschedule.
-
-Verified via curl: a crafted end-before-start request and a crafted genuinely-cross-midnight-local request are both rejected 400 on CREATE and UPDATE, independent of any UI.
+Also directly exercised `publicUrl.ts`'s three branches (prod+missing → warns + localhost; prod+set → real domain; dev+missing → silent localhost) in isolation — all three behaved exactly as designed.
 
 ---
 
-## Part 3 — Robust calendar (resource columns, drag-and-drop)
+## 2. Client detail page crash
 
-### Library
-`react-big-calendar` v1.20.0, confirmed **MIT-licensed** at time of use (checked via `npm view`), with the drag-and-drop addon (`react-big-calendar/lib/addons/dragAndDrop`) bundled in the same MIT package — no FullCalendar Scheduler paid tier involved. One real interop bug surfaced and fixed along the way: Vite's CJS dependency pre-bundling double-wraps this addon's nested default export, so a plain `import withDragAndDrop from '...'` resolves to the wrapper module object instead of the function; `Calendar.tsx` unwraps it defensively. Also: `resourceGroupingLayout` is required to get per-day, per-artist sub-columns in Week view — without it, RBC's Week/Day time grid only renders one resource header spanning every day.
+### Root cause (captured, not guessed)
+Reproduced by opening every seeded client's detail page in a real browser and watching the console. Two clients crashed — Casey and Bailey Testperson — both blank pages with:
+```
+TypeError: Cannot read properties of undefined (reading 'email')
+    at ClientDetail.tsx:847:50  (Array.map, ClientDetail component)
+```
+Traced to `ClientDetail.tsx:607`: `appointment.artist?.user.email` — optional chaining stopped at `artist?.`, so if `artist` exists but `artist.user` doesn't, `.email` throws.
 
-### Data
-`GET /appointments` extended (not a parallel route) with optional `?start=&end=` ISO range params, doing an interval-overlap query and dropping the previous 100-row cap for ranged requests (500-row cap instead — a visible calendar range is naturally bounded, this is just a safety ceiling). Existing `clientId` filter and ARTIST-sees-only-own role scoping preserved exactly; verified live that artist2 (no appointments) gets an empty, correctly-scoped result even with a wide range. Response now also includes `artist.name` (display name) and a short `inquiry.label` (truncated project description) per appointment.
+**This was a real regression from the prior (Phase UI-5) session, not a data-vintage issue.** That session changed `GET /appointments`'s response shape for the new calendar (`artist: {id, user: {email}}` → `artist: {id, name}`), and its own consumer-audit ("only Sidebar and Calendar.tsx use this route") missed that `ClientDetail.tsx` also calls it (`GET /appointments?clientId=`, same route, same shape). Casey and Bailey crashed specifically because they're the two clients that actually have appointments in the dev seed (used heavily for Part 2/3 testing last session) — clients with zero appointments never hit the `.map()` callback, so the bug was invisible for most of them.
 
-### Views
-Week (default) and Day show one resource column per active artist (toggle chips above the calendar, default all). Month shows everyone combined, color-coded by a deterministic per-artist hash (`lib/artistColors.ts`, 8-color fixed palette, pure frontend, no schema change — manual color assignment noted as a reasonable future enhancement, not built here). Plain-language Today/Back/Next + Week/Day/Month switcher replaces RBC's default toolbar entirely.
+### Fix
+Updated `ClientDetail.tsx`'s local `Appointment` interface and its one render site to match the API's actual (current) shape: `artist.name` instead of `artist.user.email`. Not a defensive guard around a hypothetical bad value — the field genuinely doesn't exist on the response anymore, so this is a shape-correctness fix, not a null-check.
 
-### Interactions (OWNER/FRONT_DESK only)
-- **Click empty slot** opens Part 2's shared `AppointmentForm`, prefilled with date/start-time/end-time and (in a resource column) that column's artist.
-- **Drag** submits through the *existing* `PATCH /appointments/:id` route (never a bespoke calendar endpoint) — audit logging and validation fire exactly as they would for a manual edit. Verified via the network log during a real browser drag that it's the same route, and confirmed the resulting `AuditLog` row (`action: "update"`, `{field: {from, to}}` diff shape) is structurally identical to one produced by a manual status change.
-- **Buffer conflict** (< 1.5 hours from another same-artist same-day appointment) is a non-blocking amber notice — the drag still saves. Verified live: dragging into a conflict returned 200 with a `bufferWarning`, no block.
-- **Same-day violation**: any drag whose resulting end crosses local midnight is rejected client-side (event visually reverts since it's never optimistically mutated) with a message, and confirmed independently rejected server-side by direct curl against the same route.
-- **Cross-column drop** (reassigning to a different artist) is rejected entirely — client-side by comparing the drop target's resource against the event's own artist and refusing to call the API at all (the update route also structurally never accepts an artistId, so this is enforced twice). The revert is total: neither the time nor the day portion of the move is kept, only a message.
-- **Click an existing appointment** opens a small modal preview (client, time range, artist, status pill, "View details →" link) — never immediate navigation. Works identically for ARTIST.
-- The buffer-conflict logic itself was extracted from `inquiries.ts`'s `/schedule` route into a shared `lib/schedulingConflict.ts`, and that route was refactored to use it — so there's exactly one implementation, reused by the original scheduling flow, the calendar's click-create, and drag-reschedule.
+### Error boundary (general resilience, independent of the specific bug)
+New `apps/web/src/components/ErrorBoundary.tsx` (a class component — React's error-boundary lifecycle has no hook equivalent). Wired in two places in `App.tsx`:
+- Around the whole `<Routes>` tree, as an app-shell-level safety net (`TopBar`/`ConversationsPanel`/`ViewAsBanner` stay outside it, so they survive a route-level crash).
+- Specifically around `<ClientDetail />`'s route element, per the task's request for one there.
 
-### ARTIST (effective, via `useEffectiveUser()` — View As included)
-Renders the plain, non-drag-and-drop `Calendar` component — not the same component with drag props omitted, a genuinely different component that never attaches drag listeners. Verified: zero `.rbc-addons-dnd-resize-*` handles in the DOM, zero resource-grouping headers, empty-slot clicks never open a create modal, but click-to-preview still works. No artist-column filter and no `/artists` fetch for this role — an ARTIST's calendar is a single agenda of only their own appointments (server-scoped, confirmed via artist1 vs artist2 tests).
+Both show "Something went wrong — try reloading" with a reload button instead of a blank page.
 
-### Mobile (< 768px)
-Falls back to a single-column Day view with a dropdown artist switcher (OWNER/FRONT_DESK) instead of shrunk-down resource columns — verified this actually triggers at a 375px viewport, and that the Week/Month switcher itself disappears when only one view is available.
-
-### A regression caught and fixed during this part
-Rewriting Calendar.tsx removed the only manual appointment-status-change control that existed anywhere in the app (the old table view's per-row status dropdown). Restored it on `AppointmentDetail.tsx` (a status `<select>` next to the header, OWNER/FRONT_DESK only) rather than leaving that capability gone.
+### Verification
+- Casey and Bailey's client detail pages load correctly now (screenshot-verified — appointments table shows "Dev Artist One" where it used to crash).
+- Deliberately injected a temporary throw at the top of `ClientDetail` (`if (window.location.search.includes('__test_crash')) throw ...`), confirmed the boundary caught it and rendered the friendly message, then reverted the injection — the diff that actually ships contains only the real fix (interface + render-site change), nothing test-related.
 
 ---
 
-## Known non-blocking issue
+## 3. Removed CUSTOMER as a selectable team-member role
 
-`react-big-calendar`'s own `TimeGridHeaderResources` internals emit a React "duplicate key" console warning when `resourceGroupingLayout` is combined with more than one day in view (Week view specifically). This is inside the library's bundled code, not something introduced here, and does not affect rendering correctness, drag/click behavior, or data integrity — confirmed via extensive live testing. Dev-console noise only.
+`Team.tsx`'s `ROLE_OPTIONS` (feeding both the add and edit team-member role `<select>`s) no longer includes `'CUSTOMER'` — now `['OWNER', 'FRONT_DESK', 'ARTIST']`.
+
+**Deliberately left untouched:** `CONFIGURABLE_ROLES` in `lib/permissions.ts` (frontend) and `apps/api/src/lib/permissions.ts` (backend) still includes `CUSTOMER` — that's the separate Permissions-matrix tab (a distinct system from an earlier session's View As permissions audit), not "who can be assigned as a team member." Conflating the two would have been a scope overreach and risked breaking that matrix.
+
+Server-side, `POST /studios/:studioId/users` and `PATCH /studios/:studioId/users/:userId` both validated `role` against `Object.values(Role)` (every enum value, including `CUSTOMER`) — the UI hiding the option was not actually enforced. Added a `STAFF_ROLES = [OWNER, FRONT_DESK, ARTIST]` constant in `studios.ts` and validate against that instead on both routes.
+
+### Verification
+- Browser: add/edit team-member role selector shows only Owner/Front Desk/Artist.
+- Direct API bypass, both routes:
+  - `POST /studios/:id/users` with `role: "CUSTOMER"` → `400 {"error":"role must be one of: OWNER, FRONT_DESK, ARTIST"}`
+  - `PATCH /studios/:id/users/:userId` with `role: "CUSTOMER"` → same 400.
+
+---
+
+## 4. Artist social profile links
+
+Added nullable `instagramHandle` and `facebookProfileUrl` to `Artist` (migration `20260720010813_add_artist_social_links`). Editable on the artist detail page (Team → Artists → an artist) as a new "Social Links" card: a handle field for Instagram (leading `@` stripped on save if pasted), a full-URL field for Facebook — validated loosely (must be a string or null, nothing more) per the task's "don't over-engineer" instruction. `PATCH /artists/:id` accepts both fields now and logs an audit entry (this route previously had no audit logging at all for bio/specialties/portfolio edits either — added it for the whole route while touching it, not just the two new fields).
+
+Two new line-icon components (`InstagramIcon`, `FacebookIcon` in `components/icons.tsx`, matching the existing hand-rolled SVG convention — not brand-mark logos). Displayed as small clickable circular icon links, present in two places when a value exists:
+- The artist detail page's Social Links card (read view, for anyone without `artists.manage`).
+- The artist card on Team → Artists tab (icon clicks `stopPropagation` so they don't also trigger the card's own navigate-to-detail).
+
+**Explicitly out of scope (per the task):** no automatic profile photo/bio/portfolio import from Instagram or Facebook. That needs the same Meta Business API + App Review process already planned for the client-facing channel integration in Phase 7B — building a one-off scraper or a duplicate integration here would be either unreliable/ToS-risky or thrown-away work. Revisit once that integration exists and can be reused.
+
+### Verification
+- Saved `@inkmanager.studio` (Instagram) and a Facebook URL on an artist via the edit form; confirmed via direct API read that they persisted correctly (and the leading `@` was stripped).
+- Logged in as Front Desk (no `artists.manage`) and confirmed both the detail page and the Team card render live, correctly-labeled, clickable icon links (`aria-label`/`title` set) pointing at the right URLs.
+
+---
 
 ## Verification summary
-- Browser (Playwright): both breakpoints, OWNER and ARTIST roles, all three parts' UI flows including a real drag-and-drop reschedule, a real cross-column revert, a real cross-midnight revert, a real buffer-conflict warning, and a real XSS payload neutralized at every render site.
-- API (curl): role/studio scoping on the ranged appointments endpoint, same-day guard on CREATE and UPDATE with a genuinely-cross-midnight-local payload (not just a naive UTC-crossing one), audit log shape parity between a drag-triggered PATCH and a manual edit, duplicate-detection with mixed phone formats.
-- Both `apps/api` and `apps/web` type-check cleanly (`tsc --noEmit`) as of the final commit.
+- `npm run build` (apps/web): clean, zero TypeScript errors, exit 0.
+- `npx tsc --noEmit` (apps/api): clean.
+- Every item above was verified live against a running dev server (and, for §1, a simulated production environment) — not just type-checked.
 
-All background dev-server shells and scratch verification scripts from this session were left running only as long as needed for testing and are being shut down now that verification is complete.
+## Commit
+`2f7cc63` — "Fix bundle: public link URLs, client-detail crash, Customer role cleanup, artist social links". Pushed to `origin/main`. Both dev-server shells (API, web) killed after verification.
