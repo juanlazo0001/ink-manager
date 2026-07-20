@@ -20,14 +20,17 @@ interface DateAndTimeRangeFieldsProps {
   disabled?: boolean
 }
 
-function toDateString(d: Date): string {
+// Exported so other single-date pickers (e.g. DatePickerField) can share
+// the exact same yyyy-mm-dd <-> Date conversion -- one source of truth for
+// the format every date-string field in the app now uses.
+export function toDateString(d: Date): string {
   const y = d.getFullYear()
   const m = String(d.getMonth() + 1).padStart(2, '0')
   const day = String(d.getDate()).padStart(2, '0')
   return `${y}-${m}-${day}`
 }
 
-function parseDateString(value: string): Date | undefined {
+export function parseDateString(value: string): Date | undefined {
   if (!value) return undefined
   const [y, m, d] = value.split('-').map(Number)
   if (!y || !m || !d) return undefined

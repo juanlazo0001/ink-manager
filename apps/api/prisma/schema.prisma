@@ -200,6 +200,15 @@ model Artist {
   // Shape: Array<{ dayOfWeek: 0-6 (0 = Sunday), startTime: "HH:MM", endTime: "HH:MM" }>
   preferredSchedule Json?
 
+  // Guest artist window -- both nullable/independent of isGuest so a guest
+  // can be flagged before dates are picked. Visibility rules (default-
+  // hidden past guestEndDate, reachable via a filter toggle) live on
+  // Calendar and assignment pickers, not here; this tab always shows guests
+  // regardless of window.
+  isGuest        Boolean   @default(false)
+  guestStartDate DateTime?
+  guestEndDate   DateTime?
+
   userId String @unique
   user   User   @relation(fields: [userId], references: [id])
 

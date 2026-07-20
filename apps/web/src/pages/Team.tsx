@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
 import PhoneInput from '../components/PhoneInput'
@@ -25,6 +25,9 @@ interface ArtistCard {
   portfolioImages: string[]
   instagramHandle: string | null
   facebookProfileUrl: string | null
+  isGuest: boolean
+  guestStartDate: string | null
+  guestEndDate: string | null
   user: { id: string; email: string; name: string | null; avatarUrl: string | null }
 }
 
@@ -57,7 +60,15 @@ interface LocationOption {
 // still present in CONFIGURABLE_ROLES (lib/permissions.ts) for the
 // separate Permissions-matrix tab, which is a distinct, deliberately
 // unrelated system -- not touched by this.
-const ROLE_OPTIONS = ['OWNER', 'FRONT_DESK', 'ARTIST']
+//
+// Staff/Artists split: the Staff tab's add/edit role selector only offers
+// OWNER/FRONT_DESK -- ARTIST creation moved to its own "+ Add Artist" flow
+// on the Artists tab, which locks role to ARTIST rather than showing a
+// selector. Once created, this UI never lets a role be converted between
+// the "staff" and "artist" categories (a deliberate simplification, not a
+// backend restriction -- STAFF_ROLES on the API side still permits it via
+// direct API access if ever genuinely needed operationally).
+const STAFF_ROLE_OPTIONS = ['OWNER', 'FRONT_DESK']
 
 const EMPTY_ADD_FORM = { name: '', phone: '', email: '', password: '', role: 'FRONT_DESK' }
 
@@ -86,6 +97,7 @@ function emptyEditForm(teamUser: TeamUser) {
 export default function Team() {
   const { user: realUser } = useAuth()
   const user = useEffectiveUser()
+  const queryClient = useQueryClient()
   const isOwner = user?.role === 'OWNER'
   const { target: viewAsTarget, startViewAs } = useViewAs()
   // The View As entry point reflects who's REALLY logged in, not the
@@ -128,10 +140,27 @@ export default function Team() {
   const [refreshIndex, setRefreshIndex] = useState(0)
 
   const [showAddModal, setShowAddModal] = useState(false)
+  const [addContext, setAddContext] = useState<'staff' | 'artist'>('staff')
   const [addForm, setAddForm] = useState(EMPTY_ADD_FORM)
   const [addAvatarUrl, setAddAvatarUrl] = useState<string | null>(null)
   const [addFormError, setAddFormError] = useState<string | null>(null)
   const [addSubmitting, setAddSubmitting] = useState(false)
+
+  function openAddStaff() {
+    setAddContext('staff')
+    setAddForm(EMPTY_ADD_FORM)
+    setAddAvatarUrl(null)
+    setAddFormError(null)
+    setShowAddModal(true)
+  }
+
+  function openAddArtist() {
+    setAddContext('artist')
+    setAddForm({ ...EMPTY_ADD_FORM, role: 'ARTIST' })
+    setAddAvatarUrl(null)
+    setAddFormError(null)
+    setShowAddModal(true)
+  }
 
   const [editingUser, setEditingUser] = useState<TeamUser | null>(null)
   const [editForm, setEditForm] = useState(EMPTY_EDIT_FORM)
@@ -145,6 +174,12 @@ export default function Team() {
   const [permissionsSubmitting, setPermissionsSubmitting] = useState(false)
 
   const [locations, setLocations] = useState<LocationOption[] | null>(null)
+
+  // Staff tab = OWNER/FRONT_DESK only -- artists appear exclusively on the
+  // Artists tab now, even though `users` (the full roster fetch below)
+  // still includes them, since the Artists tab's "Edit account"/"View as"
+  // actions reuse this same data + the edit modal below.
+  const staffUsers = users?.filter((u) => u.role === 'OWNER' || u.role === 'FRONT_DESK') ?? []
 
   useEffect(() => {
     if (!isOwner || !user?.studioId) return
@@ -290,6 +325,7 @@ export default function Team() {
       setAddForm(EMPTY_ADD_FORM)
       setAddAvatarUrl(null)
       setRefreshIndex((index) => index + 1)
+      if (addContext === 'artist') queryClient.invalidateQueries({ queryKey: artistsQueryKey(user.studioId) })
     } catch (err) {
       setAddFormError(err instanceof Error ? err.message : 'Failed to add team member')
     } finally {
@@ -346,6 +382,7 @@ export default function Team() {
       })
       setEditingUser(null)
       setRefreshIndex((index) => index + 1)
+      if (editingUser.role === 'ARTIST') queryClient.invalidateQueries({ queryKey: artistsQueryKey(user.studioId) })
     } catch (err) {
       setEditFormError(err instanceof Error ? err.message : 'Failed to update team member')
     } finally {
@@ -365,14 +402,25 @@ export default function Team() {
               <p className="mt-1 text-sm text-fg-secondary">Everyone with access to your studio's portal.</p>
             </div>
 
-            {isOwner && (
+            {isOwner && activeTab === 'staff' && (
               <button
                 type="button"
-                onClick={() => setShowAddModal(true)}
+                onClick={openAddStaff}
                 className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover"
               >
                 <PlusIcon className="h-4 w-4" />
                 Add team member
+              </button>
+            )}
+
+            {isOwner && activeTab === 'artists' && (
+              <button
+                type="button"
+                onClick={openAddArtist}
+                className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover"
+              >
+                <PlusIcon className="h-4 w-4" />
+                Add Artist
               </button>
             )}
           </div>
@@ -423,7 +471,7 @@ export default function Team() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {users.map((teamUser) => {
+                    {staffUsers.map((teamUser) => {
                       const isSelf = teamUser.id === user?.userId
                       return (
                         <tr key={teamUser.id}>
@@ -498,9 +546,7 @@ export default function Team() {
                 <div className="rounded-2xl border border-border bg-surface p-5">
                   <p className="text-sm text-fg-secondary">
                     No artists yet.{' '}
-                    {isOwner
-                      ? "Add one from the Staff tab (role: Artist) — their profile here is created automatically."
-                      : 'Ask a studio owner to add one from the Staff tab.'}
+                    {isOwner ? 'Use "Add Artist" above to add one.' : 'Ask a studio owner to add one.'}
                   </p>
                 </div>
               )}
@@ -526,8 +572,22 @@ export default function Team() {
                           </span>
                         )}
                         <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold text-fg">
-                            {artist.user.name || artist.user.email}
+                          <p className="flex items-center gap-1.5 truncate text-sm font-semibold text-fg">
+                            <span className="truncate">{artist.user.name || artist.user.email}</span>
+                            {artist.isGuest &&
+                              (() => {
+                                const ended = !!artist.guestEndDate && new Date(artist.guestEndDate) < new Date()
+                                return (
+                                  <span
+                                    className={[
+                                      'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium',
+                                      ended ? 'bg-surface-inset text-fg-muted' : 'bg-accent/10 text-accent',
+                                    ].join(' ')}
+                                  >
+                                    {ended ? 'Guest (ended)' : 'Guest'}
+                                  </span>
+                                )
+                              })()}
                           </p>
                           <p className="truncate text-xs text-fg-muted">{artist.user.email}</p>
                         </div>
@@ -591,6 +651,36 @@ export default function Team() {
                               <img src={url} alt="" className="h-full w-full object-cover" />
                             </div>
                           ))}
+                        </div>
+                      )}
+
+                      {isOwner && (
+                        <div className="mt-4 flex gap-2 border-t border-border pt-3">
+                          {canUseViewAs && artist.user.id !== realUser?.userId && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleViewAs(artist.user.id)
+                              }}
+                              className="flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                            >
+                              <ViewIcon className="h-3.5 w-3.5" />
+                              View as
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              const teamUser = users?.find((u) => u.id === artist.user.id)
+                              if (teamUser) openEdit(teamUser)
+                            }}
+                            disabled={!users?.some((u) => u.id === artist.user.id)}
+                            className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            Edit account
+                          </button>
                         </div>
                       )}
                     </div>
@@ -682,7 +772,7 @@ export default function Team() {
       </div>
 
       {showAddModal && (
-        <Modal title="Add team member" onClose={() => setShowAddModal(false)}>
+        <Modal title={addContext === 'artist' ? 'Add artist' : 'Add team member'} onClose={() => setShowAddModal(false)}>
           <form onSubmit={handleAddSubmit}>
             {addFormError && (
               <div className="mb-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
@@ -771,35 +861,37 @@ export default function Team() {
               />
             </div>
 
-            <div>
-              <label htmlFor="addRole" className="mb-1 block text-sm font-medium text-fg-secondary">
-                Role
-              </label>
-              <select
-                id="addRole"
-                value={addForm.role}
-                onChange={(event) => setAddForm({ ...addForm, role: event.target.value })}
-                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-              >
-                {ROLE_OPTIONS.map((role) => (
-                  <option key={role} value={role}>
-                    {formatStatus(role)}
-                  </option>
-                ))}
-              </select>
-              {addForm.role === 'ARTIST' && (
-                <p className="mt-1 text-xs text-fg-muted">
-                  This also creates their profile on the Artists tab — specialties and portfolio can be added there.
-                </p>
-              )}
-            </div>
+            {addContext === 'artist' ? (
+              <p className="text-xs text-fg-muted">
+                Role: Artist. Their profile on this tab — bio, specialties, portfolio, guest window — can be filled in
+                afterward.
+              </p>
+            ) : (
+              <div>
+                <label htmlFor="addRole" className="mb-1 block text-sm font-medium text-fg-secondary">
+                  Role
+                </label>
+                <select
+                  id="addRole"
+                  value={addForm.role}
+                  onChange={(event) => setAddForm({ ...addForm, role: event.target.value })}
+                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                >
+                  {STAFF_ROLE_OPTIONS.map((role) => (
+                    <option key={role} value={role}>
+                      {formatStatus(role)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <button
               type="submit"
               disabled={addSubmitting}
               className="mt-5 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
             >
-              {addSubmitting ? 'Adding…' : 'Add team member'}
+              {addSubmitting ? 'Adding…' : addContext === 'artist' ? 'Add artist' : 'Add team member'}
             </button>
           </form>
         </Modal>
@@ -882,21 +974,25 @@ export default function Team() {
             </div>
 
             <div className="mb-3">
-              <label htmlFor="editRole" className="mb-1 block text-sm font-medium text-fg-secondary">
-                Role
-              </label>
-              <select
-                id="editRole"
-                value={editForm.role}
-                onChange={(event) => setEditForm({ ...editForm, role: event.target.value })}
-                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-              >
-                {ROLE_OPTIONS.map((role) => (
-                  <option key={role} value={role}>
-                    {formatStatus(role)}
-                  </option>
-                ))}
-              </select>
+              <label className="mb-1 block text-sm font-medium text-fg-secondary">Role</label>
+              {editingUser.role === 'ARTIST' ? (
+                <p className="rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg-secondary">
+                  Artist — role isn't changed from here
+                </p>
+              ) : (
+                <select
+                  id="editRole"
+                  value={editForm.role}
+                  onChange={(event) => setEditForm({ ...editForm, role: event.target.value })}
+                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                >
+                  {STAFF_ROLE_OPTIONS.map((role) => (
+                    <option key={role} value={role}>
+                      {formatStatus(role)}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
 
             <div className="mb-3">

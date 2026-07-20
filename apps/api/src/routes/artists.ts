@@ -74,6 +74,9 @@ const ARTIST_LIST_SELECT = {
   portfolioImages: true,
   instagramHandle: true,
   facebookProfileUrl: true,
+  isGuest: true,
+  guestStartDate: true,
+  guestEndDate: true,
   user: { select: { id: true, email: true, name: true, avatarUrl: true } },
 } as const;
 
@@ -133,9 +136,16 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
+function isValidDateOrNull(value: unknown): value is string | null {
+  if (value === null) return true;
+  if (typeof value !== "string") return false;
+  return !Number.isNaN(new Date(value).getTime());
+}
+
 router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
   const id = req.params.id as string;
-  const { bio, specialties, portfolioImages, instagramHandle, facebookProfileUrl } = req.body ?? {};
+  const { bio, specialties, portfolioImages, instagramHandle, facebookProfileUrl, isGuest, guestStartDate, guestEndDate } =
+    req.body ?? {};
 
   const artist = await prisma.artist.findUnique({ where: { id }, include: { user: true } });
   if (!artist || artist.user.studioId !== req.user!.studioId) {
@@ -165,6 +175,18 @@ router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
     return res.status(400).json({ error: "facebookProfileUrl must be a string or null" });
   }
 
+  if (isGuest !== undefined && typeof isGuest !== "boolean") {
+    return res.status(400).json({ error: "isGuest must be a boolean" });
+  }
+
+  if (guestStartDate !== undefined && !isValidDateOrNull(guestStartDate)) {
+    return res.status(400).json({ error: "guestStartDate must be a valid date or null" });
+  }
+
+  if (guestEndDate !== undefined && !isValidDateOrNull(guestEndDate)) {
+    return res.status(400).json({ error: "guestEndDate must be a valid date or null" });
+  }
+
   const data = {
     ...(bio !== undefined ? { bio: bio?.trim() || null } : {}),
     ...(specialties !== undefined ? { specialties } : {}),
@@ -173,6 +195,9 @@ router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
       ? { instagramHandle: instagramHandle?.trim().replace(/^@/, "") || null }
       : {}),
     ...(facebookProfileUrl !== undefined ? { facebookProfileUrl: facebookProfileUrl?.trim() || null } : {}),
+    ...(isGuest !== undefined ? { isGuest } : {}),
+    ...(guestStartDate !== undefined ? { guestStartDate: guestStartDate ? new Date(guestStartDate) : null } : {}),
+    ...(guestEndDate !== undefined ? { guestEndDate: guestEndDate ? new Date(guestEndDate) : null } : {}),
   };
 
   const updated = await prisma.artist.update({ where: { id }, data, include: ARTIST_INCLUDE });
@@ -183,7 +208,16 @@ router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
     entityType: "Artist",
     entityId: id,
     action: "update",
-    changes: diffObjects(artist, data, ["bio", "specialties", "portfolioImages", "instagramHandle", "facebookProfileUrl"]),
+    changes: diffObjects(artist, data, [
+      "bio",
+      "specialties",
+      "portfolioImages",
+      "instagramHandle",
+      "facebookProfileUrl",
+      "isGuest",
+      "guestStartDate",
+      "guestEndDate",
+    ]),
   });
 
   res.json(updated);

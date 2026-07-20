@@ -20,6 +20,15 @@ interface ClientOption {
 interface ArtistOption {
   id: string
   user: { email: string }
+  isGuest: boolean
+  guestEndDate: string | null
+}
+
+// New assignments never default-offer a guest artist whose window has
+// ended -- they still fully exist and their past appointments are
+// untouched, they just don't show up here to be picked for something new.
+function isEndedGuest(artist: ArtistOption): boolean {
+  return artist.isGuest && !!artist.guestEndDate && new Date(artist.guestEndDate) < new Date()
 }
 
 interface InquiryOption {
@@ -106,10 +115,11 @@ export default function AppointmentForm({
     enabled: !fixedClientId,
   })
 
-  const { data: artistOptions } = useQuery({
+  const { data: allArtistOptions } = useQuery({
     queryKey: artistsQueryKey(user!.studioId),
     queryFn: () => apiFetch<ArtistOption[]>('/artists'),
   })
+  const artistOptions = allArtistOptions?.filter((a) => !isEndedGuest(a))
 
   const effectiveClientId = fixedClientId ?? clientId
 

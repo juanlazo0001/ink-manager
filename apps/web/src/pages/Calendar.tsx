@@ -36,6 +36,13 @@ const localizer = dayjsLocalizer(dayjs)
 interface ArtistOption {
   id: string
   user: { name: string | null; email: string }
+  isGuest: boolean
+  guestStartDate: string | null
+  guestEndDate: string | null
+}
+
+function isEndedGuest(artist: ArtistOption): boolean {
+  return artist.isGuest && !!artist.guestEndDate && new Date(artist.guestEndDate) < new Date()
 }
 
 interface AppointmentApi {
@@ -197,6 +204,7 @@ export default function Calendar() {
   } | null>(null)
   const [dragError, setDragError] = useState<string | null>(null)
   const [bufferNotice, setBufferNotice] = useState<string | null>(null)
+  const [includePastGuests, setIncludePastGuests] = useState(false)
 
   // Resource columns don't fit at phone widths -- fall back to a single
   // day view regardless of the desktop view state (which is preserved so
@@ -212,11 +220,21 @@ export default function Calendar() {
     enabled: !isArtist,
   })
 
+  // Ended guests are excluded from every column/filter/switcher below by
+  // default -- "Include past guests" brings them back without ever hiding
+  // their actual past appointments (Month view already shows everyone
+  // regardless, see displayEvents below).
+  const visibleArtistOptions = useMemo(
+    () => artistOptions?.filter((a) => includePastGuests || !isEndedGuest(a)),
+    [artistOptions, includePastGuests],
+  )
+  const hasEndedGuests = artistOptions?.some(isEndedGuest) ?? false
+
   useEffect(() => {
-    if (!mobileArtistId && artistOptions && artistOptions.length > 0) {
-      setMobileArtistId(artistOptions[0].id)
+    if (!mobileArtistId && visibleArtistOptions && visibleArtistOptions.length > 0) {
+      setMobileArtistId(visibleArtistOptions[0].id)
     }
-  }, [artistOptions, mobileArtistId])
+  }, [visibleArtistOptions, mobileArtistId])
 
   const rangeKey = appointmentsRangeQueryKey(user!.studioId, rangeStart.toISOString(), rangeEnd.toISOString())
 
@@ -254,8 +272,8 @@ export default function Calendar() {
   const showResourceColumns = canManageCalendar && !isMobile && effectiveView !== Views.MONTH
 
   const activeArtistIds = useMemo(
-    () => selectedArtistIds ?? artistOptions?.map((a) => a.id) ?? [],
-    [selectedArtistIds, artistOptions],
+    () => selectedArtistIds ?? visibleArtistOptions?.map((a) => a.id) ?? [],
+    [selectedArtistIds, visibleArtistOptions],
   )
 
   const displayEvents = useMemo(() => {
@@ -266,15 +284,15 @@ export default function Calendar() {
   }, [events, isArtist, isMobile, mobileArtistId, effectiveView, activeArtistIds])
 
   const resources = useMemo(() => {
-    if (!showResourceColumns || !artistOptions) return undefined
-    return artistOptions
+    if (!showResourceColumns || !visibleArtistOptions) return undefined
+    return visibleArtistOptions
       .filter((a) => activeArtistIds.includes(a.id))
       .map((a) => ({ id: a.id, title: artistDisplayName(a) }))
-  }, [showResourceColumns, artistOptions, activeArtistIds])
+  }, [showResourceColumns, visibleArtistOptions, activeArtistIds])
 
   function toggleArtistFilter(id: string) {
     setSelectedArtistIds((current) => {
-      const base = current ?? artistOptions?.map((a) => a.id) ?? []
+      const base = current ?? visibleArtistOptions?.map((a) => a.id) ?? []
       return base.includes(id) ? base.filter((x) => x !== id) : [...base, id]
     })
   }
@@ -377,10 +395,10 @@ export default function Calendar() {
             </div>
           </div>
 
-          {canManageCalendar && !isMobile && artistOptions && artistOptions.length > 0 && (
+          {canManageCalendar && !isMobile && visibleArtistOptions && visibleArtistOptions.length > 0 && (
             <div className="mt-4 flex flex-wrap items-center gap-2">
               <span className="text-xs font-medium uppercase tracking-wide text-fg-muted">Artists</span>
-              {artistOptions.map((artist) => {
+              {visibleArtistOptions.map((artist) => {
                 const active = activeArtistIds.includes(artist.id)
                 return (
                   <button
@@ -397,10 +415,21 @@ export default function Calendar() {
                   </button>
                 )
               })}
+              {hasEndedGuests && (
+                <label className="ml-2 flex items-center gap-1.5 text-xs text-fg-muted">
+                  <input
+                    type="checkbox"
+                    checked={includePastGuests}
+                    onChange={(e) => setIncludePastGuests(e.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-border bg-surface-inset accent-accent"
+                  />
+                  Include past guests
+                </label>
+              )}
             </div>
           )}
 
-          {isMobile && !isArtist && artistOptions && artistOptions.length > 0 && (
+          {isMobile && !isArtist && visibleArtistOptions && visibleArtistOptions.length > 0 && (
             <div className="mt-4">
               <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-fg-muted">Artist</label>
               <select
@@ -408,12 +437,23 @@ export default function Calendar() {
                 onChange={(event) => setMobileArtistId(event.target.value)}
                 className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               >
-                {artistOptions.map((artist) => (
+                {visibleArtistOptions.map((artist) => (
                   <option key={artist.id} value={artist.id}>
                     {artistDisplayName(artist)}
                   </option>
                 ))}
               </select>
+              {hasEndedGuests && (
+                <label className="mt-2 flex items-center gap-1.5 text-xs text-fg-muted">
+                  <input
+                    type="checkbox"
+                    checked={includePastGuests}
+                    onChange={(e) => setIncludePastGuests(e.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-border bg-surface-inset accent-accent"
+                  />
+                  Include past guests
+                </label>
+              )}
             </div>
           )}
 

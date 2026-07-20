@@ -77,6 +77,15 @@ interface Inquiry {
 interface ArtistOption {
   id: string
   user: { id: string; email: string; name?: string | null }
+  isGuest: boolean
+  guestEndDate: string | null
+}
+
+// New assignments never default-offer a guest artist whose window has
+// ended -- they still exist and past assignments/appointments are
+// untouched, they just don't show up here to be picked going forward.
+function isEndedGuest(artist: ArtistOption): boolean {
+  return artist.isGuest && !!artist.guestEndDate && new Date(artist.guestEndDate) < new Date()
 }
 
 interface SharePreview {
@@ -252,6 +261,11 @@ export default function InquiryDetail() {
     queryKey: artistsQueryKey(user!.studioId),
     queryFn: () => apiFetch<ArtistOption[]>('/artists'),
   })
+  // Assignment (a new/first assignment, only offered while status === 'NEW')
+  // excludes ended guests by default. "Share with Artist" below is a send-
+  // to/notify action, not an assignment, so it intentionally still lists
+  // everyone -- staff may reasonably want to loop in a former guest.
+  const assignableArtistOptions = artistOptions?.filter((a) => !isEndedGuest(a))
 
   // Reverse link for 6B tagging: if this inquiry has been tagged onto the
   // client's conversation, surface that here so staff can jump straight to
@@ -807,9 +821,9 @@ export default function InquiryDetail() {
                       className="rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                     >
                       <option value="" disabled>
-                        {artistOptions === undefined ? 'Loading artists…' : 'Select an artist'}
+                        {assignableArtistOptions === undefined ? 'Loading artists…' : 'Select an artist'}
                       </option>
-                      {artistOptions?.map((artist) => (
+                      {assignableArtistOptions?.map((artist) => (
                         <option key={artist.id} value={artist.id}>
                           {artist.user.email}
                         </option>

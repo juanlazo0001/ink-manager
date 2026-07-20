@@ -8,6 +8,7 @@ import { formatPhoneInput } from '../lib/format'
 import { useUserProfile } from '../context/useUserProfile'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { ArrowLeftIcon, CloseIcon, InstagramIcon, FacebookIcon } from '../components/icons'
+import DatePickerField from '../components/DatePickerField'
 
 interface ScheduleBlock {
   dayOfWeek: number
@@ -23,6 +24,9 @@ interface Artist {
   instagramHandle: string | null
   facebookProfileUrl: string | null
   preferredSchedule: ScheduleBlock[] | null
+  isGuest: boolean
+  guestStartDate: string | null
+  guestEndDate: string | null
   user: { id: string; email: string; name: string | null; phone: string | null; avatarUrl: string | null }
 }
 
@@ -67,6 +71,9 @@ export default function ArtistDetail() {
   const [portfolioImages, setPortfolioImages] = useState<string[]>([])
   const [instagramHandle, setInstagramHandle] = useState('')
   const [facebookProfileUrl, setFacebookProfileUrl] = useState('')
+  const [isGuest, setIsGuest] = useState(false)
+  const [guestStartDate, setGuestStartDate] = useState('')
+  const [guestEndDate, setGuestEndDate] = useState('')
   const [uploadingItems, setUploadingItems] = useState<UploadItem[]>([])
 
   const [saving, setSaving] = useState(false)
@@ -121,11 +128,24 @@ export default function ArtistDetail() {
     setPortfolioImages(artist.portfolioImages)
     setInstagramHandle(artist.instagramHandle ?? '')
     setFacebookProfileUrl(artist.facebookProfileUrl ?? '')
+    setIsGuest(artist.isGuest)
+    // guestStartDate/guestEndDate come back as UTC-midnight ISO strings
+    // (e.g. "2026-07-01T00:00:00.000Z") for what's really just a plain
+    // calendar date with no time-of-day meaning. Slicing the date portion
+    // directly avoids round-tripping through `new Date(...)` + local
+    // getters, which would shift the displayed day backward by one in any
+    // timezone behind UTC (a real bug caught in verification, not
+    // hypothetical -- e.g. New_York showed "Jun 30" for a saved "Jul 1").
+    setGuestStartDate(artist.guestStartDate ? artist.guestStartDate.slice(0, 10) : '')
+    setGuestEndDate(artist.guestEndDate ? artist.guestEndDate.slice(0, 10) : '')
     setScheduleDays(blocksToDays(artist.preferredSchedule))
   }
 
   const canEditSchedule =
     !!artist && (user?.role === 'OWNER' || user?.role === 'FRONT_DESK' || artist.user.id === user?.userId)
+
+  const isEndedGuest =
+    !!artist?.isGuest && !!artist.guestEndDate && new Date(artist.guestEndDate) < new Date()
 
   function toggleScheduleDay(dayOfWeek: number, enabled: boolean) {
     setScheduleDays((prev) => {
@@ -223,6 +243,9 @@ export default function ArtistDetail() {
           portfolioImages,
           instagramHandle: instagramHandle || null,
           facebookProfileUrl: facebookProfileUrl || null,
+          isGuest,
+          guestStartDate: guestStartDate || null,
+          guestEndDate: guestEndDate || null,
         }),
       })
 
@@ -275,7 +298,21 @@ export default function ArtistDetail() {
                     </span>
                   )}
                   <div>
-                    <h1 className="text-xl font-bold text-fg">{artist.user.name || artist.user.email}</h1>
+                    <h1 className="flex flex-wrap items-center gap-2 text-xl font-bold text-fg">
+                      {artist.user.name || artist.user.email}
+                      {artist.isGuest && (
+                        <span
+                          className={[
+                            'rounded-full px-2.5 py-0.5 text-xs font-medium',
+                            isEndedGuest
+                              ? 'bg-surface-inset text-fg-muted'
+                              : 'bg-accent/10 text-accent',
+                          ].join(' ')}
+                        >
+                          {isEndedGuest ? 'Guest (ended)' : 'Guest'}
+                        </span>
+                      )}
+                    </h1>
                     <p className="mt-1 text-sm text-fg-secondary">{artist.user.email}</p>
                     {artist.user.phone && (
                       <p className="text-sm text-fg-secondary">{formatPhoneInput(artist.user.phone)}</p>
@@ -292,6 +329,40 @@ export default function ArtistDetail() {
                   </p>
                 )}
               </div>
+
+              {canManage && (
+                <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                  <h2 className="text-base font-semibold text-fg">Guest Artist</h2>
+                  <p className="mt-1 text-xs text-fg-muted">
+                    A guest artist working a limited window. Once their end date passes, they drop out of Calendar's
+                    default resource columns and default assignment pickers (but stay fully visible here, and their
+                    past appointments are never hidden).
+                  </p>
+
+                  <label className="mt-3 flex items-center gap-2 text-sm font-medium text-fg-secondary">
+                    <input
+                      type="checkbox"
+                      checked={isGuest}
+                      onChange={(e) => setIsGuest(e.target.checked)}
+                      className="h-4 w-4 rounded border-border bg-surface-inset accent-accent"
+                    />
+                    Guest artist
+                  </label>
+
+                  {isGuest && (
+                    <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-fg-secondary">Start date</label>
+                        <DatePickerField value={guestStartDate} onChange={setGuestStartDate} />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-fg-secondary">End date</label>
+                        <DatePickerField value={guestEndDate} onChange={setGuestEndDate} />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
                 <h2 className="text-base font-semibold text-fg">Bio</h2>
