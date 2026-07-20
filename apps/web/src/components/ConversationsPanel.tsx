@@ -2110,7 +2110,7 @@ function ThreadView({
                                 Shared inquiry
                               </p>
                             )}
-                            {message.body && <p className="whitespace-pre-wrap">{message.body}</p>}
+                            {message.body && <p className="whitespace-pre-wrap break-words">{message.body}</p>}
                             {message.attachments && message.attachments.length > 0 && (
                               <div className={sharedInquiryId ? 'mt-1.5 grid grid-cols-2 gap-1' : 'mt-1.5 space-y-1.5'}>
                                 {message.attachments.map((url) => (
