@@ -77,6 +77,10 @@ const ARTIST_LIST_SELECT = {
   isGuest: true,
   guestStartDate: true,
   guestEndDate: true,
+  // Calendar's per-column artist-unavailable grey-shading (Phase: studio
+  // hours + calendar shading) needs this in the list view too, not just
+  // the detail page.
+  preferredSchedule: true,
   user: { select: { id: true, email: true, name: true, avatarUrl: true } },
 } as const;
 

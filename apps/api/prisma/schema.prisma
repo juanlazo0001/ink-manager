@@ -422,6 +422,11 @@ model StudioSettings {
   // conversations unread badge (ConversationRead-driven) or the Tasks
   // top-bar badge, both unconditional.
   showSidebarBadges Boolean  @default(false)
+  // Calendar grey-shading (studio-closed source). Same shape family as
+  // Artist.preferredSchedule, one entry per weekday.
+  // Array<{ dayOfWeek: 0-6 (0 = Sunday), isOpen: boolean, openTime?: "HH:MM", closeTime?: "HH:MM" }>
+  // Null/missing day = treated as closed (never silently "open all day").
+  businessHours Json?
   createdAt                     DateTime @default(now())
   updatedAt                     DateTime @updatedAt
 

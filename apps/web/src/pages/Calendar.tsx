@@ -33,16 +33,91 @@ import { colorForArtistId } from '../lib/artistColors'
 
 const localizer = dayjsLocalizer(dayjs)
 
+interface ScheduleBlock {
+  dayOfWeek: number
+  startTime: string
+  endTime: string
+}
+
 interface ArtistOption {
   id: string
   user: { name: string | null; email: string }
   isGuest: boolean
   guestStartDate: string | null
   guestEndDate: string | null
+  preferredSchedule: ScheduleBlock[] | null
 }
 
 function isEndedGuest(artist: ArtistOption): boolean {
   return artist.isGuest && !!artist.guestEndDate && new Date(artist.guestEndDate) < new Date()
+}
+
+interface BusinessHoursDay {
+  dayOfWeek: number
+  isOpen: boolean
+  openTime?: string
+  closeTime?: string
+}
+
+function timeToMinutes(time: string): number {
+  const [h, m] = time.split(':').map(Number)
+  return h * 60 + m
+}
+
+function minutesOfDay(date: Date): number {
+  return date.getHours() * 60 + date.getMinutes()
+}
+
+// Studio-closed shading source. No businessHours configured at all yet
+// (undefined -- distinct from an empty/all-closed array) never greys
+// anything, matching every other "advisory, not yet set up" field in this
+// app (e.g. Artist.preferredSchedule) -- a studio that's never touched
+// this setting shouldn't suddenly see its whole calendar greyed out.
+function isStudioClosed(date: Date, businessHours: BusinessHoursDay[] | undefined): boolean {
+  if (!businessHours || businessHours.length === 0) return false
+  const day = businessHours.find((d) => d.dayOfWeek === date.getDay())
+  if (!day || !day.isOpen || !day.openTime || !day.closeTime) return true
+  const minutes = minutesOfDay(date)
+  return minutes < timeToMinutes(day.openTime) || minutes >= timeToMinutes(day.closeTime)
+}
+
+function isStudioClosedAllDay(dayOfWeek: number, businessHours: BusinessHoursDay[] | undefined): boolean {
+  if (!businessHours || businessHours.length === 0) return false
+  const day = businessHours.find((d) => d.dayOfWeek === dayOfWeek)
+  return !day || !day.isOpen
+}
+
+// Artist-unavailable shading source -- only within that artist's own
+// resource column. A never-configured schedule (null/empty, the default
+// for every artist) implies no restriction at all, same "advisory only"
+// convention as ArtistDetail.tsx's own editor for this same field.
+function isArtistUnavailable(date: Date, schedule: ScheduleBlock[] | null): boolean {
+  if (!schedule || schedule.length === 0) return false
+  const day = schedule.find((d) => d.dayOfWeek === date.getDay())
+  if (!day) return true
+  const minutes = minutesOfDay(date)
+  return minutes < timeToMinutes(day.startTime) || minutes >= timeToMinutes(day.endTime)
+}
+
+function dateKey(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+// Guest-window shading source. Compares plain yyyy-mm-dd strings (never a
+// Date-object round-trip) -- the same off-by-one-day timezone trap fixed
+// in ArtistDetail.tsx applies here too: guestStartDate/guestEndDate are
+// UTC-midnight ISO strings for what's really just a calendar date, and
+// local getters on `new Date(isoString)` can shift it a day in either
+// direction depending on the browser's timezone.
+function isOutsideGuestWindow(date: Date, artist: ArtistOption): boolean {
+  if (!artist.isGuest) return false
+  const key = dateKey(date)
+  if (artist.guestStartDate && key < artist.guestStartDate.slice(0, 10)) return true
+  if (artist.guestEndDate && key > artist.guestEndDate.slice(0, 10)) return true
+  return false
 }
 
 interface AppointmentApi {
@@ -220,6 +295,15 @@ export default function Calendar() {
     enabled: !isArtist,
   })
 
+  // Studio-closed shading applies everywhere, including the ARTIST-effective
+  // single-agenda view, so this is fetched regardless of role (the route
+  // itself is readable by OWNER/FRONT_DESK/ARTIST as of this feature).
+  const { data: studioSettings } = useQuery({
+    queryKey: ['studio-settings-for-calendar', user!.studioId],
+    queryFn: () => apiFetch<{ businessHours: BusinessHoursDay[] | null }>('/studio-settings'),
+  })
+  const businessHours = studioSettings?.businessHours ?? undefined
+
   // Ended guests are excluded from every column/filter/switcher below by
   // default -- "Include past guests" brings them back without ever hiding
   // their actual past appointments (Month view already shows everyone
@@ -352,6 +436,31 @@ export default function Calendar() {
     }
   }
 
+  // Same muted token react-big-calendar's own "off-range day" background
+  // already uses (index.css's .rbc-off-range-bg) -- reused here rather
+  // than introducing a second grey, for all three shading sources.
+  const GREY_STYLE = { style: { backgroundColor: 'var(--color-surface-inset)' } }
+
+  function slotPropGetter(date: Date, resourceId?: number | string) {
+    if (isStudioClosed(date, businessHours)) return GREY_STYLE
+
+    if (typeof resourceId === 'string') {
+      const artist = visibleArtistOptions?.find((a) => a.id === resourceId)
+      if (artist && (isArtistUnavailable(date, artist.preferredSchedule) || isOutsideGuestWindow(date, artist))) {
+        return GREY_STYLE
+      }
+    }
+
+    return {}
+  }
+
+  // Month view only -- no resource columns there, so this is studio-closed
+  // only (a partially-open day has no meaningful "grey half the cell" in a
+  // view with no time-of-day granularity; only a fully closed day greys).
+  function dayPropGetter(date: Date) {
+    return isStudioClosedAllDay(date.getDay(), businessHours) ? GREY_STYLE : {}
+  }
+
   const commonCalendarProps = {
     localizer,
     events: displayEvents,
@@ -374,6 +483,8 @@ export default function Calendar() {
     eventPropGetter: (event: CalEvent) => ({
       style: { backgroundColor: colorForArtistId(event.appointment.artist.id), borderColor: 'transparent' },
     }),
+    slotPropGetter,
+    dayPropGetter,
     components: { toolbar: CalendarToolbar },
     style: { height: isMobile ? 560 : 680 },
   }

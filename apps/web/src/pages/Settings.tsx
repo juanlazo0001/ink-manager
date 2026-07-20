@@ -66,6 +66,23 @@ interface StudioSettingsData {
   waiverPhotoRelease: string | null
   messageTemplates: MessageTemplate[] | null
   showSidebarBadges: boolean
+  businessHours: BusinessHoursDay[] | null
+}
+
+interface BusinessHoursDay {
+  dayOfWeek: number
+  isOpen: boolean
+  openTime?: string
+  closeTime?: string
+}
+
+const BUSINESS_HOURS_DAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+
+// Every day always has an entry (isOpen: false for closed) -- unlike Artist.
+// preferredSchedule's sparse/absent-means-unavailable convention, this
+// field's shape (spelled out for Calendar's shading) is explicit per day.
+function defaultBusinessHours(): BusinessHoursDay[] {
+  return Array.from({ length: 7 }, (_, dayOfWeek) => ({ dayOfWeek, isOpen: false }))
 }
 
 // Phase UI-3: one row + edit-icon per field, each opening only its own
@@ -269,6 +286,14 @@ export default function Settings() {
   const [templatesSaving, setTemplatesSaving] = useState(false)
   const [templatesError, setTemplatesError] = useState<string | null>(null)
 
+  // Business hours: same own-card, own-Edit-toggle treatment as the two
+  // lists above, but the per-day interaction (checkbox + conditional time
+  // inputs) mirrors ArtistDetail.tsx's preferred-schedule editor.
+  const [businessHours, setBusinessHours] = useState<BusinessHoursDay[]>(defaultBusinessHours())
+  const [editingBusinessHours, setEditingBusinessHours] = useState(false)
+  const [businessHoursSaving, setBusinessHoursSaving] = useState(false)
+  const [businessHoursError, setBusinessHoursError] = useState<string | null>(null)
+
   useEffect(() => {
     if (!canViewPolicies) return
 
@@ -281,6 +306,9 @@ export default function Settings() {
         setWaiverHealthQuestions(data.waiverHealthQuestions ?? [])
         setWaiverClauses(data.waiverClauses ?? [])
         setMessageTemplates(data.messageTemplates ?? [])
+        setBusinessHours(
+          data.businessHours && data.businessHours.length > 0 ? data.businessHours : defaultBusinessHours(),
+        )
       })
       .catch(() => {
         // Section just stays empty if this fails; not critical page content.
@@ -413,6 +441,37 @@ export default function Settings() {
       setTemplatesError(err instanceof Error ? err.message : 'Failed to save')
     } finally {
       setTemplatesSaving(false)
+    }
+  }
+
+  function toggleBusinessDay(dayOfWeek: number, isOpen: boolean) {
+    setBusinessHours((current) =>
+      current.map((d) =>
+        d.dayOfWeek === dayOfWeek ? (isOpen ? { dayOfWeek, isOpen: true, openTime: '09:00', closeTime: '17:00' } : { dayOfWeek, isOpen: false }) : d,
+      ),
+    )
+  }
+
+  function updateBusinessTime(dayOfWeek: number, field: 'openTime' | 'closeTime', value: string) {
+    setBusinessHours((current) => current.map((d) => (d.dayOfWeek === dayOfWeek ? { ...d, [field]: value } : d)))
+  }
+
+  async function handleBusinessHoursSave() {
+    setBusinessHoursSaving(true)
+    setBusinessHoursError(null)
+
+    try {
+      const updated = await apiFetch<StudioSettingsData>('/studio-settings', {
+        method: 'PATCH',
+        body: JSON.stringify({ businessHours }),
+      })
+      setPolicies(updated)
+      setBusinessHours(updated.businessHours && updated.businessHours.length > 0 ? updated.businessHours : defaultBusinessHours())
+      setEditingBusinessHours(false)
+    } catch (err) {
+      setBusinessHoursError(err instanceof Error ? err.message : 'Failed to save')
+    } finally {
+      setBusinessHoursSaving(false)
     }
   }
 
@@ -890,6 +949,109 @@ export default function Settings() {
                   />
                 )}
               </div>
+            </div>
+          )}
+
+          {canViewPolicies && policies && (
+            <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-semibold text-fg">Business Hours</h2>
+                  <p className="mt-1 text-sm text-fg-secondary">
+                    When the studio is open — greys out closed time on the Calendar for everyone.
+                  </p>
+                </div>
+                {canEditPolicies && !editingBusinessHours && (
+                  <button
+                    type="button"
+                    onClick={() => setEditingBusinessHours(true)}
+                    className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                  >
+                    Edit
+                  </button>
+                )}
+              </div>
+
+              <div className="mt-4 space-y-2">
+                {BUSINESS_HOURS_DAY_LABELS.map((dayName, dayOfWeek) => {
+                  const day = businessHours.find((d) => d.dayOfWeek === dayOfWeek) ?? { dayOfWeek, isOpen: false }
+                  return (
+                    <div
+                      key={dayOfWeek}
+                      className="flex flex-wrap items-center gap-3 rounded-lg border border-border px-3 py-2"
+                    >
+                      <label className="flex w-32 shrink-0 items-center gap-2 text-sm text-fg-secondary">
+                        {editingBusinessHours ? (
+                          <input
+                            type="checkbox"
+                            checked={day.isOpen}
+                            onChange={(e) => toggleBusinessDay(dayOfWeek, e.target.checked)}
+                            className="h-4 w-4 rounded border-border bg-surface-inset accent-accent"
+                          />
+                        ) : null}
+                        {dayName}
+                      </label>
+
+                      {day.isOpen ? (
+                        editingBusinessHours ? (
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="time"
+                              value={day.openTime ?? '09:00'}
+                              onChange={(e) => updateBusinessTime(dayOfWeek, 'openTime', e.target.value)}
+                              className="rounded-lg border border-border bg-surface-inset px-2 py-1 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                            />
+                            <span className="text-fg-muted">to</span>
+                            <input
+                              type="time"
+                              value={day.closeTime ?? '17:00'}
+                              onChange={(e) => updateBusinessTime(dayOfWeek, 'closeTime', e.target.value)}
+                              className="rounded-lg border border-border bg-surface-inset px-2 py-1 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                            />
+                          </div>
+                        ) : (
+                          <span className="text-sm text-fg-secondary">
+                            {day.openTime} – {day.closeTime}
+                          </span>
+                        )
+                      ) : (
+                        <span className="text-sm text-fg-muted">Closed</span>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+
+              {businessHoursError && <p className="mt-3 text-sm text-danger">{businessHoursError}</p>}
+
+              {editingBusinessHours && (
+                <div className="mt-4 flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={handleBusinessHoursSave}
+                    disabled={businessHoursSaving}
+                    className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                  >
+                    {businessHoursSaving ? 'Saving…' : 'Save hours'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingBusinessHours(false)
+                      setBusinessHoursError(null)
+                      setBusinessHours(
+                        policies.businessHours && policies.businessHours.length > 0
+                          ? policies.businessHours
+                          : defaultBusinessHours(),
+                      )
+                    }}
+                    disabled={businessHoursSaving}
+                    className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
             </div>
           )}
 

@@ -7,7 +7,6 @@ import { diffObjects, logAudit } from "../lib/audit";
 const router = Router();
 
 router.use(requireAuth);
-router.use(requireRole(Role.OWNER, Role.FRONT_DESK));
 
 // One row per studio, created by the Phase 1 migration's backfill -- every
 // studio should already have one, but fall back to creating it on read in
@@ -18,7 +17,11 @@ async function getOrCreateSettings(studioId: string) {
   return prisma.studioSettings.create({ data: { studioId } });
 }
 
-router.get("/", async (req, res) => {
+// Read is open to any authenticated studio member (Phase: Calendar's
+// business-hours grey-shading needs this for ARTIST-role users too, not
+// just OWNER/FRONT_DESK) -- policy/waiver text and business hours aren't
+// sensitive the way write access is. PATCH below stays OWNER-only.
+router.get("/", requireRole(Role.OWNER, Role.FRONT_DESK, Role.ARTIST), async (req, res) => {
   const settings = await getOrCreateSettings(req.user!.studioId);
   res.json(settings);
 });
@@ -68,6 +71,32 @@ function isValidHealthQuestions(value: unknown): boolean {
 
 function isValidClauses(value: unknown): value is string[] {
   return Array.isArray(value) && value.length > 0 && value.every((c) => typeof c === "string" && c.trim().length > 0);
+}
+
+const BUSINESS_HOURS_TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+// Same family as Artist.preferredSchedule -- one entry per weekday, but
+// open/close times are only required when that day is actually open (a
+// closed day just needs isOpen: false, no times to validate).
+function isValidBusinessHours(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+
+  return value.every((entry) => {
+    if (typeof entry !== "object" || entry === null) return false;
+    const d = entry as Record<string, unknown>;
+
+    if (typeof d.dayOfWeek !== "number" || !Number.isInteger(d.dayOfWeek) || d.dayOfWeek < 0 || d.dayOfWeek > 6) {
+      return false;
+    }
+    if (typeof d.isOpen !== "boolean") return false;
+
+    if (d.isOpen) {
+      if (typeof d.openTime !== "string" || !BUSINESS_HOURS_TIME_PATTERN.test(d.openTime)) return false;
+      if (typeof d.closeTime !== "string" || !BUSINESS_HOURS_TIME_PATTERN.test(d.closeTime)) return false;
+    }
+
+    return true;
+  });
 }
 
 function isValidMessageTemplates(value: unknown): boolean {
@@ -159,6 +188,15 @@ router.patch("/", requireRole(Role.OWNER), async (req, res) => {
     data.showSidebarBadges = body.showSidebarBadges;
   }
 
+  if (body.businessHours !== undefined) {
+    if (body.businessHours !== null && !isValidBusinessHours(body.businessHours)) {
+      return res.status(400).json({
+        error: "businessHours must be an array of { dayOfWeek: 0-6, isOpen: boolean, openTime?: 'HH:MM', closeTime?: 'HH:MM' }",
+      });
+    }
+    data.businessHours = body.businessHours;
+  }
+
   const updated = await prisma.studioSettings.update({ where: { studioId: req.user!.studioId }, data });
 
   await logAudit({
@@ -177,6 +215,7 @@ router.patch("/", requireRole(Role.OWNER), async (req, res) => {
       "waiverClauses",
       "messageTemplates",
       "showSidebarBadges",
+      "businessHours",
     ] as (keyof typeof existing)[]),
   });
 

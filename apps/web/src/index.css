@@ -286,7 +286,16 @@
 .rbc-calendar {
   color: var(--color-fg);
 }
-.rbc-off-range-bg {
+/* Scoped under .rbc-calendar (not a bare .rbc-off-range-bg) deliberately --
+   found during Part 2 verification that a plain same-specificity selector
+   here loses a load-order tie against react-big-calendar's own shipped
+   light-mode rule for this exact class whenever no inline style also
+   applies to that cell (Month view's off-range days that AREN'T
+   independently grey-shaded by Calendar.tsx's dayPropGetter were rendering
+   with RBC's default light grey, not this dark-theme override, before this
+   fix -- a pre-existing bug this feature's own verification exposed, not
+   introduced by it). */
+.rbc-calendar .rbc-off-range-bg {
   background-color: var(--color-surface-inset);
 }
 .rbc-today {
