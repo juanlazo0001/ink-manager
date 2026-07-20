@@ -248,9 +248,43 @@ model Client {
   giftCards    GiftCard[]
   liabilityWaivers LiabilityWaiver[]
   conversation     Conversation?
+  phones           ClientPhone[]
+  emails           ClientEmail[]
 
   @@index([studioId])
   @@index([studioId, createdAt])
+}
+
+// Additive secondary-contact layer -- Client.phone stays the "primary"
+// scalar field every existing consumer (intake form, waivers, duplicate
+// detection, PhoneInput default) keeps reading unchanged. These tables
+// exist purely so a client can have more than one phone/email on file;
+// the row with isPrimary: true always mirrors Client.phone exactly (kept
+// in sync by lib/clientContacts.ts, never diverges from it).
+model ClientPhone {
+  id        String   @id @default(cuid())
+  phone     String
+  label     String?
+  isPrimary Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id])
+
+  @@unique([clientId, phone])
+}
+
+model ClientEmail {
+  id        String   @id @default(cuid())
+  email     String
+  label     String?
+  isPrimary Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id])
+
+  @@unique([clientId, email])
 }
 
 model Appointment {

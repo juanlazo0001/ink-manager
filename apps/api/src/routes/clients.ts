@@ -7,6 +7,7 @@ import { Role } from "../../generated/prisma/enums";
 import { requirePermission } from "../lib/permissions";
 import { diffObjects, logAudit } from "../lib/audit";
 import { normalizePhone } from "../lib/phone";
+import { syncPrimaryEmail, syncPrimaryPhone } from "../lib/clientContacts";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 
 const router = Router();
@@ -26,8 +27,13 @@ router.post("/", async (req, res) => {
 
   const { firstName, lastName, email, phone } = body;
 
-  const client = await prisma.client.create({
-    data: { firstName, lastName, email, phone: phone ? normalizePhone(phone) : phone, studioId: req.user!.studioId },
+  const client = await prisma.$transaction(async (tx) => {
+    const created = await tx.client.create({
+      data: { firstName, lastName, email, phone: phone ? normalizePhone(phone) : phone, studioId: req.user!.studioId },
+    });
+    await syncPrimaryPhone(tx, created.id, created.phone);
+    await syncPrimaryEmail(tx, created.id, created.email);
+    return created;
   });
 
   res.status(201).json(client);
@@ -98,6 +104,8 @@ router.get("/:id", async (req, res) => {
         orderBy: { createdAt: "desc" },
       },
       mergedInto: { select: { id: true, firstName: true, lastName: true } },
+      phones: { orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }] },
+      emails: { orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }] },
     },
   });
 
@@ -210,28 +218,38 @@ router.get("/:id/shareable-links", async (req, res) => {
 router.get("/:id/potential-duplicates", async (req, res) => {
   const id = req.params.id as string;
 
-  const client = await prisma.client.findUnique({ where: { id } });
+  const client = await prisma.client.findUnique({ where: { id }, include: { phones: true, emails: true } });
   if (!client || client.studioId !== req.user!.studioId) {
     return res.status(404).json({ error: "Client not found" });
   }
 
   const candidates = await prisma.client.findMany({
     where: { studioId: req.user!.studioId, id: { not: id }, ...NOT_MERGED },
+    include: { phones: true, emails: true },
   });
 
-  const normalizedPhone = client.phone ? normalizePhone(client.phone) : null;
+  // Every known alias, not just the primary scalar fields -- a secondary
+  // phone/email is just as real a match signal as the primary one. The
+  // scalar fields are included defensively too, in case a row was somehow
+  // never mirrored into the alias tables.
+  const clientPhones = new Set(client.phones.map((p) => p.phone));
+  if (client.phone) clientPhones.add(normalizePhone(client.phone));
+  const clientEmails = new Set(client.emails.map((e) => e.email));
+  if (client.email) clientEmails.add(client.email.toLowerCase());
 
   const duplicates = candidates.filter((candidate) => {
-    if (client.email && candidate.email && candidate.email.toLowerCase() === client.email.toLowerCase()) {
-      return true;
-    }
-    if (normalizedPhone && candidate.phone && normalizePhone(candidate.phone) === normalizedPhone) {
-      return true;
-    }
+    const candidatePhones = candidate.phones.map((p) => p.phone);
+    if (candidate.phone) candidatePhones.push(normalizePhone(candidate.phone));
+    if (candidatePhones.some((phone) => clientPhones.has(phone))) return true;
+
+    const candidateEmails = candidate.emails.map((e) => e.email);
+    if (candidate.email) candidateEmails.push(candidate.email.toLowerCase());
+    if (candidateEmails.some((email) => clientEmails.has(email))) return true;
+
     return false;
   });
 
-  res.json(duplicates);
+  res.json(duplicates.map(({ phones, emails, ...rest }) => rest));
 });
 
 const EDITABLE_CLIENT_FIELDS = ["firstName", "lastName", "email", "phone"] as const;
@@ -272,7 +290,12 @@ router.patch("/:id", async (req, res) => {
     }
   }
 
-  const updated = await prisma.client.update({ where: { id }, data });
+  const updated = await prisma.$transaction(async (tx) => {
+    const result = await tx.client.update({ where: { id }, data });
+    if ("phone" in data) await syncPrimaryPhone(tx, id, result.phone);
+    if ("email" in data) await syncPrimaryEmail(tx, id, result.email);
+    return result;
+  });
 
   await logAudit({
     studioId: req.user!.studioId,
@@ -284,6 +307,246 @@ router.patch("/:id", async (req, res) => {
   });
 
   res.json(updated);
+});
+
+// Shared existence/ownership check for every phone/email sub-route below.
+async function loadOwnedClient(id: string, studioId: string) {
+  const client = await prisma.client.findUnique({ where: { id } });
+  if (!client || client.studioId !== studioId) return null;
+  return client;
+}
+
+const P2002_UNIQUE_VIOLATION = "P2002";
+
+function isUniqueViolation(err: unknown): boolean {
+  return typeof err === "object" && err !== null && "code" in err && err.code === P2002_UNIQUE_VIOLATION;
+}
+
+// Always added as a secondary contact -- never auto-promoted to primary,
+// even for a client with no phone on file yet. Making it primary is a
+// separate, explicit action (see make-primary below), so a client always
+// ends up with the primary contact staff actually chose, not whichever one
+// happened to be added first.
+router.post("/:id/phones", async (req, res) => {
+  const id = req.params.id as string;
+  const { phone, label } = req.body ?? {};
+
+  if (typeof phone !== "string" || normalizePhone(phone).length === 0) {
+    return res.status(400).json({ error: "phone is required" });
+  }
+  if (label !== undefined && label !== null && typeof label !== "string") {
+    return res.status(400).json({ error: "label must be a string or null" });
+  }
+
+  const client = await loadOwnedClient(id, req.user!.studioId);
+  if (!client) return res.status(404).json({ error: "Client not found" });
+
+  const normalized = normalizePhone(phone);
+
+  let created;
+  try {
+    created = await prisma.clientPhone.create({
+      data: { clientId: id, phone: normalized, label: label || null },
+    });
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      return res.status(400).json({ error: "This phone number is already on file for this client" });
+    }
+    throw err;
+  }
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Client",
+    entityId: id,
+    action: "add_phone",
+    changes: { phone: normalized, label: label || null },
+  });
+
+  res.status(201).json(created);
+});
+
+router.delete("/:id/phones/:phoneId", async (req, res) => {
+  const id = req.params.id as string;
+  const phoneId = req.params.phoneId as string;
+
+  const client = await loadOwnedClient(id, req.user!.studioId);
+  if (!client) return res.status(404).json({ error: "Client not found" });
+
+  const target = await prisma.clientPhone.findUnique({ where: { id: phoneId } });
+  if (!target || target.clientId !== id) {
+    return res.status(404).json({ error: "Phone not found" });
+  }
+
+  if (target.isPrimary) {
+    const otherCount = await prisma.clientPhone.count({ where: { clientId: id, id: { not: phoneId } } });
+    if (otherCount > 0) {
+      return res.status(400).json({ error: "Make another phone primary before removing this one" });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.clientPhone.delete({ where: { id: phoneId } });
+      await tx.client.update({ where: { id }, data: { phone: null } });
+    });
+  } else {
+    await prisma.clientPhone.delete({ where: { id: phoneId } });
+  }
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Client",
+    entityId: id,
+    action: "remove_phone",
+    changes: { phone: target.phone, wasPrimary: target.isPrimary },
+  });
+
+  res.status(204).end();
+});
+
+router.post("/:id/phones/:phoneId/make-primary", async (req, res) => {
+  const id = req.params.id as string;
+  const phoneId = req.params.phoneId as string;
+
+  const client = await loadOwnedClient(id, req.user!.studioId);
+  if (!client) return res.status(404).json({ error: "Client not found" });
+
+  const target = await prisma.clientPhone.findUnique({ where: { id: phoneId } });
+  if (!target || target.clientId !== id) {
+    return res.status(404).json({ error: "Phone not found" });
+  }
+
+  if (!target.isPrimary) {
+    await prisma.$transaction(async (tx) => {
+      await tx.clientPhone.updateMany({ where: { clientId: id, isPrimary: true }, data: { isPrimary: false } });
+      await tx.clientPhone.update({ where: { id: phoneId }, data: { isPrimary: true } });
+      await tx.client.update({ where: { id }, data: { phone: target.phone } });
+    });
+
+    await logAudit({
+      studioId: req.user!.studioId,
+      actorUserId: req.user!.userId,
+      entityType: "Client",
+      entityId: id,
+      action: "make_primary_phone",
+      changes: { phone: target.phone },
+    });
+  }
+
+  const updatedClient = await prisma.client.findUnique({ where: { id } });
+  res.json(updatedClient);
+});
+
+router.post("/:id/emails", async (req, res) => {
+  const id = req.params.id as string;
+  const { email, label } = req.body ?? {};
+
+  if (typeof email !== "string" || email.trim().length === 0) {
+    return res.status(400).json({ error: "email is required" });
+  }
+  if (label !== undefined && label !== null && typeof label !== "string") {
+    return res.status(400).json({ error: "label must be a string or null" });
+  }
+
+  const client = await loadOwnedClient(id, req.user!.studioId);
+  if (!client) return res.status(404).json({ error: "Client not found" });
+
+  const normalized = email.trim().toLowerCase();
+
+  let created;
+  try {
+    created = await prisma.clientEmail.create({
+      data: { clientId: id, email: normalized, label: label || null },
+    });
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      return res.status(400).json({ error: "This email is already on file for this client" });
+    }
+    throw err;
+  }
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Client",
+    entityId: id,
+    action: "add_email",
+    changes: { email: normalized, label: label || null },
+  });
+
+  res.status(201).json(created);
+});
+
+router.delete("/:id/emails/:emailId", async (req, res) => {
+  const id = req.params.id as string;
+  const emailId = req.params.emailId as string;
+
+  const client = await loadOwnedClient(id, req.user!.studioId);
+  if (!client) return res.status(404).json({ error: "Client not found" });
+
+  const target = await prisma.clientEmail.findUnique({ where: { id: emailId } });
+  if (!target || target.clientId !== id) {
+    return res.status(404).json({ error: "Email not found" });
+  }
+
+  if (target.isPrimary) {
+    const otherCount = await prisma.clientEmail.count({ where: { clientId: id, id: { not: emailId } } });
+    if (otherCount > 0) {
+      return res.status(400).json({ error: "Make another email primary before removing this one" });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.clientEmail.delete({ where: { id: emailId } });
+      await tx.client.update({ where: { id }, data: { email: null } });
+    });
+  } else {
+    await prisma.clientEmail.delete({ where: { id: emailId } });
+  }
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Client",
+    entityId: id,
+    action: "remove_email",
+    changes: { email: target.email, wasPrimary: target.isPrimary },
+  });
+
+  res.status(204).end();
+});
+
+router.post("/:id/emails/:emailId/make-primary", async (req, res) => {
+  const id = req.params.id as string;
+  const emailId = req.params.emailId as string;
+
+  const client = await loadOwnedClient(id, req.user!.studioId);
+  if (!client) return res.status(404).json({ error: "Client not found" });
+
+  const target = await prisma.clientEmail.findUnique({ where: { id: emailId } });
+  if (!target || target.clientId !== id) {
+    return res.status(404).json({ error: "Email not found" });
+  }
+
+  if (!target.isPrimary) {
+    await prisma.$transaction(async (tx) => {
+      await tx.clientEmail.updateMany({ where: { clientId: id, isPrimary: true }, data: { isPrimary: false } });
+      await tx.clientEmail.update({ where: { id: emailId }, data: { isPrimary: true } });
+      await tx.client.update({ where: { id }, data: { email: target.email } });
+    });
+
+    await logAudit({
+      studioId: req.user!.studioId,
+      actorUserId: req.user!.userId,
+      entityType: "Client",
+      entityId: id,
+      action: "make_primary_email",
+      changes: { email: target.email },
+    });
+  }
+
+  const updatedClient = await prisma.client.findUnique({ where: { id } });
+  res.json(updatedClient);
 });
 
 // Every model with a direct clientId FK -- re-enumerate this on future
@@ -372,10 +635,50 @@ async function mergeConversations(
   return { merged: true, movedMessages: movedMessages.count };
 }
 
+// Unlike repointClientRelations above, these aren't re-pointed (the
+// source keeps its own ClientPhone/ClientEmail rows -- it still exists,
+// history stays inspectable there too) -- they're copied onto the
+// survivor as secondary aliases, skipping anything already identical on
+// the survivor. Reading the source's full ClientPhone/ClientEmail set
+// (not just its Client.phone/email scalar) means this also picks up
+// aliases the source itself carried over from an earlier merge, so a
+// chain of merges never loses a contact along the way. The survivor's
+// own primary is never touched here.
+async function carryOverContactAliases(tx: Prisma.TransactionClient, sourceId: string, survivorId: string) {
+  const [sourcePhones, survivorPhones, sourceEmails, survivorEmails] = await Promise.all([
+    tx.clientPhone.findMany({ where: { clientId: sourceId } }),
+    tx.clientPhone.findMany({ where: { clientId: survivorId } }),
+    tx.clientEmail.findMany({ where: { clientId: sourceId } }),
+    tx.clientEmail.findMany({ where: { clientId: survivorId } }),
+  ]);
+
+  const survivorPhoneSet = new Set(survivorPhones.map((p) => p.phone));
+  const addedPhones: { phone: string; label: string | null }[] = [];
+  for (const p of sourcePhones) {
+    if (survivorPhoneSet.has(p.phone)) continue;
+    await tx.clientPhone.create({ data: { clientId: survivorId, phone: p.phone, label: p.label, isPrimary: false } });
+    survivorPhoneSet.add(p.phone);
+    addedPhones.push({ phone: p.phone, label: p.label });
+  }
+
+  const survivorEmailSet = new Set(survivorEmails.map((e) => e.email));
+  const addedEmails: { email: string; label: string | null }[] = [];
+  for (const e of sourceEmails) {
+    if (survivorEmailSet.has(e.email)) continue;
+    await tx.clientEmail.create({ data: { clientId: survivorId, email: e.email, label: e.label, isPrimary: false } });
+    survivorEmailSet.add(e.email);
+    addedEmails.push({ email: e.email, label: e.label });
+  }
+
+  return { addedPhones, addedEmails };
+}
+
 // Soft-merge: the source client survives (marked via mergedIntoId) rather
 // than being deleted, so its history stays inspectable. Every FK the
 // source held moves to the survivor; nothing about the survivor's own
 // fields changes -- edit those separately via PATCH /clients/:id if needed.
+// (Except its secondary contact aliases, which do gain the source's
+// phone/email as new entries -- see carryOverContactAliases.)
 router.post("/:id/merge", async (req, res) => {
   const id = req.params.id as string;
   const body = req.body ?? {};
@@ -410,11 +713,12 @@ router.post("/:id/merge", async (req, res) => {
     return res.status(400).json({ error: "The source client has already been merged" });
   }
 
-  const { repointCounts, conversationResult } = await prisma.$transaction(async (tx) => {
+  const { repointCounts, conversationResult, aliasesAdded } = await prisma.$transaction(async (tx) => {
     const repointCounts = await repointClientRelations(tx, sourceClientId, id);
     const conversationResult = await mergeConversations(tx, sourceClientId, id);
+    const aliasesAdded = await carryOverContactAliases(tx, sourceClientId, id);
     await tx.client.update({ where: { id: sourceClientId }, data: { mergedIntoId: id } });
-    return { repointCounts, conversationResult };
+    return { repointCounts, conversationResult, aliasesAdded };
   });
 
   await logAudit({
@@ -423,7 +727,13 @@ router.post("/:id/merge", async (req, res) => {
     entityType: "Client",
     entityId: id,
     action: "merge",
-    changes: { sourceClientId, survivorId: id, repointed: repointCounts, conversation: conversationResult },
+    changes: {
+      sourceClientId,
+      survivorId: id,
+      repointed: repointCounts,
+      conversation: conversationResult,
+      aliasesAdded,
+    },
   });
 
   const merged = await prisma.client.findUnique({ where: { id } });
@@ -485,15 +795,18 @@ router.post("/:id/unarchive", async (req, res) => {
 // DELETE below -- both need the exact same full picture of this client's
 // history.
 async function gatherClientDeletionSummary(clientId: string) {
-  const [inquiries, appointments, waivers, consentForms, giftCards, depositForms, conversation] = await Promise.all([
-    prisma.inquiry.count({ where: { clientId } }),
-    prisma.appointment.count({ where: { clientId } }),
-    prisma.liabilityWaiver.count({ where: { clientId } }),
-    prisma.consentForm.count({ where: { clientId } }),
-    prisma.giftCard.findMany({ where: { clientId }, select: { id: true, code: true, amountCents: true, status: true } }),
-    prisma.depositForm.count({ where: { inquiry: { clientId } } }),
-    prisma.conversation.findUnique({ where: { clientId }, select: { id: true } }),
-  ]);
+  const [inquiries, appointments, waivers, consentForms, giftCards, depositForms, conversation, phones, emails] =
+    await Promise.all([
+      prisma.inquiry.count({ where: { clientId } }),
+      prisma.appointment.count({ where: { clientId } }),
+      prisma.liabilityWaiver.count({ where: { clientId } }),
+      prisma.consentForm.count({ where: { clientId } }),
+      prisma.giftCard.findMany({ where: { clientId }, select: { id: true, code: true, amountCents: true, status: true } }),
+      prisma.depositForm.count({ where: { inquiry: { clientId } } }),
+      prisma.conversation.findUnique({ where: { clientId }, select: { id: true } }),
+      prisma.clientPhone.count({ where: { clientId } }),
+      prisma.clientEmail.count({ where: { clientId } }),
+    ]);
 
   const messages = conversation ? await prisma.message.count({ where: { conversationId: conversation.id } }) : 0;
   const activeGiftCardCents = giftCards
@@ -510,6 +823,8 @@ async function gatherClientDeletionSummary(clientId: string) {
     depositForms,
     conversations: conversation ? 1 : 0,
     messages,
+    phones,
+    emails,
   };
 }
 
@@ -572,6 +887,8 @@ router.delete("/:id", requireRole(Role.OWNER), async (req, res) => {
 
     await tx.liabilityWaiver.deleteMany({ where: { clientId: id } });
     await tx.consentForm.deleteMany({ where: { clientId: id } });
+    await tx.clientPhone.deleteMany({ where: { clientId: id } });
+    await tx.clientEmail.deleteMany({ where: { clientId: id } });
     // DepositForm before GiftCard: DepositForm.giftCardId optionally points
     // at a gift card, so it must go first or the gift card delete below
     // would be blocked by that reference.

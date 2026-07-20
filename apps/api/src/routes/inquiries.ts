@@ -8,6 +8,7 @@ import { diffObjects, logAudit } from "../lib/audit";
 import { validateGiftCardForAttachment } from "../lib/giftCards";
 import { getOrCreateStaffConversation } from "../lib/conversations";
 import { normalizePhone } from "../lib/phone";
+import { syncPrimaryEmail, syncPrimaryPhone } from "../lib/clientContacts";
 import { findBufferConflict, formatBufferWarning } from "../lib/schedulingConflict";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 
@@ -138,8 +139,13 @@ router.post("/", async (req, res) => {
 
   const client =
     existingClient ??
-    (await prisma.client.create({
-      data: { studioId: studio.id, firstName, lastName, email, phone: phone ? normalizePhone(phone) : phone },
+    (await prisma.$transaction(async (tx) => {
+      const created = await tx.client.create({
+        data: { studioId: studio.id, firstName, lastName, email, phone: phone ? normalizePhone(phone) : phone },
+      });
+      await syncPrimaryPhone(tx, created.id, created.phone);
+      await syncPrimaryEmail(tx, created.id, created.email);
+      return created;
     }));
 
   const inquiry = await prisma.inquiry.create({

@@ -58,6 +58,20 @@ interface WaiverSummary {
   createdAt: string
 }
 
+interface ClientPhoneAlias {
+  id: string
+  phone: string
+  label: string | null
+  isPrimary: boolean
+}
+
+interface ClientEmailAlias {
+  id: string
+  email: string
+  label: string | null
+  isPrimary: boolean
+}
+
 interface Client {
   id: string
   firstName: string
@@ -71,6 +85,8 @@ interface Client {
   inquiries: InquirySummary[]
   giftCards: GiftCard[]
   liabilityWaivers: WaiverSummary[]
+  phones: ClientPhoneAlias[]
+  emails: ClientEmailAlias[]
 }
 
 interface Appointment {
@@ -226,6 +242,21 @@ export default function ClientDetail() {
   const [deleteConfirmText, setDeleteConfirmText] = useState('')
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  const [showAddPhone, setShowAddPhone] = useState(false)
+  const [newPhone, setNewPhone] = useState('')
+  const [newPhoneLabel, setNewPhoneLabel] = useState('')
+  const [addingPhone, setAddingPhone] = useState(false)
+  const [addPhoneError, setAddPhoneError] = useState<string | null>(null)
+
+  const [showAddEmail, setShowAddEmail] = useState(false)
+  const [newEmail, setNewEmail] = useState('')
+  const [newEmailLabel, setNewEmailLabel] = useState('')
+  const [addingEmail, setAddingEmail] = useState(false)
+  const [addEmailError, setAddEmailError] = useState<string | null>(null)
+
+  const [contactActionError, setContactActionError] = useState<string | null>(null)
+  const [contactActionPendingId, setContactActionPendingId] = useState<string | null>(null)
 
   useEffect(() => {
     if (!id) return
@@ -459,6 +490,116 @@ export default function ClientDetail() {
       setDeleteError(err instanceof Error ? err.message : 'Failed to delete client')
     } finally {
       setDeleting(false)
+    }
+  }
+
+  async function handleAddPhone(event: FormEvent) {
+    event.preventDefault()
+    if (!id) return
+
+    if (!isValidPhoneDigits(newPhone)) {
+      setAddPhoneError('Enter a complete 10-digit phone number.')
+      return
+    }
+
+    setAddingPhone(true)
+    setAddPhoneError(null)
+    try {
+      await apiFetch(`/clients/${id}/phones`, {
+        method: 'POST',
+        body: JSON.stringify({ phone: newPhone, label: newPhoneLabel.trim() || undefined }),
+      })
+      setShowAddPhone(false)
+      setNewPhone('')
+      setNewPhoneLabel('')
+      setRefreshIndex((index) => index + 1)
+    } catch (err) {
+      setAddPhoneError(err instanceof Error ? err.message : 'Failed to add phone')
+    } finally {
+      setAddingPhone(false)
+    }
+  }
+
+  async function handleRemovePhone(phoneId: string) {
+    if (!id) return
+    setContactActionError(null)
+    setContactActionPendingId(phoneId)
+    try {
+      await apiFetch(`/clients/${id}/phones/${phoneId}`, { method: 'DELETE' })
+      setRefreshIndex((index) => index + 1)
+    } catch (err) {
+      setContactActionError(err instanceof Error ? err.message : 'Failed to remove phone')
+    } finally {
+      setContactActionPendingId(null)
+    }
+  }
+
+  async function handleMakePrimaryPhone(phoneId: string) {
+    if (!id) return
+    setContactActionError(null)
+    setContactActionPendingId(phoneId)
+    try {
+      await apiFetch(`/clients/${id}/phones/${phoneId}/make-primary`, { method: 'POST' })
+      setRefreshIndex((index) => index + 1)
+    } catch (err) {
+      setContactActionError(err instanceof Error ? err.message : 'Failed to update primary phone')
+    } finally {
+      setContactActionPendingId(null)
+    }
+  }
+
+  async function handleAddEmail(event: FormEvent) {
+    event.preventDefault()
+    if (!id) return
+
+    if (!newEmail.trim()) {
+      setAddEmailError('Enter an email address.')
+      return
+    }
+
+    setAddingEmail(true)
+    setAddEmailError(null)
+    try {
+      await apiFetch(`/clients/${id}/emails`, {
+        method: 'POST',
+        body: JSON.stringify({ email: newEmail, label: newEmailLabel.trim() || undefined }),
+      })
+      setShowAddEmail(false)
+      setNewEmail('')
+      setNewEmailLabel('')
+      setRefreshIndex((index) => index + 1)
+    } catch (err) {
+      setAddEmailError(err instanceof Error ? err.message : 'Failed to add email')
+    } finally {
+      setAddingEmail(false)
+    }
+  }
+
+  async function handleRemoveEmail(emailId: string) {
+    if (!id) return
+    setContactActionError(null)
+    setContactActionPendingId(emailId)
+    try {
+      await apiFetch(`/clients/${id}/emails/${emailId}`, { method: 'DELETE' })
+      setRefreshIndex((index) => index + 1)
+    } catch (err) {
+      setContactActionError(err instanceof Error ? err.message : 'Failed to remove email')
+    } finally {
+      setContactActionPendingId(null)
+    }
+  }
+
+  async function handleMakePrimaryEmail(emailId: string) {
+    if (!id) return
+    setContactActionError(null)
+    setContactActionPendingId(emailId)
+    try {
+      await apiFetch(`/clients/${id}/emails/${emailId}/make-primary`, { method: 'POST' })
+      setRefreshIndex((index) => index + 1)
+    } catch (err) {
+      setContactActionError(err instanceof Error ? err.message : 'Failed to update primary email')
+    } finally {
+      setContactActionPendingId(null)
     }
   }
 
@@ -706,6 +847,208 @@ export default function ClientDetail() {
                   </div>
                 )}
                 {prefillLinkError && <p className="mt-2 text-sm text-danger">{prefillLinkError}</p>}
+              </div>
+
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                <h2 className="text-base font-semibold text-fg">Contact Info</h2>
+
+                <div className="mt-4 grid grid-cols-1 gap-6 sm:grid-cols-2">
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xs font-medium uppercase tracking-wider text-fg-muted">Phones</h3>
+                      {canManage && !client.mergedIntoId && !showAddPhone && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowAddPhone(true)
+                            setAddPhoneError(null)
+                            setNewPhone('')
+                            setNewPhoneLabel('')
+                          }}
+                          className="text-xs font-medium text-accent hover:underline"
+                        >
+                          + Add phone
+                        </button>
+                      )}
+                    </div>
+
+                    {client.phones.length === 0 && (
+                      <p className="mt-2 text-sm text-fg-secondary">No phone on file.</p>
+                    )}
+
+                    <ul className="mt-2 space-y-2">
+                      {client.phones.map((p) => (
+                        <li key={p.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                          <span className="text-fg">
+                            {formatPhoneInput(p.phone)}
+                            {p.label && <span className="ml-1.5 text-xs text-fg-muted">({p.label})</span>}
+                            {p.isPrimary && (
+                              <span className="ml-2 rounded-full bg-accent/15 px-2 py-0.5 text-[10px] font-semibold text-accent">
+                                Primary
+                              </span>
+                            )}
+                          </span>
+                          {canManage && !client.mergedIntoId && (
+                            <span className="flex shrink-0 gap-3">
+                              {!p.isPrimary && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleMakePrimaryPhone(p.id)}
+                                  disabled={contactActionPendingId === p.id}
+                                  className="text-xs font-medium text-fg-secondary transition hover:text-fg disabled:opacity-60"
+                                >
+                                  Make primary
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleRemovePhone(p.id)}
+                                disabled={contactActionPendingId === p.id}
+                                className="text-xs font-medium text-danger transition hover:underline disabled:opacity-60"
+                              >
+                                Remove
+                              </button>
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+
+                    {showAddPhone && (
+                      <form onSubmit={handleAddPhone} className="mt-3 space-y-2 rounded-lg border border-border p-3">
+                        <PhoneInput
+                          value={newPhone}
+                          onChange={setNewPhone}
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                        />
+                        <input
+                          type="text"
+                          placeholder="Label (optional, e.g. Mobile)"
+                          value={newPhoneLabel}
+                          onChange={(e) => setNewPhoneLabel(e.target.value)}
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                        />
+                        {addPhoneError && <p className="text-xs text-danger">{addPhoneError}</p>}
+                        <div className="flex gap-2">
+                          <button
+                            type="submit"
+                            disabled={addingPhone}
+                            className="rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                          >
+                            {addingPhone ? 'Adding…' : 'Add'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setShowAddPhone(false)}
+                            className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    )}
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xs font-medium uppercase tracking-wider text-fg-muted">Emails</h3>
+                      {canManage && !client.mergedIntoId && !showAddEmail && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowAddEmail(true)
+                            setAddEmailError(null)
+                            setNewEmail('')
+                            setNewEmailLabel('')
+                          }}
+                          className="text-xs font-medium text-accent hover:underline"
+                        >
+                          + Add email
+                        </button>
+                      )}
+                    </div>
+
+                    {client.emails.length === 0 && (
+                      <p className="mt-2 text-sm text-fg-secondary">No email on file.</p>
+                    )}
+
+                    <ul className="mt-2 space-y-2">
+                      {client.emails.map((e) => (
+                        <li key={e.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                          <span className="text-fg">
+                            {e.email}
+                            {e.label && <span className="ml-1.5 text-xs text-fg-muted">({e.label})</span>}
+                            {e.isPrimary && (
+                              <span className="ml-2 rounded-full bg-accent/15 px-2 py-0.5 text-[10px] font-semibold text-accent">
+                                Primary
+                              </span>
+                            )}
+                          </span>
+                          {canManage && !client.mergedIntoId && (
+                            <span className="flex shrink-0 gap-3">
+                              {!e.isPrimary && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleMakePrimaryEmail(e.id)}
+                                  disabled={contactActionPendingId === e.id}
+                                  className="text-xs font-medium text-fg-secondary transition hover:text-fg disabled:opacity-60"
+                                >
+                                  Make primary
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveEmail(e.id)}
+                                disabled={contactActionPendingId === e.id}
+                                className="text-xs font-medium text-danger transition hover:underline disabled:opacity-60"
+                              >
+                                Remove
+                              </button>
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+
+                    {showAddEmail && (
+                      <form onSubmit={handleAddEmail} className="mt-3 space-y-2 rounded-lg border border-border p-3">
+                        <input
+                          type="email"
+                          placeholder="email@example.com"
+                          value={newEmail}
+                          onChange={(e) => setNewEmail(e.target.value)}
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                        />
+                        <input
+                          type="text"
+                          placeholder="Label (optional, e.g. Work)"
+                          value={newEmailLabel}
+                          onChange={(e) => setNewEmailLabel(e.target.value)}
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                        />
+                        {addEmailError && <p className="text-xs text-danger">{addEmailError}</p>}
+                        <div className="flex gap-2">
+                          <button
+                            type="submit"
+                            disabled={addingEmail}
+                            className="rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                          >
+                            {addingEmail ? 'Adding…' : 'Add'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setShowAddEmail(false)}
+                            className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    )}
+                  </div>
+                </div>
+
+                {contactActionError && <p className="mt-3 text-sm text-danger">{contactActionError}</p>}
               </div>
 
               {canManage && !client.mergedIntoId && duplicates && duplicates.length > 0 && (
