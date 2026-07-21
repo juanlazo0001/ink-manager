@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
@@ -9,7 +9,8 @@ import InquiryPipeline from '../components/InquiryPipeline'
 import AppointmentForm from '../components/AppointmentForm'
 import CurrencyInput from '../components/CurrencyInput'
 import ImageUploadSection, { type ImageUploadState } from '../components/ImageUploadSection'
-import { ArtistAvatar, artistLabel } from '../components/ArtistAvatar'
+import { ArtistAvatar, artistLabel, type ArtistLike } from '../components/ArtistAvatar'
+import ArtistSelect from '../components/ArtistSelect'
 import DateAndTimeRangeFields, {
   combineDateAndTime,
   isCompleteTimeRange,
@@ -21,7 +22,6 @@ import { formatDateTime, formatDuration, formatPhoneInput, formatStatus } from '
 import {
   ArrowLeftIcon,
   CheckIcon,
-  ChevronDownIcon,
   ClientsIcon,
   CopyIcon,
   MessageIcon,
@@ -66,15 +66,15 @@ interface Inquiry {
   archivedAt: string | null
   clientId: string
   client: { firstName: string; lastName: string; email: string | null; phone: string | null }
-  preferredArtist: { id: string; user: { name: string | null } } | null
-  assignedArtist: { id: string; user: { name: string | null } } | null
+  preferredArtist: { id: string; user: { name: string | null; email: string; avatarUrl: string | null } } | null
+  assignedArtist: { id: string; user: { name: string | null; email: string; avatarUrl: string | null } } | null
   appointment: { id: string; startTime: string; endTime: string; status: string } | null
   sessions: {
     id: string
     startTime: string
     endTime: string
     status: string
-    artist: { id: string; user: { name: string | null; email: string } }
+    artist: { id: string; user: { name: string | null; email: string; avatarUrl: string | null } }
   }[]
   depositForm: {
     id: string
@@ -87,7 +87,15 @@ interface Inquiry {
     signatureData: string | null
     paidManually: boolean
     paidAt: string | null
+    proposedStartAt: string | null
+    proposedEndAt: string | null
   } | null
+}
+
+interface SuggestedTimeCandidate {
+  startTime: string
+  endTime: string
+  hasBufferConflict: boolean
 }
 
 interface ArtistOption {
@@ -194,6 +202,24 @@ function DetailField({ label, value }: { label: string; value: string }) {
     <div>
       <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{label}</p>
       <p className="mt-1 text-sm text-fg">{value}</p>
+    </div>
+  )
+}
+
+// Same label styling as DetailField, but the value row is an avatar+name
+// (or the plain emptyLabel text when there's no artist to show one for).
+function ArtistDetailField({ label, artist, emptyLabel }: { label: string; artist: ArtistLike | null; emptyLabel: string }) {
+  return (
+    <div>
+      <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{label}</p>
+      {artist ? (
+        <div className="mt-1 flex items-center gap-2">
+          <ArtistAvatar artist={artist} className="h-6 w-6" />
+          <p className="text-sm text-fg">{artistLabel(artist)}</p>
+        </div>
+      ) : (
+        <p className="mt-1 text-sm text-fg">{emptyLabel}</p>
+      )}
     </div>
   )
 }
@@ -340,6 +366,11 @@ export default function InquiryDetail() {
   // to/notify action, not an assignment, so it intentionally still lists
   // everyone -- staff may reasonably want to loop in a former guest.
   const assignableArtistOptions = artistOptions?.filter((a) => !isEndedGuest(a))
+  // ArtistSelect matches on `id`; the share modal's value is the artist's
+  // USER id (see the artistUserId POST payload below), not the Artist
+  // record id every other picker on this page keys by -- re-keyed here
+  // rather than changing ArtistSelect's contract for this one call site.
+  const shareArtistChoices = artistOptions?.map((artist) => ({ ...artist, id: artist.user.id }))
 
   // Reverse link for 6B tagging: if this inquiry has been tagged onto the
   // client's conversation, surface that here so staff can jump straight to
@@ -378,22 +409,8 @@ export default function InquiryDetail() {
   const hasAvailableGiftCard = !!clientGiftCards && clientGiftCards.length > 0
 
   const [selectedArtistId, setSelectedArtistId] = useState('')
-  const selectedArtist = assignableArtistOptions?.find((a) => a.id === selectedArtistId)
   const [assigning, setAssigning] = useState(false)
   const [assignError, setAssignError] = useState<string | null>(null)
-  const [artistMenuOpen, setArtistMenuOpen] = useState(false)
-  const artistMenuRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!artistMenuOpen) return
-    function handleClickOutside(event: MouseEvent) {
-      if (artistMenuRef.current && !artistMenuRef.current.contains(event.target as Node)) {
-        setArtistMenuOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [artistMenuOpen])
 
   // Starts false and is seeded per-inquiry below (true only when no estimate
   // has ever been sent yet -- otherwise these fields would always be
@@ -507,6 +524,14 @@ export default function InquiryDetail() {
   const [sendDepositError, setSendDepositError] = useState<string | null>(null)
   const [markingPaid, setMarkingPaid] = useState(false)
   const [markPaidError, setMarkPaidError] = useState<string | null>(null)
+
+  // Package D: tentative/informational deposit-form time, via the shared
+  // getSuggestedTimes service (apps/api/src/lib/schedulingAssistant.ts).
+  const [showSuggestTime, setShowSuggestTime] = useState(false)
+  const [suggestedTimeCandidates, setSuggestedTimeCandidates] = useState<SuggestedTimeCandidate[]>([])
+  const [suggestingTimeLoading, setSuggestingTimeLoading] = useState(false)
+  const [suggestTimeError, setSuggestTimeError] = useState<string | null>(null)
+  const [savingProposedTime, setSavingProposedTime] = useState(false)
 
   const [attachGiftCardId, setAttachGiftCardId] = useState('')
   const [attachingGiftCard, setAttachingGiftCard] = useState(false)
@@ -881,6 +906,50 @@ export default function InquiryDetail() {
     }
   }
 
+  async function handleOpenSuggestTime() {
+    if (!inquiry?.assignedArtist || inquiry.timeEstimateHoursMin == null || inquiry.timeEstimateHoursMax == null) return
+
+    setShowSuggestTime(true)
+    setSuggestTimeError(null)
+    setSuggestingTimeLoading(true)
+    setSuggestedTimeCandidates([])
+
+    try {
+      const durationMinutes = Math.round(((inquiry.timeEstimateHoursMin + inquiry.timeEstimateHoursMax) / 2) * 60)
+      const candidates = await apiFetch<SuggestedTimeCandidate[]>(
+        `/scheduling/suggested-times?artistId=${inquiry.assignedArtist.id}&durationMinutes=${durationMinutes}`,
+      )
+      setSuggestedTimeCandidates(candidates)
+    } catch (err) {
+      setSuggestTimeError(err instanceof Error ? err.message : 'Failed to load suggestions')
+    } finally {
+      setSuggestingTimeLoading(false)
+    }
+  }
+
+  async function handleSelectProposedTime(candidate: SuggestedTimeCandidate | null) {
+    if (!id) return
+
+    setSavingProposedTime(true)
+    setSuggestTimeError(null)
+
+    try {
+      await apiFetch(`/inquiries/${id}/deposit-form/proposed-time`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          proposedStartAt: candidate?.startTime ?? null,
+          proposedEndAt: candidate?.endTime ?? null,
+        }),
+      })
+      setShowSuggestTime(false)
+      invalidateInquiry()
+    } catch (err) {
+      setSuggestTimeError(err instanceof Error ? err.message : 'Failed to save proposed time')
+    } finally {
+      setSavingProposedTime(false)
+    }
+  }
+
   async function handleAttachGiftCard() {
     if (!id) return
     const giftCardId = attachGiftCardId || clientGiftCards?.[0]?.id
@@ -1176,53 +1245,13 @@ export default function InquiryDetail() {
 
                 {inquiry.status === 'NEW' ? (
                   <div className="mt-4 flex flex-wrap items-center gap-3">
-                    <div ref={artistMenuRef} className="relative w-64 max-w-full">
-                      <button
-                        type="button"
-                        id="assignArtistId"
-                        aria-haspopup="listbox"
-                        aria-expanded={artistMenuOpen}
-                        onClick={() => setArtistMenuOpen((open) => !open)}
-                        className="flex w-full items-center justify-between gap-2 rounded-lg border border-border bg-surface-inset px-3 py-2 text-left text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                      >
-                        {selectedArtist ? (
-                          <span className="flex min-w-0 items-center gap-2">
-                            <ArtistAvatar artist={selectedArtist} className="h-6 w-6" />
-                            <span className="truncate">{artistLabel(selectedArtist)}</span>
-                          </span>
-                        ) : (
-                          <span className="text-fg-muted">
-                            {assignableArtistOptions === undefined ? 'Loading artists…' : 'Select an artist'}
-                          </span>
-                        )}
-                        <ChevronDownIcon className="h-4 w-4 shrink-0 text-fg-muted" />
-                      </button>
-                      {artistMenuOpen && assignableArtistOptions && assignableArtistOptions.length > 0 && (
-                        <ul
-                          role="listbox"
-                          aria-labelledby="assignArtistId"
-                          className="absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-lg border border-border bg-surface-inset py-1 shadow-lg"
-                        >
-                          {assignableArtistOptions.map((artist) => (
-                            <li key={artist.id}>
-                              <button
-                                type="button"
-                                role="option"
-                                aria-selected={artist.id === selectedArtistId}
-                                onClick={() => {
-                                  setSelectedArtistId(artist.id)
-                                  setArtistMenuOpen(false)
-                                }}
-                                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-fg hover:bg-surface"
-                              >
-                                <ArtistAvatar artist={artist} className="h-7 w-7" />
-                                <span className="min-w-0 flex-1 truncate">{artistLabel(artist)}</span>
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
+                    <ArtistSelect
+                      id="assignArtistId"
+                      className="w-64 max-w-full"
+                      artists={assignableArtistOptions}
+                      value={selectedArtistId || null}
+                      onChange={(artistId) => setSelectedArtistId(artistId ?? '')}
+                    />
                     <button
                       type="button"
                       onClick={handleAssign}
@@ -1234,7 +1263,7 @@ export default function InquiryDetail() {
                   </div>
                 ) : (
                   <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    <DetailField label="Assigned artist" value={inquiry.assignedArtist?.user.name ?? 'Not yet assigned'} />
+                    <ArtistDetailField label="Assigned artist" artist={inquiry.assignedArtist} emptyLabel="Not yet assigned" />
                     <DetailField
                       label="Assigned at"
                       value={inquiry.assignedAt ? formatDateTime(inquiry.assignedAt) : 'Not yet assigned'}
@@ -1582,6 +1611,59 @@ export default function InquiryDetail() {
                           </div>
                         </div>
                       )}
+
+                      {inquiry.depositForm &&
+                        inquiry.assignedArtist &&
+                        inquiry.timeEstimateHoursMin != null &&
+                        inquiry.timeEstimateHoursMax != null && (
+                          <div className="mt-4 rounded-lg border border-border p-3">
+                            <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
+                              Tentative time (optional)
+                            </p>
+                            <p className="mt-1 text-xs text-fg-muted">
+                              Informational only — shown to the client on the deposit page. Not a real booking; real
+                              scheduling still happens after the deposit is paid.
+                            </p>
+
+                            {inquiry.depositForm.proposedStartAt && inquiry.depositForm.proposedEndAt ? (
+                              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                                <p className="text-sm text-fg">
+                                  {formatDateTime(inquiry.depositForm.proposedStartAt)} –{' '}
+                                  {formatDateTime(inquiry.depositForm.proposedEndAt)}
+                                </p>
+                                <div className="flex gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={handleOpenSuggestTime}
+                                    className="rounded-full border border-border px-3 py-1 text-xs font-medium text-fg transition hover:bg-surface"
+                                  >
+                                    Change
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSelectProposedTime(null)}
+                                    disabled={savingProposedTime}
+                                    className="rounded-full border border-border px-3 py-1 text-xs font-medium text-fg-secondary transition hover:bg-surface disabled:opacity-60"
+                                  >
+                                    Clear
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={handleOpenSuggestTime}
+                                className="mt-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                              >
+                                Suggest a time
+                              </button>
+                            )}
+
+                            {suggestTimeError && !showSuggestTime && (
+                              <p className="mt-2 text-sm text-danger">{suggestTimeError}</p>
+                            )}
+                          </div>
+                        )}
                     </>
                   )}
                 </div>
@@ -1713,8 +1795,9 @@ export default function InquiryDetail() {
                       >
                         <div>
                           <p className="text-sm text-fg">{formatDateTime(session.startTime)}</p>
-                          <p className="mt-0.5 text-xs text-fg-muted">
-                            with {session.artist.user.name ?? session.artist.user.email}
+                          <p className="mt-0.5 flex items-center gap-1.5 text-xs text-fg-muted">
+                            <ArtistAvatar artist={session.artist} className="h-4 w-4" />
+                            with {artistLabel(session.artist)}
                           </p>
                         </div>
                         <StatusPill status={session.status} />
@@ -1833,10 +1916,7 @@ export default function InquiryDetail() {
                       <DetailField label="Tattooed before" value={inquiry.hasBeenTattooedBefore ? 'Yes' : 'No'} />
                       <DetailField label="Budget" value={inquiry.budget ?? 'Not provided'} />
                       <DetailField label="Desired timing" value={inquiry.desiredTiming ?? 'Not provided'} />
-                      <DetailField
-                        label="Preferred artist"
-                        value={inquiry.preferredArtist?.user.name ?? 'No preference'}
-                      />
+                      <ArtistDetailField label="Preferred artist" artist={inquiry.preferredArtist} emptyLabel="No preference" />
                     </div>
                   </>
                 )}
@@ -1995,20 +2075,12 @@ export default function InquiryDetail() {
 
                       <div>
                         <label className="mb-1 block text-xs font-medium text-fg-secondary">Send to</label>
-                        <select
-                          value={shareArtistUserId}
-                          onChange={(e) => setShareArtistUserId(e.target.value)}
-                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                        >
-                          <option value="" disabled>
-                            {artistOptions === undefined ? 'Loading artists…' : 'Select an artist'}
-                          </option>
-                          {artistOptions?.map((artist) => (
-                            <option key={artist.id} value={artist.user.id}>
-                              {artist.user.name ?? artist.user.email}
-                            </option>
-                          ))}
-                        </select>
+                        <ArtistSelect
+                          id="shareArtistId"
+                          artists={shareArtistChoices}
+                          value={shareArtistUserId || null}
+                          onChange={(userId) => setShareArtistUserId(userId ?? '')}
+                        />
                       </div>
 
                       {shareError && <p className="text-sm text-danger">{shareError}</p>}
@@ -2101,6 +2173,46 @@ export default function InquiryDetail() {
                       {reopening ? 'Reopening…' : 'Reopen'}
                     </button>
                   </div>
+                </Modal>
+              )}
+
+              {showSuggestTime && (
+                <Modal title="Suggest a time" onClose={() => setShowSuggestTime(false)}>
+                  <p className="text-xs text-fg-muted">
+                    Informational only — picking one just saves a tentative time to show the client on the deposit
+                    page. No appointment is created.
+                  </p>
+
+                  {suggestingTimeLoading && <p className="mt-3 text-sm text-fg-secondary">Loading suggestions…</p>}
+
+                  {!suggestingTimeLoading && suggestedTimeCandidates.length === 0 && (
+                    <p className="mt-3 text-sm text-fg-secondary">No open times found in the next few weeks.</p>
+                  )}
+
+                  {!suggestingTimeLoading && suggestedTimeCandidates.length > 0 && (
+                    <div className="mt-3 space-y-2">
+                      {suggestedTimeCandidates.map((candidate) => (
+                        <button
+                          key={candidate.startTime}
+                          type="button"
+                          onClick={() => handleSelectProposedTime(candidate)}
+                          disabled={savingProposedTime}
+                          className="flex w-full items-center justify-between gap-2 rounded-lg border border-border px-3 py-2 text-left text-sm text-fg transition hover:bg-surface disabled:opacity-60"
+                        >
+                          <span>
+                            {formatDateTime(candidate.startTime)} – {formatDateTime(candidate.endTime)}
+                          </span>
+                          {candidate.hasBufferConflict && (
+                            <span className="shrink-0 rounded-full bg-warning/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-warning">
+                              Close to another appt
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {suggestTimeError && <p className="mt-3 text-sm text-danger">{suggestTimeError}</p>}
                 </Modal>
               )}
 

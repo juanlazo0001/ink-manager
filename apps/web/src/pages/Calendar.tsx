@@ -23,6 +23,8 @@ import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
 import AppointmentForm from '../components/AppointmentForm'
 import StatusPill from '../components/StatusPill'
+import { ArtistAvatar, FlatArtistAvatar } from '../components/ArtistAvatar'
+import ArtistSelect from '../components/ArtistSelect'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime } from '../lib/format'
 import { useAuth } from '../context/useAuth'
@@ -41,7 +43,7 @@ interface ScheduleBlock {
 
 interface ArtistOption {
   id: string
-  user: { name: string | null; email: string }
+  user: { name: string | null; email: string; avatarUrl: string | null }
   isGuest: boolean
   guestStartDate: string | null
   guestEndDate: string | null
@@ -136,7 +138,7 @@ interface AppointmentApi {
   endTime: string
   status: string
   client: { id: string; firstName: string; lastName: string } | null
-  artist: { id: string; name: string }
+  artist: { id: string; name: string; avatarUrl: string | null }
   inquiry: { id: string; label: string } | null
   bufferWarning?: string | null
 }
@@ -531,12 +533,13 @@ export default function Calendar() {
                     key={artist.id}
                     type="button"
                     onClick={() => toggleArtistFilter(artist.id)}
-                    className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
+                    className={`flex items-center gap-1.5 rounded-full border py-1 pl-1 pr-3 text-xs font-medium transition ${
                       active
                         ? 'border-accent bg-accent/10 text-accent'
                         : 'border-border text-fg-muted hover:bg-surface'
                     }`}
                   >
+                    <ArtistAvatar artist={artist} className="h-5 w-5" />
                     {artistDisplayName(artist)}
                   </button>
                 )
@@ -575,17 +578,12 @@ export default function Calendar() {
           {isMobile && !isArtist && visibleArtistOptions && visibleArtistOptions.length > 0 && (
             <div className="mt-4">
               <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-fg-muted">Artist</label>
-              <select
-                value={mobileArtistId ?? ''}
-                onChange={(event) => setMobileArtistId(event.target.value)}
-                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-              >
-                {visibleArtistOptions.map((artist) => (
-                  <option key={artist.id} value={artist.id}>
-                    {artistDisplayName(artist)}
-                  </option>
-                ))}
-              </select>
+              <ArtistSelect
+                id="mobileArtistId"
+                artists={visibleArtistOptions}
+                value={mobileArtistId ?? null}
+                onChange={(artistId) => setMobileArtistId(artistId ?? visibleArtistOptions[0].id)}
+              />
               {hasEndedGuests && (
                 <label className="mt-2 flex items-center gap-1.5 text-xs text-fg-muted">
                   <input
@@ -672,7 +670,14 @@ export default function Calendar() {
             </div>
             <div>
               <p className="text-xs font-medium uppercase tracking-wide text-fg-muted">Artist</p>
-              <p className="text-fg">{previewAppointment.artist.name}</p>
+              <p className="flex items-center gap-1.5 text-fg">
+                <FlatArtistAvatar
+                  name={previewAppointment.artist.name}
+                  avatarUrl={previewAppointment.artist.avatarUrl}
+                  className="h-5 w-5"
+                />
+                {previewAppointment.artist.name}
+              </p>
             </div>
             <div>
               <p className="text-xs font-medium uppercase tracking-wide text-fg-muted">Status</p>

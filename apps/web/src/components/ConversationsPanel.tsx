@@ -14,6 +14,8 @@ import { useConversationPanel } from '../context/useConversationPanel'
 import { useSocket } from '../context/useSocket'
 import Modal from './Modal'
 import PresenceDot from './PresenceDot'
+import ArtistSelect from './ArtistSelect'
+import { ArtistAvatar, artistLabel, FlatArtistAvatar } from './ArtistAvatar'
 import { navCountsQueryKey } from '../lib/queryKeys'
 import type { NavCounts } from '../lib/useNavCounts'
 import {
@@ -96,7 +98,7 @@ interface NewChatClient {
 
 interface ArtistFilterOption {
   id: string
-  user: { name: string | null; email: string }
+  user: { name: string | null; email: string; avatarUrl: string | null }
 }
 
 interface MessageMetadata {
@@ -161,7 +163,7 @@ interface ContextInquiry {
   budget: string | null
   priceEstimateLow: number | null
   priceEstimateHigh: number | null
-  assignedArtist: { id: string; user: { name: string | null; email: string } } | null
+  assignedArtist: { id: string; user: { name: string | null; email: string; avatarUrl: string | null } } | null
   depositForm: { id: string; totalCharged: number; signedAt: string | null; paidManually: boolean } | null
 }
 
@@ -173,6 +175,7 @@ interface ConversationContext {
     id: string
     startTime: string
     artistName: string
+    artistAvatarUrl: string | null
     waiverId: string | null
     waiverStatus: string | null
   } | null
@@ -1087,18 +1090,14 @@ function ConversationListView({
                 </option>
               ))}
             </select>
-            <select
-              value={artistIdFilter}
-              onChange={(e) => setArtistIdFilter(e.target.value)}
-              className="min-w-0 flex-1 rounded-lg border border-border bg-surface-inset px-2.5 py-2 text-base text-fg focus:border-accent focus:outline-none"
-            >
-              <option value="">Any artist</option>
-              {artistOptions?.map((artist) => (
-                <option key={artist.id} value={artist.id}>
-                  {artist.user.name ?? artist.user.email}
-                </option>
-              ))}
-            </select>
+            <ArtistSelect
+              id="conversationsArtistFilter"
+              className="min-w-0 flex-1"
+              artists={artistOptions}
+              value={artistIdFilter || null}
+              onChange={(artistId) => setArtistIdFilter(artistId ?? '')}
+              clearLabel="Any artist"
+            />
           </div>
           {hasActiveFilter && (
             <button
@@ -2264,12 +2263,6 @@ function ThreadView({
                                   ? `$${featuredInquiry.priceEstimateLow}-$${featuredInquiry.priceEstimateHigh}`
                                   : 'Not provided'),
                             ],
-                            [
-                              'Artist',
-                              featuredInquiry.assignedArtist?.user.name ??
-                                featuredInquiry.assignedArtist?.user.email ??
-                                'Unassigned',
-                            ],
                           ]
                         : []),
                     ].map(([label, value]) => (
@@ -2278,6 +2271,21 @@ function ThreadView({
                         <dd className="truncate text-right text-xs font-medium text-fg">{value}</dd>
                       </div>
                     ))}
+                    {featuredInquiry && (
+                      <div className="flex items-start justify-between gap-3">
+                        <dt className="shrink-0 text-xs text-fg-muted">Artist</dt>
+                        <dd className="flex min-w-0 items-center justify-end gap-1.5 text-right text-xs font-medium text-fg">
+                          {featuredInquiry.assignedArtist ? (
+                            <>
+                              <span className="truncate">{artistLabel(featuredInquiry.assignedArtist)}</span>
+                              <ArtistAvatar artist={featuredInquiry.assignedArtist} className="h-5 w-5" />
+                            </>
+                          ) : (
+                            'Unassigned'
+                          )}
+                        </dd>
+                      </div>
+                    )}
                   </dl>
 
                   {featuredInquiry && (
@@ -2310,8 +2318,14 @@ function ThreadView({
                         className="mt-1 block rounded-lg border border-border px-2.5 py-2 hover:bg-surface/60"
                       >
                         <p className="text-xs text-fg">{formatDateTime(context.nextAppointment.startTime)}</p>
-                        <p className="mt-0.5 text-[11px] text-fg-muted">
-                          with {context.nextAppointment.artistName}
+                        <p className="mt-0.5 flex items-center gap-1 text-[11px] text-fg-muted">
+                          with
+                          <FlatArtistAvatar
+                            name={context.nextAppointment.artistName}
+                            avatarUrl={context.nextAppointment.artistAvatarUrl}
+                            className="h-3.5 w-3.5"
+                          />
+                          {context.nextAppointment.artistName}
                           {context.nextAppointment.waiverStatus
                             ? ` · Waiver: ${context.nextAppointment.waiverStatus}`
                             : ''}
@@ -2677,9 +2691,12 @@ function ThreadView({
                 </p>
               )}
               {portfolioArtistId && portfolioArtist && portfolioArtist.portfolioImages.length === 0 && (
-                <p className="p-2 text-xs text-fg-muted">
-                  {featuredInquiry?.assignedArtist?.user.name ?? featuredInquiry?.assignedArtist?.user.email} has no
-                  portfolio images yet.
+                <p className="flex items-center gap-1.5 p-2 text-xs text-fg-muted">
+                  {featuredInquiry?.assignedArtist && (
+                    <ArtistAvatar artist={featuredInquiry.assignedArtist} className="h-4 w-4" />
+                  )}
+                  {featuredInquiry?.assignedArtist && artistLabel(featuredInquiry.assignedArtist)} has no portfolio
+                  images yet.
                 </p>
               )}
               {portfolioArtistId && !portfolioArtist && <p className="p-2 text-xs text-fg-muted">Loading…</p>}

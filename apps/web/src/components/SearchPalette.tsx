@@ -6,6 +6,7 @@ import { useDebouncedValue } from '../lib/useDebouncedValue'
 import { useViewAs } from '../context/useViewAs'
 import { formatStatus } from '../lib/format'
 import { AppointmentsIcon, ArtistsIcon, ClientsIcon, CloseIcon, DocumentIcon, SearchIcon, SpinnerIcon } from './icons'
+import { FlatArtistAvatar } from './ArtistAvatar'
 
 interface SearchClient {
   id: string
@@ -24,7 +25,7 @@ interface SearchInquiry {
 
 interface SearchArtist {
   id: string
-  user: { name: string; email: string }
+  user: { name: string; email: string; avatarUrl: string | null }
 }
 
 interface SearchAppointment {
@@ -32,7 +33,7 @@ interface SearchAppointment {
   startTime: string
   status: string
   client: { firstName: string; lastName: string }
-  artist: { user: { name: string } } | null
+  artist: { user: { name: string; avatarUrl: string | null } } | null
 }
 
 interface SearchResults {
@@ -164,6 +165,7 @@ export default function SearchPalette({ onClose }: SearchPaletteProps) {
                 <SearchRow
                   key={artist.id}
                   icon={ArtistsIcon}
+                  avatar={<FlatArtistAvatar name={artist.user.name} avatarUrl={artist.user.avatarUrl} className="h-6 w-6" />}
                   primary={artist.user.name}
                   secondary={artist.user.email}
                   onClick={() => go(`/artists/${artist.id}`)}
@@ -207,11 +209,15 @@ function SearchSection({ title, children }: { title: string; children: ReactNode
 
 function SearchRow({
   icon: Icon,
+  avatar,
   primary,
   secondary,
   onClick,
 }: {
   icon: ComponentType<{ className?: string }>
+  // Overrides the generic icon with an actual profile picture (or initials
+  // fallback) -- used for Artists results, where a real avatar is available.
+  avatar?: ReactNode
   primary: string
   secondary?: string
   onClick: () => void
@@ -222,7 +228,7 @@ function SearchRow({
       onClick={onClick}
       className="flex items-center gap-3 rounded-lg px-3 py-2 text-left transition hover:bg-surface-inset"
     >
-      <Icon className="h-4 w-4 shrink-0 text-fg-muted" />
+      {avatar ?? <Icon className="h-4 w-4 shrink-0 text-fg-muted" />}
       <span className="flex-1 truncate">
         <span className="text-sm font-medium text-fg">{primary}</span>
         {secondary && <span className="ml-2 text-xs text-fg-muted">{secondary}</span>}

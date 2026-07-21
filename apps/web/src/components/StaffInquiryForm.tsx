@@ -4,6 +4,7 @@ import { isValidPhoneDigits } from '../lib/format'
 import Modal from './Modal'
 import PhoneInput from './PhoneInput'
 import ImageUploadSection, { type ImageUploadState } from './ImageUploadSection'
+import ArtistSelect from './ArtistSelect'
 
 const INPUT_CLASS =
   'mt-1 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
@@ -11,7 +12,7 @@ const LABEL_CLASS = 'block text-sm font-medium text-fg-secondary'
 
 interface StaffArtist {
   id: string
-  user: { name: string | null }
+  user: { name: string | null; email: string; avatarUrl: string | null }
 }
 
 interface CreatedInquiry {
@@ -239,14 +240,14 @@ export default function StaffInquiryForm({ onClose, onCreated }: StaffInquiryFor
 
         <div>
           <label className={LABEL_CLASS}>Preferred artist</label>
-          <select value={preferredArtistId} onChange={(e) => setPreferredArtistId(e.target.value)} className={INPUT_CLASS}>
-            <option value="">No preference</option>
-            {artists.map((artist) => (
-              <option key={artist.id} value={artist.id}>
-                {artist.user.name ?? 'Unnamed artist'}
-              </option>
-            ))}
-          </select>
+          <ArtistSelect
+            id="staffInquiryPreferredArtist"
+            className="mt-1"
+            artists={artists}
+            value={preferredArtistId || null}
+            onChange={(artistId) => setPreferredArtistId(artistId ?? '')}
+            clearLabel="No preference"
+          />
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

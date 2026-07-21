@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom'
 import SignaturePad from 'signature_pad'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime } from '../lib/format'
+import { FlatArtistAvatar } from '../components/ArtistAvatar'
 
 const INPUT_CLASS =
   'mt-1 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
@@ -18,8 +19,11 @@ interface VerifyResponse {
   clientFirstName: string
   studioName: string
   artistName: string | null
+  artistAvatarUrl: string | null
   appointmentStart: string | null
   appointmentEnd: string | null
+  proposedStartAt: string | null
+  proposedEndAt: string | null
   depositAmount: number
   feeAmount: number
   totalCharged: number
@@ -159,6 +163,12 @@ export default function DepositResponse() {
           <div>
             <h1 className="text-xl font-semibold text-fg">Deposit Agreement</h1>
             <p className="mt-1 text-sm font-medium text-fg-secondary">{verifyData.studioName}</p>
+            {verifyData.artistName && (
+              <div className="mt-3 flex items-center gap-2">
+                <FlatArtistAvatar name={verifyData.artistName} avatarUrl={verifyData.artistAvatarUrl} className="h-7 w-7" />
+                <p className="text-sm font-medium text-fg">{verifyData.artistName}</p>
+              </div>
+            )}
             <p className="mt-2 text-sm text-fg-secondary">
               {verifyData.clientFirstName}, please review and sign below to confirm your appointment
               {verifyData.artistName ? ` with ${verifyData.artistName}` : ''}.
@@ -169,6 +179,19 @@ export default function DepositResponse() {
                 <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Appointment</p>
                 <p className="mt-1 text-sm text-fg">
                   {formatDateTime(verifyData.appointmentStart)} – {formatDateTime(verifyData.appointmentEnd)}
+                </p>
+              </div>
+            )}
+
+            {/* A real appointment (above) always takes precedence -- this is
+                purely informational and never implies a confirmed booking. */}
+            {!verifyData.appointmentStart && verifyData.proposedStartAt && verifyData.proposedEndAt && (
+              <div className="mt-4 rounded-lg border border-border bg-surface-inset p-3">
+                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Tentative Time</p>
+                <p className="mt-1 text-sm text-fg">
+                  Your appointment will be tentatively scheduled for{' '}
+                  {formatDateTime(verifyData.proposedStartAt)} – {formatDateTime(verifyData.proposedEndAt)}, pending
+                  your deposit. We'll confirm exact scheduling once payment is received.
                 </p>
               </div>
             )}

@@ -7,13 +7,28 @@ export function artistLabel(artist: ArtistLike): string {
 }
 
 export function ArtistAvatar({ artist, className }: { artist: ArtistLike; className: string }) {
-  const label = artistLabel(artist)
-  if (artist.user.avatarUrl) {
-    return <img src={artist.user.avatarUrl} alt={label} className={`${className} shrink-0 rounded-full object-cover`} />
+  return <FlatArtistAvatar name={artistLabel(artist)} avatarUrl={artist.user.avatarUrl} className={className} />
+}
+
+// Same rendering as ArtistAvatar, but for endpoints (GET /appointments's
+// list shape) that flatten the artist to a plain { name, avatarUrl } rather
+// than nesting a `user` -- avoids call sites re-deriving a fake ArtistLike
+// just to reuse the image-or-initials markup.
+export function FlatArtistAvatar({
+  name,
+  avatarUrl,
+  className,
+}: {
+  name: string
+  avatarUrl: string | null
+  className: string
+}) {
+  if (avatarUrl) {
+    return <img src={avatarUrl} alt={name} className={`${className} shrink-0 rounded-full object-cover`} />
   }
   return (
     <span className={`${className} flex shrink-0 items-center justify-center rounded-full bg-surface text-xs font-semibold text-fg`}>
-      {label.slice(0, 1).toUpperCase()}
+      {name.slice(0, 1).toUpperCase()}
     </span>
   )
 }

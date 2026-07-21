@@ -677,6 +677,15 @@ model DepositForm {
   paidAt                      DateTime?
   createdAt                   DateTime  @default(now())
 
+  // Package D: purely informational heads-up shown on the public deposit
+  // page (e.g. "tentatively scheduled for..."), staff-picked from
+  // getSuggestedTimes. Deliberately has NO relation to Appointment and NO
+  // gift-card requirement -- this is not a scheduling commitment, real
+  // scheduling still only happens via POST /inquiries/:id/schedule after
+  // the deposit is paid. Either both set or both null.
+  proposedStartAt              DateTime?
+  proposedEndAt                DateTime?
+
   inquiryId String  @unique
   inquiry   Inquiry @relation(fields: [inquiryId], references: [id])
 

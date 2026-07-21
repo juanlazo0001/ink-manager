@@ -16,6 +16,7 @@ import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatPhoneInput, formatStatus } from '../lib/format'
 import { formatCents, dollarsToCents } from '../lib/money'
 import { ArrowLeftIcon, CheckIcon, ClientsIcon, CopyIcon, MessageIcon, MoreIcon } from '../components/icons'
+import { ArtistAvatar, artistLabel } from '../components/ArtistAvatar'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useConversationPanel } from '../context/useConversationPanel'
 import { appointmentsQueryKey } from '../lib/queryKeys'
@@ -47,7 +48,7 @@ interface Appointment {
   checkedOutAt: string | null
   checkedOutBy: { id: string; name: string | null; email: string } | null
   client: { id: string; firstName: string; lastName: string }
-  artist: { id: string; user: { email: string; name: string | null } }
+  artist: { id: string; user: { email: string; name: string | null; avatarUrl: string | null } }
   inquiry: { id: string; description: string; clientId: string }
   giftCard: GiftCardSummary | null
   liabilityWaiver: WaiverSummary | null
@@ -483,8 +484,10 @@ export default function AppointmentDetail() {
                     <p className="mt-1 text-sm text-fg-secondary">
                       {formatDateTime(appointment.startTime)} – {formatDateTime(appointment.endTime)}
                     </p>
-                    <p className="mt-1 text-sm text-fg-secondary">
-                      Artist: {appointment.artist.user.name ?? appointment.artist.user.email}
+                    <p className="mt-1 flex items-center gap-1.5 text-sm text-fg-secondary">
+                      Artist:
+                      <ArtistAvatar artist={appointment.artist} className="h-5 w-5" />
+                      {artistLabel(appointment.artist)}
                     </p>
                     <p className="mt-1 text-sm text-fg-secondary">Project: {appointment.inquiry.description}</p>
                   </div>

@@ -151,7 +151,7 @@ router.get("/", requirePermission("appointments.view"), async (req, res) => {
       ...(hasValidRange ? { startTime: { lt: rangeEndRaw! }, endTime: { gt: rangeStartRaw! } } : {}),
     },
     include: {
-      artist: { select: { id: true, user: { select: { name: true, email: true } } } },
+      artist: { select: { id: true, user: { select: { name: true, email: true, avatarUrl: true } } } },
       client: { select: { id: true, firstName: true, lastName: true } },
       inquiryProject: { select: { id: true, description: true } },
     },
@@ -162,7 +162,7 @@ router.get("/", requirePermission("appointments.view"), async (req, res) => {
   res.json(
     appointments.map(({ inquiryProject, artist, ...rest }) => ({
       ...rest,
-      artist: { id: artist.id, name: artist.user.name ?? artist.user.email },
+      artist: { id: artist.id, name: artist.user.name ?? artist.user.email, avatarUrl: artist.user.avatarUrl },
       inquiry: inquiryProject
         ? {
             id: inquiryProject.id,
@@ -177,7 +177,7 @@ router.get("/", requirePermission("appointments.view"), async (req, res) => {
 });
 
 const APPOINTMENT_DETAIL_INCLUDE = {
-  artist: { select: { id: true, user: { select: { email: true, name: true } } } },
+  artist: { select: { id: true, user: { select: { email: true, name: true, avatarUrl: true } } } },
   client: { select: { id: true, firstName: true, lastName: true } },
   // The project this session belongs to -- via inquiryId/inquiryProject, not
   // the older 1:1 `inquiry` back-relation (Inquiry.appointmentId), which is

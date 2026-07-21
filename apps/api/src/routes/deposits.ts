@@ -93,8 +93,13 @@ publicRouter.get("/verify/:token", async (req, res) => {
     clientFirstName: inquiry.client.firstName,
     studioName: inquiry.studio.name,
     artistName: inquiry.assignedArtist?.user.name ?? null,
+    artistAvatarUrl: inquiry.assignedArtist?.user.avatarUrl ?? null,
     appointmentStart: inquiry.appointment?.startTime ?? null,
     appointmentEnd: inquiry.appointment?.endTime ?? null,
+    // Purely informational -- only meaningful once there's no real
+    // appointment yet (a real one always takes precedence in the UI).
+    proposedStartAt: depositForm!.proposedStartAt,
+    proposedEndAt: depositForm!.proposedEndAt,
     depositAmount: depositForm!.depositAmount,
     feeAmount: depositForm!.feeAmount,
     totalCharged: depositForm!.totalCharged,

@@ -52,7 +52,7 @@ router.get("/", async (req, res) => {
     }),
     prisma.artist.findMany({
       where: { user: { studioId, OR: [{ name: contains }, { email: contains }] } },
-      select: { id: true, user: { select: { name: true, email: true } } },
+      select: { id: true, user: { select: { name: true, email: true, avatarUrl: true } } },
       take: RESULT_LIMIT,
     }),
     prisma.appointment.findMany({
@@ -69,7 +69,7 @@ router.get("/", async (req, res) => {
         startTime: true,
         status: true,
         client: { select: { firstName: true, lastName: true } },
-        artist: { select: { user: { select: { name: true } } } },
+        artist: { select: { user: { select: { name: true, avatarUrl: true } } } },
       },
       orderBy: { startTime: "desc" },
       take: RESULT_LIMIT,

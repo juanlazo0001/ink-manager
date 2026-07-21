@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { apiFetch } from '../lib/api'
 import { useAuth } from '../context/useAuth'
 import { clientsQueryKey, artistsQueryKey } from '../lib/queryKeys'
-import { suggestAppointmentSlots, type ScheduleBlock, type SuggestedSlot } from '../lib/suggestAppointmentSlots'
-import { ChevronDownIcon } from './icons'
-import { ArtistAvatar, artistLabel } from './ArtistAvatar'
+import { artistLabel } from './ArtistAvatar'
+import ArtistSelect from './ArtistSelect'
+import MiniScheduleSnippet from './MiniScheduleSnippet'
 import DateAndTimeRangeFields, {
   combineDateAndTime,
   isCompleteTimeRange,
@@ -26,7 +26,15 @@ interface ArtistOption {
   isGuest: boolean
   guestStartDate: string | null
   guestEndDate: string | null
-  preferredSchedule: ScheduleBlock[] | null
+}
+
+// Package D: candidates from the shared getSuggestedTimes service
+// (apps/api/src/lib/schedulingAssistant.ts), the one algorithm behind both
+// this panel and the deposit-form's "Suggest a time" action.
+interface SuggestedTimeCandidate {
+  startTime: string
+  endTime: string
+  hasBufferConflict: boolean
 }
 
 // New assignments never default-offer a guest artist whose window has
@@ -115,19 +123,6 @@ export default function AppointmentForm({
   const [notes, setNotes] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [artistMenuOpen, setArtistMenuOpen] = useState(false)
-  const artistMenuRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!artistMenuOpen) return
-    function handleClickOutside(event: MouseEvent) {
-      if (artistMenuRef.current && !artistMenuRef.current.contains(event.target as Node)) {
-        setArtistMenuOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [artistMenuOpen])
 
   const { data: clientOptions } = useQuery({
     queryKey: clientsQueryKey(user!.studioId),
@@ -166,47 +161,66 @@ export default function AppointmentForm({
     ? Math.round(((selectedInquiry!.timeEstimateHoursMin! + selectedInquiry!.timeEstimateHoursMax!) / 2) * 60)
     : undefined
 
-  // Reads this artist's own upcoming bookings (next 14 days) to avoid
-  // proposing a slot that's already taken or inside the buffer -- see
-  // suggestAppointmentSlots for the algorithm itself.
-  const suggestionRangeStart = useMemo(() => new Date(), [])
-  const suggestionRangeEnd = useMemo(() => {
-    const end = new Date(suggestionRangeStart)
-    end.setDate(end.getDate() + 14)
-    return end
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [suggestionRangeStart])
+  // Per the task spec, suggestions only show once a gift card is actually
+  // available or already attached -- a project that can't be scheduled at
+  // all yet (no card) shouldn't be shown times to book, that would imply a
+  // commitment the client hasn't secured.
+  const hasGiftCardAvailable = giftCardId !== '' || availableGiftCards.length > 0
 
-  const { data: artistAppointments } = useQuery({
-    queryKey: ['appointments-for-suggestions', artistId, suggestionRangeStart.toDateString()],
+  // The one shared service behind both Package D consumers -- see
+  // apps/api/src/lib/schedulingAssistant.ts. Replaces the prior client-side
+  // suggestAppointmentSlots.ts algorithm entirely (deleted in this same
+  // commit) so there's exactly one implementation, not two that happen to
+  // agree.
+  const { data: suggestedTimes } = useQuery({
+    queryKey: ['suggested-times', artistId, suggestionDurationMinutes],
     queryFn: () =>
-      apiFetch<{ startTime: string; endTime: string }[]>(
-        `/appointments?artistId=${artistId}&start=${encodeURIComponent(suggestionRangeStart.toISOString())}&end=${encodeURIComponent(suggestionRangeEnd.toISOString())}`,
+      apiFetch<SuggestedTimeCandidate[]>(
+        `/scheduling/suggested-times?artistId=${artistId}&durationMinutes=${suggestionDurationMinutes}`,
       ),
-    enabled: !!artistId && hasTimeEstimate,
+    enabled: !!artistId && hasTimeEstimate && hasGiftCardAvailable,
   })
 
-  const suggestedSlots = useMemo<SuggestedSlot[]>(() => {
-    if (!selectedArtist || !artistAppointments || !suggestionDurationMinutes) return []
-    return suggestAppointmentSlots({
-      schedule: selectedArtist.preferredSchedule,
-      isGuest: selectedArtist.isGuest,
-      guestStartDate: selectedArtist.guestStartDate,
-      guestEndDate: selectedArtist.guestEndDate,
-      existingAppointments: artistAppointments,
-      durationMinutes: suggestionDurationMinutes,
-    })
+  // Reads this artist's own upcoming bookings for the mini schedule
+  // snippet's own data -- conflict-checking itself already happened
+  // server-side inside getSuggestedTimes above, this is purely for the
+  // small visual preview.
+  const snippetRangeStart = useMemo(() => new Date(), [])
+  const snippetRangeEnd = useMemo(() => {
+    const end = new Date(snippetRangeStart)
+    end.setDate(end.getDate() + 21)
+    return end
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedArtist, artistAppointments, suggestionDurationMinutes])
+  }, [snippetRangeStart])
 
-  function formatSlotLabel(slot: SuggestedSlot): string {
-    const start = combineDateAndTime(slot.date, slot.startTime)!
-    const end = combineDateAndTime(slot.date, slot.endTime)!
+  const { data: artistAppointmentsForSnippet } = useQuery({
+    queryKey: ['appointments-for-schedule-snippet', artistId, snippetRangeStart.toDateString()],
+    queryFn: () =>
+      apiFetch<{ startTime: string; endTime: string }[]>(
+        `/appointments?artistId=${artistId}&start=${encodeURIComponent(snippetRangeStart.toISOString())}&end=${encodeURIComponent(snippetRangeEnd.toISOString())}`,
+      ),
+    enabled: !!artistId && hasTimeEstimate && hasGiftCardAvailable,
+  })
+
+  function isoToTimeRangeParts(startIso: string, endIso: string): DateAndTimeRangeValue {
+    const start = new Date(startIso)
+    const end = new Date(endIso)
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return {
+      date: `${start.getFullYear()}-${pad(start.getMonth() + 1)}-${pad(start.getDate())}`,
+      startTime: `${pad(start.getHours())}:${pad(start.getMinutes())}`,
+      endTime: `${pad(end.getHours())}:${pad(end.getMinutes())}`,
+    }
+  }
+
+  function formatSlotLabel(candidate: SuggestedTimeCandidate): string {
+    const start = new Date(candidate.startTime)
+    const end = new Date(candidate.endTime)
     const today = new Date()
     const tomorrow = new Date(today)
     tomorrow.setDate(tomorrow.getDate() + 1)
     const dayLabel =
-      slot.date === today.toISOString().slice(0, 10) || start.toDateString() === today.toDateString()
+      start.toDateString() === today.toDateString()
         ? 'Today'
         : start.toDateString() === tomorrow.toDateString()
           ? 'Tomorrow'
@@ -214,6 +228,12 @@ export default function AppointmentForm({
     const timeLabel = (d: Date) => d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
     return `${dayLabel}, ${timeLabel(start)}–${timeLabel(end)}`
   }
+
+  const activeSuggestion =
+    suggestedTimes?.find((candidate) => {
+      const parts = isoToTimeRangeParts(candidate.startTime, candidate.endTime)
+      return parts.date === timeRange.date && parts.startTime === timeRange.startTime
+    }) ?? suggestedTimes?.[0]
 
   function handleClientChange(nextClientId: string) {
     setClientId(nextClientId)
@@ -364,56 +384,14 @@ export default function AppointmentForm({
         </div>
       )}
 
-      <div className="mb-3" ref={artistMenuRef}>
-        <label id="apptArtistIdLabel" className="mb-1 block text-sm font-medium text-fg-secondary">
-          Artist
-        </label>
-        <div className="relative">
-          <button
-            type="button"
-            id="apptArtistId"
-            aria-haspopup="listbox"
-            aria-expanded={artistMenuOpen}
-            aria-labelledby="apptArtistIdLabel"
-            onClick={() => setArtistMenuOpen((open) => !open)}
-            className={`${INPUT_CLASS} flex items-center justify-between gap-2 text-left`}
-          >
-            {selectedArtist ? (
-              <span className="flex min-w-0 items-center gap-2">
-                <ArtistAvatar artist={selectedArtist} className="h-6 w-6" />
-                <span className="truncate">{artistLabel(selectedArtist)}</span>
-              </span>
-            ) : (
-              <span className="text-fg-muted">{artistOptions === undefined ? 'Loading…' : 'Select an artist'}</span>
-            )}
-            <ChevronDownIcon className="h-4 w-4 shrink-0 text-fg-muted" />
-          </button>
-          {artistMenuOpen && artistOptions && artistOptions.length > 0 && (
-            <ul
-              role="listbox"
-              aria-labelledby="apptArtistIdLabel"
-              className="absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-lg border border-border bg-surface-inset py-1 shadow-lg"
-            >
-              {artistOptions.map((artist) => (
-                <li key={artist.id}>
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={artist.id === artistId}
-                    onClick={() => {
-                      setArtistId(artist.id)
-                      setArtistMenuOpen(false)
-                    }}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-fg hover:bg-surface"
-                  >
-                    <ArtistAvatar artist={artist} className="h-7 w-7" />
-                    <span className="min-w-0 flex-1 truncate">{artistLabel(artist)}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+      <div className="mb-3">
+        <label className="mb-1 block text-sm font-medium text-fg-secondary">Artist</label>
+        <ArtistSelect
+          id="apptArtistId"
+          artists={artistOptions}
+          value={artistId || null}
+          onChange={(id) => setArtistId(id ?? '')}
+        />
       </div>
 
       {artistId && !effectiveInquiryId && (
@@ -426,41 +404,65 @@ export default function AppointmentForm({
         </p>
       )}
 
-      {artistId && hasTimeEstimate && (
+      {artistId && hasTimeEstimate && !hasGiftCardAvailable && (
+        <p className="mb-3 text-xs text-fg-muted">
+          This client has no available gift card yet — suggested times appear once one is available or attached.
+        </p>
+      )}
+
+      {artistId && hasTimeEstimate && hasGiftCardAvailable && (
         <div className="mb-3">
           <p className="mb-1.5 block text-sm font-medium text-fg-secondary">Suggested times</p>
-          {!artistAppointments ? (
+          {!suggestedTimes ? (
             <p className="text-xs text-fg-muted">
               Checking {selectedArtist ? artistLabel(selectedArtist) : 'artist'}'s availability…
             </p>
-          ) : suggestedSlots.length === 0 ? (
+          ) : suggestedTimes.length === 0 ? (
             <p className="text-xs text-fg-muted">
-              No open slots found in the next 2 weeks — pick a time manually below.
+              No open slots found in the next few weeks — pick a time manually below.
             </p>
           ) : (
             <div className="flex flex-wrap gap-2">
-              {suggestedSlots.map((slot) => {
+              {suggestedTimes.map((candidate) => {
+                const parts = isoToTimeRangeParts(candidate.startTime, candidate.endTime)
                 const isSelected =
-                  timeRange.date === slot.date &&
-                  timeRange.startTime === slot.startTime &&
-                  timeRange.endTime === slot.endTime
+                  timeRange.date === parts.date &&
+                  timeRange.startTime === parts.startTime &&
+                  timeRange.endTime === parts.endTime
                 return (
                   <button
-                    key={`${slot.date}-${slot.startTime}`}
+                    key={candidate.startTime}
                     type="button"
-                    onClick={() => setTimeRange({ date: slot.date, startTime: slot.startTime, endTime: slot.endTime })}
+                    onClick={() => setTimeRange(parts)}
                     className={[
-                      'rounded-full border px-3 py-1.5 text-xs font-medium transition',
+                      'flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition',
                       isSelected
                         ? 'border-accent bg-accent/15 text-accent'
                         : 'border-border text-fg-secondary hover:bg-surface',
                     ].join(' ')}
                   >
-                    {formatSlotLabel(slot)}
+                    {formatSlotLabel(candidate)}
+                    {candidate.hasBufferConflict && (
+                      <span
+                        title="Less than 1.5 hours from another appointment for this artist"
+                        className="rounded-full bg-warning/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-warning"
+                      >
+                        Close
+                      </span>
+                    )}
                   </button>
                 )
               })}
             </div>
+          )}
+
+          {activeSuggestion && artistAppointmentsForSnippet && (
+            <MiniScheduleSnippet
+              date={isoToTimeRangeParts(activeSuggestion.startTime, activeSuggestion.endTime).date}
+              appointments={artistAppointmentsForSnippet}
+              highlightStart={activeSuggestion.startTime}
+              highlightEnd={activeSuggestion.endTime}
+            />
           )}
         </div>
       )}

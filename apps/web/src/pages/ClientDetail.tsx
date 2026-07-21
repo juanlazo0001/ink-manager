@@ -7,6 +7,7 @@ import AuditTrail from '../components/AuditTrail'
 import StatusPill from '../components/StatusPill'
 import PhoneInput from '../components/PhoneInput'
 import ClientComparisonView from '../components/ClientComparisonView'
+import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatPhoneInput, formatStatus, isValidPhoneDigits } from '../lib/format'
 import {
@@ -116,7 +117,7 @@ interface Appointment {
   closeoutNotes: string | null
   // Matches GET /appointments's response shape (Phase UI-5) -- a display
   // name, not a nested user/email chain.
-  artist: { id: string; name: string } | null
+  artist: { id: string; name: string; avatarUrl: string | null } | null
 }
 
 interface DuplicateCandidate {
@@ -1703,7 +1704,18 @@ export default function ClientDetail() {
                             className="cursor-pointer hover:bg-surface/40"
                           >
                             <td className="hidden py-3 text-fg sm:table-cell">
-                              {appointment.artist?.name ?? '—'}
+                              {appointment.artist ? (
+                                <span className="flex items-center gap-1.5">
+                                  <FlatArtistAvatar
+                                    name={appointment.artist.name}
+                                    avatarUrl={appointment.artist.avatarUrl}
+                                    className="h-5 w-5"
+                                  />
+                                  {appointment.artist.name}
+                                </span>
+                              ) : (
+                                '—'
+                              )}
                             </td>
                             <td className="py-3 text-fg-secondary">{formatDateTime(appointment.startTime)}</td>
                             <td className="py-3">
@@ -1831,8 +1843,15 @@ export default function ClientDetail() {
                                 type="button"
                                 onClick={() => handleSendWaiver(appointment.id)}
                                 disabled={sendingWaiverId === appointment.id}
-                                className="flex w-full items-center gap-2 truncate rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface disabled:opacity-60"
+                                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface disabled:opacity-60"
                               >
+                                {appointment.artist && (
+                                  <FlatArtistAvatar
+                                    name={appointment.artist.name}
+                                    avatarUrl={appointment.artist.avatarUrl}
+                                    className="h-5 w-5"
+                                  />
+                                )}
                                 <span className="truncate">
                                   {formatDateTime(appointment.startTime)}
                                   {appointment.artist && ` · ${appointment.artist.name}`}

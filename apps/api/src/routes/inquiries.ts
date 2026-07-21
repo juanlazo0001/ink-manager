@@ -211,7 +211,7 @@ const NON_TERMINAL_STATUSES: InquiryStatus[] = (Object.values(InquiryStatus) as 
 
 const INQUIRY_INCLUDE = {
   client: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
-  preferredArtist: { select: { id: true, user: { select: { name: true } } } },
+  preferredArtist: { select: { id: true, user: { select: { name: true, email: true, avatarUrl: true } } } },
   // email/avatarUrl added for the Kanban board's card (Package E) --
   // renders through the shared ArtistAvatar component, which needs both to
   // avoid falling back to a raw email string.
@@ -227,7 +227,7 @@ const INQUIRY_INCLUDE = {
       startTime: true,
       endTime: true,
       status: true,
-      artist: { select: { id: true, user: { select: { name: true, email: true } } } },
+      artist: { select: { id: true, user: { select: { name: true, email: true, avatarUrl: true } } } },
     },
     orderBy: { startTime: "asc" },
   },
@@ -243,6 +243,8 @@ const INQUIRY_INCLUDE = {
       signatureData: true,
       paidManually: true,
       paidAt: true,
+      proposedStartAt: true,
+      proposedEndAt: true,
     },
   },
 } as const;
@@ -954,6 +956,62 @@ router.post("/:id/deposit-form", requireAuth, requireRole(Role.OWNER, Role.FRONT
 
   res.status(201).json({ ...depositForm, depositUrl: await shortenUrl(`${PUBLIC_APP_URL}/deposit/${token}`) });
 });
+
+// Package D: staff picks (or clears) a tentative, informational-only time
+// from getSuggestedTimes to show on the public deposit page. Deliberately
+// separate from POST /:id/deposit-form above -- that route rotates the
+// token/expiry every call, which would invalidate a link already sent to
+// the client; this only ever touches the two proposed* columns. No
+// Appointment is created or referenced here, and no gift card is involved
+// -- purely informational, matching the deposit-form's own pre-payment,
+// pre-real-scheduling position in the pipeline.
+router.patch(
+  "/:id/deposit-form/proposed-time",
+  requireAuth,
+  requireRole(Role.OWNER, Role.FRONT_DESK),
+  async (req, res) => {
+    const id = req.params.id as string;
+    const body = req.body ?? {};
+    const { proposedStartAt, proposedEndAt } = body;
+
+    const inquiry = await prisma.inquiry.findUnique({ where: { id }, include: { depositForm: true } });
+    if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+      return res.status(404).json({ error: "Inquiry not found" });
+    }
+    if (!inquiry.depositForm) {
+      return res.status(400).json({ error: "This inquiry has no deposit form yet" });
+    }
+
+    // Both set or both cleared -- never a dangling start with no end.
+    const bothNull = proposedStartAt === null && proposedEndAt === null;
+    const bothStrings = typeof proposedStartAt === "string" && typeof proposedEndAt === "string";
+    if (!bothNull && !bothStrings) {
+      return res.status(400).json({ error: "proposedStartAt and proposedEndAt must both be set or both be null" });
+    }
+    if (bothStrings && !(new Date(proposedStartAt) < new Date(proposedEndAt))) {
+      return res.status(400).json({ error: "proposedStartAt must be before proposedEndAt" });
+    }
+
+    const updated = await prisma.depositForm.update({
+      where: { inquiryId: id },
+      data: {
+        proposedStartAt: bothStrings ? new Date(proposedStartAt) : null,
+        proposedEndAt: bothStrings ? new Date(proposedEndAt) : null,
+      },
+    });
+
+    await logAudit({
+      studioId: req.user!.studioId,
+      actorUserId: req.user!.userId,
+      entityType: "DepositForm",
+      entityId: updated.id,
+      action: "update",
+      changes: { proposedStartAt: updated.proposedStartAt, proposedEndAt: updated.proposedEndAt },
+    });
+
+    res.json(updated);
+  },
+);
 
 // Alternative to the deposit-form flow above: the client already has an
 // available gift card on file (e.g. from an earlier project, or issued

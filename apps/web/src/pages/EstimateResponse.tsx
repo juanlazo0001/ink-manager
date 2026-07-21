@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { apiFetch, ApiError } from '../lib/api'
 import { sanitizeHtml } from '../lib/sanitizeHtml'
+import { FlatArtistAvatar } from '../components/ArtistAvatar'
 
 const INPUT_CLASS =
   'mt-1 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
@@ -137,18 +138,9 @@ export default function EstimateResponse() {
             <h1 className="text-xl font-semibold text-fg">Your Tattoo Estimate</h1>
             <p className="mt-1 text-sm font-medium text-fg-secondary">{verifyData.studioName}</p>
             <div className="mt-3 flex items-center gap-2.5">
-              {verifyData.artistName &&
-                (verifyData.artistAvatarUrl ? (
-                  <img
-                    src={verifyData.artistAvatarUrl}
-                    alt={verifyData.artistName}
-                    className="h-8 w-8 shrink-0 rounded-full object-cover"
-                  />
-                ) : (
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-inset text-xs font-semibold text-fg">
-                    {verifyData.artistName.slice(0, 1).toUpperCase()}
-                  </span>
-                ))}
+              {verifyData.artistName && (
+                <FlatArtistAvatar name={verifyData.artistName} avatarUrl={verifyData.artistAvatarUrl} className="h-8 w-8" />
+              )}
               <p className="text-sm text-fg-secondary">
                 {verifyData.clientFirstName}, here's what {verifyData.artistName ?? 'your artist'} put together for
                 you.
