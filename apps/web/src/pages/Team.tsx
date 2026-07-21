@@ -541,13 +541,24 @@ export default function Team() {
               )}
 
               {!artistsErrorMessage && artists && artists.length > 0 && (
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {artists.map((artist) => (
-                    <div
-                      key={artist.id}
-                      onClick={() => navigate(`/artists/${artist.id}`)}
-                      className="cursor-pointer rounded-2xl border border-border bg-surface p-5 transition hover:border-border-strong"
-                    >
+                <div className="space-y-8">
+                  {[
+                    { label: 'Studio Artists', items: artists.filter((artist) => !artist.isGuest) },
+                    { label: 'Guest Artists', items: artists.filter((artist) => artist.isGuest) },
+                  ]
+                    .filter((group) => group.items.length > 0)
+                    .map((group) => (
+                      <div key={group.label}>
+                        <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-fg-muted">
+                          {group.label}
+                        </h2>
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                          {group.items.map((artist) => (
+                            <div
+                              key={artist.id}
+                              onClick={() => navigate(`/artists/${artist.id}`)}
+                              className="cursor-pointer rounded-2xl border border-border bg-surface p-5 transition hover:border-border-strong"
+                            >
                       <div className="flex items-center gap-3">
                         {artist.user.avatarUrl ? (
                           <img
@@ -672,8 +683,11 @@ export default function Team() {
                           </button>
                         </div>
                       )}
-                    </div>
-                  ))}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
                 </div>
               )}
             </div>

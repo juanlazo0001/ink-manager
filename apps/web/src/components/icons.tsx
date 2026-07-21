@@ -41,13 +41,16 @@ export function ArtistsIcon({ className }: IconProps) {
   )
 }
 
+// An ID-badge silhouette (card + photo + name lines) -- deliberately not
+// another two-person icon like ClientsIcon, since at sidebar size the two
+// used to be indistinguishable.
 export function TeamIcon({ className }: IconProps) {
   return (
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
-      <circle cx="7" cy="6" r="2.5" />
-      <path d="M2.5 16c0-3 2-4.8 4.5-4.8s4.5 1.8 4.5 4.8" />
-      <circle cx="14.5" cy="6.5" r="2" />
-      <path d="M12 11.5c2.2.2 3.5 1.8 3.5 4.5" />
+      <rect x="4" y="2.5" width="12" height="15" rx="2" />
+      <circle cx="10" cy="8" r="2.25" />
+      <path d="M6.75 14.5c.55-2 2-3 3.25-3s2.7 1 3.25 3" />
+      <line x1="7" y1="4.75" x2="13" y2="4.75" />
     </svg>
   )
 }

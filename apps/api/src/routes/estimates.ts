@@ -58,7 +58,9 @@ router.get("/verify/:token", async (req, res) => {
   res.json({
     clientFirstName: inquiry!.client.firstName,
     studioName: inquiry!.studio.name,
+    studioLogoUrl: inquiry!.studio.logoUrl,
     artistName: inquiry!.assignedArtist?.user.name ?? null,
+    artistAvatarUrl: inquiry!.assignedArtist?.user.avatarUrl ?? null,
     priceEstimateLow: inquiry!.priceEstimateLow,
     priceEstimateHigh: inquiry!.priceEstimateHigh,
     timeEstimateHoursMin: inquiry!.timeEstimateHoursMin,

@@ -12,7 +12,9 @@ type Decision = 'PROCEED' | 'BUDGET_TOO_HIGH' | 'DECLINE'
 interface VerifyResponse {
   clientFirstName: string
   studioName: string
+  studioLogoUrl: string | null
   artistName: string | null
+  artistAvatarUrl: string | null
   priceEstimateLow: number | null
   priceEstimateHigh: number | null
   timeEstimateHoursMin: number | null
@@ -125,11 +127,33 @@ export default function EstimateResponse() {
 
         {state === 'ready' && verifyData && (
           <div>
+            {verifyData.studioLogoUrl && (
+              <img
+                src={verifyData.studioLogoUrl}
+                alt={verifyData.studioName}
+                className="mb-4 h-10 w-auto object-contain"
+              />
+            )}
             <h1 className="text-xl font-semibold text-fg">Your Tattoo Estimate</h1>
             <p className="mt-1 text-sm font-medium text-fg-secondary">{verifyData.studioName}</p>
-            <p className="mt-2 text-sm text-fg-secondary">
-              {verifyData.clientFirstName}, here's what {verifyData.artistName ?? 'your artist'} put together for you.
-            </p>
+            <div className="mt-3 flex items-center gap-2.5">
+              {verifyData.artistName &&
+                (verifyData.artistAvatarUrl ? (
+                  <img
+                    src={verifyData.artistAvatarUrl}
+                    alt={verifyData.artistName}
+                    className="h-8 w-8 shrink-0 rounded-full object-cover"
+                  />
+                ) : (
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-inset text-xs font-semibold text-fg">
+                    {verifyData.artistName.slice(0, 1).toUpperCase()}
+                  </span>
+                ))}
+              <p className="text-sm text-fg-secondary">
+                {verifyData.clientFirstName}, here's what {verifyData.artistName ?? 'your artist'} put together for
+                you.
+              </p>
+            </div>
 
             <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
