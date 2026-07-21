@@ -13,6 +13,7 @@ import { normalizePhone } from "../lib/phone";
 import { syncPrimaryEmail, syncPrimaryPhone } from "../lib/clientContacts";
 import { findBufferConflict, formatBufferWarning } from "../lib/schedulingConflict";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
+import { emitInvalidation } from "../lib/realtime/registry";
 
 const router = Router();
 
@@ -201,6 +202,8 @@ router.post("/", optionalAuth, async (req, res) => {
       changes: { clientId: client.id, channel },
     });
   }
+
+  emitInvalidation({ type: "inquiry.created", studioId: studio.id });
 
   res.status(201).json(inquiry);
 });
@@ -749,6 +752,8 @@ router.post("/:id/schedule", requireAuth, requireRole(Role.OWNER, Role.FRONT_DES
     action: "status_change",
     changes: diffObjects(inquiry, scheduleData, ["status", "appointmentId"]),
   });
+
+  emitInvalidation({ type: "appointment.changed", studioId: req.user!.studioId });
 
   res.status(201).json({
     ...updated,

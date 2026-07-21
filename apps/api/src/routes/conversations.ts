@@ -13,6 +13,7 @@ import {
 } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
+import { emitInvalidation } from "../lib/realtime/registry";
 import {
   canViewConversation,
   getOrCreateStaffConversation,
@@ -612,6 +613,7 @@ router.post("/:id/messages", async (req, res) => {
         where: { id: result.messageId },
         include: { author: { select: { id: true, name: true, email: true } } },
       });
+      emitInvalidation({ type: "conversation.updated", studioId, conversationId: id });
       return res.status(201).json(created);
     }
   }
@@ -702,6 +704,8 @@ router.post("/:id/messages", async (req, res) => {
       changes: { addedUserIds: newParticipantIds },
     });
   }
+
+  emitInvalidation({ type: "conversation.updated", studioId, conversationId: id });
 
   res.status(201).json(message);
 });

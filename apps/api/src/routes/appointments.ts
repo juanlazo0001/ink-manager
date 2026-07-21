@@ -8,6 +8,7 @@ import { validateGiftCardForAttachment } from "../lib/giftCards";
 import { isSameCalendarDay } from "../lib/dateRange";
 import { findBufferConflict, formatBufferWarning } from "../lib/schedulingConflict";
 import { ensureLiabilityWaiver } from "../lib/waivers";
+import { emitInvalidation } from "../lib/realtime/registry";
 
 const router = Router();
 
@@ -105,6 +106,8 @@ router.post("/", requirePermission("appointments.create"), async (req, res) => {
   });
 
   const conflict = await findBufferConflict(artistId, start, end, appointment.id);
+
+  emitInvalidation({ type: "appointment.changed", studioId });
 
   res.status(201).json({ ...appointment, bufferWarning: formatBufferWarning(conflict) });
 });
@@ -527,6 +530,8 @@ router.patch("/:id", requirePermission("appointments.manage"), async (req, res) 
     data.startTime && data.endTime
       ? await findBufferConflict(updated.artistId, data.startTime, data.endTime, id)
       : null;
+
+  emitInvalidation({ type: "appointment.changed", studioId: req.user!.studioId });
 
   res.json({ ...updated, bufferWarning: formatBufferWarning(conflict) });
 });

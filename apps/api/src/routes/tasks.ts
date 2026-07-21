@@ -4,6 +4,7 @@ import { Role } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { diffObjects, logAudit } from "../lib/audit";
 import { TASK_SOURCE_REGISTRY } from "../lib/tasks/registry";
+import { emitInvalidation } from "../lib/realtime/registry";
 
 const router = Router();
 router.use(requireAuth);
@@ -136,6 +137,8 @@ router.post("/personal", async (req, res) => {
     changes: { title: task.title, ...(assigneeId !== userId ? { assignedTo: assigneeId } : {}) },
   });
 
+  emitInvalidation({ type: "task.changed", studioId });
+
   res.status(201).json(task);
 });
 
@@ -204,6 +207,8 @@ router.patch("/personal/:id", async (req, res) => {
       action: data.completedAt ? "complete" : "reopen",
       changes: diffObjects(task, data, ["completedAt"]),
     });
+
+    emitInvalidation({ type: "task.changed", studioId });
   }
 
   res.json(updated);
