@@ -149,7 +149,7 @@ Playwright against the local dev stack, as both `owner@dev-studio.test` (OWNER) 
 
 ## Commit
 
-Pending — committed immediately after this report entry, hash to follow in the commit message itself; this session's diff touches: `apps/api/src/lib/realtime/registry.ts`, `apps/api/src/routes/inquiries.ts`, `apps/web/src/components/InquiryPipeline.tsx`, `apps/web/src/components/kanban/InquiryKanbanBoard.tsx` (new), `apps/web/src/components/kanban/InquiryKanbanCard.tsx` (new), `apps/web/src/lib/kanban.ts` (new), `apps/web/src/lib/queryKeys.ts`, `apps/web/src/pages/Inquiries.tsx`, `apps/web/src/pages/InquiryDetail.tsx`, `apps/web/src/pages/MyInquiries.tsx`, `apps/web/package.json`/`package-lock.json` (`@dnd-kit/react` dependency).
+`a29a718` — Package E: Kanban view for Inquiries & Projects.
 
 ## Cleanup
 
