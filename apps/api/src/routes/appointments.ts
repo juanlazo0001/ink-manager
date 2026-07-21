@@ -13,6 +13,11 @@ const router = Router();
 
 router.use(requireAuth);
 
+// Same exclude-from-default-list-views treatment as Client.archivedAt /
+// Inquiry.archivedAt -- the record stays intact and directly reachable via
+// GET /:id, only the default list (which backs the Calendar) excludes it.
+const NOT_ARCHIVED = { archivedAt: null } as const;
+
 // Every appointment needs both an inquiry (the project it belongs to) and
 // an attached ACTIVE gift card (the deposit) -- N appointments require N
 // gift cards. A client with no available card can't get an appointment
@@ -133,6 +138,7 @@ router.get("/", requirePermission("appointments.view"), async (req, res) => {
   const appointments = await prisma.appointment.findMany({
     where: {
       studioId,
+      ...NOT_ARCHIVED,
       ...(clientId ? { clientId } : {}),
       ...(artistId ? { artistId } : {}),
       ...(hasValidRange ? { startTime: { lt: rangeEndRaw! }, endTime: { gt: rangeStartRaw! } } : {}),
@@ -188,6 +194,143 @@ router.get("/:id", requirePermission("appointments.view"), async (req, res) => {
 
   const { inquiryProject, ...rest } = appointment;
   res.json({ ...rest, inquiry: inquiryProject });
+});
+
+// Archive: soft, reversible hide -- same treatment as Client.archivedAt /
+// Inquiry.archivedAt.
+router.post("/:id/archive", requirePermission("appointments.manage"), async (req, res) => {
+  const id = req.params.id as string;
+  const appointment = await prisma.appointment.findUnique({ where: { id } });
+  if (!appointment || appointment.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Appointment not found" });
+  }
+  if (appointment.archivedAt) {
+    return res.json(appointment);
+  }
+
+  const updated = await prisma.appointment.update({ where: { id }, data: { archivedAt: new Date() } });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Appointment",
+    entityId: id,
+    action: "archive",
+    changes: { archivedAt: updated.archivedAt },
+  });
+
+  res.json(updated);
+});
+
+router.post("/:id/unarchive", requirePermission("appointments.manage"), async (req, res) => {
+  const id = req.params.id as string;
+  const appointment = await prisma.appointment.findUnique({ where: { id } });
+  if (!appointment || appointment.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Appointment not found" });
+  }
+  if (!appointment.archivedAt) {
+    return res.json(appointment);
+  }
+
+  const updated = await prisma.appointment.update({ where: { id }, data: { archivedAt: null } });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Appointment",
+    entityId: id,
+    action: "unarchive",
+    changes: { archivedAt: null },
+  });
+
+  res.json(updated);
+});
+
+// Shared between the delete-preview (so the confirmation UI can show what
+// will be detached/destroyed) and the audit snapshot written just before
+// the actual DELETE below.
+async function gatherAppointmentDeletionSummary(appointmentId: string) {
+  const [waivers, consentForm, giftCard, conversationTags] = await Promise.all([
+    prisma.liabilityWaiver.count({ where: { appointmentId } }),
+    prisma.consentForm.findUnique({ where: { appointmentId }, select: { id: true } }),
+    prisma.giftCard.findUnique({
+      where: { appointmentId },
+      select: { id: true, code: true, amountCents: true, status: true },
+    }),
+    prisma.conversationTag.count({ where: { entityType: "Appointment", entityId: appointmentId } }),
+  ]);
+
+  return {
+    waivers,
+    consentForms: consentForm ? 1 : 0,
+    giftCardToDetach: giftCard,
+    conversationTags,
+  };
+}
+
+router.get("/:id/delete-preview", requireRole(Role.OWNER), async (req, res) => {
+  const id = req.params.id as string;
+  const appointment = await prisma.appointment.findUnique({ where: { id } });
+  if (!appointment || appointment.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Appointment not found" });
+  }
+
+  const summary = await gatherAppointmentDeletionSummary(id);
+  res.json(summary);
+});
+
+// True permanent delete -- OWNER only. Scoped to just this one appointment,
+// same detach-don't-destroy philosophy as Inquiry's own delete route: a gift
+// card attached here is the client's money, independent of this one
+// session, so it's DETACHED (appointmentId -> null), never destroyed. A
+// consent form is likewise unlinked rather than deleted -- a signed legal
+// document outlives the session it was tied to. The liability waiver, by
+// contrast, has a required (non-nullable) appointmentId -- it cannot exist
+// without this appointment, so it's deleted along with it.
+router.delete("/:id", requireRole(Role.OWNER), async (req, res) => {
+  const id = req.params.id as string;
+  const { confirm } = req.body ?? {};
+
+  if (confirm !== "DELETE") {
+    return res.status(400).json({ error: 'Type "DELETE" to confirm this action.' });
+  }
+
+  const appointment = await prisma.appointment.findUnique({ where: { id } });
+  if (!appointment || appointment.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Appointment not found" });
+  }
+
+  const summary = await gatherAppointmentDeletionSummary(id);
+
+  await prisma.$transaction(async (tx) => {
+    // Detach, don't destroy -- the client's money survives this delete.
+    await tx.giftCard.updateMany({ where: { appointmentId: id }, data: { appointmentId: null } });
+    // Unlink, don't destroy -- a signed consent form outlives the session.
+    await tx.consentForm.updateMany({ where: { appointmentId: id }, data: { appointmentId: null } });
+
+    await tx.liabilityWaiver.deleteMany({ where: { appointmentId: id } });
+    await tx.conversationTag.deleteMany({ where: { entityType: "Appointment", entityId: id } });
+
+    // Inquiry.appointmentId is an optional back-reference to this same
+    // appointment (the older 1:1 "scheduled slot" link) -- null it before
+    // deleting the appointment, or that FK blocks the delete below.
+    await tx.inquiry.updateMany({ where: { appointmentId: id }, data: { appointmentId: null } });
+    await tx.appointment.delete({ where: { id } });
+  });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Appointment",
+    entityId: id,
+    action: "permanently_deleted",
+    changes: {
+      appointment: { startTime: appointment.startTime, endTime: appointment.endTime, status: appointment.status },
+      ...summary,
+    },
+  });
+
+  res.json({ success: true, detachedGiftCard: summary.giftCardToDetach });
 });
 
 // Day-of liability waiver: one per appointment, front desk creates it and

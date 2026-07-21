@@ -353,6 +353,12 @@ model Appointment {
   notes       String?
   createdAt   DateTime          @default(now())
 
+  // Soft, reversible hide -- same exclude-from-list-views pattern as
+  // Client.archivedAt / Inquiry.archivedAt. The record stays intact and
+  // directly reachable via GET /:id; only the default list (which backs the
+  // Calendar) excludes it.
+  archivedAt DateTime?
+
   // Checkout (Phase 4): filled in together, at the end of the session, by
   // POST /appointments/:id/checkout. status moves to COMPLETED at the same
   // time -- COMPLETED already existed as a plain manual status option with

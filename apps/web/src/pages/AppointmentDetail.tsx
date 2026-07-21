@@ -3,11 +3,19 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import AuditTrail from '../components/AuditTrail'
+import Modal from '../components/Modal'
 import StatusPill from '../components/StatusPill'
+import DateAndTimeRangeFields, {
+  combineDateAndTime,
+  isCompleteTimeRange,
+  isValidTimeRange,
+  toDateString,
+  type DateAndTimeRangeValue,
+} from '../components/DateAndTimeRangeFields'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatPhoneInput, formatStatus } from '../lib/format'
 import { formatCents, dollarsToCents } from '../lib/money'
-import { ArrowLeftIcon, MessageIcon } from '../components/icons'
+import { ArrowLeftIcon, MessageIcon, MoreIcon } from '../components/icons'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useConversationPanel } from '../context/useConversationPanel'
 import { appointmentsQueryKey } from '../lib/queryKeys'
@@ -33,6 +41,7 @@ interface Appointment {
   endTime: string
   status: string
   notes: string | null
+  archivedAt: string | null
   finalCostCents: number | null
   closeoutNotes: string | null
   checkedOutAt: string | null
@@ -43,6 +52,15 @@ interface Appointment {
   giftCard: GiftCardSummary | null
   liabilityWaiver: WaiverSummary | null
 }
+
+interface DeletePreview {
+  waivers: number
+  consentForms: number
+  giftCardToDetach: { id: string; code: string; amountCents: number; status: string } | null
+  conversationTags: number
+}
+
+const DELETE_CONFIRM_TEXT = 'DELETE'
 
 interface HealthQuestionSnapshot {
   question: string
@@ -114,6 +132,29 @@ export default function AppointmentDetail() {
 
   const [updatingStatus, setUpdatingStatus] = useState(false)
   const [statusError, setStatusError] = useState<string | null>(null)
+
+  const [showMoreMenu, setShowMoreMenu] = useState(false)
+
+  const [showRescheduleModal, setShowRescheduleModal] = useState(false)
+  const [rescheduleRange, setRescheduleRange] = useState<DateAndTimeRangeValue>({
+    date: '',
+    startTime: '',
+    endTime: '',
+  })
+  const [rescheduling, setRescheduling] = useState(false)
+  const [rescheduleError, setRescheduleError] = useState<string | null>(null)
+  const [rescheduleBufferWarning, setRescheduleBufferWarning] = useState<string | null>(null)
+
+  const [archiving, setArchiving] = useState(false)
+  const [archiveError, setArchiveError] = useState<string | null>(null)
+
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [deletePreview, setDeletePreview] = useState<DeletePreview | null>(null)
+  const [deletePreviewLoading, setDeletePreviewLoading] = useState(false)
+  const [deletePreviewError, setDeletePreviewError] = useState<string | null>(null)
+  const [deleteConfirmText, setDeleteConfirmText] = useState('')
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!id) return
@@ -273,6 +314,124 @@ export default function AppointmentDetail() {
     }
   }
 
+  function openRescheduleModal() {
+    if (!appointment) return
+    const start = new Date(appointment.startTime)
+    const end = new Date(appointment.endTime)
+    setRescheduleRange({
+      date: toDateString(start),
+      startTime: start.toTimeString().slice(0, 5),
+      endTime: end.toTimeString().slice(0, 5),
+    })
+    setRescheduleError(null)
+    setRescheduleBufferWarning(null)
+    setShowRescheduleModal(true)
+  }
+
+  async function handleReschedule(event: FormEvent) {
+    event.preventDefault()
+    if (!id) return
+
+    if (!isCompleteTimeRange(rescheduleRange)) {
+      setRescheduleError('Select a date, start time, and end time.')
+      return
+    }
+    if (!isValidTimeRange(rescheduleRange)) {
+      setRescheduleError('End time must be after start time.')
+      return
+    }
+
+    const start = combineDateAndTime(rescheduleRange.date, rescheduleRange.startTime)!
+    const end = combineDateAndTime(rescheduleRange.date, rescheduleRange.endTime)!
+
+    setRescheduling(true)
+    setRescheduleError(null)
+
+    try {
+      const updated = await apiFetch<{ bufferWarning: string | null }>(`/appointments/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ startTime: start.toISOString(), endTime: end.toISOString() }),
+      })
+      if (user) queryClient.invalidateQueries({ queryKey: appointmentsQueryKey(user.studioId) })
+      setRefreshIndex((i) => i + 1)
+      if (updated.bufferWarning) {
+        setRescheduleBufferWarning(updated.bufferWarning)
+      } else {
+        setShowRescheduleModal(false)
+      }
+    } catch (err) {
+      setRescheduleError(err instanceof Error ? err.message : 'Failed to reschedule this appointment')
+    } finally {
+      setRescheduling(false)
+    }
+  }
+
+  async function handleArchive() {
+    if (!id) return
+    setArchiving(true)
+    setArchiveError(null)
+    try {
+      await apiFetch(`/appointments/${id}/archive`, { method: 'POST' })
+      if (user) queryClient.invalidateQueries({ queryKey: appointmentsQueryKey(user.studioId) })
+      setRefreshIndex((i) => i + 1)
+    } catch (err) {
+      setArchiveError(err instanceof Error ? err.message : 'Failed to archive appointment')
+    } finally {
+      setArchiving(false)
+    }
+  }
+
+  async function handleUnarchive() {
+    if (!id) return
+    setArchiving(true)
+    setArchiveError(null)
+    try {
+      await apiFetch(`/appointments/${id}/unarchive`, { method: 'POST' })
+      if (user) queryClient.invalidateQueries({ queryKey: appointmentsQueryKey(user.studioId) })
+      setRefreshIndex((i) => i + 1)
+    } catch (err) {
+      setArchiveError(err instanceof Error ? err.message : 'Failed to unarchive appointment')
+    } finally {
+      setArchiving(false)
+    }
+  }
+
+  async function openDeleteModal() {
+    if (!id) return
+    setShowDeleteModal(true)
+    setDeleteConfirmText('')
+    setDeleteError(null)
+    setDeletePreview(null)
+    setDeletePreviewError(null)
+    setDeletePreviewLoading(true)
+    try {
+      const preview = await apiFetch<DeletePreview>(`/appointments/${id}/delete-preview`)
+      setDeletePreview(preview)
+    } catch (err) {
+      setDeletePreviewError(err instanceof Error ? err.message : 'Failed to load what will be deleted')
+    } finally {
+      setDeletePreviewLoading(false)
+    }
+  }
+
+  async function handleConfirmDelete() {
+    if (!id || !appointment) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await apiFetch(`/appointments/${id}`, {
+        method: 'DELETE',
+        body: JSON.stringify({ confirm: deleteConfirmText }),
+      })
+      if (user) queryClient.invalidateQueries({ queryKey: appointmentsQueryKey(user.studioId) })
+      navigate(`/inquiries/${appointment.inquiry.id}`)
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Failed to delete appointment')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   const checkoutDecision: 'REDEEM' | 'ROLL' | null = appointment?.checkedOutAt
     ? appointment.giftCard && appointment.giftCard.status === 'REDEEMED'
       ? 'REDEEM'
@@ -360,10 +519,91 @@ export default function AppointmentDetail() {
                     ) : (
                       <StatusPill status={appointment.status} />
                     )}
+                    {canManage && (
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => setShowMoreMenu((v) => !v)}
+                          aria-label="More actions"
+                          aria-pressed={showMoreMenu}
+                          title="More actions"
+                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
+                        >
+                          <MoreIcon className="h-4 w-4" />
+                        </button>
+                        {showMoreMenu && (
+                          <>
+                            <div
+                              className="fixed inset-0 z-10"
+                              onClick={() => setShowMoreMenu(false)}
+                              aria-hidden="true"
+                            />
+                            <div className="absolute right-0 top-9 z-20 w-48 rounded-xl border border-border bg-surface-raised p-1 shadow-xl">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setShowMoreMenu(false)
+                                  openRescheduleModal()
+                                }}
+                                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
+                              >
+                                Reschedule
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setShowMoreMenu(false)
+                                  if (appointment.archivedAt) {
+                                    handleUnarchive()
+                                  } else {
+                                    handleArchive()
+                                  }
+                                }}
+                                disabled={archiving}
+                                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface disabled:opacity-60"
+                              >
+                                {appointment.archivedAt ? 'Unarchive' : 'Archive'}
+                              </button>
+                              {user?.role === 'OWNER' && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setShowMoreMenu(false)
+                                    openDeleteModal()
+                                  }}
+                                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-danger hover:bg-danger/10"
+                                >
+                                  Delete Permanently
+                                </button>
+                              )}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
 
                 {statusError && <p className="mt-2 text-sm text-danger">{statusError}</p>}
+                {archiveError && <p className="mt-2 text-sm text-danger">{archiveError}</p>}
+
+                {appointment.archivedAt && (
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
+                    <span>
+                      Archived {formatDateTime(appointment.archivedAt)}. Hidden from the calendar, but fully intact.
+                    </span>
+                    {canManage && (
+                      <button
+                        type="button"
+                        onClick={handleUnarchive}
+                        disabled={archiving}
+                        className="shrink-0 rounded-full border border-warning/40 px-3 py-1.5 text-xs font-medium text-warning transition hover:bg-warning/10 disabled:opacity-60"
+                      >
+                        {archiving ? 'Unarchiving…' : 'Unarchive'}
+                      </button>
+                    )}
+                  </div>
+                )}
 
                 {appointment.notes && (
                   <p className="mt-4 border-t border-border pt-4 text-sm text-fg-secondary">{appointment.notes}</p>
@@ -732,6 +972,119 @@ export default function AppointmentDetail() {
               )}
 
               <AuditTrail entityType="Appointment" entityId={appointment.id} />
+
+              {showRescheduleModal && (
+                <Modal
+                  title="Reschedule Appointment"
+                  onClose={() => {
+                    setShowRescheduleModal(false)
+                    setRescheduleError(null)
+                    setRescheduleBufferWarning(null)
+                  }}
+                >
+                  <form onSubmit={handleReschedule} className="space-y-4">
+                    <DateAndTimeRangeFields
+                      value={rescheduleRange}
+                      onChange={setRescheduleRange}
+                      disabled={rescheduling}
+                    />
+
+                    {rescheduleBufferWarning && (
+                      <div className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
+                        {rescheduleBufferWarning}
+                      </div>
+                    )}
+
+                    {rescheduleError && <p className="text-sm text-danger">{rescheduleError}</p>}
+
+                    <button
+                      type="submit"
+                      disabled={rescheduling}
+                      className="w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                    >
+                      {rescheduling ? 'Rescheduling…' : 'Confirm New Time'}
+                    </button>
+                  </form>
+                </Modal>
+              )}
+
+              {showDeleteModal && (
+                <Modal
+                  title="Delete Appointment Permanently"
+                  onClose={() => {
+                    setShowDeleteModal(false)
+                    setDeletePreview(null)
+                    setDeletePreviewError(null)
+                    setDeleteError(null)
+                  }}
+                >
+                  <div className="space-y-4">
+                    <p className="text-sm text-fg-secondary">
+                      Permanently delete this appointment for{' '}
+                      <span className="font-semibold">
+                        {appointment.client.firstName} {appointment.client.lastName}
+                      </span>
+                      ? This cannot be undone.
+                    </p>
+
+                    {deletePreviewLoading && (
+                      <p className="text-sm text-fg-secondary">Checking what will be destroyed…</p>
+                    )}
+                    {deletePreviewError && <p className="text-sm text-danger">{deletePreviewError}</p>}
+
+                    {deletePreview && (
+                      <div className="rounded-lg border border-danger/30 bg-danger/10 p-3 text-sm">
+                        <p className="mb-2 text-xs font-medium uppercase tracking-wider text-danger">
+                          This will permanently destroy
+                        </p>
+                        <ul className="space-y-1 text-fg-secondary">
+                          <li>{deletePreview.waivers} signed waiver{deletePreview.waivers === 1 ? '' : 's'}</li>
+                        </ul>
+                        {deletePreview.consentForms > 0 && (
+                          <p className="mt-2 text-fg-secondary">
+                            {deletePreview.consentForms} consent form{deletePreview.consentForms === 1 ? '' : 's'}{' '}
+                            will be unlinked, not destroyed.
+                          </p>
+                        )}
+                        {deletePreview.giftCardToDetach && (
+                          <p className="mt-2 font-semibold text-danger">
+                            The attached gift card ({formatCents(deletePreview.giftCardToDetach.amountCents)}) will
+                            be detached and kept active — not destroyed. It's the client's money, independent of
+                            this session.
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {deletePreview && (
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-fg-secondary">
+                          Type <span className="font-mono font-semibold text-fg">DELETE</span> to confirm
+                        </label>
+                        <input
+                          type="text"
+                          value={deleteConfirmText}
+                          onChange={(e) => setDeleteConfirmText(e.target.value)}
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-danger focus:outline-none focus:ring-1 focus:ring-danger"
+                        />
+                      </div>
+                    )}
+
+                    {deleteError && <p className="text-sm text-danger">{deleteError}</p>}
+
+                    {deletePreview && (
+                      <button
+                        type="button"
+                        onClick={handleConfirmDelete}
+                        disabled={deleting || deleteConfirmText !== DELETE_CONFIRM_TEXT}
+                        className="w-full rounded-full bg-danger px-4 py-2 text-sm font-medium text-bg transition hover:bg-danger/90 disabled:opacity-50"
+                      >
+                        {deleting ? 'Deleting…' : 'Delete Permanently'}
+                      </button>
+                    )}
+                  </div>
+                </Modal>
+              )}
             </>
           )}
         </div>
