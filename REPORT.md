@@ -1,76 +1,66 @@
-# Production backfill — repair malformed ShortLink URLs
+# Package A — Quick fixes (deposit link, artist picker, appointment modal, calendar default, estimate UI)
 
-Single session, targeting PRODUCTION directly via `apps/api/.env.production`. Data-only fix — no application code changes, nothing to commit for the fix itself.
+Single session on `main`. No schema changes needed. `ConversationsPanel.tsx` untouched.
 
-**Context:** the prior session's short-link fix corrected `resolvePublicAppUrl()`/`resolveApiPublicUrl()` (via a new `ensureScheme()` helper) going forward, but every `ShortLink` row created before that fix still had the old malformed (schemeless) `targetUrl` stored. This session repaired the existing data.
+---
 
-## 1. Backup
+## 1. Deposit form link incorrectly hidden — investigated, **no bug found**
 
-No `pg_dump`/`psql`/Docker available in this environment (confirmed absent). With the user's explicit sign-off, took a full logical backup instead: a Prisma script connected to production and dumped every row from all 28 tables to timestamped JSON.
+Root cause hypothesis in the task ("hides the deposit link whenever the client has ANY gift card") does **not** match the current code. Checked every place a deposit link/action is gated:
 
-- File (moved out of the git-tracked repo after capture, since it contains real client PII): session scratchpad, `prod-backup-2026-07-21T02-54-44-567Z.json`
-- Size: 4,345,207 bytes (4.14 MB)
-- Contents: 222 rows across 28 tables, including all `ShortLink` rows at time of backup (9 rows, matching the pre-backfill state)
-- Spot-checked as genuine production data: studio name "Black Hive Ink", includes `rTP3uwyI`
+- `apps/api/src/routes/clients.ts` `GET /:id/shareable-links` — `depositLinks` (resend case) gates only on `inquiry.depositForm` existing; `depositFormOptions` (fresh-send case) gates only on `status === 'DEPOSIT_PENDING'`, both price bounds set, and not already signed. Neither reads `client.giftCards` at all — that array only feeds the separate, intentionally-unconditional `giftCardLinks`.
+- `apps/web/src/pages/ClientDetail.tsx` `eligibleDepositInquiries` — same per-inquiry rule (`DEPOSIT_PENDING` + both bounds + not signed), no gift-card check.
+- `apps/web/src/components/ConversationsPanel.tsx` composer "+" menu renders the two arrays above as-is, no extra client-side gift-card gating.
 
-## 2. Independent verification
+(`InquiryDetail.tsx`'s `hasAvailableGiftCard` branch is a different, intentional feature — it offers "Attach Gift Card" as an alternative to a *fresh* deposit request, it doesn't hide an existing link.)
 
-Confirmed the exact schema/column holding the malformed data: `ShortLink.targetUrl`. Queried all rows and classified each by scheme presence (`/^https?:\/\//i`):
+**Verified live**: seeded a second `DEPOSIT_PENDING` inquiry (with price bounds, no deposit form yet) for `client2@dev-studio.test` (Bailey Testperson), who already holds 3 active gift cards from unrelated prior work. Both the client page and the inquiry's own Deposit section correctly show **"Send Deposit Form"** — confirmed by screenshot. No code change made; if this bug was seen elsewhere, it isn't reachable through any of the three surfaces above as they stand today.
 
-```
-Total ShortLink rows: 9
-Y9nlzjo5 | scheme-present: false | ink-manager.up.railway.app/estimate/8e0e08f4e8886408fbcf1644fcbf83c9039325d3c7ad39f4c71dc85172b0f5e1
-uUf0tU1J | scheme-present: false | ink-manager.up.railway.app/gift-card/qx4vxnJFOCFSUkZexDlThA
-lslmSy7Z | scheme-present: false | ink-manager.up.railway.app/inquiry/black-hive-ink
-T5nnwW2h | scheme-present: false | ink-manager.up.railway.app/inquiry/black-hive-ink?draft=583b26e1e5c7e37ef5b6c6686851c13d429f36d058bb0ad6d0a9f9c6feea7c02
-YB6ijeUz | scheme-present: false | ink-manager.up.railway.app/estimate/3317ad67564f366410f9ff84cb02acb18068222a03fa0fab2f84808bc4fb7b9c
-rTP3uwyI | scheme-present: false | ink-manager.up.railway.app/inquiry/black-hive-ink?draft=13ce0736a86a6bd8f847528246fb2a0b02cf2f0ea5557b888310df6b63dc948a
-kOjPKE5Q | scheme-present: true  | https://ink-manager.up.railway.app/estimate/dda570284829f681a5e66cc0a0007ebf783e1a878cd3ee3e92f7bed8d1abb590
-u941wZGy | scheme-present: true  | https://ink-manager.up.railway.app/gift-card/qx4vxnJFOCFSUkZexDlThA
-FkhYRC7K | scheme-present: true  | https://ink-manager.up.railway.app/inquiry/black-hive-ink
+## 2. Artist assignment picker — fixed
 
-Malformed (schemeless) row count: 6
-```
+`apps/web/src/pages/InquiryDetail.tsx`'s Assignment card used a native `<select>` rendering `artist.user.email`. Replaced with the same button+listbox dropdown pattern `AppointmentForm.tsx` already uses (avatar image, or initials-circle fallback, next to the name).
 
-## 3. Plan presented, "go" received
+Extracted the avatar rendering (`ArtistAvatar`, `artistLabel`) out of `AppointmentForm.tsx` into a new shared `apps/web/src/components/ArtistAvatar.tsx`, imported by both files — one implementation, not two copies.
 
-Exact SQL executed, matching `ensureScheme()`'s normalization precisely (prepend `https://` only to rows not already starting with `http://` or `https://`):
+## 3. "New Appointment" navigating to Calendar — already fixed, no bug found
 
-```sql
-BEGIN;
+Commit `95dce18` (already on `main` before this session started) fixed the Projects-tab header button — it now opens `AppointmentForm` in a `Modal`, no `navigate()`. `InquiryDetail.tsx`'s own per-project "New Appointment" action already used `Modal` + `AppointmentForm` with `fixedClientId`/`fixedInquiryId` pre-filled — pre-existing from the UI-4/5 session, untouched by `95dce18`. Verified live: clicking "New Appointment" on the Projects tab opens the modal in place; URL stays on `/inquiries?tab=projects`.
 
-UPDATE "ShortLink"
-SET "targetUrl" = 'https://' || "targetUrl"
-WHERE "targetUrl" NOT ILIKE 'http://%'
-  AND "targetUrl" NOT ILIKE 'https://%';
+## 4. Calendar default view — fixed
 
-COMMIT;
-```
+`apps/web/src/pages/Calendar.tsx`: `useState<View>(Views.WEEK)` → `useState<View>(Views.MONTH)`. Verified Week/Day switching still works normally; Month loads first and shows as the active toggle.
 
-Run inside a Prisma `$transaction`. Previewed as affecting exactly 6 rows before execution; user confirmed "go".
+## 5. Estimate UI consolidation + permission review
 
-## 4. Execution and verification
+**Consolidation**: `InquiryDetail.tsx` had the price/time range rendered twice — a read-only copy inside the "Assignment" card (regardless of send status), and a second read-only copy inside "Client Response" (only when `estimateSentAt`). Removed the Assignment-card copy entirely; the Assignment card now only shows artist assignment + decline note. Renamed "Client Response" → **"Estimate"** and widened its visibility/read-only-display conditions to key off the range values existing at all, not just `estimateSentAt` — so entering a range now surfaces immediately in the one section that also holds the edit form, Generate & Send action, and the sent→opened→responded timeline. Verified live: exactly one "Estimate" heading, zero "Client Response" headings, "Price estimate low" appears once on the page (was twice).
 
-`$executeRawUnsafe` reported **6 rows updated** — exact match with the preview.
+**Permission gating — investigated, existing scoping is correct, no change made.** The premise ("previously this may have been more restricted") doesn't match how ARTIST already interacts with estimate fields in this codebase:
 
-Re-queried immediately after (13 rows now present — 4 new `ShortLink` rows had been created by live production traffic between the backup/preview and execution; all 4 were already well-formed and confirmed untouched):
+- `InquiryDetail.tsx` (the page with the section above) is a **staff-only** page — `GET /inquiries/:id` is `requireRole(OWNER, FRONT_DESK)`, so ARTIST can't load it at all, regardless of any gating inside it.
+- ARTIST already has their own, separate, fully-unrestricted flow to enter/edit price and time-estimate ranges: `MyInquiries.tsx` (`/my-inquiries`) → `PATCH /inquiries/:id/respond` (`requireRole(ARTIST)`), scoped to inquiries actually assigned to them (`inquiry.assignedArtistId !== artist.id` → 403). This is how an artist approves an inquiry and sets its estimate today, and it was not restricted before this session.
+- Widening `InquiryDetail.tsx`'s generic `PATCH /:id` route to include ARTIST would have been the wrong move: that route also accepts `description`, `placement`, `estimatedSize`, `budget`, `desiredTiming`, and both image arrays — far broader than "the estimate range," and would grant ARTIST edit access to a staff-only page's unrelated fields as a side effect.
 
-- **All 6 previously-malformed rows** (`Y9nlzjo5`, `uUf0tU1J`, `lslmSy7Z`, `T5nnwW2h`, `YB6ijeUz`, `rTP3uwyI`) now start with `https://`, and each new value matches exactly `https://` + the original stored value (verified programmatically, not just visually).
-- **All rows that were already correct** (`kOjPKE5Q`, `u941wZGy`, `FkhYRC7K`, plus the 4 new arrivals `ZO3MK21G`, `fG26I5Fj`, `LhmBGAwa`, `K47DY0Cr`) are byte-for-byte unchanged.
-- **Still-malformed count after the update: 0.**
+Given ARTIST already has adequate, correctly-scoped entry via `MyInquiries.tsx`/`respond`, I left `PATCH /inquiries/:id` and `POST /inquiries/:id/send-estimate` exactly as they were (`OWNER`, `FRONT_DESK` only) — no discrepancy existed between the two to begin with. Flagging this explicitly since the task described it as an expected change: if the actual intent was for ARTIST to gain access to the *staff* `InquiryDetail.tsx` estimate section specifically (not just their own existing flow), that's a materially bigger change — granting a new role read access to a page currently gated to OWNER/FRONT_DESK — and would need a separate, deliberate pass rather than a quick-fix bundled into this session.
 
-Before → after for the reported row and two others:
+## Verification
 
-| Code | Before | After |
-|---|---|---|
-| `rTP3uwyI` | `ink-manager.up.railway.app/inquiry/black-hive-ink?draft=13ce0736a86a6bd8f847528246fb2a0b02cf2f0ea5557b888310df6b63dc948a` | `https://ink-manager.up.railway.app/inquiry/black-hive-ink?draft=13ce0736a86a6bd8f847528246fb2a0b02cf2f0ea5557b888310df6b63dc948a` |
-| `Y9nlzjo5` | `ink-manager.up.railway.app/estimate/8e0e08f4e8886408fbcf1644fcbf83c9039325d3c7ad39f4c71dc85172b0f5e1` | `https://ink-manager.up.railway.app/estimate/8e0e08f4e8886408fbcf1644fcbf83c9039325d3c7ad39f4c71dc85172b0f5e1` |
-| `uUf0tU1J` | `ink-manager.up.railway.app/gift-card/qx4vxnJFOCFSUkZexDlThA` | `https://ink-manager.up.railway.app/gift-card/qx4vxnJFOCFSUkZexDlThA` |
+Playwright against the local dev stack (`apps/web` on :5173, `apps/api` on :4000):
+- Deposit link/button correctly shown for a client with unrelated gift cards + a genuine pending deposit (screenshot).
+- Artist picker dropdown shows name + avatar (image or initials), no raw emails (screenshot).
+- "New Appointment" from Projects tab opens the modal in place, URL unchanged (screenshot).
+- Calendar's Month toggle is active by default on load; Week/Day still switch normally.
+- Inquiry page shows one "Estimate" section (heading count confirmed, no duplicate "Price estimate low" text).
 
-**`rTP3uwyI` confirmed**: `targetUrl` is now `https://ink-manager.up.railway.app/inquiry/black-hive-ink?draft=13ce0736a86a6bd8f847528246fb2a0b02cf2f0ea5557b888310df6b63dc948a` — a complete, correctly-schemed URL.
+Test data added to the dev database during verification (a second inquiry for `client2@dev-studio.test`, `[PACKAGE-A TEST] Second project, deposit pending`) was **not** rolled back, per the same convention noted in the prior realtime-updates session — this is the dev database DEVELOPMENT.md describes as being for exactly this kind of testing.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) — clean. `npm run build` (web) — clean.
+
+## Commit
+
+`c439de7` — Package A quick fixes: artist picker avatar, Calendar month default, estimate section consolidation.
 
 ## Cleanup
 
-- Scratch scripts (`scratch-prod-backup.ts`, `scratch-prod-inspect-shortlinks.ts`, `scratch-prod-backfill.ts`) deleted from `apps/api/`.
-- Backup JSON (contains real client PII) moved out of the git-tracked repo into the session's local scratchpad directory, never staged/committed.
-- No application code changed this session; nothing to commit for the fix itself.
+Dev web server (vite, :5173) that I started for verification was stopped. The API dev server on :4000 was already running from an earlier session (not started by me this session) — left as-is. Scratch seed script (`apps/api/scratch-seed-deposit-test.ts`) deleted after use.

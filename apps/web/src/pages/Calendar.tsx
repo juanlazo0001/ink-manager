@@ -274,7 +274,7 @@ export default function Calendar() {
   const isMobile = useIsMobile()
   useMarkSectionSeen('appointments')
 
-  const [view, setView] = useState<View>(Views.WEEK)
+  const [view, setView] = useState<View>(Views.MONTH)
   const [date, setDate] = useState(new Date())
   // null = "all artists" (the default); once staff toggle a chip, an
   // explicit array takes over.

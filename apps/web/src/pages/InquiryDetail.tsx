@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
@@ -9,6 +9,7 @@ import InquiryPipeline from '../components/InquiryPipeline'
 import AppointmentForm from '../components/AppointmentForm'
 import CurrencyInput from '../components/CurrencyInput'
 import ImageUploadSection, { type ImageUploadState } from '../components/ImageUploadSection'
+import { ArtistAvatar, artistLabel } from '../components/ArtistAvatar'
 import DateAndTimeRangeFields, {
   combineDateAndTime,
   isCompleteTimeRange,
@@ -20,6 +21,7 @@ import { formatDateTime, formatDuration, formatPhoneInput, formatStatus } from '
 import {
   ArrowLeftIcon,
   CheckIcon,
+  ChevronDownIcon,
   ClientsIcon,
   CopyIcon,
   MessageIcon,
@@ -90,7 +92,7 @@ interface Inquiry {
 
 interface ArtistOption {
   id: string
-  user: { id: string; email: string; name?: string | null }
+  user: { id: string; email: string; name: string | null; avatarUrl: string | null }
   isGuest: boolean
   guestEndDate: string | null
 }
@@ -375,8 +377,22 @@ export default function InquiryDetail() {
   const hasAvailableGiftCard = !!clientGiftCards && clientGiftCards.length > 0
 
   const [selectedArtistId, setSelectedArtistId] = useState('')
+  const selectedArtist = assignableArtistOptions?.find((a) => a.id === selectedArtistId)
   const [assigning, setAssigning] = useState(false)
   const [assignError, setAssignError] = useState<string | null>(null)
+  const [artistMenuOpen, setArtistMenuOpen] = useState(false)
+  const artistMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!artistMenuOpen) return
+    function handleClickOutside(event: MouseEvent) {
+      if (artistMenuRef.current && !artistMenuRef.current.contains(event.target as Node)) {
+        setArtistMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [artistMenuOpen])
 
   // Starts false and is seeded per-inquiry below (true only when no estimate
   // has ever been sent yet -- otherwise these fields would always be
@@ -1129,20 +1145,53 @@ export default function InquiryDetail() {
 
                 {inquiry.status === 'NEW' ? (
                   <div className="mt-4 flex flex-wrap items-center gap-3">
-                    <select
-                      value={selectedArtistId}
-                      onChange={(event) => setSelectedArtistId(event.target.value)}
-                      className="rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                    >
-                      <option value="" disabled>
-                        {assignableArtistOptions === undefined ? 'Loading artists…' : 'Select an artist'}
-                      </option>
-                      {assignableArtistOptions?.map((artist) => (
-                        <option key={artist.id} value={artist.id}>
-                          {artist.user.email}
-                        </option>
-                      ))}
-                    </select>
+                    <div ref={artistMenuRef} className="relative w-64 max-w-full">
+                      <button
+                        type="button"
+                        id="assignArtistId"
+                        aria-haspopup="listbox"
+                        aria-expanded={artistMenuOpen}
+                        onClick={() => setArtistMenuOpen((open) => !open)}
+                        className="flex w-full items-center justify-between gap-2 rounded-lg border border-border bg-surface-inset px-3 py-2 text-left text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                      >
+                        {selectedArtist ? (
+                          <span className="flex min-w-0 items-center gap-2">
+                            <ArtistAvatar artist={selectedArtist} className="h-6 w-6" />
+                            <span className="truncate">{artistLabel(selectedArtist)}</span>
+                          </span>
+                        ) : (
+                          <span className="text-fg-muted">
+                            {assignableArtistOptions === undefined ? 'Loading artists…' : 'Select an artist'}
+                          </span>
+                        )}
+                        <ChevronDownIcon className="h-4 w-4 shrink-0 text-fg-muted" />
+                      </button>
+                      {artistMenuOpen && assignableArtistOptions && assignableArtistOptions.length > 0 && (
+                        <ul
+                          role="listbox"
+                          aria-labelledby="assignArtistId"
+                          className="absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-lg border border-border bg-surface-inset py-1 shadow-lg"
+                        >
+                          {assignableArtistOptions.map((artist) => (
+                            <li key={artist.id}>
+                              <button
+                                type="button"
+                                role="option"
+                                aria-selected={artist.id === selectedArtistId}
+                                onClick={() => {
+                                  setSelectedArtistId(artist.id)
+                                  setArtistMenuOpen(false)
+                                }}
+                                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-fg hover:bg-surface"
+                              >
+                                <ArtistAvatar artist={artist} className="h-7 w-7" />
+                                <span className="min-w-0 flex-1 truncate">{artistLabel(artist)}</span>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
                     <button
                       type="button"
                       onClick={handleAssign}
@@ -1164,30 +1213,6 @@ export default function InquiryDetail() {
 
                 {assignError && <p className="mt-3 text-sm text-danger">{assignError}</p>}
 
-                {(inquiry.priceEstimateLow != null ||
-                  inquiry.priceEstimateHigh != null ||
-                  inquiry.timeEstimateHoursMin != null ||
-                  inquiry.timeEstimateHoursMax != null) && (
-                  <div className="mt-5 grid grid-cols-1 gap-4 border-t border-border pt-4 sm:grid-cols-3">
-                    <DetailField
-                      label="Price estimate low"
-                      value={inquiry.priceEstimateLow != null ? `$${inquiry.priceEstimateLow}` : 'Not provided'}
-                    />
-                    <DetailField
-                      label="Price estimate high"
-                      value={inquiry.priceEstimateHigh != null ? `$${inquiry.priceEstimateHigh}` : 'Not provided'}
-                    />
-                    <DetailField
-                      label="Time estimate"
-                      value={
-                        inquiry.timeEstimateHoursMin != null && inquiry.timeEstimateHoursMax != null
-                          ? `${inquiry.timeEstimateHoursMin}–${inquiry.timeEstimateHoursMax} hours`
-                          : 'Not provided'
-                      }
-                    />
-                  </div>
-                )}
-
                 {inquiry.declineNote && (
                   <div className="mt-5 rounded-lg border border-warning/30 bg-warning/10 p-3">
                     <p className="text-xs font-medium uppercase tracking-wider text-warning">
@@ -1198,10 +1223,16 @@ export default function InquiryDetail() {
                 )}
               </div>
 
-              {((!isTerminal && canMessage) || inquiry.estimateSentAt || inquiry.closedReason) && (
+              {((!isTerminal && canMessage) ||
+                inquiry.estimateSentAt ||
+                inquiry.closedReason ||
+                inquiry.priceEstimateLow != null ||
+                inquiry.priceEstimateHigh != null ||
+                inquiry.timeEstimateHoursMin != null ||
+                inquiry.timeEstimateHoursMax != null) && (
                 <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
                   <div className="flex items-center justify-between">
-                    <h2 className="text-base font-semibold text-fg">Client Response</h2>
+                    <h2 className="text-base font-semibold text-fg">Estimate</h2>
                     {!isTerminal && canMessage && !editingEstimate && (
                       <button
                         type="button"
@@ -1311,7 +1342,11 @@ export default function InquiryDetail() {
                     </>
                   )}
 
-                  {!editingEstimate && inquiry.estimateSentAt && (
+                  {!editingEstimate &&
+                    (inquiry.priceEstimateLow != null ||
+                      inquiry.priceEstimateHigh != null ||
+                      inquiry.timeEstimateHoursMin != null ||
+                      inquiry.timeEstimateHoursMax != null) && (
                     <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
                       <DetailField
                         label="Price estimate low"

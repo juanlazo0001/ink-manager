@@ -6,6 +6,7 @@ import { useAuth } from '../context/useAuth'
 import { clientsQueryKey, artistsQueryKey } from '../lib/queryKeys'
 import { suggestAppointmentSlots, type ScheduleBlock, type SuggestedSlot } from '../lib/suggestAppointmentSlots'
 import { ChevronDownIcon } from './icons'
+import { ArtistAvatar, artistLabel } from './ArtistAvatar'
 import DateAndTimeRangeFields, {
   combineDateAndTime,
   isCompleteTimeRange,
@@ -26,22 +27,6 @@ interface ArtistOption {
   guestStartDate: string | null
   guestEndDate: string | null
   preferredSchedule: ScheduleBlock[] | null
-}
-
-function artistLabel(artist: ArtistOption): string {
-  return artist.user.name ?? artist.user.email
-}
-
-function ArtistAvatar({ artist, className }: { artist: ArtistOption; className: string }) {
-  const label = artistLabel(artist)
-  if (artist.user.avatarUrl) {
-    return <img src={artist.user.avatarUrl} alt={label} className={`${className} shrink-0 rounded-full object-cover`} />
-  }
-  return (
-    <span className={`${className} flex shrink-0 items-center justify-center rounded-full bg-surface text-xs font-semibold text-fg`}>
-      {label.slice(0, 1).toUpperCase()}
-    </span>
-  )
 }
 
 // New assignments never default-offer a guest artist whose window has
