@@ -527,11 +527,20 @@ export default function InquiryDetail() {
 
   // Package D: tentative/informational deposit-form time, via the shared
   // getSuggestedTimes service (apps/api/src/lib/schedulingAssistant.ts).
+  // Required before a deposit form can be generated at all (see
+  // handleSendDepositForm/tentativeTimeValid below) -- tentativeTimeRange is
+  // the one field both the pre-send picker and the post-send "Change" modal
+  // bind to, since the two are never shown at the same time.
   const [showSuggestTime, setShowSuggestTime] = useState(false)
   const [suggestedTimeCandidates, setSuggestedTimeCandidates] = useState<SuggestedTimeCandidate[]>([])
   const [suggestingTimeLoading, setSuggestingTimeLoading] = useState(false)
   const [suggestTimeError, setSuggestTimeError] = useState<string | null>(null)
   const [savingProposedTime, setSavingProposedTime] = useState(false)
+  const [tentativeTimeRange, setTentativeTimeRange] = useState<DateAndTimeRangeValue>({
+    date: '',
+    startTime: '',
+    endTime: '',
+  })
 
   const [attachGiftCardId, setAttachGiftCardId] = useState('')
   const [attachingGiftCard, setAttachingGiftCard] = useState(false)
@@ -890,14 +899,41 @@ export default function InquiryDetail() {
     }
   }
 
+  // ISO instant -> the {date, startTime, endTime} shape DateAndTimeRangeFields
+  // edits -- mirrors AppointmentForm.tsx's own helper of the same name for
+  // the same getSuggestedTimes response shape.
+  function isoToTimeRangeParts(startIso: string, endIso: string): DateAndTimeRangeValue {
+    const start = new Date(startIso)
+    const end = new Date(endIso)
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return {
+      date: `${start.getFullYear()}-${pad(start.getMonth() + 1)}-${pad(start.getDate())}`,
+      startTime: `${pad(start.getHours())}:${pad(start.getMinutes())}`,
+      endTime: `${pad(end.getHours())}:${pad(end.getMinutes())}`,
+    }
+  }
+
+  const tentativeTimeValid = isCompleteTimeRange(tentativeTimeRange) && isValidTimeRange(tentativeTimeRange)
+
   async function handleSendDepositForm() {
     if (!id) return
+    // Required only the first time -- resending (token rotation on an
+    // existing, unsigned form) doesn't touch the tentative time at all, see
+    // the API route's own comment.
+    const isFirstSend = !inquiry?.depositForm
+    if (isFirstSend && !tentativeTimeValid) return
 
     setSendingDeposit(true)
     setSendDepositError(null)
 
     try {
-      await apiFetch(`/inquiries/${id}/deposit-form`, { method: 'POST' })
+      const body = isFirstSend
+        ? JSON.stringify({
+            proposedStartAt: combineDateAndTime(tentativeTimeRange.date, tentativeTimeRange.startTime)!.toISOString(),
+            proposedEndAt: combineDateAndTime(tentativeTimeRange.date, tentativeTimeRange.endTime)!.toISOString(),
+          })
+        : undefined
+      await apiFetch(`/inquiries/${id}/deposit-form`, { method: 'POST', body })
       invalidateInquiry()
     } catch (err) {
       setSendDepositError(err instanceof Error ? err.message : 'Failed to send deposit form')
@@ -906,10 +942,11 @@ export default function InquiryDetail() {
     }
   }
 
-  async function handleOpenSuggestTime() {
+  // Shared by the always-visible pre-send picker below and the post-send
+  // "Change" modal -- both read from the same suggestedTimeCandidates state.
+  async function fetchSuggestedTimes() {
     if (!inquiry?.assignedArtist || inquiry.timeEstimateHoursMin == null || inquiry.timeEstimateHoursMax == null) return
 
-    setShowSuggestTime(true)
     setSuggestTimeError(null)
     setSuggestingTimeLoading(true)
     setSuggestedTimeCandidates([])
@@ -927,8 +964,39 @@ export default function InquiryDetail() {
     }
   }
 
-  async function handleSelectProposedTime(candidate: SuggestedTimeCandidate | null) {
-    if (!id) return
+  // Pre-send: suggestions load as soon as there's an artist + time estimate
+  // to search with and no deposit form exists yet -- staff shouldn't need an
+  // extra click just to see them, since picking one (or entering a time by
+  // hand) is now required before a deposit form can be generated at all.
+  useEffect(() => {
+    if (inquiry?.depositForm) return
+    if (!inquiry?.assignedArtist || inquiry.timeEstimateHoursMin == null || inquiry.timeEstimateHoursMax == null) return
+    fetchSuggestedTimes()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    inquiry?.id,
+    Boolean(inquiry?.depositForm),
+    inquiry?.assignedArtist?.id,
+    inquiry?.timeEstimateHoursMin,
+    inquiry?.timeEstimateHoursMax,
+  ])
+
+  function handleOpenSuggestTime() {
+    // Seed the shared fields from whatever's already set (editing an
+    // existing tentative time), or blank (never had one, or previously
+    // Cleared) -- either way the modal always offers both the suggested
+    // list and manual entry.
+    setTentativeTimeRange(
+      inquiry?.depositForm?.proposedStartAt && inquiry?.depositForm?.proposedEndAt
+        ? isoToTimeRangeParts(inquiry.depositForm.proposedStartAt, inquiry.depositForm.proposedEndAt)
+        : { date: '', startTime: '', endTime: '' },
+    )
+    setShowSuggestTime(true)
+    fetchSuggestedTimes()
+  }
+
+  async function handleSaveProposedTime() {
+    if (!id || !tentativeTimeValid) return
 
     setSavingProposedTime(true)
     setSuggestTimeError(null)
@@ -937,14 +1005,33 @@ export default function InquiryDetail() {
       await apiFetch(`/inquiries/${id}/deposit-form/proposed-time`, {
         method: 'PATCH',
         body: JSON.stringify({
-          proposedStartAt: candidate?.startTime ?? null,
-          proposedEndAt: candidate?.endTime ?? null,
+          proposedStartAt: combineDateAndTime(tentativeTimeRange.date, tentativeTimeRange.startTime)!.toISOString(),
+          proposedEndAt: combineDateAndTime(tentativeTimeRange.date, tentativeTimeRange.endTime)!.toISOString(),
         }),
       })
       setShowSuggestTime(false)
       invalidateInquiry()
     } catch (err) {
       setSuggestTimeError(err instanceof Error ? err.message : 'Failed to save proposed time')
+    } finally {
+      setSavingProposedTime(false)
+    }
+  }
+
+  async function handleClearProposedTime() {
+    if (!id) return
+
+    setSavingProposedTime(true)
+    setSuggestTimeError(null)
+
+    try {
+      await apiFetch(`/inquiries/${id}/deposit-form/proposed-time`, {
+        method: 'PATCH',
+        body: JSON.stringify({ proposedStartAt: null, proposedEndAt: null }),
+      })
+      invalidateInquiry()
+    } catch (err) {
+      setSuggestTimeError(err instanceof Error ? err.message : 'Failed to clear proposed time')
     } finally {
       setSavingProposedTime(false)
     }
@@ -1575,12 +1662,70 @@ export default function InquiryDetail() {
                     </div>
                   ) : (
                     <>
+                      {!inquiry.depositForm && (
+                        <div className="mt-4 rounded-lg border border-border p-3">
+                          <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
+                            Tentative appointment time (required)
+                          </p>
+                          <p className="mt-1 text-xs text-fg-muted">
+                            Informational only — shown to the client on the deposit page before they've paid. Not a
+                            real booking; real scheduling still happens after the deposit is paid.
+                          </p>
+
+                          {suggestingTimeLoading && (
+                            <p className="mt-3 text-sm text-fg-secondary">Loading suggested times…</p>
+                          )}
+
+                          {!suggestingTimeLoading && suggestedTimeCandidates.length > 0 && (
+                            <div className="mt-3">
+                              <p className="mb-1.5 text-xs font-medium text-fg-secondary">Suggested times</p>
+                              <div className="flex flex-wrap gap-2">
+                                {suggestedTimeCandidates.map((candidate) => {
+                                  const parts = isoToTimeRangeParts(candidate.startTime, candidate.endTime)
+                                  const isSelected =
+                                    tentativeTimeRange.date === parts.date &&
+                                    tentativeTimeRange.startTime === parts.startTime &&
+                                    tentativeTimeRange.endTime === parts.endTime
+                                  return (
+                                    <button
+                                      key={candidate.startTime}
+                                      type="button"
+                                      onClick={() => setTentativeTimeRange(parts)}
+                                      className={[
+                                        'flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition',
+                                        isSelected
+                                          ? 'border-accent bg-accent/15 text-accent'
+                                          : 'border-border text-fg-secondary hover:bg-surface',
+                                      ].join(' ')}
+                                    >
+                                      {formatDateTime(candidate.startTime)} – {formatDateTime(candidate.endTime)}
+                                      {candidate.hasBufferConflict && (
+                                        <span className="rounded-full bg-warning/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-warning">
+                                          Close
+                                        </span>
+                                      )}
+                                    </button>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="mt-3">
+                            <p className="mb-1.5 text-xs font-medium text-fg-secondary">Or pick a specific time</p>
+                            <DateAndTimeRangeFields value={tentativeTimeRange} onChange={setTentativeTimeRange} />
+                          </div>
+
+                          {suggestTimeError && <p className="mt-2 text-sm text-danger">{suggestTimeError}</p>}
+                        </div>
+                      )}
+
                       {sendDepositError && <p className="mt-3 text-sm text-danger">{sendDepositError}</p>}
 
                       <button
                         type="button"
                         onClick={handleSendDepositForm}
-                        disabled={sendingDeposit}
+                        disabled={sendingDeposit || (!inquiry.depositForm && !tentativeTimeValid)}
                         className="mt-4 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                       >
                         {sendingDeposit ? 'Sending…' : inquiry.depositForm ? 'Resend Deposit Form' : 'Send Deposit Form'}
@@ -1612,58 +1757,53 @@ export default function InquiryDetail() {
                         </div>
                       )}
 
-                      {inquiry.depositForm &&
-                        inquiry.assignedArtist &&
-                        inquiry.timeEstimateHoursMin != null &&
-                        inquiry.timeEstimateHoursMax != null && (
-                          <div className="mt-4 rounded-lg border border-border p-3">
-                            <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
-                              Tentative time (optional)
-                            </p>
-                            <p className="mt-1 text-xs text-fg-muted">
-                              Informational only — shown to the client on the deposit page. Not a real booking; real
-                              scheduling still happens after the deposit is paid.
-                            </p>
+                      {inquiry.depositForm && (
+                        <div className="mt-4 rounded-lg border border-border p-3">
+                          <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Tentative time</p>
+                          <p className="mt-1 text-xs text-fg-muted">
+                            Informational only — shown to the client on the deposit page. Not a real booking; real
+                            scheduling still happens after the deposit is paid.
+                          </p>
 
-                            {inquiry.depositForm.proposedStartAt && inquiry.depositForm.proposedEndAt ? (
-                              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                                <p className="text-sm text-fg">
-                                  {formatDateTime(inquiry.depositForm.proposedStartAt)} –{' '}
-                                  {formatDateTime(inquiry.depositForm.proposedEndAt)}
-                                </p>
-                                <div className="flex gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={handleOpenSuggestTime}
-                                    className="rounded-full border border-border px-3 py-1 text-xs font-medium text-fg transition hover:bg-surface"
-                                  >
-                                    Change
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleSelectProposedTime(null)}
-                                    disabled={savingProposedTime}
-                                    className="rounded-full border border-border px-3 py-1 text-xs font-medium text-fg-secondary transition hover:bg-surface disabled:opacity-60"
-                                  >
-                                    Clear
-                                  </button>
-                                </div>
+                          {inquiry.depositForm.proposedStartAt && inquiry.depositForm.proposedEndAt ? (
+                            <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                              <p className="text-sm text-fg">
+                                {formatDateTime(inquiry.depositForm.proposedStartAt)} –{' '}
+                                {formatDateTime(inquiry.depositForm.proposedEndAt)}
+                              </p>
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={handleOpenSuggestTime}
+                                  className="rounded-full border border-border px-3 py-1 text-xs font-medium text-fg transition hover:bg-surface"
+                                >
+                                  Change
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={handleClearProposedTime}
+                                  disabled={savingProposedTime}
+                                  className="rounded-full border border-border px-3 py-1 text-xs font-medium text-fg-secondary transition hover:bg-surface disabled:opacity-60"
+                                >
+                                  Clear
+                                </button>
                               </div>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={handleOpenSuggestTime}
-                                className="mt-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
-                              >
-                                Suggest a time
-                              </button>
-                            )}
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={handleOpenSuggestTime}
+                              className="mt-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                            >
+                              Set a tentative time
+                            </button>
+                          )}
 
-                            {suggestTimeError && !showSuggestTime && (
-                              <p className="mt-2 text-sm text-danger">{suggestTimeError}</p>
-                            )}
-                          </div>
-                        )}
+                          {suggestTimeError && !showSuggestTime && (
+                            <p className="mt-2 text-sm text-danger">{suggestTimeError}</p>
+                          )}
+                        </div>
+                      )}
                     </>
                   )}
                 </div>
@@ -2177,42 +2317,63 @@ export default function InquiryDetail() {
               )}
 
               {showSuggestTime && (
-                <Modal title="Suggest a time" onClose={() => setShowSuggestTime(false)}>
+                <Modal title="Tentative Appointment Time" onClose={() => setShowSuggestTime(false)}>
                   <p className="text-xs text-fg-muted">
-                    Informational only — picking one just saves a tentative time to show the client on the deposit
-                    page. No appointment is created.
+                    Informational only — shown to the client on the deposit page. No appointment is created.
                   </p>
 
-                  {suggestingTimeLoading && <p className="mt-3 text-sm text-fg-secondary">Loading suggestions…</p>}
-
-                  {!suggestingTimeLoading && suggestedTimeCandidates.length === 0 && (
-                    <p className="mt-3 text-sm text-fg-secondary">No open times found in the next few weeks.</p>
-                  )}
+                  {suggestingTimeLoading && <p className="mt-3 text-sm text-fg-secondary">Loading suggested times…</p>}
 
                   {!suggestingTimeLoading && suggestedTimeCandidates.length > 0 && (
-                    <div className="mt-3 space-y-2">
-                      {suggestedTimeCandidates.map((candidate) => (
-                        <button
-                          key={candidate.startTime}
-                          type="button"
-                          onClick={() => handleSelectProposedTime(candidate)}
-                          disabled={savingProposedTime}
-                          className="flex w-full items-center justify-between gap-2 rounded-lg border border-border px-3 py-2 text-left text-sm text-fg transition hover:bg-surface disabled:opacity-60"
-                        >
-                          <span>
-                            {formatDateTime(candidate.startTime)} – {formatDateTime(candidate.endTime)}
-                          </span>
-                          {candidate.hasBufferConflict && (
-                            <span className="shrink-0 rounded-full bg-warning/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-warning">
-                              Close to another appt
-                            </span>
-                          )}
-                        </button>
-                      ))}
+                    <div className="mt-3">
+                      <p className="mb-1.5 text-xs font-medium text-fg-secondary">Suggested times</p>
+                      <div className="flex flex-wrap gap-2">
+                        {suggestedTimeCandidates.map((candidate) => {
+                          const parts = isoToTimeRangeParts(candidate.startTime, candidate.endTime)
+                          const isSelected =
+                            tentativeTimeRange.date === parts.date &&
+                            tentativeTimeRange.startTime === parts.startTime &&
+                            tentativeTimeRange.endTime === parts.endTime
+                          return (
+                            <button
+                              key={candidate.startTime}
+                              type="button"
+                              onClick={() => setTentativeTimeRange(parts)}
+                              className={[
+                                'flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition',
+                                isSelected
+                                  ? 'border-accent bg-accent/15 text-accent'
+                                  : 'border-border text-fg-secondary hover:bg-surface',
+                              ].join(' ')}
+                            >
+                              {formatDateTime(candidate.startTime)} – {formatDateTime(candidate.endTime)}
+                              {candidate.hasBufferConflict && (
+                                <span className="rounded-full bg-warning/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-warning">
+                                  Close
+                                </span>
+                              )}
+                            </button>
+                          )
+                        })}
+                      </div>
                     </div>
                   )}
 
+                  <div className="mt-4">
+                    <p className="mb-1.5 text-xs font-medium text-fg-secondary">Or pick a specific time</p>
+                    <DateAndTimeRangeFields value={tentativeTimeRange} onChange={setTentativeTimeRange} />
+                  </div>
+
                   {suggestTimeError && <p className="mt-3 text-sm text-danger">{suggestTimeError}</p>}
+
+                  <button
+                    type="button"
+                    onClick={handleSaveProposedTime}
+                    disabled={savingProposedTime || !tentativeTimeValid}
+                    className="mt-4 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                  >
+                    {savingProposedTime ? 'Saving…' : 'Save Tentative Time'}
+                  </button>
                 </Modal>
               )}
 

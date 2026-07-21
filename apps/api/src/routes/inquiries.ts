@@ -920,6 +920,7 @@ router.post("/:id/reopen", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK)
 // estimate, not anything the client stated.
 router.post("/:id/deposit-form", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
   const id = req.params.id as string;
+  const { proposedStartAt, proposedEndAt } = req.body ?? {};
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id }, include: { depositForm: true } });
   if (!inquiry || inquiry.studioId !== req.user!.studioId) {
@@ -938,6 +939,26 @@ router.post("/:id/deposit-form", requireAuth, requireRole(Role.OWNER, Role.FRONT
     return res.status(400).json({ error: "This deposit form has already been signed" });
   }
 
+  // A tentative time is required the FIRST time a deposit form is generated
+  // -- staff must commit to some proposed slot (suggested or hand-picked)
+  // before the client-facing link is created at all. Resending an existing
+  // form (token rotation only, below) leaves whatever tentative time is
+  // already set untouched -- PATCH .../deposit-form/proposed-time is the
+  // only way to change it after the fact, since that route doesn't rotate
+  // the token and so never invalidates a link already shared with the client.
+  let proposedStart: Date | null = null;
+  let proposedEnd: Date | null = null;
+  if (!inquiry.depositForm) {
+    if (typeof proposedStartAt !== "string" || typeof proposedEndAt !== "string") {
+      return res.status(400).json({ error: "A tentative appointment time is required before generating a deposit form" });
+    }
+    proposedStart = new Date(proposedStartAt);
+    proposedEnd = new Date(proposedEndAt);
+    if (Number.isNaN(proposedStart.getTime()) || Number.isNaN(proposedEnd.getTime()) || proposedStart >= proposedEnd) {
+      return res.status(400).json({ error: "proposedStartAt must be a valid date before proposedEndAt" });
+    }
+  }
+
   const settings = await prisma.studioSettings.findUnique({ where: { studioId: req.user!.studioId } });
   const tiers = resolveDepositTiers(settings?.depositTiers);
 
@@ -950,7 +971,16 @@ router.post("/:id/deposit-form", requireAuth, requireRole(Role.OWNER, Role.FRONT
 
   const depositForm = await prisma.depositForm.upsert({
     where: { inquiryId: id },
-    create: { inquiryId: id, token, tokenExpiresAt, depositAmount, feeAmount, totalCharged },
+    create: {
+      inquiryId: id,
+      token,
+      tokenExpiresAt,
+      depositAmount,
+      feeAmount,
+      totalCharged,
+      proposedStartAt: proposedStart,
+      proposedEndAt: proposedEnd,
+    },
     update: { token, tokenExpiresAt, depositAmount, feeAmount, totalCharged },
   });
 
