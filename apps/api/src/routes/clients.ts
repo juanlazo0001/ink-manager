@@ -78,6 +78,12 @@ router.get("/:id", async (req, res) => {
           // /inquiries/:id/deposit-form itself enforces).
           priceEstimateLow: true,
           priceEstimateHigh: true,
+          // AppointmentForm's suggested-times feature needs the artist's
+          // own time estimate for this project to know how long a slot to
+          // look for -- both bounds required before suggestions can use it
+          // (see the max() logic in AppointmentForm.tsx).
+          timeEstimateHoursMin: true,
+          timeEstimateHoursMax: true,
           depositForm: {
             select: {
               id: true,

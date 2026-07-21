@@ -38,6 +38,8 @@ interface InquiryOption {
   id: string
   description: string
   status: string
+  timeEstimateHoursMin: number | null
+  timeEstimateHoursMax: number | null
 }
 
 interface GiftCardOption {
@@ -125,8 +127,32 @@ export default function AppointmentForm({
   const artistOptions = allArtistOptions?.filter((a) => !isEndedGuest(a))
   const selectedArtist = artistOptions?.find((a) => a.id === artistId)
 
-  // Suggestions read this artist's own upcoming bookings (next 14 days) to
-  // avoid proposing a slot that's already taken or inside the buffer -- see
+  const effectiveClientId = fixedClientId ?? clientId
+
+  const { data: clientDetail } = useQuery({
+    queryKey: ['client-projects-for-appointment', effectiveClientId],
+    queryFn: () => apiFetch<ClientWithProjects>(`/clients/${effectiveClientId}`),
+    enabled: !!effectiveClientId,
+  })
+
+  const availableInquiries = clientDetail?.inquiries ?? []
+  const availableGiftCards = (clientDetail?.giftCards ?? []).filter(isCardAvailable)
+
+  // Suggestions need a real duration to search for -- borrowed from the
+  // chosen project's own time estimate (an artist's honest guess at how
+  // long this specific tattoo takes) rather than a generic guess, so the
+  // whole feature stays hidden until both an artist AND a project with a
+  // time estimate are picked (see the JSX gating below).
+  const effectiveInquiryId = fixedInquiryId ?? inquiryId
+  const selectedInquiry = availableInquiries.find((i) => i.id === effectiveInquiryId)
+  const hasTimeEstimate =
+    selectedInquiry?.timeEstimateHoursMin != null && selectedInquiry?.timeEstimateHoursMax != null
+  const suggestionDurationMinutes = hasTimeEstimate
+    ? Math.round(((selectedInquiry!.timeEstimateHoursMin! + selectedInquiry!.timeEstimateHoursMax!) / 2) * 60)
+    : undefined
+
+  // Reads this artist's own upcoming bookings (next 14 days) to avoid
+  // proposing a slot that's already taken or inside the buffer -- see
   // suggestAppointmentSlots for the algorithm itself.
   const suggestionRangeStart = useMemo(() => new Date(), [])
   const suggestionRangeEnd = useMemo(() => {
@@ -142,20 +168,21 @@ export default function AppointmentForm({
       apiFetch<{ startTime: string; endTime: string }[]>(
         `/appointments?artistId=${artistId}&start=${encodeURIComponent(suggestionRangeStart.toISOString())}&end=${encodeURIComponent(suggestionRangeEnd.toISOString())}`,
       ),
-    enabled: !!artistId,
+    enabled: !!artistId && hasTimeEstimate,
   })
 
   const suggestedSlots = useMemo<SuggestedSlot[]>(() => {
-    if (!selectedArtist || !artistAppointments) return []
+    if (!selectedArtist || !artistAppointments || !suggestionDurationMinutes) return []
     return suggestAppointmentSlots({
       schedule: selectedArtist.preferredSchedule,
       isGuest: selectedArtist.isGuest,
       guestStartDate: selectedArtist.guestStartDate,
       guestEndDate: selectedArtist.guestEndDate,
       existingAppointments: artistAppointments,
+      durationMinutes: suggestionDurationMinutes,
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedArtist, artistAppointments])
+  }, [selectedArtist, artistAppointments, suggestionDurationMinutes])
 
   function formatSlotLabel(slot: SuggestedSlot): string {
     const start = combineDateAndTime(slot.date, slot.startTime)!
@@ -172,17 +199,6 @@ export default function AppointmentForm({
     const timeLabel = (d: Date) => d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
     return `${dayLabel}, ${timeLabel(start)}–${timeLabel(end)}`
   }
-
-  const effectiveClientId = fixedClientId ?? clientId
-
-  const { data: clientDetail } = useQuery({
-    queryKey: ['client-projects-for-appointment', effectiveClientId],
-    queryFn: () => apiFetch<ClientWithProjects>(`/clients/${effectiveClientId}`),
-    enabled: !!effectiveClientId,
-  })
-
-  const availableInquiries = clientDetail?.inquiries ?? []
-  const availableGiftCards = (clientDetail?.giftCards ?? []).filter(isCardAvailable)
 
   function handleClientChange(nextClientId: string) {
     setClientId(nextClientId)
@@ -355,7 +371,17 @@ export default function AppointmentForm({
         </select>
       </div>
 
-      {artistId && (
+      {artistId && !effectiveInquiryId && (
+        <p className="mb-3 text-xs text-fg-muted">Select a project to see suggested times.</p>
+      )}
+
+      {artistId && effectiveInquiryId && !hasTimeEstimate && (
+        <p className="mb-3 text-xs text-fg-muted">
+          This project has no estimated time yet — add one on the inquiry page to see suggested times.
+        </p>
+      )}
+
+      {artistId && hasTimeEstimate && (
         <div className="mb-3">
           <p className="mb-1.5 block text-sm font-medium text-fg-secondary">Suggested times</p>
           {!artistAppointments ? (
