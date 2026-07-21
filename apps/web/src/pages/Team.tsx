@@ -13,6 +13,8 @@ import { artistsQueryKey } from '../lib/queryKeys'
 import { useAuth } from '../context/useAuth'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useViewAs } from '../context/useViewAs'
+import { useSocket } from '../context/useSocket'
+import PresenceDot from '../components/PresenceDot'
 import { PlusIcon, ViewIcon, InstagramIcon, FacebookIcon } from '../components/icons'
 
 type PermissionMatrix = Record<string, Record<string, boolean>>
@@ -97,6 +99,7 @@ function emptyEditForm(teamUser: TeamUser) {
 export default function Team() {
   const { user: realUser } = useAuth()
   const user = useEffectiveUser()
+  const { onlineUserIds } = useSocket()
   const queryClient = useQueryClient()
   const isOwner = user?.role === 'OWNER'
   const { target: viewAsTarget, startViewAs } = useViewAs()
@@ -466,17 +469,20 @@ export default function Team() {
                         <tr key={teamUser.id}>
                           <td className="py-3 text-fg">
                             <div className="flex items-center gap-2.5">
-                              {teamUser.avatarUrl ? (
-                                <img
-                                  src={teamUser.avatarUrl}
-                                  alt={teamUser.name ?? teamUser.email}
-                                  className="h-7 w-7 shrink-0 rounded-full object-cover"
-                                />
-                              ) : (
-                                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface text-xs font-semibold text-fg">
-                                  {(teamUser.name ?? teamUser.email).slice(0, 1).toUpperCase()}
-                                </span>
-                              )}
+                              <div className="relative h-7 w-7 shrink-0">
+                                {teamUser.avatarUrl ? (
+                                  <img
+                                    src={teamUser.avatarUrl}
+                                    alt={teamUser.name ?? teamUser.email}
+                                    className="h-7 w-7 rounded-full object-cover"
+                                  />
+                                ) : (
+                                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-surface text-xs font-semibold text-fg">
+                                    {(teamUser.name ?? teamUser.email).slice(0, 1).toUpperCase()}
+                                  </span>
+                                )}
+                                <PresenceDot online={onlineUserIds.has(teamUser.id)} />
+                              </div>
                               {teamUser.name || '—'}
                             </div>
                           </td>
@@ -560,17 +566,20 @@ export default function Team() {
                               className="cursor-pointer rounded-2xl border border-border bg-surface p-5 transition hover:border-border-strong"
                             >
                       <div className="flex items-center gap-3">
-                        {artist.user.avatarUrl ? (
-                          <img
-                            src={artist.user.avatarUrl}
-                            alt={artist.user.name ?? artist.user.email}
-                            className="h-12 w-12 shrink-0 rounded-full object-cover"
-                          />
-                        ) : (
-                          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-surface text-lg font-semibold text-fg">
-                            {(artist.user.name ?? artist.user.email).slice(0, 1).toUpperCase()}
-                          </span>
-                        )}
+                        <div className="relative h-12 w-12 shrink-0">
+                          {artist.user.avatarUrl ? (
+                            <img
+                              src={artist.user.avatarUrl}
+                              alt={artist.user.name ?? artist.user.email}
+                              className="h-12 w-12 rounded-full object-cover"
+                            />
+                          ) : (
+                            <span className="flex h-12 w-12 items-center justify-center rounded-full bg-surface text-lg font-semibold text-fg">
+                              {(artist.user.name ?? artist.user.email).slice(0, 1).toUpperCase()}
+                            </span>
+                          )}
+                          <PresenceDot online={onlineUserIds.has(artist.user.id)} />
+                        </div>
                         <div className="min-w-0">
                           <p className="flex items-center gap-1.5 truncate text-sm font-semibold text-fg">
                             <span className="truncate">{artist.user.name || artist.user.email}</span>

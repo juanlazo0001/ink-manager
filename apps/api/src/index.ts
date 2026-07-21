@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { createServer } from "node:http";
 import express, { type ErrorRequestHandler } from "express";
 import cors from "cors";
 import compression from "compression";
@@ -29,6 +30,7 @@ import searchRouter from "./routes/search";
 import shortLinksRouter from "./routes/shortLinks";
 import { startScheduler } from "./lib/jobs";
 import { requireAuth } from "./middleware/auth";
+import { initRealtime } from "./lib/realtime/io";
 
 const app = express();
 const port = process.env.PORT || 4000;
@@ -118,7 +120,12 @@ const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
 
 app.use(errorHandler);
 
-app.listen(port, () => {
+// Socket.IO attaches to this same server rather than opening a second
+// listener -- Railway only exposes the one port.
+const httpServer = createServer(app);
+initRealtime(httpServer);
+
+httpServer.listen(port, () => {
   console.log(`Ink Manager API listening on port ${port}`);
 });
 

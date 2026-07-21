@@ -4,6 +4,7 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import './index.css'
 import App from './App.tsx'
 import { AuthProvider } from './context/AuthContext'
+import { SocketProvider } from './context/SocketContext'
 import { StudioProvider } from './context/StudioContext'
 import { UserProfileProvider } from './context/UserProfileContext'
 import { ViewAsProvider } from './context/ViewAsContext'
@@ -14,19 +15,21 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <StudioProvider>
-          <UserProfileProvider>
-            {/* Needs to be inside UserProfileProvider -- it calls that
-                context's refresh() on every view-as start/exit so
-                useUserProfile() (role/permissions, backed by GET /users/me)
-                reflects the impersonated user, not just the raw JWT. */}
-            <ViewAsProvider>
-              <ConversationPanelProvider>
-                <App />
-              </ConversationPanelProvider>
-            </ViewAsProvider>
-          </UserProfileProvider>
-        </StudioProvider>
+        <SocketProvider>
+          <StudioProvider>
+            <UserProfileProvider>
+              {/* Needs to be inside UserProfileProvider -- it calls that
+                  context's refresh() on every view-as start/exit so
+                  useUserProfile() (role/permissions, backed by GET /users/me)
+                  reflects the impersonated user, not just the raw JWT. */}
+              <ViewAsProvider>
+                <ConversationPanelProvider>
+                  <App />
+                </ConversationPanelProvider>
+              </ViewAsProvider>
+            </UserProfileProvider>
+          </StudioProvider>
+        </SocketProvider>
       </AuthProvider>
     </QueryClientProvider>
   </StrictMode>,

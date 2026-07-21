@@ -11,7 +11,9 @@ import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useViewAs } from '../context/useViewAs'
 import { useUserProfile } from '../context/useUserProfile'
 import { useConversationPanel } from '../context/useConversationPanel'
+import { useSocket } from '../context/useSocket'
 import Modal from './Modal'
+import PresenceDot from './PresenceDot'
 import { navCountsQueryKey } from '../lib/queryKeys'
 import type { NavCounts } from '../lib/useNavCounts'
 import {
@@ -398,7 +400,15 @@ function MiniAvatar({ name, avatarUrl, className }: { name: string; avatarUrl: s
 // layout never shifts between CLIENT/STAFF and GROUP threads. A third+
 // participant collapses into a "+N" badge rather than a third overlapping
 // circle, which stops being legible past two.
-function GroupAvatarCluster({ participants, unread }: { participants: GroupParticipant[]; unread: boolean }) {
+function GroupAvatarCluster({
+  participants,
+  unread,
+  onlineUserIds,
+}: {
+  participants: GroupParticipant[]
+  unread: boolean
+  onlineUserIds?: Set<string>
+}) {
   const [first, second] = participants
   const extra = participants.length - 2
 
@@ -411,12 +421,24 @@ function GroupAvatarCluster({ participants, unread }: { participants: GroupParti
               +{extra}
             </div>
           ) : (
-            <MiniAvatar name={second.name} avatarUrl={second.avatarUrl} className="h-6 w-6 text-[10px]" />
+            <div className="relative">
+              <MiniAvatar name={second.name} avatarUrl={second.avatarUrl} className="h-6 w-6 text-[10px]" />
+              {onlineUserIds && (
+                <PresenceDot
+                  online={onlineUserIds.has(second.id)}
+                  borderClassName="border-surface"
+                  className="h-1.5 w-1.5"
+                />
+              )}
+            </div>
           )}
         </div>
       )}
       <div className="absolute left-0 top-0 rounded-full ring-2 ring-surface">
-        <MiniAvatar name={first?.name ?? 'Unknown'} avatarUrl={first?.avatarUrl ?? null} className="h-9 w-9 text-sm" />
+        <div className="relative">
+          <MiniAvatar name={first?.name ?? 'Unknown'} avatarUrl={first?.avatarUrl ?? null} className="h-9 w-9 text-sm" />
+          {onlineUserIds && first && <PresenceDot online={onlineUserIds.has(first.id)} borderClassName="border-surface" />}
+        </div>
       </div>
       {unread && (
         <span className="absolute -right-px -top-px h-[15px] w-[15px] rounded-full border-[2.5px] border-surface-raised bg-accent" />
@@ -431,15 +453,22 @@ function ProgressRingAvatar({
   status,
   unread,
   participants,
+  presenceUserId,
+  onlineUserIds,
 }: {
   name: string
   avatarUrl?: string | null
   status: string | null
   unread: boolean
   participants?: GroupParticipant[]
+  // Only meaningful for STAFF (non-GROUP) threads -- the single
+  // counterpart's userId, so their dot can be looked up in onlineUserIds.
+  // Left undefined for CLIENT threads, which have no login/presence.
+  presenceUserId?: string
+  onlineUserIds?: Set<string>
 }) {
   if (participants && participants.length > 0) {
-    return <GroupAvatarCluster participants={participants} unread={unread} />
+    return <GroupAvatarCluster participants={participants} unread={unread} onlineUserIds={onlineUserIds} />
   }
 
   const size = 52
@@ -481,6 +510,9 @@ function ProgressRingAvatar({
         <div className="absolute inset-[6px] flex items-center justify-center rounded-full bg-surface-raised text-sm font-semibold text-fg">
           {initials(name)}
         </div>
+      )}
+      {presenceUserId && onlineUserIds && (
+        <PresenceDot online={onlineUserIds.has(presenceUserId)} borderClassName="border-surface-raised" />
       )}
       {unread && (
         <span className="absolute -right-px -top-px h-[15px] w-[15px] rounded-full border-[2.5px] border-surface-raised bg-accent" />
@@ -723,6 +755,7 @@ function ConversationListView({
   const { target: viewAsTarget } = useViewAs()
   const canAddClients = (profile?.permissions.includes('clients.manage') ?? false) && !viewAsTarget
   const queryClient = useQueryClient()
+  const { onlineUserIds } = useSocket()
 
   const params = new URLSearchParams({ type: tab })
   if (tab === 'CLIENT' && entityTypeFilter) params.set('entityType', entityTypeFilter)
@@ -1115,6 +1148,12 @@ function ConversationListView({
                     status={conversation.primaryInquiry?.status ?? null}
                     unread={isUnread}
                     participants={conversation.counterpart?.participants}
+                    presenceUserId={
+                      conversation.type !== 'CLIENT' && !conversation.counterpart?.participants
+                        ? (conversation.counterpart?.id ?? undefined)
+                        : undefined
+                    }
+                    onlineUserIds={conversation.type !== 'CLIENT' ? onlineUserIds : undefined}
                   />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline justify-between gap-2">
@@ -1246,6 +1285,7 @@ function ThreadView({
 }) {
   const user = useEffectiveUser()
   const { target: viewAsTarget } = useViewAs()
+  const { onlineUserIds } = useSocket()
   const queryClient = useQueryClient()
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -1938,40 +1978,68 @@ function ThreadView({
                     +{data.conversation.counterpart.participants.length - 1}
                   </div>
                 ) : (
-                  <MiniAvatar
-                    name={data.conversation.counterpart.participants[1].name}
-                    avatarUrl={data.conversation.counterpart.participants[1].avatarUrl}
-                    className="h-4 w-4 text-[8px]"
-                  />
+                  <div className="relative">
+                    <MiniAvatar
+                      name={data.conversation.counterpart.participants[1].name}
+                      avatarUrl={data.conversation.counterpart.participants[1].avatarUrl}
+                      className="h-4 w-4 text-[8px]"
+                    />
+                    {!isClientThread && (
+                      <PresenceDot
+                        online={onlineUserIds.has(data.conversation.counterpart.participants[1].id)}
+                        borderClassName="border-surface"
+                        className="h-1.5 w-1.5"
+                      />
+                    )}
+                  </div>
                 )}
               </div>
             )}
             <div className="absolute left-0 top-0 rounded-full ring-2 ring-surface">
-              <MiniAvatar
-                name={data.conversation.counterpart.participants[0].name}
-                avatarUrl={data.conversation.counterpart.participants[0].avatarUrl}
-                className="h-6 w-6 text-[10px]"
-              />
+              <div className="relative">
+                <MiniAvatar
+                  name={data.conversation.counterpart.participants[0].name}
+                  avatarUrl={data.conversation.counterpart.participants[0].avatarUrl}
+                  className="h-6 w-6 text-[10px]"
+                />
+                {!isClientThread && (
+                  <PresenceDot
+                    online={onlineUserIds.has(data.conversation.counterpart.participants[0].id)}
+                    borderClassName="border-surface"
+                    className="h-1.5 w-1.5"
+                  />
+                )}
+              </div>
             </div>
           </div>
         ) : data?.conversation.counterpart?.avatarUrl ? (
-          <img
-            src={data.conversation.counterpart.avatarUrl}
-            alt=""
-            className={[
-              'h-8 w-8 shrink-0 rounded-full object-cover ring-2',
-              headerTone ? TONE_RING_CLASSES[headerTone] : 'ring-border-strong',
-            ].join(' ')}
-          />
+          <div className="relative h-8 w-8 shrink-0">
+            <img
+              src={data.conversation.counterpart.avatarUrl}
+              alt=""
+              className={[
+                'h-8 w-8 rounded-full object-cover ring-2',
+                headerTone ? TONE_RING_CLASSES[headerTone] : 'ring-border-strong',
+              ].join(' ')}
+            />
+            {!isClientThread && data.conversation.counterpart?.id && (
+              <PresenceDot online={onlineUserIds.has(data.conversation.counterpart.id)} borderClassName="border-surface" />
+            )}
+          </div>
         ) : (
-          <span
-            className={[
-              'flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-raised text-xs font-semibold text-fg ring-2',
-              headerTone ? TONE_RING_CLASSES[headerTone] : 'ring-border-strong',
-            ].join(' ')}
-          >
-            {initials(counterpartName)}
-          </span>
+          <div className="relative h-8 w-8 shrink-0">
+            <span
+              className={[
+                'flex h-8 w-8 items-center justify-center rounded-full bg-surface-raised text-xs font-semibold text-fg ring-2',
+                headerTone ? TONE_RING_CLASSES[headerTone] : 'ring-border-strong',
+              ].join(' ')}
+            >
+              {initials(counterpartName)}
+            </span>
+            {!isClientThread && data?.conversation.counterpart?.id && (
+              <PresenceDot online={onlineUserIds.has(data.conversation.counterpart.id)} borderClassName="border-surface" />
+            )}
+          </div>
         )}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
