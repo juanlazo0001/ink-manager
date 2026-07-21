@@ -7,6 +7,7 @@ import Modal from '../components/Modal'
 import StatusPill from '../components/StatusPill'
 import InquiryPipeline from '../components/InquiryPipeline'
 import AppointmentForm from '../components/AppointmentForm'
+import CurrencyInput from '../components/CurrencyInput'
 import DateAndTimeRangeFields, {
   combineDateAndTime,
   isCompleteTimeRange,
@@ -15,7 +16,7 @@ import DateAndTimeRangeFields, {
 } from '../components/DateAndTimeRangeFields'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatDuration, formatPhoneInput, formatStatus } from '../lib/format'
-import { ArrowLeftIcon, MessageIcon, MoreIcon, PencilIcon, PlusIcon, ShareIcon } from '../components/icons'
+import { ArrowLeftIcon, ClientsIcon, MessageIcon, MoreIcon, PencilIcon, PlusIcon, ShareIcon } from '../components/icons'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useViewAs } from '../context/useViewAs'
 import { useConversationPanel } from '../context/useConversationPanel'
@@ -141,6 +142,10 @@ interface DeletePreview {
 }
 
 const DELETE_CONFIRM_TEXT = 'DELETE'
+
+// Whole-hour options for the estimate form's time-min/max dropdowns (1-16
+// covers everything from a small piece to a full-day session).
+const HOUR_OPTIONS = Array.from({ length: 16 }, (_, i) => i + 1)
 
 function formatCents(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`
@@ -775,6 +780,16 @@ export default function InquiryDetail() {
                         and title are present at both sizes so an
                         unfamiliar icon is always identifiable even on
                         desktop where the label is also visible. */}
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/clients/${inquiry.clientId}`)}
+                      aria-label="View Client"
+                      title="View Client"
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-3 md:py-1.5"
+                    >
+                      <ClientsIcon className="h-4 w-4 md:h-3.5 md:w-3.5" />
+                      <span className="hidden text-xs font-medium md:inline">View Client</span>
+                    </button>
                     {canMessage && (
                       <button
                         type="button"
@@ -1049,48 +1064,50 @@ export default function InquiryDetail() {
                     <>
                       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <div>
-                          <label className="mb-1 block text-xs font-medium text-fg-secondary">Price low ($)</label>
-                          <input
-                            type="number"
-                            min="0"
-                            step="1"
+                          <label className="mb-1 block text-xs font-medium text-fg-secondary">Price low</label>
+                          <CurrencyInput
                             value={estimateForm.priceEstimateLow}
-                            onChange={(e) => setEstimateForm({ ...estimateForm, priceEstimateLow: e.target.value })}
+                            onChange={(digits) => setEstimateForm({ ...estimateForm, priceEstimateLow: digits })}
                             className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                           />
                         </div>
                         <div>
-                          <label className="mb-1 block text-xs font-medium text-fg-secondary">Price high ($)</label>
-                          <input
-                            type="number"
-                            min="0"
-                            step="1"
+                          <label className="mb-1 block text-xs font-medium text-fg-secondary">Price high</label>
+                          <CurrencyInput
                             value={estimateForm.priceEstimateHigh}
-                            onChange={(e) => setEstimateForm({ ...estimateForm, priceEstimateHigh: e.target.value })}
+                            onChange={(digits) => setEstimateForm({ ...estimateForm, priceEstimateHigh: digits })}
                             className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                           />
                         </div>
                         <div>
                           <label className="mb-1 block text-xs font-medium text-fg-secondary">Time min (hours)</label>
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.5"
+                          <select
                             value={estimateForm.timeEstimateHoursMin}
                             onChange={(e) => setEstimateForm({ ...estimateForm, timeEstimateHoursMin: e.target.value })}
                             className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                          />
+                          >
+                            <option value="">Select…</option>
+                            {HOUR_OPTIONS.map((hours) => (
+                              <option key={hours} value={hours}>
+                                {hours} {hours === 1 ? 'hour' : 'hours'}
+                              </option>
+                            ))}
+                          </select>
                         </div>
                         <div>
                           <label className="mb-1 block text-xs font-medium text-fg-secondary">Time max (hours)</label>
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.5"
+                          <select
                             value={estimateForm.timeEstimateHoursMax}
                             onChange={(e) => setEstimateForm({ ...estimateForm, timeEstimateHoursMax: e.target.value })}
                             className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                          />
+                          >
+                            <option value="">Select…</option>
+                            {HOUR_OPTIONS.map((hours) => (
+                              <option key={hours} value={hours}>
+                                {hours} {hours === 1 ? 'hour' : 'hours'}
+                              </option>
+                            ))}
+                          </select>
                         </div>
                       </div>
 

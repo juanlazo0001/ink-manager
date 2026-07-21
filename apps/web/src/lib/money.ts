@@ -8,3 +8,11 @@ export function dollarsToCents(dollars: number): number {
 export function formatCents(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`
 }
+
+// Display-time formatter for CurrencyInput below -- `digits` is always the
+// clean whole-dollar-amount string (no `$`, no commas) that value/onChange
+// carry; this only ever runs at render time to decide what the user sees.
+export function formatCurrencyInput(digits: string): string {
+  if (!digits) return ''
+  return `$${Number(digits).toLocaleString('en-US')}`
+}
