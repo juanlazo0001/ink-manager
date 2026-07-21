@@ -989,7 +989,9 @@ router.post("/:id/attach-gift-card", requireAuth, requireRole(Role.OWNER, Role.F
 // fields only, built up rather than derived by deleting keys from a full
 // inquiry object, so nothing client-identifying (name/email/phone/DOB/
 // address/emergency contact/health data/ID images) can leak through by
-// accident as new Inquiry fields get added later.
+// accident as new Inquiry fields get added later. Deliberately just these
+// seven fields plus photos -- no preferred artist, no staff-internal price/
+// time estimate, both of which used to leak into this share before.
 function buildSharedInquiryProjection(inquiry: {
   description: string;
   colorOrBlackGrey: string;
@@ -998,13 +1000,8 @@ function buildSharedInquiryProjection(inquiry: {
   hasBeenTattooedBefore: boolean;
   budget: string | null;
   desiredTiming: string | null;
-  timeEstimateHoursMin: number | null;
-  timeEstimateHoursMax: number | null;
-  priceEstimateLow: number | null;
-  priceEstimateHigh: number | null;
   referenceImages: string[];
   placementImages: string[];
-  preferredArtist: { user: { name: string | null; email: string } } | null;
 }): { body: string; attachments: string[] } {
   const lines = [
     `Tattoo: ${inquiry.description}`,
@@ -1016,33 +1013,19 @@ function buildSharedInquiryProjection(inquiry: {
 
   if (inquiry.budget) lines.push(`Budget: ${inquiry.budget}`);
   if (inquiry.desiredTiming) lines.push(`Desired timing: ${inquiry.desiredTiming}`);
-  if (inquiry.preferredArtist) {
-    lines.push(`Preferred artist: ${inquiry.preferredArtist.user.name ?? inquiry.preferredArtist.user.email}`);
-  }
-  if (inquiry.timeEstimateHoursMin != null && inquiry.timeEstimateHoursMax != null) {
-    lines.push(`Estimated time: ${inquiry.timeEstimateHoursMin}-${inquiry.timeEstimateHoursMax} hours`);
-  }
-  if (inquiry.priceEstimateLow != null && inquiry.priceEstimateHigh != null) {
-    lines.push(`Estimated price: $${inquiry.priceEstimateLow}-$${inquiry.priceEstimateHigh}`);
-  }
 
   return { body: lines.join("\n"), attachments: [...inquiry.referenceImages, ...inquiry.placementImages] };
 }
 
-// Both share-to-artist routes need the same non-PII fields plus the
-// preferred-artist name (resolved via join so the message never shows a raw
-// id) -- kept as a Prisma include shape shared between them.
-const SHARE_TO_ARTIST_INCLUDE = {
-  preferredArtist: { include: { user: { select: { name: true, email: true } } } },
-} as const;
-
 // Preview: exactly what would be composed into the artist's thread, before
 // an artist is even picked -- the projection never depends on who receives
-// it, so the frontend's confirmation modal can show this ahead of send.
+// it, so the frontend's confirmation modal can show this ahead of send (and
+// let staff edit it there before sending -- see the optional body override
+// below).
 router.get("/:id/share-to-artist/preview", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
   const id = req.params.id as string;
 
-  const inquiry = await prisma.inquiry.findUnique({ where: { id }, include: SHARE_TO_ARTIST_INCLUDE });
+  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
   if (!inquiry || inquiry.studioId !== req.user!.studioId) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
@@ -1051,20 +1034,28 @@ router.get("/:id/share-to-artist/preview", requireAuth, requireRole(Role.OWNER, 
 });
 
 // Sends a sanitized copy of an inquiry's tattoo details into the front-desk
-// <-> artist STAFF thread, deliberately excluding all client PII. The body
-// accepts artistUserId ONLY -- never message content from the client side --
-// so the composed message can never carry anything beyond the fixed
-// projection above.
+// <-> artist STAFF thread. `body` is optional -- staff can edit the
+// generated preview in the share modal before sending, so this accepts
+// their edited text as an override; omitted (or blank), it falls back to
+// the same fixed projection the preview above shows. Unlike the client-
+// facing composer, this is staff talking to staff, so free-text here isn't
+// the PII risk the original fixed-projection-only design was guarding
+// against -- that guard was about auto-including client-identifying
+// fields, not about staff's own wording.
 router.post("/:id/share-to-artist", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
   const id = req.params.id as string;
   const { studioId, userId } = req.user!;
-  const { artistUserId } = req.body ?? {};
+  const { artistUserId, body: customBody } = req.body ?? {};
 
   if (typeof artistUserId !== "string" || artistUserId.trim().length === 0) {
     return res.status(400).json({ error: "artistUserId is required" });
   }
 
-  const inquiry = await prisma.inquiry.findUnique({ where: { id }, include: SHARE_TO_ARTIST_INCLUDE });
+  if (customBody !== undefined && typeof customBody !== "string") {
+    return res.status(400).json({ error: "body must be a string" });
+  }
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
   if (!inquiry || inquiry.studioId !== studioId) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
@@ -1075,7 +1066,8 @@ router.post("/:id/share-to-artist", requireAuth, requireRole(Role.OWNER, Role.FR
   }
 
   const { conversation } = await getOrCreateStaffConversation(studioId, artistUserId, userId);
-  const { body, attachments } = buildSharedInquiryProjection(inquiry);
+  const { body: defaultBody, attachments } = buildSharedInquiryProjection(inquiry);
+  const body = customBody && customBody.trim().length > 0 ? customBody.trim() : defaultBody;
   const now = new Date();
 
   const [message] = await prisma.$transaction([

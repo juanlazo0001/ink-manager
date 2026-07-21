@@ -251,11 +251,23 @@ export default function InquiryDetail() {
   const [shareError, setShareError] = useState<string | null>(null)
   const [shareSent, setShareSent] = useState(false)
 
+  // Editable copy of the generated preview -- seeded once per fetch (not on
+  // every render) so staff's in-progress edits never get clobbered by a
+  // background refetch, same "seed once" pattern as estimateForm/detailsForm
+  // above. Reset alongside the other share-modal state when it's reopened.
+  const [shareBody, setShareBody] = useState('')
+  const [shareBodySeeded, setShareBodySeeded] = useState(false)
+
   const { data: sharePreview } = useQuery({
     queryKey: ['inquiry-share-preview', id],
     queryFn: () => apiFetch<SharePreview>(`/inquiries/${id}/share-to-artist/preview`),
     enabled: !!id && showShareModal,
   })
+
+  if (sharePreview && !shareBodySeeded) {
+    setShareBodySeeded(true)
+    setShareBody(sharePreview.body)
+  }
 
   async function handleShareToArtist() {
     if (!id || !shareArtistUserId) return
@@ -266,7 +278,7 @@ export default function InquiryDetail() {
     try {
       await apiFetch(`/inquiries/${id}/share-to-artist`, {
         method: 'POST',
-        body: JSON.stringify({ artistUserId: shareArtistUserId }),
+        body: JSON.stringify({ artistUserId: shareArtistUserId, body: shareBody }),
       })
       setShareSent(true)
     } catch (err) {
@@ -955,6 +967,7 @@ export default function InquiryDetail() {
                           setShareArtistUserId(assignedUserId ?? '')
                           setShareError(null)
                           setShareSent(false)
+                          setShareBodySeeded(false)
                           setShowShareModal(true)
                         }}
                         aria-label="Share with Artist"
@@ -1887,22 +1900,32 @@ export default function InquiryDetail() {
                         information.
                       </p>
 
-                      <div className="rounded-lg border border-border p-3 text-sm">
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-fg-secondary">Message to artist</label>
                         {sharePreview ? (
-                          <>
-                            <p className="whitespace-pre-wrap text-fg">{sharePreview.body}</p>
-                            {sharePreview.attachments.length > 0 && (
-                              <div className="mt-2 grid grid-cols-4 gap-2">
-                                {sharePreview.attachments.map((url) => (
-                                  <img key={url} src={url} alt="" className="aspect-square rounded-lg object-cover" />
-                                ))}
-                              </div>
-                            )}
-                          </>
+                          <textarea
+                            rows={7}
+                            value={shareBody}
+                            onChange={(e) => setShareBody(e.target.value)}
+                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                          />
                         ) : (
-                          <p className="text-fg-muted">Loading preview…</p>
+                          <p className="rounded-lg border border-border p-3 text-sm text-fg-muted">
+                            Loading preview…
+                          </p>
                         )}
                       </div>
+
+                      {sharePreview && sharePreview.attachments.length > 0 && (
+                        <div>
+                          <p className="mb-1 text-xs font-medium text-fg-secondary">Photos</p>
+                          <div className="grid grid-cols-4 gap-2">
+                            {sharePreview.attachments.map((url) => (
+                              <img key={url} src={url} alt="" className="aspect-square rounded-lg object-cover" />
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
                       <div>
                         <label className="mb-1 block text-xs font-medium text-fg-secondary">Send to</label>
@@ -1927,7 +1950,7 @@ export default function InquiryDetail() {
                       <button
                         type="button"
                         onClick={handleShareToArtist}
-                        disabled={!shareArtistUserId || sharing}
+                        disabled={!shareArtistUserId || !shareBody.trim() || sharing}
                         className="w-full rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                       >
                         {sharing ? 'Sending…' : 'Send'}
