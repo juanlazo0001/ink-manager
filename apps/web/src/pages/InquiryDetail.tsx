@@ -147,6 +147,30 @@ const DELETE_CONFIRM_TEXT = 'DELETE'
 // covers everything from a small piece to a full-day session).
 const HOUR_OPTIONS = Array.from({ length: 16 }, (_, i) => i + 1)
 
+// Mirrors clientSms.ts's SendClientSmsResult -- send-estimate auto-sends
+// through that same real path now, so the same skip reasons apply. The
+// estimate itself is always generated regardless of this outcome (see the
+// route's own comment), so a skip/failure here is informational, not an
+// error the user needs to retry past -- the link is still on-screen to
+// share manually either way.
+function describeEstimateSendResult(
+  result:
+    | { sent: true }
+    | { sent: false; reason: 'not_connected' | 'no_phone' | 'opted_out' | 'send_failed'; error?: string },
+): string {
+  if (result.sent) return 'Estimate sent to the client via text — check Conversations.'
+  switch (result.reason) {
+    case 'not_connected':
+      return 'Estimate generated, but SMS isn\'t connected for this studio — share the link below manually.'
+    case 'no_phone':
+      return 'Estimate generated, but this client has no phone on file — share the link below manually.'
+    case 'opted_out':
+      return 'Estimate generated, but this client has opted out of texts — share the link below manually.'
+    default:
+      return 'Estimate generated, but the text failed to send — share the link below manually.'
+  }
+}
+
 function formatCents(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`
 }
@@ -337,6 +361,7 @@ export default function InquiryDetail() {
   })
   const [sendingEstimate, setSendingEstimate] = useState(false)
   const [sendEstimateError, setSendEstimateError] = useState<string | null>(null)
+  const [estimateSendNotice, setEstimateSendNotice] = useState<string | null>(null)
 
   const [editingDetails, setEditingDetails] = useState(false)
   const [detailsForm, setDetailsForm] = useState({
@@ -484,9 +509,14 @@ export default function InquiryDetail() {
 
     setSendingEstimate(true)
     setSendEstimateError(null)
+    setEstimateSendNotice(null)
 
     try {
-      await apiFetch(`/inquiries/${id}/send-estimate`, {
+      const result = await apiFetch<{
+        estimateSendResult:
+          | { sent: true }
+          | { sent: false; reason: 'not_connected' | 'no_phone' | 'opted_out' | 'send_failed'; error?: string }
+      }>(`/inquiries/${id}/send-estimate`, {
         method: 'POST',
         body: JSON.stringify({
           priceEstimateLow: estimateForm.priceEstimateLow ? Number(estimateForm.priceEstimateLow) : undefined,
@@ -500,6 +530,7 @@ export default function InquiryDetail() {
         }),
       })
 
+      setEstimateSendNotice(describeEstimateSendResult(result.estimateSendResult))
       invalidateInquiry()
     } catch (err) {
       setSendEstimateError(err instanceof Error ? err.message : 'Failed to send estimate')
@@ -1125,6 +1156,8 @@ export default function InquiryDetail() {
                             ? 'Generate & Resend Estimate'
                             : 'Generate & Send Estimate'}
                       </button>
+
+                      {estimateSendNotice && <p className="mt-3 text-sm text-fg-secondary">{estimateSendNotice}</p>}
                     </>
                   )}
 

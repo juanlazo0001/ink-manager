@@ -6,6 +6,7 @@ import { ensureLiabilityWaiver } from "../waivers";
 import { sendClientSms, sendStaffSms } from "../clientSms";
 import { getOrCreateClientConversation, getOrCreateStaffConversation } from "../conversations";
 import { PUBLIC_APP_URL } from "../publicUrl";
+import { shortenUrl } from "../shortLinks";
 import { logAudit } from "../audit";
 
 // Three separately-registered jobs (rather than one combined ticker) so
@@ -226,7 +227,7 @@ async function sendEstimateFollowUps(
   for (const inquiry of candidates) {
     const body = renderTemplate(template, {
       clientFirstName: inquiry.client.firstName,
-      estimateLink: `${PUBLIC_APP_URL}/estimate/${inquiry.estimateToken}`,
+      estimateLink: await shortenUrl(`${PUBLIC_APP_URL}/estimate/${inquiry.estimateToken}`),
       studioName,
     });
 

@@ -7,6 +7,7 @@ import { computeGiftCardExpiration, generateUniqueGiftCardCode, isExpired, syncE
 import { getOrCreateClientConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
+import { shortenUrl } from "../lib/shortLinks";
 
 const GIFT_CARD_DETAIL_INCLUDE = {
   appointment: { select: { id: true, startTime: true, endTime: true } },
@@ -153,7 +154,7 @@ router.post("/:id/text-receipt", async (req, res) => {
     return res.status(400).json({ error: `Only an ACTIVE card can have a receipt texted (this one is ${synced.status})` });
   }
 
-  const publicUrl = `${PUBLIC_APP_URL}/gift-card/${card.code}`;
+  const publicUrl = await shortenUrl(`${PUBLIC_APP_URL}/gift-card/${card.code}`);
   const amount = (card.amountCents / 100).toFixed(2);
   const body = `Thanks for your purchase! Here's your $${amount} gift card from ${card.studio.name}: ${publicUrl} (code ${card.code})`;
 

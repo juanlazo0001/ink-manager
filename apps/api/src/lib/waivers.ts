@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { prisma } from "./prisma";
 import { logAudit } from "./audit";
 import { PUBLIC_APP_URL } from "./publicUrl";
+import { shortenUrl } from "./shortLinks";
 import type { LiabilityWaiver } from "../../generated/prisma/client";
 
 interface HealthQuestionSnapshot {
@@ -154,7 +155,7 @@ export async function ensureLiabilityWaiver(
     return {
       ok: true,
       waiver,
-      signingUrl: `${PUBLIC_APP_URL}/waiver/${waiver.token}`,
+      signingUrl: await shortenUrl(`${PUBLIC_APP_URL}/waiver/${waiver.token}`),
       created: false,
     };
   }
@@ -192,5 +193,5 @@ export async function ensureLiabilityWaiver(
     changes: { appointmentId: appointment.id },
   });
 
-  return { ok: true, waiver, signingUrl: `${PUBLIC_APP_URL}/waiver/${token}`, created: true };
+  return { ok: true, waiver, signingUrl: await shortenUrl(`${PUBLIC_APP_URL}/waiver/${token}`), created: true };
 }

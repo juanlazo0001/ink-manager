@@ -26,6 +26,7 @@ import jobsRouter from "./routes/jobs";
 import integrationsRouter from "./routes/integrations";
 import webhooksRouter from "./routes/webhooks";
 import searchRouter from "./routes/search";
+import shortLinksRouter from "./routes/shortLinks";
 import { startScheduler } from "./lib/jobs";
 import { requireAuth } from "./middleware/auth";
 
@@ -90,6 +91,8 @@ app.use("/integrations", integrationsRouter);
 app.use("/search", searchRouter);
 // Public: Twilio calls these directly, no requireAuth anywhere in this router.
 app.use("/webhooks", webhooksRouter);
+// Public: whoever taps a shortened link in a text has no auth yet.
+app.use("/s", shortLinksRouter);
 
 app.get("/me", requireAuth, (req, res) => {
   res.json(req.user);

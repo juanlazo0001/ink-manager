@@ -6,6 +6,7 @@ import { requireAuth, requireRole } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
 import { PREFILLABLE_FIELDS, sanitizePrefillPayload } from "../lib/prefill";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
+import { shortenUrl } from "../lib/shortLinks";
 
 const router = Router();
 
@@ -58,7 +59,10 @@ router.post("/", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (r
 
   const studio = await prisma.studio.findUnique({ where: { id: studioId }, select: { slug: true } });
 
-  res.status(201).json({ ...draft, prefillUrl: `${PUBLIC_APP_URL}/inquiry/${studio!.slug}?draft=${token}` });
+  res.status(201).json({
+    ...draft,
+    prefillUrl: await shortenUrl(`${PUBLIC_APP_URL}/inquiry/${studio!.slug}?draft=${token}`),
+  });
 });
 
 export default router;

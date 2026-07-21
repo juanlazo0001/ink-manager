@@ -6,7 +6,9 @@ import { optionalAuth, requireAuth, requireRole } from "../middleware/auth";
 import { Role } from "../../generated/prisma/enums";
 import { diffObjects, logAudit } from "../lib/audit";
 import { validateGiftCardForAttachment } from "../lib/giftCards";
-import { getOrCreateStaffConversation } from "../lib/conversations";
+import { getOrCreateClientConversation, getOrCreateStaffConversation } from "../lib/conversations";
+import { sendClientSms } from "../lib/clientSms";
+import { shortenUrl } from "../lib/shortLinks";
 import { normalizePhone } from "../lib/phone";
 import { syncPrimaryEmail, syncPrimaryPhone } from "../lib/clientContacts";
 import { findBufferConflict, formatBufferWarning } from "../lib/schedulingConflict";
@@ -633,7 +635,27 @@ router.post("/:id/send-estimate", requireAuth, requireRole(Role.OWNER, Role.FRON
     ]),
   });
 
-  res.status(201).json({ ...updated, estimateUrl: `${PUBLIC_APP_URL}/estimate/${estimateToken}` });
+  const estimateUrl = await shortenUrl(`${PUBLIC_APP_URL}/estimate/${estimateToken}`);
+
+  // Auto-send through the same real-SMS path the composer/reminders use --
+  // a Message row lands in this client's actual Conversations thread on
+  // success, exactly like any other outbound text. This is deliberately
+  // best-effort: the estimate itself is already generated and the
+  // inquiry's status already moved forward above regardless of whether
+  // the text goes out, so a skip/failure here doesn't roll any of that
+  // back -- staff still has the link to share manually (the response
+  // below always reports which case happened).
+  const studio = await prisma.studio.findUnique({ where: { id: req.user!.studioId }, select: { name: true } });
+  const estimateSendResult = await sendClientSms({
+    studioId: req.user!.studioId,
+    clientId: updated.clientId,
+    conversationId: (await getOrCreateClientConversation(req.user!.studioId, updated.clientId, req.user!.userId))
+      .conversation.id,
+    body: `Hi ${updated.client.firstName}, here's your tattoo estimate from ${studio?.name ?? "our studio"}: ${estimateUrl}`,
+    actorUserId: req.user!.userId,
+  });
+
+  res.status(201).json({ ...updated, estimateUrl, estimateSendResult });
 });
 
 // Creates the real Appointment once the deposit's been paid (SCHEDULING is
@@ -880,7 +902,7 @@ router.post("/:id/deposit-form", requireAuth, requireRole(Role.OWNER, Role.FRONT
     update: { token, tokenExpiresAt, depositAmount, feeAmount, totalCharged },
   });
 
-  res.status(201).json({ ...depositForm, depositUrl: `${PUBLIC_APP_URL}/deposit/${token}` });
+  res.status(201).json({ ...depositForm, depositUrl: await shortenUrl(`${PUBLIC_APP_URL}/deposit/${token}`) });
 });
 
 // Explicit allowlist projection for the sanitized artist share -- named

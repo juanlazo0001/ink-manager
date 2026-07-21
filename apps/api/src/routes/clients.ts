@@ -9,6 +9,7 @@ import { diffObjects, logAudit } from "../lib/audit";
 import { normalizePhone } from "../lib/phone";
 import { syncPrimaryEmail, syncPrimaryPhone } from "../lib/clientContacts";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
+import { shortenUrl } from "../lib/shortLinks";
 
 const router = Router();
 
@@ -173,50 +174,59 @@ router.get("/:id/shareable-links", async (req, res) => {
     return res.status(404).json({ error: "Client not found" });
   }
 
-  const estimateLinks = client.inquiries.map((inquiry) => {
-    const active = inquiry.estimateToken && inquiry.estimateTokenExpiresAt && inquiry.estimateTokenExpiresAt > now;
-    return {
-      inquiryId: inquiry.id,
-      label: `Estimate — ${inquiry.description.slice(0, 40)}`,
-      url: active ? `${PUBLIC_APP_URL}/estimate/${inquiry.estimateToken}` : null,
-      hint: active ? null : "Generate from the inquiry page",
-    };
-  });
-
-  const depositLinks = client.inquiries
-    .filter((inquiry) => inquiry.depositForm)
-    .map((inquiry) => {
-      const form = inquiry.depositForm!;
-      const active = !form.signedAt && form.tokenExpiresAt > now;
+  const estimateLinks = await Promise.all(
+    client.inquiries.map(async (inquiry) => {
+      const active = inquiry.estimateToken && inquiry.estimateTokenExpiresAt && inquiry.estimateTokenExpiresAt > now;
       return {
         inquiryId: inquiry.id,
-        label: `Deposit form — ${inquiry.description.slice(0, 40)}`,
-        url: active ? `${PUBLIC_APP_URL}/deposit/${form.token}` : null,
-        hint: active ? null : form.signedAt ? "Already signed" : "Generate from the inquiry page",
+        label: `Estimate — ${inquiry.description.slice(0, 40)}`,
+        url: active ? await shortenUrl(`${PUBLIC_APP_URL}/estimate/${inquiry.estimateToken}`) : null,
+        hint: active ? null : "Generate from the inquiry page",
       };
-    });
+    }),
+  );
 
-  const waiverLinks = client.appointments
-    .filter((appointment) => appointment.liabilityWaiver)
-    .map((appointment) => {
-      const waiver = appointment.liabilityWaiver!;
-      const active = waiver.status === "PENDING" && waiver.token && waiver.tokenExpiresAt && waiver.tokenExpiresAt > now;
-      return {
-        appointmentId: appointment.id,
-        label: `Waiver — ${new Date(appointment.startTime).toLocaleDateString()}`,
-        url: active ? `${PUBLIC_APP_URL}/waiver/${waiver.token}` : null,
-        hint: active ? null : "Generate from the appointment page",
-      };
-    });
+  const depositLinks = await Promise.all(
+    client.inquiries
+      .filter((inquiry) => inquiry.depositForm)
+      .map(async (inquiry) => {
+        const form = inquiry.depositForm!;
+        const active = !form.signedAt && form.tokenExpiresAt > now;
+        return {
+          inquiryId: inquiry.id,
+          label: `Deposit form — ${inquiry.description.slice(0, 40)}`,
+          url: active ? await shortenUrl(`${PUBLIC_APP_URL}/deposit/${form.token}`) : null,
+          hint: active ? null : form.signedAt ? "Already signed" : "Generate from the inquiry page",
+        };
+      }),
+  );
+
+  const waiverLinks = await Promise.all(
+    client.appointments
+      .filter((appointment) => appointment.liabilityWaiver)
+      .map(async (appointment) => {
+        const waiver = appointment.liabilityWaiver!;
+        const active =
+          waiver.status === "PENDING" && waiver.token && waiver.tokenExpiresAt && waiver.tokenExpiresAt > now;
+        return {
+          appointmentId: appointment.id,
+          label: `Waiver — ${new Date(appointment.startTime).toLocaleDateString()}`,
+          url: active ? await shortenUrl(`${PUBLIC_APP_URL}/waiver/${waiver.token}`) : null,
+          hint: active ? null : "Generate from the appointment page",
+        };
+      }),
+  );
 
   // Gift card public pages never expire (the code is a permanent bearer
   // token -- Phase 3), so every gift card the client has is always active.
-  const giftCardLinks = client.giftCards.map((card) => ({
-    giftCardId: card.id,
-    label: `Gift card — $${(card.amountCents / 100).toFixed(2)}`,
-    url: `${PUBLIC_APP_URL}/gift-card/${card.code}`,
-    hint: null,
-  }));
+  const giftCardLinks = await Promise.all(
+    client.giftCards.map(async (card) => ({
+      giftCardId: card.id,
+      label: `Gift card — $${(card.amountCents / 100).toFixed(2)}`,
+      url: await shortenUrl(`${PUBLIC_APP_URL}/gift-card/${card.code}`),
+      hint: null,
+    })),
+  );
 
   // Distinct from depositLinks/waiverLinks above (which only ever list
   // entities that ALREADY have a form/waiver row) -- these back the
@@ -251,7 +261,7 @@ router.get("/:id/shareable-links", async (req, res) => {
     .map((appointment) => ({ appointmentId: appointment.id, label: appointment.startTime.toISOString() }));
 
   res.json({
-    intakeFormUrl: `${PUBLIC_APP_URL}/inquiry/${client.studio.slug}`,
+    intakeFormUrl: await shortenUrl(`${PUBLIC_APP_URL}/inquiry/${client.studio.slug}`),
     estimateLinks,
     depositLinks,
     depositFormOptions,
@@ -981,7 +991,7 @@ router.post("/:clientId/consent-forms", async (req, res) => {
     data: { clientId, signingToken, tokenExpiresAt },
   });
 
-  res.status(201).json({ ...consentForm, signingUrl: `${PUBLIC_APP_URL}/sign/${signingToken}` });
+  res.status(201).json({ ...consentForm, signingUrl: await shortenUrl(`${PUBLIC_APP_URL}/sign/${signingToken}`) });
 });
 
 export default router;

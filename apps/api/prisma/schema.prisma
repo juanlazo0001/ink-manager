@@ -967,3 +967,22 @@ model ArtistReminderLog {
 
   @@unique([artistId, forDate])
 }
+
+// Shortens every outbound-SMS-bound public link (estimate/deposit/waiver/
+// gift-card/intake/prefill) so a text doesn't arrive as a 70+ character
+// raw URL. Deliberately keyed by targetUrl (not by which entity it points
+// to) and looked up idempotently in lib/shortLinks.ts -- the same long URL
+// always resolves to the same short code, so re-rendering a link that's
+// already been shortened once (e.g. a waiver link reused across the
+// week-before/night-before/morning-of reminder cadence) never mints a
+// second one. No expiry of its own: the destination page's own token
+// already carries whatever expiry applies, so an old short link just
+// forwards to a page that correctly reports itself expired.
+model ShortLink {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  targetUrl String
+  createdAt DateTime @default(now())
+
+  @@index([targetUrl])
+}
