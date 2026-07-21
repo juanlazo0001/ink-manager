@@ -116,24 +116,24 @@ model Studio {
   website   String?
   createdAt DateTime @default(now())
 
-  users           User[]
-  clients         Client[]
-  appointments    Appointment[]
-  locations       Location[]
-  rolePermissions RolePermission[]
-  inquiries       Inquiry[]
-  auditLogs       AuditLog[]
-  giftCards       GiftCard[]
-  settings        StudioSettings?
-  liabilityWaivers LiabilityWaiver[]
-  taskDismissals   TaskDismissal[]
-  personalTasks    PersonalTask[]
-  sectionSeens     SectionSeen[]
-  conversations Conversation[]
-  messages      Message[]
-  conversationTags ConversationTag[]
-  prefillDrafts    PrefillDraft[]
-  integrations     StudioIntegration[]
+  users              User[]
+  clients            Client[]
+  appointments       Appointment[]
+  locations          Location[]
+  rolePermissions    RolePermission[]
+  inquiries          Inquiry[]
+  auditLogs          AuditLog[]
+  giftCards          GiftCard[]
+  settings           StudioSettings?
+  liabilityWaivers   LiabilityWaiver[]
+  taskDismissals     TaskDismissal[]
+  personalTasks      PersonalTask[]
+  sectionSeens       SectionSeen[]
+  conversations      Conversation[]
+  messages           Message[]
+  conversationTags   ConversationTag[]
+  prefillDrafts      PrefillDraft[]
+  integrations       StudioIntegration[]
   artistReminderLogs ArtistReminderLog[]
 }
 
@@ -209,17 +209,17 @@ model User {
   artist Artist?
   client Client?
 
-  auditLogs       AuditLog[]
-  issuedGiftCards GiftCard[]
-  verifiedWaivers        LiabilityWaiver[] @relation("WaiverVerifiedBy")
-  checkedOutAppointments Appointment[]     @relation("AppointmentCheckedOutBy")
-  taskDismissals         TaskDismissal[]
-  personalTasks          PersonalTask[]
-  createdPersonalTasks    PersonalTask[]     @relation("PersonalTaskCreatedBy")
-  sectionSeens           SectionSeen[]
-  staffConversation      Conversation?      @relation("StaffConversation")
-  authoredMessages       Message[]          @relation("MessageAuthor")
-  conversationReads      ConversationRead[]
+  auditLogs               AuditLog[]
+  issuedGiftCards         GiftCard[]
+  verifiedWaivers         LiabilityWaiver[]         @relation("WaiverVerifiedBy")
+  checkedOutAppointments  Appointment[]             @relation("AppointmentCheckedOutBy")
+  taskDismissals          TaskDismissal[]
+  personalTasks           PersonalTask[]
+  createdPersonalTasks    PersonalTask[]            @relation("PersonalTaskCreatedBy")
+  sectionSeens            SectionSeen[]
+  staffConversation       Conversation?             @relation("StaffConversation")
+  authoredMessages        Message[]                 @relation("MessageAuthor")
+  conversationReads       ConversationRead[]
   conversationParticipant ConversationParticipant[]
   createdConversationTags ConversationTag[]
   createdPrefillDrafts    PrefillDraft[]
@@ -263,8 +263,8 @@ model Artist {
   user   User   @relation(fields: [userId], references: [id])
 
   appointments       Appointment[]
-  preferredInquiries Inquiry[]     @relation("PreferredArtist")
-  assignedInquiries  Inquiry[]     @relation("AssignedArtist")
+  preferredInquiries Inquiry[]           @relation("PreferredArtist")
+  assignedInquiries  Inquiry[]           @relation("AssignedArtist")
   reminderLogs       ArtistReminderLog[]
 }
 
@@ -299,10 +299,10 @@ model Client {
   // shows -- this is the actual enforcement point, not just a display flag.
   smsOptedOutAt DateTime?
 
-  appointments Appointment[]
-  consentForms ConsentForm[]
-  inquiries    Inquiry[]
-  giftCards    GiftCard[]
+  appointments     Appointment[]
+  consentForms     ConsentForm[]
+  inquiries        Inquiry[]
+  giftCards        GiftCard[]
   liabilityWaivers LiabilityWaiver[]
   conversation     Conversation?
   phones           ClientPhone[]
@@ -393,7 +393,7 @@ model Appointment {
   // appointment-creation routes (standalone and /inquiries/:id/schedule)
   // now populate it, and every appointment must have one.
   inquiryId      String
-  inquiryProject Inquiry  @relation("InquirySessions", fields: [inquiryId], references: [id])
+  inquiryProject Inquiry @relation("InquirySessions", fields: [inquiryId], references: [id])
 
   consentForm     ConsentForm?
   inquiry         Inquiry?         @relation("InquiryScheduledAppointment")
@@ -529,34 +529,34 @@ model StudioSettings {
   messageTemplates              Json?
   // Liability waiver template (Phase 4), editable by OWNER from Settings.
   // Array<{ question: string, type: "yes_no" | "yes_no_explain", explainPrompt?: string }>
-  waiverHealthQuestions Json?
+  waiverHealthQuestions         Json?
   // Array<string>, exactly 10 clauses in display/initialing order.
-  waiverClauses         Json?
-  waiverAcknowledgment  String?
-  waiverPhotoRelease    String?
+  waiverClauses                 Json?
+  waiverAcknowledgment          String?
+  waiverPhotoRelease            String?
   // UI-1 §7: sidebar new-item count bubbles (Phase 5's SectionSeen-driven
   // badges) are opt-in, default off. When false, the frontend neither
   // renders bubbles nor fires POST /nav-counts/seen -- doesn't affect the
   // conversations unread badge (ConversationRead-driven) or the Tasks
   // top-bar badge, both unconditional.
-  showSidebarBadges Boolean  @default(false)
+  showSidebarBadges             Boolean  @default(false)
   // Calendar grey-shading (studio-closed source). Same shape family as
   // Artist.preferredSchedule, one entry per weekday.
   // Array<{ dayOfWeek: 0-6 (0 = Sunday), isOpen: boolean, openTime?: "HH:MM", closeTime?: "HH:MM" }>
   // Null/missing day = treated as closed (never silently "open all day").
-  businessHours Json?
+  businessHours                 Json?
   // Phase 7B-2: plain-text SMS templates for the automated reminder
   // cadence -- deliberately separate from messageTemplates above (that's
   // the composer's own manual "insert template" menu, a different
   // concept). Shape: { clientWeekBefore, clientNightBefore, clientMorningOf,
   // artistDayBefore, estimateFollowUp }, each a plain string with
   // {{placeholder}} tokens filled in at send time.
-  reminderTemplates Json?
+  reminderTemplates             Json?
   // Shape: { weekBeforeTime, nightBeforeTime, morningOfTime,
   // artistDayBeforeTime }, each "HH:MM" in this studio's own timezone
   // (see the `timezone` field above) -- checked against
   // isWithinSendWindow (lib/reminderWindow.ts) by the 15-minute ticker.
-  reminderSendTimes Json?
+  reminderSendTimes             Json?
   createdAt                     DateTime @default(now())
   updatedAt                     DateTime @updatedAt
 
@@ -597,6 +597,10 @@ model DepositForm {
   agreedIdAndVoucher          Boolean   @default(false)
   agreedAge18                 Boolean   @default(false)
   signatureName               String?
+  // Base64 PNG from signature_pad, same pattern as ConsentForm.signatureData
+  // -- signatureName stays too (the typed legal name backing the drawn mark,
+  // shown in the audit trail), it's just no longer the signature itself.
+  signatureData               String?
   signedAt                    DateTime?
   depositAmount               Float
   feeAmount                   Float
@@ -647,8 +651,8 @@ model GiftCard {
 }
 
 model LiabilityWaiver {
-  id     String                 @id @default(cuid())
-  status LiabilityWaiverStatus  @default(PENDING)
+  id     String                @id @default(cuid())
+  status LiabilityWaiverStatus @default(PENDING)
 
   // Public-flow bearer token (same pattern as ConsentForm) -- unlike
   // GiftCard.code, this token IS single-use: it's cleared on signing.
@@ -660,13 +664,13 @@ model LiabilityWaiver {
   emergencyContactName  String?
   emergencyContactPhone String?
   // Array<{ questionIndex: number, answer: "YES" | "NO", explanation?: string }>
-  healthAnswers  Json?
-  idImageUrl     String?
+  healthAnswers         Json?
+  idImageUrl            String?
   // Array<{ clauseIndex: number, initials: string }>
-  clauseInitials Json?
-  signatureName  String?
+  clauseInitials        Json?
+  signatureName         String?
 
-  photoReleaseAccepted     Boolean @default(false)
+  photoReleaseAccepted      Boolean @default(false)
   photoReleaseSignatureName String?
 
   // Snapshots of the template exactly as the client saw it at signing time,
@@ -729,9 +733,9 @@ model Conversation {
   staffUserId String? @unique
   staffUser   User?   @relation("StaffConversation", fields: [staffUserId], references: [id])
 
-  messages Message[]
-  reads    ConversationRead[]
-  tags     ConversationTag[]
+  messages      Message[]
+  reads         ConversationRead[]
+  tags          ConversationTag[]
   prefillDrafts PrefillDraft[]
   participants  ConversationParticipant[]
 
@@ -765,18 +769,18 @@ model ConversationTag {
 // Immutable once created -- a communications record, not an editable
 // document. No PATCH/DELETE route exists for this model, deliberately.
 model Message {
-  id        String            @id @default(cuid())
-  channel   MessageChannel
-  direction MessageDirection
-  body      String
+  id          String           @id @default(cuid())
+  channel     MessageChannel
+  direction   MessageDirection
+  body        String
   // Array<string> of Cloudinary URLs, reusing the existing upload flow.
   attachments Json?
   // Set at creation only (messages stay immutable) -- null for ordinary
   // messages. Phase 6B's sanitized share-to-artist sets
   // { kind: "shared_inquiry", inquiryId } so the UI can render a distinct
   // card instead of a plain text bubble.
-  metadata  Json?
-  createdAt DateTime          @default(now())
+  metadata    Json?
+  createdAt   DateTime         @default(now())
 
   studioId String
   studio   Studio @relation(fields: [studioId], references: [id])
@@ -803,14 +807,14 @@ model Message {
 // that consumes it, same expire-and-single-use shape as the deposit/waiver
 // tokens elsewhere in this app.
 model PrefillDraft {
-  id        String   @id @default(cuid())
-  token     String   @unique
+  id        String    @id @default(cuid())
+  token     String    @unique
   // Intake-form field values only (contact + tattoo fields) -- shape
   // mirrors a subset of Inquiry's own fields, validated at the route layer.
   payload   Json
   expiresAt DateTime
   usedAt    DateTime?
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
 
   studioId String
   studio   Studio @relation(fields: [studioId], references: [id])
@@ -961,9 +965,9 @@ model JobRun {
 // Appointment the way the client cadence's does -- it needs its own record
 // keyed by (artist, the date being reminded about).
 model ArtistReminderLog {
-  id       String   @id @default(cuid())
-  forDate  DateTime
-  sentAt   DateTime @default(now())
+  id      String   @id @default(cuid())
+  forDate DateTime
+  sentAt  DateTime @default(now())
 
   studioId String
   studio   Studio @relation(fields: [studioId], references: [id])

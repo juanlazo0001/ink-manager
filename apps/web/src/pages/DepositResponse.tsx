@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
+import SignaturePad from 'signature_pad'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime } from '../lib/format'
 
@@ -33,8 +34,12 @@ export default function DepositResponse() {
 
   const [agreed, setAgreed] = useState<Record<string, boolean>>({})
   const [signatureName, setSignatureName] = useState('')
+  const [signatureEmptyError, setSignatureEmptyError] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const signaturePadRef = useRef<SignaturePad | null>(null)
 
   useEffect(() => {
     if (!token) return
@@ -58,6 +63,29 @@ export default function DepositResponse() {
     }
   }, [token])
 
+  useEffect(() => {
+    if (state !== 'ready' || !canvasRef.current) return
+
+    const canvas = canvasRef.current
+    const ratio = Math.max(window.devicePixelRatio || 1, 1)
+    canvas.width = canvas.offsetWidth * ratio
+    canvas.height = canvas.offsetHeight * ratio
+    canvas.getContext('2d')?.scale(ratio, ratio)
+
+    const pad = new SignaturePad(canvas, { backgroundColor: 'rgb(255, 255, 255)' })
+    signaturePadRef.current = pad
+
+    return () => {
+      pad.off()
+      signaturePadRef.current = null
+    }
+  }, [state])
+
+  function handleClearSignature() {
+    signaturePadRef.current?.clear()
+    setSignatureEmptyError(false)
+  }
+
   const allAgreed = verifyData ? verifyData.terms.every((term) => agreed[term.key]) : false
 
   async function handleSubmit(e: React.FormEvent) {
@@ -70,19 +98,29 @@ export default function DepositResponse() {
     }
 
     if (signatureName.trim().length === 0) {
-      setSubmitError('Please type your name as your signature.')
+      setSubmitError('Please type your full name.')
       return
     }
 
+    if (!signaturePadRef.current || signaturePadRef.current.isEmpty()) {
+      setSignatureEmptyError(true)
+      setSubmitError('Please sign before submitting.')
+      return
+    }
+
+    setSignatureEmptyError(false)
     setSubmitError(null)
     setSubmitting(true)
 
     try {
+      const signatureData = signaturePadRef.current.toDataURL('image/png')
+
       await apiFetch(`/deposits/sign/${token}`, {
         method: 'PATCH',
         body: JSON.stringify({
           ...Object.fromEntries(verifyData.terms.map((term) => [term.key, true])),
           signatureName: signatureName.trim(),
+          signatureData,
         }),
       })
 
@@ -169,15 +207,28 @@ export default function DepositResponse() {
               ))}
 
               <div>
-                <label className="mb-1 block text-sm font-medium text-fg-secondary">
-                  Type your full name as your signature
-                </label>
+                <label className="mb-1 block text-sm font-medium text-fg-secondary">Type your full name</label>
                 <input
                   type="text"
                   value={signatureName}
                   onChange={(e) => setSignatureName(e.target.value)}
                   className={INPUT_CLASS}
                 />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-fg-secondary">Sign below</label>
+                <div className="overflow-hidden rounded-lg border border-border">
+                  <canvas ref={canvasRef} className="h-32 w-full touch-none" />
+                </div>
+                {signatureEmptyError && <p className="mt-2 text-sm text-danger">Please sign before submitting.</p>}
+                <button
+                  type="button"
+                  onClick={handleClearSignature}
+                  className="mt-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg-secondary transition hover:bg-surface"
+                >
+                  Clear
+                </button>
               </div>
 
               {submitError && (

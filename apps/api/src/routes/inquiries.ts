@@ -242,6 +242,7 @@ const INQUIRY_INCLUDE = {
       totalCharged: true,
       signedAt: true,
       signatureName: true,
+      signatureData: true,
       paidManually: true,
       paidAt: true,
     },
@@ -903,6 +904,56 @@ router.post("/:id/deposit-form", requireAuth, requireRole(Role.OWNER, Role.FRONT
   });
 
   res.status(201).json({ ...depositForm, depositUrl: await shortenUrl(`${PUBLIC_APP_URL}/deposit/${token}`) });
+});
+
+// Alternative to the deposit-form flow above: the client already has an
+// available gift card on file (e.g. from an earlier project, or issued
+// directly by staff) that can secure this booking, so there's nothing to
+// send/sign -- just move straight to SCHEDULING. Deliberately does NOT
+// touch GiftCard.appointmentId here; the actual attach happens at
+// POST /:id/schedule like every other card, same as mark-paid's freshly-
+// issued card isn't attached to anything until that same step.
+router.post("/:id/attach-gift-card", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+  const { giftCardId } = req.body ?? {};
+
+  if (!giftCardId) {
+    return res.status(400).json({ error: "giftCardId is required" });
+  }
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { id }, include: { depositForm: true } });
+  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  if (inquiry.status !== InquiryStatus.DEPOSIT_PENDING) {
+    return res.status(400).json({ error: "Only an inquiry in DEPOSIT_PENDING can skip to an existing gift card" });
+  }
+
+  if (inquiry.depositForm) {
+    return res.status(400).json({ error: "A deposit form already exists for this inquiry" });
+  }
+
+  const giftCardResult = await validateGiftCardForAttachment(giftCardId, req.user!.studioId, inquiry.clientId);
+  if ("error" in giftCardResult) {
+    return res.status(400).json({ error: giftCardResult.error });
+  }
+
+  const updated = await prisma.inquiry.update({ where: { id }, data: { status: InquiryStatus.SCHEDULING } });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Inquiry",
+    entityId: id,
+    action: "status_change",
+    changes: {
+      ...diffObjects(inquiry, { status: InquiryStatus.SCHEDULING }, ["status"]),
+      satisfiedByExistingGiftCardId: giftCardId,
+    },
+  });
+
+  res.json(updated);
 });
 
 // Explicit allowlist projection for the sanitized artist share -- named

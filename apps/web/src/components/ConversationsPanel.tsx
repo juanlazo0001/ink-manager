@@ -6,6 +6,7 @@ import StatusPill, { getStatusTone, type Tone } from './StatusPill'
 import InquiryPipeline from './InquiryPipeline'
 import { formatDateTime, formatRelativeTime, formatStatus } from '../lib/format'
 import { uploadImageToCloudinary } from '../lib/cloudinary'
+import { linkifyText } from '../lib/linkify'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useViewAs } from '../context/useViewAs'
 import { useUserProfile } from '../context/useUserProfile'
@@ -681,6 +682,7 @@ export default function ConversationsPanel() {
               onTabChange={setTab}
               showTabs={!isArtist}
               onSelect={(id) => setSelectedId(id)}
+              onClose={closePanel}
             />
           ))}
       </div>
@@ -694,12 +696,14 @@ function ConversationListView({
   onTabChange,
   showTabs,
   onSelect,
+  onClose,
 }: {
   tab: Tab
   isOpen: boolean
   onTabChange: (tab: Tab) => void
   showTabs: boolean
   onSelect: (id: string) => void
+  onClose: () => void
 }) {
   const [entityTypeFilter, setEntityTypeFilter] = useState('')
   const [artistIdFilter, setArtistIdFilter] = useState('')
@@ -852,11 +856,21 @@ function ConversationListView({
   return (
     <>
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
-        <h2 className="text-sm font-semibold text-fg">Conversations</h2>
-        {/* No explicit close button here, matching ThreadView's header --
-            closing happens via the panel's own backdrop click or Escape
-            (see ConversationsPanel's keydown handler), same as the thread
-            view relies on.
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
+          >
+            <ArrowLeftIcon className="h-4 w-4" />
+          </button>
+          <h2 className="text-sm font-semibold text-fg">Conversations</h2>
+        </div>
+        {/* Backdrop click and Escape (see ConversationsPanel's keydown
+            handler) also close the panel, same as the thread view relies
+            on -- the arrow above is just an explicit, discoverable way to
+            do the same thing.
             Artists can end up with more than one visible Team conversation
             (their own thread, plus any group they're @mentioned into --
             see the artistConversations query above), but /conversations/
@@ -2321,7 +2335,9 @@ function ThreadView({
                                 Shared inquiry
                               </p>
                             )}
-                            {message.body && <p className="whitespace-pre-wrap break-words">{message.body}</p>}
+                            {message.body && (
+                              <p className="whitespace-pre-wrap break-words">{linkifyText(message.body)}</p>
+                            )}
                             {message.attachments && message.attachments.length > 0 && (
                               <div className={sharedInquiryId ? 'mt-1.5 grid grid-cols-2 gap-1' : 'mt-1.5 space-y-1.5'}>
                                 {message.attachments.map((url) => (

@@ -105,7 +105,7 @@ publicRouter.get("/verify/:token", async (req, res) => {
 publicRouter.patch("/sign/:token", async (req, res) => {
   const token = req.params.token as string;
   const body = req.body ?? {};
-  const { signatureName } = body;
+  const { signatureName, signatureData } = body;
 
   const depositForm = await prisma.depositForm.findUnique({ where: { token } });
 
@@ -124,6 +124,10 @@ publicRouter.patch("/sign/:token", async (req, res) => {
     return res.status(400).json({ error: "signatureName is required" });
   }
 
+  if (typeof signatureData !== "string" || signatureData.trim().length === 0) {
+    return res.status(400).json({ error: "signatureData is required" });
+  }
+
   await prisma.depositForm.update({
     where: { id: depositForm!.id },
     data: {
@@ -136,6 +140,7 @@ publicRouter.patch("/sign/:token", async (req, res) => {
       agreedIdAndVoucher: true,
       agreedAge18: true,
       signatureName: signatureName.trim(),
+      signatureData,
       signedAt: new Date(),
     },
   });

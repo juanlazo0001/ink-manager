@@ -71,6 +71,7 @@ interface Inquiry {
     totalCharged: number
     signedAt: string | null
     signatureName: string | null
+    signatureData: string | null
     paidManually: boolean
     paidAt: string | null
   } | null
@@ -426,6 +427,10 @@ export default function InquiryDetail() {
   const [markingPaid, setMarkingPaid] = useState(false)
   const [markPaidError, setMarkPaidError] = useState<string | null>(null)
 
+  const [attachGiftCardId, setAttachGiftCardId] = useState('')
+  const [attachingGiftCard, setAttachingGiftCard] = useState(false)
+  const [attachGiftCardError, setAttachGiftCardError] = useState<string | null>(null)
+
   // UI-1 §3: appointments/sessions nested inside their project. Distinct
   // from scheduleForm above (which drives the special first-scheduling-slot
   // flow via /inquiries/:id/schedule) -- this is the generic
@@ -750,6 +755,27 @@ export default function InquiryDetail() {
       setSendDepositError(err instanceof Error ? err.message : 'Failed to send deposit form')
     } finally {
       setSendingDeposit(false)
+    }
+  }
+
+  async function handleAttachGiftCard() {
+    if (!id) return
+    const giftCardId = attachGiftCardId || clientGiftCards?.[0]?.id
+    if (!giftCardId) return
+
+    setAttachingGiftCard(true)
+    setAttachGiftCardError(null)
+
+    try {
+      await apiFetch(`/inquiries/${id}/attach-gift-card`, {
+        method: 'POST',
+        body: JSON.stringify({ giftCardId }),
+      })
+      invalidateInquiry()
+    } catch (err) {
+      setAttachGiftCardError(err instanceof Error ? err.message : 'Failed to attach gift card')
+    } finally {
+      setAttachingGiftCard(false)
     }
   }
 
@@ -1286,6 +1312,14 @@ export default function InquiryDetail() {
                         Signed by {inquiry.depositForm.signatureName} on {formatDateTime(inquiry.depositForm.signedAt)}
                       </p>
 
+                      {inquiry.depositForm.signatureData && (
+                        <img
+                          src={inquiry.depositForm.signatureData}
+                          alt="Client signature"
+                          className="mt-2 h-20 rounded-lg border border-border bg-white"
+                        />
+                      )}
+
                       {markPaidError && <p className="mt-3 text-sm text-danger">{markPaidError}</p>}
 
                       {inquiry.depositForm.paidManually ? (
@@ -1306,13 +1340,42 @@ export default function InquiryDetail() {
                   ) : !inquiry.depositForm && hasAvailableGiftCard ? (
                     // No point requesting a fresh deposit if the client
                     // already has a card that can secure the booking --
-                    // staff can go straight to Scheduling below.
-                    <p className="mt-4 text-sm text-fg-secondary">
-                      {clientGiftCards!.length === 1
-                        ? 'This client already has an available gift card'
-                        : `This client already has ${clientGiftCards!.length} available gift cards`}{' '}
-                      on file — no deposit needs to be requested. Schedule the appointment directly below.
-                    </p>
+                    // attaching it moves straight to Scheduling below,
+                    // same status transition mark-paid does, just without
+                    // creating a new card.
+                    <div className="mt-4">
+                      <p className="text-sm text-fg-secondary">
+                        {clientGiftCards!.length === 1
+                          ? 'This client already has an available gift card'
+                          : `This client already has ${clientGiftCards!.length} available gift cards`}{' '}
+                        on file — no deposit needs to be requested.
+                      </p>
+
+                      {clientGiftCards!.length > 1 && (
+                        <select
+                          value={attachGiftCardId || clientGiftCards![0].id}
+                          onChange={(e) => setAttachGiftCardId(e.target.value)}
+                          className="mt-3 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                        >
+                          {clientGiftCards!.map((card) => (
+                            <option key={card.id} value={card.id}>
+                              ${(card.amountCents / 100).toFixed(2)} — {card.code.slice(0, 8)}…
+                            </option>
+                          ))}
+                        </select>
+                      )}
+
+                      {attachGiftCardError && <p className="mt-3 text-sm text-danger">{attachGiftCardError}</p>}
+
+                      <button
+                        type="button"
+                        onClick={handleAttachGiftCard}
+                        disabled={attachingGiftCard}
+                        className="mt-3 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                      >
+                        {attachingGiftCard ? 'Attaching…' : 'Attach Gift Card'}
+                      </button>
+                    </div>
                   ) : (
                     <>
                       {sendDepositError && <p className="mt-3 text-sm text-danger">{sendDepositError}</p>}
