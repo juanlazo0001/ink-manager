@@ -8,7 +8,7 @@ export interface ImageUploadState {
 
 interface UploadItem {
   id: string
-  file: File
+  file?: File
   previewUrl: string
   status: 'uploading' | 'done' | 'error'
   url?: string
@@ -20,13 +20,19 @@ const LABEL_CLASS = 'block text-sm font-medium text-fg-secondary'
 export default function ImageUploadSection({
   label,
   hint,
+  initialUrls,
   onChange,
 }: {
   label: string
   hint: string
+  // Already-uploaded images to seed the grid with (edit mode) -- omitted
+  // entirely for a fresh upload-only flow like the public intake form.
+  initialUrls?: string[]
   onChange: (state: ImageUploadState) => void
 }) {
-  const [items, setItems] = useState<UploadItem[]>([])
+  const [items, setItems] = useState<UploadItem[]>(() =>
+    (initialUrls ?? []).map((url) => ({ id: crypto.randomUUID(), previewUrl: url, status: 'done' as const, url })),
+  )
   const onChangeRef = useRef(onChange)
   onChangeRef.current = onChange
 
@@ -38,6 +44,7 @@ export default function ImageUploadSection({
   }, [items])
 
   async function uploadOne(item: UploadItem) {
+    if (!item.file) return
     try {
       const url = await uploadImageToCloudinary(item.file)
       setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, status: 'done', url } : i)))
@@ -69,7 +76,10 @@ export default function ImageUploadSection({
   function handleRemove(id: string) {
     setItems((prev) => {
       const item = prev.find((i) => i.id === id)
-      if (item) URL.revokeObjectURL(item.previewUrl)
+      // Only a freshly-picked file's previewUrl is a blob: URL needing
+      // cleanup -- a seeded existing image's previewUrl is its real
+      // Cloudinary URL, nothing to revoke.
+      if (item?.file) URL.revokeObjectURL(item.previewUrl)
       return prev.filter((i) => i.id !== id)
     })
   }

@@ -317,6 +317,7 @@ const NUMERIC_FIELDS = [
   "timeEstimateHoursMin",
   "timeEstimateHoursMax",
 ] as const;
+const IMAGE_ARRAY_FIELDS = ["referenceImages", "placementImages"] as const;
 
 router.patch("/:id", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
   const id = req.params.id as string;
@@ -331,7 +332,7 @@ router.patch("/:id", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), asyn
     return res.status(404).json({ error: "Inquiry not found" });
   }
 
-  const data: Record<string, string | number | null> = {};
+  const data: Record<string, string | number | null | string[]> = {};
 
   for (const field of REQUIRED_STRING_FIELDS) {
     if (body[field] === undefined) continue;
@@ -357,6 +358,14 @@ router.patch("/:id", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), asyn
     data[field] = body[field];
   }
 
+  for (const field of IMAGE_ARRAY_FIELDS) {
+    if (body[field] === undefined) continue;
+    if (!isStringArray(body[field])) {
+      return res.status(400).json({ error: `${field} must be an array of strings` });
+    }
+    data[field] = body[field];
+  }
+
   const updated = await prisma.inquiry.update({ where: { id }, data, include: INQUIRY_INCLUDE });
 
   await logAudit({
@@ -369,6 +378,7 @@ router.patch("/:id", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), asyn
       ...REQUIRED_STRING_FIELDS,
       ...NULLABLE_STRING_FIELDS,
       ...NUMERIC_FIELDS,
+      ...IMAGE_ARRAY_FIELDS,
     ] as unknown as (keyof typeof inquiry)[]),
   });
 

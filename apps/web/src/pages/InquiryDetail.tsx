@@ -8,6 +8,7 @@ import StatusPill from '../components/StatusPill'
 import InquiryPipeline from '../components/InquiryPipeline'
 import AppointmentForm from '../components/AppointmentForm'
 import CurrencyInput from '../components/CurrencyInput'
+import ImageUploadSection, { type ImageUploadState } from '../components/ImageUploadSection'
 import DateAndTimeRangeFields, {
   combineDateAndTime,
   isCompleteTimeRange,
@@ -382,6 +383,16 @@ export default function InquiryDetail() {
   const [savingDetails, setSavingDetails] = useState(false)
   const [detailsError, setDetailsError] = useState<string | null>(null)
 
+  const [editingReferenceImages, setEditingReferenceImages] = useState(false)
+  const [referenceImagesState, setReferenceImagesState] = useState<ImageUploadState>({ urls: [], uploading: false })
+  const [savingReferenceImages, setSavingReferenceImages] = useState(false)
+  const [referenceImagesError, setReferenceImagesError] = useState<string | null>(null)
+
+  const [editingPlacementImages, setEditingPlacementImages] = useState(false)
+  const [placementImagesState, setPlacementImagesState] = useState<ImageUploadState>({ urls: [], uploading: false })
+  const [savingPlacementImages, setSavingPlacementImages] = useState(false)
+  const [placementImagesError, setPlacementImagesError] = useState<string | null>(null)
+
   const [scheduleTimeRange, setScheduleTimeRange] = useState<DateAndTimeRangeValue>({
     date: '',
     startTime: '',
@@ -577,6 +588,48 @@ export default function InquiryDetail() {
       setDetailsError(err instanceof Error ? err.message : 'Failed to save changes')
     } finally {
       setSavingDetails(false)
+    }
+  }
+
+  async function handleSaveReferenceImages() {
+    if (!id) return
+
+    setSavingReferenceImages(true)
+    setReferenceImagesError(null)
+
+    try {
+      await apiFetch(`/inquiries/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ referenceImages: referenceImagesState.urls }),
+      })
+
+      setEditingReferenceImages(false)
+      invalidateInquiry()
+    } catch (err) {
+      setReferenceImagesError(err instanceof Error ? err.message : 'Failed to save changes')
+    } finally {
+      setSavingReferenceImages(false)
+    }
+  }
+
+  async function handleSavePlacementImages() {
+    if (!id) return
+
+    setSavingPlacementImages(true)
+    setPlacementImagesError(null)
+
+    try {
+      await apiFetch(`/inquiries/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ placementImages: placementImagesState.urls }),
+      })
+
+      setEditingPlacementImages(false)
+      invalidateInquiry()
+    } catch (err) {
+      setPlacementImagesError(err instanceof Error ? err.message : 'Failed to save changes')
+    } finally {
+      setSavingPlacementImages(false)
     }
   }
 
@@ -1664,17 +1717,105 @@ export default function InquiryDetail() {
               </div>
 
               <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <h2 className="text-base font-semibold text-fg">Reference images</h2>
-                <div className="mt-4">
-                  <ImageGrid images={inquiry.referenceImages} />
+                <div className="flex items-center justify-between">
+                  <h2 className="text-base font-semibold text-fg">Reference images</h2>
+                  {!editingReferenceImages && (
+                    <button
+                      type="button"
+                      onClick={() => setEditingReferenceImages(true)}
+                      className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                    >
+                      <PencilIcon className="h-3.5 w-3.5" />
+                      Edit
+                    </button>
+                  )}
                 </div>
+
+                {editingReferenceImages ? (
+                  <div className="mt-4 space-y-4">
+                    <ImageUploadSection
+                      label="Reference images"
+                      hint="Add, remove, or replace the images this client shared."
+                      initialUrls={inquiry.referenceImages}
+                      onChange={setReferenceImagesState}
+                    />
+
+                    {referenceImagesError && <p className="text-sm text-danger">{referenceImagesError}</p>}
+
+                    <div className="flex gap-3">
+                      <button
+                        type="button"
+                        onClick={handleSaveReferenceImages}
+                        disabled={savingReferenceImages || referenceImagesState.uploading}
+                        className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                      >
+                        {savingReferenceImages ? 'Saving…' : 'Save'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingReferenceImages(false)}
+                        className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-4">
+                    <ImageGrid images={inquiry.referenceImages} />
+                  </div>
+                )}
               </div>
 
               <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <h2 className="text-base font-semibold text-fg">Placement photos</h2>
-                <div className="mt-4">
-                  <ImageGrid images={inquiry.placementImages} />
+                <div className="flex items-center justify-between">
+                  <h2 className="text-base font-semibold text-fg">Placement photos</h2>
+                  {!editingPlacementImages && (
+                    <button
+                      type="button"
+                      onClick={() => setEditingPlacementImages(true)}
+                      className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                    >
+                      <PencilIcon className="h-3.5 w-3.5" />
+                      Edit
+                    </button>
+                  )}
                 </div>
+
+                {editingPlacementImages ? (
+                  <div className="mt-4 space-y-4">
+                    <ImageUploadSection
+                      label="Placement photos"
+                      hint="Add, remove, or replace photos of where the tattoo will go."
+                      initialUrls={inquiry.placementImages}
+                      onChange={setPlacementImagesState}
+                    />
+
+                    {placementImagesError && <p className="text-sm text-danger">{placementImagesError}</p>}
+
+                    <div className="flex gap-3">
+                      <button
+                        type="button"
+                        onClick={handleSavePlacementImages}
+                        disabled={savingPlacementImages || placementImagesState.uploading}
+                        className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                      >
+                        {savingPlacementImages ? 'Saving…' : 'Save'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingPlacementImages(false)}
+                        className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-4">
+                    <ImageGrid images={inquiry.placementImages} />
+                  </div>
+                )}
               </div>
 
               <AuditTrail entityType="Inquiry" entityId={inquiry.id} />

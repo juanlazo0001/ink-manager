@@ -17,6 +17,7 @@ import type { NavCounts } from '../lib/useNavCounts'
 import {
   ArrowLeftIcon,
   ArrowUpRightIcon,
+  ArtistsIcon,
   AttachmentIcon,
   CloseIcon,
   InfoIcon,
@@ -158,7 +159,7 @@ interface ContextInquiry {
   budget: string | null
   priceEstimateLow: number | null
   priceEstimateHigh: number | null
-  assignedArtist: { user: { name: string | null; email: string } } | null
+  assignedArtist: { id: string; user: { name: string | null; email: string } } | null
   depositForm: { id: string; totalCharged: number; signedAt: string | null; paidManually: boolean } | null
 }
 
@@ -1268,6 +1269,7 @@ function ThreadView({
   const [sendError, setSendError] = useState<string | null>(null)
   const [showTemplates, setShowTemplates] = useState(false)
   const [showLinkMenu, setShowLinkMenu] = useState(false)
+  const [showPortfolioPicker, setShowPortfolioPicker] = useState(false)
   const [showContext, setShowContext] = useState(false)
   const [showTagPicker, setShowTagPicker] = useState(false)
   const [tagError, setTagError] = useState<string | null>(null)
@@ -1308,7 +1310,7 @@ function ThreadView({
   // whichever submenu it opened (templates/link menu) -- picking a submenu
   // item closes showComposerMenu itself, so without this the button would
   // stop looking "selected" the instant its submenu actually opened.
-  const composerMenuActive = showComposerMenu || showTemplates || showLinkMenu
+  const composerMenuActive = showComposerMenu || showTemplates || showLinkMenu || showPortfolioPicker
 
   const isClientThread = data?.conversation.type === 'CLIENT'
 
@@ -1565,7 +1567,10 @@ function ThreadView({
   const { data: context } = useQuery({
     queryKey: ['conversation-context', conversationId],
     queryFn: () => apiFetch<ConversationContext>(`/conversations/${conversationId}/context`),
-    enabled: isOpen && isClientThread && (showContext || showTagPicker || imagePickerFor !== null || slashQuery !== null),
+    enabled:
+      isOpen &&
+      isClientThread &&
+      (showContext || showTagPicker || imagePickerFor !== null || slashQuery !== null || showPortfolioPicker),
   })
 
   // Only relevant for a STAFF thread being viewed by an artist: used to
@@ -1639,6 +1644,16 @@ function ThreadView({
   // through to the client's full profile instead of being silently dropped.
   const featuredInquiry = pickPrimaryInquiry(context?.inquiries)
   const otherInquiries = (context?.inquiries ?? []).filter((i) => i.id !== featuredInquiry?.id)
+
+  // "The" artist for this composer's portfolio picker is whichever one is
+  // assigned to the featured inquiry -- same "one artist to feature" pick
+  // pickPrimaryInquiry already makes for the rest of the context panel.
+  const portfolioArtistId = featuredInquiry?.assignedArtist?.id ?? null
+  const { data: portfolioArtist } = useQuery({
+    queryKey: ['artist-portfolio', portfolioArtistId],
+    queryFn: () => apiFetch<{ portfolioImages: string[] }>(`/artists/${portfolioArtistId}`),
+    enabled: isOpen && isClientThread && showPortfolioPicker && !!portfolioArtistId,
+  })
 
   async function handleAddTag(entityType: string, entityId: string) {
     setTagError(null)
@@ -2572,6 +2587,43 @@ function ThreadView({
           </>
         )}
 
+        {showPortfolioPicker && isClientThread && (
+          <>
+            <div className="fixed inset-0 z-10" onClick={() => setShowPortfolioPicker(false)} aria-hidden="true" />
+            <div className="relative z-20 mb-2 max-h-48 overflow-y-auto rounded-lg border border-border bg-surface p-2 text-sm">
+              {!portfolioArtistId && (
+                <p className="p-2 text-xs text-fg-muted">
+                  No artist is assigned on this client's project yet — assign one to pull from their portfolio.
+                </p>
+              )}
+              {portfolioArtistId && portfolioArtist && portfolioArtist.portfolioImages.length === 0 && (
+                <p className="p-2 text-xs text-fg-muted">
+                  {featuredInquiry?.assignedArtist?.user.name ?? featuredInquiry?.assignedArtist?.user.email} has no
+                  portfolio images yet.
+                </p>
+              )}
+              {portfolioArtistId && !portfolioArtist && <p className="p-2 text-xs text-fg-muted">Loading…</p>}
+              {portfolioArtistId && portfolioArtist && portfolioArtist.portfolioImages.length > 0 && (
+                <div className="grid grid-cols-3 gap-1.5 p-1">
+                  {portfolioArtist.portfolioImages.map((url) => (
+                    <button
+                      key={url}
+                      type="button"
+                      onClick={() => {
+                        setAttachments((current) => [...current, url])
+                        setShowPortfolioPicker(false)
+                      }}
+                      className="aspect-square overflow-hidden rounded-lg border border-border transition hover:border-border-strong"
+                    >
+                      <img src={url} alt="" className="h-full w-full object-cover" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
         {sendError && <p className="mb-2 text-xs text-danger">{sendError}</p>}
 
         {mentionQuery !== null && mentionCandidates.length > 0 && (
@@ -2683,6 +2735,7 @@ function ThreadView({
                           onClick={() => {
                             setShowTemplates((v) => !v)
                             setShowLinkMenu(false)
+                            setShowPortfolioPicker(false)
                             setShowComposerMenu(false)
                           }}
                           className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
@@ -2697,12 +2750,26 @@ function ThreadView({
                           onClick={() => {
                             setShowLinkMenu((v) => !v)
                             setShowTemplates(false)
+                            setShowPortfolioPicker(false)
                             setShowComposerMenu(false)
                           }}
                           className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
                         >
                           <PlusIcon className="h-4 w-4" />
                           Attach link
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowPortfolioPicker((v) => !v)
+                            setShowTemplates(false)
+                            setShowLinkMenu(false)
+                            setShowComposerMenu(false)
+                          }}
+                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
+                        >
+                          <ArtistsIcon className="h-4 w-4" />
+                          Add from Portfolio
                         </button>
                       </div>
                     </>
