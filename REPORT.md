@@ -265,3 +265,55 @@ Settings UI: new "Deposit Tiers" card (OWNER-edit, same own-card own-Edit-toggle
 ## Cleanup
 
 Web dev server (:5173) started for this session's verification was stopped; the API dev server on :4000 (already running from an earlier session) was left as-is. Test policies created for XSS/cross-studio verification were deleted after use, since they contained literal script-injection payload text. `depositTiers` on `dev-studio`'s `StudioSettings` is now explicitly persisted (equal to the defaults, from the valid-config verification PATCH) rather than left null — no behavior change, just no longer relying on the null-fallback for this one studio.
+
+---
+
+# Package D — Scheduling assistant (tentative deposit-form time + real suggested times)
+
+Single session on `main`. One schema migration (`package_d_deposit_form_proposed_time`). A concurrent session had already substantially reworked artist-picker UI (extracting a shared `ArtistSelect.tsx`, adding `avatarUrl` to more artist selections across the app) directly in files this feature also needed to touch — see "Concurrent work" below for exactly how that was handled.
+
+## The shared service
+
+`apps/api/src/lib/schedulingAssistant.ts` — `getSuggestedTimes(artistId, durationMinutes, options?): Promise<SuggestedTimeCandidate[]>`, where `SuggestedTimeCandidate = { startTime: Date; endTime: Date; hasBufferConflict: boolean }` and `options = { now?, searchDays? (default 21), maxSuggestions? (default 5), excludeAppointmentId? }`. Exposed via `GET /scheduling/suggested-times?artistId=&durationMinutes=&excludeAppointmentId=` (`apps/api/src/routes/scheduling.ts`, `requireAuth` + `requireRole(OWNER, FRONT_DESK)` — same level as every other scheduling-mutation route). **This is the one entry point both consumers below call — reuse this route (or the function directly, server-side) for any future feature needing suggested times, rather than adding a third implementation.**
+
+Algorithm: reads the artist's `preferredSchedule` + guest window (both advisory, same semantics as everywhere else they're read — no `Location.hours` fallback, matching the exact reasoning the prior client-side algorithm already documented: there's no `Artist.locationId`, only `User.locationId`, unselected by any artist route), fetches that artist's appointments once for the whole search window, then for each candidate slot mirrors `findBufferConflict`'s exact `SCHEDULING_BUFFER_MS` (1.5h) predicate against that already-fetched list rather than re-querying per candidate. Buffer-clean candidates always rank first; a flagged one only survives into the final top-N if the search window has fewer than N clean candidates anywhere — verified explicitly (see Verification below), matching the app's established "flag, don't block/omit" philosophy.
+
+## 1. Pre-payment: tentative deposit-form time
+
+`DepositForm` gains `proposedStartAt`/`proposedEndAt` (both nullable `DateTime`, no relation to `Appointment`, no gift-card requirement). New `PATCH /inquiries/:id/deposit-form/proposed-time` (`{ proposedStartAt, proposedEndAt }`, both set or both null) — deliberately **separate** from the existing `POST /:id/deposit-form`, which rotates the token/expiry on every call and would invalidate a link already sent to the client if reused for this. Requires a deposit form to already exist; audited as `entityType: "DepositForm"`.
+
+`InquiryDetail.tsx`'s Deposit card gets a new "Tentative time (optional)" block (visible once a deposit form exists, an artist is assigned, and both time-estimate bounds are set) — "Suggest a time" opens a modal listing `getSuggestedTimes` candidates (buffer-conflict ones visibly flagged "Close to another appt"), picking one saves it; "Change"/"Clear" once one's set. Explicit copy throughout: "Informational only... No appointment is created."
+
+Public deposit page (`DepositResponse.tsx`) shows a new "Tentative Time" block with the exact framing from the spec ("Your appointment will be tentatively scheduled for X, pending your deposit. We'll confirm exact scheduling once payment is received.") — rendered only when there's no real `appointment` yet (a real one always takes precedence, unchanged).
+
+## 2. Post-payment: real suggested times + mini schedule snippet
+
+`AppointmentForm.tsx`'s "Suggested times" panel now calls `GET /scheduling/suggested-times` instead of its prior client-side-only `suggestAppointmentSlots.ts` (deleted — this was the exact duplicate-buffer-constant risk the task called out; there is now exactly one implementation). New gating per spec: the panel (and the new mini schedule snippet) only appears once a gift card is available or already attached (`giftCardId !== '' || availableGiftCards.length > 0`) — previously suggestions had no gift-card gating at all. Selecting a suggestion pre-fills the existing `timeRange` state powering `DateAndTimeRangeFields`; submission is completely untouched, still the same validated, gift-card-gated `POST /appointments` route.
+
+New `apps/web/src/components/MiniScheduleSnippet.tsx` — a simple custom 8am-8pm horizontal day-strip (existing appointments as muted blocks, the active suggestion highlighted), not a second `react-big-calendar` instance, per spec.
+
+## Verification
+
+**PowerShell / direct unit-style tests** (the task's own framing: "unit-testable in isolation... without needing to eyeball a calendar") — seeded a real conflicting appointment for a dev artist whose `preferredSchedule` is Tuesday 11:00–15:00 (server-local time; first attempt got the day/window wrong by not accounting for the dev server's `America/New_York` local time vs UTC — caught and corrected before trusting any result), then called `getSuggestedTimes` directly (not through the live API, so `now` could be pinned exactly):
+- Every candidate's `hasBufferConflict` flag matched the exact `SCHEDULING_BUFFER_MS` predicate computed independently in the test, for both a fully-clean day and a fully-conflicting day.
+- Clean candidates always ranked before flagged ones.
+- With a clean day available later in a wider search window, the flagged conflict-day candidates were excluded from the top-5 entirely (not just deprioritized) — confirming "only returned if nothing better exists."
+- A guest artist queried outside their `guestStartDate`/`guestEndDate` window returned zero candidates.
+
+**Browser** (Playwright): seeded an inquiry with an assigned artist + time estimate, sent its deposit form, used "Suggest a time," confirmed the picked time saved and displayed on both the inquiry page (with Change/Clear) and the public deposit page (exact spec wording, no "confirmed" language) — and confirmed the inquiry's Appointments list still read "No appointments booked for this project yet" throughout, i.e. **zero coupling between the proposed time and real Appointment creation**. On the real appointment-creation form: confirmed the gift-card gating message shows when the client has no available card (all of this client's other cards were already attached from earlier verification, so this was a genuine, not staged, empty case), issued a fresh available card, confirmed suggestions then appeared, the mini schedule snippet rendered, and selecting a suggestion correctly pre-filled the date/time fields — same candidates as the deposit-form flow above, confirming both surfaces genuinely share the one service.
+
+## Concurrent work
+
+A different session's uncommitted `ArtistSelect.tsx` extraction + `avatarUrl` rollout was already sitting in the working tree before this one started, touching several files this feature also needed (`AppointmentForm.tsx`, `InquiryDetail.tsx`, `deposits.ts`, `inquiries.ts`, plus others this feature never touched at all: `appointments.ts`, `conversations.ts`, `search.ts`, `ArtistAvatar.tsx`, `ConversationsPanel.tsx`, `SearchPalette.tsx`, `StaffInquiryForm.tsx`, `AppointmentDetail.tsx`, `Calendar.tsx`, `ClientDetail.tsx`, `EstimateResponse.tsx`). Unlike Package B's `Modal.tsx` (a file this session never needed to touch, cleanly excluded from that commit), this was too entangled to split file-by-file. Before including it: confirmed no schema conflict (`Location.hours`, which that session's `Calendar.tsx` changes consume, already existed in committed schema — not a concurrent migration), fixed one genuinely broken spot it had left (`AppointmentForm.tsx` referenced `ArtistSelect` without importing it, and had an implicit-`any` parameter — needed fixing regardless since this session had to substantially rewrite that same file's suggestion logic), then confirmed a full clean `npm run build` + `npx tsc --noEmit` across the *entire* tree (including files this session never touched) before committing everything together in one commit, disclosed explicitly in the commit message.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) — clean. `npm run build` (web) — clean.
+
+## Commit
+
+`83de48a` — Package D: scheduling assistant (tentative deposit time + real suggested times).
+
+## Cleanup
+
+Web dev server (:5173) stopped. The API dev server on :4000 (already running from an earlier session) left as-is. All scratch verification scripts deleted after use. Test data left in the dev database (per standing convention): the seeded conflict appointment for `artist1@dev-studio.test`, the assigned-artist/time-estimate now set on the `[PACKAGE-A TEST]` inquiry, its now-generated deposit form with a saved proposed time, and a fresh $100 gift card issued to Bailey Testperson for the gift-card-gating test.
