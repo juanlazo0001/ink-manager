@@ -15,7 +15,7 @@ import DateAndTimeRangeFields, {
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatPhoneInput, formatStatus } from '../lib/format'
 import { formatCents, dollarsToCents } from '../lib/money'
-import { ArrowLeftIcon, MessageIcon, MoreIcon } from '../components/icons'
+import { ArrowLeftIcon, ClientsIcon, MessageIcon, MoreIcon } from '../components/icons'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useConversationPanel } from '../context/useConversationPanel'
 import { appointmentsQueryKey } from '../lib/queryKeys'
@@ -478,9 +478,7 @@ export default function AppointmentDetail() {
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
                     <h1 className="text-xl font-bold text-fg">
-                      <Link to={`/clients/${appointment.client.id}`} className="hover:underline">
-                        {appointment.client.firstName} {appointment.client.lastName}
-                      </Link>
+                      {appointment.client.firstName} {appointment.client.lastName}
                     </h1>
                     <p className="mt-1 text-sm text-fg-secondary">
                       {formatDateTime(appointment.startTime)} – {formatDateTime(appointment.endTime)}
@@ -492,6 +490,14 @@ export default function AppointmentDetail() {
                   </div>
 
                   <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/clients/${appointment.client.id}`)}
+                      className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                    >
+                      <ClientsIcon className="h-3.5 w-3.5" />
+                      View Client
+                    </button>
                     {canManage && (
                       <button
                         type="button"

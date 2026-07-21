@@ -1330,51 +1330,6 @@ export default function ClientDetail() {
               </div>
 
               <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <h2 className="text-base font-semibold text-fg">Appointments</h2>
-
-                {appointments === null && <p className="mt-4 text-sm text-fg-secondary">Loading appointments…</p>}
-
-                {appointments !== null && appointments.length === 0 && (
-                  <p className="mt-4 text-sm text-fg-secondary">No appointments yet.</p>
-                )}
-
-                {appointments !== null && appointments.length > 0 && (
-                  <div className="mt-4 overflow-x-auto">
-                    <table className="w-full text-left text-sm">
-                      <thead>
-                        <tr className="bg-surface-inset text-xs text-fg-muted">
-                          <th className="hidden pb-3 font-medium sm:table-cell">Artist</th>
-                          <th className="pb-3 font-medium">Date &amp; Time</th>
-                          <th className="pb-3 font-medium">Status</th>
-                          <th className="hidden pb-3 font-medium md:table-cell">Final Cost</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border">
-                        {appointments.map((appointment) => (
-                          <tr
-                            key={appointment.id}
-                            onClick={() => navigate(`/appointments/${appointment.id}`)}
-                            className="cursor-pointer hover:bg-surface/40"
-                          >
-                            <td className="hidden py-3 text-fg sm:table-cell">
-                              {appointment.artist?.name ?? '—'}
-                            </td>
-                            <td className="py-3 text-fg-secondary">{formatDateTime(appointment.startTime)}</td>
-                            <td className="py-3">
-                              <StatusPill status={appointment.status} />
-                            </td>
-                            <td className="hidden py-3 text-fg-secondary md:table-cell">
-                              {appointment.finalCostCents != null ? formatCents(appointment.finalCostCents) : '—'}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-
-              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
                 <div className="flex items-center justify-between">
                   <h2 className="text-base font-semibold text-fg">Gift Cards</h2>
                   {canIssueGiftCards && (
@@ -1532,6 +1487,51 @@ export default function ClientDetail() {
                                   ? formatDateTime(inquiry.depositForm!.paidAt)
                                   : 'Yes'
                                 : 'Not yet'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                <h2 className="text-base font-semibold text-fg">Appointments</h2>
+
+                {appointments === null && <p className="mt-4 text-sm text-fg-secondary">Loading appointments…</p>}
+
+                {appointments !== null && appointments.length === 0 && (
+                  <p className="mt-4 text-sm text-fg-secondary">No appointments yet.</p>
+                )}
+
+                {appointments !== null && appointments.length > 0 && (
+                  <div className="mt-4 overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead>
+                        <tr className="bg-surface-inset text-xs text-fg-muted">
+                          <th className="hidden pb-3 font-medium sm:table-cell">Artist</th>
+                          <th className="pb-3 font-medium">Date &amp; Time</th>
+                          <th className="pb-3 font-medium">Status</th>
+                          <th className="hidden pb-3 font-medium md:table-cell">Final Cost</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {appointments.map((appointment) => (
+                          <tr
+                            key={appointment.id}
+                            onClick={() => navigate(`/appointments/${appointment.id}`)}
+                            className="cursor-pointer hover:bg-surface/40"
+                          >
+                            <td className="hidden py-3 text-fg sm:table-cell">
+                              {appointment.artist?.name ?? '—'}
+                            </td>
+                            <td className="py-3 text-fg-secondary">{formatDateTime(appointment.startTime)}</td>
+                            <td className="py-3">
+                              <StatusPill status={appointment.status} />
+                            </td>
+                            <td className="hidden py-3 text-fg-secondary md:table-cell">
+                              {appointment.finalCostCents != null ? formatCents(appointment.finalCostCents) : '—'}
                             </td>
                           </tr>
                         ))}

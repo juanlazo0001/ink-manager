@@ -348,11 +348,17 @@ export default function InquiryDetail() {
     enabled: !!inquiry?.clientId,
     select: (data) => data.giftCards.filter(isCardAvailable),
   })
+  const hasAvailableGiftCard = !!clientGiftCards && clientGiftCards.length > 0
 
   const [selectedArtistId, setSelectedArtistId] = useState('')
   const [assigning, setAssigning] = useState(false)
   const [assignError, setAssignError] = useState<string | null>(null)
 
+  // Starts false and is seeded per-inquiry below (true only when no estimate
+  // has ever been sent yet -- otherwise these fields would always be
+  // editable inputs even while just viewing an inquiry that already has an
+  // estimate out).
+  const [editingEstimate, setEditingEstimate] = useState(false)
   const [estimateForm, setEstimateForm] = useState({
     priceEstimateLow: '',
     priceEstimateHigh: '',
@@ -441,6 +447,7 @@ export default function InquiryDetail() {
       timeEstimateHoursMin: inquiry.timeEstimateHoursMin?.toString() ?? '',
       timeEstimateHoursMax: inquiry.timeEstimateHoursMax?.toString() ?? '',
     })
+    setEditingEstimate(!inquiry.estimateSentAt)
     setDetailsForm({
       description: inquiry.description,
       colorOrBlackGrey: inquiry.colorOrBlackGrey,
@@ -531,6 +538,7 @@ export default function InquiryDetail() {
       })
 
       setEstimateSendNotice(describeEstimateSendResult(result.estimateSendResult))
+      setEditingEstimate(false)
       invalidateInquiry()
     } catch (err) {
       setSendEstimateError(err instanceof Error ? err.message : 'Failed to send estimate')
@@ -838,7 +846,13 @@ export default function InquiryDetail() {
                       <button
                         type="button"
                         onClick={() => {
-                          setShareArtistUserId('')
+                          // Default to whoever's already assigned -- that's
+                          // almost always who staff mean to share with;
+                          // nothing to default to if no one's assigned yet.
+                          const assignedUserId = artistOptions?.find(
+                            (a) => a.id === inquiry.assignedArtist?.id,
+                          )?.user.id
+                          setShareArtistUserId(assignedUserId ?? '')
                           setShareError(null)
                           setShareSent(false)
                           setShowShareModal(true)
@@ -1073,7 +1087,19 @@ export default function InquiryDetail() {
 
               {((!isTerminal && canMessage) || inquiry.estimateSentAt || inquiry.closedReason) && (
                 <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                  <h2 className="text-base font-semibold text-fg">Client Response</h2>
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-base font-semibold text-fg">Client Response</h2>
+                    {!isTerminal && canMessage && !editingEstimate && (
+                      <button
+                        type="button"
+                        onClick={() => setEditingEstimate(true)}
+                        className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                      >
+                        <PencilIcon className="h-3.5 w-3.5" />
+                        Edit
+                      </button>
+                    )}
+                  </div>
 
                   {inquiry.clientStatedBudget && (
                     <div className="mt-4 rounded-lg border border-warning/30 bg-warning/10 p-3">
@@ -1091,7 +1117,7 @@ export default function InquiryDetail() {
                     </div>
                   )}
 
-                  {!isTerminal && canMessage && (
+                  {!isTerminal && canMessage && editingEstimate && (
                     <>
                       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <div>
@@ -1144,21 +1170,53 @@ export default function InquiryDetail() {
 
                       {sendEstimateError && <p className="mt-3 text-sm text-danger">{sendEstimateError}</p>}
 
-                      <button
-                        type="button"
-                        onClick={handleSendEstimate}
-                        disabled={sendingEstimate}
-                        className="mt-3 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
-                      >
-                        {sendingEstimate
-                          ? 'Sending…'
-                          : inquiry.estimateSentAt
-                            ? 'Generate & Resend Estimate'
-                            : 'Generate & Send Estimate'}
-                      </button>
+                      <div className="mt-3 flex flex-wrap gap-3">
+                        <button
+                          type="button"
+                          onClick={handleSendEstimate}
+                          disabled={sendingEstimate}
+                          className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                        >
+                          {sendingEstimate
+                            ? 'Sending…'
+                            : inquiry.estimateSentAt
+                              ? 'Generate & Resend Estimate'
+                              : 'Generate & Send Estimate'}
+                        </button>
+                        {inquiry.estimateSentAt && (
+                          <button
+                            type="button"
+                            onClick={() => setEditingEstimate(false)}
+                            className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
+                          >
+                            Cancel
+                          </button>
+                        )}
+                      </div>
 
                       {estimateSendNotice && <p className="mt-3 text-sm text-fg-secondary">{estimateSendNotice}</p>}
                     </>
+                  )}
+
+                  {!editingEstimate && inquiry.estimateSentAt && (
+                    <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+                      <DetailField
+                        label="Price estimate low"
+                        value={inquiry.priceEstimateLow != null ? `$${inquiry.priceEstimateLow}` : 'Not provided'}
+                      />
+                      <DetailField
+                        label="Price estimate high"
+                        value={inquiry.priceEstimateHigh != null ? `$${inquiry.priceEstimateHigh}` : 'Not provided'}
+                      />
+                      <DetailField
+                        label="Time estimate"
+                        value={
+                          inquiry.timeEstimateHoursMin != null && inquiry.timeEstimateHoursMax != null
+                            ? `${inquiry.timeEstimateHoursMin}–${inquiry.timeEstimateHoursMax} hours`
+                            : 'Not provided'
+                        }
+                      />
+                    </div>
                   )}
 
                   {estimateUrl && (
@@ -1206,6 +1264,83 @@ export default function InquiryDetail() {
                         <p className="text-fg-muted">Awaiting response</p>
                       )}
                     </div>
+                  )}
+                </div>
+              )}
+
+              {(inquiry.status === 'DEPOSIT_PENDING' || inquiry.depositForm) && (
+                <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                  <h2 className="text-base font-semibold text-fg">Deposit</h2>
+
+                  {inquiry.depositForm && (
+                    <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+                      <DetailField label="Deposit" value={`$${inquiry.depositForm.depositAmount}`} />
+                      <DetailField label="Fee" value={`$${inquiry.depositForm.feeAmount}`} />
+                      <DetailField label="Total to collect" value={`$${inquiry.depositForm.totalCharged}`} />
+                    </div>
+                  )}
+
+                  {inquiry.depositForm?.signedAt ? (
+                    <>
+                      <p className="mt-4 text-sm text-fg-secondary">
+                        Signed by {inquiry.depositForm.signatureName} on {formatDateTime(inquiry.depositForm.signedAt)}
+                      </p>
+
+                      {markPaidError && <p className="mt-3 text-sm text-danger">{markPaidError}</p>}
+
+                      {inquiry.depositForm.paidManually ? (
+                        <p className="mt-3 text-sm text-success">
+                          Marked paid {inquiry.depositForm.paidAt ? formatDateTime(inquiry.depositForm.paidAt) : ''}
+                        </p>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleMarkPaid}
+                          disabled={markingPaid}
+                          className="mt-3 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                        >
+                          {markingPaid ? 'Saving…' : `Mark $${inquiry.depositForm.totalCharged} as Paid`}
+                        </button>
+                      )}
+                    </>
+                  ) : !inquiry.depositForm && hasAvailableGiftCard ? (
+                    // No point requesting a fresh deposit if the client
+                    // already has a card that can secure the booking --
+                    // staff can go straight to Scheduling below.
+                    <p className="mt-4 text-sm text-fg-secondary">
+                      {clientGiftCards!.length === 1
+                        ? 'This client already has an available gift card'
+                        : `This client already has ${clientGiftCards!.length} available gift cards`}{' '}
+                      on file — no deposit needs to be requested. Schedule the appointment directly below.
+                    </p>
+                  ) : (
+                    <>
+                      {sendDepositError && <p className="mt-3 text-sm text-danger">{sendDepositError}</p>}
+
+                      <button
+                        type="button"
+                        onClick={handleSendDepositForm}
+                        disabled={sendingDeposit}
+                        className="mt-4 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                      >
+                        {sendingDeposit ? 'Sending…' : inquiry.depositForm ? 'Resend Deposit Form' : 'Send Deposit Form'}
+                      </button>
+
+                      {depositUrl && (
+                        <div className="mt-4 rounded-lg border border-border p-3">
+                          <p className="mb-2 text-xs text-fg-muted">
+                            Share this link with the client — it expires in 48 hours.
+                          </p>
+                          <input
+                            type="text"
+                            readOnly
+                            value={depositUrl}
+                            onFocus={(event) => event.target.select()}
+                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:outline-none"
+                          />
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               )}
@@ -1346,73 +1481,6 @@ export default function InquiryDetail() {
                   </div>
                 )}
               </div>
-
-              {(inquiry.status === 'DEPOSIT_PENDING' || inquiry.depositForm) && (
-                <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                  <h2 className="text-base font-semibold text-fg">Deposit</h2>
-
-                  {inquiry.depositForm && (
-                    <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
-                      <DetailField label="Deposit" value={`$${inquiry.depositForm.depositAmount}`} />
-                      <DetailField label="Fee" value={`$${inquiry.depositForm.feeAmount}`} />
-                      <DetailField label="Total to collect" value={`$${inquiry.depositForm.totalCharged}`} />
-                    </div>
-                  )}
-
-                  {inquiry.depositForm?.signedAt ? (
-                    <>
-                      <p className="mt-4 text-sm text-fg-secondary">
-                        Signed by {inquiry.depositForm.signatureName} on {formatDateTime(inquiry.depositForm.signedAt)}
-                      </p>
-
-                      {markPaidError && <p className="mt-3 text-sm text-danger">{markPaidError}</p>}
-
-                      {inquiry.depositForm.paidManually ? (
-                        <p className="mt-3 text-sm text-success">
-                          Marked paid {inquiry.depositForm.paidAt ? formatDateTime(inquiry.depositForm.paidAt) : ''}
-                        </p>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={handleMarkPaid}
-                          disabled={markingPaid}
-                          className="mt-3 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
-                        >
-                          {markingPaid ? 'Saving…' : `Mark $${inquiry.depositForm.totalCharged} as Paid`}
-                        </button>
-                      )}
-                    </>
-                  ) : (
-                    <>
-                      {sendDepositError && <p className="mt-3 text-sm text-danger">{sendDepositError}</p>}
-
-                      <button
-                        type="button"
-                        onClick={handleSendDepositForm}
-                        disabled={sendingDeposit}
-                        className="mt-4 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
-                      >
-                        {sendingDeposit ? 'Sending…' : inquiry.depositForm ? 'Resend Deposit Form' : 'Send Deposit Form'}
-                      </button>
-
-                      {depositUrl && (
-                        <div className="mt-4 rounded-lg border border-border p-3">
-                          <p className="mb-2 text-xs text-fg-muted">
-                            Share this link with the client — it expires in 48 hours.
-                          </p>
-                          <input
-                            type="text"
-                            readOnly
-                            value={depositUrl}
-                            onFocus={(event) => event.target.select()}
-                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:outline-none"
-                          />
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
 
               <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
                 <div className="flex items-center justify-between">
