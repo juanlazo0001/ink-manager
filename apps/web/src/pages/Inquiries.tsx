@@ -5,6 +5,8 @@ import Sidebar from '../components/Sidebar'
 import { SkeletonTableRows } from '../components/Skeleton'
 import StatusPill from '../components/StatusPill'
 import StaffInquiryForm from '../components/StaffInquiryForm'
+import Modal from '../components/Modal'
+import AppointmentForm from '../components/AppointmentForm'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatStatus } from '../lib/format'
 import { PhotoIcon, PlusIcon } from '../components/icons'
@@ -72,6 +74,7 @@ export default function Inquiries() {
   const canCreateInquiry = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
   const [searchParams, setSearchParams] = useSearchParams()
   const [showNewInquiry, setShowNewInquiry] = useState(false)
+  const [showNewAppointment, setShowNewAppointment] = useState(false)
   const queryClient = useQueryClient()
 
   // Set by InquiryDetail's permanent-delete flow on redirect -- read once,
@@ -207,7 +210,7 @@ export default function Inquiries() {
             {activeTab === 'projects' && canCreateAppointment && (
               <button
                 type="button"
-                onClick={() => navigate('/calendar?new=1')}
+                onClick={() => setShowNewAppointment(true)}
                 className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover"
               >
                 <PlusIcon className="h-4 w-4" />
@@ -229,6 +232,19 @@ export default function Inquiries() {
 
           {showNewInquiry && (
             <StaffInquiryForm onClose={() => setShowNewInquiry(false)} onCreated={handleInquiryCreated} />
+          )}
+
+          {showNewAppointment && (
+            <Modal title="New Appointment" onClose={() => setShowNewAppointment(false)}>
+              <AppointmentForm
+                onCreated={() => {
+                  setShowNewAppointment(false)
+                  setFlash('Appointment created.')
+                  queryClient.invalidateQueries({ queryKey: inquiriesQueryKey(user!.studioId) })
+                }}
+                onCancel={() => setShowNewAppointment(false)}
+              />
+            </Modal>
           )}
 
           <div className="mt-6 flex gap-1 border-b border-border">

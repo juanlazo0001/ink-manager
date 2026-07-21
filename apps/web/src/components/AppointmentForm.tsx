@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { apiFetch } from '../lib/api'
 import { useAuth } from '../context/useAuth'
 import { clientsQueryKey, artistsQueryKey } from '../lib/queryKeys'
 import { suggestAppointmentSlots, type ScheduleBlock, type SuggestedSlot } from '../lib/suggestAppointmentSlots'
+import { ChevronDownIcon } from './icons'
 import DateAndTimeRangeFields, {
   combineDateAndTime,
   isCompleteTimeRange,
@@ -20,11 +21,27 @@ interface ClientOption {
 
 interface ArtistOption {
   id: string
-  user: { email: string }
+  user: { email: string; name: string | null; avatarUrl: string | null }
   isGuest: boolean
   guestStartDate: string | null
   guestEndDate: string | null
   preferredSchedule: ScheduleBlock[] | null
+}
+
+function artistLabel(artist: ArtistOption): string {
+  return artist.user.name ?? artist.user.email
+}
+
+function ArtistAvatar({ artist, className }: { artist: ArtistOption; className: string }) {
+  const label = artistLabel(artist)
+  if (artist.user.avatarUrl) {
+    return <img src={artist.user.avatarUrl} alt={label} className={`${className} shrink-0 rounded-full object-cover`} />
+  }
+  return (
+    <span className={`${className} flex shrink-0 items-center justify-center rounded-full bg-surface text-xs font-semibold text-fg`}>
+      {label.slice(0, 1).toUpperCase()}
+    </span>
+  )
 }
 
 // New assignments never default-offer a guest artist whose window has
@@ -113,6 +130,19 @@ export default function AppointmentForm({
   const [notes, setNotes] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [artistMenuOpen, setArtistMenuOpen] = useState(false)
+  const artistMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!artistMenuOpen) return
+    function handleClickOutside(event: MouseEvent) {
+      if (artistMenuRef.current && !artistMenuRef.current.contains(event.target as Node)) {
+        setArtistMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [artistMenuOpen])
 
   const { data: clientOptions } = useQuery({
     queryKey: clientsQueryKey(user!.studioId),
@@ -349,26 +379,56 @@ export default function AppointmentForm({
         </div>
       )}
 
-      <div className="mb-3">
-        <label htmlFor="apptArtistId" className="mb-1 block text-sm font-medium text-fg-secondary">
+      <div className="mb-3" ref={artistMenuRef}>
+        <label id="apptArtistIdLabel" className="mb-1 block text-sm font-medium text-fg-secondary">
           Artist
         </label>
-        <select
-          id="apptArtistId"
-          required
-          value={artistId}
-          onChange={(event) => setArtistId(event.target.value)}
-          className={INPUT_CLASS}
-        >
-          <option value="" disabled>
-            {artistOptions === undefined ? 'Loading…' : 'Select an artist'}
-          </option>
-          {artistOptions?.map((artist) => (
-            <option key={artist.id} value={artist.id}>
-              {artist.user.email}
-            </option>
-          ))}
-        </select>
+        <div className="relative">
+          <button
+            type="button"
+            id="apptArtistId"
+            aria-haspopup="listbox"
+            aria-expanded={artistMenuOpen}
+            aria-labelledby="apptArtistIdLabel"
+            onClick={() => setArtistMenuOpen((open) => !open)}
+            className={`${INPUT_CLASS} flex items-center justify-between gap-2 text-left`}
+          >
+            {selectedArtist ? (
+              <span className="flex min-w-0 items-center gap-2">
+                <ArtistAvatar artist={selectedArtist} className="h-6 w-6" />
+                <span className="truncate">{artistLabel(selectedArtist)}</span>
+              </span>
+            ) : (
+              <span className="text-fg-muted">{artistOptions === undefined ? 'Loading…' : 'Select an artist'}</span>
+            )}
+            <ChevronDownIcon className="h-4 w-4 shrink-0 text-fg-muted" />
+          </button>
+          {artistMenuOpen && artistOptions && artistOptions.length > 0 && (
+            <ul
+              role="listbox"
+              aria-labelledby="apptArtistIdLabel"
+              className="absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-lg border border-border bg-surface-inset py-1 shadow-lg"
+            >
+              {artistOptions.map((artist) => (
+                <li key={artist.id}>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={artist.id === artistId}
+                    onClick={() => {
+                      setArtistId(artist.id)
+                      setArtistMenuOpen(false)
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-fg hover:bg-surface"
+                  >
+                    <ArtistAvatar artist={artist} className="h-7 w-7" />
+                    <span className="min-w-0 flex-1 truncate">{artistLabel(artist)}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
 
       {artistId && !effectiveInquiryId && (
@@ -385,7 +445,9 @@ export default function AppointmentForm({
         <div className="mb-3">
           <p className="mb-1.5 block text-sm font-medium text-fg-secondary">Suggested times</p>
           {!artistAppointments ? (
-            <p className="text-xs text-fg-muted">Checking {selectedArtist?.user.email ?? 'artist'}'s availability…</p>
+            <p className="text-xs text-fg-muted">
+              Checking {selectedArtist ? artistLabel(selectedArtist) : 'artist'}'s availability…
+            </p>
           ) : suggestedSlots.length === 0 ? (
             <p className="text-xs text-fg-muted">
               No open slots found in the next 2 weeks — pick a time manually below.
