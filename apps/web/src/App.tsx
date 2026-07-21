@@ -21,6 +21,7 @@ import DepositResponse from './pages/DepositResponse'
 import GiftCardResponse from './pages/GiftCardResponse'
 import GiftCardDetail from './pages/GiftCardDetail'
 import WaiverSign from './pages/WaiverSign'
+import ShortLinkRedirect from './pages/ShortLinkRedirect'
 import Tasks from './pages/Tasks'
 import ConversationDeepLink from './pages/ConversationDeepLink'
 import ConversationsPanel from './components/ConversationsPanel'
@@ -41,6 +42,7 @@ function App() {
         <Route path="/deposit/:token" element={<DepositResponse />} />
         <Route path="/gift-card/:code" element={<GiftCardResponse />} />
         <Route path="/waiver/:token" element={<WaiverSign />} />
+        <Route path="/s/:code" element={<ShortLinkRedirect />} />
         <Route
           path="/gift-cards/:id"
           element={
