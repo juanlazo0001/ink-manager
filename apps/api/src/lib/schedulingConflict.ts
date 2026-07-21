@@ -19,20 +19,31 @@ export async function findBufferConflict(
   end: Date,
   excludeAppointmentId?: string,
 ): Promise<ConflictingAppointment | null> {
-  const dayStart = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
-  const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+  // Previously bucketed by UTC calendar day (Date.UTC(start...)) -- the
+  // same class of timezone bug reported and fixed elsewhere in this
+  // session: an appointment near local midnight for a studio timezone far
+  // enough from UTC could fall in a different UTC day than a genuinely
+  // conflicting appointment 20 minutes away on the studio's own clock,
+  // and never even get fetched for the overlap check below. A window
+  // padded by the buffer on both sides is provably sufficient instead --
+  // anything outside it cannot possibly satisfy the overlap predicate,
+  // regardless of what calendar day it falls on in any timezone -- so
+  // there's no need to reason about "which day" at all here.
+  const windowStart = new Date(start.getTime() - SCHEDULING_BUFFER_MS);
+  const windowEnd = new Date(end.getTime() + SCHEDULING_BUFFER_MS);
 
-  const sameDayAppointments = await prisma.appointment.findMany({
+  const nearbyAppointments = await prisma.appointment.findMany({
     where: {
       artistId,
-      startTime: { gte: dayStart, lt: dayEnd },
+      startTime: { lt: windowEnd },
+      endTime: { gt: windowStart },
       ...(excludeAppointmentId ? { id: { not: excludeAppointmentId } } : {}),
     },
     select: { id: true, startTime: true, endTime: true },
   });
 
   return (
-    sameDayAppointments.find(
+    nearbyAppointments.find(
       (appt) =>
         start.getTime() < appt.endTime.getTime() + SCHEDULING_BUFFER_MS &&
         appt.startTime.getTime() < end.getTime() + SCHEDULING_BUFFER_MS,
