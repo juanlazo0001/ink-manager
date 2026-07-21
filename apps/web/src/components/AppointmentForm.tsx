@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { apiFetch } from '../lib/api'
 import { useAuth } from '../context/useAuth'
 import { clientsQueryKey, artistsQueryKey } from '../lib/queryKeys'
+import { suggestAppointmentSlots, type ScheduleBlock, type SuggestedSlot } from '../lib/suggestAppointmentSlots'
 import DateAndTimeRangeFields, {
   combineDateAndTime,
   isCompleteTimeRange,
@@ -21,7 +22,9 @@ interface ArtistOption {
   id: string
   user: { email: string }
   isGuest: boolean
+  guestStartDate: string | null
   guestEndDate: string | null
+  preferredSchedule: ScheduleBlock[] | null
 }
 
 // New assignments never default-offer a guest artist whose window has
@@ -120,6 +123,55 @@ export default function AppointmentForm({
     queryFn: () => apiFetch<ArtistOption[]>('/artists'),
   })
   const artistOptions = allArtistOptions?.filter((a) => !isEndedGuest(a))
+  const selectedArtist = artistOptions?.find((a) => a.id === artistId)
+
+  // Suggestions read this artist's own upcoming bookings (next 14 days) to
+  // avoid proposing a slot that's already taken or inside the buffer -- see
+  // suggestAppointmentSlots for the algorithm itself.
+  const suggestionRangeStart = useMemo(() => new Date(), [])
+  const suggestionRangeEnd = useMemo(() => {
+    const end = new Date(suggestionRangeStart)
+    end.setDate(end.getDate() + 14)
+    return end
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suggestionRangeStart])
+
+  const { data: artistAppointments } = useQuery({
+    queryKey: ['appointments-for-suggestions', artistId, suggestionRangeStart.toDateString()],
+    queryFn: () =>
+      apiFetch<{ startTime: string; endTime: string }[]>(
+        `/appointments?artistId=${artistId}&start=${encodeURIComponent(suggestionRangeStart.toISOString())}&end=${encodeURIComponent(suggestionRangeEnd.toISOString())}`,
+      ),
+    enabled: !!artistId,
+  })
+
+  const suggestedSlots = useMemo<SuggestedSlot[]>(() => {
+    if (!selectedArtist || !artistAppointments) return []
+    return suggestAppointmentSlots({
+      schedule: selectedArtist.preferredSchedule,
+      isGuest: selectedArtist.isGuest,
+      guestStartDate: selectedArtist.guestStartDate,
+      guestEndDate: selectedArtist.guestEndDate,
+      existingAppointments: artistAppointments,
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedArtist, artistAppointments])
+
+  function formatSlotLabel(slot: SuggestedSlot): string {
+    const start = combineDateAndTime(slot.date, slot.startTime)!
+    const end = combineDateAndTime(slot.date, slot.endTime)!
+    const today = new Date()
+    const tomorrow = new Date(today)
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    const dayLabel =
+      slot.date === today.toISOString().slice(0, 10) || start.toDateString() === today.toDateString()
+        ? 'Today'
+        : start.toDateString() === tomorrow.toDateString()
+          ? 'Tomorrow'
+          : start.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+    const timeLabel = (d: Date) => d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+    return `${dayLabel}, ${timeLabel(start)}–${timeLabel(end)}`
+  }
 
   const effectiveClientId = fixedClientId ?? clientId
 
@@ -302,6 +354,43 @@ export default function AppointmentForm({
           ))}
         </select>
       </div>
+
+      {artistId && (
+        <div className="mb-3">
+          <p className="mb-1.5 block text-sm font-medium text-fg-secondary">Suggested times</p>
+          {!artistAppointments ? (
+            <p className="text-xs text-fg-muted">Checking {selectedArtist?.user.email ?? 'artist'}'s availability…</p>
+          ) : suggestedSlots.length === 0 ? (
+            <p className="text-xs text-fg-muted">
+              No open slots found in the next 2 weeks — pick a time manually below.
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {suggestedSlots.map((slot) => {
+                const isSelected =
+                  timeRange.date === slot.date &&
+                  timeRange.startTime === slot.startTime &&
+                  timeRange.endTime === slot.endTime
+                return (
+                  <button
+                    key={`${slot.date}-${slot.startTime}`}
+                    type="button"
+                    onClick={() => setTimeRange({ date: slot.date, startTime: slot.startTime, endTime: slot.endTime })}
+                    className={[
+                      'rounded-full border px-3 py-1.5 text-xs font-medium transition',
+                      isSelected
+                        ? 'border-accent bg-accent/15 text-accent'
+                        : 'border-border text-fg-secondary hover:bg-surface',
+                    ].join(' ')}
+                  >
+                    {formatSlotLabel(slot)}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="mb-3">
         <DateAndTimeRangeFields value={timeRange} onChange={setTimeRange} />

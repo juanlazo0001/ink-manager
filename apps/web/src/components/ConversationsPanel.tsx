@@ -2043,7 +2043,19 @@ function ThreadView({
         )}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <h2 className="truncate text-sm font-semibold text-fg">{counterpartName}</h2>
+            <h2 className="truncate text-sm font-semibold text-fg">
+              {isClientThread && data?.conversation.counterpart?.id ? (
+                <Link
+                  to={`/clients/${data.conversation.counterpart.id}`}
+                  onClick={onClose}
+                  className="hover:underline"
+                >
+                  {counterpartName}
+                </Link>
+              ) : (
+                counterpartName
+              )}
+            </h2>
             {primaryInquiry && <StatusPill status={primaryInquiry.status} className="px-2 py-0.5 text-[11px]" />}
           </div>
           {primaryInquiry && (

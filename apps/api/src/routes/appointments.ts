@@ -126,7 +126,11 @@ router.get("/", requirePermission("appointments.view"), async (req, res) => {
   const hasValidRange =
     rangeStartRaw && rangeEndRaw && !Number.isNaN(rangeStartRaw.getTime()) && !Number.isNaN(rangeEndRaw.getTime());
 
-  let artistId: string | undefined;
+  // Staff-supplied filter (e.g. AppointmentForm's slot-suggestion feature
+  // fetching just one artist's bookings) -- an ARTIST caller below always
+  // overrides this with their own id regardless, so this only ever narrows
+  // what OWNER/FRONT_DESK see, never widens an artist's own view.
+  let artistId: string | undefined = typeof req.query.artistId === "string" ? req.query.artistId : undefined;
 
   if (role === Role.ARTIST) {
     const artist = await prisma.artist.findUnique({ where: { userId } });
