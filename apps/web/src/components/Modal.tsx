@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
-import { CloseIcon } from './icons'
+import { CloseIcon, DragHandleIcon } from './icons'
 
 interface ModalProps {
   title: string
@@ -139,9 +139,12 @@ export default function Modal({ title, onClose, children }: ModalProps) {
       >
         <div
           onPointerDown={handleHeaderPointerDown}
-          className={['flex items-center justify-between', dragging ? 'cursor-grabbing select-none' : 'cursor-grab'].join(' ')}
+          className={['flex items-center gap-1.5 justify-between', dragging ? 'cursor-grabbing select-none' : 'cursor-grab'].join(' ')}
         >
-          <h2 className="text-lg font-semibold text-fg">{title}</h2>
+          <div className="flex min-w-0 items-center gap-1.5">
+            <DragHandleIcon className="h-4 w-4 shrink-0 text-fg-muted" />
+            <h2 className="truncate text-lg font-semibold text-fg">{title}</h2>
+          </div>
           <button
             type="button"
             onClick={requestClose}

@@ -328,3 +328,19 @@ export function CopyIcon({ className }: IconProps) {
     </svg>
   )
 }
+
+// Classic two-column grip-dot glyph -- the universal "drag here" affordance
+// (matches MoreIcon's filled-dot style rather than a stroked one, since at
+// this size filled dots read more clearly as a grip than outlined ones).
+export function DragHandleIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="currentColor" stroke="none" className={className}>
+      <circle cx="7" cy="5" r="1.4" />
+      <circle cx="13" cy="5" r="1.4" />
+      <circle cx="7" cy="10" r="1.4" />
+      <circle cx="13" cy="10" r="1.4" />
+      <circle cx="7" cy="15" r="1.4" />
+      <circle cx="13" cy="15" r="1.4" />
+    </svg>
+  )
+}
