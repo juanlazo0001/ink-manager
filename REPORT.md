@@ -1,58 +1,73 @@
-# URGENT — short link generated correctly but didn't redirect (production only)
+# Real-time live updates + staff presence
 
-Single small session, on `main`. Diagnosed against the real deployed site, per the task's own instruction — not localhost, not a simulation.
+Two-part session, both committed and pushed separately, per the task's own instructions. Ran in parallel with an SMS-consent session working in the same checkout (not a separate worktree) — its in-progress, uncommitted edits to `ClientDetail.tsx`, `InquiryDetail.tsx`, `AppointmentDetail.tsx`, and `Inquiries.tsx` were stashed immediately before each `git pull --rebase` and restored immediately after, so neither session's work was ever staged or committed by the other.
 
 ---
-
-## What I actually observed (before guessing)
-
-Navigated Playwright directly to `https://ink-manager.up.railway.app/s/rTP3uwyI`:
-
-1. `GET https://ink-manager.up.railway.app/s/rTP3uwyI` → **200**. The web app's SPA correctly serves `index.html` for this path — **SPA-fallback routing is not the problem.**
-2. The page's own JS then calls the API: `GET https://ink-manager-production-f981.up.railway.app/s/rTP3uwyI` → **200**, no CORS error anywhere in the console. Confirmed `apps/api/src/index.ts` runs `cors()` with no origin restriction at all — **CORS is not the problem.**
-3. The final URL the browser landed on: `https://ink-manager.up.railway.app/s/ink-manager.up.railway.app/inquiry/black-hive-ink?draft=...` — garbled, not the real destination.
-4. Fetched the API's resolve endpoint directly to see the raw payload:
-   ```
-   curl https://ink-manager-production-f981.up.railway.app/s/rTP3uwyI
-   {"targetUrl":"ink-manager.up.railway.app/inquiry/black-hive-ink?draft=..."}
-   ```
-   **No `https://` prefix.** That's the entire bug.
-
-## Root cause
-
-`PUBLIC_APP_URL` is set on Railway as the bare domain (`ink-manager.up.railway.app`), not `https://ink-manager.up.railway.app` — an easy mistake, since Railway's own dashboard displays domains without a scheme. `resolvePublicAppUrl()` in `apps/api/src/lib/publicUrl.ts` never validated this; it just stripped trailing slashes and returned whatever was configured. Every public link this server builds from `PUBLIC_APP_URL` (estimate/deposit/waiver/gift-card/consent-form/intake/prefill, and the short-link redirect) has therefore been schemeless in production.
-
-**Why this only visibly broke the short-link redirect and nothing else:** a human tapping a link from a text message, or pasting a bare-domain-looking string into a browser's address bar, is lenient — both usually still get somewhere. `ShortLinkRedirect.tsx`'s `window.location.replace(result.targetUrl)` is not lenient: a schemeless string there is parsed as a path *relative to the current page*, which is exactly the garbled `/s/ink-manager.up.railway.app/...` URL observed. The short-link feature was the first thing in this app to hand a `PUBLIC_APP_URL`-built string to `window.location` programmatically rather than have a human tap it — that's why it surfaced here and nowhere else, not because it's the only place actually affected.
-
-## Fix
-
-`apps/api/src/lib/publicUrl.ts`: both `resolvePublicAppUrl()` and `resolveApiPublicUrl()` now run the configured env var through a new `ensureScheme()` — prepends `https://` only if the value doesn't already start with `http://` or `https://`. Verified against four inputs (schemeless, already-`https://`, already-`http://`, schemeless-with-trailing-slash) — all four now resolve to a well-formed absolute URL, and an already-correct value is never double-prefixed.
-
-## What this fix does NOT retroactively repair
-
-Every `ShortLink` row already written to the production database has its schemeless `targetUrl` baked in permanently — the fix only affects newly-generated links going forward. **I could not check or repair the real production database directly**: this local checkout's `DATABASE_URL` points at a different database entirely (confirmed — it has only the seeded "Dev Studio," no "black-hive-ink" studio, and `rTP3uwyI` doesn't exist in it at all). Whoever has real production DB access should run this once, after the fix above is deployed:
-```sql
-UPDATE "ShortLink" SET "targetUrl" = 'https://' || "targetUrl" WHERE "targetUrl" NOT LIKE 'http%';
-```
-That repairs every already-generated short link (including `rTP3uwyI`) in place — no need to regenerate or resend anything, since the underlying estimate/deposit/waiver/gift-card entity itself was never affected, only the stored link string.
-
-## Verification status — deploy required before this can be confirmed fixed
-
-This fix cannot be verified until it's actually deployed. **After redeploy: check Railway's build logs for a clean deploy (no schema changes ship with this, so it should be a plain code deploy), then generate a fresh short link on the real live site and tap it from a real device** — the same standard the prior session's fix was held to and failed. If the SQL backfill above hasn't been run yet, expect `rTP3uwyI` specifically to still be broken even after redeploy (it's a stored-data problem, not a code problem, for that specific link) — a freshly-generated link is the correct thing to test post-deploy, not the one already reported broken.
-
-## Standing note for future work spanning both services
-
-**Local or simulated testing is not sufficient for anything that crosses the API/web domain boundary** (CORS, cross-service redirects, or any config value like `PUBLIC_APP_URL`/`API_PUBLIC_URL` that gets reused across both). The prior session's own "verified in production-simulated config" check used a well-formed fake URL and never exercised the exact malformed input the real Railway env var actually had — a correct-looking local test of the *logic* still missed the real *data* problem. Any future feature that builds a URL from one service and hands it to the other (a redirect, a webhook callback, an iframe src, anything) needs to be checked against the actual deployed values, not a hand-constructed stand-in for them.
 
 ## Commits
+
 | Hash | What |
 |---|---|
-| `687d6d5` | This session's fix — `PUBLIC_APP_URL`/`API_PUBLIC_URL` now always resolve to a scheme-complete URL |
+| `b112fd7` | Part 1: WebSocket infrastructure + staff presence |
+| `f89865a` | Part 2: live updates via WebSocket invalidation |
 
-Pushed to `origin/main`. No background shells were started this session (all diagnosis ran against the real deployed site via Playwright/curl, not a local server).
+Both pushed to `origin/main`.
 
----
+## Part 1 — WebSocket infrastructure + presence
 
-## Still open from a prior session — unrelated to the above, not touched this session
+- `apps/api/src/lib/realtime/io.ts`: Socket.IO attached to the same `http.Server` Express already listens on (`apps/api/src/index.ts` now does `createServer(app)` → `initRealtime(httpServer)` → `httpServer.listen(...)`, one port, matching Railway). Handshake auth verifies the same JWT REST requests use (`socket.handshake.auth.token`, `jwt.verify` against `JWT_SECRET`); on success a socket joins `studio:{studioId}` and `user:{userId}`.
+- `apps/api/src/lib/realtime/presence.ts`: in-memory `Map`-based presence (`onlineUsers: Map<studioId, Set<userId>>`, plus a connection-refcount map so multiple tabs/devices for one user don't flicker each other's presence). Disconnect triggers an 8-second debounce (`OFFLINE_DEBOUNCE_MS`) before broadcasting `presence:offline`, absorbing a brief reconnect or tab switch. A freshly-connecting socket gets a `presence:snapshot` event with the full current online set for its studio, so a fresh page load is correct immediately rather than waiting for the next live event.
+- Frontend: `SocketProvider`/`useSocket()` (`apps/web/src/context/SocketContext.tsx`) connects once authenticated, exposes `onlineUserIds: Set<string>`, and re-syncs from a fresh `presence:snapshot` on every reconnect (Socket.IO's default reconnection is used as-is). It also registers the generic `invalidate` listener Part 2 relies on.
+- Presence dots (`apps/web/src/components/PresenceDot.tsx`, green/grey) added to: Team page Staff tab + Artists tab avatars, and conversation participant avatars — but only on STAFF/GROUP threads (gated on `conversation.type !== 'CLIENT'` / the existing `counterpart.participants` signal), never on CLIENT threads since clients have no login.
 
-There is still no SMS consent-tracking field anywhere in this app (`Client` only has `smsOptedOutAt`, no `smsConsentGivenAt` or equivalent; the public intake form has disclosure text but no checkbox). The client reminder cadence, the estimate 24-hour follow-up, and the estimate auto-send are fully automated and have been texting every client with a phone number and no explicit opt-out, including ones who never affirmatively consented, since those features shipped. This needs its own session (schema field + required intake checkbox + `/privacy`/`/terms` pages) before the actual gate (`sendClientSms()` in `apps/api/src/lib/clientSms.ts`) can be added. Carried forward here only so it isn't lost.
+**Known, accepted limitation (called out in code comments too):** presence and the Part 2 invalidation broadcast both live in a single in-process Socket.IO server + in-memory Maps. Correct for one API instance (what's deployed today). If the API is ever scaled to multiple replicas, a client on replica A would never see a presence/invalidate event emitted by replica B — would need a shared adapter (`@socket.io/redis-adapter`) plus moving presence's Maps to Redis. Same category of limitation already accepted for the Phase 7A in-process job scheduler.
+
+**Verified** (Playwright, two/three real logged-in browser contexts against the local dev stack): two different staff users show as online to each other; closing a tab shows the other user going offline after ~8s (not instant, not never); a third session logging in fresh sees both already-connected users as online immediately on page load, before any live event.
+
+## Part 2 — live updates via WebSocket invalidation
+
+`apps/api/src/lib/realtime/registry.ts` — mirrors the existing `TASK_SOURCE_REGISTRY` pattern:
+
+```ts
+export type InvalidationEvent =
+  | { type: "conversation.updated"; studioId: string; conversationId: string }
+  | { type: "task.changed"; studioId: string }
+  | { type: "inquiry.created"; studioId: string }
+  | { type: "appointment.changed"; studioId: string };
+
+emitInvalidation(event) // looks up query-key prefixes for event.type, io.to(`studio:${studioId}`).emit("invalidate", { keys })
+```
+
+To add a new surface later: add a variant to `InvalidationEvent`, add its query-key prefixes to the `keysFor` switch, call `emitInvalidation(...)` from the mutation route right after its existing logic succeeds. Nothing else changes — same "one new entry, nothing else needs to change" shape as the task-source registry.
+
+**Keys are prefixes, not full React Query keys** — e.g. `["tasks"]` rather than `["tasks", userId]`. This mirrors the `appointmentsQueryKey`/`appointmentsRangeQueryKey` prefix-compatibility trick already in `apps/web/src/lib/queryKeys.ts`. `invalidateQueries` prefix-matches by default, and any one client's cache only ever holds its own studioId/userId-scoped queries, so the server never needs to know each recipient's userId to build a correct key — one static prefix list, broadcast studio-wide, safely invalidates only each recipient's own data. No shared package exists between `apps/api` and `apps/web`, so these string literals are a hand-kept contract with `queryKeys.ts` and the ad-hoc keys in `ConversationsPanel.tsx` — noted in the registry file's own comment.
+
+Wired into (purely additive — existing response bodies/status codes unchanged):
+- `apps/api/src/routes/conversations.ts` — `POST /:id/messages`, both the real-Twilio-send early-return and the normal log-only path.
+- `apps/api/src/routes/tasks.ts` — `POST /personal` (create) and `PATCH /personal/:id` when the patch is a completion/reopen change.
+- `apps/api/src/routes/inquiries.ts` — `POST /` (the single route serving both staff-logged and public-intake-form submissions) and `POST /:id/schedule` (appointment created via the inquiry-scheduling flow).
+- `apps/api/src/routes/appointments.ts` — `POST /` (create) and `PATCH /:id` (status change and/or reschedule, same shared handler Calendar drag-and-drop uses).
+
+Nav-count badges (`useNavCounts`, and the duplicated inline poll in `ConversationsPanel.tsx`) needed no code change — they already use `navCountsQueryKey`, which starts with `nav-counts`, a prefix every relevant event includes. They get instant socket-driven updates for free, and the existing 60-second `refetchInterval` poll is untouched as the fallback.
+
+### Live-update verification (Playwright, two simultaneous logged-in browser sessions)
+
+For each of the four surfaces: one session performed the mutation (via the real UI where practical, or a direct authenticated/unauthenticated API call standing in for the public intake form), and the *other, already-open* session was asserted to (a) issue a fresh GET request for the relevant data with **no page navigation/reload** (checked via a `window` marker that a reload would wipe) and (b) show the new data in the DOM — all within a couple seconds, no manual refresh:
+
+| Surface | Trigger | Result |
+|---|---|---|
+| Conversations | Owner sends a STAFF-thread message | Front desk's already-open thread refetched and rendered the new message live |
+| Tasks | Owner creates & assigns a personal task to front desk | Front desk's already-open Tasks page showed it under "Assigned to Me" live |
+| Inquiries | Unauthenticated `POST /inquiries` (same code path the public intake form uses) | Front desk's already-open Inquiries list showed the new row live |
+| Calendar | Front desk PATCHes a seeded appointment's status | Owner's already-open Calendar issued a live refetch (network-verified; status reverted afterward so seed data is unchanged) |
+
+**Disconnect/reconnect resilience:** set one browser context offline (Playwright `context.setOffline(true)`) — page stayed responsive, no crash. Brought it back online, waited for the socket to reconnect, then triggered another task assignment: it arrived live again, confirming reconnect resumes normal invalidation behavior (a mutation that happened *while* offline is simply missed by the socket, same as any other missed push — nav-counts' 60s poll is the belt-and-suspenders fallback for that gap, same principle as lazy gift-card expiration alongside the active sweep).
+
+## Config notes
+
+- Presence offline debounce: **8 seconds** (`OFFLINE_DEBOUNCE_MS` in `apps/api/src/lib/realtime/presence.ts`).
+- Single-instance limitation applies to both features built this session (presence and invalidation broadcast) — see Part 1 section above; not repeated per-feature since it's the same one underlying cause (one in-process Socket.IO server, in-memory state).
+
+## Cleanup
+
+Both dev servers started for verification (API on :4000, web on :5173) were killed at the end of the session. Test data left in the dev database from verification (one extra STAFF conversation + messages, a couple of personal tasks, one extra inquiry/client) was **not** rolled back — this is the dev database DEVELOPMENT.md describes as being for exactly this kind of testing; the one mutation that changed pre-existing seed data (an appointment's status, toggled to prove the live update) was explicitly reverted back to its original value.
