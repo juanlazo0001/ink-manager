@@ -691,15 +691,13 @@ export default function ClientDetail() {
     }
   }
 
-  async function handleCopyLink() {
-    if (!latestSigningUrl) return
-
+  async function handleCopyLink(url: string) {
     try {
-      await navigator.clipboard.writeText(latestSigningUrl)
+      await navigator.clipboard.writeText(url)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     } catch {
-      setSendFormError('Failed to copy the link — copy it manually.')
+      // Clipboard access can fail (permissions); the link is visible to copy manually.
     }
   }
 
@@ -1454,6 +1452,13 @@ export default function ClientDetail() {
                         className="min-w-0 flex-1 rounded-lg border border-border bg-surface-inset px-3 py-2 text-xs text-fg"
                         onFocus={(e) => e.target.select()}
                       />
+                      <button
+                        type="button"
+                        onClick={() => handleCopyLink(latestDepositUrl)}
+                        className="shrink-0 rounded-full border border-border bg-surface px-4 py-2 text-xs font-medium text-fg transition hover:bg-surface-raised"
+                      >
+                        {copied ? 'Copied!' : 'Copy Link'}
+                      </button>
                     </div>
                   </div>
                 )}
@@ -1578,7 +1583,7 @@ export default function ClientDetail() {
                       />
                       <button
                         type="button"
-                        onClick={handleCopyLink}
+                        onClick={() => handleCopyLink(latestSigningUrl)}
                         className="shrink-0 rounded-full border border-border bg-surface px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface-raised"
                       >
                         {copied ? 'Copied!' : 'Copy Link'}
@@ -1681,6 +1686,13 @@ export default function ClientDetail() {
                         className="min-w-0 flex-1 rounded-lg border border-border bg-surface-inset px-3 py-2 text-xs text-fg"
                         onFocus={(e) => e.target.select()}
                       />
+                      <button
+                        type="button"
+                        onClick={() => handleCopyLink(latestWaiverUrl)}
+                        className="shrink-0 rounded-full border border-border bg-surface px-4 py-2 text-xs font-medium text-fg transition hover:bg-surface-raised"
+                      >
+                        {copied ? 'Copied!' : 'Copy Link'}
+                      </button>
                     </div>
                   </div>
                 )}

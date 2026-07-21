@@ -412,6 +412,7 @@ export default function InquiryDetail() {
   // same permission level as these two actions, so it's reused directly
   // rather than defining a second identical role check.
   const [showMoreMenu, setShowMoreMenu] = useState(false)
+  const [copied, setCopied] = useState(false)
   const [showMarkLostModal, setShowMarkLostModal] = useState(false)
   const [lostReasonInput, setLostReasonInput] = useState('')
   const [markingLost, setMarkingLost] = useState(false)
@@ -845,6 +846,16 @@ export default function InquiryDetail() {
       setMarkPaidError(err instanceof Error ? err.message : 'Failed to mark deposit as paid')
     } finally {
       setMarkingPaid(false)
+    }
+  }
+
+  async function handleCopyLink(url: string) {
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Clipboard access can fail (permissions); the link is visible to copy manually.
     }
   }
 
@@ -1303,13 +1314,22 @@ export default function InquiryDetail() {
                       <p className="mb-2 text-xs text-fg-muted">
                         Share this link with the client — it expires in 7 days.
                       </p>
-                      <input
-                        type="text"
-                        readOnly
-                        value={estimateUrl}
-                        onFocus={(event) => event.target.select()}
-                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:outline-none"
-                      />
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          readOnly
+                          value={estimateUrl}
+                          onFocus={(event) => event.target.select()}
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleCopyLink(estimateUrl)}
+                          className="shrink-0 rounded-full border border-border bg-surface px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface-raised"
+                        >
+                          {copied ? 'Copied!' : 'Copy Link'}
+                        </button>
+                      </div>
                     </div>
                   )}
 
@@ -1451,13 +1471,22 @@ export default function InquiryDetail() {
                           <p className="mb-2 text-xs text-fg-muted">
                             Share this link with the client — it expires in 48 hours.
                           </p>
-                          <input
-                            type="text"
-                            readOnly
-                            value={depositUrl}
-                            onFocus={(event) => event.target.select()}
-                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:outline-none"
-                          />
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              readOnly
+                              value={depositUrl}
+                              onFocus={(event) => event.target.select()}
+                              className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:outline-none"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleCopyLink(depositUrl)}
+                              className="shrink-0 rounded-full border border-border bg-surface px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface-raised"
+                            >
+                              {copied ? 'Copied!' : 'Copy Link'}
+                            </button>
+                          </div>
                         </div>
                       )}
                     </>
