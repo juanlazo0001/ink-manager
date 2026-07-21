@@ -317,3 +317,72 @@ A different session's uncommitted `ArtistSelect.tsx` extraction + `avatarUrl` ro
 ## Cleanup
 
 Web dev server (:5173) stopped. The API dev server on :4000 (already running from an earlier session) left as-is. All scratch verification scripts deleted after use. Test data left in the dev database (per standing convention): the seeded conflict appointment for `artist1@dev-studio.test`, the assigned-artist/time-estimate now set on the `[PACKAGE-A TEST]` inquiry, its now-generated deposit form with a saved proposed time, and a fresh $100 gift card issued to Bailey Testperson for the gift-card-gating test.
+
+---
+
+# URGENT — suggested times ignore artist's actual working hours (timezone bug)
+
+Single small session on `main`. No schema changes.
+
+## Root cause, confirmed exactly
+
+`getSuggestedTimes` (from the previous Package D session) built each candidate slot with plain `Date.setHours`/`setMinutes` calls, and read `Artist.preferredSchedule`'s stored `"09:00"`/`"17:00"` strings straight into them — both operate in the **API server process's own OS timezone**, never `StudioSettings.timezone`. My own dev-machine testing during Package D happened to pass because my dev machine's OS timezone (`America/New_York`) coincidentally matched the studio's configured timezone — masking the bug entirely in that environment. On a server whose OS timezone is UTC (the ordinary default for a production container) but a studio configured for `America/New_York`, a `9:00 AM–5:00 PM` schedule was silently read as `9:00 AM–5:00 PM UTC`, i.e. `5:00 AM–1:00 PM Eastern` — a near-exact 4-hour shift, matching the reported symptom (Louie G, Wed 9–5 schedule, all suggestions landing 5–9 AM) exactly.
+
+## Every location the audit found
+
+- **`preferredSchedule` window comparison** (`schedulingAssistant.ts`) — the primary bug above. Fixed.
+- **Guest artist date-window check** (same file) — `localDateKey` used the same server-OS-local `getFullYear`/`getMonth`/`getDate` getters for the guest-window comparison. Same root cause, same fix.
+- **`findBufferConflict`'s day-bucketing** (`schedulingConflict.ts`) — used **UTC** calendar-day boundaries (`Date.UTC(start.getUTCFullYear()...)`) to scope its query, a *third*, different timezone treatment from either of the above. This could miss a genuine conflict for an appointment near local midnight in a studio timezone far enough from UTC. Fixed by replacing the day-bucketed query with a buffer-padded absolute-instant window (`[start - 1.5h, end + 1.5h]`) — provably sufficient for the overlap predicate (which was already correct, timezone-agnostic absolute-instant math) and removes any timezone dependency from the query scope entirely, rather than trying to get the "right" timezone for a day-boundary that doesn't need to exist at all.
+- **Business hours / per-location hours** — investigated, **nothing to fix**: `StudioSettings.businessHours` is dead code on the read side (written by the settings PATCH, never read anywhere), and `Location.hours` is only consumed by `Calendar.tsx`'s frontend visual shading (correctly using the *browser's* own local time for a staff member's own calendar view — a legitimate, different concern, not a backend scheduling comparison). Neither is read by any backend scheduling-suggestion or conflict-check code, so there was no flawed comparison to fix here.
+
+## The shared utility
+
+New `apps/api/src/lib/studioTime.ts` — the one shared, independently unit-tested home for every studio-timezone-aware time primitive used across the scheduling feature (and now the reminder ticker too):
+- `civilDateKey(date, timeZone)` and `localMinutesSinceMidnight(date, timeZone)` — moved here from `reminderWindow.ts` (re-exported from there so `reminderTicker.ts`'s existing import is unaffected).
+- `isSameCalendarDay(start, end, timeZone)` — moved here from `dateRange.ts` (same re-export treatment for `appointments.ts`'s existing import).
+- `localDayOfWeek(date, timeZone)` and `zonedTimeToUtc(dateKey, time, timeZone)` — new. `zonedTimeToUtc` is the missing direction neither existing function needed before (they only ever went instant → local; generating a candidate slot from a stored `"09:00"` needs local → instant) — implemented via the standard two-pass offset-correction technique for `Intl`-only timezone conversion (handles DST transitions correctly), consistent with this codebase's existing convention of plain `Intl.DateTimeFormat` over a timezone library.
+
+`schedulingAssistant.ts` now fetches the artist's studio's `StudioSettings.timezone` (falling back to `America/New_York`, matching the schema's own default) and routes every civil-date/wall-clock computation through these primitives — no more `Date.setHours`/`getDay`/`getFullYear` anywhere in that file.
+
+## Unit tests (`apps/api/src/lib/studioTime.test.ts`, Node's built-in test runner)
+
+No test framework existed in this repo before; added zero new dependencies (`node:test` + `node:assert/strict`, available natively). `npm test` now runs `tsx --test src/**/*.test.ts` (was a placeholder `exit 1` before). 9 tests, all passing:
+- `zonedTimeToUtc("2026-07-22", "09:00", "America/New_York")` → `2026-07-22T13:00:00.000Z`, explicitly asserting the result's UTC hour is **not** 9 (the exact bug).
+- Same check in January (`EST`, UTC-5) to prove DST correctness independently of the July case.
+- `civilDateKey`/`isSameCalendarDay`: an instant that's the same UTC calendar day but a different Eastern day (and vice versa) — proving the whole point of timezone-aware day comparison with a concrete counter-example.
+- `localDayOfWeek`, `localMinutesSinceMidnight` round-tripping.
+- A 4-timezone × DST-transition-adjacent round-trip table (`zonedTimeToUtc` → `civilDateKey`/`localMinutesSinceMidnight` recovers the original inputs exactly).
+
+## Live re-verification — exact reported scenario
+
+Created a "Louie G" dev artist (Mon/Wed/Fri, 9:00 AM–5:00 PM, matching the bug report's screenshot exactly) and queried the real, running `GET /scheduling/suggested-times` endpoint (live HTTP request, real auth, real DB) for a Wednesday:
+
+**Before this fix** (mechanism, not re-run against old code — reasoned from the exact same arithmetic the old code performed): stored `"09:00"` read as server-OS-local 9:00 AM → serialized as `09:00 UTC` → **5:00 AM Eastern**.
+
+**After this fix** (actual live output):
+```
+2026-07-22T13:00:00.000Z | conflict: false   (09:00 Eastern)
+2026-07-22T13:30:00.000Z | conflict: false   (09:00 Eastern)
+2026-07-22T14:00:00.000Z | conflict: false   (10:00 Eastern)
+2026-07-22T14:30:00.000Z | conflict: false   (10:00 Eastern)
+2026-07-22T15:00:00.000Z | conflict: false   (11:00 Eastern)
+```
+All within 9:00 AM–5:00 PM Eastern, not 5:00–9:00 AM. 2026-07-22 confirmed a Wednesday.
+
+**Additional rigor, not just asked for but necessary**: my dev machine's own OS timezone is `America/New_York`, the same as the dev studio's configured timezone — meaning a same-environment re-test alone couldn't distinguish "genuinely timezone-aware" from "coincidentally correct because both TZs match" (exactly the blind spot that let the original bug ship undetected). To rule that out, I temporarily pointed the studio's `timezone` at `America/Los_Angeles` (deliberately different from the server's own OS timezone) and re-ran the same query: every suggestion correctly shifted to land within 9:00 AM–5:00 PM **Pacific**, on a Mon/Wed/Fri, proving the result tracks the *studio's* configured timezone and is fully independent of whatever timezone the server process itself happens to run in. Reverted the studio's timezone back to `America/New_York` immediately after.
+
+## Sweep-check — second artist, different hours/day
+
+`artist1@dev-studio.test` (Tuesday only, 11:00 AM–3:00 PM — different artist, different day, different hours than Louie G): all 5 live suggestions landed Tuesday 11:00 AM–1:00 PM Eastern, correctly within window. Not a one-artist coincidence fix.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) — clean. `npm run build` (web, unaffected by this backend-only fix) — clean. `npm test` (api) — 9/9 passing.
+
+## Commit
+
+`d23e278` — Fix scheduling assistant timezone bug: preferredSchedule read in server OS time, not studio time.
+
+## Cleanup
+
+Web dev server (:5173) stopped. The API dev server on :4000 (already running from an earlier session) left as-is. All scratch verification scripts deleted after use. Test data left in the dev database (per standing convention): a new "Louie G" dev artist (Mon/Wed/Fri 9–5, `louieg@dev-studio.test` / `password123`) created specifically to reproduce the reported scenario — worth keeping for any future scheduling-assistant work.
