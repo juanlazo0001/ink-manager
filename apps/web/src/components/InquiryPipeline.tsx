@@ -102,8 +102,12 @@ export default function InquiryPipeline({
             const done = index < activeIndex
             const current = index === activeIndex
             return (
-              <div key={step.label} className="flex flex-1 items-center last:flex-none">
-                <div className="flex flex-col items-center gap-1.5">
+              <div key={step.label} className="flex flex-1 flex-col items-center last:flex-none">
+                {/* Circle + connector live in their own fixed-height row so the
+                    connector centers against the circle alone -- centering it
+                    against this whole column (circle + label) instead pulled it
+                    down to the block's midpoint, off the circle's center. */}
+                <div className="flex w-full items-center">
                   <span
                     className={[
                       'flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold',
@@ -112,18 +116,18 @@ export default function InquiryPipeline({
                   >
                     {done ? <CheckIcon className="h-3 w-3" /> : index + 1}
                   </span>
-                  <span
-                    className={[
-                      'whitespace-nowrap text-[11px] font-medium',
-                      current ? 'text-fg' : done ? 'text-fg-secondary' : 'text-fg-muted',
-                    ].join(' ')}
-                  >
-                    {step.label}
-                  </span>
+                  {index < PIPELINE_STEPS.length - 1 && (
+                    <div className={`mx-1.5 h-0.5 flex-1 rounded-full ${done ? 'bg-accent' : 'bg-border'}`} />
+                  )}
                 </div>
-                {index < PIPELINE_STEPS.length - 1 && (
-                  <div className={`mx-1.5 h-0.5 flex-1 rounded-full ${done ? 'bg-accent' : 'bg-border'}`} />
-                )}
+                <span
+                  className={[
+                    'mt-1.5 whitespace-nowrap text-[11px] font-medium',
+                    current ? 'text-fg' : done ? 'text-fg-secondary' : 'text-fg-muted',
+                  ].join(' ')}
+                >
+                  {step.label}
+                </span>
               </div>
             )
           })}
