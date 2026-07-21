@@ -7,11 +7,30 @@
 // real clients at localhost instead of failing loudly.
 const DEV_FALLBACK = "http://localhost:5173";
 
+// A Railway env var pasted as just "ink-manager.up.railway.app" (no
+// scheme) is a real, easy-to-make mistake -- Railway's own dashboard shows
+// the domain that way, with nothing prompting you to add "https://" in
+// front of it. The bug this causes is subtle precisely because it's
+// asymmetric: a human tapping the resulting link from an SMS or pasting it
+// into a browser's address bar often still gets there fine (both are
+// lenient about a bare domain-looking string), but anything that hands the
+// same string to `window.location.replace()`/`.href` programmatically is
+// NOT lenient -- a schemeless value there is parsed as a path *relative to
+// the current page*, producing a garbled URL instead of navigating
+// anywhere real (see apps/web/src/pages/ShortLinkRedirect.tsx, the first
+// place this was ever exercised programmatically rather than tapped).
+// Normalizing here means every caller of PUBLIC_APP_URL/API_PUBLIC_URL
+// gets a well-formed absolute URL regardless of whether the env var
+// happened to include the scheme.
+function ensureScheme(url: string): string {
+  return /^https?:\/\//i.test(url) ? url : `https://${url}`;
+}
+
 function resolvePublicAppUrl(): string {
   const configured = process.env.PUBLIC_APP_URL;
 
   if (configured) {
-    return configured.replace(/\/+$/, "");
+    return ensureScheme(configured.replace(/\/+$/, ""));
   }
 
   if (process.env.NODE_ENV !== "production") {
@@ -47,7 +66,7 @@ function resolveApiPublicUrl(): string {
   const configured = process.env.API_PUBLIC_URL;
 
   if (configured) {
-    return configured.replace(/\/+$/, "");
+    return ensureScheme(configured.replace(/\/+$/, ""));
   }
 
   if (process.env.NODE_ENV !== "production") {
