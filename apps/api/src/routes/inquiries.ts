@@ -923,6 +923,14 @@ router.post("/:id/deposit-form", requireAuth, requireRole(Role.OWNER, Role.FRONT
 // touch GiftCard.appointmentId here; the actual attach happens at
 // POST /:id/schedule like every other card, same as mark-paid's freshly-
 // issued card isn't attached to anything until that same step.
+//
+// Staff routinely hits "Send Deposit Form" before ever checking whether the
+// client already has a card on file, so this stays available even after an
+// unsigned DepositForm already exists -- it's only blocked once the client
+// has actually signed one (a real commitment shouldn't be silently
+// discarded). An unsigned one gets deleted here rather than left behind, so
+// its public link can't still be signed for an inquiry that's already
+// moved on without it.
 router.post("/:id/attach-gift-card", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
   const id = req.params.id as string;
   const { giftCardId } = req.body ?? {};
@@ -940,8 +948,8 @@ router.post("/:id/attach-gift-card", requireAuth, requireRole(Role.OWNER, Role.F
     return res.status(400).json({ error: "Only an inquiry in DEPOSIT_PENDING can skip to an existing gift card" });
   }
 
-  if (inquiry.depositForm) {
-    return res.status(400).json({ error: "A deposit form already exists for this inquiry" });
+  if (inquiry.depositForm?.signedAt) {
+    return res.status(400).json({ error: "This client has already signed a deposit form for this inquiry" });
   }
 
   const giftCardResult = await validateGiftCardForAttachment(giftCardId, req.user!.studioId, inquiry.clientId);
@@ -949,7 +957,12 @@ router.post("/:id/attach-gift-card", requireAuth, requireRole(Role.OWNER, Role.F
     return res.status(400).json({ error: giftCardResult.error });
   }
 
-  const updated = await prisma.inquiry.update({ where: { id }, data: { status: InquiryStatus.SCHEDULING } });
+  const updated = await prisma.$transaction(async (tx) => {
+    if (inquiry.depositForm) {
+      await tx.depositForm.delete({ where: { id: inquiry.depositForm.id } });
+    }
+    return tx.inquiry.update({ where: { id }, data: { status: InquiryStatus.SCHEDULING } });
+  });
 
   await logAudit({
     studioId: req.user!.studioId,
@@ -960,6 +973,7 @@ router.post("/:id/attach-gift-card", requireAuth, requireRole(Role.OWNER, Role.F
     changes: {
       ...diffObjects(inquiry, { status: InquiryStatus.SCHEDULING }, ["status"]),
       satisfiedByExistingGiftCardId: giftCardId,
+      ...(inquiry.depositForm ? { discardedUnsignedDepositFormId: inquiry.depositForm.id } : {}),
     },
   });
 

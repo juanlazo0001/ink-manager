@@ -1390,18 +1390,22 @@ export default function InquiryDetail() {
                         </button>
                       )}
                     </>
-                  ) : !inquiry.depositForm && hasAvailableGiftCard ? (
+                  ) : hasAvailableGiftCard ? (
                     // No point requesting a fresh deposit if the client
                     // already has a card that can secure the booking --
                     // attaching it moves straight to Scheduling below,
                     // same status transition mark-paid does, just without
-                    // creating a new card.
+                    // creating a new card. Still offered even if an unsigned
+                    // DepositForm already exists (staff routinely send one
+                    // before checking for an existing card) -- attaching
+                    // discards that unsigned form server-side.
                     <div className="mt-4">
                       <p className="text-sm text-fg-secondary">
                         {clientGiftCards!.length === 1
                           ? 'This client already has an available gift card'
                           : `This client already has ${clientGiftCards!.length} available gift cards`}{' '}
                         on file — no deposit needs to be requested.
+                        {inquiry.depositForm && ' Attaching it will cancel the deposit form link above.'}
                       </p>
 
                       {clientGiftCards!.length > 1 && (
