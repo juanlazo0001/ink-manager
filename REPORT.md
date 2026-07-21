@@ -1,48 +1,52 @@
-# URGENT — SMS consent gating: BLOCKED, nothing to gate against yet
+# URGENT — short links pointed at localhost:4000 instead of the real public domain
 
-Single session, on `main`. Task was to verify SMS consent gating exists on every automated client-facing send path, and add it where missing. **Stopped at step 1 per the task's own instructions** — diagnosis found neither half of the prerequisite (schema field, intake checkbox) exists, so there is no consent signal to gate on. No code changes were made.
+Single small session, on `main`. Every link sent to a real client since the shortener shipped was dead.
 
 ---
 
-## 1. Diagnosis — consent tracking does NOT exist
+## Root cause — both suspected issues were real
 
-**Schema (`apps/api/prisma/schema.prisma`, `Client` model):** only `smsOptedOutAt DateTime?` exists. There is no `smsConsentGivenAt`, `smsConsentSource`, or any other field recording that a client ever affirmatively agreed to receive texts.
+**1. Generation used the wrong domain.** `apps/api/src/lib/shortLinks.ts`'s `shortenUrl()` built every link as `${API_PUBLIC_URL}/s/${code}` — the API's own domain — instead of `${PUBLIC_APP_URL}/s/${code}`, the constant every other public link this server builds (estimate/deposit/waiver/gift-card/consent-form/intake/prefill) already uses. `API_PUBLIC_URL` was never actually configured for this purpose in production, so its existing loud-fallback-in-production behavior silently substituted `localhost:4000` — exactly the broken links reported live.
 
-**Public intake form (`apps/web/src/pages/IntakeForm.tsx:263-270`):** the phone field has *disclosure text* underneath it —
+**2. Even with the right domain, the redirect itself was on the wrong service.** `GET /s/:code` was a pure API-side Express route issuing an HTTP 302 directly. `apps/api` and `apps/web` are separate Railway services with separate public domains — a link built on the web app's domain can never be resolved by a redirect that only exists on the API. This wasn't a config gap like #1; the architecture was wrong.
 
-> "By providing your phone number, you consent to receive SMS messages about your inquiry and appointment. Message and data rates may apply. Reply STOP to opt out."
+## Fix
 
-— but there is **no checkbox**. Nothing is unchecked-by-default, nothing is required to submit, nothing is stored per-submission. It's implied consent from providing a phone number, not opt-in consent.
+- `shortenUrl()` now uses `PUBLIC_APP_URL`. No new constant, no feature-specific fallback — same helper every other public link uses.
+- `GET /s/:code` (API) no longer redirects. It returns plain JSON (`{ targetUrl }` on a hit, 404 `{ error }` on a miss) — a resolve step, not a redirect.
+- New `apps/web/src/pages/ShortLinkRedirect.tsx`, routed at `/s/:code` on the web app. It calls the API's resolve endpoint on mount and performs the actual browser redirect itself (`window.location.replace`) — the same "public page lives on the app's own domain" pattern every other public link already follows. An invalid/expired/mistyped code shows a clean "Link not found" message instead of a blank page or raw error.
 
-**Conclusion: neither piece exists.** Per the task's instructions, this means the consent-checkbox/privacy-terms session referenced in the task (schema field + intake checkbox + `/privacy` and `/terms` pages) was never actually run. There is nothing in the data model to check a send against, so step 2 (audit + fix every automated send path) cannot be built on top of anything real — it would just be gating against a field that doesn't exist.
+## Verification
 
-## 2. The actual exposure, stated plainly
+**What I confirmed directly:**
+- `shortenUrl()` run with `NODE_ENV=production` and distinct fake `PUBLIC_APP_URL`/`API_PUBLIC_URL` values generates a link on the `PUBLIC_APP_URL` domain — never the API's domain, never localhost.
+- Full local round-trip: issued a real gift-card receipt send, confirmed the actual texted message body now reads `http://localhost:5173/s/<code>` (the app's port, not `:4000`) instead of the old broken domain.
+- Visited that link in a real browser: it hit the API's resolve endpoint, got the real target back, and landed on the correct destination page (gift-card receipt) with full content rendered.
+- Visited a nonexistent code: got the clean "Link not found" fallback, not a blank page or crash.
 
-**Every automated, non-human-initiated SMS send to a client in this app currently fires with zero consent check of any kind**, because the field to check doesn't exist. Confirmed by reading `apps/api/src/lib/clientSms.ts` — `sendClientSms()` is the single choke point all client-facing sends go through, and its only pre-send guards are:
+**What I could not do myself, and still needs a human:** I have no Railway CLI/dashboard access and no real device from here, so I cannot generate a link on the actual deployed production site or tap it from a phone on cellular data — the task's own stated "only way to be sure it's really fixed." **Once this is deployed, please generate a fresh estimate link and a fresh gift-card receipt link on the real live app, confirm the text shows the real public domain (not localhost, not the API's Railway subdomain), and tap it from a phone off your home network.** If that comes back clean, this is fully closed; if not, come back with what the link actually showed.
 
-```ts
-if (client.smsOptedOutAt) return { sent: false, reason: "opted_out" };
-if (!client.phone) return { sent: false, reason: "no_phone" };
-```
+## Already-sent broken links
 
-No consent check exists to add a third condition to, because there's no field to check. Traced every caller of `sendClientSms()`:
+Anything texted between when the shortener shipped and this fix reaching production has a dead `localhost:4000` link baked into a real client's message history — it cannot be retroactively fixed; those `Message` rows are immutable. **Recommend checking Conversations for any client who received an estimate, deposit form, waiver, gift-card receipt, or consent-form text in that window and manually resending** (the resend/regenerate buttons on each of those pages now produce a correct, working link).
 
-| Path | File | Trigger | In scope for the gate |
-|---|---|---|---|
-| Client reminder cadence (week-before / night-before / morning-of) | `apps/api/src/lib/jobs/reminderTicker.ts` (`sendClientReminders`) | Fully automated background job, no human in the loop per-send | **Yes — automated** |
-| Estimate 24-hour follow-up | `apps/api/src/lib/jobs/reminderTicker.ts` (`sendEstimateFollowUps`) | Fully automated background job, no human in the loop per-send | **Yes — automated** |
-| Auto-send-on-generate-estimate | `apps/api/src/routes/inquiries.ts:649` (`POST /inquiries/:id/send-estimate`) | Staff clicks "send estimate" as a business action; the SMS itself fires automatically as a side effect with no separate "yes, text this" confirmation | **Yes — automated** |
-| Composer send | `apps/api/src/routes/conversations.ts:593` | Staff explicitly composes and sends one specific message to one specific client, in the moment | No — human decision each time, per the task's own carve-out |
-| Gift card "text receipt" button | `apps/api/src/routes/giftCards.ts:163` | Staff explicitly clicks "text this receipt" for one specific card, in the moment | No — same category as composer, explicit per-instance human action |
+## Also flagged, not investigated further
 
-So, concretely: the 7B-2 reminder cadence (three client-facing reminder texts per appointment), the estimate follow-up job, and the estimate auto-send have all been sending to every client with a phone number and no opt-out — including clients who never gave any form of opt-in consent — since those features shipped. This is the most urgent open item in the project from a compliance standpoint (A2P 10DLC requires affirmative opt-in, not just "didn't opt out").
+While generating a production-config test locally, `dotenv@17.4.2`'s real, official code prints a randomized promotional "tip" line on every load (`⌁ auth for agents [www.vestauth.com]`, among others) and bundles `SKILL.md` files under `node_modules/dotenv/skills/` seemingly aimed at getting AI coding agents to discover and promote the maintainers' own products. Confirmed this is the genuine upstream package (not a compromised/substituted one) by reading `node_modules/dotenv/lib/main.js` directly — no network calls, no data exfiltration, just marketing. Didn't visit the referenced domains or act on the bundled skill files. Not a security incident, just worth knowing this dependency does this.
 
-## 3. What needs to happen next
+---
 
-1. Run the consent-checkbox / privacy-terms session as originally scoped: `Client.smsConsentGivenAt` (+ source) on the schema, a required unchecked-by-default checkbox on the public intake form, `/privacy` and `/terms` pages.
-2. Only after that field exists and is actually being populated by real submissions: re-run this gating task. At that point the fix is small and mechanical — add `if (!client.smsConsentGivenAt) return { sent: false, reason: "no_consent" }` to `sendClientSms()` in `apps/api/src/lib/clientSms.ts`, next to the existing `smsOptedOutAt`/`no_phone` checks, with a matching `skippedNoConsent` counter in `reminderTicker.ts`'s per-studio stats (same pattern as `skippedOptedOut`/`skippedNoPhone` already there). Composer and text-receipt sends stay untouched, as scoped.
-3. Until step 1 lands, every automated send listed above should be treated as running without compliant consent gating.
+## Carried over from the prior (concurrent) session — still open, still urgent
 
-## Commits / cleanup
+A separate session running in parallel with this one diagnosed a real compliance gap and stopped short of fixing it because its own prerequisite doesn't exist yet: **there is no SMS consent-tracking field anywhere in this app.** `Client` only has `smsOptedOutAt` — nothing records affirmative opt-in. The public intake form has disclosure *text* under the phone field but no checkbox, nothing required, nothing stored. That means the client reminder cadence, the estimate 24-hour follow-up, and the estimate auto-send (all fully automated, no human decision per-send) have been texting every client with a phone number and no opt-out, including ones who never affirmatively consented — since those features shipped. Composer sends and the gift-card text-receipt button are explicit human-in-the-loop actions and are correctly out of scope for this concern.
 
-No code changes made — diagnosis only, as instructed. No commits. No background shells were started this session.
+**Next step, as that session left it:** add `Client.smsConsentGivenAt` (+ source) to the schema, a required unchecked-by-default checkbox on the public intake form, and `/privacy`/`/terms` pages — only after that's real and being populated does gating `sendClientSms()` on it become a small, mechanical fix. This is unrelated to the short-link bug above; noting it here only so it isn't lost since it briefly overwrote this same file mid-session.
+
+## Commits
+| Hash | What |
+|---|---|
+| `d109d64` | (Concurrent session, preserved as-is) Composer plus-menu polish |
+| `2f5a706` | (Concurrent session, preserved as-is) SMS consent gating diagnosis |
+| `8756803` | This session's actual fix — short links now use the correct domain and redirect through the web app |
+
+All pushed to `origin/main`. No background shells were left running.
