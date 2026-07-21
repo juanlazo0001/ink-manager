@@ -238,6 +238,11 @@ interface ShareableLinksResponse {
   intakeFormUrl: string
   estimateLinks: (ShareableLink & { inquiryId: string })[]
   depositLinks: (ShareableLink & { inquiryId: string })[]
+  // Inquiries/appointments eligible for a fresh Send Deposit Form/Waiver --
+  // distinct from depositLinks/waiverLinks above, which only ever list
+  // entities that already have one.
+  depositFormOptions: { inquiryId: string; label: string }[]
+  waiverOptions: { appointmentId: string; label: string }[]
   waiverLinks: (ShareableLink & { appointmentId: string })[]
   giftCardLinks: (ShareableLink & { giftCardId: string })[]
 }
@@ -1418,6 +1423,9 @@ function ThreadView({
   const [receiptResendResult, setReceiptResendResult] = useState<{ giftCardId: string; error: string | null } | null>(
     null,
   )
+  const [creatingDepositId, setCreatingDepositId] = useState<string | null>(null)
+  const [creatingWaiverId, setCreatingWaiverId] = useState<string | null>(null)
+  const [createFormError, setCreateFormError] = useState<string | null>(null)
 
   // Same PrefillDraft token mechanism as the other 6C link types (7-day TTL,
   // single-use, quiet empty-form fallback if invalid/expired) -- just built
@@ -1473,6 +1481,43 @@ function ThreadView({
       setReceiptResendResult({ giftCardId, error: err instanceof Error ? err.message : 'Failed to resend' })
     } finally {
       setResendingReceiptId(null)
+    }
+  }
+
+  // Both of these create the entity (same routes InquiryDetail.tsx/
+  // AppointmentDetail.tsx themselves call), then insert the link into the
+  // draft -- unlike the gift-card resend above, this doesn't send anything
+  // by itself, matching every other row in this menu (staff reviews/adds
+  // their own message around it before sending).
+  async function handleCreateDepositForm(inquiryId: string) {
+    setCreatingDepositId(inquiryId)
+    setCreateFormError(null)
+    try {
+      const result = await apiFetch<{ depositUrl: string }>(`/inquiries/${inquiryId}/deposit-form`, {
+        method: 'POST',
+      })
+      setBody((current) => (current ? `${current}\n${result.depositUrl}` : result.depositUrl))
+      queryClient.invalidateQueries({ queryKey: ['client-shareable-links', data?.conversation.clientId] })
+    } catch (err) {
+      setCreateFormError(err instanceof Error ? err.message : 'Failed to create deposit form')
+    } finally {
+      setCreatingDepositId(null)
+    }
+  }
+
+  async function handleCreateWaiver(appointmentId: string) {
+    setCreatingWaiverId(appointmentId)
+    setCreateFormError(null)
+    try {
+      const result = await apiFetch<{ signingUrl: string }>(`/appointments/${appointmentId}/waiver`, {
+        method: 'POST',
+      })
+      setBody((current) => (current ? `${current}\n${result.signingUrl}` : result.signingUrl))
+      queryClient.invalidateQueries({ queryKey: ['client-shareable-links', data?.conversation.clientId] })
+    } catch (err) {
+      setCreateFormError(err instanceof Error ? err.message : 'Failed to create waiver')
+    } finally {
+      setCreatingWaiverId(null)
     }
   }
 
@@ -2463,6 +2508,40 @@ function ThreadView({
               </div>
             ))}
             {receiptResendResult?.error && <p className="px-3 py-1 text-xs text-danger">{receiptResendResult.error}</p>}
+
+            {/* Deposit form / waiver: create-then-insert-link, one row per
+                eligible inquiry/appointment (there's no existing link to
+                show yet for these -- that's the whole point). */}
+            {(linksData?.depositFormOptions ?? []).map((option) => (
+              <button
+                key={option.inquiryId}
+                type="button"
+                disabled={creatingDepositId === option.inquiryId}
+                onClick={() => handleCreateDepositForm(option.inquiryId)}
+                className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-fg-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <span className="truncate">Deposit form — {option.label}</span>
+                <span className="shrink-0 text-fg-muted">
+                  {creatingDepositId === option.inquiryId ? 'Creating…' : 'Send'}
+                </span>
+              </button>
+            ))}
+
+            {(linksData?.waiverOptions ?? []).map((option) => (
+              <button
+                key={option.appointmentId}
+                type="button"
+                disabled={creatingWaiverId === option.appointmentId}
+                onClick={() => handleCreateWaiver(option.appointmentId)}
+                className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-fg-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <span className="truncate">Waiver — {new Date(option.label).toLocaleDateString()}</span>
+                <span className="shrink-0 text-fg-muted">
+                  {creatingWaiverId === option.appointmentId ? 'Creating…' : 'Send'}
+                </span>
+              </button>
+            ))}
+            {createFormError && <p className="px-3 py-1 text-xs text-danger">{createFormError}</p>}
           </div>
         )}
 

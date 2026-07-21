@@ -36,6 +36,8 @@ interface InquirySummary {
   status: string
   channel: string
   createdAt: string
+  priceEstimateLow: number | null
+  priceEstimateHigh: number | null
   depositForm: DepositFormSummary | null
 }
 
@@ -265,6 +267,22 @@ export default function ClientDetail() {
   const [sendFormError, setSendFormError] = useState<string | null>(null)
   const [latestSigningUrl, setLatestSigningUrl] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+
+  // Deposit form / waiver both attach to a specific inquiry/appointment
+  // (unlike consent forms, which are client-scoped) -- these track the
+  // "which one" picker popover, in-flight send, and any error, one set per
+  // entity type. showDepositPicker/showWaiverPicker only actually render a
+  // picker when there's more than one eligible entity (see the JSX below);
+  // with exactly one, the button just sends directly.
+  const [showDepositPicker, setShowDepositPicker] = useState(false)
+  const [sendingDepositId, setSendingDepositId] = useState<string | null>(null)
+  const [depositSendError, setDepositSendError] = useState<string | null>(null)
+  const [latestDepositUrl, setLatestDepositUrl] = useState<string | null>(null)
+
+  const [showWaiverPicker, setShowWaiverPicker] = useState(false)
+  const [sendingWaiverId, setSendingWaiverId] = useState<string | null>(null)
+  const [waiverSendError, setWaiverSendError] = useState<string | null>(null)
+  const [latestWaiverUrl, setLatestWaiverUrl] = useState<string | null>(null)
 
   const [duplicates, setDuplicates] = useState<DuplicateCandidate[] | null>(null)
   const [mergeTarget, setMergeTarget] = useState<DuplicateCandidate | null>(null)
@@ -685,7 +703,107 @@ export default function ClientDetail() {
     }
   }
 
+  async function handleSendDepositForm(inquiryId: string) {
+    setSendingDepositId(inquiryId)
+    setDepositSendError(null)
+
+    try {
+      const result = await apiFetch<DepositFormSummary & { depositUrl: string }>(
+        `/inquiries/${inquiryId}/deposit-form`,
+        { method: 'POST' },
+      )
+      setLatestDepositUrl(result.depositUrl)
+      setShowDepositPicker(false)
+      setClient((prev) =>
+        prev
+          ? {
+              ...prev,
+              inquiries: prev.inquiries.map((inquiry) =>
+                inquiry.id === inquiryId
+                  ? {
+                      ...inquiry,
+                      depositForm: {
+                        id: result.id,
+                        depositAmount: result.depositAmount,
+                        feeAmount: result.feeAmount,
+                        totalCharged: result.totalCharged,
+                        signedAt: result.signedAt,
+                        paidManually: result.paidManually,
+                        paidAt: result.paidAt,
+                      },
+                    }
+                  : inquiry,
+              ),
+            }
+          : prev,
+      )
+    } catch (err) {
+      setDepositSendError(err instanceof Error ? err.message : 'Failed to send deposit form')
+    } finally {
+      setSendingDepositId(null)
+    }
+  }
+
+  async function handleSendWaiver(appointmentId: string) {
+    setSendingWaiverId(appointmentId)
+    setWaiverSendError(null)
+
+    try {
+      const result = await apiFetch<WaiverSummary & { signingUrl: string }>(`/appointments/${appointmentId}/waiver`, {
+        method: 'POST',
+      })
+      setLatestWaiverUrl(result.signingUrl)
+      setShowWaiverPicker(false)
+      setClient((prev) =>
+        prev
+          ? {
+              ...prev,
+              liabilityWaivers: [
+                {
+                  id: result.id,
+                  status: result.status,
+                  signedAt: result.signedAt,
+                  verifiedAt: result.verifiedAt,
+                  appointmentId: result.appointmentId,
+                  createdAt: result.createdAt,
+                },
+                ...prev.liabilityWaivers,
+              ],
+            }
+          : prev,
+      )
+    } catch (err) {
+      setWaiverSendError(err instanceof Error ? err.message : 'Failed to send waiver')
+    } finally {
+      setSendingWaiverId(null)
+    }
+  }
+
   const depositForms = client?.inquiries.filter((inquiry) => inquiry.depositForm !== null) ?? []
+
+  // Same eligibility rule POST /inquiries/:id/deposit-form itself enforces
+  // -- DEPOSIT_PENDING, both price bounds set, not already signed. That
+  // route upserts, so an inquiry that already has an unsigned deposit form
+  // is still eligible (this doubles as "resend").
+  const eligibleDepositInquiries =
+    client?.inquiries.filter(
+      (inquiry) =>
+        inquiry.status === 'DEPOSIT_PENDING' &&
+        inquiry.priceEstimateLow != null &&
+        inquiry.priceEstimateHigh != null &&
+        !inquiry.depositForm?.signedAt,
+    ) ?? []
+
+  // POST /appointments/:id/waiver rejects outright if one already exists
+  // (no upsert/resend there, unlike deposit forms) -- so eligibility here
+  // is just "no waiver row yet", restricted to appointments actually
+  // happening (CONFIRMED/COMPLETED), not a REQUESTED/CANCELLED/NO_SHOW one.
+  const waivedAppointmentIds = new Set((client?.liabilityWaivers ?? []).map((w) => w.appointmentId))
+  const eligibleWaiverAppointments = (appointments ?? []).filter(
+    (appointment) =>
+      !waivedAppointmentIds.has(appointment.id) &&
+      (appointment.status === 'CONFIRMED' || appointment.status === 'COMPLETED'),
+  )
 
   return (
     <div className="flex min-h-screen bg-bg text-fg">
@@ -1312,7 +1430,78 @@ export default function ClientDetail() {
               </div>
 
               <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <h2 className="text-base font-semibold text-fg">Deposit Forms</h2>
+                <div className="flex items-center justify-between">
+                  <h2 className="text-base font-semibold text-fg">Deposit Forms</h2>
+                  {canManage && !client.mergedIntoId && (
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (eligibleDepositInquiries.length === 1) {
+                            handleSendDepositForm(eligibleDepositInquiries[0].id)
+                          } else {
+                            setShowDepositPicker((v) => !v)
+                          }
+                        }}
+                        disabled={eligibleDepositInquiries.length === 0 || sendingDepositId !== null}
+                        title={
+                          eligibleDepositInquiries.length === 0
+                            ? 'No inquiry is in Deposit Pending status with a price estimate set'
+                            : undefined
+                        }
+                        className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                      >
+                        <PlusIcon className="h-4 w-4" />
+                        {sendingDepositId ? 'Sending…' : 'Send Deposit Form'}
+                      </button>
+                      {showDepositPicker && eligibleDepositInquiries.length > 1 && (
+                        <>
+                          <div
+                            className="fixed inset-0 z-10"
+                            onClick={() => setShowDepositPicker(false)}
+                            aria-hidden="true"
+                          />
+                          <div className="absolute right-0 top-full z-20 mt-2 w-64 rounded-2xl border border-border bg-surface-raised p-2 shadow-xl">
+                            <p className="px-2 pb-1 pt-1 text-xs font-semibold uppercase tracking-wider text-fg-muted">
+                              Which inquiry?
+                            </p>
+                            {eligibleDepositInquiries.map((inquiry) => (
+                              <button
+                                key={inquiry.id}
+                                type="button"
+                                onClick={() => handleSendDepositForm(inquiry.id)}
+                                disabled={sendingDepositId === inquiry.id}
+                                className="flex w-full items-center gap-2 truncate rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface disabled:opacity-60"
+                              >
+                                <span className="truncate">{inquiry.description}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {depositSendError && (
+                  <div className="mt-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+                    {depositSendError}
+                  </div>
+                )}
+
+                {latestDepositUrl && (
+                  <div className="mt-4 rounded-lg border border-border p-3">
+                    <p className="mb-2 text-xs text-fg-muted">Share this link with the client:</p>
+                    <div className="flex items-center gap-2">
+                      <input
+                        readOnly
+                        value={latestDepositUrl}
+                        className="min-w-0 flex-1 rounded-lg border border-border bg-surface-inset px-3 py-2 text-xs text-fg"
+                        onFocus={(e) => e.target.select()}
+                      />
+                    </div>
+                  </div>
+                )}
 
                 {depositForms.length === 0 && <p className="mt-4 text-sm text-fg-secondary">No deposit forms yet.</p>}
 
@@ -1420,7 +1609,81 @@ export default function ClientDetail() {
               </div>
 
               <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <h2 className="text-base font-semibold text-fg">Waivers</h2>
+                <div className="flex items-center justify-between">
+                  <h2 className="text-base font-semibold text-fg">Waivers</h2>
+                  {canManage && !client.mergedIntoId && (
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (eligibleWaiverAppointments.length === 1) {
+                            handleSendWaiver(eligibleWaiverAppointments[0].id)
+                          } else {
+                            setShowWaiverPicker((v) => !v)
+                          }
+                        }}
+                        disabled={eligibleWaiverAppointments.length === 0 || sendingWaiverId !== null}
+                        title={
+                          eligibleWaiverAppointments.length === 0
+                            ? 'No confirmed appointment without a waiver yet'
+                            : undefined
+                        }
+                        className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                      >
+                        <PlusIcon className="h-4 w-4" />
+                        {sendingWaiverId ? 'Sending…' : 'Send Waiver'}
+                      </button>
+                      {showWaiverPicker && eligibleWaiverAppointments.length > 1 && (
+                        <>
+                          <div
+                            className="fixed inset-0 z-10"
+                            onClick={() => setShowWaiverPicker(false)}
+                            aria-hidden="true"
+                          />
+                          <div className="absolute right-0 top-full z-20 mt-2 w-64 rounded-2xl border border-border bg-surface-raised p-2 shadow-xl">
+                            <p className="px-2 pb-1 pt-1 text-xs font-semibold uppercase tracking-wider text-fg-muted">
+                              Which appointment?
+                            </p>
+                            {eligibleWaiverAppointments.map((appointment) => (
+                              <button
+                                key={appointment.id}
+                                type="button"
+                                onClick={() => handleSendWaiver(appointment.id)}
+                                disabled={sendingWaiverId === appointment.id}
+                                className="flex w-full items-center gap-2 truncate rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface disabled:opacity-60"
+                              >
+                                <span className="truncate">
+                                  {formatDateTime(appointment.startTime)}
+                                  {appointment.artist && ` · ${appointment.artist.name}`}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {waiverSendError && (
+                  <div className="mt-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+                    {waiverSendError}
+                  </div>
+                )}
+
+                {latestWaiverUrl && (
+                  <div className="mt-4 rounded-lg border border-border p-3">
+                    <p className="mb-2 text-xs text-fg-muted">Share this link with the client:</p>
+                    <div className="flex items-center gap-2">
+                      <input
+                        readOnly
+                        value={latestWaiverUrl}
+                        className="min-w-0 flex-1 rounded-lg border border-border bg-surface-inset px-3 py-2 text-xs text-fg"
+                        onFocus={(e) => e.target.select()}
+                      />
+                    </div>
+                  </div>
+                )}
 
                 {client.liabilityWaivers.length === 0 && (
                   <p className="mt-4 text-sm text-fg-secondary">No waivers yet.</p>

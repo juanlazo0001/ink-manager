@@ -71,6 +71,12 @@ router.get("/:id", async (req, res) => {
           status: true,
           channel: true,
           createdAt: true,
+          // Needed to compute which inquiries are eligible for a "Send
+          // Deposit Form" click on the client page (DEPOSIT_PENDING status
+          // + both bounds set + not already signed -- same rule POST
+          // /inquiries/:id/deposit-form itself enforces).
+          priceEstimateLow: true,
+          priceEstimateHigh: true,
           depositForm: {
             select: {
               id: true,
@@ -138,6 +144,12 @@ router.get("/:id/shareable-links", async (req, res) => {
           description: true,
           estimateToken: true,
           estimateTokenExpiresAt: true,
+          // status/priceEstimate* back the new depositFormEligible flag
+          // below -- same DEPOSIT_PENDING + both bounds set + not signed
+          // rule POST /inquiries/:id/deposit-form itself enforces.
+          status: true,
+          priceEstimateLow: true,
+          priceEstimateHigh: true,
           depositForm: { select: { token: true, tokenExpiresAt: true, signedAt: true } },
         },
         orderBy: { createdAt: "desc" },
@@ -147,6 +159,9 @@ router.get("/:id/shareable-links", async (req, res) => {
         select: {
           id: true,
           startTime: true,
+          // Backs waiverEligible below -- POST /appointments/:id/waiver
+          // only makes sense for a session that's actually happening.
+          status: true,
           liabilityWaiver: { select: { token: true, tokenExpiresAt: true, status: true } },
         },
         orderBy: { startTime: "desc" },
@@ -203,10 +218,44 @@ router.get("/:id/shareable-links", async (req, res) => {
     hint: null,
   }));
 
+  // Distinct from depositLinks/waiverLinks above (which only ever list
+  // entities that ALREADY have a form/waiver row) -- these back the
+  // composer's "Send Deposit Form"/"Send Waiver" actions, which need to
+  // create one that doesn't exist yet. Same eligibility rules the actual
+  // POST routes enforce (deposit-form upserts, so an inquiry with an
+  // existing-but-unsigned one is still eligible == "resend"; waiver
+  // rejects outright if one exists, so eligibility there is "none yet").
+  //
+  // An inquiry whose existing deposit form is still active (unsigned,
+  // unexpired) is deliberately EXCLUDED here even though the route would
+  // technically allow resending -- it already has a row in depositLinks
+  // above with the identical label, and offering both would just be two
+  // near-identical-looking rows in the same menu, one of which silently
+  // invalidates the other's token. Only offer the fresh-send action when
+  // there's no live link to just insert instead (none yet, or expired).
+  const depositFormOptions = client.inquiries
+    .filter((inquiry) => {
+      if (inquiry.status !== "DEPOSIT_PENDING") return false;
+      if (inquiry.priceEstimateLow == null || inquiry.priceEstimateHigh == null) return false;
+      if (inquiry.depositForm?.signedAt) return false;
+      const hasActiveLink = inquiry.depositForm && inquiry.depositForm.tokenExpiresAt > now;
+      return !hasActiveLink;
+    })
+    .map((inquiry) => ({ inquiryId: inquiry.id, label: inquiry.description }));
+
+  const waiverOptions = client.appointments
+    .filter(
+      (appointment) =>
+        !appointment.liabilityWaiver && (appointment.status === "CONFIRMED" || appointment.status === "COMPLETED"),
+    )
+    .map((appointment) => ({ appointmentId: appointment.id, label: appointment.startTime.toISOString() }));
+
   res.json({
     intakeFormUrl: `${PUBLIC_APP_URL}/inquiry/${client.studio.slug}`,
     estimateLinks,
     depositLinks,
+    depositFormOptions,
+    waiverOptions,
     waiverLinks,
     giftCardLinks,
   });

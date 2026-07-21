@@ -530,13 +530,14 @@ router.post("/:id/send-estimate", requireAuth, requireRole(Role.OWNER, Role.FRON
     return res.status(404).json({ error: "Inquiry not found" });
   }
 
-  if (
-    inquiry.status !== InquiryStatus.AWAITING_CLIENT_RESPONSE &&
-    inquiry.status !== InquiryStatus.BUDGET_NEGOTIATION
-  ) {
-    return res
-      .status(400)
-      .json({ error: "An estimate can only be sent while awaiting client response or during budget negotiation" });
+  // Deliberately not narrowed to AWAITING_CLIENT_RESPONSE/BUDGET_NEGOTIATION
+  // -- front desk/owner routinely gets a price verbally from the artist
+  // (especially guest artists who never touch the app) and types it in
+  // themselves, often before the artist has "responded" in-app at all.
+  // Only the two terminal statuses are off-limits, same allowlist every
+  // other cross-status inquiry action in this file already uses.
+  if (!NON_TERMINAL_STATUSES.includes(inquiry.status)) {
+    return res.status(400).json({ error: "An estimate can't be sent on a closed or cold-lead inquiry" });
   }
 
   for (const [field, value] of Object.entries({

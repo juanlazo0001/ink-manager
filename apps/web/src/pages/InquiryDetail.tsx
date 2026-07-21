@@ -1025,10 +1025,7 @@ export default function InquiryDetail() {
                 )}
               </div>
 
-              {(inquiry.status === 'AWAITING_CLIENT_RESPONSE' ||
-                inquiry.status === 'BUDGET_NEGOTIATION' ||
-                inquiry.estimateSentAt ||
-                inquiry.closedReason) && (
+              {((!isTerminal && canMessage) || inquiry.estimateSentAt || inquiry.closedReason) && (
                 <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
                   <h2 className="text-base font-semibold text-fg">Client Response</h2>
 
@@ -1048,7 +1045,7 @@ export default function InquiryDetail() {
                     </div>
                   )}
 
-                  {(inquiry.status === 'AWAITING_CLIENT_RESPONSE' || inquiry.status === 'BUDGET_NEGOTIATION') && (
+                  {!isTerminal && canMessage && (
                     <>
                       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <div>
