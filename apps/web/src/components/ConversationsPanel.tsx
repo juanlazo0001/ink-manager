@@ -1290,6 +1290,11 @@ function ThreadView({
   // separate pickers (see composer-toolbar-v2-mockup.html).
   const [showComposerMenu, setShowComposerMenu] = useState(false)
   const [showChannelModeMenu, setShowChannelModeMenu] = useState(false)
+  // The "+" button should read as active for its own dropdown AND for
+  // whichever submenu it opened (templates/link menu) -- picking a submenu
+  // item closes showComposerMenu itself, so without this the button would
+  // stop looking "selected" the instant its submenu actually opened.
+  const composerMenuActive = showComposerMenu || showTemplates || showLinkMenu
 
   const isClientThread = data?.conversation.type === 'CLIENT'
 
@@ -2417,28 +2422,33 @@ function ThreadView({
         )}
 
         {showTemplates && isClientThread && (
-          <div className="mb-2 max-h-40 overflow-y-auto rounded-lg border border-border p-2">
-            {(templatesData?.messageTemplates ?? []).length === 0 && (
-              <p className="p-1 text-xs text-fg-muted">No templates configured (Settings → Policies &amp; Defaults).</p>
-            )}
-            {templatesData?.messageTemplates?.map((template) => (
-              <button
-                key={template.id}
-                type="button"
-                onClick={() => {
-                  setBody((current) => (current ? `${current}\n${template.body}` : template.body))
-                  setShowTemplates(false)
-                }}
-                className="block w-full rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
-              >
-                <span className="font-medium text-fg">{template.name}</span>
-              </button>
-            ))}
-          </div>
+          <>
+            <div className="fixed inset-0 z-10" onClick={() => setShowTemplates(false)} aria-hidden="true" />
+            <div className="relative z-20 mb-2 max-h-40 overflow-y-auto rounded-lg border border-border bg-surface p-2">
+              {(templatesData?.messageTemplates ?? []).length === 0 && (
+                <p className="p-1 text-xs text-fg-muted">No templates configured (Settings → Policies &amp; Defaults).</p>
+              )}
+              {templatesData?.messageTemplates?.map((template) => (
+                <button
+                  key={template.id}
+                  type="button"
+                  onClick={() => {
+                    setBody((current) => (current ? `${current}\n${template.body}` : template.body))
+                    setShowTemplates(false)
+                  }}
+                  className="block w-full rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
+                >
+                  <span className="font-medium text-fg">{template.name}</span>
+                </button>
+              ))}
+            </div>
+          </>
         )}
 
         {showLinkMenu && isClientThread && (
-          <div className="mb-2 max-h-48 overflow-y-auto rounded-lg border border-border p-2 text-sm">
+          <>
+            <div className="fixed inset-0 z-10" onClick={() => setShowLinkMenu(false)} aria-hidden="true" />
+            <div className="relative z-20 mb-2 max-h-48 overflow-y-auto rounded-lg border border-border bg-surface p-2 text-sm">
             <button
               type="button"
               disabled={!clientContact || generatingPrefillLink}
@@ -2542,7 +2552,8 @@ function ThreadView({
               </button>
             ))}
             {createFormError && <p className="px-3 py-1 text-xs text-danger">{createFormError}</p>}
-          </div>
+            </div>
+          </>
         )}
 
         {sendError && <p className="mb-2 text-xs text-danger">{sendError}</p>}
@@ -2628,8 +2639,11 @@ function ThreadView({
                     type="button"
                     onClick={() => setShowComposerMenu((v) => !v)}
                     aria-label="More options"
-                    aria-pressed={showComposerMenu}
-                    className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-full bg-surface-raised text-fg-muted transition hover:text-fg"
+                    aria-pressed={composerMenuActive}
+                    className={[
+                      'flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-full transition',
+                      composerMenuActive ? 'bg-accent text-bg' : 'bg-surface-raised text-fg-muted hover:text-fg',
+                    ].join(' ')}
                   >
                     <PlusIcon className="h-[17px] w-[17px]" />
                   </button>
@@ -2672,7 +2686,7 @@ function ThreadView({
                           className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
                         >
                           <PlusIcon className="h-4 w-4" />
-                          Attach form
+                          Attach link
                         </button>
                       </div>
                     </>
