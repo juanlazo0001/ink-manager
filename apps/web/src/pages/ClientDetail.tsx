@@ -8,7 +8,7 @@ import StatusPill from '../components/StatusPill'
 import PhoneInput from '../components/PhoneInput'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatPhoneInput, formatStatus, isValidPhoneDigits } from '../lib/format'
-import { ArrowLeftIcon, CopyIcon, MessageIcon, MoreIcon, PencilIcon, PlusIcon } from '../components/icons'
+import { ArrowLeftIcon, CheckIcon, CopyIcon, MessageIcon, MoreIcon, PencilIcon, PlusIcon } from '../components/icons'
 import { useUserProfile } from '../context/useUserProfile'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useConversationPanel } from '../context/useConversationPanel'
@@ -1455,9 +1455,11 @@ export default function ClientDetail() {
                       <button
                         type="button"
                         onClick={() => handleCopyLink(latestDepositUrl)}
-                        className="shrink-0 rounded-full border border-border bg-surface px-4 py-2 text-xs font-medium text-fg transition hover:bg-surface-raised"
+                        aria-label={copied ? 'Copied' : 'Copy link'}
+                        title={copied ? 'Copied!' : 'Copy link'}
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-fg-secondary transition hover:bg-surface-raised hover:text-fg"
                       >
-                        {copied ? 'Copied!' : 'Copy Link'}
+                        {copied ? <CheckIcon className="h-4 w-4 text-success" /> : <CopyIcon className="h-4 w-4" />}
                       </button>
                     </div>
                   </div>
@@ -1584,9 +1586,11 @@ export default function ClientDetail() {
                       <button
                         type="button"
                         onClick={() => handleCopyLink(latestSigningUrl)}
-                        className="shrink-0 rounded-full border border-border bg-surface px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface-raised"
+                        aria-label={copied ? 'Copied' : 'Copy link'}
+                        title={copied ? 'Copied!' : 'Copy link'}
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-fg-secondary transition hover:bg-surface-raised hover:text-fg"
                       >
-                        {copied ? 'Copied!' : 'Copy Link'}
+                        {copied ? <CheckIcon className="h-4 w-4 text-success" /> : <CopyIcon className="h-4 w-4" />}
                       </button>
                     </div>
                   </div>
@@ -1689,9 +1693,11 @@ export default function ClientDetail() {
                       <button
                         type="button"
                         onClick={() => handleCopyLink(latestWaiverUrl)}
-                        className="shrink-0 rounded-full border border-border bg-surface px-4 py-2 text-xs font-medium text-fg transition hover:bg-surface-raised"
+                        aria-label={copied ? 'Copied' : 'Copy link'}
+                        title={copied ? 'Copied!' : 'Copy link'}
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-fg-secondary transition hover:bg-surface-raised hover:text-fg"
                       >
-                        {copied ? 'Copied!' : 'Copy Link'}
+                        {copied ? <CheckIcon className="h-4 w-4 text-success" /> : <CopyIcon className="h-4 w-4" />}
                       </button>
                     </div>
                   </div>

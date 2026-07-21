@@ -157,7 +157,17 @@ export default function Inquiries() {
           )}
         </td>
         <td className="py-3 text-fg">
-          {inquiry.client.firstName} {inquiry.client.lastName}
+          {/* Below sm, only this cell and Status are visible with nothing
+              else to give the row width -- a long full name would shove
+              into (or under) the status pill with no room to wrap. Bounded
+              max-widths + truncate at every breakpoint (never max-w-none)
+              guarantee the name can never overlap Status, however long it
+              is; below sm it also drops to first-name-only so the common
+              case reads clean instead of ellipsis-clipped mid-word. */}
+          <span className="block max-w-[96px] truncate sm:hidden">{inquiry.client.firstName}</span>
+          <span className="hidden max-w-[140px] truncate sm:block md:max-w-[200px] lg:max-w-[280px]">
+            {inquiry.client.firstName} {inquiry.client.lastName}
+          </span>
         </td>
         <td className="hidden py-3 text-fg-secondary md:table-cell">{formatStatus(inquiry.channel)}</td>
         <td className="hidden py-3 text-fg-secondary md:table-cell">{truncate(inquiry.description, 60)}</td>

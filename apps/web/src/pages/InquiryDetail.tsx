@@ -17,7 +17,17 @@ import DateAndTimeRangeFields, {
 } from '../components/DateAndTimeRangeFields'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatDuration, formatPhoneInput, formatStatus } from '../lib/format'
-import { ArrowLeftIcon, ClientsIcon, MessageIcon, MoreIcon, PencilIcon, PlusIcon, ShareIcon } from '../components/icons'
+import {
+  ArrowLeftIcon,
+  CheckIcon,
+  ClientsIcon,
+  CopyIcon,
+  MessageIcon,
+  MoreIcon,
+  PencilIcon,
+  PlusIcon,
+  ShareIcon,
+} from '../components/icons'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useViewAs } from '../context/useViewAs'
 import { useConversationPanel } from '../context/useConversationPanel'
@@ -1325,9 +1335,11 @@ export default function InquiryDetail() {
                         <button
                           type="button"
                           onClick={() => handleCopyLink(estimateUrl)}
-                          className="shrink-0 rounded-full border border-border bg-surface px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface-raised"
+                          aria-label={copied ? 'Copied' : 'Copy link'}
+                          title={copied ? 'Copied!' : 'Copy link'}
+                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-fg-secondary transition hover:bg-surface-raised hover:text-fg"
                         >
-                          {copied ? 'Copied!' : 'Copy Link'}
+                          {copied ? <CheckIcon className="h-4 w-4 text-success" /> : <CopyIcon className="h-4 w-4" />}
                         </button>
                       </div>
                     </div>
@@ -1482,9 +1494,11 @@ export default function InquiryDetail() {
                             <button
                               type="button"
                               onClick={() => handleCopyLink(depositUrl)}
-                              className="shrink-0 rounded-full border border-border bg-surface px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface-raised"
+                              aria-label={copied ? 'Copied' : 'Copy link'}
+                              title={copied ? 'Copied!' : 'Copy link'}
+                              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-fg-secondary transition hover:bg-surface-raised hover:text-fg"
                             >
-                              {copied ? 'Copied!' : 'Copy Link'}
+                              {copied ? <CheckIcon className="h-4 w-4 text-success" /> : <CopyIcon className="h-4 w-4" />}
                             </button>
                           </div>
                         </div>
