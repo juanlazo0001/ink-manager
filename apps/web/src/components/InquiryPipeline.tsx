@@ -1,12 +1,16 @@
 import { CheckIcon } from './icons'
 
 // Single source of truth for "what step is this inquiry on, relative to the
-// whole process" -- consumed by both InquiryDetail (horizontal, full width)
-// and the Conversations context panel (vertical, narrow drawer). Several
-// raw InquiryStatus values collapse into one pipeline step (e.g. both
-// AWAITING_CLIENT_RESPONSE and BUDGET_NEGOTIATION are "the client has an
-// estimate and is responding to it").
-const PIPELINE_STEPS = [
+// whole process" -- consumed by InquiryDetail (horizontal, full width), the
+// Conversations context panel (vertical, narrow drawer), and the Kanban
+// board's Inquiries-tab columns (Package E -- exported so it never grows a
+// second, competing grouping scheme). Several raw InquiryStatus values
+// collapse into one pipeline step (e.g. both AWAITING_CLIENT_RESPONSE and
+// BUDGET_NEGOTIATION are "the client has an estimate and is responding to
+// it"). The final 'Scheduled' step is deliberately not used by the Kanban
+// board's Inquiries tab -- that step belongs to the Projects tab's own,
+// more granular SCHEDULING/WAITLISTED/CONFIRMED columns instead.
+export const PIPELINE_STEPS = [
   { label: 'Inquiry received', statuses: ['NEW'] },
   { label: 'Artist assigned', statuses: ['ARTIST_ASSIGNED'] },
   { label: 'Estimate sent', statuses: ['AWAITING_CLIENT_RESPONSE', 'BUDGET_NEGOTIATION'] },

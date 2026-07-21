@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import AuditTrail from '../components/AuditTrail'
@@ -223,6 +223,7 @@ function ImageGrid({ images }: { images: string[] }) {
 export default function InquiryDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const user = useEffectiveUser()
   const { target: viewAsTarget } = useViewAs()
   const queryClient = useQueryClient()
@@ -460,6 +461,36 @@ export default function InquiryDetail() {
   const [reopenStatus, setReopenStatus] = useState('')
   const [reopening, setReopening] = useState(false)
   const [reopenError, setReopenError] = useState<string | null>(null)
+
+  // The Kanban board (Inquiries.tsx / MyInquiries.tsx) navigates here with
+  // ?openFlow=... for any drag that needs more input than "this happened" --
+  // this is the single place that turns that into the exact same
+  // modal/section every other entry point into these flows already uses, so
+  // nothing about assign/send-estimate/schedule/mark-lost/reopen's own
+  // validation or audit logging is duplicated or bypassed. Runs once
+  // `inquiry` is loaded (so status-gated sections have already rendered),
+  // then strips the param so a refresh doesn't reopen it.
+  useEffect(() => {
+    const openFlow = searchParams.get('openFlow')
+    if (!openFlow || !inquiry) return
+
+    if (openFlow === 'mark-lost') {
+      setShowMarkLostModal(true)
+    } else if (openFlow === 'reopen') {
+      setShowReopenModal(true)
+    } else if (openFlow === 'assign' || openFlow === 'send-estimate' || openFlow === 'schedule') {
+      const sectionId =
+        openFlow === 'assign' ? 'assignment-section' : openFlow === 'send-estimate' ? 'estimate-section' : 'scheduling-section'
+      document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.delete('openFlow')
+      return next
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inquiry, searchParams])
 
   const [archiving, setArchiving] = useState(false)
   const [archiveError, setArchiveError] = useState<string | null>(null)
@@ -1140,7 +1171,7 @@ export default function InquiryDetail() {
                 <InquiryPipeline status={inquiry.status} closedReason={inquiry.closedReason} orientation="horizontal" />
               </div>
 
-              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+              <div id="assignment-section" className="mt-6 rounded-2xl border border-border bg-surface p-5">
                 <h2 className="text-base font-semibold text-fg">Assignment</h2>
 
                 {inquiry.status === 'NEW' ? (
@@ -1230,7 +1261,7 @@ export default function InquiryDetail() {
                 inquiry.priceEstimateHigh != null ||
                 inquiry.timeEstimateHoursMin != null ||
                 inquiry.timeEstimateHoursMax != null) && (
-                <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                <div id="estimate-section" className="mt-6 rounded-2xl border border-border bg-surface p-5">
                   <div className="flex items-center justify-between">
                     <h2 className="text-base font-semibold text-fg">Estimate</h2>
                     {!isTerminal && canMessage && !editingEstimate && (
@@ -1557,7 +1588,7 @@ export default function InquiryDetail() {
               )}
 
               {(inquiry.status === 'SCHEDULING' || inquiry.status === 'WAITLISTED' || inquiry.appointment) && (
-                <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                <div id="scheduling-section" className="mt-6 rounded-2xl border border-border bg-surface p-5">
                   <h2 className="text-base font-semibold text-fg">Scheduling</h2>
 
                   {bufferWarning && (

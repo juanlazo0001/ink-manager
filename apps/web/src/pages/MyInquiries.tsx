@@ -1,11 +1,16 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Navigate } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
+import InquiryKanbanBoard from '../components/kanban/InquiryKanbanBoard'
+import { INQUIRY_TAB_COLUMNS, PROJECT_TAB_COLUMNS } from './Inquiries'
+import type { KanbanInquiry, KanbanTransition } from '../lib/kanban'
 import { apiFetch } from '../lib/api'
 import { formatDateTime, formatStatus } from '../lib/format'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useMarkSectionSeen } from '../lib/useMarkSectionSeen'
+import { assignedInquiriesQueryKey } from '../lib/queryKeys'
 
 interface Inquiry {
   id: string
@@ -21,7 +26,20 @@ interface Inquiry {
   placementImages: string[]
   createdAt: string
   client: { firstName: string; lastName: string }
+  // Already returned by the API (Prisma `include` always returns every base
+  // scalar field) -- only added to the TS shape here for the Kanban board
+  // (Package E), which needs them and was never declared before since the
+  // flat approve/decline inbox above never needed anything past NEW's
+  // review-pending shape.
+  status: string
+  updatedAt: string
+  priceEstimateLow: number | null
+  priceEstimateHigh: number | null
+  assignedArtist: { id: string; user: { email: string; name: string | null; avatarUrl: string | null } } | null
 }
+
+type ViewMode = 'list' | 'kanban'
+type PipelineTab = 'inquiries' | 'projects'
 
 function ImageGrid({ images }: { images: string[] }) {
   if (images.length === 0) {
@@ -69,6 +87,52 @@ export default function MyInquiries() {
   const [declineNote, setDeclineNote] = useState('')
   const [declineError, setDeclineError] = useState<string | null>(null)
   const [declineSubmitting, setDeclineSubmitting] = useState(false)
+
+  // Kanban board (Package E) -- a second, independent data source from the
+  // flat inbox above (?scope=all instead of the default ARTIST_ASSIGNED-
+  // only filter), fetched via React Query so it also benefits for free from
+  // the WS inquiry.updated invalidation (see assignedInquiriesQueryKey).
+  // Only ever fetched once the artist actually switches to Board view.
+  const [viewMode, setViewMode] = useState<ViewMode>('list')
+  const [kanbanTab, setKanbanTab] = useState<PipelineTab>('inquiries')
+
+  const { data: kanbanInquiries, isLoading: kanbanLoading } = useQuery({
+    queryKey: assignedInquiriesQueryKey(user?.studioId ?? ''),
+    queryFn: () => apiFetch<Inquiry[]>('/inquiries/assigned-to-me?scope=all'),
+    enabled: user?.role === 'ARTIST' && viewMode === 'kanban',
+  })
+
+  const kanbanTabStatuses: readonly string[] =
+    kanbanTab === 'projects' ? PROJECT_TAB_COLUMNS.flatMap((c) => c.statuses) : INQUIRY_TAB_COLUMNS.flatMap((c) => c.statuses)
+  const kanbanFilteredInquiries = kanbanInquiries?.filter((inquiry) => kanbanTabStatuses.includes(inquiry.status))
+
+  // The artist's only forward action from a Kanban drag is approving an
+  // ARTIST_ASSIGNED card into Estimate Sent -- everything else on their
+  // board (every other column, both tabs' backward drags, the whole
+  // Projects tab) has no route they're permitted to call, so it's
+  // read-only: the board still shows where their assigned work stands
+  // end to end, it just doesn't accept a drop there. Decline is
+  // deliberately not wired to a drag either -- it isn't a forward step to
+  // any column on this board (it unassigns back to NEW, which never
+  // appears here since NEW inquiries have no assignedArtistId yet) -- it
+  // stays exactly where it already was, the List view's Decline button.
+  function resolveArtistTransition({
+    inquiry,
+    fromColumnKey,
+    toColumnKey,
+  }: {
+    inquiry: KanbanInquiry
+    fromColumnKey: string
+    toColumnKey: string
+  }): KanbanTransition {
+    if (kanbanTab === 'inquiries' && fromColumnKey === 'Artist assigned' && toColumnKey === 'Estimate sent') {
+      return { kind: 'open-flow', run: () => openApprove(inquiry as Inquiry) }
+    }
+    return {
+      kind: 'reject',
+      message: `You don't have an action that moves a card from ${fromColumnKey} to ${toColumnKey}.`,
+    }
+  }
 
   useEffect(() => {
     if (user?.role !== 'ARTIST') return
@@ -169,26 +233,90 @@ export default function MyInquiries() {
 
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-5xl px-6 py-6 sm:px-10 sm:py-8">
-          <div>
-            <h1 className="text-2xl font-bold text-fg sm:text-3xl">My Inquiries</h1>
-            <p className="mt-1 text-sm text-fg-secondary">Tattoo requests assigned to you for review.</p>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h1 className="text-2xl font-bold text-fg sm:text-3xl">My Inquiries</h1>
+              <p className="mt-1 text-sm text-fg-secondary">
+                {viewMode === 'list' ? 'Tattoo requests assigned to you for review.' : 'Everything currently assigned to you.'}
+              </p>
+            </div>
+
+            <div className="flex shrink-0 rounded-full border border-border p-0.5">
+              {(['list', 'kanban'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setViewMode(mode)}
+                  aria-pressed={viewMode === mode}
+                  className={[
+                    'rounded-full px-3 py-1.5 text-sm font-medium capitalize transition',
+                    viewMode === mode ? 'bg-accent text-bg' : 'text-fg-secondary hover:text-fg',
+                  ].join(' ')}
+                >
+                  {mode === 'list' ? 'List' : 'Board'}
+                </button>
+              ))}
+            </div>
           </div>
 
-          {error && (
+          {viewMode === 'kanban' && (
+            <div className="mt-4 flex gap-1 border-b border-border">
+              {(
+                [
+                  ['inquiries', 'Inquiries'],
+                  ['projects', 'Projects'],
+                ] as const
+              ).map(([tab, label]) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setKanbanTab(tab)}
+                  className={[
+                    'rounded-t-lg px-4 py-2 text-sm font-medium transition',
+                    kanbanTab === tab ? 'border-b-2 border-accent text-fg' : 'text-fg-muted hover:text-fg',
+                  ].join(' ')}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {viewMode === 'kanban' && (
+            <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+              {kanbanLoading && <p className="text-sm text-fg-secondary">Loading…</p>}
+              {!kanbanLoading && (
+                <InquiryKanbanBoard
+                  key={kanbanTab}
+                  inquiries={kanbanFilteredInquiries ?? []}
+                  columns={kanbanTab === 'projects' ? PROJECT_TAB_COLUMNS : INQUIRY_TAB_COLUMNS}
+                  interactiveColumnKeys={kanbanTab === 'projects' ? [] : ['Artist assigned']}
+                  resolveTransition={(params) =>
+                    resolveArtistTransition({ ...params, inquiry: params.inquiry })
+                  }
+                  emptyMessage="Nothing assigned to you right now."
+                />
+              )}
+            </div>
+          )}
+
+          {viewMode === 'list' && error && (
             <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
               <p className="text-sm text-danger">{error}</p>
             </div>
           )}
 
-          {!error && inquiries === null && <p className="mt-6 text-sm text-fg-secondary">Loading inquiries…</p>}
+          {viewMode === 'list' && !error && inquiries === null && (
+            <p className="mt-6 text-sm text-fg-secondary">Loading inquiries…</p>
+          )}
 
-          {!error && inquiries !== null && inquiries.length === 0 && (
+          {viewMode === 'list' && !error && inquiries !== null && inquiries.length === 0 && (
             <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
               <p className="text-sm text-fg-secondary">Nothing assigned to you right now.</p>
             </div>
           )}
 
-          {!error && inquiries && inquiries.length > 0 && (
+          {viewMode === 'list' && !error && inquiries && inquiries.length > 0 && (
             <div className="mt-6 space-y-5">
               {inquiries.map((inquiry) => (
                 <div key={inquiry.id} className="rounded-2xl border border-border bg-surface p-5">

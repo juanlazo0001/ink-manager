@@ -7,6 +7,9 @@ import StatusPill from '../components/StatusPill'
 import StaffInquiryForm from '../components/StaffInquiryForm'
 import Modal from '../components/Modal'
 import AppointmentForm from '../components/AppointmentForm'
+import InquiryKanbanBoard from '../components/kanban/InquiryKanbanBoard'
+import { PIPELINE_STEPS } from '../components/InquiryPipeline'
+import type { KanbanColumn, KanbanTransition } from '../lib/kanban'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatStatus } from '../lib/format'
 import { PhotoIcon, PlusIcon } from '../components/icons'
@@ -21,11 +24,16 @@ interface Inquiry {
   description: string
   status: string
   createdAt: string
+  updatedAt: string
+  priceEstimateLow: number | null
+  priceEstimateHigh: number | null
   referenceImages: string[]
   client: { firstName: string; lastName: string }
+  assignedArtist: { id: string; user: { email: string; name: string | null; avatarUrl: string | null } } | null
 }
 
 type PipelineTab = 'inquiries' | 'projects'
+type ViewMode = 'list' | 'kanban'
 
 // UI-1 §3: one Inquiry table, one nav item, two status-filtered tabs. The
 // conversion moment is deposit PAID (the mark-paid transition in
@@ -36,7 +44,7 @@ type PipelineTab = 'inquiries' | 'projects'
 // /waitlist route), so it's already-converted work waiting on a time
 // slot -- a Projects status, not a lead status, even though the plan's
 // prose didn't explicitly place it.
-const INQUIRIES_TAB_STATUSES = [
+export const INQUIRIES_TAB_STATUSES = [
   'NEW',
   'ARTIST_ASSIGNED',
   'AWAITING_CLIENT_RESPONSE',
@@ -45,7 +53,29 @@ const INQUIRIES_TAB_STATUSES = [
   'CLOSED_LOST',
   'COLD_LEAD',
 ] as const
-const PROJECTS_TAB_STATUSES = ['SCHEDULING', 'WAITLISTED', 'CONFIRMED'] as const
+export const PROJECTS_TAB_STATUSES = ['SCHEDULING', 'WAITLISTED', 'CONFIRMED'] as const
+
+// Kanban columns (Package E). Inquiries tab reuses InquiryPipeline's own
+// 5-step grouping (its first four steps -- the fifth, 'Scheduled', belongs
+// to the Projects tab's own more granular columns below) rather than
+// inventing a second grouping scheme. Terminal states collapse into one
+// column, consistent with how INQUIRIES_TAB_STATUSES already folds them
+// into this tab (Projects never shows them -- see PROJECTS_TAB_STATUSES).
+export const INQUIRY_TAB_COLUMNS: KanbanColumn[] = [
+  ...PIPELINE_STEPS.slice(0, 4).map((step) => ({ key: step.label, label: step.label, statuses: step.statuses })),
+  { key: 'INACTIVE', label: 'Inactive', statuses: ['CLOSED_LOST', 'COLD_LEAD'] },
+]
+
+// Projects tab: one column per actual status in PROJECTS_TAB_STATUSES
+// (verified straight from the enum + this page's own existing filter list,
+// not assumed) -- SCHEDULING/WAITLISTED/CONFIRMED, in that order. There is
+// no COMPLETED InquiryStatus; completion lives on the separate Appointment
+// model and isn't part of this board.
+export const PROJECT_TAB_COLUMNS: KanbanColumn[] = PROJECTS_TAB_STATUSES.map((status) => ({
+  key: status,
+  label: formatStatus(status),
+  statuses: [status],
+}))
 
 type StatusBucket = 'All' | 'New' | 'Assigned' | 'Closed'
 
@@ -92,6 +122,10 @@ export default function Inquiries() {
   const [bucketFilter, setBucketFilter] = useState<StatusBucket>('All')
   const [projectStatusFilter, setProjectStatusFilter] = useState<ProjectStatusFilter>('All')
   const [groupByStatus, setGroupByStatus] = useState(false)
+  // Not URL-persisted deliberately: setTab below replaces searchParams
+  // wholesale on every tab switch, which would otherwise wipe a view=kanban
+  // param on every click -- local state survives the tab switch instead.
+  const [viewMode, setViewMode] = useState<ViewMode>('list')
   useMarkSectionSeen('inquiries')
 
   function setTab(tab: PipelineTab) {
@@ -102,6 +136,74 @@ export default function Inquiries() {
     setShowNewInquiry(false)
     queryClient.invalidateQueries({ queryKey: inquiriesQueryKey(user!.studioId) })
     navigate(`/inquiries/${inquiryId}`)
+  }
+
+  // Kanban drag resolution (Package E). Every case here either calls the
+  // exact same route the rest of the app already uses for that transition,
+  // or opens the exact same modal/section InquiryDetail.tsx already has for
+  // it (via ?openFlow=..., see the effect there) -- there is no new
+  // status-PATCH path. Whatever isn't explicitly handled below is rejected:
+  // no route exists to do it, so silently allowing the drag would let a
+  // card sit in a column its real status doesn't match.
+  function resolveInquiriesTabTransition({
+    inquiry,
+    fromColumnKey,
+    toColumnKey,
+  }: {
+    inquiry: Inquiry
+    fromColumnKey: string
+    toColumnKey: string
+  }): KanbanTransition {
+    if (toColumnKey === 'INACTIVE') {
+      return { kind: 'open-flow', run: () => navigate(`/inquiries/${inquiry.id}?openFlow=mark-lost`) }
+    }
+    if (fromColumnKey === 'INACTIVE') {
+      return { kind: 'open-flow', run: () => navigate(`/inquiries/${inquiry.id}?openFlow=reopen`) }
+    }
+    if (fromColumnKey === 'Inquiry received' && toColumnKey === 'Artist assigned') {
+      return { kind: 'open-flow', run: () => navigate(`/inquiries/${inquiry.id}?openFlow=assign`) }
+    }
+    if (fromColumnKey === 'Artist assigned' && toColumnKey === 'Estimate sent') {
+      return { kind: 'open-flow', run: () => navigate(`/inquiries/${inquiry.id}?openFlow=send-estimate`) }
+    }
+    if (fromColumnKey === 'Estimate sent' && toColumnKey === 'Deposit requested') {
+      return {
+        kind: 'reject',
+        message: "Deposit Requested happens automatically once the client accepts the estimate -- it can't be moved manually.",
+      }
+    }
+    return { kind: 'reject', message: `There's no action that moves a card from ${fromColumnKey} to ${toColumnKey}.` }
+  }
+
+  function resolveProjectsTabTransition({
+    inquiry,
+    fromColumnKey,
+    toColumnKey,
+  }: {
+    inquiry: Inquiry
+    fromColumnKey: string
+    toColumnKey: string
+  }): KanbanTransition {
+    if (fromColumnKey === 'SCHEDULING' && toColumnKey === 'CONFIRMED') {
+      return { kind: 'open-flow', run: () => navigate(`/inquiries/${inquiry.id}?openFlow=schedule`) }
+    }
+    // /waitlist takes only an optional note -- genuinely data-free as a
+    // drag, unlike every other Projects-tab transition.
+    if (fromColumnKey === 'SCHEDULING' && toColumnKey === 'WAITLISTED') {
+      return {
+        kind: 'direct',
+        run: async () => {
+          await apiFetch(`/inquiries/${inquiry.id}/waitlist`, { method: 'POST', body: JSON.stringify({}) })
+          queryClient.invalidateQueries({ queryKey: inquiriesQueryKey(user!.studioId) })
+        },
+      }
+    }
+    // WAITLISTED has no route back into SCHEDULING/CONFIRMED, and CONFIRMED
+    // has no forward route at all -- both are dead ends by design today.
+    return {
+      kind: 'reject',
+      message: `There's no action that moves a card from ${formatStatus(fromColumnKey)} to ${formatStatus(toColumnKey)}.`,
+    }
   }
 
   const {
@@ -298,19 +400,41 @@ export default function Inquiries() {
               )}
             </div>
 
-            <button
-              type="button"
-              onClick={() => setGroupByStatus((v) => !v)}
-              aria-pressed={groupByStatus}
-              className={[
-                'shrink-0 rounded-full border px-3 py-2 text-sm font-medium transition',
-                groupByStatus
-                  ? 'border-accent/40 bg-accent/15 text-accent'
-                  : 'border-border text-fg-secondary hover:bg-surface hover:text-fg',
-              ].join(' ')}
-            >
-              Group by status
-            </button>
+            {viewMode === 'list' && (
+              <button
+                type="button"
+                onClick={() => setGroupByStatus((v) => !v)}
+                aria-pressed={groupByStatus}
+                className={[
+                  'shrink-0 rounded-full border px-3 py-2 text-sm font-medium transition',
+                  groupByStatus
+                    ? 'border-accent/40 bg-accent/15 text-accent'
+                    : 'border-border text-fg-secondary hover:bg-surface hover:text-fg',
+                ].join(' ')}
+              >
+                Group by status
+              </button>
+            )}
+
+            {/* List/Kanban is a rendering-mode toggle only -- it shares the
+                same fetched `inquiries`, the same tab, and the same filters
+                above, so switching modes never changes what's included. */}
+            <div className="flex shrink-0 rounded-full border border-border p-0.5">
+              {(['list', 'kanban'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setViewMode(mode)}
+                  aria-pressed={viewMode === mode}
+                  className={[
+                    'rounded-full px-3 py-1.5 text-sm font-medium capitalize transition',
+                    viewMode === mode ? 'bg-accent text-bg' : 'text-fg-secondary hover:text-fg',
+                  ].join(' ')}
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
@@ -333,7 +457,24 @@ export default function Inquiries() {
               </div>
             )}
 
-            {!errorMessage && (isLoading || (filteredInquiries && filteredInquiries.length > 0)) && (
+            {!errorMessage && !isLoading && viewMode === 'kanban' && filteredInquiries && filteredInquiries.length > 0 && (
+              <InquiryKanbanBoard
+                key={activeTab}
+                inquiries={filteredInquiries}
+                columns={activeTab === 'projects' ? PROJECT_TAB_COLUMNS : INQUIRY_TAB_COLUMNS}
+                interactiveColumnKeys={(activeTab === 'projects' ? PROJECT_TAB_COLUMNS : INQUIRY_TAB_COLUMNS).map(
+                  (column) => column.key,
+                )}
+                resolveTransition={(params) =>
+                  activeTab === 'projects'
+                    ? resolveProjectsTabTransition({ ...params, inquiry: params.inquiry as Inquiry })
+                    : resolveInquiriesTabTransition({ ...params, inquiry: params.inquiry as Inquiry })
+                }
+                onOpenCard={(id) => navigate(`/inquiries/${id}`)}
+              />
+            )}
+
+            {!errorMessage && viewMode === 'list' && (isLoading || (filteredInquiries && filteredInquiries.length > 0)) && (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm">
                   <thead>

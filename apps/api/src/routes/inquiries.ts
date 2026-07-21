@@ -220,7 +220,10 @@ const NON_TERMINAL_STATUSES: InquiryStatus[] = (Object.values(InquiryStatus) as 
 const INQUIRY_INCLUDE = {
   client: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
   preferredArtist: { select: { id: true, user: { select: { name: true } } } },
-  assignedArtist: { select: { id: true, user: { select: { name: true } } } },
+  // email/avatarUrl added for the Kanban board's card (Package E) --
+  // renders through the shared ArtistAvatar component, which needs both to
+  // avoid falling back to a raw email string.
+  assignedArtist: { select: { id: true, user: { select: { id: true, name: true, email: true, avatarUrl: true } } } },
   appointment: { select: { id: true, startTime: true, endTime: true, status: true } },
   // UI-1 §3: every appointment/session under this project (1:many via
   // Appointment.inquiryId), for the project detail page's nested
@@ -252,16 +255,24 @@ const INQUIRY_INCLUDE = {
   },
 } as const;
 
-// The inbox list only renders these fields -- preferredArtist/assignedArtist/
-// appointment/depositForm are detail-page-only, so the list query skips them.
+// The inbox list only renders these fields -- preferredArtist/appointment/
+// depositForm are detail-page-only, so the list query skips them.
+// updatedAt/priceEstimateLow/High/assignedArtist were added for the Kanban
+// board's card (Package E): "time in this stage" (updatedAt), the estimate
+// range, and the assigned artist's avatar+name -- the List view simply
+// ignores the extra fields.
 const INQUIRY_LIST_SELECT = {
   id: true,
   channel: true,
   description: true,
   status: true,
   createdAt: true,
+  updatedAt: true,
+  priceEstimateLow: true,
+  priceEstimateHigh: true,
   referenceImages: true,
   client: { select: { firstName: true, lastName: true } },
+  assignedArtist: { select: { id: true, user: { select: { id: true, name: true, email: true, avatarUrl: true } } } },
 } as const;
 
 // Excluded from the default inbox the same way merged clients are excluded
@@ -283,16 +294,29 @@ router.get("/", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (re
 // Artist-facing inbox: inquiries currently assigned to the requesting
 // artist and awaiting their review. Registered before the "/:id" route
 // below so Express doesn't try to match "assigned-to-me" as an :id.
+//
+// ?scope=all (Package E's Kanban board): an artist has zero access to
+// GET / or GET /:id (both OWNER/FRONT_DESK-only) -- this is their ONLY
+// window into inquiry data, so their filtered Kanban board reuses this
+// same route with the ARTIST_ASSIGNED-only filter dropped, rather than
+// opening up either staff-only route. Default (no scope param) behavior
+// is completely unchanged, so MyInquiries.tsx's existing approve/decline
+// inbox is unaffected.
 router.get("/assigned-to-me", requireAuth, requireRole(Role.ARTIST), async (req, res) => {
   const artist = await prisma.artist.findUnique({ where: { userId: req.user!.userId } });
   if (!artist) {
     return res.json([]);
   }
 
+  const scopeAll = req.query.scope === "all";
+
   const inquiries = await prisma.inquiry.findMany({
-    where: { assignedArtistId: artist.id, status: InquiryStatus.ARTIST_ASSIGNED },
+    where: {
+      assignedArtistId: artist.id,
+      ...(scopeAll ? NOT_ARCHIVED : { status: InquiryStatus.ARTIST_ASSIGNED }),
+    },
     include: INQUIRY_INCLUDE,
-    orderBy: { assignedAt: "desc" },
+    orderBy: scopeAll ? { updatedAt: "desc" } : { assignedAt: "desc" },
   });
 
   res.json(inquiries);
@@ -430,6 +454,8 @@ router.patch("/:id/assign", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK
     changes: diffObjects(inquiry, updateData, ["status", "assignedArtistId", "assignedAt"]),
   });
 
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+
   res.json(updated);
 });
 
@@ -486,6 +512,8 @@ router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), async (req, 
       changes: diffObjects(inquiry, declineData, ["status", "assignedArtistId", "assignedAt", "declineNote"]),
     });
 
+    emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+
     return res.json(updated);
   }
 
@@ -528,6 +556,8 @@ router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), async (req, 
       "timeEstimateHoursMax",
     ]),
   });
+
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
 
   res.json(updated);
 });
@@ -669,6 +699,8 @@ router.post("/:id/send-estimate", requireAuth, requireRole(Role.OWNER, Role.FRON
     actorUserId: req.user!.userId,
   });
 
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+
   res.status(201).json({ ...updated, estimateUrl, estimateSendResult });
 });
 
@@ -754,6 +786,7 @@ router.post("/:id/schedule", requireAuth, requireRole(Role.OWNER, Role.FRONT_DES
   });
 
   emitInvalidation({ type: "appointment.changed", studioId: req.user!.studioId });
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
 
   res.status(201).json({
     ...updated,
@@ -799,6 +832,8 @@ router.post("/:id/waitlist", requireAuth, requireRole(Role.OWNER, Role.FRONT_DES
     changes: diffObjects(inquiry, waitlistData, ["status", "declineNote"]),
   });
 
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+
   res.json(updated);
 });
 
@@ -841,6 +876,8 @@ router.post("/:id/mark-lost", requireAuth, requireRole(Role.OWNER, Role.FRONT_DE
     changes: diffObjects(inquiry, lostData, ["status", "lostAt", "lostReason"]),
   });
 
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+
   res.json(updated);
 });
 
@@ -877,6 +914,8 @@ router.post("/:id/reopen", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK)
     action: "status_change",
     changes: diffObjects(inquiry, reopenData, ["status", "lostAt", "lostReason"]),
   });
+
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
 
   res.json(updated);
 });
@@ -981,6 +1020,8 @@ router.post("/:id/attach-gift-card", requireAuth, requireRole(Role.OWNER, Role.F
       ...(inquiry.depositForm ? { discardedUnsignedDepositFormId: inquiry.depositForm.id } : {}),
     },
   });
+
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
 
   res.json(updated);
 });

@@ -22,6 +22,12 @@ export type InvalidationEvent =
   | { type: "conversation.updated"; studioId: string; conversationId: string }
   | { type: "task.changed"; studioId: string }
   | { type: "inquiry.created"; studioId: string }
+  // Any status-transition route firing after the initial create (assign,
+  // respond, send-estimate, schedule, waitlist, mark-lost, reopen,
+  // attach-gift-card) -- the Kanban board (Package E) reuses the exact same
+  // ["inquiries"] prefix so cards move live for every viewer, staff and
+  // artist alike, without a second query key to keep in sync.
+  | { type: "inquiry.updated"; studioId: string }
   | { type: "appointment.changed"; studioId: string };
 
 function keysFor(event: InvalidationEvent): unknown[][] {
@@ -37,6 +43,7 @@ function keysFor(event: InvalidationEvent): unknown[][] {
     case "task.changed":
       return [["tasks"], ["nav-counts"]];
     case "inquiry.created":
+    case "inquiry.updated":
       return [["inquiries"], ["nav-counts"]];
     case "appointment.changed":
       return [["appointments"], ["nav-counts"]];
