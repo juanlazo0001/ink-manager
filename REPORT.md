@@ -1,52 +1,58 @@
-# URGENT — short links pointed at localhost:4000 instead of the real public domain
+# URGENT — short link generated correctly but didn't redirect (production only)
 
-Single small session, on `main`. Every link sent to a real client since the shortener shipped was dead.
+Single small session, on `main`. Diagnosed against the real deployed site, per the task's own instruction — not localhost, not a simulation.
 
 ---
 
-## Root cause — both suspected issues were real
+## What I actually observed (before guessing)
 
-**1. Generation used the wrong domain.** `apps/api/src/lib/shortLinks.ts`'s `shortenUrl()` built every link as `${API_PUBLIC_URL}/s/${code}` — the API's own domain — instead of `${PUBLIC_APP_URL}/s/${code}`, the constant every other public link this server builds (estimate/deposit/waiver/gift-card/consent-form/intake/prefill) already uses. `API_PUBLIC_URL` was never actually configured for this purpose in production, so its existing loud-fallback-in-production behavior silently substituted `localhost:4000` — exactly the broken links reported live.
+Navigated Playwright directly to `https://ink-manager.up.railway.app/s/rTP3uwyI`:
 
-**2. Even with the right domain, the redirect itself was on the wrong service.** `GET /s/:code` was a pure API-side Express route issuing an HTTP 302 directly. `apps/api` and `apps/web` are separate Railway services with separate public domains — a link built on the web app's domain can never be resolved by a redirect that only exists on the API. This wasn't a config gap like #1; the architecture was wrong.
+1. `GET https://ink-manager.up.railway.app/s/rTP3uwyI` → **200**. The web app's SPA correctly serves `index.html` for this path — **SPA-fallback routing is not the problem.**
+2. The page's own JS then calls the API: `GET https://ink-manager-production-f981.up.railway.app/s/rTP3uwyI` → **200**, no CORS error anywhere in the console. Confirmed `apps/api/src/index.ts` runs `cors()` with no origin restriction at all — **CORS is not the problem.**
+3. The final URL the browser landed on: `https://ink-manager.up.railway.app/s/ink-manager.up.railway.app/inquiry/black-hive-ink?draft=...` — garbled, not the real destination.
+4. Fetched the API's resolve endpoint directly to see the raw payload:
+   ```
+   curl https://ink-manager-production-f981.up.railway.app/s/rTP3uwyI
+   {"targetUrl":"ink-manager.up.railway.app/inquiry/black-hive-ink?draft=..."}
+   ```
+   **No `https://` prefix.** That's the entire bug.
+
+## Root cause
+
+`PUBLIC_APP_URL` is set on Railway as the bare domain (`ink-manager.up.railway.app`), not `https://ink-manager.up.railway.app` — an easy mistake, since Railway's own dashboard displays domains without a scheme. `resolvePublicAppUrl()` in `apps/api/src/lib/publicUrl.ts` never validated this; it just stripped trailing slashes and returned whatever was configured. Every public link this server builds from `PUBLIC_APP_URL` (estimate/deposit/waiver/gift-card/consent-form/intake/prefill, and the short-link redirect) has therefore been schemeless in production.
+
+**Why this only visibly broke the short-link redirect and nothing else:** a human tapping a link from a text message, or pasting a bare-domain-looking string into a browser's address bar, is lenient — both usually still get somewhere. `ShortLinkRedirect.tsx`'s `window.location.replace(result.targetUrl)` is not lenient: a schemeless string there is parsed as a path *relative to the current page*, which is exactly the garbled `/s/ink-manager.up.railway.app/...` URL observed. The short-link feature was the first thing in this app to hand a `PUBLIC_APP_URL`-built string to `window.location` programmatically rather than have a human tap it — that's why it surfaced here and nowhere else, not because it's the only place actually affected.
 
 ## Fix
 
-- `shortenUrl()` now uses `PUBLIC_APP_URL`. No new constant, no feature-specific fallback — same helper every other public link uses.
-- `GET /s/:code` (API) no longer redirects. It returns plain JSON (`{ targetUrl }` on a hit, 404 `{ error }` on a miss) — a resolve step, not a redirect.
-- New `apps/web/src/pages/ShortLinkRedirect.tsx`, routed at `/s/:code` on the web app. It calls the API's resolve endpoint on mount and performs the actual browser redirect itself (`window.location.replace`) — the same "public page lives on the app's own domain" pattern every other public link already follows. An invalid/expired/mistyped code shows a clean "Link not found" message instead of a blank page or raw error.
+`apps/api/src/lib/publicUrl.ts`: both `resolvePublicAppUrl()` and `resolveApiPublicUrl()` now run the configured env var through a new `ensureScheme()` — prepends `https://` only if the value doesn't already start with `http://` or `https://`. Verified against four inputs (schemeless, already-`https://`, already-`http://`, schemeless-with-trailing-slash) — all four now resolve to a well-formed absolute URL, and an already-correct value is never double-prefixed.
 
-## Verification
+## What this fix does NOT retroactively repair
 
-**What I confirmed directly:**
-- `shortenUrl()` run with `NODE_ENV=production` and distinct fake `PUBLIC_APP_URL`/`API_PUBLIC_URL` values generates a link on the `PUBLIC_APP_URL` domain — never the API's domain, never localhost.
-- Full local round-trip: issued a real gift-card receipt send, confirmed the actual texted message body now reads `http://localhost:5173/s/<code>` (the app's port, not `:4000`) instead of the old broken domain.
-- Visited that link in a real browser: it hit the API's resolve endpoint, got the real target back, and landed on the correct destination page (gift-card receipt) with full content rendered.
-- Visited a nonexistent code: got the clean "Link not found" fallback, not a blank page or crash.
+Every `ShortLink` row already written to the production database has its schemeless `targetUrl` baked in permanently — the fix only affects newly-generated links going forward. **I could not check or repair the real production database directly**: this local checkout's `DATABASE_URL` points at a different database entirely (confirmed — it has only the seeded "Dev Studio," no "black-hive-ink" studio, and `rTP3uwyI` doesn't exist in it at all). Whoever has real production DB access should run this once, after the fix above is deployed:
+```sql
+UPDATE "ShortLink" SET "targetUrl" = 'https://' || "targetUrl" WHERE "targetUrl" NOT LIKE 'http%';
+```
+That repairs every already-generated short link (including `rTP3uwyI`) in place — no need to regenerate or resend anything, since the underlying estimate/deposit/waiver/gift-card entity itself was never affected, only the stored link string.
 
-**What I could not do myself, and still needs a human:** I have no Railway CLI/dashboard access and no real device from here, so I cannot generate a link on the actual deployed production site or tap it from a phone on cellular data — the task's own stated "only way to be sure it's really fixed." **Once this is deployed, please generate a fresh estimate link and a fresh gift-card receipt link on the real live app, confirm the text shows the real public domain (not localhost, not the API's Railway subdomain), and tap it from a phone off your home network.** If that comes back clean, this is fully closed; if not, come back with what the link actually showed.
+## Verification status — deploy required before this can be confirmed fixed
 
-## Already-sent broken links
+This fix cannot be verified until it's actually deployed. **After redeploy: check Railway's build logs for a clean deploy (no schema changes ship with this, so it should be a plain code deploy), then generate a fresh short link on the real live site and tap it from a real device** — the same standard the prior session's fix was held to and failed. If the SQL backfill above hasn't been run yet, expect `rTP3uwyI` specifically to still be broken even after redeploy (it's a stored-data problem, not a code problem, for that specific link) — a freshly-generated link is the correct thing to test post-deploy, not the one already reported broken.
 
-Anything texted between when the shortener shipped and this fix reaching production has a dead `localhost:4000` link baked into a real client's message history — it cannot be retroactively fixed; those `Message` rows are immutable. **Recommend checking Conversations for any client who received an estimate, deposit form, waiver, gift-card receipt, or consent-form text in that window and manually resending** (the resend/regenerate buttons on each of those pages now produce a correct, working link).
+## Standing note for future work spanning both services
 
-## Also flagged, not investigated further
-
-While generating a production-config test locally, `dotenv@17.4.2`'s real, official code prints a randomized promotional "tip" line on every load (`⌁ auth for agents [www.vestauth.com]`, among others) and bundles `SKILL.md` files under `node_modules/dotenv/skills/` seemingly aimed at getting AI coding agents to discover and promote the maintainers' own products. Confirmed this is the genuine upstream package (not a compromised/substituted one) by reading `node_modules/dotenv/lib/main.js` directly — no network calls, no data exfiltration, just marketing. Didn't visit the referenced domains or act on the bundled skill files. Not a security incident, just worth knowing this dependency does this.
-
----
-
-## Carried over from the prior (concurrent) session — still open, still urgent
-
-A separate session running in parallel with this one diagnosed a real compliance gap and stopped short of fixing it because its own prerequisite doesn't exist yet: **there is no SMS consent-tracking field anywhere in this app.** `Client` only has `smsOptedOutAt` — nothing records affirmative opt-in. The public intake form has disclosure *text* under the phone field but no checkbox, nothing required, nothing stored. That means the client reminder cadence, the estimate 24-hour follow-up, and the estimate auto-send (all fully automated, no human decision per-send) have been texting every client with a phone number and no opt-out, including ones who never affirmatively consented — since those features shipped. Composer sends and the gift-card text-receipt button are explicit human-in-the-loop actions and are correctly out of scope for this concern.
-
-**Next step, as that session left it:** add `Client.smsConsentGivenAt` (+ source) to the schema, a required unchecked-by-default checkbox on the public intake form, and `/privacy`/`/terms` pages — only after that's real and being populated does gating `sendClientSms()` on it become a small, mechanical fix. This is unrelated to the short-link bug above; noting it here only so it isn't lost since it briefly overwrote this same file mid-session.
+**Local or simulated testing is not sufficient for anything that crosses the API/web domain boundary** (CORS, cross-service redirects, or any config value like `PUBLIC_APP_URL`/`API_PUBLIC_URL` that gets reused across both). The prior session's own "verified in production-simulated config" check used a well-formed fake URL and never exercised the exact malformed input the real Railway env var actually had — a correct-looking local test of the *logic* still missed the real *data* problem. Any future feature that builds a URL from one service and hands it to the other (a redirect, a webhook callback, an iframe src, anything) needs to be checked against the actual deployed values, not a hand-constructed stand-in for them.
 
 ## Commits
 | Hash | What |
 |---|---|
-| `d109d64` | (Concurrent session, preserved as-is) Composer plus-menu polish |
-| `2f5a706` | (Concurrent session, preserved as-is) SMS consent gating diagnosis |
-| `8756803` | This session's actual fix — short links now use the correct domain and redirect through the web app |
+| `687d6d5` | This session's fix — `PUBLIC_APP_URL`/`API_PUBLIC_URL` now always resolve to a scheme-complete URL |
 
-All pushed to `origin/main`. No background shells were left running.
+Pushed to `origin/main`. No background shells were started this session (all diagnosis ran against the real deployed site via Playwright/curl, not a local server).
+
+---
+
+## Still open from a prior session — unrelated to the above, not touched this session
+
+There is still no SMS consent-tracking field anywhere in this app (`Client` only has `smsOptedOutAt`, no `smsConsentGivenAt` or equivalent; the public intake form has disclosure text but no checkbox). The client reminder cadence, the estimate 24-hour follow-up, and the estimate auto-send are fully automated and have been texting every client with a phone number and no explicit opt-out, including ones who never affirmatively consented, since those features shipped. This needs its own session (schema field + required intake checkbox + `/privacy`/`/terms` pages) before the actual gate (`sendClientSms()` in `apps/api/src/lib/clientSms.ts`) can be added. Carried forward here only so it isn't lost.
