@@ -136,6 +136,7 @@ model Studio {
   integrations       StudioIntegration[]
   artistReminderLogs ArtistReminderLog[]
   dismissedDuplicatePairs DismissedDuplicatePair[]
+  customPolicies     CustomPolicy[]
 }
 
 // Self-serve provider connections -- a studio owner connects their OWN
@@ -592,11 +593,43 @@ model StudioSettings {
   // (see the `timezone` field above) -- checked against
   // isWithinSendWindow (lib/reminderWindow.ts) by the 15-minute ticker.
   reminderSendTimes             Json?
+  // Package C1: configurable deposit-tier lookup, replacing the previously
+  // hardcoded breakpoints in computeDepositTier (apps/api/src/routes/
+  // inquiries.ts). Array<{ minAmountCents: number, maxAmountCents: number |
+  // null, depositAmountCents: number }>, ordered ascending by minAmountCents;
+  // maxAmountCents: null marks the top, catch-all tier -- exactly one tier
+  // must have it, enforced by validateDepositTiers at PATCH time, not by
+  // the schema. Nullable only because existing rows predate this column;
+  // the migration backfills every existing studio with its literal prior
+  // hardcoded behavior, and computeDepositTier falls back to that same
+  // default list if a studio somehow still has null here.
+  depositTiers                  Json?
   createdAt                     DateTime @default(now())
   updatedAt                     DateTime @updatedAt
 
   studioId String @unique
   studio   Studio @relation(fields: [studioId], references: [id])
+}
+
+// Package C1: add-your-own policy beyond the 8 fixed StudioSettings HTML
+// fields -- same WYSIWYG edit pattern (RichTextEditor.tsx), same
+// sanitizeHtml.ts allow-list applied on render, but an open-ended list
+// instead of fixed keys. isPublic gates visibility on the public /policies
+// page; a policy can exist (and be edited) while isPublic is false, it's
+// just not listed there.
+model CustomPolicy {
+  id        String   @id @default(cuid())
+  title     String
+  bodyHtml  String?
+  isPublic  Boolean  @default(false)
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  @@index([studioId])
 }
 
 model AuditLog {

@@ -14,20 +14,12 @@ import { syncPrimaryEmail, syncPrimaryPhone } from "../lib/clientContacts";
 import { findBufferConflict, formatBufferWarning } from "../lib/schedulingConflict";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { emitInvalidation } from "../lib/realtime/registry";
+import { computeDepositTier, resolveDepositTiers } from "../lib/depositTiers";
 
 const router = Router();
 
 const ESTIMATE_TOKEN_TTL_DAYS = 7;
 const DEPOSIT_TOKEN_TTL_HOURS = 48;
-
-// $0-200 -> $50 deposit / $60 total, $201-599 -> $100/$110, $600+ -> $200/$210.
-// Fee is a flat $10 in every tier, but derived (not hardcoded) from the two
-// numbers so the tier table stays the single source of truth.
-function computeDepositTier(averageEstimate: number): { depositAmount: number; totalCharged: number } {
-  if (averageEstimate <= 200) return { depositAmount: 50, totalCharged: 60 };
-  if (averageEstimate <= 599) return { depositAmount: 100, totalCharged: 110 };
-  return { depositAmount: 200, totalCharged: 210 };
-}
 
 const REQUIRED_FIELDS = [
   "studioSlug",
@@ -944,8 +936,11 @@ router.post("/:id/deposit-form", requireAuth, requireRole(Role.OWNER, Role.FRONT
     return res.status(400).json({ error: "This deposit form has already been signed" });
   }
 
+  const settings = await prisma.studioSettings.findUnique({ where: { studioId: req.user!.studioId } });
+  const tiers = resolveDepositTiers(settings?.depositTiers);
+
   const average = (inquiry.priceEstimateLow + inquiry.priceEstimateHigh) / 2;
-  const { depositAmount, totalCharged } = computeDepositTier(average);
+  const { depositAmount, totalCharged } = computeDepositTier(average, tiers);
   const feeAmount = totalCharged - depositAmount;
 
   const token = crypto.randomBytes(32).toString("hex");

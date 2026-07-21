@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { Role } from "../../generated/prisma/enums";
 import { diffObjects, logAudit } from "../lib/audit";
+import { DEFAULT_DEPOSIT_TIERS, validateDepositTiers } from "../lib/depositTiers";
 
 const router = Router();
 
@@ -23,7 +24,16 @@ async function getOrCreateSettings(studioId: string) {
 // sensitive the way write access is. PATCH below stays OWNER-only.
 router.get("/", requireRole(Role.OWNER, Role.FRONT_DESK, Role.ARTIST), async (req, res) => {
   const settings = await getOrCreateSettings(req.user!.studioId);
-  res.json(settings);
+  // Materializes the literal prior hardcoded breakpoints for any studio
+  // that hasn't saved its own tiers yet, so the Settings UI (and anyone
+  // else reading this route) sees the studio's actual current effective
+  // behavior rather than an empty list -- computeDepositTier applies this
+  // same fallback independently (see lib/depositTiers.ts), this is purely
+  // about not showing a misleadingly-empty editor.
+  const depositTiers = Array.isArray(settings.depositTiers) && settings.depositTiers.length > 0
+    ? settings.depositTiers
+    : DEFAULT_DEPOSIT_TIERS;
+  res.json({ ...settings, depositTiers });
 });
 
 const TEXT_FIELDS = [
@@ -246,6 +256,14 @@ router.patch("/", requireRole(Role.OWNER), async (req, res) => {
     data.reminderSendTimes = body.reminderSendTimes;
   }
 
+  if (body.depositTiers !== undefined) {
+    const validationError = validateDepositTiers(body.depositTiers);
+    if (validationError) {
+      return res.status(400).json({ error: validationError });
+    }
+    data.depositTiers = body.depositTiers;
+  }
+
   const updated = await prisma.studioSettings.update({ where: { studioId: req.user!.studioId }, data });
 
   await logAudit({
@@ -267,6 +285,7 @@ router.patch("/", requireRole(Role.OWNER), async (req, res) => {
       "businessHours",
       "reminderTemplates",
       "reminderSendTimes",
+      "depositTiers",
     ] as (keyof typeof existing)[]),
   });
 

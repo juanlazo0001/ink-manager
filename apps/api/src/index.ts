@@ -28,6 +28,7 @@ import integrationsRouter from "./routes/integrations";
 import webhooksRouter from "./routes/webhooks";
 import searchRouter from "./routes/search";
 import shortLinksRouter from "./routes/shortLinks";
+import { publicRouter as customPoliciesPublicRouter, staffRouter as customPoliciesStaffRouter } from "./routes/customPolicies";
 import { startScheduler } from "./lib/jobs";
 import { requireAuth } from "./middleware/auth";
 import { initRealtime } from "./lib/realtime/io";
@@ -91,6 +92,11 @@ app.use("/view-as", viewAsRouter);
 app.use("/jobs", jobsRouter);
 app.use("/integrations", integrationsRouter);
 app.use("/search", searchRouter);
+// Public router first, same reasoning as gift-cards/waivers above: the
+// public /policies page's studioSlug-keyed GET must be reachable before
+// the staff router's requireAuth.
+app.use("/custom-policies", customPoliciesPublicRouter);
+app.use("/custom-policies", customPoliciesStaffRouter);
 // Public: Twilio calls these directly, no requireAuth anywhere in this router.
 app.use("/webhooks", webhooksRouter);
 // Public: whoever taps a shortened link in a text has no auth yet.

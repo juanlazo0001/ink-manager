@@ -4,7 +4,7 @@ import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
 import RichTextEditor from '../components/RichTextEditor'
 import PhoneInput from '../components/PhoneInput'
-import { CheckIcon, ClockIcon, CloseIcon, CopyIcon, PencilIcon, SpinnerIcon } from '../components/icons'
+import { CheckIcon, ChevronDownIcon, ClockIcon, CloseIcon, CopyIcon, PencilIcon, SpinnerIcon } from '../components/icons'
 import { apiFetch } from '../lib/api'
 import {
   formatDateTime,
@@ -29,6 +29,29 @@ interface MessageTemplate {
   id: string
   name: string
   body: string
+}
+
+// Package C1: configurable deposit-tier lookup (replaces the previously
+// hardcoded breakpoints in computeDepositTier).
+interface DepositTierData {
+  minAmountCents: number
+  maxAmountCents: number | null
+  depositAmountCents: number
+}
+
+interface DepositTierDraft {
+  minDollars: string
+  maxDollars: string
+  depositDollars: string
+}
+
+// Package C1: add-your-own policy beyond the fixed 8 HTML fields below.
+interface CustomPolicyData {
+  id: string
+  title: string
+  bodyHtml: string | null
+  isPublic: boolean
+  order: number
 }
 
 // Phase 7A: Settings -> System section (job scheduler observability).
@@ -91,6 +114,7 @@ interface StudioSettingsData {
   showSidebarBadges: boolean
   reminderTemplates: ReminderTemplatesData | null
   reminderSendTimes: ReminderSendTimesData | null
+  depositTiers: DepositTierData[]
 }
 
 // Phase 7B-2: the SMS reminder cadence's own editable templates/times --
@@ -510,6 +534,43 @@ export default function Settings() {
   const [sendTimesSaving, setSendTimesSaving] = useState(false)
   const [sendTimesError, setSendTimesError] = useState<string | null>(null)
 
+  // Custom Policies (Package C1 §1): an open-ended list instead of the
+  // fixed POLICY_HTML_FIELDS keys, but the same per-item edit-icon+modal
+  // interaction. editingCustomPolicy is either a real row (editing), the
+  // literal string 'new' (creating), or null (modal closed).
+  const [customPolicies, setCustomPolicies] = useState<CustomPolicyData[] | null>(null)
+  const [editingCustomPolicy, setEditingCustomPolicy] = useState<CustomPolicyData | 'new' | null>(null)
+  const [customPolicyTitleDraft, setCustomPolicyTitleDraft] = useState('')
+  const [customPolicyBodyDraft, setCustomPolicyBodyDraft] = useState('')
+  const [customPolicyPublicDraft, setCustomPolicyPublicDraft] = useState(false)
+  const [customPolicySaving, setCustomPolicySaving] = useState(false)
+  const [customPolicyError, setCustomPolicyError] = useState<string | null>(null)
+  const [deletingCustomPolicyId, setDeletingCustomPolicyId] = useState<string | null>(null)
+
+  // Deposit Tiers (Package C1 §2): same own-card, own-Edit-toggle treatment
+  // as Send Times above, but a variable-length list instead of fixed keys
+  // -- drafts are kept in dollars (matching every other dollar-amount input
+  // in this app) and converted to/from cents only at the API boundary.
+  const [editingDepositTiers, setEditingDepositTiers] = useState(false)
+  const [depositTiersDraft, setDepositTiersDraft] = useState<DepositTierDraft[]>([])
+  const [depositTiersSaving, setDepositTiersSaving] = useState(false)
+  const [depositTiersError, setDepositTiersError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!canViewPolicies) return
+    let ignore = false
+    apiFetch<CustomPolicyData[]>('/custom-policies')
+      .then((data) => {
+        if (!ignore) setCustomPolicies(data)
+      })
+      .catch(() => {
+        /* Section just stays empty if this fails; not critical page content. */
+      })
+    return () => {
+      ignore = true
+    }
+  }, [canViewPolicies])
+
   useEffect(() => {
     if (!canViewPolicies) return
 
@@ -554,6 +615,130 @@ export default function Settings() {
       setFieldError(err instanceof Error ? err.message : 'Failed to save')
     } finally {
       setFieldSaving(false)
+    }
+  }
+
+  function openCustomPolicyModal(policy: CustomPolicyData | 'new') {
+    setEditingCustomPolicy(policy)
+    setCustomPolicyTitleDraft(policy === 'new' ? '' : policy.title)
+    setCustomPolicyBodyDraft(policy === 'new' ? '' : (policy.bodyHtml ?? ''))
+    setCustomPolicyPublicDraft(policy === 'new' ? false : policy.isPublic)
+    setCustomPolicyError(null)
+  }
+
+  async function handleCustomPolicySave() {
+    if (!editingCustomPolicy) return
+    setCustomPolicySaving(true)
+    setCustomPolicyError(null)
+    try {
+      if (editingCustomPolicy === 'new') {
+        const created = await apiFetch<CustomPolicyData>('/custom-policies', {
+          method: 'POST',
+          body: JSON.stringify({
+            title: customPolicyTitleDraft,
+            bodyHtml: customPolicyBodyDraft,
+            isPublic: customPolicyPublicDraft,
+          }),
+        })
+        setCustomPolicies((prev) => [...(prev ?? []), created])
+      } else {
+        const updated = await apiFetch<CustomPolicyData>(`/custom-policies/${editingCustomPolicy.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            title: customPolicyTitleDraft,
+            bodyHtml: customPolicyBodyDraft,
+            isPublic: customPolicyPublicDraft,
+          }),
+        })
+        setCustomPolicies((prev) => (prev ?? []).map((p) => (p.id === updated.id ? updated : p)))
+      }
+      setEditingCustomPolicy(null)
+    } catch (err) {
+      setCustomPolicyError(err instanceof Error ? err.message : 'Failed to save')
+    } finally {
+      setCustomPolicySaving(false)
+    }
+  }
+
+  async function handleDeleteCustomPolicy(id: string) {
+    setCustomPolicyError(null)
+    try {
+      await apiFetch(`/custom-policies/${id}`, { method: 'DELETE' })
+      setCustomPolicies((prev) => (prev ?? []).filter((p) => p.id !== id))
+      setDeletingCustomPolicyId(null)
+    } catch (err) {
+      setCustomPolicyError(err instanceof Error ? err.message : 'Failed to delete')
+    }
+  }
+
+  async function moveCustomPolicy(index: number, direction: -1 | 1) {
+    if (!customPolicies) return
+    const target = index + direction
+    if (target < 0 || target >= customPolicies.length) return
+
+    const reordered = [...customPolicies]
+    ;[reordered[index], reordered[target]] = [reordered[target], reordered[index]]
+    setCustomPolicies(reordered)
+    setCustomPolicyError(null)
+
+    try {
+      const saved = await apiFetch<CustomPolicyData[]>('/custom-policies/reorder', {
+        method: 'POST',
+        body: JSON.stringify({ orderedIds: reordered.map((p) => p.id) }),
+      })
+      setCustomPolicies(saved)
+    } catch (err) {
+      setCustomPolicyError(err instanceof Error ? err.message : 'Failed to reorder')
+    }
+  }
+
+  function centsToDollarsInput(cents: number): string {
+    return (cents / 100).toString()
+  }
+
+  function startEditingDepositTiers() {
+    setDepositTiersDraft(
+      (policies?.depositTiers ?? []).map((tier) => ({
+        minDollars: centsToDollarsInput(tier.minAmountCents),
+        maxDollars: tier.maxAmountCents === null ? '' : centsToDollarsInput(tier.maxAmountCents),
+        depositDollars: centsToDollarsInput(tier.depositAmountCents),
+      })),
+    )
+    setDepositTiersError(null)
+    setEditingDepositTiers(true)
+  }
+
+  function addDepositTier() {
+    setDepositTiersDraft((prev) => [...prev, { minDollars: '', maxDollars: '', depositDollars: '' }])
+  }
+
+  function removeDepositTier(index: number) {
+    setDepositTiersDraft((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  function updateDepositTier(index: number, patch: Partial<DepositTierDraft>) {
+    setDepositTiersDraft((prev) => prev.map((tier, i) => (i === index ? { ...tier, ...patch } : tier)))
+  }
+
+  async function handleDepositTiersSave() {
+    setDepositTiersSaving(true)
+    setDepositTiersError(null)
+    try {
+      const payload = depositTiersDraft.map((tier) => ({
+        minAmountCents: Math.round(Number(tier.minDollars) * 100),
+        maxAmountCents: tier.maxDollars.trim() === '' ? null : Math.round(Number(tier.maxDollars) * 100),
+        depositAmountCents: Math.round(Number(tier.depositDollars) * 100),
+      }))
+      const updated = await apiFetch<StudioSettingsData>('/studio-settings', {
+        method: 'PATCH',
+        body: JSON.stringify({ depositTiers: payload }),
+      })
+      setPolicies(updated)
+      setEditingDepositTiers(false)
+    } catch (err) {
+      setDepositTiersError(err instanceof Error ? err.message : 'Failed to save deposit tiers')
+    } finally {
+      setDepositTiersSaving(false)
     }
   }
 
@@ -1655,6 +1840,238 @@ export default function Settings() {
             </div>
           )}
 
+          {activeTab === 'policies' && canViewPolicies && (
+            <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold text-fg">Custom Policies</h2>
+                  <p className="mt-1 text-sm text-fg-secondary">
+                    Add your own policy sections beyond the fixed set above. Public ones appear on your studio's
+                    /policies page.
+                  </p>
+                </div>
+                {canEditPolicies && (
+                  <button
+                    type="button"
+                    onClick={() => openCustomPolicyModal('new')}
+                    className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                  >
+                    + Add Policy
+                  </button>
+                )}
+              </div>
+
+              {customPolicyError && <p className="mt-3 text-sm text-danger">{customPolicyError}</p>}
+
+              {customPolicies && customPolicies.length === 0 && (
+                <p className="mt-4 text-sm text-fg-secondary">No custom policies yet.</p>
+              )}
+
+              {customPolicies && customPolicies.length > 0 && (
+                <div className="mt-4 divide-y divide-border">
+                  {customPolicies.map((policy, index) => (
+                    <div key={policy.id} className="flex items-center justify-between gap-3 py-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium text-fg">{policy.title}</p>
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                              policy.isPublic ? 'bg-success/10 text-success' : 'bg-surface-inset text-fg-muted'
+                            }`}
+                          >
+                            {policy.isPublic ? 'Public' : 'Private'}
+                          </span>
+                        </div>
+                        <p className="mt-0.5 truncate text-xs text-fg-secondary">
+                          {stripHtmlPreview(policy.bodyHtml)}
+                        </p>
+                      </div>
+                      {canEditPolicies && (
+                        <div className="flex shrink-0 items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => moveCustomPolicy(index, -1)}
+                            disabled={index === 0}
+                            aria-label="Move up"
+                            title="Move up"
+                            className="flex h-8 w-8 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface-inset hover:text-fg disabled:opacity-30"
+                          >
+                            <ChevronDownIcon className="h-4 w-4 rotate-180" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => moveCustomPolicy(index, 1)}
+                            disabled={index === customPolicies.length - 1}
+                            aria-label="Move down"
+                            title="Move down"
+                            className="flex h-8 w-8 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface-inset hover:text-fg disabled:opacity-30"
+                          >
+                            <ChevronDownIcon className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openCustomPolicyModal(policy)}
+                            aria-label={`Edit ${policy.title}`}
+                            title={`Edit ${policy.title}`}
+                            className="flex h-8 w-8 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface-inset hover:text-fg"
+                          >
+                            <PencilIcon className="h-4 w-4" />
+                          </button>
+                          {deletingCustomPolicyId === policy.id ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteCustomPolicy(policy.id)}
+                                className="rounded-full border border-danger/40 px-2 py-1 text-xs font-medium text-danger transition hover:bg-danger/10"
+                              >
+                                Confirm
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setDeletingCustomPolicyId(null)}
+                                className="rounded-full border border-border px-2 py-1 text-xs font-medium text-fg-secondary transition hover:bg-surface"
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setDeletingCustomPolicyId(policy.id)}
+                              className="rounded-full border border-border px-2 py-1 text-xs font-medium text-fg-secondary transition hover:bg-surface hover:text-danger"
+                            >
+                              Delete
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'policies' && canViewPolicies && policies && (
+            <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold text-fg">Deposit Tiers</h2>
+                  <p className="mt-1 text-sm text-fg-secondary">
+                    The deposit amount charged depends on which tier the average price estimate falls into.
+                  </p>
+                </div>
+                {canEditPolicies && !editingDepositTiers && (
+                  <button
+                    type="button"
+                    onClick={startEditingDepositTiers}
+                    className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                  >
+                    Edit
+                  </button>
+                )}
+              </div>
+
+              {!editingDepositTiers && (
+                <div className="mt-4 divide-y divide-border">
+                  {policies.depositTiers.map((tier, i) => (
+                    <div key={i} className="flex items-center justify-between gap-3 py-3 text-sm">
+                      <span className="text-fg">
+                        ${(tier.minAmountCents / 100).toFixed(2)} –{' '}
+                        {tier.maxAmountCents === null ? 'and above' : `$${(tier.maxAmountCents / 100).toFixed(2)}`}
+                      </span>
+                      <span className="font-medium text-fg">${(tier.depositAmountCents / 100).toFixed(2)} deposit</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {editingDepositTiers && (
+                <div className="mt-4 space-y-3">
+                  {depositTiersDraft.map((tier, i) => (
+                    <div key={i} className="flex flex-wrap items-end gap-2 rounded-lg border border-border p-3">
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-fg-secondary">Min ($)</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={tier.minDollars}
+                          onChange={(e) => updateDepositTier(i, { minDollars: e.target.value })}
+                          className="w-28 rounded-lg border border-border bg-surface-inset px-2 py-1.5 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-fg-secondary">
+                          Max ($, blank = and above)
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={tier.maxDollars}
+                          onChange={(e) => updateDepositTier(i, { maxDollars: e.target.value })}
+                          placeholder="and above"
+                          className="w-36 rounded-lg border border-border bg-surface-inset px-2 py-1.5 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-fg-secondary">Deposit ($)</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={tier.depositDollars}
+                          onChange={(e) => updateDepositTier(i, { depositDollars: e.target.value })}
+                          className="w-28 rounded-lg border border-border bg-surface-inset px-2 py-1.5 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeDepositTier(i)}
+                        className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg-secondary transition hover:bg-surface"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+
+                  <button
+                    type="button"
+                    onClick={addDepositTier}
+                    className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                  >
+                    + Add tier
+                  </button>
+
+                  {depositTiersError && <p className="text-sm text-danger">{depositTiersError}</p>}
+
+                  <div className="flex gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={handleDepositTiersSave}
+                      disabled={depositTiersSaving}
+                      className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                    >
+                      {depositTiersSaving ? 'Saving…' : 'Save tiers'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingDepositTiers(false)
+                        setDepositTiersError(null)
+                      }}
+                      disabled={depositTiersSaving}
+                      className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {editingField && (
             <Modal
               title={`Edit ${POLICY_HTML_FIELDS.find((f) => f.key === editingField)?.label ?? ''}`}
@@ -1675,6 +2092,54 @@ export default function Settings() {
                   type="button"
                   onClick={() => setEditingField(null)}
                   disabled={fieldSaving}
+                  className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+              </div>
+            </Modal>
+          )}
+
+          {editingCustomPolicy && (
+            <Modal
+              title={editingCustomPolicy === 'new' ? 'Add Custom Policy' : `Edit ${editingCustomPolicy.title}`}
+              onClose={() => setEditingCustomPolicy(null)}
+            >
+              <label className="mb-1 block text-sm font-medium text-fg-secondary">Title</label>
+              <input
+                type="text"
+                value={customPolicyTitleDraft}
+                onChange={(e) => setCustomPolicyTitleDraft(e.target.value)}
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+
+              <label className="mb-1 mt-4 block text-sm font-medium text-fg-secondary">Body</label>
+              <RichTextEditor value={customPolicyBodyDraft} onChange={setCustomPolicyBodyDraft} />
+
+              <label className="mt-4 flex items-center gap-2 text-sm text-fg">
+                <input
+                  type="checkbox"
+                  checked={customPolicyPublicDraft}
+                  onChange={(e) => setCustomPolicyPublicDraft(e.target.checked)}
+                />
+                Public (visible on the studio's /policies page)
+              </label>
+
+              {customPolicyError && <p className="mt-3 text-sm text-danger">{customPolicyError}</p>}
+
+              <div className="mt-4 flex gap-3">
+                <button
+                  type="button"
+                  onClick={handleCustomPolicySave}
+                  disabled={customPolicySaving || !customPolicyTitleDraft.trim()}
+                  className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                >
+                  {customPolicySaving ? 'Saving…' : 'Save'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingCustomPolicy(null)}
+                  disabled={customPolicySaving}
                   className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
                 >
                   Cancel
