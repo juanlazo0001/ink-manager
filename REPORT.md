@@ -1,69 +1,48 @@
-# Post-merge verification — three parallel sessions landed close together
+# URGENT — SMS consent gating: BLOCKED, nothing to gate against yet
 
-Single session, read-mostly, on `main`. Re-verifies (rather than trusts) three sessions that ran in parallel: (A) global search + gift card receipts + contextual New Appointment/Inquiry button + a `PHONE` channel enum value, (B) the 7B Part 2 reminder cadence, (C) a calendar CSS fix (`0176297`, already clean, not touched). Checklist below is pass/fail per item, per the task's own instruction — findings and fixes are called out separately.
-
----
-
-## 1. Uncommitted work check — DONE
-Session A's work was still fully sitting uncommitted in the working tree at session start (nothing lost). Reviewed every file's diff for coherence before committing (all of it was complete, working code, not half-finished). Committed as its own commit, separate from this session's fixes: **`0657246`** — "Global search, gift card receipts, contextual inquiry button, staff-entered inquiries".
-
-## 2. Migration integrity — **PASS**
-`npx prisma migrate status`: 21 migrations found, **database schema is up to date**, zero drift. Confirmed both before and after committing session A's work (migrations are independent of git staging state).
-
-## 3. Commit sweep verification (`e658e1f`) — **PASS, with one finding**
-Read the actual diff (`git diff e658e1f^ e658e1f`), not just the prior report. Confirmed `apps/api/src/routes/inquiries.ts` in that commit genuinely contains **both**: session A's `optionalAuth`/`isStaffRequest`/`PHONE`-channel staff-inquiry logic, and session B's own `estimateFollowUpSentAt` reset-on-resend logic. Nothing missing or reverted.
-
-**Finding — main had a broken build window.** `inquiries.ts` at `e658e1f` imports `optionalAuth` from `../middleware/auth`, but `middleware/auth.ts` didn't export it in git history until this session's `0657246` (it only existed as an uncommitted file on session A's disk). Proved this with a real compile, not just a grep: checked out `e658e1f` in an isolated worktree, ran `npx prisma generate` + `npx tsc --noEmit` fresh — **`error TS2305: Module '"../middleware/auth"' has no exported member 'optionalAuth'`**. This means `main` would not have built for anyone pulling fresh (CI, a new clone, a Railway deploy from git) from commit `e658e1f` through `0176297` inclusive (3 commits). **Already fixed** — current HEAD builds clean. Worktree removed after the test.
-
-## 4. Waiver row integrity — **PASS**
-- `cmrp92dy00008nsi2hbot388z` (byte-for-byte restore target): confirmed identical to its pre-deletion state — same `id`, token, `tokenExpiresAt` (2026-07-18, in the past — correctly, since it was never re-extended after the earlier restore), `clientId`, `appointmentId`, `status: PENDING`, `signedAt`/`verifiedAt` both still `null`.
-- `cmrsjb6w70004qsi203wnomdn` (new-token restore target): its **new token resolves correctly** on the live `GET /waivers/verify/:token` endpoint (full signing payload returned). Searched the codebase and the database for any prior reference to the old (unrecoverable) token: zero `Message` rows contain any waiver link for this appointment/studio from before this session's testing, and the waiver's only audit-log entry is its original `create` — no `sign`/`verify` action ever followed. **The old link was never sent to anyone, so nothing is actually broken by the token having changed.**
-
-## 5. Feature re-verification — **all PASS** (one real bug found and fixed along the way)
-
-| Item | Result |
-|---|---|
-| Global search via ⌘K | PASS |
-| Global search via sidebar click | PASS |
-| Search matches: client | PASS |
-| Search matches: inquiry | PASS |
-| Search matches: artist | PASS (first check raced the 300ms debounce and looked like a miss; re-run with a longer wait confirmed it works) |
-| Search matches: appointment | PASS (route target confirmed to exist, `/appointments/:id`) |
-| Search result click navigates correctly | PASS |
-| Cross-studio isolation | **Verified by code review, not a live cross-tenant browser test** — only one studio exists in dev data. `routes/search.ts` scopes every one of its four queries by `studioId: req.user!.studioId`, sourced only from the authenticated JWT, never from any client-supplied parameter — there is no code path for a request to search another studio's data. |
-| Gift card public page shows code + QR | PASS |
-| Staff "Text receipt" button sends real SMS | PASS — real Twilio send, accepted |
-| Contextual button: Projects tab → "New Appointment" | PASS |
-| Contextual button: Inquiries tab → "New Inquiry" | PASS |
-| Staff inquiry form saves, PHONE channel persists | **Initially FAILED** — see finding below. PASS after the fix. |
-| PHONE channel displays correctly (inquiry list, inquiry detail) | PASS — renders as "Phone" via the existing generic `formatStatus` formatter; no channel-specific icon map elsewhere needed updating |
-| Reminder cadence: 3 jobs show friendly names + working Run Now | PASS |
-| Slot-collision fix re-test | **PASS** — see below |
-| Template editor: placeholder chips insert at cursor | PASS |
-| Template editor: live SMS character/segment counter | PASS |
-| `ensureLiabilityWaiver` extends an already-existing waiver's expiry | PASS — re-verified live on the same waiver row (past expiry pushed to cover a new 30-day-out date, same `id`/token, `created: false`), then restored back to its original expiry afterward |
-
-**Finding — real, currently-live bug: staff-created inquiries had no server-side role check.** `POST /inquiries`'s `optionalAuth` path only checked *whether* a valid token was present, not *which role* it belonged to — meaning an authenticated ARTIST could call the route directly and create inquiries attributed as staff-created, bypassing both the frontend's own OWNER/FRONT_DESK gate and the pattern every other staff-mutation route in that same file enforces. **Fixed**: added an explicit `requireRole`-equivalent check on the authenticated branch (403 for any role other than OWNER/FRONT_DESK).
-
-**Finding — real, currently-live bug: `PHONE` channel was rejected by the running API.** The `Channel` enum was correctly added to `schema.prisma` and migrated into the actual Postgres database (confirmed via `migrate status`), but the **generated Prisma client on this machine had never been regenerated** since before that migration — so `Object.values(Channel).includes(body.channel)` didn't recognize `"PHONE"` at all, and every attempt to log a walk-in/phone inquiry failed with `400 channel must be one of: EMAIL, INSTAGRAM, FACEBOOK`. **Fixed** by running `npx prisma generate`; this is a local build-artifact fix only (that directory is gitignored, regenerated automatically by the `postinstall` script on any fresh install, e.g. Railway's deploy) — the *committed code* was always correct, only this dev machine's stale generated client was wrong. Re-verified end-to-end through the actual browser form afterward: PASS.
-
-**Finding — real, currently-live crash bug: `AuditTrail` crashed the whole `ClientDetail` page for clients with older merge history.** `formatMergeSummary` unconditionally read `changes.aliasesAdded.addedPhones`, but merge audit-log rows written before that field existed (a real row already in the database, from before this session) have no `aliasesAdded` key at all — `TypeError: Cannot read properties of undefined (reading 'addedPhones')`, caught only by the page's `ErrorBoundary`, breaking the entire client page (not just the audit section). Found while re-verifying the AuditTrail merge-summary rendering, not something the task explicitly asked to check — but a real, live, currently-reachable bug. **Fixed**: `aliasesAdded` is now optional on the type, and the alias-count line falls back to zero when absent. Verified live on the exact client that had been crashing: renders correctly now ("Merged another client record into this client.").
-
-## 6. Combined sanity pass — **PASS**
-- Fresh `cd apps/web && npm run build` — clean, zero errors.
-- Fresh `cd apps/api && npx tsc --noEmit` — clean, zero errors.
-- Both run after all fixes above (auth role-check, Prisma client regen, AuditTrail crash fix) were in place together.
-- One full browser click-through in the same running instance, in this order: global search (⌘K + sidebar) → gift card detail + text receipt → public gift card page → Inquiries page contextual button (both tabs) → staff inquiry creation with PHONE channel → Settings → System (all three reminder jobs) → Settings template editor → client detail page with older merge history. No interaction issues found between features; the AuditTrail crash above is the only cross-feature problem surfaced, and it's fixed.
+Single session, on `main`. Task was to verify SMS consent gating exists on every automated client-facing send path, and add it where missing. **Stopped at step 1 per the task's own instructions** — diagnosis found neither half of the prerequisite (schema field, intake checkbox) exists, so there is no consent signal to gate on. No code changes were made.
 
 ---
 
-## Commits made this session
-| Hash | What |
-|---|---|
-| `0657246` | Session A's previously-uncommitted work (global search, gift card receipts, contextual button, staff inquiries, `PHONE` channel), plus the missing role check on `POST /inquiries`'s staff path |
-| `ae40505` | Fix `AuditTrail` crash on merge audit rows missing `aliasesAdded` |
+## 1. Diagnosis — consent tracking does NOT exist
 
-Both pushed to `origin/main`. No destructive actions taken; all test data created during this session's re-verification (one gift card, two throwaway inquiries + their auto-created clients) was deleted afterward. The dev API server's generated Prisma client was regenerated (`npx prisma generate`) — a local artifact, not a commit.
+**Schema (`apps/api/prisma/schema.prisma`, `Client` model):** only `smsOptedOutAt DateTime?` exists. There is no `smsConsentGivenAt`, `smsConsentSource`, or any other field recording that a client ever affirmatively agreed to receive texts.
 
-## Bottom line
-Everything on the checklist above ultimately passes. Three real, currently-live bugs were found and fixed in the process (none were in the two sessions' own self-reports): the missing `optionalAuth` export causing a multi-commit build-breakage window on `main`, the missing role check on staff-created inquiries, and the `AuditTrail` crash on older merge rows — plus one local-only stale-generated-client issue (the `PHONE` enum) that would not have affected a real deploy but did block verification on this machine until regenerated. All are confirmed fixed at current `HEAD`.
+**Public intake form (`apps/web/src/pages/IntakeForm.tsx:263-270`):** the phone field has *disclosure text* underneath it —
+
+> "By providing your phone number, you consent to receive SMS messages about your inquiry and appointment. Message and data rates may apply. Reply STOP to opt out."
+
+— but there is **no checkbox**. Nothing is unchecked-by-default, nothing is required to submit, nothing is stored per-submission. It's implied consent from providing a phone number, not opt-in consent.
+
+**Conclusion: neither piece exists.** Per the task's instructions, this means the consent-checkbox/privacy-terms session referenced in the task (schema field + intake checkbox + `/privacy` and `/terms` pages) was never actually run. There is nothing in the data model to check a send against, so step 2 (audit + fix every automated send path) cannot be built on top of anything real — it would just be gating against a field that doesn't exist.
+
+## 2. The actual exposure, stated plainly
+
+**Every automated, non-human-initiated SMS send to a client in this app currently fires with zero consent check of any kind**, because the field to check doesn't exist. Confirmed by reading `apps/api/src/lib/clientSms.ts` — `sendClientSms()` is the single choke point all client-facing sends go through, and its only pre-send guards are:
+
+```ts
+if (client.smsOptedOutAt) return { sent: false, reason: "opted_out" };
+if (!client.phone) return { sent: false, reason: "no_phone" };
+```
+
+No consent check exists to add a third condition to, because there's no field to check. Traced every caller of `sendClientSms()`:
+
+| Path | File | Trigger | In scope for the gate |
+|---|---|---|---|
+| Client reminder cadence (week-before / night-before / morning-of) | `apps/api/src/lib/jobs/reminderTicker.ts` (`sendClientReminders`) | Fully automated background job, no human in the loop per-send | **Yes — automated** |
+| Estimate 24-hour follow-up | `apps/api/src/lib/jobs/reminderTicker.ts` (`sendEstimateFollowUps`) | Fully automated background job, no human in the loop per-send | **Yes — automated** |
+| Auto-send-on-generate-estimate | `apps/api/src/routes/inquiries.ts:649` (`POST /inquiries/:id/send-estimate`) | Staff clicks "send estimate" as a business action; the SMS itself fires automatically as a side effect with no separate "yes, text this" confirmation | **Yes — automated** |
+| Composer send | `apps/api/src/routes/conversations.ts:593` | Staff explicitly composes and sends one specific message to one specific client, in the moment | No — human decision each time, per the task's own carve-out |
+| Gift card "text receipt" button | `apps/api/src/routes/giftCards.ts:163` | Staff explicitly clicks "text this receipt" for one specific card, in the moment | No — same category as composer, explicit per-instance human action |
+
+So, concretely: the 7B-2 reminder cadence (three client-facing reminder texts per appointment), the estimate follow-up job, and the estimate auto-send have all been sending to every client with a phone number and no opt-out — including clients who never gave any form of opt-in consent — since those features shipped. This is the most urgent open item in the project from a compliance standpoint (A2P 10DLC requires affirmative opt-in, not just "didn't opt out").
+
+## 3. What needs to happen next
+
+1. Run the consent-checkbox / privacy-terms session as originally scoped: `Client.smsConsentGivenAt` (+ source) on the schema, a required unchecked-by-default checkbox on the public intake form, `/privacy` and `/terms` pages.
+2. Only after that field exists and is actually being populated by real submissions: re-run this gating task. At that point the fix is small and mechanical — add `if (!client.smsConsentGivenAt) return { sent: false, reason: "no_consent" }` to `sendClientSms()` in `apps/api/src/lib/clientSms.ts`, next to the existing `smsOptedOutAt`/`no_phone` checks, with a matching `skippedNoConsent` counter in `reminderTicker.ts`'s per-studio stats (same pattern as `skippedOptedOut`/`skippedNoPhone` already there). Composer and text-receipt sends stay untouched, as scoped.
+3. Until step 1 lands, every automated send listed above should be treated as running without compliant consent gating.
+
+## Commits / cleanup
+
+No code changes made — diagnosis only, as instructed. No commits. No background shells were started this session.
