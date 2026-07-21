@@ -210,3 +210,58 @@ Scratch scripts (`scratch-seed-duplicate-pair.ts`, `scratch-check-studios.ts`, `
 - Alex Testperson (`client1@dev-studio.test`): phone corrected to a valid 10-digit number, plus the Instagram/Facebook/Other-contact values added during verification.
 - Casey/Drew (`client3`/`client4@dev-studio.test`): Drew's email was changed to match Casey's (to create a real auto-detected duplicate pair to test against), then dismissed as "not a duplicate" via the UI — the dismissal row is real and correctly in effect.
 - A second studio (`dev-studio-2`, owner `owner2@dev-studio2.test` / `password123`, one client) created solely to test cross-studio rejection. This is a bigger footprint than a typical single test row — flagging it explicitly in case it's not wanted long-term in the shared dev database; delete via `prisma.studio.delete({ where: { slug: "dev-studio-2" } })` (cascades) if so.
+
+---
+
+# Package C1 — Custom policies + configurable deposit tiers
+
+Single session on `main`. One schema migration (`package_c1_custom_policies_and_deposit_tiers`).
+
+## 1. Custom policies
+
+New `CustomPolicy` model (`title`, `bodyHtml`, `isPublic`, `order`, timestamps, `studioId`). CRUD lives in a new `apps/api/src/routes/customPolicies.ts`, split into `publicRouter` (unauthenticated `GET /custom-policies/public?studioSlug=`, mirroring `artists.ts`'s existing public-route pattern) and `staffRouter` (`requireAuth` + per-route `requireRole`) — mounted the same public-then-staff order as `gift-cards`/`waivers` in `index.ts`. View (`GET /`) is OWNER + FRONT_DESK, matching the fixed 8 HTML fields' own `canViewPolicies`; create/edit/delete/reorder are OWNER-only, matching `canEditPolicies` and `studioSettings.ts`'s existing `PATCH /` gating — no new permission pattern introduced, `requirePermission`/the configurable matrix was deliberately not used here since policy/settings editing has never been part of it (confirmed: the 8 existing fields use plain `requireRole(Role.OWNER)` too).
+
+Frontend reuses the exact edit-icon → `RichTextEditor.tsx` → `Modal` interaction the 8 fixed fields already use, generalized to an open-ended list (add, edit, reorder via up/down buttons, delete via an inline confirm/cancel pair, public/private toggle in the edit modal) — new "Custom Policies" card in Settings → Policies & Templates, right below the existing Reminder Templates card.
+
+New public page `apps/web/src/pages/Policies.tsx` at `/policies/:studioSlug`, modeled on `IntakeForm.tsx`'s loading/invalid/ready state machine. Renders each public policy's `bodyHtml` through the **existing, unmodified** `sanitizeHtml.ts` (DOMPurify, the same allow-list already shared by `EstimateResponse.tsx`/`WaiverSign.tsx`) — no new sanitizer, no server-side sanitization added; sanitization happens client-side at render time only, consistent with how every other HTML policy field in this app already works.
+
+**Sanitizer coverage confirmed** with a real injection, not just a typed/auto-escaped string: PATCHed a policy's `bodyHtml` directly via the API (bypassing the editor, which auto-escapes typed `<`/`>`) to `<p>Legit text</p><script>alert(1)</script><img src=x onerror="alert(2)"><a href="javascript:alert(3)">click</a>`, confirmed the raw value is stored as-is (no server-side sanitization, by design), then loaded `/policies/dev-studio` in a real browser: no `alert()` fired, no `<script>` element in the DOM, no `onerror` attribute, no `javascript:` href — while "Legit text" still rendered correctly. Test policy deleted afterward rather than left with literal payload text in the dev database.
+
+## 2. Configurable deposit tiers
+
+`StudioSettings.depositTiers` (`Json?`) replaces `computeDepositTier`'s hardcoded breakpoints. New `apps/api/src/lib/depositTiers.ts`: `DEFAULT_DEPOSIT_TIERS` (the studio's literal prior behavior, in cents), `validateDepositTiers` (contiguity/no-gap/no-overlap/exactly-one-catch-all), `resolveDepositTiers` (null-safe fallback), and `computeDepositTier(averageEstimate, tiers)` now taking the tier list as a parameter instead of hardcoding it. The one call site (`POST /inquiries/:id/deposit-form`) now reads the studio's `StudioSettings.depositTiers` first, falling back to the defaults if unset.
+
+**Seeded initial tier values** (for review against current real pricing) — mirrors the prior hardcoded logic exactly, at cent granularity so contiguity holds:
+
+| Min | Max | Deposit |
+|---|---|---|
+| $0.00 | $200.00 | $50.00 |
+| $200.01 | $599.00 | $100.00 |
+| $599.01 | and above | $200.00 |
+
+(Flat $10 fee on top of the deposit in every tier, unchanged — the task only asked to make the deposit breakpoints configurable, not the fee.)
+
+**Deviation from a literal DB backfill, flagged deliberately**: the task asked to "seed the studio's current hardcoded breakpoints as the initial value." Since `depositTiers` is nullable and the schema migration had already been applied to the dev database by the time this need was identified, editing the already-applied migration file to add a data-seeding `UPDATE` would have left its recorded checksum out of sync with the file on disk — a real risk of `prisma migrate dev` flagging drift (and potentially prompting a dev-database reset) on a future run. Instead, "seeding" is handled entirely in application code: `GET /studio-settings` materializes `DEFAULT_DEPOSIT_TIERS` into its response whenever the stored value is null (so the Settings UI always shows the studio's real current effective tiers, never a misleadingly-empty list), and `computeDepositTier`'s own fallback guarantees identical behavior either way. Net effect for the user is the same — behavior and displayed values don't change until an OWNER edits them — this only changes *how* that's achieved, and this also means any future new studio benefits from the same fallback automatically without needing its own migration.
+
+Settings UI: new "Deposit Tiers" card (OWNER-edit, same own-card own-Edit-toggle convention as the existing Send Times section) — add/remove/edit tier rows in dollars (converted to/from cents at the API boundary only), Save/Cancel.
+
+## Verification
+
+**Browser** (Playwright): created a custom policy, marked it public, confirmed it appears at `/policies/dev-studio`; toggled it private, confirmed it disappeared from the public page while remaining visible/editable in Settings; deposit tiers card correctly displays the seeded $50/$100/$200 breakpoints.
+
+**PowerShell**:
+- Invalid tier configs all correctly rejected with clear errors: a gap (`20000` → `20500`), an overlap (`20000` → `19000`), a missing catch-all tier, and two catch-all tiers. A valid config (matching the defaults) was accepted.
+- FRONT_DESK correctly blocked (403) from editing deposit tiers and from creating a custom policy, while still able to read the custom-policies list (matching the view/edit split).
+- Cross-studio isolation confirmed for custom policies: a second studio's owner token sees an empty list (not the other studio's policy), and direct PATCH/DELETE-by-id attempts against the other studio's policy both 404 (ownership check, not just a filtered list) — same pattern as Package B's `merge`/`dismiss-duplicate` cross-studio checks.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) — clean. `npm run build` (web) — clean.
+
+## Commit
+
+`15f8cd7` — Package C1: custom policies + configurable deposit tiers.
+
+## Cleanup
+
+Web dev server (:5173) started for this session's verification was stopped; the API dev server on :4000 (already running from an earlier session) was left as-is. Test policies created for XSS/cross-studio verification were deleted after use, since they contained literal script-injection payload text. `depositTiers` on `dev-studio`'s `StudioSettings` is now explicitly persisted (equal to the defaults, from the valid-config verification PATCH) rather than left null — no behavior change, just no longer relying on the null-fallback for this one studio.
