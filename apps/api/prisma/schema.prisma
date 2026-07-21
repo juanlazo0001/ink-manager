@@ -135,6 +135,7 @@ model Studio {
   prefillDrafts      PrefillDraft[]
   integrations       StudioIntegration[]
   artistReminderLogs ArtistReminderLog[]
+  dismissedDuplicatePairs DismissedDuplicatePair[]
 }
 
 // Self-serve provider connections -- a studio owner connects their OWN
@@ -223,6 +224,7 @@ model User {
   conversationParticipant ConversationParticipant[]
   createdConversationTags ConversationTag[]
   createdPrefillDrafts    PrefillDraft[]
+  dismissedDuplicatePairs DismissedDuplicatePair[]
 
   locationId String?
   location   Location? @relation(fields: [locationId], references: [id])
@@ -276,6 +278,16 @@ model Client {
   phone     String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // Manual, staff-entered links only -- same rationale as Artist's
+  // identical fields (see Artist.instagramHandle): no automatic
+  // profile/photo import from Instagram or Facebook this pass.
+  instagramHandle    String?
+  facebookProfileUrl String?
+  // Free-text catch-all for any other contact channel not worth a
+  // dedicated column (TikTok, personal website, etc.) -- informational
+  // display only, no validation beyond basic length.
+  otherContact String?
 
   studioId String
   studio   Studio @relation(fields: [studioId], references: [id])
@@ -342,6 +354,29 @@ model ClientEmail {
   client   Client @relation(fields: [clientId], references: [id])
 
   @@unique([clientId, email])
+}
+
+// Suppresses an automatic potential-duplicate suggestion for one specific
+// pair -- staff decided these two clients are NOT the same person. Manual
+// merge via the client-search picker stays available regardless (this only
+// hides the pair from GET /clients/:id/potential-duplicates), since staff
+// might reconsider later. clientAId/clientBId are always stored with the
+// lexicographically smaller id first, so a pair is unique and matchable
+// regardless of which of the two clients the dismiss action was fired from.
+model DismissedDuplicatePair {
+  id          String   @id @default(cuid())
+  clientAId   String
+  clientBId   String
+  dismissedAt DateTime @default(now())
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  dismissedById String
+  dismissedBy   User   @relation(fields: [dismissedById], references: [id])
+
+  @@unique([clientAId, clientBId])
+  @@index([studioId])
 }
 
 model Appointment {

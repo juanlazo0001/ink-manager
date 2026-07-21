@@ -6,9 +6,21 @@ import Modal from '../components/Modal'
 import AuditTrail from '../components/AuditTrail'
 import StatusPill from '../components/StatusPill'
 import PhoneInput from '../components/PhoneInput'
+import ClientComparisonView from '../components/ClientComparisonView'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatPhoneInput, formatStatus, isValidPhoneDigits } from '../lib/format'
-import { ArrowLeftIcon, CheckIcon, CopyIcon, MessageIcon, MoreIcon, PencilIcon, PlusIcon } from '../components/icons'
+import {
+  ArrowLeftIcon,
+  CheckIcon,
+  CopyIcon,
+  FacebookIcon,
+  InstagramIcon,
+  MessageIcon,
+  MoreIcon,
+  PencilIcon,
+  PlusIcon,
+  SearchIcon,
+} from '../components/icons'
 import { useUserProfile } from '../context/useUserProfile'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useConversationPanel } from '../context/useConversationPanel'
@@ -80,6 +92,9 @@ interface Client {
   lastName: string
   email: string | null
   phone: string | null
+  instagramHandle: string | null
+  facebookProfileUrl: string | null
+  otherContact: string | null
   mergedIntoId: string | null
   mergedInto: { id: string; firstName: string; lastName: string } | null
   archivedAt: string | null
@@ -138,7 +153,15 @@ function formatCents(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`
 }
 
-const EMPTY_EDIT_FORM = { firstName: '', lastName: '', email: '', phone: '' }
+const EMPTY_EDIT_FORM = {
+  firstName: '',
+  lastName: '',
+  email: '',
+  phone: '',
+  instagramHandle: '',
+  facebookProfileUrl: '',
+  otherContact: '',
+}
 
 const EMPTY_GIFT_CARD_FORM = { amountDollars: '', expiresAt: '' }
 
@@ -291,6 +314,16 @@ export default function ClientDetail() {
   const [merging, setMerging] = useState(false)
   const [mergeError, setMergeError] = useState<string | null>(null)
 
+  const [dismissingId, setDismissingId] = useState<string | null>(null)
+  const [dismissError, setDismissError] = useState<string | null>(null)
+
+  const [compareTarget, setCompareTarget] = useState<DuplicateCandidate | null>(null)
+
+  const [showMergeSearch, setShowMergeSearch] = useState(false)
+  const [mergeSearchQuery, setMergeSearchQuery] = useState('')
+  const [mergeSearchResults, setMergeSearchResults] = useState<DuplicateCandidate[]>([])
+  const [mergeSearchLoading, setMergeSearchLoading] = useState(false)
+
   const [showMoreMenu, setShowMoreMenu] = useState(false)
   const [archiving, setArchiving] = useState(false)
   const [archiveError, setArchiveError] = useState<string | null>(null)
@@ -359,6 +392,54 @@ export default function ClientDetail() {
     }
   }, [id, refreshIndex])
 
+  // Manual merge search (§2) -- debounced so every keystroke doesn't fire a
+  // request; only runs while the search modal is actually open.
+  useEffect(() => {
+    if (!showMergeSearch) return
+    if (mergeSearchQuery.trim().length < 2) {
+      setMergeSearchResults([])
+      setMergeSearchLoading(false)
+      return
+    }
+
+    let ignore = false
+    setMergeSearchLoading(true)
+    const timeout = setTimeout(async () => {
+      try {
+        const results = await apiFetch<DuplicateCandidate[]>(
+          `/clients/merge-search?q=${encodeURIComponent(mergeSearchQuery.trim())}&excludeId=${id}`,
+        )
+        if (!ignore) setMergeSearchResults(results)
+      } catch {
+        if (!ignore) setMergeSearchResults([])
+      } finally {
+        if (!ignore) setMergeSearchLoading(false)
+      }
+    }, 300)
+
+    return () => {
+      ignore = true
+      clearTimeout(timeout)
+    }
+  }, [mergeSearchQuery, showMergeSearch, id])
+
+  async function handleDismissDuplicate(candidate: DuplicateCandidate) {
+    if (!id) return
+    setDismissingId(candidate.id)
+    setDismissError(null)
+    try {
+      await apiFetch(`/clients/${id}/dismiss-duplicate`, {
+        method: 'POST',
+        body: JSON.stringify({ otherClientId: candidate.id }),
+      })
+      setDuplicates((prev) => (prev ? prev.filter((d) => d.id !== candidate.id) : prev))
+    } catch (err) {
+      setDismissError(err instanceof Error ? err.message : 'Failed to dismiss duplicate')
+    } finally {
+      setDismissingId(null)
+    }
+  }
+
   function startEditing() {
     if (!client) return
     setEditForm({
@@ -366,6 +447,9 @@ export default function ClientDetail() {
       lastName: client.lastName,
       email: client.email ?? '',
       phone: client.phone ?? '',
+      instagramHandle: client.instagramHandle ?? '',
+      facebookProfileUrl: client.facebookProfileUrl ?? '',
+      otherContact: client.otherContact ?? '',
     })
     setEditError(null)
     setEditing(true)
@@ -391,6 +475,9 @@ export default function ClientDetail() {
           lastName: editForm.lastName,
           email: editForm.email || null,
           phone: editForm.phone || null,
+          instagramHandle: editForm.instagramHandle.trim() || null,
+          facebookProfileUrl: editForm.facebookProfileUrl.trim() || null,
+          otherContact: editForm.otherContact.trim() || null,
         }),
       })
 
@@ -892,6 +979,36 @@ export default function ClientDetail() {
                           className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                         />
                       </div>
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-fg-secondary">Instagram handle</label>
+                        <input
+                          type="text"
+                          value={editForm.instagramHandle}
+                          onChange={(e) => setEditForm({ ...editForm, instagramHandle: e.target.value })}
+                          placeholder="username (no @)"
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-fg-secondary">Facebook profile URL</label>
+                        <input
+                          type="text"
+                          value={editForm.facebookProfileUrl}
+                          onChange={(e) => setEditForm({ ...editForm, facebookProfileUrl: e.target.value })}
+                          placeholder="https://facebook.com/..."
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="mb-1 block text-sm font-medium text-fg-secondary">Other contact</label>
+                        <input
+                          type="text"
+                          value={editForm.otherContact}
+                          onChange={(e) => setEditForm({ ...editForm, otherContact: e.target.value })}
+                          placeholder="TikTok, personal website, etc."
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                        />
+                      </div>
                     </div>
 
                     {editError && <p className="mt-3 text-sm text-danger">{editError}</p>}
@@ -928,6 +1045,37 @@ export default function ClientDetail() {
                         <p className="text-sm text-fg-secondary">
                           {client.phone ? formatPhoneInput(client.phone) : 'No phone on file'}
                         </p>
+                        {(client.instagramHandle || client.facebookProfileUrl) && (
+                          <div className="mt-2 flex items-center gap-2">
+                            {client.instagramHandle && (
+                              <a
+                                href={`https://instagram.com/${client.instagramHandle}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                aria-label="Instagram"
+                                title="Instagram"
+                                className="flex h-7 w-7 items-center justify-center rounded-full border border-border text-fg-secondary transition hover:bg-surface-raised hover:text-fg"
+                              >
+                                <InstagramIcon className="h-3.5 w-3.5" />
+                              </a>
+                            )}
+                            {client.facebookProfileUrl && (
+                              <a
+                                href={client.facebookProfileUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                aria-label="Facebook"
+                                title="Facebook"
+                                className="flex h-7 w-7 items-center justify-center rounded-full border border-border text-fg-secondary transition hover:bg-surface-raised hover:text-fg"
+                              >
+                                <FacebookIcon className="h-3.5 w-3.5" />
+                              </a>
+                            )}
+                          </div>
+                        )}
+                        {client.otherContact && (
+                          <p className="mt-1 text-xs text-fg-muted">{client.otherContact}</p>
+                        )}
                       </div>
                     </div>
 
@@ -1255,11 +1403,25 @@ export default function ClientDetail() {
                 {contactActionError && <p className="mt-3 text-sm text-danger">{contactActionError}</p>}
               </div>
 
+              {canManage && !client.mergedIntoId && (
+                <div className="mt-6 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setShowMergeSearch(true)}
+                    className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
+                  >
+                    <SearchIcon className="h-4 w-4" />
+                    Merge with another client
+                  </button>
+                </div>
+              )}
+
               {canManage && !client.mergedIntoId && duplicates && duplicates.length > 0 && (
                 <div className="mt-6 rounded-2xl border border-warning/30 bg-warning/10 p-4">
                   <p className="text-sm font-medium text-warning">
                     {duplicates.length} potential duplicate{duplicates.length > 1 ? 's' : ''} found
                   </p>
+                  {dismissError && <p className="mt-2 text-sm text-danger">{dismissError}</p>}
                   <ul className="mt-3 space-y-2">
                     {duplicates.map((candidate) => (
                       <li
@@ -1271,13 +1433,23 @@ export default function ClientDetail() {
                           {candidate.email ? ` — ${candidate.email}` : ''}
                           {candidate.phone ? ` — ${formatPhoneInput(candidate.phone)}` : ''}
                         </span>
-                        <button
-                          type="button"
-                          onClick={() => openMergeConfirm(candidate)}
-                          className="rounded-full border border-warning/40 px-3 py-1 text-xs font-semibold text-warning transition hover:bg-warning/10"
-                        >
-                          Merge into this client
-                        </button>
+                        <span className="flex shrink-0 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setCompareTarget(candidate)}
+                            className="rounded-full border border-warning/40 px-3 py-1 text-xs font-semibold text-warning transition hover:bg-warning/10"
+                          >
+                            Merge into this client
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDismissDuplicate(candidate)}
+                            disabled={dismissingId === candidate.id}
+                            className="rounded-full border border-border px-3 py-1 text-xs font-medium text-fg-secondary transition hover:bg-surface disabled:opacity-60"
+                          >
+                            {dismissingId === candidate.id ? 'Dismissing…' : 'Not a duplicate'}
+                          </button>
+                        </span>
                       </li>
                     ))}
                   </ul>
@@ -1778,6 +1950,69 @@ export default function ClientDetail() {
               {issuingGiftCard ? 'Issuing…' : 'Issue Gift Card'}
             </button>
           </form>
+        </Modal>
+      )}
+
+      {showMergeSearch && (
+        <Modal
+          title="Merge with another client"
+          onClose={() => {
+            setShowMergeSearch(false)
+            setMergeSearchQuery('')
+            setMergeSearchResults([])
+          }}
+        >
+          <input
+            type="text"
+            autoFocus
+            placeholder="Search by name, email, or phone…"
+            value={mergeSearchQuery}
+            onChange={(e) => setMergeSearchQuery(e.target.value)}
+            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+          />
+
+          {mergeSearchLoading && <p className="mt-3 text-sm text-fg-secondary">Searching…</p>}
+          {!mergeSearchLoading && mergeSearchQuery.trim().length >= 2 && mergeSearchResults.length === 0 && (
+            <p className="mt-3 text-sm text-fg-secondary">No clients found.</p>
+          )}
+
+          <ul className="mt-3 max-h-72 space-y-2 overflow-y-auto">
+            {mergeSearchResults.map((candidate) => (
+              <li key={candidate.id}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowMergeSearch(false)
+                    setMergeSearchQuery('')
+                    setMergeSearchResults([])
+                    setCompareTarget(candidate)
+                  }}
+                  className="flex w-full items-center justify-between gap-2 rounded-lg border border-border px-3 py-2 text-left text-sm text-fg transition hover:bg-surface"
+                >
+                  <span>
+                    {candidate.firstName} {candidate.lastName}
+                    {candidate.email ? ` — ${candidate.email}` : ''}
+                    {candidate.phone ? ` — ${formatPhoneInput(candidate.phone)}` : ''}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </Modal>
+      )}
+
+      {compareTarget && id && (
+        <Modal title="Compare Clients" onClose={() => setCompareTarget(null)}>
+          <ClientComparisonView
+            clientAId={id}
+            clientBId={compareTarget.id}
+            onProceed={() => {
+              const target = compareTarget
+              setCompareTarget(null)
+              openMergeConfirm(target)
+            }}
+            onCancel={() => setCompareTarget(null)}
+          />
         </Modal>
       )}
 

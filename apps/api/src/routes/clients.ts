@@ -59,6 +59,42 @@ router.get("/", async (req, res) => {
   res.json(clients);
 });
 
+// Backs the manual-merge search picker (§2): find ANY client in the
+// studio by name/email/phone, not just contact-matching auto-suggestions.
+// A static path, so it must be registered before GET /:id below --
+// otherwise Express would match "/merge-search" as :id.
+router.get("/merge-search", async (req, res) => {
+  const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+  const excludeId = typeof req.query.excludeId === "string" ? req.query.excludeId : undefined;
+
+  if (q.length < 2) {
+    return res.json([]);
+  }
+
+  // Split on whitespace and require every word to match SOME field --
+  // otherwise a two-word query like "Casey Testperson" would never match
+  // anything, since neither firstName nor lastName alone contains the full
+  // string (the pitfall in the single-string `OR` the global omnibox search
+  // uses, fine there since it's usually a single token).
+  const words = q.split(/\s+/).filter(Boolean);
+  const results = await prisma.client.findMany({
+    where: {
+      studioId: req.user!.studioId,
+      ...NOT_MERGED,
+      ...(excludeId ? { id: { not: excludeId } } : {}),
+      AND: words.map((word) => {
+        const contains = { contains: word, mode: "insensitive" as const };
+        return { OR: [{ firstName: contains }, { lastName: contains }, { email: contains }, { phone: contains }] };
+      }),
+    },
+    select: { id: true, firstName: true, lastName: true, email: true, phone: true },
+    orderBy: { createdAt: "desc" },
+    take: 20,
+  });
+
+  res.json(results);
+});
+
 router.get("/:id", async (req, res) => {
   const id = req.params.id as string;
   const client = await prisma.client.findUnique({
@@ -277,9 +313,19 @@ router.get("/:id/shareable-links", async (req, res) => {
   });
 });
 
+// clientAId/clientBId are always stored with the lexicographically smaller
+// id first, so a dismissed pair is unique/matchable regardless of which of
+// the two clients the dismiss action was fired from.
+function normalizeDuplicatePair(clientId1: string, clientId2: string): [string, string] {
+  return clientId1 < clientId2 ? [clientId1, clientId2] : [clientId2, clientId1];
+}
+
 // Other non-merged clients in this studio sharing an email or phone.
 // Exact-match only (after normalizing phone formatting) -- no fuzzy name
-// matching, keeping false positives at zero.
+// matching, keeping false positives at zero. Excludes any pair staff has
+// already dismissed as "not a duplicate" -- manual merge via search stays
+// available for a dismissed pair regardless, this only suppresses the
+// automatic suggestion banner.
 router.get("/:id/potential-duplicates", async (req, res) => {
   const id = req.params.id as string;
 
@@ -288,10 +334,19 @@ router.get("/:id/potential-duplicates", async (req, res) => {
     return res.status(404).json({ error: "Client not found" });
   }
 
-  const candidates = await prisma.client.findMany({
-    where: { studioId: req.user!.studioId, id: { not: id }, ...NOT_MERGED },
-    include: { phones: true, emails: true },
-  });
+  const [candidates, dismissedPairs] = await Promise.all([
+    prisma.client.findMany({
+      where: { studioId: req.user!.studioId, id: { not: id }, ...NOT_MERGED },
+      include: { phones: true, emails: true },
+    }),
+    prisma.dismissedDuplicatePair.findMany({
+      where: { studioId: req.user!.studioId, OR: [{ clientAId: id }, { clientBId: id }] },
+    }),
+  ]);
+
+  const dismissedOtherIds = new Set(
+    dismissedPairs.map((pair) => (pair.clientAId === id ? pair.clientBId : pair.clientAId)),
+  );
 
   // Every known alias, not just the primary scalar fields -- a secondary
   // phone/email is just as real a match signal as the primary one. The
@@ -303,6 +358,8 @@ router.get("/:id/potential-duplicates", async (req, res) => {
   if (client.email) clientEmails.add(client.email.toLowerCase());
 
   const duplicates = candidates.filter((candidate) => {
+    if (dismissedOtherIds.has(candidate.id)) return false;
+
     const candidatePhones = candidate.phones.map((p) => p.phone);
     if (candidate.phone) candidatePhones.push(normalizePhone(candidate.phone));
     if (candidatePhones.some((phone) => clientPhones.has(phone))) return true;
@@ -317,7 +374,63 @@ router.get("/:id/potential-duplicates", async (req, res) => {
   res.json(duplicates.map(({ phones, emails, ...rest }) => rest));
 });
 
-const EDITABLE_CLIENT_FIELDS = ["firstName", "lastName", "email", "phone"] as const;
+// Suppresses the automatic potential-duplicate suggestion for this pair --
+// staff decided these two clients are NOT the same person. Does not touch
+// merge eligibility: the pair remains fully mergeable via the manual
+// search picker (§2), since staff might reconsider later. Idempotent --
+// dismissing an already-dismissed pair just re-confirms it (upsert).
+router.post("/:id/dismiss-duplicate", async (req, res) => {
+  const id = req.params.id as string;
+  const { otherClientId } = req.body ?? {};
+
+  if (!otherClientId || typeof otherClientId !== "string") {
+    return res.status(400).json({ error: "otherClientId is required" });
+  }
+  if (otherClientId === id) {
+    return res.status(400).json({ error: "A client cannot be dismissed as its own duplicate" });
+  }
+
+  const [client, other] = await Promise.all([
+    prisma.client.findUnique({ where: { id } }),
+    prisma.client.findUnique({ where: { id: otherClientId } }),
+  ]);
+
+  if (!client || client.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Client not found" });
+  }
+  if (!other || other.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Other client not found" });
+  }
+
+  const [clientAId, clientBId] = normalizeDuplicatePair(id, otherClientId);
+
+  const dismissal = await prisma.dismissedDuplicatePair.upsert({
+    where: { clientAId_clientBId: { clientAId, clientBId } },
+    update: {},
+    create: { studioId: req.user!.studioId, clientAId, clientBId, dismissedById: req.user!.userId },
+  });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Client",
+    entityId: id,
+    action: "dismiss_duplicate",
+    changes: { otherClientId },
+  });
+
+  res.json(dismissal);
+});
+
+const EDITABLE_CLIENT_FIELDS = [
+  "firstName",
+  "lastName",
+  "email",
+  "phone",
+  "instagramHandle",
+  "facebookProfileUrl",
+  "otherContact",
+] as const;
 
 router.patch("/:id", async (req, res) => {
   const id = req.params.id as string;
