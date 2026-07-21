@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { CloseIcon } from './icons'
 
 interface ModalProps {
@@ -27,10 +27,43 @@ export default function Modal({ title, onClose, children }: ModalProps) {
   // this component out from under its own animation.
   const [closing, setClosing] = useState(false)
 
+  // Drag-to-move: an offset from the dialog's normal centered position,
+  // dragged from the header. Resets to (0, 0) for free on every open since
+  // each Modal call site mounts a fresh instance -- no explicit reset needed.
+  const [position, setPosition] = useState({ x: 0, y: 0 })
+  const [dragging, setDragging] = useState(false)
+  const dragStartRef = useRef({ x: 0, y: 0 })
+
   useEffect(() => {
     const id = requestAnimationFrame(() => setEntered(true))
     return () => cancelAnimationFrame(id)
   }, [])
+
+  useEffect(() => {
+    if (!dragging) return
+
+    function handlePointerMove(event: PointerEvent) {
+      setPosition({ x: event.clientX - dragStartRef.current.x, y: event.clientY - dragStartRef.current.y })
+    }
+    function handlePointerUp() {
+      setDragging(false)
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+    }
+  }, [dragging])
+
+  // Only the header itself starts a drag -- not the close button (or
+  // anything else a caller might one day add up there).
+  function handleHeaderPointerDown(event: ReactPointerEvent) {
+    if ((event.target as HTMLElement).closest('button')) return
+    dragStartRef.current = { x: event.clientX - position.x, y: event.clientY - position.y }
+    setDragging(true)
+  }
 
   function requestClose() {
     setClosing(true)
@@ -92,12 +125,22 @@ export default function Modal({ title, onClose, children }: ModalProps) {
         aria-modal="true"
         aria-label={title}
         className={[
-          'w-full max-w-md rounded-2xl border border-border bg-surface p-6 transition-[opacity,transform] duration-base',
-          shown ? 'scale-100 opacity-100 ease-out' : 'scale-95 opacity-0 ease-in',
+          'w-full max-w-md rounded-2xl border border-border bg-surface p-6 duration-base',
+          // Transform is driven by the inline style below (translate for
+          // dragging, composed with scale for the enter/exit animation) --
+          // while actively dragging, the transform transition is dropped
+          // entirely so the dialog tracks the pointer instantly instead of
+          // lagging behind it.
+          dragging ? 'transition-opacity' : 'transition-[opacity,transform]',
+          shown ? 'opacity-100 ease-out' : 'opacity-0 ease-in',
         ].join(' ')}
+        style={{ transform: `translate3d(${position.x}px, ${position.y}px, 0) scale(${shown ? 1 : 0.95})` }}
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex items-center justify-between">
+        <div
+          onPointerDown={handleHeaderPointerDown}
+          className={['flex items-center justify-between', dragging ? 'cursor-grabbing select-none' : 'cursor-grab'].join(' ')}
+        >
           <h2 className="text-lg font-semibold text-fg">{title}</h2>
           <button
             type="button"
