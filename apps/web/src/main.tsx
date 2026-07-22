@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { QueryClientProvider } from '@tanstack/react-query'
 import './index.css'
 import App from './App.tsx'
+import ThemeApplier from './components/ThemeApplier'
 import { AuthProvider } from './context/AuthContext'
 import { SocketProvider } from './context/SocketContext'
 import { StudioProvider } from './context/StudioContext'
@@ -15,6 +16,7 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
+        <ThemeApplier />
         <SocketProvider>
           <StudioProvider>
             <UserProfileProvider>

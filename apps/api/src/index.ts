@@ -30,6 +30,7 @@ import searchRouter from "./routes/search";
 import shortLinksRouter from "./routes/shortLinks";
 import { publicRouter as customPoliciesPublicRouter, staffRouter as customPoliciesStaffRouter } from "./routes/customPolicies";
 import schedulingRouter from "./routes/scheduling";
+import themeRouter from "./routes/theme";
 import { startScheduler } from "./lib/jobs";
 import { requireAuth } from "./middleware/auth";
 import { initRealtime } from "./lib/realtime/io";
@@ -103,6 +104,9 @@ app.use("/webhooks", webhooksRouter);
 // Public: whoever taps a shortened link in a text has no auth yet.
 app.use("/s", shortLinksRouter);
 app.use("/scheduling", schedulingRouter);
+// Public: every unauthenticated studio-scoped page applies the studio's
+// theme preset the same way, no requireAuth here at all.
+app.use("/theme", themeRouter);
 
 app.get("/me", requireAuth, (req, res) => {
   res.json(req.user);

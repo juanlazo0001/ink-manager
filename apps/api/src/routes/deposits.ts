@@ -5,6 +5,7 @@ import { requireAuth, requireRole } from "../middleware/auth";
 import { diffObjects, logAudit } from "../lib/audit";
 import { dollarsToCents } from "../lib/money";
 import { computeGiftCardExpiration, generateUniqueGiftCardCode } from "../lib/giftCards";
+import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 
 // Exact SOP wording, in the order the client must agree to each one.
 const TERMS = [
@@ -73,7 +74,7 @@ publicRouter.get("/verify/:token", async (req, res) => {
       inquiry: {
         include: {
           client: true,
-          studio: true,
+          studio: { include: { settings: { select: { themePreset: true } } } },
           assignedArtist: { include: { user: true } },
           appointment: true,
         },
@@ -92,6 +93,7 @@ publicRouter.get("/verify/:token", async (req, res) => {
   res.json({
     clientFirstName: inquiry.client.firstName,
     studioName: inquiry.studio.name,
+    themePreset: inquiry.studio.settings?.themePreset ?? DEFAULT_THEME_PRESET,
     artistName: inquiry.assignedArtist?.user.name ?? null,
     artistAvatarUrl: inquiry.assignedArtist?.user.avatarUrl ?? null,
     appointmentStart: inquiry.appointment?.startTime ?? null,
