@@ -4,6 +4,7 @@ import { apiFetch, ApiError } from '../lib/api'
 import PhoneInput from '../components/PhoneInput'
 import ImageUploadSection, { type ImageUploadState } from '../components/ImageUploadSection'
 import { isValidPhoneDigits } from '../lib/format'
+import { applyThemePreset } from '../lib/themePresets'
 
 interface PrefillPayload {
   firstName?: string
@@ -55,6 +56,20 @@ export default function IntakeForm() {
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [submitted, setSubmitted] = useState(false)
+
+  // Package C2: public, unauthenticated pages apply the studio's theme
+  // preset independently from the authenticated app shell (ThemeApplier)
+  // -- a small dedicated GET /theme?studioSlug= rather than piggybacking
+  // on this page's own /artists/public response, so a failure/hiccup in
+  // one doesn't affect the other.
+  useEffect(() => {
+    if (!studioSlug) return
+    apiFetch<{ themePreset: string }>(`/theme?studioSlug=${encodeURIComponent(studioSlug)}`)
+      .then((data) => applyThemePreset(data.themePreset))
+      .catch(() => {
+        /* Falls back to index.css's own onyx-lime default -- not critical. */
+      })
+  }, [studioSlug])
 
   useEffect(() => {
     if (!studioSlug) return

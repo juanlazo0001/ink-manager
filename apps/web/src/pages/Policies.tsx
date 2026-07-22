@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { apiFetch, ApiError } from '../lib/api'
 import { sanitizeHtml } from '../lib/sanitizeHtml'
+import { applyThemePreset } from '../lib/themePresets'
 
 interface PublicCustomPolicy {
   id: string
@@ -11,6 +12,7 @@ interface PublicCustomPolicy {
 
 interface PublicPoliciesResponse {
   studioName: string
+  themePreset: string
   policies: PublicCustomPolicy[]
 }
 
@@ -34,6 +36,7 @@ export default function Policies() {
       .then((response) => {
         if (ignore) return
         setData(response)
+        applyThemePreset(response.themePreset)
         setState('ready')
       })
       .catch((err) => {

@@ -75,6 +75,39 @@
   --animate-fade-slide-up: fade-slide-up var(--duration-base) ease-out;
 }
 
+/* Package C2: theme presets. Every preset shares the exact same near-black
+   surface/border/text tokens above (already independently verified WCAG
+   AA -- see REPORT.md) and only overrides the accent trio, so contrast on
+   every existing fg/bg pairing never needs re-checking per preset; only
+   the new accent-fg-on-accent and accent-as-text-on-bg/surface pairings
+   are preset-specific, each verified AA (see REPORT.md for the exact
+   ratios). ThemeApplier (apps/web/src/components/ThemeApplier.tsx) sets
+   this attribute on <html> from StudioSettings.themePreset; every public
+   page applies it the same way from its own public route's themePreset
+   field. "onyx-lime" is listed explicitly (even though it's identical to
+   the @theme defaults above) so all four presets' full palettes are
+   visible together in one place. */
+:root[data-theme="onyx-lime"] {
+  --color-accent: #c9f031;
+  --color-accent-fg: #0a0a0b;
+  --color-accent-hover: #b8dd25;
+}
+:root[data-theme="slate-teal"] {
+  --color-accent: #2dd4bf;
+  --color-accent-fg: #0a0a0b;
+  --color-accent-hover: #14b8a6;
+}
+:root[data-theme="ember-amber"] {
+  --color-accent: #fb923c;
+  --color-accent-fg: #0a0a0b;
+  --color-accent-hover: #f97316;
+}
+:root[data-theme="orchid-magenta"] {
+  --color-accent: #e879f9;
+  --color-accent-fg: #0a0a0b;
+  --color-accent-hover: #d946ef;
+}
+
 @utility duration-fast {
   transition-duration: var(--duration-fast);
 }
