@@ -2,6 +2,7 @@ import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { InquiryStatus } from "../../generated/prisma/enums";
 import { logAudit } from "../lib/audit";
+import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 
 const router = Router();
 
@@ -29,7 +30,11 @@ router.get("/verify/:token", async (req, res) => {
 
   const inquiry = await prisma.inquiry.findUnique({
     where: { estimateToken: token },
-    include: { client: true, studio: true, assignedArtist: { include: { user: true } } },
+    include: {
+      client: true,
+      studio: { include: { settings: { select: { themePreset: true } } } },
+      assignedArtist: { include: { user: true } },
+    },
   });
 
   const invalidity = isExpiredOrInvalid(inquiry);
@@ -59,6 +64,7 @@ router.get("/verify/:token", async (req, res) => {
     clientFirstName: inquiry!.client.firstName,
     studioName: inquiry!.studio.name,
     studioLogoUrl: inquiry!.studio.logoUrl,
+    themePreset: inquiry!.studio.settings?.themePreset ?? DEFAULT_THEME_PRESET,
     artistName: inquiry!.assignedArtist?.user.name ?? null,
     artistAvatarUrl: inquiry!.assignedArtist?.user.avatarUrl ?? null,
     priceEstimateLow: inquiry!.priceEstimateLow,

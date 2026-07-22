@@ -5,6 +5,7 @@ import { uploadImageToCloudinary } from '../lib/cloudinary'
 import { formatDateTime } from '../lib/format'
 import { sanitizeHtml } from '../lib/sanitizeHtml'
 import PhoneInput from '../components/PhoneInput'
+import { applyThemePreset } from '../lib/themePresets'
 
 const INPUT_CLASS =
   'mt-1 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
@@ -20,6 +21,7 @@ interface HealthQuestion {
 
 interface VerifyResponse {
   studioName: string
+  themePreset: string
   appointmentStart: string
   appointmentEnd: string
   healthQuestions: HealthQuestion[]
@@ -73,6 +75,7 @@ export default function WaiverSign() {
       .then((result) => {
         if (ignore) return
         setData(result)
+        applyThemePreset(result.themePreset)
         setState('ready')
       })
       .catch((err) => {

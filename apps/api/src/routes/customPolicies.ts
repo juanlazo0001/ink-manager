@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma";
 import { Role } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { diffObjects, logAudit } from "../lib/audit";
+import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 
 // Public: the studio's own /policies page lists every isPublic custom
 // policy, keyed by studio slug -- same unauthenticated, studio-scoped GET
@@ -18,7 +19,10 @@ publicRouter.get("/public", async (req, res) => {
     return res.status(400).json({ error: "studioSlug is required" });
   }
 
-  const studio = await prisma.studio.findUnique({ where: { slug: studioSlug } });
+  const studio = await prisma.studio.findUnique({
+    where: { slug: studioSlug },
+    include: { settings: { select: { themePreset: true } } },
+  });
   if (!studio) {
     return res.status(404).json({ error: "Studio not found" });
   }
@@ -29,7 +33,11 @@ publicRouter.get("/public", async (req, res) => {
     orderBy: { order: "asc" },
   });
 
-  res.json({ studioName: studio.name, policies });
+  res.json({
+    studioName: studio.name,
+    themePreset: studio.settings?.themePreset ?? DEFAULT_THEME_PRESET,
+    policies,
+  });
 });
 
 const staffRouter = Router();

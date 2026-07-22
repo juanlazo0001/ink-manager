@@ -386,3 +386,110 @@ All within 9:00 AM–5:00 PM Eastern, not 5:00–9:00 AM. 2026-07-22 confirmed a
 ## Cleanup
 
 Web dev server (:5173) stopped. The API dev server on :4000 (already running from an earlier session) left as-is. All scratch verification scripts deleted after use. Test data left in the dev database (per standing convention): a new "Louie G" dev artist (Mon/Wed/Fri 9–5, `louieg@dev-studio.test` / `password123`) created specifically to reproduce the reported scenario — worth keeping for any future scheduling-assistant work.
+
+---
+
+# Package C2 — Theme presets (curated, accessible)
+
+**Branch: `ui/theme-presets`** (cut from `main` at commit `6f02f59`, after Package B/C1/D and the scheduling timezone fix all landed) — **NOT merged to `main`**. One schema migration (`package_c2_theme_presets`).
+
+## Design
+
+Rather than parameterizing every token per preset, all 4 presets share the *exact same* `bg`/`surface`/`surface-raised`/`surface-inset`/`border`/`fg`/`fg-secondary`/`fg-muted`/semantic-status tokens the current theme already has — only the accent trio (`accent`/`accent-fg`/`accent-hover`) varies per preset. This was a deliberate choice, not a shortcut: it means every already-AA-verified fg/bg pairing needs no re-verification at all (they're byte-for-byte unchanged across presets), and the *only* new contrast surface each preset introduces is its own accent used as button-fill-with-text and as standalone text on `bg`/`surface` — a small, fully enumerable set I could verify exhaustively rather than spot-checking. It also keeps the "near-black surface philosophy... never a jarring light theme" requirement trivially true for every preset, since the surfaces are identical to begin with.
+
+## The 4 presets — exact token values
+
+All four share:
+```
+--color-bg: #0a0a0b
+--color-surface: #17171a
+--color-surface-raised: #1e1e22
+--color-surface-inset: #121214
+--color-border: #ffffff14
+--color-border-strong: #ffffff26
+--color-fg: #f4f4f5
+--color-fg-secondary: #a1a1aa
+--color-fg-muted: #8b8b94
+```
+(semantic status colors — success/info/warning/danger/neutral — also unchanged across all 4)
+
+| Preset | key | accent | accent-fg | accent-hover |
+|---|---|---|---|---|
+| Onyx & Lime (default) | `onyx-lime` | `#c9f031` | `#0a0a0b` | `#b8dd25` |
+| Slate & Teal | `slate-teal` | `#2dd4bf` | `#0a0a0b` | `#14b8a6` |
+| Ember & Amber | `ember-amber` | `#fb923c` | `#0a0a0b` | `#f97316` |
+| Orchid & Magenta | `orchid-magenta` | `#e879f9` | `#0a0a0b` | `#d946ef` |
+
+## Contrast-ratio verification (computed, not eyeballed)
+
+Wrote a standalone WCAG 2.1 relative-luminance/contrast-ratio calculator (straight from the spec formula, no library) and ran every pairing programmatically.
+
+**Shared pairings (identical across all 4 presets):**
+
+| Pairing | Ratio | Threshold | Result |
+|---|---|---|---|
+| fg on bg | 18.00:1 | 4.5:1 | PASS |
+| fg on surface | 16.28:1 | 4.5:1 | PASS |
+| fg on surface-raised | 15.11:1 | 4.5:1 | PASS |
+| fg on surface-inset | 17.02:1 | 4.5:1 | PASS |
+| fg-secondary on bg | 7.72:1 | 4.5:1 | PASS |
+| fg-secondary on surface | 6.98:1 | 4.5:1 | PASS |
+| fg-muted on bg | 5.86:1 | 4.5:1 | PASS |
+| fg-muted on surface | 5.30:1 | 4.5:1 | PASS |
+| fg-muted on surface-raised | 4.92:1 | 4.5:1 | PASS (tightest shared pairing) |
+
+**Per-preset accent pairings:**
+
+| Preset | accent-fg on accent | accent-fg on accent-hover | accent as text on bg | accent as text on surface |
+|---|---|---|---|---|
+| Onyx & Lime | 15.07:1 PASS | 12.63:1 PASS | 15.07:1 PASS | 13.62:1 PASS |
+| Slate & Teal | 10.63:1 PASS | 7.95:1 PASS | 10.63:1 PASS | 9.61:1 PASS |
+| Ember & Amber | 8.74:1 PASS | 7.06:1 PASS | 8.74:1 PASS | 7.90:1 PASS |
+| Orchid & Magenta | 8.04:1 PASS | 5.72:1 PASS | 8.04:1 PASS | 7.27:1 PASS |
+
+Every pairing in every preset clears the 4.5:1 AA threshold for normal text, with the tightest margin (Orchid & Magenta's hover state, 5.72:1) still comfortably above it.
+
+## Implementation
+
+- `StudioSettings.themePreset` (`String @default("onyx-lime")`), validated against a fixed `THEME_PRESET_KEYS` list server-side (`apps/api/src/lib/themePresets.ts`) — never free-form. `PATCH /studio-settings` (already `requireRole(Role.OWNER)`, unchanged) validates and audits it exactly like every other field on that route.
+- `apps/web/src/index.css`: one `:root[data-theme="..."]` block per preset, overriding only `--color-accent`/`--color-accent-fg`/`--color-accent-hover` — every existing Tailwind utility (`bg-accent`, `text-accent`, etc.) already reads these custom properties, so **zero components changed**.
+- `apps/web/src/lib/themePresets.ts`: preset metadata (name/description/swatch colors) for the picker UI, plus `applyThemePreset()` (sets the `data-theme` attribute — the one function every consumer below calls).
+- New `apps/web/src/components/ThemeApplier.tsx`, mounted once in `main.tsx` inside `AuthProvider`: fetches `/studio-settings` once a user is authenticated and applies the preset for the entire app shell.
+- **Every public page also applies its own preset independently** (no shared context possible, since none of them have an authenticated user): `deposits.ts`/`estimates.ts`/`waivers.ts`/`giftCards.ts`'s existing public verify/view routes now each include `settings.themePreset` in their response (they already load the related `Studio` server-side, so this was a one-field addition, not a new query); `customPolicies.ts`'s public route likewise. `artists.ts`'s `/public?studioSlug=` (used by the intake form) returns a bare array, and I didn't want to risk changing that existing, working shape — so the intake form (and any future bare-array public route) instead calls a new, tiny `GET /theme?studioSlug=` (public, studioSlug-keyed, mirrors the existing `/artists/public?studioSlug=` pattern) built specifically for this.
+- Settings → General gets a new "Theme" card: 4 visual swatch/preview cards (never a dropdown of names), gated on `user?.role === 'OWNER'` — deliberately reusing the *same* condition as `canEditPolicies` rather than the page's separate, studio-configurable `studio.manage` permission the Studio Profile card above it uses, since the backend PATCH route's gate is the hardcoded role check, not that configurable permission — using the wrong one would have let a FRONT_DESK with `studio.manage` granted see a picker that always 403'd.
+
+## Verification (Playwright)
+
+Switched through all 4 presets as OWNER and spot-checked the exact surfaces required, reading `getComputedStyle(document.documentElement).getPropertyValue('--color-accent')` at each stop rather than eyeballing screenshots alone:
+
+| Surface | Onyx & Lime (default) | Slate & Teal |
+|---|---|---|
+| Settings picker | `#c9f031` | `#2dd4bf` |
+| Dashboard (app shell) | — | `#2dd4bf` |
+| Inquiries & Projects (data-heavy page) | — | `#2dd4bf` |
+| Client profile | — | `#2dd4bf` |
+| Conversations slide-over | — | `#2dd4bf` |
+| Public intake form (`/inquiry/dev-studio`, unauthenticated) | — | `#2dd4bf` |
+
+Also switched through Ember & Amber (`#fb923c`) and Orchid & Magenta (`#e879f9`) end-to-end in Settings, confirming each renders distinctly (screenshots taken at every step). No leftover hardcoded colors observed anywhere — every surface tracked the selected preset immediately, including the truly unauthenticated public intake form's own "Submit inquiry" button. Reverted the studio back to Onyx & Lime (its original default) at the end of verification, so the shared dev environment's baseline appearance is unchanged for anyone else using it.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) — clean. `npm run build` (web) — clean.
+
+## Commit
+
+`aeee865` on branch **`ui/theme-presets`** — Package C2: theme presets (4 curated, WCAG AA-verified accents). Branch cut from `main`'s `6f02f59` and pushed to `origin/ui/theme-presets`.
+
+**Note**: this branch's working directory had a different, unrelated, substantial concurrent session's in-progress `Tasks.tsx`/`tasks.ts` changes sitting uncommitted when the branch was created — left completely untouched and unstaged (same treatment as Package B's `Modal.tsx` exclusion), since they have nothing to do with theme presets and this branch is meant to be a clean, reviewable, single-purpose diff.
+
+## Cleanup
+
+Web dev server (:5173) stopped. The API dev server on :4000 (already running from an earlier session) left as-is. All scratch verification/contrast-calculator scripts deleted after use (they lived in the session scratchpad, never in the repo). The studio's live theme was reverted to `onyx-lime` after testing, so the shared dev database's visual baseline is unaffected.
+
+## Next steps for review
+
+Production is entirely unaffected either way until a deliberate merge — same as the original UI-2 redesign:
+1. **Review locally**: `git fetch && git checkout ui/theme-presets`, run the app, switch between all 4 presets yourself.
+2. **Approve and merge** `ui/theme-presets` into `main` to ship it.
+3. **Discard the branch** if it's not wanted — nothing on `main` or production changes either way.

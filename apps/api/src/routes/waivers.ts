@@ -6,6 +6,7 @@ import { requireAuth, requireRole } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
 import { isAtLeast18, validateClauseInitials, validateHealthAnswers } from "../lib/waivers";
 import { normalizePhone } from "../lib/phone";
+import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 
 function isExpiredOrInvalid(waiver: { signedAt: Date | null; tokenExpiresAt: Date | null } | null) {
   if (!waiver) {
@@ -34,7 +35,7 @@ publicRouter.get("/verify/:token", async (req, res) => {
   const waiver = await prisma.liabilityWaiver.findUnique({
     where: { token },
     include: {
-      studio: { select: { name: true } },
+      studio: { select: { name: true, settings: { select: { themePreset: true } } } },
       appointment: { select: { startTime: true, endTime: true } },
     },
   });
@@ -49,6 +50,7 @@ publicRouter.get("/verify/:token", async (req, res) => {
   // echoed back on this public pre-signing view.
   res.json({
     studioName: waiver!.studio.name,
+    themePreset: waiver!.studio.settings?.themePreset ?? DEFAULT_THEME_PRESET,
     appointmentStart: waiver!.appointment.startTime,
     appointmentEnd: waiver!.appointment.endTime,
     healthQuestions: waiver!.healthQuestionsSnapshot,
