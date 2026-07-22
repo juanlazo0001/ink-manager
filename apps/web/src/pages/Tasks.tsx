@@ -30,9 +30,24 @@ interface PersonalTask {
   createdBy: { id: string; name: string | null; email: string }
 }
 
+// The flip side of PersonalTask, from GET /tasks' new assignedByMe array --
+// same row shape, but with the assignee (`user`) instead of the creator,
+// since the creator is always the viewer themselves here.
+interface AssignedByMeTask {
+  id: string
+  title: string
+  notes: string | null
+  dueAt: string | null
+  completedAt: string | null
+  createdAt: string
+  updatedAt: string
+  user: { id: string; name: string | null; email: string }
+}
+
 interface TasksResponse {
   system: SystemTask[]
   personal: PersonalTask[]
+  assignedByMe: AssignedByMeTask[]
 }
 
 interface StaffRosterEntry {
@@ -71,6 +86,7 @@ export default function Tasks() {
   const canAssign = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
 
   const [showCompleted, setShowCompleted] = useState(false)
+  const [showCompletedAssignedByMe, setShowCompletedAssignedByMe] = useState(false)
   const [form, setForm] = useState(EMPTY_FORM)
   const [formError, setFormError] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -149,9 +165,73 @@ export default function Tasks() {
     setEditingId(null)
   }
 
+  function renderPersonalTaskItem(task: PersonalTask) {
+    return (
+      <li key={task.id} className="flex items-center gap-3 rounded-lg border border-border p-3 text-sm">
+        <button
+          type="button"
+          onClick={() => toggleComplete(task)}
+          disabled={!!viewAsTarget}
+          aria-label="Mark complete"
+          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border text-transparent transition hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <CheckIcon className="h-3 w-3" />
+        </button>
+
+        {editingId === task.id ? (
+          <input
+            type="text"
+            autoFocus
+            value={editTitle}
+            onChange={(e) => setEditTitle(e.target.value)}
+            onBlur={() => saveEdit(task.id)}
+            onKeyDown={(e) => e.key === 'Enter' && saveEdit(task.id)}
+            className="min-w-0 flex-1 rounded-xl border border-border bg-surface-inset px-2 py-1 text-sm text-fg focus:outline-none"
+          />
+        ) : (
+          <div className="min-w-0 flex-1">
+            <button
+              type="button"
+              onClick={() => startEdit(task)}
+              className="block w-full truncate text-left text-fg hover:underline"
+            >
+              {task.title}
+            </button>
+            {task.createdBy.id !== user?.userId && (
+              <p className="mt-0.5 text-xs text-fg-muted">Assigned by {task.createdBy.name ?? task.createdBy.email}</p>
+            )}
+          </div>
+        )}
+
+        {task.dueAt && (
+          <span className="shrink-0 text-xs text-fg-muted">Due {new Date(task.dueAt).toLocaleDateString()}</span>
+        )}
+
+        <button
+          type="button"
+          onClick={() => deleteMutation.mutate(task.id)}
+          disabled={!!viewAsTarget}
+          aria-label="Delete task"
+          className="shrink-0 rounded-full p-1 text-fg-muted transition hover:bg-surface hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <CloseIcon className="h-3.5 w-3.5" />
+        </button>
+      </li>
+    )
+  }
+
   const systemGroups = data ? groupByType(data.system) : []
   const incompletePersonal = data?.personal.filter((t) => !t.completedAt) ?? []
   const completedPersonal = data?.personal.filter((t) => t.completedAt) ?? []
+  // "Assigned to Me" groups into what's actually mine to plan vs. what
+  // someone else handed me -- same flat list from the API, split client-
+  // side purely on who created each row.
+  const myOwnIncomplete = incompletePersonal.filter((t) => t.createdBy.id === user?.userId)
+  const assignedByOthersIncomplete = incompletePersonal.filter((t) => t.createdBy.id !== user?.userId)
+
+  const assignedByMe = data?.assignedByMe ?? []
+  const incompleteAssignedByMe = assignedByMe.filter((t) => !t.completedAt)
+  const completedAssignedByMe = assignedByMe.filter((t) => t.completedAt)
 
   return (
     <div className="flex min-h-screen bg-bg text-fg">
@@ -261,65 +341,22 @@ export default function Tasks() {
                   <p className="mt-4 text-sm text-fg-secondary">No personal tasks yet — add one above.</p>
                 )}
 
-                {incompletePersonal.length > 0 && (
-                  <ul className="mt-4 space-y-2">
-                    {incompletePersonal.map((task) => (
-                      <li key={task.id} className="flex items-center gap-3 rounded-lg border border-border p-3 text-sm">
-                        <button
-                          type="button"
-                          onClick={() => toggleComplete(task)}
-                          disabled={!!viewAsTarget}
-                          aria-label="Mark complete"
-                          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border text-transparent transition hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          <CheckIcon className="h-3 w-3" />
-                        </button>
+                {myOwnIncomplete.length > 0 && (
+                  <div className="mt-4">
+                    {assignedByOthersIncomplete.length > 0 && (
+                      <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">My tasks</p>
+                    )}
+                    <ul className={assignedByOthersIncomplete.length > 0 ? 'mt-2 space-y-2' : 'space-y-2'}>
+                      {myOwnIncomplete.map(renderPersonalTaskItem)}
+                    </ul>
+                  </div>
+                )}
 
-                        {editingId === task.id ? (
-                          <input
-                            type="text"
-                            autoFocus
-                            value={editTitle}
-                            onChange={(e) => setEditTitle(e.target.value)}
-                            onBlur={() => saveEdit(task.id)}
-                            onKeyDown={(e) => e.key === 'Enter' && saveEdit(task.id)}
-                            className="min-w-0 flex-1 rounded-xl border border-border bg-surface-inset px-2 py-1 text-sm text-fg focus:outline-none"
-                          />
-                        ) : (
-                          <div className="min-w-0 flex-1">
-                            <button
-                              type="button"
-                              onClick={() => startEdit(task)}
-                              className="block w-full truncate text-left text-fg hover:underline"
-                            >
-                              {task.title}
-                            </button>
-                            {task.createdBy.id !== user?.userId && (
-                              <p className="mt-0.5 text-xs text-fg-muted">
-                                Assigned by {task.createdBy.name ?? task.createdBy.email}
-                              </p>
-                            )}
-                          </div>
-                        )}
-
-                        {task.dueAt && (
-                          <span className="shrink-0 text-xs text-fg-muted">
-                            Due {new Date(task.dueAt).toLocaleDateString()}
-                          </span>
-                        )}
-
-                        <button
-                          type="button"
-                          onClick={() => deleteMutation.mutate(task.id)}
-                          disabled={!!viewAsTarget}
-                          aria-label="Delete task"
-                          className="shrink-0 rounded-full p-1 text-fg-muted transition hover:bg-surface hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          <CloseIcon className="h-3.5 w-3.5" />
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
+                {assignedByOthersIncomplete.length > 0 && (
+                  <div className="mt-4">
+                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Assigned by others</p>
+                    <ul className="mt-2 space-y-2">{assignedByOthersIncomplete.map(renderPersonalTaskItem)}</ul>
+                  </div>
                 )}
 
                 {completedPersonal.length > 0 && (
@@ -364,6 +401,88 @@ export default function Tasks() {
                   </div>
                 )}
               </div>
+
+              {canAssign && (
+                <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                  <h2 className="text-base font-semibold text-fg">Assigned by Me</h2>
+                  <p className="mt-1 text-sm text-fg-secondary">
+                    Tasks you've handed to someone else -- only they can mark these complete.
+                  </p>
+
+                  {assignedByMe.length === 0 && (
+                    <p className="mt-4 text-sm text-fg-secondary">You haven't assigned any tasks to teammates yet.</p>
+                  )}
+
+                  {incompleteAssignedByMe.length > 0 && (
+                    <ul className="mt-4 space-y-2">
+                      {incompleteAssignedByMe.map((task) => (
+                        <li key={task.id} className="flex items-center gap-3 rounded-lg border border-border p-3 text-sm">
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-fg">{task.title}</p>
+                            <p className="mt-0.5 text-xs text-fg-muted">
+                              Assigned to {task.user.name ?? task.user.email}
+                            </p>
+                          </div>
+
+                          {task.dueAt && (
+                            <span className="shrink-0 text-xs text-fg-muted">
+                              Due {new Date(task.dueAt).toLocaleDateString()}
+                            </span>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => deleteMutation.mutate(task.id)}
+                            disabled={!!viewAsTarget}
+                            aria-label="Delete task"
+                            className="shrink-0 rounded-full p-1 text-fg-muted transition hover:bg-surface hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <CloseIcon className="h-3.5 w-3.5" />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  {completedAssignedByMe.length > 0 && (
+                    <div className="mt-4">
+                      <button
+                        type="button"
+                        onClick={() => setShowCompletedAssignedByMe((v) => !v)}
+                        className="text-xs font-medium text-fg-muted hover:text-fg"
+                      >
+                        {showCompletedAssignedByMe ? 'Hide' : 'Show'} completed ({completedAssignedByMe.length})
+                      </button>
+
+                      {showCompletedAssignedByMe && (
+                        <ul className="mt-2 space-y-2">
+                          {completedAssignedByMe.map((task) => (
+                            <li
+                              key={task.id}
+                              className="flex items-center gap-3 rounded-lg border border-border p-3 text-sm opacity-60"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-fg-secondary line-through">{task.title}</p>
+                                <p className="mt-0.5 text-xs text-fg-muted">
+                                  Assigned to {task.user.name ?? task.user.email}
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => deleteMutation.mutate(task.id)}
+                                aria-label="Delete task"
+                                className="shrink-0 rounded-full p-1 text-fg-muted transition hover:bg-surface hover:text-fg"
+                              >
+                                <CloseIcon className="h-3.5 w-3.5" />
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </>
           )}
         </div>
