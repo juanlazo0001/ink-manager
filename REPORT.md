@@ -593,3 +593,57 @@ New shared `PublicPageFooter.tsx` (renders nothing until `studioSlug` resolves) 
 ## Cleanup
 
 Both dev servers (API on a scratch port 4099, web on 5199 — chosen to avoid the several other sessions' dev servers already running on the usual 4000/5173 range) killed. Backfill/verification scratch scripts lived only in the session scratchpad, never in the repo. The worktree at `../ink-manager-sms-consent` will be removed after this report is committed and pushed.
+
+---
+
+# Package F — Exempt gift cards (OWNER-only issuance, bypasses deposit requirement)
+
+## Design
+
+An exempt gift card is a real `GiftCard` row: a new `GiftCardStatus.EXEMPT`, `amountCents: 0`, and an optional `exemptionReason` (nullable text). It satisfies the existing "appointment requires an attached ACTIVE gift card" rule without representing real money, by deliberately reusing the entire existing gift-card system (attach/detach mechanics, audit trail, appointment validation) rather than building a parallel exemption mechanism.
+
+## 1. Schema
+
+Added `EXEMPT` to `GiftCardStatus` and `exemptionReason String?` to `GiftCard` (`apps/api/prisma/schema.prisma`), migration `20260722125903_package_f_exempt_gift_cards`.
+
+## 2. Issuance — OWNER only
+
+New `POST /gift-cards/exempt` in `apps/api/src/routes/giftCards.ts`, gated `requireRole(Role.OWNER)` stacked on the router-level `requireRole(Role.OWNER, Role.FRONT_DESK)` — the exact same per-route-override pattern as the existing `POST /:id/void`. Creates a `GiftCard` with `status: EXEMPT`, `amountCents: 0`, optional `exemptionReason`, and an optional `expiresAt` (unlike regular issuance, defaults to **never** rather than the studio's configured default — only an explicit OWNER-set date applies). Audited as `exempt_gift_card_issued`, recording the OWNER, client, and reason.
+
+Frontend: a distinct "Issue Deposit Exemption" button in `ClientDetail.tsx`, gated on `user?.role === 'OWNER'` via `useEffectiveUser()` (same idiom as every other OWNER-only action in the app), opening its own modal (reason + optional expiration) that posts to the new route — entirely separate from the existing "Issue Gift Card" button/modal, which is unchanged and still available to OWNER/FRONT_DESK.
+
+## 3. Appointment creation — accept EXEMPT alongside ACTIVE
+
+The exact validation check broadened: `validateGiftCardForAttachment` in `apps/api/src/lib/giftCards.ts`, the line that read `if (synced.status !== GiftCardStatus.ACTIVE)`, now reads `if (synced.status !== GiftCardStatus.ACTIVE && synced.status !== GiftCardStatus.EXEMPT)`. This one shared function is called from all three real attach paths (`POST /appointments`, `POST /inquiries/:id/schedule`, `POST /inquiries/:id/attach-gift-card`), so all three picked up EXEMPT support with this single change — no rewrite of the surrounding logic. `isExpired`/`syncExpiredStatus` were also broadened the same way, so a time-limited exempt card still lazily expires like an ACTIVE one. `PATCH /gift-cards/:id/attachment`'s "only ACTIVE can be moved" guard was broadened identically for consistency, though this route has no frontend caller today.
+
+Frontend `isCardAvailable` filters in `AppointmentForm.tsx` and `InquiryDetail.tsx` (previously ACTIVE-only) were broadened the same way, so exempt cards appear in the attach-flow dropdowns; their option labels show "Deposit Exemption" instead of a dollar figure.
+
+Attach/detach of an already-issued exempt card uses the same existing attachment mechanics and the same OWNER/FRONT_DESK permission level as any other gift card — only initial issuance (§2) is OWNER-restricted.
+
+## 4. Checkout behavior
+
+`POST /appointments/:id/checkout` (`apps/api/src/routes/appointments.ts`): when the attached card's status is `EXEMPT`, the server now ignores whatever `depositDecision` the client sent and forces the existing ROLL-equivalent behavior — `redeem = depositDecision === "REDEEM" && !isExempt`. This is a defensive server-side guarantee, not just a UI convention: even if a client sent `"REDEEM"` for an exempt card, the server would still detach it rather than mark it REDEEMED. Because ROLL's pre-existing math is `amountDueCents = finalCostCents` and its pre-existing gift-card update is `{ appointmentId: null }` (status untouched), this **reuses the exact same code path** already used for a real card's rollover — no new amount-due branch, no new detach branch. The only change is the boolean that decides which branch runs. The GiftCard-level audit entry additionally records `reason: "exempt_card_detach"` (vs. `"checkout_roll"` for a real rollover) so the two are distinguishable in the audit trail despite sharing the same code path.
+
+Frontend (`AppointmentDetail.tsx`): when `appointment.giftCard?.status === 'EXEMPT'`, the REDEEM/ROLL radio choice is replaced with a static note ("Deposit exemption — no charge applied from this card"), and `handleCheckout` always sends `depositDecision: 'ROLL'` for these (the backend enforces this regardless, per above, so this is belt-and-suspenders, not the actual safety mechanism).
+
+## 5. Display
+
+`StatusPill.tsx`: added `EXEMPT: 'info'` — the one gift-card tone not already spoken for (ACTIVE=success, REDEEMED=neutral, EXPIRED=warning, VOID=danger). Every gift-card display location (`ClientDetail.tsx`'s table, `GiftCardDetail.tsx`, `GiftCardResponse.tsx`'s public page, `AppointmentDetail.tsx`'s inline line and checkout note, `ConversationsPanel.tsx`'s client-context list, the `AppointmentForm.tsx`/`InquiryDetail.tsx` attach dropdowns) shows "Deposit Exemption" (+ the reason, where there's room) instead of a dollar amount when `status === 'EXEMPT'`.
+
+Text receipt (`GiftCardDetail.tsx`) was already ACTIVE-only gated, so EXEMPT is excluded with no code change needed there. QR code and Copy-link (previously shown unconditionally) now have an explicit `card.status !== 'EXEMPT'` guard added. Public-share links: `clients.ts`'s `giftCardLinks` (which feeds the Conversations composer's "+" menu) now filters exempt cards out entirely at the source, so `ConversationsPanel.tsx` needed no changes at all — there's simply no share/resend row for an exemption.
+
+## Verification (PowerShell against the local dev instance's API, plus Playwright in a real browser)
+
+**PowerShell**: OWNER issues an exempt card (`status: EXEMPT`, `amountCents: 0`) successfully; FRONT_DESK attempting the same route gets 403; FRONT_DESK attaches that exempt card to a new appointment via the normal `POST /appointments` (no real gift card needed); checkout with `depositDecision: "REDEEM"` sent deliberately still returns `amountDueCents: 15000` (the full final cost, ignoring REDEEM since the card is EXEMPT); the card afterward is confirmed `status: EXEMPT`, `appointmentId: null` (detached, not redeemed); the same card is then successfully attached to a *second* appointment for the same client, confirming immediate reusability. Cross-studio isolation holds structurally — the new route and every existing gift-card route scope every query/write to `req.user!.studioId`, the same mechanism already relied on (and previously verified) for every other gift-card operation.
+
+**Browser**: as OWNER, the "Issue Deposit Exemption" button is confirmed present (and, as FRONT_DESK, confirmed absent, while "Issue Gift Card" remains visible to FRONT_DESK) on the client profile; issuing one renders it in the gift card table as "Deposit Exemption — <reason>" with an `Exempt` (info-tone) pill, never a dollar amount; the gift card detail page shows the same label + reason, with the Text receipt, Copy link, and QR code all confirmed absent (screenshotted); the appointment checkout section, with an exempt card attached, shows the "Deposit exemption — no charge applied from this card" note in place of the REDEEM/ROLL radio, final cost $150 produces "Amount due today: $150.00", and after confirming checkout the card was confirmed via the API to be detached (`appointmentId: null`) and still `EXEMPT`.
+
+Both `npx tsc --noEmit` (api) and `npm run build` (web) are clean.
+
+## Commit
+
+`74715e5` on `main`.
+
+## Cleanup
+
+Both dev servers (API on port 4000, web on 5173 -- the stale API process squatting on port 4000 from earlier in the day was killed first since it predated this session's Prisma client regeneration) killed. All verification gift cards/appointments created during PowerShell and browser testing were voided/cancelled as part of the scripts themselves. Verification scripts lived only in the session scratchpad (`pw-test/test-package-f*.js`), never in the repo.
