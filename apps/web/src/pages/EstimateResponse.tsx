@@ -4,6 +4,7 @@ import { apiFetch, ApiError } from '../lib/api'
 import { sanitizeHtml } from '../lib/sanitizeHtml'
 import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import { applyThemePreset } from '../lib/themePresets'
+import PublicPageFooter from '../components/PublicPageFooter'
 
 const INPUT_CLASS =
   'mt-1 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
@@ -14,6 +15,7 @@ type Decision = 'PROCEED' | 'BUDGET_TOO_HIGH' | 'DECLINE'
 interface VerifyResponse {
   clientFirstName: string
   studioName: string
+  studioSlug: string
   studioLogoUrl: string | null
   themePreset: string
   artistName: string | null
@@ -245,6 +247,8 @@ export default function EstimateResponse() {
             </div>
           </div>
         )}
+
+        <PublicPageFooter studioSlug={verifyData?.studioSlug} />
       </div>
     </div>
   )

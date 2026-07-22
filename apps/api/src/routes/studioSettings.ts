@@ -6,9 +6,36 @@ import { diffObjects, logAudit } from "../lib/audit";
 import { DEFAULT_DEPOSIT_TIERS, validateDepositTiers } from "../lib/depositTiers";
 import { THEME_PRESET_KEYS, isValidThemePreset } from "../lib/themePresets";
 
-const router = Router();
+// Public: /privacy/:studioSlug and /terms/:studioSlug (unauthenticated) need
+// to read these two fields by slug, same "public sub-router mounted first"
+// split already used by giftCards.ts/waivers.ts/customPolicies.ts -- kept in
+// this same file rather than a new one since it's two fields off the same
+// model the staff router below already owns end to end.
+const publicRouter = Router();
 
-router.use(requireAuth);
+publicRouter.get("/public", async (req, res) => {
+  const studioSlug = req.query.studioSlug;
+  if (typeof studioSlug !== "string" || !studioSlug) {
+    return res.status(400).json({ error: "studioSlug is required" });
+  }
+
+  const studio = await prisma.studio.findUnique({ where: { slug: studioSlug } });
+  if (!studio) {
+    return res.status(404).json({ error: "Studio not found" });
+  }
+
+  const settings = await prisma.studioSettings.findUnique({ where: { studioId: studio.id } });
+
+  res.json({
+    studioName: studio.name,
+    privacyPolicy: settings?.privacyPolicy ?? null,
+    termsAndConditions: settings?.termsAndConditions ?? null,
+  });
+});
+
+const staffRouter = Router();
+
+staffRouter.use(requireAuth);
 
 // One row per studio, created by the Phase 1 migration's backfill -- every
 // studio should already have one, but fall back to creating it on read in
@@ -23,7 +50,7 @@ async function getOrCreateSettings(studioId: string) {
 // business-hours grey-shading needs this for ARTIST-role users too, not
 // just OWNER/FRONT_DESK) -- policy/waiver text and business hours aren't
 // sensitive the way write access is. PATCH below stays OWNER-only.
-router.get("/", requireRole(Role.OWNER, Role.FRONT_DESK, Role.ARTIST), async (req, res) => {
+staffRouter.get("/", requireRole(Role.OWNER, Role.FRONT_DESK, Role.ARTIST), async (req, res) => {
   const settings = await getOrCreateSettings(req.user!.studioId);
   // Materializes the literal prior hardcoded breakpoints for any studio
   // that hasn't saved its own tiers yet, so the Settings UI (and anyone
@@ -46,6 +73,8 @@ const TEXT_FIELDS = [
   "estimateTerms",
   "waiverAcknowledgment",
   "waiverPhotoRelease",
+  "privacyPolicy",
+  "termsAndConditions",
 ] as const;
 
 // Curated, not the full ~400-zone IANA list -- Settings' timezone control
@@ -158,7 +187,7 @@ function isValidMessageTemplates(value: unknown): boolean {
   });
 }
 
-router.patch("/", requireRole(Role.OWNER), async (req, res) => {
+staffRouter.patch("/", requireRole(Role.OWNER), async (req, res) => {
   const body = req.body ?? {};
   const existing = await getOrCreateSettings(req.user!.studioId);
 
@@ -301,4 +330,4 @@ router.patch("/", requireRole(Role.OWNER), async (req, res) => {
   res.json(updated);
 });
 
-export default router;
+export { publicRouter, staffRouter };

@@ -98,6 +98,16 @@ router.post("/", optionalAuth, async (req, res) => {
     return res.status(400).json({ error: "placementImages must be an array of strings" });
   }
 
+  // A2P 10DLC compliance: the PUBLIC intake form's consent checkbox is
+  // required to submit at all (unchecked-by-default, enforced here too, not
+  // just via a disabled button) -- staff logging a walk-in/phone inquiry
+  // through this same route has no such checkbox in its UI and isn't the
+  // client affirmatively opting in themselves, so this only applies to the
+  // public path.
+  if (!isStaffRequest && body.smsConsent !== true) {
+    return res.status(400).json({ error: "SMS consent is required to submit this form" });
+  }
+
   const {
     studioSlug,
     firstName,
@@ -116,6 +126,7 @@ router.post("/", optionalAuth, async (req, res) => {
     referenceImages,
     placementImages,
     draftToken,
+    smsConsent,
   } = body;
 
   const studio = isStaffRequest
@@ -151,16 +162,37 @@ router.post("/", optionalAuth, async (req, res) => {
     where: { studioId: studio.id, email },
   });
 
-  const client =
-    existingClient ??
-    (await prisma.$transaction(async (tx) => {
+  // Consent is only ever SET here, never overwritten -- a returning
+  // client's original consent timestamp (from whichever submission first
+  // gave it) is preserved across every later one, staff or public.
+  const givesConsentNow = !isStaffRequest && smsConsent === true;
+
+  let client;
+  if (existingClient) {
+    client =
+      givesConsentNow && !existingClient.smsConsentGivenAt
+        ? await prisma.client.update({
+            where: { id: existingClient.id },
+            data: { smsConsentGivenAt: new Date(), smsConsentSource: "intake_form" },
+          })
+        : existingClient;
+  } else {
+    client = await prisma.$transaction(async (tx) => {
       const created = await tx.client.create({
-        data: { studioId: studio.id, firstName, lastName, email, phone: phone ? normalizePhone(phone) : phone },
+        data: {
+          studioId: studio.id,
+          firstName,
+          lastName,
+          email,
+          phone: phone ? normalizePhone(phone) : phone,
+          ...(givesConsentNow ? { smsConsentGivenAt: new Date(), smsConsentSource: "intake_form" } : {}),
+        },
       });
       await syncPrimaryPhone(tx, created.id, created.phone);
       await syncPrimaryEmail(tx, created.id, created.email);
       return created;
-    }));
+    });
+  }
 
   const inquiry = await prisma.inquiry.create({
     data: {

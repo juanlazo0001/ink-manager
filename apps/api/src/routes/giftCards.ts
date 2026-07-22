@@ -27,7 +27,7 @@ publicRouter.get("/view/:code", async (req, res) => {
 
   const card = await prisma.giftCard.findUnique({
     where: { code },
-    include: { studio: { select: { name: true, settings: { select: { themePreset: true } } } } },
+    include: { studio: { select: { name: true, slug: true, settings: { select: { themePreset: true } } } } },
   });
 
   if (!card) {
@@ -38,6 +38,7 @@ publicRouter.get("/view/:code", async (req, res) => {
 
   res.json({
     studioName: card.studio.name,
+    studioSlug: card.studio.slug,
     themePreset: card.studio.settings?.themePreset ?? DEFAULT_THEME_PRESET,
     code: card.code,
     amountCents: synced.amountCents,

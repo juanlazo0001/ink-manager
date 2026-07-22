@@ -63,6 +63,7 @@ router.get("/verify/:token", async (req, res) => {
   res.json({
     clientFirstName: inquiry!.client.firstName,
     studioName: inquiry!.studio.name,
+    studioSlug: inquiry!.studio.slug,
     studioLogoUrl: inquiry!.studio.logoUrl,
     themePreset: inquiry!.studio.settings?.themePreset ?? DEFAULT_THEME_PRESET,
     artistName: inquiry!.assignedArtist?.user.name ?? null,

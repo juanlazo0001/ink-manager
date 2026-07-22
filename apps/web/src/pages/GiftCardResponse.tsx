@@ -5,9 +5,11 @@ import { formatDateTime } from '../lib/format'
 import QrCode from '../components/QrCode'
 import StatusPill from '../components/StatusPill'
 import { applyThemePreset } from '../lib/themePresets'
+import PublicPageFooter from '../components/PublicPageFooter'
 
 interface GiftCardView {
   studioName: string
+  studioSlug: string
   themePreset: string
   code: string
   amountCents: number
@@ -82,6 +84,8 @@ export default function GiftCardResponse() {
             </div>
           </>
         )}
+
+        <PublicPageFooter studioSlug={data?.studioSlug} />
       </div>
     </div>
   )

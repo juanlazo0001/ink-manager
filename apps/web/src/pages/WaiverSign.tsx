@@ -6,6 +6,7 @@ import { formatDateTime } from '../lib/format'
 import { sanitizeHtml } from '../lib/sanitizeHtml'
 import PhoneInput from '../components/PhoneInput'
 import { applyThemePreset } from '../lib/themePresets'
+import PublicPageFooter from '../components/PublicPageFooter'
 
 const INPUT_CLASS =
   'mt-1 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
@@ -21,6 +22,7 @@ interface HealthQuestion {
 
 interface VerifyResponse {
   studioName: string
+  studioSlug: string
   themePreset: string
   appointmentStart: string
   appointmentEnd: string
@@ -419,6 +421,8 @@ export default function WaiverSign() {
             </form>
           </div>
         )}
+
+        <PublicPageFooter studioSlug={data?.studioSlug} />
       </div>
     </div>
   )

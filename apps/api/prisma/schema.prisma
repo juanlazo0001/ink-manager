@@ -312,6 +312,16 @@ model Client {
   // shows -- this is the actual enforcement point, not just a display flag.
   smsOptedOutAt DateTime?
 
+  // A2P 10DLC compliance: affirmative, opt-in consent, not just "they gave
+  // us a phone number." Set once, the first time it's actually given (the
+  // public intake form's required, unchecked-by-default checkbox is the
+  // only source today -- smsConsentSource records which flow, so a future
+  // second source doesn't have to guess). Never overwritten once set --
+  // a returning client's original consent timestamp is preserved across
+  // every later submission, staff or public.
+  smsConsentGivenAt DateTime?
+  smsConsentSource  String?
+
   appointments     Appointment[]
   consentForms     ConsentForm[]
   inquiries        Inquiry[]
@@ -559,6 +569,13 @@ model StudioSettings {
   estimateTerms                 String?
   giftCardDefaultExpirationDays Int?
   calendarInviteTemplate        String?
+  // A2P 10DLC compliance: public, unauthenticated /privacy/:studioSlug and
+  // /terms/:studioSlug pages render these (sanitized, same as every other
+  // HTML policy field here). Not legal advice -- the seeded default text is
+  // a reasonable starting point flagged for a lawyer's review, same caveat
+  // as every other policy field in this app.
+  privacyPolicy                 String?
+  termsAndConditions            String?
   // Phase 7A: daily jobs (gift-card expiration, cold-lead sweep) compute
   // "the day" per-studio using this rather than the server process's own
   // TZ. IANA identifier (e.g. "America/New_York"). Also reserved for the

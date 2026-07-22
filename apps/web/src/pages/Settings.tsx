@@ -111,6 +111,8 @@ interface StudioSettingsData {
   waiverClauses: string[] | null
   waiverAcknowledgment: string | null
   waiverPhotoRelease: string | null
+  privacyPolicy: string | null
+  termsAndConditions: string | null
   messageTemplates: MessageTemplate[] | null
   showSidebarBadges: boolean
   reminderTemplates: ReminderTemplatesData | null
@@ -201,6 +203,11 @@ const POLICY_HTML_FIELDS: { key: keyof StudioSettingsData; label: string }[] = [
   { key: 'waiverAcknowledgment', label: 'Waiver Acknowledgment' },
   { key: 'waiverPhotoRelease', label: 'Photo/Video Release' },
   { key: 'calendarInviteTemplate', label: 'Calendar Invite Template' },
+  // A2P 10DLC compliance: public, unauthenticated pages at /privacy/:studioSlug
+  // and /terms/:studioSlug -- not legal advice, seeded default text is a
+  // reasonable starting point flagged for a lawyer's review.
+  { key: 'privacyPolicy', label: 'Privacy Policy' },
+  { key: 'termsAndConditions', label: 'Terms & Conditions' },
 ]
 
 // Strips tags for the compact row preview (plain text only, never rendered
@@ -491,7 +498,7 @@ export default function Settings() {
 
   const [policies, setPolicies] = useState<StudioSettingsData | null>(null)
 
-  // Phase UI-3: each of the 8 HTML policy fields edits through its own
+  // Phase UI-3: each of the HTML policy fields edits through its own
   // modal -- editingField names which POLICY_HTML_FIELDS key is open (or
   // null), fieldDraft holds that one field's in-progress HTML.
   const [editingField, setEditingField] = useState<keyof StudioSettingsData | null>(null)
