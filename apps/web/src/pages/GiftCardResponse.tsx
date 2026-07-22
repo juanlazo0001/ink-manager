@@ -4,9 +4,11 @@ import { apiFetch } from '../lib/api'
 import { formatDateTime } from '../lib/format'
 import QrCode from '../components/QrCode'
 import StatusPill from '../components/StatusPill'
+import { applyThemePreset } from '../lib/themePresets'
 
 interface GiftCardView {
   studioName: string
+  themePreset: string
   code: string
   amountCents: number
   status: string
@@ -25,7 +27,10 @@ export default function GiftCardResponse() {
 
     apiFetch<GiftCardView>(`/gift-cards/view/${code}`)
       .then((result) => {
-        if (!ignore) setData(result)
+        if (!ignore) {
+          setData(result)
+          applyThemePreset(result.themePreset)
+        }
       })
       .catch((err) => {
         if (!ignore) setError(err instanceof Error ? err.message : 'This gift card code is invalid.')

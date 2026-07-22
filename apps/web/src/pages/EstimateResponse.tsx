@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom'
 import { apiFetch, ApiError } from '../lib/api'
 import { sanitizeHtml } from '../lib/sanitizeHtml'
 import { FlatArtistAvatar } from '../components/ArtistAvatar'
+import { applyThemePreset } from '../lib/themePresets'
 
 const INPUT_CLASS =
   'mt-1 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
@@ -14,6 +15,7 @@ interface VerifyResponse {
   clientFirstName: string
   studioName: string
   studioLogoUrl: string | null
+  themePreset: string
   artistName: string | null
   artistAvatarUrl: string | null
   priceEstimateLow: number | null
@@ -51,6 +53,7 @@ export default function EstimateResponse() {
       .then((data) => {
         if (ignore) return
         setVerifyData(data)
+        applyThemePreset(data.themePreset)
         setState('ready')
       })
       .catch((err) => {

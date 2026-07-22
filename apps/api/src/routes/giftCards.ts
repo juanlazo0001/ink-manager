@@ -8,6 +8,7 @@ import { getOrCreateClientConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { shortenUrl } from "../lib/shortLinks";
+import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 
 const GIFT_CARD_DETAIL_INCLUDE = {
   appointment: { select: { id: true, startTime: true, endTime: true } },
@@ -26,7 +27,7 @@ publicRouter.get("/view/:code", async (req, res) => {
 
   const card = await prisma.giftCard.findUnique({
     where: { code },
-    include: { studio: { select: { name: true } } },
+    include: { studio: { select: { name: true, settings: { select: { themePreset: true } } } } },
   });
 
   if (!card) {
@@ -37,6 +38,7 @@ publicRouter.get("/view/:code", async (req, res) => {
 
   res.json({
     studioName: card.studio.name,
+    themePreset: card.studio.settings?.themePreset ?? DEFAULT_THEME_PRESET,
     code: card.code,
     amountCents: synced.amountCents,
     status: synced.status,

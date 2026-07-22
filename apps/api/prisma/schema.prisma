@@ -604,6 +604,12 @@ model StudioSettings {
   // hardcoded behavior, and computeDepositTier falls back to that same
   // default list if a studio somehow still has null here.
   depositTiers                  Json?
+  // Package C2: one of a fixed, curated set of theme presets (see
+  // apps/api/src/lib/themePresets.ts's THEME_PRESET_KEYS) -- never
+  // free-form. Default matches the current live theme's key exactly, so
+  // every existing studio's appearance is unchanged until an OWNER
+  // deliberately picks a different one.
+  themePreset                   String   @default("onyx-lime")
   createdAt                     DateTime @default(now())
   updatedAt                     DateTime @updatedAt
 

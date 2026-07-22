@@ -18,6 +18,7 @@ import { navCountsQueryKey } from '../lib/queryKeys'
 import { useStudio } from '../context/useStudio'
 import { useUserProfile } from '../context/useUserProfile'
 import { useEffectiveUser } from '../context/useEffectiveUser'
+import { THEME_PRESETS, applyThemePreset } from '../lib/themePresets'
 
 interface HealthQuestion {
   question: string
@@ -115,6 +116,7 @@ interface StudioSettingsData {
   reminderTemplates: ReminderTemplatesData | null
   reminderSendTimes: ReminderSendTimesData | null
   depositTiers: DepositTierData[]
+  themePreset: string
 }
 
 // Phase 7B-2: the SMS reminder cadence's own editable templates/times --
@@ -556,6 +558,10 @@ export default function Settings() {
   const [depositTiersSaving, setDepositTiersSaving] = useState(false)
   const [depositTiersError, setDepositTiersError] = useState<string | null>(null)
 
+  // Package C2: theme presets.
+  const [themeSavingKey, setThemeSavingKey] = useState<string | null>(null)
+  const [themeError, setThemeError] = useState<string | null>(null)
+
   useEffect(() => {
     if (!canViewPolicies) return
     let ignore = false
@@ -739,6 +745,24 @@ export default function Settings() {
       setDepositTiersError(err instanceof Error ? err.message : 'Failed to save deposit tiers')
     } finally {
       setDepositTiersSaving(false)
+    }
+  }
+
+  async function handleSelectTheme(key: string) {
+    if (!policies || policies.themePreset === key) return
+    setThemeSavingKey(key)
+    setThemeError(null)
+    try {
+      const updated = await apiFetch<StudioSettingsData>('/studio-settings', {
+        method: 'PATCH',
+        body: JSON.stringify({ themePreset: key }),
+      })
+      setPolicies(updated)
+      applyThemePreset(updated.themePreset)
+    } catch (err) {
+      setThemeError(err instanceof Error ? err.message : 'Failed to save theme')
+    } finally {
+      setThemeSavingKey(null)
     }
   }
 
@@ -1330,6 +1354,52 @@ export default function Settings() {
             )}
             </div>
           </div>
+          )}
+
+          {activeTab === 'general' && canEditPolicies && policies && (
+            <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
+              <h2 className="text-lg font-semibold text-fg">Theme</h2>
+              <p className="mt-1 text-sm text-fg-secondary">
+                Applies everywhere — the app, public forms and links, everything your clients see.
+              </p>
+
+              {themeError && <p className="mt-3 text-sm text-danger">{themeError}</p>}
+
+              <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {THEME_PRESETS.map((preset) => {
+                  const isSelected = policies.themePreset === preset.key
+                  const isSaving = themeSavingKey === preset.key
+                  return (
+                    <button
+                      key={preset.key}
+                      type="button"
+                      onClick={() => handleSelectTheme(preset.key)}
+                      disabled={themeSavingKey !== null}
+                      className={[
+                        'rounded-xl border p-3 text-left transition disabled:opacity-60',
+                        isSelected ? 'border-accent ring-1 ring-accent' : 'border-border hover:border-border-strong',
+                      ].join(' ')}
+                    >
+                      <div
+                        className="flex h-14 items-center justify-center gap-1.5 rounded-lg"
+                        style={{ backgroundColor: preset.swatchBg }}
+                      >
+                        <span
+                          className="h-6 w-6 rounded-full"
+                          style={{ backgroundColor: preset.swatchSurface, border: `1px solid ${preset.swatchAccent}33` }}
+                        />
+                        <span className="h-6 w-6 rounded-full" style={{ backgroundColor: preset.swatchAccent }} />
+                      </div>
+                      <p className="mt-2 text-sm font-medium text-fg">
+                        {preset.name}
+                        {isSelected && <span className="ml-1.5 text-xs font-normal text-accent">(current)</span>}
+                      </p>
+                      <p className="mt-0.5 text-xs text-fg-muted">{isSaving ? 'Saving…' : preset.description}</p>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
           )}
 
           {activeTab === 'general' && studio && (

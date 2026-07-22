@@ -4,6 +4,7 @@ import { requireAuth, requireRole } from "../middleware/auth";
 import { Role } from "../../generated/prisma/enums";
 import { diffObjects, logAudit } from "../lib/audit";
 import { DEFAULT_DEPOSIT_TIERS, validateDepositTiers } from "../lib/depositTiers";
+import { THEME_PRESET_KEYS, isValidThemePreset } from "../lib/themePresets";
 
 const router = Router();
 
@@ -264,6 +265,13 @@ router.patch("/", requireRole(Role.OWNER), async (req, res) => {
     data.depositTiers = body.depositTiers;
   }
 
+  if (body.themePreset !== undefined) {
+    if (!isValidThemePreset(body.themePreset)) {
+      return res.status(400).json({ error: `themePreset must be one of: ${THEME_PRESET_KEYS.join(", ")}` });
+    }
+    data.themePreset = body.themePreset;
+  }
+
   const updated = await prisma.studioSettings.update({ where: { studioId: req.user!.studioId }, data });
 
   await logAudit({
@@ -286,6 +294,7 @@ router.patch("/", requireRole(Role.OWNER), async (req, res) => {
       "reminderTemplates",
       "reminderSendTimes",
       "depositTiers",
+      "themePreset",
     ] as (keyof typeof existing)[]),
   });
 

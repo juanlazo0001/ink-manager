@@ -4,6 +4,7 @@ import SignaturePad from 'signature_pad'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime } from '../lib/format'
 import { FlatArtistAvatar } from '../components/ArtistAvatar'
+import { applyThemePreset } from '../lib/themePresets'
 
 const INPUT_CLASS =
   'mt-1 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
@@ -24,6 +25,7 @@ interface VerifyResponse {
   appointmentEnd: string | null
   proposedStartAt: string | null
   proposedEndAt: string | null
+  themePreset: string
   depositAmount: number
   feeAmount: number
   totalCharged: number
@@ -54,6 +56,7 @@ export default function DepositResponse() {
       .then((data) => {
         if (ignore) return
         setVerifyData(data)
+        applyThemePreset(data.themePreset)
         setState('ready')
       })
       .catch((err) => {
