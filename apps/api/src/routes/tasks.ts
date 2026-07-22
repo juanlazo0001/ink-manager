@@ -28,25 +28,8 @@ router.get("/", async (req, res) => {
     orderBy: [{ completedAt: "asc" }, { dueAt: "asc" }, { createdAt: "asc" }],
   });
 
-  // "Assigned by Me": the flip side -- a task this user created FOR someone
-  // else (createdById === them, userId/assignee !== them). Previously
-  // invisible to the assigner once delegated: it only ever showed up in the
-  // assignee's own "Assigned to Me" list, with nothing tracking it back on
-  // the creator's side. Only OWNER/FRONT_DESK can ever create one of these
-  // (see POST /personal's role gate below), so this is always empty for an
-  // ARTIST -- skipped entirely rather than querying for a guaranteed-empty
-  // result.
-  const assignedByMe =
-    role === Role.ARTIST
-      ? []
-      : await prisma.personalTask.findMany({
-          where: { studioId, createdById: userId, userId: { not: userId } },
-          include: { user: { select: { id: true, name: true, email: true } } },
-          orderBy: [{ completedAt: "asc" }, { dueAt: "asc" }, { createdAt: "asc" }],
-        });
-
   if (role === Role.ARTIST) {
-    return res.json({ system: [], personal, assignedByMe });
+    return res.json({ system: [], personal });
   }
 
   const [sourceResults, dismissals] = await Promise.all([
@@ -61,7 +44,7 @@ router.get("/", async (req, res) => {
     .filter((task) => !dismissedKeys.has(`${task.type}:${task.dismissalKey}`))
     .sort((a, b) => a.actionableAt.getTime() - b.actionableAt.getTime());
 
-  res.json({ system, personal, assignedByMe });
+  res.json({ system, personal });
 });
 
 router.post("/dismiss", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
