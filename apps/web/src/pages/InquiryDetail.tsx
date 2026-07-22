@@ -128,8 +128,12 @@ interface GiftCardOption {
 }
 
 function isCardAvailable(card: GiftCardOption): boolean {
-  if (card.status !== 'ACTIVE' || card.appointmentId) return false
+  if ((card.status !== 'ACTIVE' && card.status !== 'EXEMPT') || card.appointmentId) return false
   return !card.expiresAt || new Date(card.expiresAt) > new Date()
+}
+
+function giftCardOptionLabel(card: GiftCardOption): string {
+  return card.status === 'EXEMPT' ? 'Deposit Exemption' : `$${(card.amountCents / 100).toFixed(2)}`
 }
 
 // Phase 7A: mirrors apps/api/src/routes/inquiries.ts's NON_TERMINAL_STATUSES
@@ -1675,7 +1679,7 @@ export default function InquiryDetail() {
                         >
                           {clientGiftCards!.map((card) => (
                             <option key={card.id} value={card.id}>
-                              ${(card.amountCents / 100).toFixed(2)} — {card.code.slice(0, 8)}…
+                              {giftCardOptionLabel(card)} — {card.code.slice(0, 8)}…
                             </option>
                           ))}
                         </select>
@@ -1884,7 +1888,7 @@ export default function InquiryDetail() {
                             </option>
                             {clientGiftCards?.map((card) => (
                               <option key={card.id} value={card.id}>
-                                ${(card.amountCents / 100).toFixed(2)} — {card.code.slice(0, 8)}…
+                                {giftCardOptionLabel(card)} — {card.code.slice(0, 8)}…
                               </option>
                             ))}
                           </select>

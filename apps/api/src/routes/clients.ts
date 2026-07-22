@@ -143,6 +143,7 @@ router.get("/:id", async (req, res) => {
           expiresAt: true,
           appointmentId: true,
           createdAt: true,
+          exemptionReason: true,
         },
         orderBy: { createdAt: "desc" },
       },
@@ -197,7 +198,7 @@ router.get("/:id/shareable-links", async (req, res) => {
         },
         orderBy: { createdAt: "desc" },
       },
-      giftCards: { select: { id: true, code: true, amountCents: true }, orderBy: { createdAt: "desc" } },
+      giftCards: { select: { id: true, code: true, amountCents: true, status: true }, orderBy: { createdAt: "desc" } },
       appointments: {
         select: {
           id: true,
@@ -261,13 +262,18 @@ router.get("/:id/shareable-links", async (req, res) => {
 
   // Gift card public pages never expire (the code is a permanent bearer
   // token -- Phase 3), so every gift card the client has is always active.
+  // EXEMPT cards (Package F deposit exemptions) are excluded entirely --
+  // there's no reason to text a client a public link/QR for their own
+  // internal scheduling exemption.
   const giftCardLinks = await Promise.all(
-    client.giftCards.map(async (card) => ({
-      giftCardId: card.id,
-      label: `Gift card — $${(card.amountCents / 100).toFixed(2)}`,
-      url: await shortenUrl(`${PUBLIC_APP_URL}/gift-card/${card.code}`),
-      hint: null,
-    })),
+    client.giftCards
+      .filter((card) => card.status !== "EXEMPT")
+      .map(async (card) => ({
+        giftCardId: card.id,
+        label: `Gift card — $${(card.amountCents / 100).toFixed(2)}`,
+        url: await shortenUrl(`${PUBLIC_APP_URL}/gift-card/${card.code}`),
+        hint: null,
+      })),
   );
 
   // Distinct from depositLinks/waiverLinks above (which only ever list

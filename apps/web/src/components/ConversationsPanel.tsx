@@ -2352,7 +2352,9 @@ function ThreadView({
                         onClick={onClose}
                         className="mt-1 block rounded-lg border border-border px-2.5 py-2 hover:bg-surface/60"
                       >
-                        <p className="text-xs text-fg">${(card.amountCents / 100).toFixed(2)}</p>
+                        <p className="text-xs text-fg">
+                          {card.status === 'EXEMPT' ? 'Deposit Exemption' : `$${(card.amountCents / 100).toFixed(2)}`}
+                        </p>
                         <div className="mt-1">
                           <StatusPill status={card.status} />
                         </div>

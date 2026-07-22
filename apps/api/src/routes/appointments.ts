@@ -183,7 +183,7 @@ const APPOINTMENT_DETAIL_INCLUDE = {
   // the older 1:1 `inquiry` back-relation (Inquiry.appointmentId), which is
   // a different, usually-null link left over from the original scheduling flow.
   inquiryProject: { select: { id: true, description: true, clientId: true } },
-  giftCard: { select: { id: true, code: true, amountCents: true, status: true, expiresAt: true } },
+  giftCard: { select: { id: true, code: true, amountCents: true, status: true, expiresAt: true, exemptionReason: true } },
   checkedOutBy: { select: { id: true, name: true, email: true } },
   // Non-PII summary only -- the health data and ID image behind this
   // waiver live behind GET /waivers/:id, which is OWNER/FRONT_DESK only.
@@ -399,10 +399,18 @@ router.post("/:id/checkout", requireRole(Role.OWNER, Role.FRONT_DESK), async (re
   }
 
   const card = appointment.giftCard;
+  // An EXEMPT card has no real value to redeem or preserve -- regardless of
+  // what depositDecision was sent, it's always detached (never redeemed) so
+  // it stays EXEMPT and immediately reusable for this client's next
+  // appointment. The frontend hides the REDEEM/ROLL choice for these, but
+  // this guard makes that the actual server-enforced behavior, not just a UI
+  // convention.
+  const isExempt = card.status === GiftCardStatus.EXEMPT;
+  const redeem = depositDecision === "REDEEM" && !isExempt;
   let amountDueCents = 0;
   let remainderCents = 0;
 
-  if (depositDecision === "REDEEM") {
+  if (redeem) {
     amountDueCents = Math.max(0, finalCostCents - card.amountCents);
     remainderCents = Math.max(0, card.amountCents - finalCostCents);
   } else {
@@ -410,7 +418,7 @@ router.post("/:id/checkout", requireRole(Role.OWNER, Role.FRONT_DESK), async (re
   }
 
   const updated = await prisma.$transaction(async (tx) => {
-    if (depositDecision === "REDEEM") {
+    if (redeem) {
       await tx.giftCard.update({
         where: { id: card.id },
         data: { status: GiftCardStatus.REDEEMED, redeemedAt: new Date() },
@@ -451,11 +459,10 @@ router.post("/:id/checkout", requireRole(Role.OWNER, Role.FRONT_DESK), async (re
     actorUserId: req.user!.userId,
     entityType: "GiftCard",
     entityId: card.id,
-    action: depositDecision === "REDEEM" ? "redeemed" : "rollover",
-    changes:
-      depositDecision === "REDEEM"
-        ? { status: { from: card.status, to: GiftCardStatus.REDEEMED }, appointmentId: id, finalCostCents, remainderCents }
-        : { fromAppointmentId: id, toAppointmentId: null, reason: "checkout_roll" },
+    action: redeem ? "redeemed" : "rollover",
+    changes: redeem
+      ? { status: { from: card.status, to: GiftCardStatus.REDEEMED }, appointmentId: id, finalCostCents, remainderCents }
+      : { fromAppointmentId: id, toAppointmentId: null, reason: isExempt ? "exempt_card_detach" : "checkout_roll" },
   });
 
   res.json({ ...updated, amountDueCents, remainderCents });

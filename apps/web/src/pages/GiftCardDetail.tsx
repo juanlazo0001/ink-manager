@@ -19,6 +19,7 @@ interface GiftCard {
   client: { id: string; firstName: string; lastName: string }
   appointment: { id: string; startTime: string; endTime: string } | null
   issuedBy: { id: string; name: string | null; email: string }
+  exemptionReason: string | null
 }
 
 export default function GiftCardDetail() {
@@ -160,7 +161,12 @@ export default function GiftCardDetail() {
               <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
                 <div className="flex flex-wrap items-start justify-between gap-6">
                   <div>
-                    <h1 className="text-xl font-bold text-fg">${(card.amountCents / 100).toFixed(2)} Gift Card</h1>
+                    <h1 className="text-xl font-bold text-fg">
+                      {card.status === 'EXEMPT' ? 'Deposit Exemption' : `$${(card.amountCents / 100).toFixed(2)} Gift Card`}
+                    </h1>
+                    {card.status === 'EXEMPT' && card.exemptionReason && (
+                      <p className="mt-1 text-sm text-fg-secondary">{card.exemptionReason}</p>
+                    )}
                     <p className="mt-1 text-sm text-fg-secondary">
                       <Link to={`/clients/${card.client.id}`} className="hover:underline">
                         {card.client.firstName} {card.client.lastName}
@@ -194,17 +200,19 @@ export default function GiftCardDetail() {
                     </div>
                   </div>
 
-                  <QrCode value={publicUrl!} size={140} />
+                  {card.status !== 'EXEMPT' && <QrCode value={publicUrl!} size={140} />}
                 </div>
 
                 <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-border pt-4">
-                  <button
-                    type="button"
-                    onClick={handleCopyLink}
-                    className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
-                  >
-                    {copied ? 'Copied!' : 'Copy link'}
-                  </button>
+                  {card.status !== 'EXEMPT' && (
+                    <button
+                      type="button"
+                      onClick={handleCopyLink}
+                      className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
+                    >
+                      {copied ? 'Copied!' : 'Copy link'}
+                    </button>
+                  )}
 
                   {canManage && card.status === 'ACTIVE' && (
                     <button

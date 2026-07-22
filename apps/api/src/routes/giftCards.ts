@@ -121,6 +121,70 @@ router.post("/", async (req, res) => {
   res.status(201).json(card);
 });
 
+// OWNER-only: a "Deposit Exemption" is a real GiftCard row (status EXEMPT,
+// amountCents 0) that satisfies the "appointment requires an attached
+// ACTIVE gift card" rule without representing real money -- it reuses the
+// entire existing gift-card system (attach/detach, audit trail, appointment
+// validation in validateGiftCardForAttachment) rather than a parallel
+// mechanism. Day-to-day attach/detach of an already-issued exempt card
+// stays OWNER/FRONT_DESK via the router-level gate above; only issuance
+// itself is OWNER-restricted, same precedent as /:id/void below.
+router.post("/exempt", requireRole(Role.OWNER), async (req, res) => {
+  const body = req.body ?? {};
+  const { clientId, exemptionReason, expiresAt } = body;
+  const studioId = req.user!.studioId;
+
+  if (!clientId || typeof clientId !== "string") {
+    return res.status(400).json({ error: "clientId is required" });
+  }
+
+  if (exemptionReason !== undefined && exemptionReason !== null && typeof exemptionReason !== "string") {
+    return res.status(400).json({ error: "exemptionReason must be a string or null" });
+  }
+
+  const client = await prisma.client.findUnique({ where: { id: clientId } });
+  if (!client || client.studioId !== studioId || client.mergedIntoId) {
+    return res.status(400).json({ error: "clientId must belong to an active client in your studio" });
+  }
+
+  // Unlike regular issuance, an exemption defaults to never expiring --
+  // there's no studio-wide default here, only what the OWNER explicitly sets.
+  let resolvedExpiresAt: Date | null = null;
+  if (expiresAt !== undefined && expiresAt !== null) {
+    resolvedExpiresAt = new Date(expiresAt);
+    if (Number.isNaN(resolvedExpiresAt.getTime())) {
+      return res.status(400).json({ error: "expiresAt must be a valid date or null" });
+    }
+  }
+
+  const code = await generateUniqueGiftCardCode();
+  const reason = typeof exemptionReason === "string" && exemptionReason.trim() ? exemptionReason.trim() : null;
+
+  const card = await prisma.giftCard.create({
+    data: {
+      studioId,
+      clientId,
+      code,
+      amountCents: 0,
+      status: GiftCardStatus.EXEMPT,
+      exemptionReason: reason,
+      expiresAt: resolvedExpiresAt,
+      issuedById: req.user!.userId,
+    },
+  });
+
+  await logAudit({
+    studioId,
+    actorUserId: req.user!.userId,
+    entityType: "GiftCard",
+    entityId: card.id,
+    action: "exempt_gift_card_issued",
+    changes: { clientId, exemptionReason: reason, expiresAt: resolvedExpiresAt },
+  });
+
+  res.status(201).json(card);
+});
+
 router.get("/:id", async (req, res) => {
   const id = req.params.id as string;
 
@@ -201,8 +265,10 @@ router.patch("/:id/attachment", async (req, res) => {
   }
 
   const synced = await syncExpiredStatus(card);
-  if (synced.status !== GiftCardStatus.ACTIVE) {
-    return res.status(400).json({ error: `Only an ACTIVE card can be moved (this one is ${synced.status})` });
+  if (synced.status !== GiftCardStatus.ACTIVE && synced.status !== GiftCardStatus.EXEMPT) {
+    return res
+      .status(400)
+      .json({ error: `Only an ACTIVE or EXEMPT card can be moved (this one is ${synced.status})` });
   }
 
   const fromAppointmentId = card.appointmentId;

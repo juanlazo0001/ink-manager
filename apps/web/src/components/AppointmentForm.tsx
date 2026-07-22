@@ -67,7 +67,7 @@ interface ClientWithProjects {
 }
 
 function isCardAvailable(card: GiftCardOption): boolean {
-  if (card.status !== 'ACTIVE' || card.appointmentId) return false
+  if ((card.status !== 'ACTIVE' && card.status !== 'EXEMPT') || card.appointmentId) return false
   return !card.expiresAt || new Date(card.expiresAt) > new Date()
 }
 
@@ -375,7 +375,8 @@ export default function AppointmentForm({
               </option>
               {availableGiftCards.map((card) => (
                 <option key={card.id} value={card.id}>
-                  ${(card.amountCents / 100).toFixed(2)} — {card.code.slice(0, 8)}…
+                  {card.status === 'EXEMPT' ? 'Deposit Exemption' : `$${(card.amountCents / 100).toFixed(2)}`} —{' '}
+                  {card.code.slice(0, 8)}…
                   {card.expiresAt ? ` (expires ${new Date(card.expiresAt).toLocaleDateString()})` : ''}
                 </option>
               ))}

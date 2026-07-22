@@ -22,9 +22,10 @@ export function computeGiftCardExpiration(defaultExpirationDays: number | null):
 }
 
 // Shared by both appointment-creation routes (standalone + /schedule): a
-// gift card must belong to the same client/studio, be ACTIVE and unexpired
-// (syncing the lazy-expiration transition if needed), and not already be
-// attached elsewhere.
+// gift card must belong to the same client/studio, be ACTIVE (or EXEMPT --
+// a Package F deposit exemption, which satisfies this rule without
+// representing real money) and unexpired (syncing the lazy-expiration
+// transition if needed), and not already be attached elsewhere.
 export async function validateGiftCardForAttachment(
   giftCardId: string,
   studioId: string,
@@ -38,7 +39,7 @@ export async function validateGiftCardForAttachment(
 
   const synced = await syncExpiredStatus(card);
 
-  if (synced.status !== GiftCardStatus.ACTIVE) {
+  if (synced.status !== GiftCardStatus.ACTIVE && synced.status !== GiftCardStatus.EXEMPT) {
     return { error: `This gift card is not available (status: ${synced.status})` };
   }
 
@@ -51,9 +52,14 @@ export async function validateGiftCardForAttachment(
 
 // No scheduler exists yet (a later phase adds a background sweep). Until
 // then, expiration is handled lazily: anywhere a card is read or validated,
-// a still-ACTIVE card whose expiresAt has passed is treated as EXPIRED.
+// a still-ACTIVE (or still-EXEMPT, e.g. a time-limited comp) card whose
+// expiresAt has passed is treated as EXPIRED.
 export function isExpired(card: Pick<GiftCard, "status" | "expiresAt">): boolean {
-  return card.status === GiftCardStatus.ACTIVE && card.expiresAt != null && card.expiresAt < new Date();
+  return (
+    (card.status === GiftCardStatus.ACTIVE || card.status === GiftCardStatus.EXEMPT) &&
+    card.expiresAt != null &&
+    card.expiresAt < new Date()
+  );
 }
 
 // Lazily persists the EXPIRED transition on read, rather than just computing

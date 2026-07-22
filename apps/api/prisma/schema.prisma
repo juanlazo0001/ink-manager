@@ -42,6 +42,7 @@ enum GiftCardStatus {
   REDEEMED
   EXPIRED
   VOID
+  EXEMPT
 }
 
 enum LiabilityWaiverStatus {
@@ -751,6 +752,11 @@ model GiftCard {
   issuedBy   User   @relation(fields: [issuedById], references: [id])
 
   depositForm DepositForm?
+
+  // Set only for EXEMPT cards -- an optional staff-facing note (e.g.
+  // "Sponsor", "Comped -- prior service issue") explaining why the deposit
+  // requirement was waived.
+  exemptionReason String?
 
   @@index([studioId])
   @@index([clientId])

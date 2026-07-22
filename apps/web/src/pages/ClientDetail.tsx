@@ -62,6 +62,7 @@ interface GiftCard {
   expiresAt: string | null
   appointmentId: string | null
   createdAt: string
+  exemptionReason: string | null
 }
 
 interface WaiverSummary {
@@ -167,6 +168,7 @@ const EMPTY_EDIT_FORM = {
 }
 
 const EMPTY_GIFT_CARD_FORM = { amountDollars: '', expiresAt: '' }
+const EMPTY_EXEMPT_FORM = { reason: '', expiresAt: '' }
 
 export default function ClientDetail() {
   const { id } = useParams<{ id: string }>()
@@ -283,6 +285,11 @@ export default function ClientDetail() {
   const [giftCardForm, setGiftCardForm] = useState(EMPTY_GIFT_CARD_FORM)
   const [issuingGiftCard, setIssuingGiftCard] = useState(false)
   const [giftCardError, setGiftCardError] = useState<string | null>(null)
+
+  const [showIssueExempt, setShowIssueExempt] = useState(false)
+  const [exemptForm, setExemptForm] = useState(EMPTY_EXEMPT_FORM)
+  const [issuingExempt, setIssuingExempt] = useState(false)
+  const [exemptError, setExemptError] = useState<string | null>(null)
 
   const [editing, setEditing] = useState(false)
   const [editForm, setEditForm] = useState(EMPTY_EDIT_FORM)
@@ -522,6 +529,33 @@ export default function ClientDetail() {
       setGiftCardError(err instanceof Error ? err.message : 'Failed to issue gift card')
     } finally {
       setIssuingGiftCard(false)
+    }
+  }
+
+  async function handleIssueExempt(event: FormEvent) {
+    event.preventDefault()
+    if (!id) return
+
+    setIssuingExempt(true)
+    setExemptError(null)
+
+    try {
+      await apiFetch('/gift-cards/exempt', {
+        method: 'POST',
+        body: JSON.stringify({
+          clientId: id,
+          exemptionReason: exemptForm.reason.trim() || null,
+          ...(exemptForm.expiresAt ? { expiresAt: new Date(exemptForm.expiresAt).toISOString() } : {}),
+        }),
+      })
+
+      setShowIssueExempt(false)
+      setExemptForm(EMPTY_EXEMPT_FORM)
+      setRefreshIndex((index) => index + 1)
+    } catch (err) {
+      setExemptError(err instanceof Error ? err.message : 'Failed to issue deposit exemption')
+    } finally {
+      setIssuingExempt(false)
     }
   }
 
@@ -1514,16 +1548,28 @@ export default function ClientDetail() {
               <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
                 <div className="flex items-center justify-between">
                   <h2 className="text-base font-semibold text-fg">Gift Cards</h2>
-                  {canIssueGiftCards && (
-                    <button
-                      type="button"
-                      onClick={() => setShowIssueGiftCard(true)}
-                      className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
-                    >
-                      <PlusIcon className="h-3.5 w-3.5" />
-                      Issue Gift Card
-                    </button>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {isOwner && (
+                      <button
+                        type="button"
+                        onClick={() => setShowIssueExempt(true)}
+                        className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                      >
+                        <PlusIcon className="h-3.5 w-3.5" />
+                        Issue Deposit Exemption
+                      </button>
+                    )}
+                    {canIssueGiftCards && (
+                      <button
+                        type="button"
+                        onClick={() => setShowIssueGiftCard(true)}
+                        className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                      >
+                        <PlusIcon className="h-3.5 w-3.5" />
+                        Issue Gift Card
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {client.giftCards.length === 0 && <p className="mt-4 text-sm text-fg-secondary">No gift cards yet.</p>}
@@ -1548,7 +1594,18 @@ export default function ClientDetail() {
                             className="cursor-pointer hover:bg-surface/40"
                           >
                             <td className="py-3 font-mono text-xs text-fg">{card.code}</td>
-                            <td className="py-3 text-fg-secondary">{formatCents(card.amountCents)}</td>
+                            <td className="py-3 text-fg-secondary">
+                              {card.status === 'EXEMPT' ? (
+                                <>
+                                  Deposit Exemption
+                                  {card.exemptionReason && (
+                                    <span className="text-fg-muted"> — {card.exemptionReason}</span>
+                                  )}
+                                </>
+                              ) : (
+                                formatCents(card.amountCents)
+                              )}
+                            </td>
                             <td className="py-3">
                               <StatusPill status={card.status} />
                             </td>
@@ -1978,6 +2035,57 @@ export default function ClientDetail() {
               className="mt-5 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
             >
               {issuingGiftCard ? 'Issuing…' : 'Issue Gift Card'}
+            </button>
+          </form>
+        </Modal>
+      )}
+
+      {showIssueExempt && (
+        <Modal
+          title="Issue Deposit Exemption"
+          onClose={() => {
+            setShowIssueExempt(false)
+            setExemptForm(EMPTY_EXEMPT_FORM)
+            setExemptError(null)
+          }}
+        >
+          <form onSubmit={handleIssueExempt}>
+            <p className="text-sm text-fg-secondary">
+              Issues a $0 gift card with status "Deposit Exemption" -- it satisfies the appointment deposit
+              requirement without representing real money.
+            </p>
+
+            <div className="mt-3">
+              <label className="mb-1 block text-sm font-medium text-fg-secondary">Reason (optional)</label>
+              <input
+                type="text"
+                placeholder="e.g. Sponsor, Comped — prior service issue"
+                value={exemptForm.reason}
+                onChange={(e) => setExemptForm({ ...exemptForm, reason: e.target.value })}
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+            </div>
+
+            <div className="mt-3">
+              <label className="mb-1 block text-sm font-medium text-fg-secondary">
+                Expiration (optional, default never expires)
+              </label>
+              <input
+                type="date"
+                value={exemptForm.expiresAt}
+                onChange={(e) => setExemptForm({ ...exemptForm, expiresAt: e.target.value })}
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+            </div>
+
+            {exemptError && <p className="mt-3 text-sm text-danger">{exemptError}</p>}
+
+            <button
+              type="submit"
+              disabled={issuingExempt}
+              className="mt-5 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
+            >
+              {issuingExempt ? 'Issuing…' : 'Issue Deposit Exemption'}
             </button>
           </form>
         </Modal>

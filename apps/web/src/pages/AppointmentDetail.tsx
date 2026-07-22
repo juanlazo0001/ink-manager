@@ -34,6 +34,7 @@ interface GiftCardSummary {
   amountCents: number
   status: string
   expiresAt: string | null
+  exemptionReason: string | null
 }
 
 interface Appointment {
@@ -268,10 +269,13 @@ export default function AppointmentDetail() {
 
   const finalCostCents = Number(checkoutForm.finalCostDollars) ? dollarsToCents(Number(checkoutForm.finalCostDollars)) : 0
   const cardAmountCents = appointment?.giftCard?.amountCents ?? 0
+  const isExemptCard = appointment?.giftCard?.status === 'EXEMPT'
   const amountDuePreview =
-    checkoutForm.depositDecision === 'REDEEM' ? Math.max(0, finalCostCents - cardAmountCents) : finalCostCents
+    checkoutForm.depositDecision === 'REDEEM' && !isExemptCard
+      ? Math.max(0, finalCostCents - cardAmountCents)
+      : finalCostCents
   const remainderPreview =
-    checkoutForm.depositDecision === 'REDEEM' ? Math.max(0, cardAmountCents - finalCostCents) : 0
+    checkoutForm.depositDecision === 'REDEEM' && !isExemptCard ? Math.max(0, cardAmountCents - finalCostCents) : 0
 
   async function handleCheckout(event: FormEvent) {
     event.preventDefault()
@@ -285,7 +289,7 @@ export default function AppointmentDetail() {
         method: 'POST',
         body: JSON.stringify({
           finalCostCents,
-          depositDecision: checkoutForm.depositDecision,
+          depositDecision: isExemptCard ? 'ROLL' : checkoutForm.depositDecision,
           closeoutNotes: checkoutForm.closeoutNotes || undefined,
         }),
       })
@@ -622,7 +626,9 @@ export default function AppointmentDetail() {
                   <div className="mt-4 border-t border-border pt-4 text-sm">
                     <span className="text-fg-muted">Gift card: </span>
                     <Link to={`/gift-cards/${appointment.giftCard.id}`} className="text-fg hover:underline">
-                      {formatCents(appointment.giftCard.amountCents)} ({formatStatus(appointment.giftCard.status)})
+                      {appointment.giftCard.status === 'EXEMPT'
+                        ? `Deposit Exemption${appointment.giftCard.exemptionReason ? ` (${appointment.giftCard.exemptionReason})` : ''}`
+                        : `${formatCents(appointment.giftCard.amountCents)} (${formatStatus(appointment.giftCard.status)})`}
                     </Link>
                   </div>
                 )}
@@ -863,33 +869,39 @@ export default function AppointmentDetail() {
                         />
                       </div>
 
-                      <div>
-                        <span className="mb-2 block text-sm font-medium text-fg-secondary">
-                          Deposit ({formatCents(appointment.giftCard.amountCents)})
-                        </span>
-                        <div className="flex gap-4">
-                          <label className="flex items-center gap-2 text-sm text-fg-secondary">
-                            <input
-                              type="radio"
-                              name="depositDecision"
-                              checked={checkoutForm.depositDecision === 'REDEEM'}
-                              onChange={() => setCheckoutForm({ ...checkoutForm, depositDecision: 'REDEEM' })}
-                              className="accent-accent"
-                            />
-                            Redeem toward today's cost
-                          </label>
-                          <label className="flex items-center gap-2 text-sm text-fg-secondary">
-                            <input
-                              type="radio"
-                              name="depositDecision"
-                              checked={checkoutForm.depositDecision === 'ROLL'}
-                              onChange={() => setCheckoutForm({ ...checkoutForm, depositDecision: 'ROLL' })}
-                              className="accent-accent"
-                            />
-                            Roll to a future appointment
-                          </label>
+                      {isExemptCard ? (
+                        <p className="rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg-secondary">
+                          Deposit exemption — no charge applied from this card
+                        </p>
+                      ) : (
+                        <div>
+                          <span className="mb-2 block text-sm font-medium text-fg-secondary">
+                            Deposit ({formatCents(appointment.giftCard.amountCents)})
+                          </span>
+                          <div className="flex gap-4">
+                            <label className="flex items-center gap-2 text-sm text-fg-secondary">
+                              <input
+                                type="radio"
+                                name="depositDecision"
+                                checked={checkoutForm.depositDecision === 'REDEEM'}
+                                onChange={() => setCheckoutForm({ ...checkoutForm, depositDecision: 'REDEEM' })}
+                                className="accent-accent"
+                              />
+                              Redeem toward today's cost
+                            </label>
+                            <label className="flex items-center gap-2 text-sm text-fg-secondary">
+                              <input
+                                type="radio"
+                                name="depositDecision"
+                                checked={checkoutForm.depositDecision === 'ROLL'}
+                                onChange={() => setCheckoutForm({ ...checkoutForm, depositDecision: 'ROLL' })}
+                                className="accent-accent"
+                              />
+                              Roll to a future appointment
+                            </label>
+                          </div>
                         </div>
-                      </div>
+                      )}
 
                       <div className="rounded-lg border border-border p-3 text-sm">
                         <p className="text-fg-secondary">

@@ -39,6 +39,7 @@ const STATUS_TONE: Record<string, Tone> = {
   REDEEMED: 'neutral',
   EXPIRED: 'warning',
   VOID: 'danger',
+  EXEMPT: 'info',
 
   // Liability waivers
   PENDING: 'warning',

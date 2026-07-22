@@ -58,7 +58,9 @@ export default function GiftCardResponse() {
         {!error && data && (
           <>
             <p className="text-sm text-fg-secondary">{data.studioName}</p>
-            <h1 className="mt-1 text-3xl font-bold text-fg">${(data.amountCents / 100).toFixed(2)}</h1>
+            <h1 className="mt-1 text-3xl font-bold text-fg">
+              {data.status === 'EXEMPT' ? 'Deposit Exemption' : `$${(data.amountCents / 100).toFixed(2)}`}
+            </h1>
             <p className="mt-1 text-sm text-fg-secondary">Gift Card Receipt</p>
 
             <div className="mt-4 flex justify-center">
