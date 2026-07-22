@@ -512,6 +512,12 @@ model Inquiry {
   lostReason             String?
   lostAt                 DateTime?
 
+  // Free-text staff notes -- internal only, never shown to the client or
+  // included in the artist share projection. Same plain single-field
+  // pattern as Appointment.notes/PersonalTask.notes elsewhere in this
+  // schema, not a timestamped log.
+  notes String?
+
   // Soft, reversible hide -- same pattern as Client.archivedAt.
   archivedAt DateTime?
 

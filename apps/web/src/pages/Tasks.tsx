@@ -165,6 +165,10 @@ export default function Tasks() {
     setEditingId(null)
   }
 
+  function updateDueDate(id: string, value: string) {
+    updateMutation.mutate({ id, data: { dueAt: value ? new Date(value).toISOString() : null } })
+  }
+
   function renderPersonalTaskItem(task: PersonalTask) {
     return (
       <li key={task.id} className="flex items-center gap-3 rounded-lg border border-border p-3 text-sm">
@@ -203,9 +207,14 @@ export default function Tasks() {
           </div>
         )}
 
-        {task.dueAt && (
-          <span className="shrink-0 text-xs text-fg-muted">Due {new Date(task.dueAt).toLocaleDateString()}</span>
-        )}
+        <input
+          type="date"
+          value={task.dueAt ? task.dueAt.slice(0, 10) : ''}
+          onChange={(e) => updateDueDate(task.id, e.target.value)}
+          disabled={!!viewAsTarget}
+          aria-label="Due date"
+          className="w-[9.5rem] shrink-0 rounded-lg border border-border bg-surface-inset px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent disabled:cursor-not-allowed disabled:opacity-50"
+        />
 
         <button
           type="button"

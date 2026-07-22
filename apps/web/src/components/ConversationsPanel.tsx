@@ -356,6 +356,14 @@ const RING_PHASE_INDEX: Record<string, number> = {
 }
 const RING_PHASE_COUNT = 5
 
+// One color per active phase (index-matched to RING_PHASE_INDEX above), cool
+// to warm as the inquiry moves forward -- previously every active phase
+// shared the same lime fill and only the *amount* filled changed, so two
+// threads at very different points in the pipeline looked identical at a
+// glance. Ends on the same lime (#c8e04a) the ring always used before this,
+// so an already-scheduled thread's ring is unchanged.
+const RING_PHASE_COLORS = ['#4a90d9', '#4ac9c9', '#e0b84a', '#e08a3c', '#c8e04a']
+
 // Terminal/branch statuses get a full ring in a distinct color instead of a
 // partial lime fill -- CLOSED_LOST reads as declined/closed, COLD_LEAD as a
 // separate "gone quiet" branch, so neither is confused with active progress.
@@ -480,7 +488,7 @@ function ProgressRingAvatar({
   const terminalColor = status ? RING_TERMINAL_COLORS[status] : undefined
   const phaseIndex = status ? RING_PHASE_INDEX[status] : undefined
   const fraction = terminalColor ? 1 : phaseIndex != null ? (phaseIndex + 1) / RING_PHASE_COUNT : 0
-  const ringColor = terminalColor ?? '#c8e04a'
+  const ringColor = terminalColor ?? (phaseIndex != null ? RING_PHASE_COLORS[phaseIndex] : '#c8e04a')
 
   return (
     <div className="relative h-[52px] w-[52px] shrink-0">

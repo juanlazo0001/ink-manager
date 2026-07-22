@@ -331,7 +331,7 @@ router.get("/:id", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async 
 // Detail-field edits only -- status transitions stay in their own dedicated
 // routes above/below (assign, respond, schedule, waitlist), never here.
 const REQUIRED_STRING_FIELDS = ["description", "colorOrBlackGrey", "placement", "estimatedSize"] as const;
-const NULLABLE_STRING_FIELDS = ["budget", "desiredTiming"] as const;
+const NULLABLE_STRING_FIELDS = ["budget", "desiredTiming", "notes"] as const;
 const NUMERIC_FIELDS = [
   "priceEstimateLow",
   "priceEstimateHigh",

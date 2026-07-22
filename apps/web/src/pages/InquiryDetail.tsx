@@ -63,6 +63,7 @@ interface Inquiry {
   closedReason: string | null
   lostReason: string | null
   lostAt: string | null
+  notes: string | null
   archivedAt: string | null
   clientId: string
   client: { firstName: string; lastName: string; email: string | null; phone: string | null }
@@ -439,6 +440,15 @@ export default function InquiryDetail() {
   const [savingDetails, setSavingDetails] = useState(false)
   const [detailsError, setDetailsError] = useState<string | null>(null)
 
+  // Internal-only staff notes -- separate save flow from detailsForm above
+  // since it's an independent field with no relation to the client-facing
+  // tattoo details, and shouldn't get bundled into (or blocked by) that
+  // save/validation cycle.
+  const [editingNotes, setEditingNotes] = useState(false)
+  const [notesForm, setNotesForm] = useState('')
+  const [savingNotes, setSavingNotes] = useState(false)
+  const [notesError, setNotesError] = useState<string | null>(null)
+
   const [editingReferenceImages, setEditingReferenceImages] = useState(false)
   const [referenceImagesState, setReferenceImagesState] = useState<ImageUploadState>({ urls: [], uploading: false })
   const [savingReferenceImages, setSavingReferenceImages] = useState(false)
@@ -576,6 +586,7 @@ export default function InquiryDetail() {
       budget: inquiry.budget ?? '',
       desiredTiming: inquiry.desiredTiming ?? '',
     })
+    setNotesForm(inquiry.notes ?? '')
   }
 
   // Mirrors the backend's own validation, so staff get instant feedback
@@ -692,6 +703,27 @@ export default function InquiryDetail() {
       setDetailsError(err instanceof Error ? err.message : 'Failed to save changes')
     } finally {
       setSavingDetails(false)
+    }
+  }
+
+  async function handleSaveNotes() {
+    if (!id) return
+
+    setSavingNotes(true)
+    setNotesError(null)
+
+    try {
+      await apiFetch(`/inquiries/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ notes: notesForm.trim() || null }),
+      })
+
+      setEditingNotes(false)
+      invalidateInquiry()
+    } catch (err) {
+      setNotesError(err instanceof Error ? err.message : 'Failed to save notes')
+    } finally {
+      setSavingNotes(false)
     }
   }
 
@@ -2059,6 +2091,60 @@ export default function InquiryDetail() {
                       <ArtistDetailField label="Preferred artist" artist={inquiry.preferredArtist} emptyLabel="No preference" />
                     </div>
                   </>
+                )}
+              </div>
+
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-base font-semibold text-fg">Notes</h2>
+                  {canMessage && !editingNotes && (
+                    <button
+                      type="button"
+                      onClick={() => setEditingNotes(true)}
+                      className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                    >
+                      <PencilIcon className="h-3.5 w-3.5" />
+                      Edit
+                    </button>
+                  )}
+                </div>
+                <p className="mt-1 text-xs text-fg-muted">Internal only -- never shown to the client or shared with an artist.</p>
+
+                {canMessage && editingNotes ? (
+                  <div className="mt-4">
+                    <textarea
+                      rows={5}
+                      value={notesForm}
+                      onChange={(e) => setNotesForm(e.target.value)}
+                      placeholder="Add a note for the team…"
+                      className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                    />
+                    {notesError && <p className="mt-2 text-sm text-danger">{notesError}</p>}
+                    <div className="mt-3 flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        onClick={handleSaveNotes}
+                        disabled={savingNotes || !!viewAsTarget}
+                        className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                      >
+                        {savingNotes ? 'Saving…' : 'Save'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNotesForm(inquiry.notes ?? '')
+                          setEditingNotes(false)
+                        }}
+                        className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="mt-4 whitespace-pre-wrap text-sm text-fg">
+                    {inquiry.notes || <span className="text-fg-muted">No notes yet.</span>}
+                  </p>
                 )}
               </div>
 

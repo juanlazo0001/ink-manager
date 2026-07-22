@@ -12,11 +12,12 @@ import { PIPELINE_STEPS } from '../components/InquiryPipeline'
 import type { KanbanColumn, KanbanTransition } from '../lib/kanban'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatStatus } from '../lib/format'
-import { PhotoIcon, PlusIcon } from '../components/icons'
+import { PhotoIcon, PlusIcon, SearchIcon } from '../components/icons'
 import { useAuth } from '../context/useAuth'
 import { useUserProfile } from '../context/useUserProfile'
-import { inquiriesQueryKey } from '../lib/queryKeys'
+import { inquiriesQueryKey, artistsQueryKey } from '../lib/queryKeys'
 import { useMarkSectionSeen } from '../lib/useMarkSectionSeen'
+import { artistLabel } from '../components/ArtistAvatar'
 
 interface Inquiry {
   id: string
@@ -77,6 +78,44 @@ export const PROJECT_TAB_COLUMNS: KanbanColumn[] = PROJECTS_TAB_STATUSES.map((st
   statuses: [status],
 }))
 
+interface ArtistOption {
+  id: string
+  user: { email: string; name: string | null; avatarUrl: string | null }
+}
+
+type SortOption = 'newest' | 'oldest' | 'updated' | 'name-asc' | 'name-desc'
+
+const SORT_LABELS: Record<SortOption, string> = {
+  newest: 'Newest first',
+  oldest: 'Oldest first',
+  updated: 'Recently updated',
+  'name-asc': 'Client name (A–Z)',
+  'name-desc': 'Client name (Z–A)',
+}
+
+function clientName(inquiry: { client: { firstName: string; lastName: string } }): string {
+  return `${inquiry.client.firstName} ${inquiry.client.lastName}`
+}
+
+function sortInquiries<T extends { createdAt: string; updatedAt: string; client: { firstName: string; lastName: string } }>(
+  list: T[],
+  sort: SortOption,
+): T[] {
+  const sorted = [...list]
+  switch (sort) {
+    case 'newest':
+      return sorted.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    case 'oldest':
+      return sorted.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+    case 'updated':
+      return sorted.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+    case 'name-asc':
+      return sorted.sort((a, b) => clientName(a).localeCompare(clientName(b)))
+    case 'name-desc':
+      return sorted.sort((a, b) => clientName(b).localeCompare(clientName(a)))
+  }
+}
+
 type StatusBucket = 'All' | 'New' | 'Assigned' | 'Closed'
 
 const STATUS_BUCKETS: StatusBucket[] = ['All', 'New', 'Assigned', 'Closed']
@@ -122,6 +161,9 @@ export default function Inquiries() {
   const [bucketFilter, setBucketFilter] = useState<StatusBucket>('All')
   const [projectStatusFilter, setProjectStatusFilter] = useState<ProjectStatusFilter>('All')
   const [groupByStatus, setGroupByStatus] = useState(false)
+  const [search, setSearch] = useState('')
+  const [artistFilter, setArtistFilter] = useState<'All' | 'Unassigned' | string>('All')
+  const [sortOption, setSortOption] = useState<SortOption>('newest')
   // Not URL-persisted deliberately: setTab below replaces searchParams
   // wholesale on every tab switch, which would otherwise wipe a view=kanban
   // param on every click -- local state survives the tab switch instead.
@@ -215,6 +257,11 @@ export default function Inquiries() {
     queryFn: () => apiFetch<Inquiry[]>('/inquiries'),
   })
 
+  const { data: artistOptions } = useQuery({
+    queryKey: artistsQueryKey(user!.studioId),
+    queryFn: () => apiFetch<ArtistOption[]>('/artists'),
+  })
+
   const errorMessage = error
     ? error instanceof ApiError && error.status === 403
       ? "You don't have permission to view inquiries."
@@ -224,7 +271,7 @@ export default function Inquiries() {
   const tabStatuses: readonly string[] = activeTab === 'projects' ? PROJECTS_TAB_STATUSES : INQUIRIES_TAB_STATUSES
   const tabFilteredInquiries = inquiries?.filter((inquiry) => tabStatuses.includes(inquiry.status))
 
-  const filteredInquiries =
+  const statusFilteredInquiries =
     activeTab === 'projects'
       ? tabFilteredInquiries?.filter(
           (inquiry) => projectStatusFilter === 'All' || inquiry.status === projectStatusFilter,
@@ -232,6 +279,23 @@ export default function Inquiries() {
       : tabFilteredInquiries?.filter(
           (inquiry) => bucketFilter === 'All' || bucketFor(inquiry.status) === bucketFilter,
         )
+
+  const artistFilteredInquiries = statusFilteredInquiries?.filter((inquiry) => {
+    if (artistFilter === 'All') return true
+    if (artistFilter === 'Unassigned') return !inquiry.assignedArtist
+    return inquiry.assignedArtist?.id === artistFilter
+  })
+
+  const searchTerm = search.trim().toLowerCase()
+  const searchFilteredInquiries = searchTerm
+    ? artistFilteredInquiries?.filter(
+        (inquiry) =>
+          clientName(inquiry).toLowerCase().includes(searchTerm) ||
+          inquiry.description.toLowerCase().includes(searchTerm),
+      )
+    : artistFilteredInquiries
+
+  const filteredInquiries = searchFilteredInquiries ? sortInquiries(searchFilteredInquiries, sortOption) : undefined
 
   // Groups follow the same pipeline order as the tab's own status list, so
   // "New" always appears above "Assigned" above "Closed", etc. -- not
@@ -400,6 +464,43 @@ export default function Inquiries() {
               )}
             </div>
 
+            <div className="flex items-center gap-2 rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg sm:w-56">
+              <SearchIcon className="h-4 w-4 shrink-0 text-fg-muted" />
+              <input
+                type="text"
+                placeholder="Search name or description"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                className="w-full min-w-0 bg-transparent placeholder:text-fg-muted focus:outline-none"
+              />
+            </div>
+
+            <select
+              value={artistFilter}
+              onChange={(event) => setArtistFilter(event.target.value)}
+              className="shrink-0 rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+            >
+              <option value="All">All artists</option>
+              <option value="Unassigned">Unassigned</option>
+              {artistOptions?.map((artist) => (
+                <option key={artist.id} value={artist.id}>
+                  {artistLabel(artist)}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={sortOption}
+              onChange={(event) => setSortOption(event.target.value as SortOption)}
+              className="shrink-0 rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+            >
+              {(Object.keys(SORT_LABELS) as SortOption[]).map((option) => (
+                <option key={option} value={option}>
+                  {SORT_LABELS[option]}
+                </option>
+              ))}
+            </select>
+
             {viewMode === 'list' && (
               <button
                 type="button"
@@ -446,13 +547,15 @@ export default function Inquiries() {
                   <PhotoIcon className="h-6 w-6" />
                 </div>
                 <p className="text-sm text-fg-secondary">
-                  {activeTab === 'projects'
-                    ? projectStatusFilter !== 'All'
-                      ? 'No projects match this filter.'
-                      : 'No projects yet -- projects appear here once a deposit is paid.'
-                    : bucketFilter !== 'All'
-                      ? 'No inquiries match this filter.'
-                      : 'No inquiries yet.'}
+                  {(() => {
+                    const hasExtraFilter = artistFilter !== 'All' || searchTerm.length > 0
+                    if (activeTab === 'projects') {
+                      if (projectStatusFilter !== 'All' || hasExtraFilter) return 'No projects match these filters.'
+                      return 'No projects yet -- projects appear here once a deposit is paid.'
+                    }
+                    if (bucketFilter !== 'All' || hasExtraFilter) return 'No inquiries match these filters.'
+                    return 'No inquiries yet.'
+                  })()}
                 </p>
               </div>
             )}
