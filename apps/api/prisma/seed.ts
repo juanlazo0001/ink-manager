@@ -86,6 +86,52 @@ const reschedulePolicy = "[DEV SEED] Please give at least 48 hours notice to res
 const communicationPolicy = "[DEV SEED] We respond to inquiries within one business day.";
 const calendarInviteTemplate = "[DEV SEED] Your appointment at {{studioName}} is confirmed for {{startTime}}.";
 
+// A2P 10DLC compliance: public, unauthenticated /privacy and /terms pages
+// render these. NOT LEGAL ADVICE -- a reasonable starting point covering the
+// disclosures required for SMS opt-in (no sharing/selling mobile numbers,
+// a message-frequency estimate matching the actual 7B reminder cadence,
+// and the exact phrase "Message and data rates may apply."), flagged for a
+// lawyer's review before relying on it, same caveat as every other policy
+// field in this app. No {{placeholder}} tokens -- unlike
+// calendarInviteTemplate, nothing substitutes them at render time here; the
+// studio's name is already shown prominently above the body on the page
+// itself, so the text stays generic ("we"/"our studio") instead.
+const privacyPolicy = `[DEV SEED] This studio respects your privacy. This policy explains what information we collect, how we use it, and how we protect it.
+
+Information We Collect
+When you submit an inquiry or book an appointment, we collect your name, email address, phone number, and details about the tattoo you're interested in, including any reference or placement photos you choose to share.
+
+How We Use Your Information
+We use this information to communicate with you about your inquiry and appointment -- confirmations, reminders, and updates from your artist -- and to provide the services you request.
+
+Text Messaging
+If you opt in to receive text messages, message frequency varies based on your appointments -- typically a few messages around each scheduled session (booking confirmations, reminders in the days and hours before your appointment, and occasional follow-ups). Message and data rates may apply. Reply STOP at any time to opt out, or START to opt back in.
+
+We do not share or sell your mobile phone number to third parties.
+
+Data Retention and Security
+We retain your information for as long as needed to provide our services and comply with legal obligations, and take reasonable measures to protect it from unauthorized access.
+
+Contact Us
+If you have questions about this policy or your information, please contact us directly.`;
+
+const termsAndConditions = `[DEV SEED] By submitting an inquiry or booking an appointment, you agree to the following terms.
+
+Appointments and Deposits
+A deposit may be required to secure your appointment. Our deposit, refund, and reschedule policies are provided separately at the time a deposit is requested.
+
+Communications
+By providing your phone number and opting in, you agree to receive text messages regarding your appointment, including reminders and updates. Message frequency varies based on your appointments -- typically a few messages around each scheduled session. Message and data rates may apply. Reply STOP to opt out at any time, or START to opt back in. We do not share or sell your mobile phone number to third parties.
+
+Eligibility
+You must be at least 18 years of age to receive tattoo services.
+
+Changes to These Terms
+We may update these terms from time to time; continued use of our services after a change means you accept the updated terms.
+
+Contact Us
+If you have questions about these terms, please contact us directly.`;
+
 // Phase 7B-2: plain-text SMS reminder templates, editable afterward from
 // Settings -> Integrations' reminder-cadence section. artistDayBefore has
 // no {{appointmentTime}}/{{waiverLink}} placeholders -- it's a single
@@ -144,6 +190,8 @@ async function main() {
       waiverClauses,
       waiverAcknowledgment,
       waiverPhotoRelease,
+      privacyPolicy,
+      termsAndConditions,
       reminderTemplates,
       reminderSendTimes,
     },

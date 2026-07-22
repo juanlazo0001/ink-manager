@@ -15,7 +15,7 @@ import estimatesRouter from "./routes/estimates";
 import { publicRouter as depositsRouter, staffRouter as depositFormsRouter } from "./routes/deposits";
 import uploadsRouter from "./routes/uploads";
 import auditRouter from "./routes/audit";
-import studioSettingsRouter from "./routes/studioSettings";
+import { publicRouter as studioSettingsPublicRouter, staffRouter as studioSettingsStaffRouter } from "./routes/studioSettings";
 import { publicRouter as giftCardsPublicRouter, staffRouter as giftCardsStaffRouter } from "./routes/giftCards";
 import { publicRouter as waiversPublicRouter, staffRouter as waiversStaffRouter } from "./routes/waivers";
 import tasksRouter from "./routes/tasks";
@@ -77,7 +77,11 @@ app.use("/deposits", depositsRouter);
 app.use("/deposit-forms", depositFormsRouter);
 app.use("/uploads", uploadsRouter);
 app.use("/audit", auditRouter);
-app.use("/studio-settings", studioSettingsRouter);
+// Public router first, same reasoning as gift-cards/waivers/custom-policies
+// above: /studio-settings/public?studioSlug= (the /privacy and /terms pages)
+// must be reachable before the staff router's requireAuth.
+app.use("/studio-settings", studioSettingsPublicRouter);
+app.use("/studio-settings", studioSettingsStaffRouter);
 // Public router first: /gift-cards/view/:code must match before the
 // staff router's /gift-cards/:id would otherwise swallow it.
 app.use("/gift-cards", giftCardsPublicRouter);

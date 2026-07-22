@@ -14,6 +14,7 @@ import Team from './pages/Team'
 import SignConsentForm from './pages/SignConsentForm'
 import IntakeForm from './pages/IntakeForm'
 import Policies from './pages/Policies'
+import PublicPolicyPage from './pages/PublicPolicyPage'
 import Inquiries from './pages/Inquiries'
 import InquiryDetail from './pages/InquiryDetail'
 import MyInquiries from './pages/MyInquiries'
@@ -40,6 +41,14 @@ function App() {
         <Route path="/sign/:token" element={<SignConsentForm />} />
         <Route path="/inquiry/:studioSlug" element={<IntakeForm />} />
         <Route path="/policies/:studioSlug" element={<Policies />} />
+        <Route
+          path="/privacy/:studioSlug"
+          element={<PublicPolicyPage field="privacyPolicy" title="Privacy Policy" />}
+        />
+        <Route
+          path="/terms/:studioSlug"
+          element={<PublicPolicyPage field="termsAndConditions" title="Terms & Conditions" />}
+        />
         <Route path="/estimate/:token" element={<EstimateResponse />} />
         <Route path="/deposit/:token" element={<DepositResponse />} />
         <Route path="/gift-card/:code" element={<GiftCardResponse />} />

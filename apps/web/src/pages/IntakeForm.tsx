@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { useParams, useSearchParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { apiFetch, ApiError } from '../lib/api'
 import PhoneInput from '../components/PhoneInput'
 import ImageUploadSection, { type ImageUploadState } from '../components/ImageUploadSection'
+import PublicPageFooter from '../components/PublicPageFooter'
 import { isValidPhoneDigits } from '../lib/format'
 import { applyThemePreset } from '../lib/themePresets'
 
@@ -47,8 +48,13 @@ export default function IntakeForm() {
   const [budget, setBudget] = useState('')
   const [desiredTiming, setDesiredTiming] = useState('')
   const [preferredArtistId, setPreferredArtistId] = useState('')
+  // Unchecked by default, deliberately -- a pre-checked box is not valid
+  // A2P 10DLC opt-in consent.
+  const [smsConsent, setSmsConsent] = useState(false)
+  const [smsConsentError, setSmsConsentError] = useState(false)
 
   const [studioCheck, setStudioCheck] = useState<StudioCheck>('loading')
+  const [studioName, setStudioName] = useState('')
   const [artists, setArtists] = useState<PublicArtist[]>([])
   const [referenceImages, setReferenceImages] = useState<ImageUploadState>({ urls: [], uploading: false })
   const [placementImages, setPlacementImages] = useState<ImageUploadState>({ urls: [], uploading: false })
@@ -100,6 +106,26 @@ export default function IntakeForm() {
     }
   }, [studioSlug])
 
+  // Studio display name for the consent checkbox label -- same public
+  // endpoint the /privacy and /terms pages read from, just the name field.
+  useEffect(() => {
+    if (!studioSlug) return
+
+    let ignore = false
+
+    apiFetch<{ studioName: string }>(`/studio-settings/public?studioSlug=${encodeURIComponent(studioSlug)}`)
+      .then((data) => {
+        if (!ignore) setStudioName(data.studioName)
+      })
+      .catch(() => {
+        // Non-essential -- the checkbox label falls back to generic wording.
+      })
+
+    return () => {
+      ignore = true
+    }
+  }, [studioSlug])
+
   // Prefill data never rides in the URL as field values -- just this
   // opaque, single-use token. An invalid/expired token quietly falls back
   // to an empty form, no error banner drama.
@@ -135,6 +161,7 @@ export default function IntakeForm() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setSubmitError(null)
+    setSmsConsentError(false)
 
     if (
       !firstName ||
@@ -161,6 +188,11 @@ export default function IntakeForm() {
       return
     }
 
+    if (!smsConsent) {
+      setSmsConsentError(true)
+      return
+    }
+
     setSubmitting(true)
 
     try {
@@ -184,6 +216,7 @@ export default function IntakeForm() {
           referenceImages: referenceImages.urls,
           placementImages: placementImages.urls,
           draftToken: draftToken || undefined,
+          smsConsent,
         }),
       })
 
@@ -427,6 +460,45 @@ export default function IntakeForm() {
             onChange={setPlacementImages}
           />
 
+          <div>
+            <label className="flex items-start gap-2 text-sm text-fg-secondary">
+              <input
+                type="checkbox"
+                checked={smsConsent}
+                onChange={(e) => {
+                  setSmsConsent(e.target.checked)
+                  if (e.target.checked) setSmsConsentError(false)
+                }}
+                className="mt-0.5 h-4 w-4 shrink-0 accent-accent"
+              />
+              <span>
+                I agree to receive text messages from {studioName || 'the studio'} regarding my appointment,
+                including reminders and updates. Message and data rates may apply. Reply STOP to opt out. View our{' '}
+                <Link
+                  to={`/privacy/${studioSlug}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline hover:text-fg"
+                >
+                  Privacy Policy
+                </Link>{' '}
+                and{' '}
+                <Link
+                  to={`/terms/${studioSlug}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline hover:text-fg"
+                >
+                  Terms
+                </Link>
+                .
+              </span>
+            </label>
+            {smsConsentError && (
+              <p className="mt-1 text-xs text-danger">Please agree to receive text messages to submit this form.</p>
+            )}
+          </div>
+
           {submitError && (
             <div className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
               {submitError}
@@ -441,6 +513,8 @@ export default function IntakeForm() {
             {submitting ? 'Submitting…' : 'Submit inquiry'}
           </button>
         </form>
+
+        <PublicPageFooter studioSlug={studioSlug} />
       </div>
     </div>
   )

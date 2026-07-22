@@ -5,6 +5,7 @@ import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime } from '../lib/format'
 import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import { applyThemePreset } from '../lib/themePresets'
+import PublicPageFooter from '../components/PublicPageFooter'
 
 const INPUT_CLASS =
   'mt-1 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
@@ -19,6 +20,7 @@ interface Term {
 interface VerifyResponse {
   clientFirstName: string
   studioName: string
+  studioSlug: string
   artistName: string | null
   artistAvatarUrl: string | null
   appointmentStart: string | null
@@ -273,6 +275,8 @@ export default function DepositResponse() {
             </form>
           </div>
         )}
+
+        <PublicPageFooter studioSlug={verifyData?.studioSlug} />
       </div>
     </div>
   )

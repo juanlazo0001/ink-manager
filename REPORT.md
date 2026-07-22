@@ -493,3 +493,103 @@ Production is entirely unaffected either way until a deliberate merge — same a
 1. **Review locally**: `git fetch && git checkout ui/theme-presets`, run the app, switch between all 4 presets yourself.
 2. **Approve and merge** `ui/theme-presets` into `main` to ship it.
 3. **Discard the branch** if it's not wanted — nothing on `main` or production changes either way.
+
+---
+
+# SMS consent checkbox + public Privacy Policy & Terms pages
+
+Single session, on `main`, done in an isolated `git worktree` (`../ink-manager-sms-consent`) rather than the shared checkout — a schema migration was involved and another session was actively mid-work on `ui/theme-presets` in the main checkout when this one started, matching exactly the collision risk the task's pre-flight called out.
+
+## Pre-flight and the migration collision, resolved without a reset
+
+`prisma migrate dev` immediately hit **schema drift**: the shared dev database already had `StudioSettings.themePreset` applied (from the `ui/theme-presets` session, committed on its own branch but not yet merged to `main`), which `main`'s own migration history didn't know about. Prisma's only offered fix was `prisma migrate reset` — **which would have dropped the shared dev database and destroyed the other session's test data**. Declined. Instead:
+
+1. Hand-wrote the migration SQL (`ALTER TABLE "Client" ADD COLUMN ...`, `ALTER TABLE "StudioSettings" ADD COLUMN ...`) instead of letting `migrate dev` compute a diff.
+2. Applied it directly with `prisma db execute --file`.
+3. Recorded it as applied with `prisma migrate resolve --applied` (no shadow database, no drift check, no reset).
+
+This kept `main`'s own migration history clean (doesn't bundle the unrelated `themePreset` column into this feature's migration) while never touching the already-applied state the other session depended on.
+
+**A second, unrelated concurrent session** also used this same worktree directory partway through (its own `Inquiry.notes`/delegated-tasks work landed as two separate commits, `0727da8` and `bd5adaf`, mid-session) — every file it touched was verified line-by-line to contain none of this session's changes before staging, so nothing of theirs was swept into this commit. Bringing `origin/main`'s 4 diverged commits (the `ui/theme-presets` branch's eventual merge) back in via `git pull` produced real conflicts in `deposits.ts`/`giftCards.ts`/`waivers.ts` and their four frontend pages, where both sessions added a field to the same public API response (`themePreset` vs. this session's `studioSlug`) — resolved by keeping both fields in every case, then `prisma generate` + a full typecheck/build to confirm the merge didn't break anything.
+
+## 1–2. Schema + Settings UI
+
+- `Client.smsConsentGivenAt` (DateTime?), `Client.smsConsentSource` (String?) — set once, never overwritten.
+- `StudioSettings.privacyPolicy` / `termsAndConditions` (String?, HTML) — added as two more entries in the *existing* `POLICY_HTML_FIELDS` array in `Settings.tsx` (now 10 fields total, one shared modal/editor, zero new UI machinery) and the backend's `TEXT_FIELDS` allow-list in `studioSettings.ts`.
+- `studioSettings.ts` split into `publicRouter`/`staffRouter` (mirroring `customPolicies.ts`/`giftCards.ts`/`waivers.ts`) so `GET /studio-settings/public?studioSlug=` can serve these two fields with no auth, alongside the existing OWNER-only `GET`/`PATCH /studio-settings`.
+
+## 3. Public pages
+
+`/privacy/:studioSlug` and `/terms/:studioSlug` — one shared `PublicPolicyPage.tsx` component (`field`/`title` props), same `sanitizeHtml` + `tiptap-content whitespace-pre-wrap` render pattern as every other policy field (`Policies.tsx`, `EstimateResponse.tsx`, `WaiverSign.tsx`). Studio name shown above the body. Live: `http://localhost:5199/privacy/dev-studio` and `http://localhost:5199/terms/dev-studio` in this session's dev instance (same paths in production once deployed).
+
+**Exact seeded text** (also in `apps/api/prisma/seed.ts` for any fresh dev database going forward — **not legal advice**, flagged for a lawyer's review before relying on it in production, same standing caveat as every other policy field in this app):
+
+> **Privacy Policy** (`[DEV SEED] This studio respects your privacy...`)
+>
+> This studio respects your privacy. This policy explains what information we collect, how we use it, and how we protect it.
+>
+> **Information We Collect** — When you submit an inquiry or book an appointment, we collect your name, email address, phone number, and details about the tattoo you're interested in, including any reference or placement photos you choose to share.
+>
+> **How We Use Your Information** — We use this information to communicate with you about your inquiry and appointment -- confirmations, reminders, and updates from your artist -- and to provide the services you request.
+>
+> **Text Messaging** — If you opt in to receive text messages, message frequency varies based on your appointments -- typically a few messages around each scheduled session (booking confirmations, reminders in the days and hours before your appointment, and occasional follow-ups). Message and data rates may apply. Reply STOP at any time to opt out, or START to opt back in.
+>
+> We do not share or sell your mobile phone number to third parties.
+>
+> **Data Retention and Security** — We retain your information for as long as needed to provide our services and comply with legal obligations, and take reasonable measures to protect it from unauthorized access.
+>
+> **Contact Us** — If you have questions about this policy or your information, please contact us directly.
+
+> **Terms & Conditions** (`[DEV SEED] By submitting an inquiry or booking an appointment...`)
+>
+> By submitting an inquiry or booking an appointment, you agree to the following terms.
+>
+> **Appointments and Deposits** — A deposit may be required to secure your appointment. Our deposit, refund, and reschedule policies are provided separately at the time a deposit is requested.
+>
+> **Communications** — By providing your phone number and opting in, you agree to receive text messages regarding your appointment, including reminders and updates. Message frequency varies based on your appointments -- typically a few messages around each scheduled session. Message and data rates may apply. Reply STOP to opt out at any time, or START to opt back in. We do not share or sell your mobile phone number to third parties.
+>
+> **Eligibility** — You must be at least 18 years of age to receive tattoo services.
+>
+> **Changes to These Terms** — We may update these terms from time to time; continued use of our services after a change means you accept the updated terms.
+>
+> **Contact Us** — If you have questions about these terms, please contact us directly.
+
+No `{{placeholder}}` tokens (unlike `calendarInviteTemplate`) — nothing substitutes them at render time on these two pages, so the studio's actual name is shown separately, prominently, above the body instead.
+
+## 4. Consent checkbox
+
+`IntakeForm.tsx`: unchecked by default (`useState(false)`), inline "Please agree to receive text messages to submit this form" error on submit attempt while unchecked (does not call the API), label reads "I agree to receive text messages from {studio name} regarding my appointment, including reminders and updates. Message and data rates may apply. Reply STOP to opt out. View our **Privacy Policy** and **Terms**." with both as `target="_blank"` links to the two pages above.
+
+Backend (`inquiries.ts` `POST /`): `smsConsent !== true` is a 400 for the **public** path only (staff walk-ins via `StaffInquiryForm` have no checkbox and aren't gated) — enforced server-side, not just via the disabled-until-checked UI. On success: a brand-new client gets `smsConsentGivenAt`/`smsConsentSource` set inline in its create; an existing client (matched by email) only gets them backfilled if not already set (`!existingClient.smsConsentGivenAt`) — verified live by submitting the same email twice and confirming the second submission's timestamp exactly matched the first (`2026-07-22T00:51:00.305Z`, unchanged).
+
+## 5. Footer links
+
+New shared `PublicPageFooter.tsx` (renders nothing until `studioSlug` resolves) added to `IntakeForm.tsx`, `EstimateResponse.tsx`, `DepositResponse.tsx`, `WaiverSign.tsx`, `GiftCardResponse.tsx` — the latter four needed a `studioSlug` field added to their existing verify/view API responses (`estimates.ts`, `deposits.ts`, `waivers.ts`, `giftCards.ts`), which didn't carry one before.
+
+## 6. Client profile
+
+`ClientDetail.tsx`'s Contact Info card now shows "SMS Consent: Given [date]" (green, `text-success`) or "Not yet given" (muted), right above the existing `smsOptedOutAt` warning line — same visual convention, no new pattern.
+
+## Verification (Playwright against the local dev instance, not just typechecks)
+
+- Intake form: checkbox confirmed unchecked on load; submit-while-unchecked shows the inline error and does **not** hit the API; checking it and submitting succeeds.
+- Consent fields set correctly on the created client (`smsConsentGivenAt`/`smsConsentSource: "intake_form"`); a second submission from the same email preserved the original timestamp exactly.
+- `/privacy/dev-studio` and `/terms/dev-studio` render the real seeded text live, studio name prominent above each.
+- **Malicious payload test**: typing `<script>alert(1)</script>` through the Settings WYSIWYG editor itself just gets escaped as literal text by the editor (not a real test of the sanitizer) — so this was additionally tested by **PATCHing the raw string directly via the API** (`<script>alert(1)</script><img src=x onerror="alert(2)"><p>Legit paragraph</p><a href="javascript:alert(3)">bad link</a>`, bypassing the editor entirely) and loading `/terms/dev-studio` in a real browser with a `dialog` listener armed: the rendered DOM contained no `<script>` tag, no `onerror` attribute, and the `<a>` tag's `javascript:` href was stripped to nothing — `alert()` never fired. The legitimate `<p>Legit paragraph</p>` survived untouched. Confirms `sanitizeHtml.ts`'s existing allow-list is the real boundary, not the editor. Text restored to the clean seeded copy afterward.
+- Footer links present with correct per-studio hrefs on the gift card page (screenshotted) and confirmed wired identically on the other three response pages by code (all four use the same `PublicPageFooter` component and the same newly-added `studioSlug` response field).
+- Both typechecks (`npx tsc --noEmit` api, `npm run build` web) clean, including after the theme-presets merge and conflict resolution.
+
+## Live public URLs (this session's dev instance)
+
+- `http://localhost:5199/privacy/dev-studio`
+- `http://localhost:5199/terms/dev-studio`
+
+(Same relative paths — `/privacy/:studioSlug` and `/terms/:studioSlug` — once deployed; the dev-only port above won't exist in production.)
+
+## Commit
+
+`<FILLED IN AFTER COMMIT>` on `main`.
+
+## Cleanup
+
+Both dev servers (API on a scratch port 4099, web on 5199 — chosen to avoid the several other sessions' dev servers already running on the usual 4000/5173 range) killed. Backfill/verification scratch scripts lived only in the session scratchpad, never in the repo. The worktree at `../ink-manager-sms-consent` will be removed after this report is committed and pushed.

@@ -100,6 +100,8 @@ interface Client {
   mergedInto: { id: string; firstName: string; lastName: string } | null
   archivedAt: string | null
   smsOptedOutAt: string | null
+  smsConsentGivenAt: string | null
+  smsConsentSource: string | null
   consentForms: ConsentForm[]
   inquiries: InquirySummary[]
   giftCards: GiftCard[]
@@ -1197,6 +1199,15 @@ export default function ClientDetail() {
 
               <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
                 <h2 className="text-base font-semibold text-fg">Contact Info</h2>
+
+                <p className="mt-2 text-xs font-medium text-fg-secondary">
+                  SMS Consent:{' '}
+                  {client.smsConsentGivenAt ? (
+                    <span className="text-success">Given {formatDateTime(client.smsConsentGivenAt)}</span>
+                  ) : (
+                    <span className="text-fg-muted">Not yet given</span>
+                  )}
+                </p>
 
                 {client.smsOptedOutAt && (
                   <p className="mt-2 text-xs font-medium text-warning">
