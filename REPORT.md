@@ -588,7 +588,7 @@ New shared `PublicPageFooter.tsx` (renders nothing until `studioSlug` resolves) 
 
 ## Commit
 
-`<FILLED IN AFTER COMMIT>` on `main`.
+`bd73203` on `main`.
 
 ## Cleanup
 
