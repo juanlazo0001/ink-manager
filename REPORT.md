@@ -1153,4 +1153,111 @@ Photo viewing is not role-gated beyond normal appointment access -- `GET /appoin
 
 Both scratch dev servers (API :4001, web :5183) stopped; the underlying `tsx watch`/vite child processes outlived `TaskStop` again as in every prior package, confirmed still holding their ports via `Get-NetTCPConnection` and force-killed by PID. The other concurrent session's server on :4000 left untouched. Playwright driver scripts and screenshots stayed in the scratchpad only, none committed. The one test photo that survived the add/delete verification sequence was left on the existing seeded "Emily Rodriguez" / "Signature pad test piece" appointment, consistent with the standing convention in every prior package's report of leaving legitimate dev-seed test data in place.
 
+---
+
+# Package O — Referral program (friend codes, $25 reward, configurable)
+
+Single session on `main`. Two migrations (see below for why two, not one).
+
+## Investigation before writing any code
+
+The task's own framing said the reward hook should fire "at the exact point a deposit is marked paid (Stripe webhook success OR manual mark-paid -- both existing paths from Phase 7C/Phase 3)." Grepped the entire codebase for `stripe` (case-insensitive) and found **zero** matches, anywhere -- no Stripe integration, no webhook, nothing under that name exists in this repo. `apps/api/src/routes/webhooks.ts` only handles two Twilio SMS webhooks (`/twilio/sms`, `/twilio/status`); the only real "a deposit was paid" trigger point in this codebase is `deposits.ts`'s `PATCH /deposit-forms/:id/mark-paid` (the manual staff action). The task's premise about a second path was simply wrong for this codebase -- there is exactly one hook point, and this is where the reward logic was added. Documented explicitly per the task's own request below.
+
+Read `GiftCard` (Phase 3 issuance), `DepositForm`'s `mark-paid` route (Package M's `isFirstConversion` gate for multi-session projects), and Package J's `sendClientSms`/`getOrCreateClientConversation` pattern before writing anything, since the task explicitly said to reuse all three rather than duplicate them.
+
+## Schema
+
+```prisma
+model Client {
+  // ...
+  referralCode              String    @unique
+  referredByClientId        String?
+  referredBy                Client?   @relation("ClientReferral", fields: [referredByClientId], references: [id])
+  referredClients           Client[]  @relation("ClientReferral")
+  referralRewardIssuedAt    DateTime?
+  referralRewardGiftCardId  String?   @unique
+  referralRewardGiftCard    GiftCard? @relation("ReferralRewardGiftCard", fields: [referralRewardGiftCardId], references: [id])
+}
+model GiftCard {
+  // ...
+  referralRewardFor Client? @relation("ReferralRewardGiftCard")
+}
+model StudioSettings {
+  // ...
+  referralRewardAmountCents Int @default(2500)
+}
+enum Channel {
+  EMAIL
+  INSTAGRAM
+  FACEBOOK
+  PHONE
+  REFERRAL
+}
+```
+
+**Why two migrations, not one**: `referralCode` needed to land as `String @unique` with no default, on a table with 38 existing rows -- `prisma migrate dev` immediately refused non-interactively ("Prisma Migrate has detected that the environment is non-interactive"), the same wall hit in Package L. Resolved with the same technique: added the column as nullable first (`prisma migrate diff --from-config-datasource ... --to-schema ... --script`, hand-placed into a timestamped migration folder, applied via `migrate deploy`), backfilled all 38 existing clients with a real generated code via a one-off script (deleted immediately after), then flipped the schema to non-nullable and repeated the diff/deploy dance for a second, single-statement `ALTER COLUMN ... SET NOT NULL` migration -- safe by then since no row was null. Confirmed via `prisma migrate status` clean after each step.
+
+`referralCode`'s alphabet deliberately differs from every other code-generator already in this codebase (`GiftCard.code`'s base64url, `ShortLink`'s base62): uppercase-only, 7 characters, excluding visually-ambiguous characters (0/O, 1/I/L) -- see `apps/api/src/lib/referrals.ts`'s `generateUniqueReferralCode()`. This is the one code in the app specifically meant to be read aloud over the counter or typed in character-by-character by a client, so ambiguity here is a real usability bug the other two generators don't need to worry about.
+
+Every one of the four places a `Client` row gets created now generates one: `clients.ts`'s direct "Add Client", `inquiries.ts`'s intake-submission route (public and staff), `webhooks.ts`'s inbound-SMS unknown-number auto-create, and `seed.ts`'s `upsertClient`.
+
+## The referral-code entry point (intake forms)
+
+Both `IntakeForm.tsx` (public) and `StaffInquiryForm.tsx` (staff-logged walk-in/phone) got the same treatment, since both submit through the identical `POST /inquiries` route and its shared `Channel` enum validation: a new "A friend referred me" option that reveals a text input for the code. Server-side (`inquiries.ts`), `referralCode` is only consulted when `channel === REFERRAL` -- riding along on any other channel is silently ignored, not honored, closing off a route to backdoor a referral relationship in through e.g. "Instagram." The lookup is scoped `{ studioId, referralCode }`, so an unknown code and a code from a different studio produce the exact same "We couldn't find that referral code" 400 -- never a distinguishing signal that would leak whether a code exists elsewhere.
+
+**Judgment call**: `referredByClientId` is only ever set on a genuinely new client (the "create" branch of the existing-client-lookup-by-email logic already in that route) -- a returning client resubmitting a second inquiry and picking "a friend referred me" does not retroactively attach a referrer to their already-established identity. This matches the task's own framing ("a NEW client can enter someone else's code") and avoids a nonsensical case where a client with years of history suddenly gets a "referred by" backfilled after the fact.
+
+## The reward trigger (`deposits.ts`'s `mark-paid`)
+
+Added entirely inside the existing route, no new endpoint:
+
+1. Before the transaction: read the paying client's `referredByClientId`/`referralRewardIssuedAt`, and if a referrer candidate exists and the guard is still open, resolve the referrer and generate a gift card code for them up front (kept outside the transaction the same way the existing code already generates the primary gift card's code outside it).
+2. Inside the **same** `$transaction` that already flips `paidManually` and (conditionally) advances the inquiry's status: re-read the referred client's `referralRewardIssuedAt` fresh, and independently re-count that client's own already-paid deposit forms (`paidManually: true`, excluding this one) -- both conditions must still hold immediately before writing, narrowing the check-then-act race window to the width of the transaction rather than the whole request. If both hold, create the reward `GiftCard` (unattached, `ACTIVE`, amount from `StudioSettings.referralRewardAmountCents`, same `computeGiftCardExpiration` as every other card) and set `referralRewardIssuedAt`/`referralRewardGiftCardId` on the referred client in the same transaction.
+3. After the transaction: two audit entries (`GiftCard`/`referral_reward_issued` and `Client`/`referral_reward_triggered`), then Package J's exact send pattern -- `getOrCreateClientConversation` + `sendClientSms`, best-effort, into the **referrer's** thread: "Great news, {referrer}! {referred} just paid their deposit, so you've earned a ${amount} referral reward from {studio}: {shortened public gift-card link} (code {code})." A failed/skipped send (no phone, opted out, Twilio rejects the number) never blocks or unwinds the reward itself -- confirmed live (see Verification).
+
+**Double-issue guard, confirmed two ways**: `Client.referralRewardIssuedAt` is the permanent guard -- once set, it is never cleared, and it is set in the same transaction as the reward gift card's creation, so a client's referral can never trigger twice regardless of how many of their own later sessions/deposit forms get paid afterward (Package M made multi-session-per-project routine, so this needed a real test, not just a glance at the code -- see Verification).
+
+## Where staff find and share a client's code
+
+Client profile header (`ClientDetail.tsx`): the client's own `referralCode` in a pill next to a copy-to-clipboard button, plus (when set) a "Referred by {name}" line linking to the referrer's own profile. Deliberately its own small block, not folded into the existing "Copy options" dropdown menu that already backs the prefilled-intake-link feature -- the task was explicit that a referral code (this client hands it to a friend) and a prefilled intake link (a link prefilled onto this client's own record) are different concepts that shouldn't be conflated, and "prominently" displayed argued for something always visible rather than one more item behind a menu click.
+
+## Settings
+
+`StudioSettings.referralRewardAmountCents` (default 2500 = $25), OWNER-only via the existing `PATCH /studio-settings` route (added to its `TEXT_FIELDS`-adjacent validation and audit-diff list, same pattern as every other numeric default there). Frontend: a new field in Settings' existing "Defaults" modal/summary, dollars-in-the-UI/cents-in-the-DB exactly like the deposit-tiers editor already on the same page (reused its own `centsToDollarsInput` helper rather than writing a second one).
+
+## Verification
+
+**PowerShell, direct API calls** (scratch API on port 4001, other concurrent session's server on :4000 left untouched):
+- Fetched Client A's (seeded "Alex Testperson") referral code (`SCAFEUE`) via `GET /clients/:id`.
+- Changed `referralRewardAmountCents` from the seeded default (2500) to 3000 via `PATCH /studio-settings`.
+- Submitted a public intake (`POST /inquiries`) as "Referred ClientB" with `channel: REFERRAL, referralCode: SCAFEUE` -- confirmed `referredByClientId` on the new client pointed at Client A.
+- Invalid code (`ZZZZZZZ`) -- 400, `"We couldn't find that referral code"`.
+- Cross-studio: the exact same valid code (`SCAFEUE`, studio 1) submitted against `studioSlug: dev-studio-2` -- same 400/"couldn't find" response, never a 403 or any signal distinguishing "wrong studio" from "doesn't exist."
+- Pushed Client B's inquiry through estimate -> PROCEED -> deposit form -> sign -> `mark-paid`: response included `referralReward: { amountCents: 3000, referrerClientId: <Alex's id>, ... }` -- reflecting the just-updated $30 setting, not the stale $25 default. Gift card confirmed real or (`GET /clients/:id`) ACTIVE, unattached, correct amount. Both audit entries confirmed via `GET /audit?entityType=...`. The SMS send itself failed for this specific client (`"Invalid 'To' Phone Number"` -- a dev-seed artifact, that particular seeded phone number isn't a real deliverable number) -- exactly the best-effort path working as designed, not a bug; re-verified the send mechanism itself using a freshly-created client with a differently-formatted test number (below).
+- Created a fresh "Referrer ClientC" (real test phone), referred a fresh "Referred ClientD" through the identical pipeline -- this time the SMS **did** send, and the exact expected message body landed in Client C's conversation thread, confirmed via `GET /conversations/:id/messages`.
+- **Double-issue guard**: generated and paid a **second** deposit form (session 2, same inquiry, Package M's multi-session support) for Client D -- response's `referralReward` was `null`, Client C's gift-card count stayed at exactly 1, Client D's guard fields (`referralRewardIssuedAt`/`referralRewardGiftCardId`) were unchanged from the first payment, and no second conversation message appeared.
+- Role gating (pre-existing, unchanged by this package, re-confirmed anyway since `referralRewardAmountCents` rides on the same route): ARTIST and FRONT_DESK both still 403 on `PATCH /studio-settings` (OWNER-only).
+
+**Browser** (Playwright, `chromium-cli` unavailable on this Windows environment, same plain-`chromium.launch()` fallback as every prior session in this report):
+- Client A's profile: the `SCAFEUE` pill and copy button render and actually copy (verified with clipboard permissions granted to the Playwright context -- without them the copy silently no-ops in headless Chromium, a headless-environment quirk, not a bug).
+- Public intake form: selecting "A friend referred me" reveals the code input; submitting an invalid code shows "We couldn't find that referral code" inline, in the same error slot every other validation error in this form already uses, and does not submit.
+- Submitted a valid referral through the actual form (a fresh "Referred ClientE-Browser" using Client A's code) -- confirmed on Client E's own profile page afterward: "Referred by Alex Testperson" rendered as a working link.
+- Pushed Client E's inquiry to a signed, unpaid deposit form (API, to keep the estimate/sign steps fast), then clicked the real "Mark deposit as paid" button on the Inquiry detail page in the browser -- zero console errors. Returned to Client A's profile: **two** separate $30.00 ACTIVE unattached gift cards now listed (one from Client D's payment, one from Client E's), confirming the reward fires independently per distinct referral relationship rather than being a single per-referrer flag.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) -- clean. `npm run build` (web) -- clean.
+
+## Commit
+
+`8af71d8` -- Package O: referral program (friend codes, $25 reward, configurable). Pushed immediately (`5011a3b..8af71d8`); a concurrent session's commit (`5011a3b`, consistent button styling for section-header create actions) had landed on `main` between this session's start and its own push, picked up cleanly as a fast-forward with no conflicts since it touched unrelated files.
+
+**Double-issue guard, explicitly confirmed**: `Client.referralRewardIssuedAt`, set exactly once, inside the same transaction as the reward gift card's creation, re-checked fresh immediately before that write -- verified live above via a second deposit form/session for the same referred client producing `referralReward: null` and no second gift card, message, or audit entry.
+
+**Deposit-paid hook point used**: `PATCH /deposit-forms/:id/mark-paid` (the manual staff action) only. No Stripe webhook exists anywhere in this codebase (confirmed by grep) -- the task's premise of a second existing path was incorrect for this repo; `webhooks.ts` handles only Twilio SMS.
+
+## Cleanup
+
+Both scratch dev servers (API :4001, web :5183) stopped; confirmed via `Get-NetTCPConnection` that the underlying `tsx watch`/vite processes outlived `TaskStop` yet again (the tool reported "No task found," having already exited on its own wrapper level) and force-killed the actual listening PIDs directly. The other concurrent session's server on :4000 left untouched. One-off scripts written directly in `apps/api/` for direct-Prisma-client checks (`count_clients.ts`, `backfill_referral_codes.ts`, `list_studios.ts`, `check_referral_msg.ts`) were deleted immediately after each use; none committed. Playwright driver scripts and screenshots stayed in the scratchpad only. Test data created during verification (five clients -- B/C/D/E plus their referral relationships -- and four gift cards, one deposit-tier settings change to $30) left in the dev database, consistent with the standing convention in every prior package's report; `referralRewardAmountCents` was left at $30 rather than restored to $25, since the task never asked for it to be reset and a later package can treat it as the current studio setting exactly like any other staff-made change.
+
 
