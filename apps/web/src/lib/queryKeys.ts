@@ -16,3 +16,5 @@ export const artistsQueryKey = (studioId: string) => ['artists', studioId] as co
 export const inquiryQueryKey = (id: string) => ['inquiry', id] as const
 export const tasksQueryKey = (userId: string) => ['tasks', userId] as const
 export const navCountsQueryKey = (userId: string) => ['nav-counts', userId] as const
+export const reportsDashboardQueryKey = (studioId: string, startIso: string, endIso: string) =>
+  ['reports-dashboard', studioId, startIso, endIso] as const
