@@ -150,7 +150,7 @@ export default function InquiryNotesSection({ inquiryId, canManage, readOnly }: 
           type="button"
           onClick={handlePost}
           disabled={posting || readOnly || isBlank(composerValue)}
-          className="mt-3 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
+          className="mt-3 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60"
         >
           {posting ? 'Posting…' : 'Add Note'}
         </button>

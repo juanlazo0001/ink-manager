@@ -1601,18 +1601,13 @@ export default function ClientDetail() {
                 <div className="flex items-center justify-between">
                   <h2 className="text-base font-semibold text-fg">Gift Cards</h2>
                   <div className="flex items-center gap-2">
-                    {/* Primary create action (filled) first, same size/order
-                        convention as Schedule Appointment + Add to Waitlist
-                        in InquiryDetail.tsx -- the rarer, OWNER-only
-                        exemption path is the secondary outline action
-                        alongside it, not a second equally-weighted primary. */}
                     {canIssueGiftCards && (
                       <button
                         type="button"
                         onClick={() => setShowIssueGiftCard(true)}
-                        className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover"
+                        className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
                       >
-                        <PlusIcon className="h-4 w-4" />
+                        <PlusIcon className="h-3.5 w-3.5" />
                         Issue Gift Card
                       </button>
                     )}
@@ -1620,9 +1615,9 @@ export default function ClientDetail() {
                       <button
                         type="button"
                         onClick={() => setShowIssueExempt(true)}
-                        className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
+                        className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
                       >
-                        <PlusIcon className="h-4 w-4" />
+                        <PlusIcon className="h-3.5 w-3.5" />
                         Issue Deposit Exemption
                       </button>
                     )}
@@ -1700,9 +1695,9 @@ export default function ClientDetail() {
                             ? 'No inquiry is in Deposit Pending status with a price estimate set'
                             : undefined
                         }
-                        className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                        className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:opacity-60"
                       >
-                        <PlusIcon className="h-4 w-4" />
+                        <PlusIcon className="h-3.5 w-3.5" />
                         {sendingDepositId ? 'Sending…' : 'Send Deposit Form'}
                       </button>
                       {showDepositPicker && eligibleDepositInquiries.length > 1 && (
@@ -1870,9 +1865,9 @@ export default function ClientDetail() {
                       type="button"
                       onClick={handleSendConsentForm}
                       disabled={sendingForm}
-                      className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                      className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:opacity-60"
                     >
-                      <PlusIcon className="h-4 w-4" />
+                      <PlusIcon className="h-3.5 w-3.5" />
                       {sendingForm ? 'Sending…' : 'Send Consent Form'}
                     </button>
                   )}
@@ -1953,9 +1948,9 @@ export default function ClientDetail() {
                             ? 'No confirmed appointment without a waiver yet'
                             : undefined
                         }
-                        className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                        className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:opacity-60"
                       >
-                        <PlusIcon className="h-4 w-4" />
+                        <PlusIcon className="h-3.5 w-3.5" />
                         {sendingWaiverId ? 'Sending…' : 'Send Waiver'}
                       </button>
                       {showWaiverPicker && eligibleWaiverAppointments.length > 1 && (
