@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { apiFetch, ApiError } from '../lib/api'
 import PhoneInput from '../components/PhoneInput'
+import CurrencyInput from '../components/CurrencyInput'
 import ImageUploadSection, { type ImageUploadState } from '../components/ImageUploadSection'
 import PublicPageFooter from '../components/PublicPageFooter'
 import { isValidPhoneDigits } from '../lib/format'
+import { formatCurrencyInput } from '../lib/money'
 import { applyThemePreset } from '../lib/themePresets'
 
 interface PrefillPayload {
@@ -144,7 +146,7 @@ export default function IntakeForm() {
         if (payload.description) setDescription(payload.description)
         if (payload.placement) setPlacement(payload.placement)
         if (payload.estimatedSize) setEstimatedSize(payload.estimatedSize)
-        if (payload.budget) setBudget(payload.budget)
+        if (payload.budget) setBudget(payload.budget.replace(/\D/g, ''))
         if (payload.desiredTiming) setDesiredTiming(payload.desiredTiming)
       })
       .catch(() => {
@@ -188,6 +190,16 @@ export default function IntakeForm() {
       return
     }
 
+    if (referenceImages.urls.length === 0) {
+      setSubmitError('Please add at least one reference image.')
+      return
+    }
+
+    if (placementImages.urls.length === 0) {
+      setSubmitError('Please add at least one placement photo.')
+      return
+    }
+
     if (!smsConsent) {
       setSmsConsentError(true)
       return
@@ -210,7 +222,7 @@ export default function IntakeForm() {
           placement,
           estimatedSize,
           hasBeenTattooedBefore: hasBeenTattooedBefore === 'yes',
-          budget: budget || undefined,
+          budget: budget ? formatCurrencyInput(budget) : undefined,
           desiredTiming: desiredTiming || undefined,
           preferredArtistId: preferredArtistId || undefined,
           referenceImages: referenceImages.urls,
@@ -428,13 +440,7 @@ export default function IntakeForm() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label className={LABEL_CLASS}>Budget</label>
-              <input
-                type="text"
-                placeholder="e.g. $300-500"
-                value={budget}
-                onChange={(e) => setBudget(e.target.value)}
-                className={INPUT_CLASS}
-              />
+              <CurrencyInput value={budget} onChange={setBudget} placeholder="$0" className={INPUT_CLASS} />
             </div>
             <div>
               <label className={LABEL_CLASS}>Desired timing</label>
@@ -449,13 +455,13 @@ export default function IntakeForm() {
           </div>
 
           <ImageUploadSection
-            label="Reference images"
+            label="Reference images *"
             hint="Photos or designs that show the style you're going for."
             onChange={setReferenceImages}
           />
 
           <ImageUploadSection
-            label="Placement photos"
+            label="Placement photos *"
             hint="A photo of the area where you want the tattoo."
             onChange={setPlacementImages}
           />

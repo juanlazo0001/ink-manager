@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { apiFetch } from '../lib/api'
@@ -11,6 +11,7 @@ import DateAndTimeRangeFields, {
   combineDateAndTime,
   isCompleteTimeRange,
   isValidTimeRange,
+  parseDateString,
   type DateAndTimeRangeValue,
 } from './DateAndTimeRangeFields'
 
@@ -20,12 +21,40 @@ interface ClientOption {
   lastName: string
 }
 
+interface ScheduleBlock {
+  dayOfWeek: number
+  startTime: string
+  endTime: string
+}
+
 interface ArtistOption {
   id: string
   user: { email: string; name: string | null; avatarUrl: string | null }
   isGuest: boolean
   guestStartDate: string | null
   guestEndDate: string | null
+  preferredSchedule: ScheduleBlock[] | null
+}
+
+function timeToMinutes(time: string): number {
+  const [h, m] = time.split(':').map(Number)
+  return h * 60 + m
+}
+
+// Package I: preferredSchedule stays advisory (matches Calendar.tsx's own
+// isArtistUnavailable shading and ArtistDetail.tsx's editor copy) -- this
+// only decides whether to show a warning, never blocks submission outright.
+// An artist with no configured schedule at all implies no restriction.
+function isOutsidePreferredHours(schedule: ScheduleBlock[] | null | undefined, value: DateAndTimeRangeValue): boolean {
+  if (!schedule || schedule.length === 0) return false
+  if (!isCompleteTimeRange(value)) return false
+  const date = parseDateString(value.date)
+  if (!date) return false
+  const day = schedule.find((d) => d.dayOfWeek === date.getDay())
+  if (!day) return true
+  const startMinutes = timeToMinutes(value.startTime)
+  const endMinutes = timeToMinutes(value.endTime)
+  return startMinutes < timeToMinutes(day.startTime) || endMinutes > timeToMinutes(day.endTime)
 }
 
 // Package D: candidates from the shared getSuggestedTimes service
@@ -50,6 +79,7 @@ interface InquiryOption {
   status: string
   timeEstimateHoursMin: number | null
   timeEstimateHoursMax: number | null
+  assignedArtistId: string | null
 }
 
 interface GiftCardOption {
@@ -123,6 +153,19 @@ export default function AppointmentForm({
   const [notes, setNotes] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [confirmedOutsideHours, setConfirmedOutsideHours] = useState(false)
+  const [confirmedDifferentArtist, setConfirmedDifferentArtist] = useState(false)
+
+  function handleArtistChange(nextArtistId: string | null) {
+    setArtistId(nextArtistId ?? '')
+    setConfirmedOutsideHours(false)
+    setConfirmedDifferentArtist(false)
+  }
+
+  function handleTimeRangeChange(next: DateAndTimeRangeValue) {
+    setTimeRange(next)
+    setConfirmedOutsideHours(false)
+  }
 
   const { data: clientOptions } = useQuery({
     queryKey: clientsQueryKey(user!.studioId),
@@ -155,6 +198,38 @@ export default function AppointmentForm({
   // time estimate are picked (see the JSX gating below).
   const effectiveInquiryId = fixedInquiryId ?? inquiryId
   const selectedInquiry = availableInquiries.find((i) => i.id === effectiveInquiryId)
+
+  // Package I: default the artist picker to the inquiry's already-assigned
+  // artist when opened from a project context -- the calendar's own
+  // click-to-create prefill (initialArtistId) takes precedence if present,
+  // and a user's own pick is never overwritten once artistId is non-empty.
+  const assignedArtistId = fixedInquiryId ? (selectedInquiry?.assignedArtistId ?? null) : null
+  useEffect(() => {
+    if (initialArtistId || artistId || !assignedArtistId) return
+    setArtistId(assignedArtistId)
+  }, [initialArtistId, artistId, assignedArtistId])
+
+  const isDifferentFromAssigned = !!assignedArtistId && !!artistId && artistId !== assignedArtistId
+  const outsideHours = isOutsidePreferredHours(selectedArtist?.preferredSchedule, timeRange)
+
+  // Days with no preferredSchedule entry at all for this artist -- greyed
+  // in the calendar grid below (still fully selectable, advisory only).
+  const unavailableDaysOfWeek = useMemo(() => {
+    const schedule = selectedArtist?.preferredSchedule
+    if (!schedule || schedule.length === 0) return undefined
+    const scheduledDays = new Set(schedule.map((d) => d.dayOfWeek))
+    return [0, 1, 2, 3, 4, 5, 6].filter((d) => !scheduledDays.has(d))
+  }, [selectedArtist])
+
+  const artistSelectOptions = useMemo(() => {
+    if (!artistOptions || !assignedArtistId) return artistOptions
+    return artistOptions.map((a) =>
+      a.id === assignedArtistId
+        ? { ...a, user: { ...a.user, name: `${a.user.name ?? a.user.email} (assigned)` } }
+        : a,
+    )
+  }, [artistOptions, assignedArtistId])
+
   const hasTimeEstimate =
     selectedInquiry?.timeEstimateHoursMin != null && selectedInquiry?.timeEstimateHoursMax != null
   const suggestionDurationMinutes = hasTimeEstimate
@@ -253,6 +328,16 @@ export default function AppointmentForm({
     }
     if (!isValidTimeRange(timeRange)) {
       setError('End time must be after start time.')
+      return
+    }
+
+    if (outsideHours && !confirmedOutsideHours) {
+      setError("Confirm you understand this is outside the artist's usual hours.")
+      return
+    }
+
+    if (isDifferentFromAssigned && !confirmedDifferentArtist) {
+      setError('Confirm you understand this is a different artist than the one assigned to this project.')
       return
     }
 
@@ -389,10 +474,24 @@ export default function AppointmentForm({
         <label className="mb-1 block text-sm font-medium text-fg-secondary">Artist</label>
         <ArtistSelect
           id="apptArtistId"
-          artists={artistOptions}
+          artists={artistSelectOptions}
           value={artistId || null}
-          onChange={(id) => setArtistId(id ?? '')}
+          onChange={handleArtistChange}
         />
+        {isDifferentFromAssigned && (
+          <div className="mt-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
+            <p>This project is assigned to a different artist.</p>
+            <label className="mt-2 flex items-center gap-2 text-xs font-medium">
+              <input
+                type="checkbox"
+                checked={confirmedDifferentArtist}
+                onChange={(event) => setConfirmedDifferentArtist(event.target.checked)}
+                className="accent-warning"
+              />
+              I understand, proceed anyway
+            </label>
+          </div>
+        )}
       </div>
 
       {artistId && !effectiveInquiryId && (
@@ -412,8 +511,8 @@ export default function AppointmentForm({
       )}
 
       {artistId && hasTimeEstimate && hasGiftCardAvailable && (
-        <div className="mb-3">
-          <p className="mb-1.5 block text-sm font-medium text-fg-secondary">Suggested times</p>
+        <div className="mb-4 rounded-xl border border-accent/30 bg-accent/5 p-3">
+          <p className="mb-1.5 block text-sm font-semibold text-fg">Suggested times</p>
           {!suggestedTimes ? (
             <p className="text-xs text-fg-muted">
               Checking {selectedArtist ? artistLabel(selectedArtist) : 'artist'}'s availability…
@@ -469,7 +568,25 @@ export default function AppointmentForm({
       )}
 
       <div className="mb-3">
-        <DateAndTimeRangeFields value={timeRange} onChange={setTimeRange} />
+        <DateAndTimeRangeFields
+          value={timeRange}
+          onChange={handleTimeRangeChange}
+          unavailableDaysOfWeek={unavailableDaysOfWeek}
+        />
+        {outsideHours && (
+          <div className="mt-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
+            <p>This is outside {selectedArtist ? artistLabel(selectedArtist) : 'this artist'}'s usual hours.</p>
+            <label className="mt-2 flex items-center gap-2 text-xs font-medium">
+              <input
+                type="checkbox"
+                checked={confirmedOutsideHours}
+                onChange={(event) => setConfirmedOutsideHours(event.target.checked)}
+                className="accent-warning"
+              />
+              I understand, proceed anyway
+            </label>
+          </div>
+        )}
       </div>
 
       <div className="mb-3">
@@ -492,7 +609,9 @@ export default function AppointmentForm({
             submitting ||
             !effectiveClientId ||
             (!fixedInquiryId && availableInquiries.length === 0) ||
-            availableGiftCards.length === 0
+            availableGiftCards.length === 0 ||
+            (outsideHours && !confirmedOutsideHours) ||
+            (isDifferentFromAssigned && !confirmedDifferentArtist)
           }
           className="flex-1 rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
         >

@@ -120,6 +120,10 @@ router.get("/:id", async (req, res) => {
           // (see the max() logic in AppointmentForm.tsx).
           timeEstimateHoursMin: true,
           timeEstimateHoursMax: true,
+          // Package I: lets AppointmentForm default its artist picker to
+          // this inquiry's already-assigned artist when opened from a
+          // project context.
+          assignedArtistId: true,
           depositForm: {
             select: {
               id: true,

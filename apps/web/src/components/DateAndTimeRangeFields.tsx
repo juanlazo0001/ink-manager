@@ -18,6 +18,12 @@ interface DateAndTimeRangeFieldsProps {
   value: DateAndTimeRangeValue
   onChange: (value: DateAndTimeRangeValue) => void
   disabled?: boolean
+  // Package I: optional, additive -- days (0 = Sunday) with no
+  // preferredSchedule entry at all for the currently-selected artist get
+  // greyed in the calendar grid. Omitted by every caller that doesn't have
+  // an artist-schedule concept, so existing behavior is unchanged for them.
+  // This is advisory styling only -- the day remains fully selectable.
+  unavailableDaysOfWeek?: number[]
 }
 
 // Exported so other single-date pickers (e.g. DatePickerField) can share
@@ -56,7 +62,12 @@ export function isValidTimeRange(value: DateAndTimeRangeValue): boolean {
   return end > start
 }
 
-export default function DateAndTimeRangeFields({ value, onChange, disabled }: DateAndTimeRangeFieldsProps) {
+export default function DateAndTimeRangeFields({
+  value,
+  onChange,
+  disabled,
+  unavailableDaysOfWeek,
+}: DateAndTimeRangeFieldsProps) {
   const [showCalendar, setShowCalendar] = useState(false)
   const selectedDate = parseDateString(value.date)
   const rangeInvalid = !!value.date && !!value.startTime && !!value.endTime && !isValidTimeRange(value)
@@ -88,7 +99,18 @@ export default function DateAndTimeRangeFields({ value, onChange, disabled }: Da
                     onChange({ ...value, date: toDateString(day) })
                     setShowCalendar(false)
                   }}
+                  modifiers={
+                    unavailableDaysOfWeek && unavailableDaysOfWeek.length > 0
+                      ? { unavailable: (day) => unavailableDaysOfWeek.includes(day.getDay()) }
+                      : undefined
+                  }
+                  modifiersClassNames={{ unavailable: 'opacity-40' }}
                 />
+                {unavailableDaysOfWeek && unavailableDaysOfWeek.length > 0 && (
+                  <p className="mt-1 px-1 text-[10px] text-fg-muted">
+                    Greyed days are outside this artist's usual schedule.
+                  </p>
+                )}
               </div>
             </>
           )}

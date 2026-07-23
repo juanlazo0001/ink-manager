@@ -182,7 +182,20 @@ const APPOINTMENT_DETAIL_INCLUDE = {
   // The project this session belongs to -- via inquiryId/inquiryProject, not
   // the older 1:1 `inquiry` back-relation (Inquiry.appointmentId), which is
   // a different, usually-null link left over from the original scheduling flow.
-  inquiryProject: { select: { id: true, description: true, clientId: true } },
+  // Package I: budget/reference/placement fields added so the appointment
+  // detail page can surface project context inline, without navigating away.
+  inquiryProject: {
+    select: {
+      id: true,
+      description: true,
+      clientId: true,
+      budget: true,
+      priceEstimateLow: true,
+      priceEstimateHigh: true,
+      referenceImages: true,
+      placementImages: true,
+    },
+  },
   giftCard: { select: { id: true, code: true, amountCents: true, status: true, expiresAt: true, exemptionReason: true } },
   checkedOutBy: { select: { id: true, name: true, email: true } },
   // Non-PII summary only -- the health data and ID image behind this

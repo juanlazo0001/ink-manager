@@ -50,7 +50,16 @@ interface Appointment {
   checkedOutBy: { id: string; name: string | null; email: string } | null
   client: { id: string; firstName: string; lastName: string }
   artist: { id: string; user: { email: string; name: string | null; avatarUrl: string | null } }
-  inquiry: { id: string; description: string; clientId: string }
+  inquiry: {
+    id: string
+    description: string
+    clientId: string
+    budget: string | null
+    priceEstimateLow: number | null
+    priceEstimateHigh: number | null
+    referenceImages: string[]
+    placementImages: string[]
+  }
   giftCard: GiftCardSummary | null
   liabilityWaiver: WaiverSummary | null
 }
@@ -630,6 +639,58 @@ export default function AppointmentDetail() {
                         ? `Deposit Exemption${appointment.giftCard.exemptionReason ? ` (${appointment.giftCard.exemptionReason})` : ''}`
                         : `${formatCents(appointment.giftCard.amountCents)} (${formatStatus(appointment.giftCard.status)})`}
                     </Link>
+                  </div>
+                )}
+              </div>
+
+              {/* Package I: parent project context surfaced inline, no navigation away needed */}
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                <h2 className="text-base font-semibold text-fg">Project details</h2>
+                <div className="mt-3">
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Budget</p>
+                  <p className="mt-1 text-sm text-fg">
+                    {appointment.inquiry.budget ??
+                      (appointment.inquiry.priceEstimateLow != null && appointment.inquiry.priceEstimateHigh != null
+                        ? `$${appointment.inquiry.priceEstimateLow.toLocaleString('en-US')} – $${appointment.inquiry.priceEstimateHigh.toLocaleString('en-US')}`
+                        : 'Not provided')}
+                  </p>
+                </div>
+
+                {appointment.inquiry.referenceImages.length > 0 && (
+                  <div className="mt-4">
+                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Reference images</p>
+                    <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-6">
+                      {appointment.inquiry.referenceImages.map((url) => (
+                        <a
+                          key={url}
+                          href={url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="block aspect-square overflow-hidden rounded-lg border border-border"
+                        >
+                          <img src={url} alt="" className="h-full w-full object-cover transition hover:opacity-80" />
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {appointment.inquiry.placementImages.length > 0 && (
+                  <div className="mt-4">
+                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Placement photos</p>
+                    <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-6">
+                      {appointment.inquiry.placementImages.map((url) => (
+                        <a
+                          key={url}
+                          href={url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="block aspect-square overflow-hidden rounded-lg border border-border"
+                        >
+                          <img src={url} alt="" className="h-full w-full object-cover transition hover:opacity-80" />
+                        </a>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>

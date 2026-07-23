@@ -98,6 +98,17 @@ router.post("/", optionalAuth, async (req, res) => {
     return res.status(400).json({ error: "placementImages must be an array of strings" });
   }
 
+  // Package I: both photo types are now mandatory on the PUBLIC intake form
+  // -- same isStaffRequest carve-out as smsConsent below, since a staff
+  // walk-in/phone log-in through this same route may not have photos on hand.
+  if (!isStaffRequest && (!isStringArray(body.referenceImages) || body.referenceImages.length === 0)) {
+    return res.status(400).json({ error: "At least one reference image is required" });
+  }
+
+  if (!isStaffRequest && (!isStringArray(body.placementImages) || body.placementImages.length === 0)) {
+    return res.status(400).json({ error: "At least one placement photo is required" });
+  }
+
   // A2P 10DLC compliance: the PUBLIC intake form's consent checkbox is
   // required to submit at all (unchecked-by-default, enforced here too, not
   // just via a disabled button) -- staff logging a walk-in/phone inquiry
