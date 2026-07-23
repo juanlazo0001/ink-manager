@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
@@ -13,13 +13,13 @@ import type { KanbanColumn, KanbanTransition } from '../lib/kanban'
 import MultiSelectFilter from '../components/MultiSelectFilter'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatStatus, describeInquiryStatus } from '../lib/format'
-import { PhotoIcon, PlusIcon, SearchIcon } from '../components/icons'
+import { ChevronDownIcon, PhotoIcon, PlusIcon, SearchIcon } from '../components/icons'
 import { useAuth } from '../context/useAuth'
 import { useUserProfile } from '../context/useUserProfile'
 import { inquiriesQueryKey, artistsQueryKey } from '../lib/queryKeys'
 import { useMarkSectionSeen } from '../lib/useMarkSectionSeen'
 import { useDebouncedValue } from '../lib/useDebouncedValue'
-import { artistLabel } from '../components/ArtistAvatar'
+import { ArtistAvatar, artistLabel } from '../components/ArtistAvatar'
 
 interface Inquiry {
   id: string
@@ -106,6 +106,37 @@ function truncate(text: string, max: number) {
   return text.length > max ? `${text.slice(0, max).trimEnd()}…` : text
 }
 
+// List-view column visibility. Client and Status stay permanently visible
+// (the row's identity and current state) -- everything else is optional,
+// toggled from the "Columns" menu and persisted so the choice survives a
+// reload. Shared between both tabs (same table, same toggles) rather than
+// a separate preference per tab, since hiding e.g. Description is just as
+// useful looking at either one.
+type ColumnKey = 'channel' | 'description' | 'date' | 'artist'
+const COLUMN_DEFS: { key: ColumnKey; label: string }[] = [
+  { key: 'channel', label: 'Channel' },
+  { key: 'description', label: 'Description' },
+  { key: 'date', label: 'Date' },
+  { key: 'artist', label: 'Assigned Artist' },
+]
+const DEFAULT_COLUMN_VISIBILITY: Record<ColumnKey, boolean> = {
+  channel: true,
+  description: true,
+  date: true,
+  artist: true,
+}
+const COLUMN_VISIBILITY_STORAGE_KEY = 'ink-manager:inquiries-columns'
+
+function loadColumnVisibility(): Record<ColumnKey, boolean> {
+  try {
+    const raw = localStorage.getItem(COLUMN_VISIBILITY_STORAGE_KEY)
+    if (!raw) return DEFAULT_COLUMN_VISIBILITY
+    return { ...DEFAULT_COLUMN_VISIBILITY, ...JSON.parse(raw) }
+  } catch {
+    return DEFAULT_COLUMN_VISIBILITY
+  }
+}
+
 export default function Inquiries() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -150,7 +181,29 @@ export default function Inquiries() {
   // wholesale on every tab switch, which would otherwise wipe a view=kanban
   // param on every click -- local state survives the tab switch instead.
   const [viewMode, setViewMode] = useState<ViewMode>('list')
+  const [columnVisibility, setColumnVisibility] = useState<Record<ColumnKey, boolean>>(loadColumnVisibility)
+  const [showColumnMenu, setShowColumnMenu] = useState(false)
+  const columnMenuRef = useRef<HTMLDivElement>(null)
   useMarkSectionSeen('inquiries')
+
+  useEffect(() => {
+    if (!showColumnMenu) return
+    function handleClickOutside(event: MouseEvent) {
+      if (columnMenuRef.current && !columnMenuRef.current.contains(event.target as Node)) {
+        setShowColumnMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showColumnMenu])
+
+  function toggleColumn(key: ColumnKey) {
+    setColumnVisibility((prev) => {
+      const next = { ...prev, [key]: !prev[key] }
+      localStorage.setItem(COLUMN_VISIBILITY_STORAGE_KEY, JSON.stringify(next))
+      return next
+    })
+  }
 
   function setTab(tab: PipelineTab) {
     setSearchParams(tab === 'inquiries' ? {} : { tab })
@@ -330,21 +383,41 @@ export default function Inquiries() {
             {inquiry.client.firstName} {inquiry.client.lastName}
           </span>
         </td>
-        <td className="hidden py-3 text-fg-secondary md:table-cell">{formatStatus(inquiry.channel)}</td>
-        <td className="hidden py-3 text-fg-secondary md:table-cell">{truncate(inquiry.description, 60)}</td>
-        <td className="hidden py-3 text-fg-secondary sm:table-cell">
-          {activeTab === 'projects'
-            ? inquiry.appointment
-              ? formatDateTime(inquiry.appointment.startTime)
-              : 'Not yet scheduled'
-            : formatDateTime(inquiry.createdAt)}
-        </td>
+        {columnVisibility.channel && (
+          <td className="hidden py-3 text-fg-secondary md:table-cell">{formatStatus(inquiry.channel)}</td>
+        )}
+        {columnVisibility.description && (
+          <td className="hidden py-3 text-fg-secondary md:table-cell">{truncate(inquiry.description, 60)}</td>
+        )}
+        {columnVisibility.date && (
+          <td className="hidden py-3 text-fg-secondary sm:table-cell">
+            {activeTab === 'projects'
+              ? inquiry.appointment
+                ? formatDateTime(inquiry.appointment.startTime)
+                : 'Not yet scheduled'
+              : formatDateTime(inquiry.createdAt)}
+          </td>
+        )}
+        {columnVisibility.artist && (
+          <td className="hidden py-3 text-fg-secondary lg:table-cell">
+            {inquiry.assignedArtist ? (
+              <span className="flex min-w-0 items-center gap-1.5">
+                <ArtistAvatar artist={inquiry.assignedArtist} className="h-5 w-5" />
+                <span className="truncate">{artistLabel(inquiry.assignedArtist)}</span>
+              </span>
+            ) : (
+              <span className="text-fg-muted">Unassigned</span>
+            )}
+          </td>
+        )}
         <td className="py-3 pr-3">
           <StatusPill status={inquiry.status} label={describeInquiryStatus(inquiry)} />
         </td>
       </tr>
     )
   }
+
+  const visibleColumnCount = 3 + COLUMN_DEFS.filter((c) => columnVisibility[c.key]).length
 
   return (
     <div className="flex min-h-screen bg-bg text-fg">
@@ -510,6 +583,44 @@ export default function Inquiries() {
                 </button>
               ))}
             </div>
+
+            {/* Column visibility only applies to the table, not Kanban cards.
+                Client and Status are always shown; everything else here is
+                optional and persisted across reloads (localStorage). */}
+            {viewMode === 'list' && (
+              <div ref={columnMenuRef} className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowColumnMenu((v) => !v)}
+                  aria-haspopup="listbox"
+                  aria-expanded={showColumnMenu}
+                  className="flex items-center gap-2 rounded-full border border-border px-3 py-2 text-sm font-medium text-fg-secondary transition hover:bg-surface hover:text-fg"
+                >
+                  Columns
+                  <ChevronDownIcon className="h-4 w-4 shrink-0 text-fg-muted" />
+                </button>
+                {showColumnMenu && (
+                  <div className="absolute right-0 z-10 mt-1 w-52 rounded-lg border border-border bg-surface-inset py-1 shadow-lg">
+                    {COLUMN_DEFS.map((column) => (
+                      <label
+                        key={column.key}
+                        className="flex cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm text-fg hover:bg-surface"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={columnVisibility[column.key]}
+                          onChange={() => toggleColumn(column.key)}
+                          className="h-4 w-4 shrink-0 rounded border-border accent-accent"
+                        />
+                        <span className="min-w-0 flex-1 truncate">
+                          {column.key === 'date' ? (activeTab === 'projects' ? 'Scheduled Date' : 'Submitted') : column.label}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
@@ -559,26 +670,43 @@ export default function Inquiries() {
                     <tr className="bg-surface-inset text-xs text-fg-muted">
                       <th className="rounded-l-lg py-2 pl-3 font-medium"></th>
                       <th className="py-2 font-medium">Client</th>
-                      <th className="hidden py-2 font-medium md:table-cell">Channel</th>
-                      <th className="hidden py-2 font-medium md:table-cell">Description</th>
-                      <th className="hidden py-2 font-medium sm:table-cell">
-                        {activeTab === 'projects' ? 'Scheduled Date' : 'Submitted'}
-                      </th>
+                      {columnVisibility.channel && (
+                        <th className="hidden py-2 font-medium md:table-cell">Channel</th>
+                      )}
+                      {columnVisibility.description && (
+                        <th className="hidden py-2 font-medium md:table-cell">Description</th>
+                      )}
+                      {columnVisibility.date && (
+                        <th className="hidden py-2 font-medium sm:table-cell">
+                          {activeTab === 'projects' ? 'Scheduled Date' : 'Submitted'}
+                        </th>
+                      )}
+                      {columnVisibility.artist && (
+                        <th className="hidden py-2 font-medium lg:table-cell">Assigned Artist</th>
+                      )}
                       <th className="rounded-r-lg py-2 pr-3 font-medium">Status</th>
                     </tr>
                   </thead>
                   {isLoading ? (
                     <SkeletonTableRows
                       rows={6}
-                      columns={6}
-                      columnClassNames={['', '', 'hidden md:table-cell', 'hidden md:table-cell', 'hidden sm:table-cell', '']}
+                      columns={visibleColumnCount}
+                      columnClassNames={[
+                        '',
+                        '',
+                        ...(columnVisibility.channel ? ['hidden md:table-cell'] : []),
+                        ...(columnVisibility.description ? ['hidden md:table-cell'] : []),
+                        ...(columnVisibility.date ? ['hidden sm:table-cell'] : []),
+                        ...(columnVisibility.artist ? ['hidden lg:table-cell'] : []),
+                        '',
+                      ]}
                     />
                   ) : groupedInquiries ? (
                     groupedInquiries.map((group) => (
                       <tbody key={group.status} className="divide-y divide-border">
                         <tr>
                           <td
-                            colSpan={6}
+                            colSpan={visibleColumnCount}
                             className="bg-surface-inset px-3 py-2 text-xs font-semibold uppercase tracking-wider text-fg-muted"
                           >
                             {formatStatus(group.status)} ({group.items.length})
