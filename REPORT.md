@@ -686,3 +686,49 @@ Two of the three items were already fully built by prior sessions -- confirmed b
 ## Cleanup
 
 Both dev servers (API on scratch port 4088, web on 5173 with `VITE_API_URL` overridden inline rather than editing the shared `apps/web/.env` -- several other sessions' dev servers were already running on the standard ports in this same shared checkout) killed, including a `tsx watch` restart-loop artifact (another concurrent session was actively saving `inquiries.ts`, unrelated to this work, causing repeated restarts and PID churn on my own port) -- resolved by killing whatever held port 4088 in a short retry loop rather than hunting through dozens of near-identical `tsx watch` process command lines from every other session's dev server. My own test task and its stray earlier duplicates were deleted; the appointment checked out during verification was left checked out (that's the correct end state of the test, not something to revert), consistent with the standing convention of leaving legitimate verification actions in the dev database.
+
+---
+
+# Package I — Scheduling & appointment UX polish
+
+No schema changes. Ran concurrently with Package H in this same shared checkout (not a separate worktree) -- `apps/api/src/routes/inquiries.ts` was mid-edit by that session throughout this work (its own Kanban-filter/sort/unwaitlist additions, clearly commented `Package H:`). Rather than wait, I isolated my one self-contained hunk (the two new photo-requirement checks) by reconstructing the last-committed file from `git show HEAD:...`, applying just that hunk to a scratch copy, and injecting it directly into the git index via `git hash-object -w` + `git update-index --cacheinfo` -- leaving H's uncommitted edits completely untouched in the working tree for them to commit separately. Verified afterward that the committed blob contains zero `Package H` markers.
+
+## 1. Intake form: reference images + placement photos required
+
+Both were previously accepted as empty arrays both client- and server-side. `IntakeForm.tsx`'s `handleSubmit` now checks `referenceImages.urls.length === 0` / `placementImages.urls.length === 0` (after the existing "still uploading" check, so a genuinely-empty submission and an in-progress upload get distinct messages) and blocks with a specific inline error for whichever is missing; both labels got a `*`. Server-side, `apps/api/src/routes/inquiries.ts`'s `POST /` gained two checks requiring a non-empty array, gated `!isStaffRequest` -- the same carve-out already used for `smsConsent` just above them, since a staff walk-in/phone log-in through this same route may have no photos on hand. Confirmed live: a public submission with photos omitted gets a 400 (`"At least one reference image is required"`), the identical staff-authenticated payload gets a 201.
+
+## 2. Currency masking on the budget field
+
+Reused the existing `CurrencyInput`/`formatCurrencyInput` (already built for `priceEstimateLow`/`High` elsewhere, never previously wired into the public intake form) rather than adding a new masking library -- none existed in `apps/web/package.json` to begin with, both existing money-ish inputs (`PhoneInput`, `CurrencyInput`) are hand-rolled. This does change the budget field's semantics from a free-text range hint (`"e.g. $300-500"`) to a single masked dollar amount (matching the task's own `$1,500` example) -- `Inquiry.budget` stays the same `String?` column, so what's sent over the wire is still just text (`formatCurrencyInput(budget)`, e.g. `"$1,500"`), meaning every existing display site (`InquiryDetail.tsx`, `MyInquiries.tsx`, `ConversationsPanel.tsx`) needed no changes. Draft-prefill now strips non-digits before seeding state, matching the field's new canonical-digits contract.
+
+## 3. Suggested times prominence + preferredSchedule becomes a visible (still advisory) signal
+
+`AppointmentForm.tsx`'s suggested-times panel already existed (Package D) but sat as a plain label among other secondary hints; it's now wrapped in an accent-bordered, tinted card with a bolder heading so it reads as the primary path, not a footnote.
+
+`Artist.preferredSchedule` was previously read only by the suggestion-generation algorithm (`schedulingAssistant.ts`) and Calendar.tsx's own column-shading (`isArtistUnavailable`) -- manually typing a time in `DateAndTimeRangeFields` never cross-checked it at all. Two additions, both purely advisory (**confirmed**: neither blocks submission on their own):
+- A new optional `unavailableDaysOfWeek` prop on the shared `DateAndTimeRangeFields` component (backward-compatible default `undefined` -- every other caller, including the ones Package H may be touching, is unaffected) greys out calendar days with no matching `preferredSchedule` entry for the selected artist, with a caption explaining why.
+- A new `isOutsidePreferredHours` check in `AppointmentForm.tsx` compares the picked date+time range against the selected artist's schedule; when it's outside (or the day has no entry at all), a warning banner appears ("This is outside Maria Chen's usual hours") with a required "I understand, proceed anyway" checkbox gating the submit button (both client-side, in the disabled condition, and re-checked inside `handleSubmit` itself as defense-in-depth) -- no backend change, since this was never meant to be enforced there.
+- An artist with no `preferredSchedule` configured at all shows no greying and no warning, ever -- same "advisory-only, no restriction until configured" convention already established for this field.
+
+## 4. Assigned-artist default
+
+`GET /clients/:id`'s `inquiries.select` (in `apps/api/src/routes/clients.ts`) gained `assignedArtistId` -- `AppointmentForm.tsx` already fetches this exact response for its own gift-card/inquiry lookups, so no new network request was needed. When opened with `fixedInquiryId` (the InquiryDetail "New Appointment" flow) and no calendar-prefilled `initialArtistId`, a `useEffect` defaults `artistId` to that inquiry's assigned artist once the query resolves; the assigned artist's own dropdown row gets its name suffixed `" (assigned)"` (a shallow-cloned options array, not a change to `ArtistSelect`/`ArtistAvatar` themselves). Picking a different artist shows the same warn-and-confirm pattern as item 3, sharing the identical "reset the confirmation whenever the underlying input changes" logic.
+
+## 5. Appointment detail: parent project context inline
+
+`APPOINTMENT_DETAIL_INCLUDE`'s `inquiryProject.select` (in `apps/api/src/routes/appointments.ts`) gained `budget`, `priceEstimateLow`, `priceEstimateHigh`, `referenceImages`, `placementImages` -- all pre-existing `Inquiry` columns, zero schema/migration work. `AppointmentDetail.tsx` renders a new "Project details" card (budget as free text if set, else a `$low – $high` range, else "Not provided"; reference/placement images as small link-out thumbnail grids, shown only when non-empty) directly below the appointment summary card, above Liability Waiver -- no navigation to the inquiry page required.
+
+## Verification (PowerShell + Playwright against the local dev instance)
+
+- **Intake form**: submitting with every required field filled except both photo types shows "Please add at least one reference image."; adding only a reference image and resubmitting shows "Please add at least one placement photo." instead. Typing `1500` into Budget renders `$1,500` live. Confirmed server-side too: identical public POST payload without images -> 400; the same payload authenticated as staff -> 201 (the `isStaffRequest` carve-out holds).
+- **Browser, AppointmentForm opened from an inquiry with an assigned artist (Maria Chen, Mon–Fri 10–18/16 schedule) and a $500-700 budget + 1 reference image**: artist picker pre-selected "Maria Chen (assigned)"; picking a different artist showed "This project is assigned to a different artist." with its own confirm checkbox; switching back to Maria Chen cleared that warning. The Suggested Times panel rendered in its new accent-bordered card. Opening the date picker showed every Saturday/Sunday visibly greyed (Maria Chen's schedule has no entry for those days) with the caption "Greyed days are outside this artist's usual schedule."; picking a Sunday 11am–1pm slot showed "This is outside Maria Chen's usual hours." with a required confirm checkbox -- the submit button stayed disabled until it was checked, and checking it enabled submission (**confirming `preferredSchedule` stayed advisory, not a hard block** -- the appointment was created successfully once confirmed, nothing server-side ever rejected the out-of-hours time).
+- Navigated to the resulting appointment's detail page: "Project details" card showed Budget `$500-700` and the inquiry's one reference image as a thumbnail.
+- Both `npx tsc --noEmit` (api) and `npm run build` (web) clean.
+
+## Commit
+
+`b67f06b` on `main`, pushed immediately (`80317f5..b67f06b`) per the shared-file collision protocol above -- Package H's uncommitted `inquiries.ts` work was still sitting in the working tree at push time, untouched.
+
+## Cleanup
+
+Test appointment created during Playwright verification (Emily Rodriguez / Maria Chen, Sun Jul 26) was cancelled afterward via the API, detaching its gift card back to reusable. The gift card issued for that same client to enable the test remains `ACTIVE` and unattached in the dev database (harmless, matches the existing abundance of test gift cards already there). A staff-created verification inquiry (`Backend CheckStaff`) was left in place, consistent with the standing convention of not chasing down every piece of dev-seed test data this deep into the project's test history. Both dev servers (API port 4000, web port 5173) left running since they were shared with other concurrent sessions at the time -- not killed, to avoid disrupting Package H's own live testing against them.
