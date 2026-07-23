@@ -16,7 +16,7 @@ import { apiFetch, ApiError } from '../lib/api'
 import { describeAppointmentStatus, formatDateTime, formatPhoneInput, formatStatus } from '../lib/format'
 import { describeSendResult, type ClientSendResult } from '../lib/sendResult'
 import { formatCents, dollarsToCents } from '../lib/money'
-import { ArrowLeftIcon, CheckIcon, ClientsIcon, CopyIcon, MessageIcon, MoreIcon } from '../components/icons'
+import { ArrowLeftIcon, CheckIcon, ClientsIcon, CopyIcon, DocumentIcon, MessageIcon, MoreIcon } from '../components/icons'
 import { ArtistAvatar, artistLabel } from '../components/ArtistAvatar'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useConversationPanel } from '../context/useConversationPanel'
@@ -798,9 +798,14 @@ export default function AppointmentDetail() {
                       type="button"
                       onClick={handleCreateWaiver}
                       disabled={creatingWaiver}
-                      className="mt-3 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
+                      aria-label="Create Waiver"
+                      title="Create Waiver"
+                      className="mt-3 flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface disabled:opacity-60 md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                     >
-                      {creatingWaiver ? 'Creating…' : 'Create Waiver'}
+                      <DocumentIcon className="h-4 w-4" />
+                      <span className="hidden text-sm font-semibold md:inline">
+                        {creatingWaiver ? 'Creating…' : 'Create Waiver'}
+                      </span>
                     </button>
                     {waiverError && <p className="mt-2 text-sm text-danger">{waiverError}</p>}
                     {waiverSendNotice && <p className="mt-2 text-sm text-fg-secondary">{waiverSendNotice}</p>}

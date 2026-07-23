@@ -23,8 +23,10 @@ import { formatDateTime, formatDuration, formatPhoneInput, formatStatus, describ
 import { describeSendResult, type ClientSendResult } from '../lib/sendResult'
 import {
   ArrowLeftIcon,
+  AttachmentIcon,
   CheckIcon,
   ClientsIcon,
+  ClockIcon,
   CopyIcon,
   MessageIcon,
   MoreIcon,
@@ -1895,9 +1897,14 @@ export default function InquiryDetail() {
                         type="button"
                         onClick={handleAttachGiftCard}
                         disabled={attachingGiftCard}
-                        className="mt-3 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
+                        aria-label="Attach Gift Card"
+                        title="Attach Gift Card"
+                        className="mt-3 flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface disabled:opacity-60 md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                       >
-                        {attachingGiftCard ? 'Attaching…' : 'Attach Gift Card'}
+                        <AttachmentIcon className="h-4 w-4" />
+                        <span className="hidden text-sm font-semibold md:inline">
+                          {attachingGiftCard ? 'Attaching…' : 'Attach Gift Card'}
+                        </span>
                       </button>
                     </div>
                   ) : (
@@ -2122,16 +2129,24 @@ export default function InquiryDetail() {
                           type="button"
                           onClick={handleSchedule}
                           disabled={scheduling || !isCompleteTimeRange(scheduleTimeRange) || !scheduleGiftCardId}
-                          className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
+                          aria-label="Schedule Appointment"
+                          title="Schedule Appointment"
+                          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface disabled:opacity-60 md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                         >
-                          {scheduling ? 'Scheduling…' : 'Schedule Appointment'}
+                          <ClockIcon className="h-4 w-4" />
+                          <span className="hidden text-sm font-semibold md:inline">
+                            {scheduling ? 'Scheduling…' : 'Schedule Appointment'}
+                          </span>
                         </button>
                         <button
                           type="button"
                           onClick={() => setShowWaitlistForm((v) => !v)}
-                          className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
+                          aria-label="Add to Waitlist"
+                          title="Add to Waitlist"
+                          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                         >
-                          Add to Waitlist
+                          <PlusIcon className="h-4 w-4" />
+                          <span className="hidden text-sm font-semibold md:inline">Add to Waitlist</span>
                         </button>
                       </div>
 
@@ -2191,10 +2206,12 @@ export default function InquiryDetail() {
                     <button
                       type="button"
                       onClick={() => setShowAppointmentModal(true)}
-                      className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
+                      aria-label="New Appointment"
+                      title="New Appointment"
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                     >
                       <PlusIcon className="h-4 w-4" />
-                      New Appointment
+                      <span className="hidden text-sm font-semibold md:inline">New Appointment</span>
                     </button>
                   )}
                 </div>

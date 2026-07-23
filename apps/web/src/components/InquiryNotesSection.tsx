@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import RichTextEditor from './RichTextEditor'
-import { PencilIcon } from './icons'
+import { PencilIcon, PlusIcon } from './icons'
 import { sanitizeHtml } from '../lib/sanitizeHtml'
 import { apiFetch } from '../lib/api'
 import { formatDateTime } from '../lib/format'
@@ -150,9 +150,12 @@ export default function InquiryNotesSection({ inquiryId, canManage, readOnly }: 
           type="button"
           onClick={handlePost}
           disabled={posting || readOnly || isBlank(composerValue)}
-          className="mt-3 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60"
+          aria-label="Add Note"
+          title="Add Note"
+          className="mt-3 flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60 md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
         >
-          {posting ? 'Posting…' : 'Add Note'}
+          <PlusIcon className="h-4 w-4" />
+          <span className="hidden text-sm font-semibold md:inline">{posting ? 'Posting…' : 'Add Note'}</span>
         </button>
       </div>
 
