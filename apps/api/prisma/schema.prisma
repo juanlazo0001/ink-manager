@@ -547,7 +547,8 @@ model Inquiry {
   // Newer 1:many "sessions under this project" link -- see Appointment.inquiryId.
   sessions Appointment[] @relation("InquirySessions")
 
-  depositForm DepositForm?
+  // Package M: one per tattoo session, no longer a single optional 1:1.
+  depositForms DepositForm[]
 
   notes InquiryNote[]
 
@@ -745,13 +746,28 @@ model DepositForm {
   proposedStartAt              DateTime?
   proposedEndAt                DateTime?
 
-  inquiryId String  @unique
+  // Package M: one project (Inquiry) can now have several deposit forms
+  // over time -- one per tattoo session, not just one at conversion. No
+  // longer @unique. sessionNumber is purely a labeling convenience (1, 2,
+  // 3... in creation order for this inquiry) -- nothing else derives from
+  // it, so a gap or out-of-order value from manual data repair would be
+  // cosmetic, never a correctness issue.
+  inquiryId String
   inquiry   Inquiry @relation(fields: [inquiryId], references: [id])
+  // Default only matters for backfilling existing rows at migration time --
+  // every one of them was necessarily the only DepositForm for its inquiry
+  // (the unique constraint this replaces guaranteed it), so 1 is exactly
+  // correct for all of them, not a guess. The application always sets this
+  // explicitly on create; the default is just a safety net, not a relied-on
+  // behavior.
+  sessionNumber Int @default(1)
 
   // One-way optional link to the gift card issued for this deposit, once
   // one exists. Nullable: older/unsigned deposit forms won't have one yet.
   giftCardId String?   @unique
   giftCard   GiftCard? @relation(fields: [giftCardId], references: [id])
+
+  @@index([inquiryId, sessionNumber])
 }
 
 model GiftCard {

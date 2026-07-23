@@ -164,7 +164,8 @@ interface ContextInquiry {
   priceEstimateLow: number | null
   priceEstimateHigh: number | null
   assignedArtist: { id: string; user: { name: string | null; email: string; avatarUrl: string | null } } | null
-  depositForm: { id: string; totalCharged: number; signedAt: string | null; paidManually: boolean } | null
+  // Package M: one per tattoo session now, oldest first.
+  depositForms: { id: string; sessionNumber: number; totalCharged: number; signedAt: string | null; paidManually: boolean }[]
 }
 
 interface ConversationContext {
@@ -244,7 +245,8 @@ interface ShareableLink {
 interface ShareableLinksResponse {
   intakeFormUrl: string
   estimateLinks: (ShareableLink & { inquiryId: string })[]
-  depositLinks: (ShareableLink & { inquiryId: string })[]
+  // Package M: one row per deposit form (not per inquiry) now.
+  depositLinks: (ShareableLink & { inquiryId: string; depositFormId: string })[]
   // Inquiries/appointments eligible for a fresh Send Deposit Form/Waiver --
   // distinct from depositLinks/waiverLinks above, which only ever list
   // entities that already have one.
@@ -1662,14 +1664,14 @@ function ThreadView({
             entityId: card.id,
             label: `Gift card: $${(card.amountCents / 100).toFixed(2)}`,
           })),
-          ...context.inquiries
-            .filter((i) => i.depositForm)
-            .map((inquiry) => ({
-              key: `DepositForm:${inquiry.depositForm!.id}`,
+          ...context.inquiries.flatMap((inquiry) =>
+            inquiry.depositForms.map((form) => ({
+              key: `DepositForm:${form.id}`,
               entityType: 'DepositForm',
-              entityId: inquiry.depositForm!.id,
-              label: `Deposit: $${inquiry.depositForm!.totalCharged}`,
+              entityId: form.id,
+              label: `Deposit (Session ${form.sessionNumber}): $${form.totalCharged}`,
             })),
+          ),
           ...(context.nextAppointment
             ? [
                 {
@@ -2192,23 +2194,23 @@ function ThreadView({
                   </button>
                 )
               })}
-              {context.inquiries
-                .filter((i) => i.depositForm)
-                .map((inquiry) => {
-                  const key = `DepositForm:${inquiry.depositForm!.id}`
+              {context.inquiries.flatMap((inquiry) =>
+                inquiry.depositForms.map((form) => {
+                  const key = `DepositForm:${form.id}`
                   return (
                     <button
                       key={key}
                       type="button"
                       disabled={existingTagKeys.has(key)}
-                      onClick={() => handleAddTag('DepositForm', inquiry.depositForm!.id)}
+                      onClick={() => handleAddTag('DepositForm', form.id)}
                       className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
                     >
-                      <span className="truncate">Deposit: ${inquiry.depositForm!.totalCharged}</span>
+                      <span className="truncate">Deposit (Session {form.sessionNumber}): ${form.totalCharged}</span>
                       {!existingTagKeys.has(key) && <PlusIcon className="h-3 w-3 shrink-0" />}
                     </button>
                   )
-                })}
+                }),
+              )}
               {context.nextAppointment && (
                 <button
                   type="button"

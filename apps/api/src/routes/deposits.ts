@@ -198,6 +198,14 @@ staffRouter.patch("/:id/mark-paid", requireAuth, requireRole(Role.OWNER, Role.FR
     generateUniqueGiftCardCode(),
   ]);
 
+  // Package M: this deposit form might belong to session 2+ of a project
+  // that already converted (and has been scheduling/confirming/completing
+  // sessions ever since) -- only the very first deposit form ever paid for
+  // an inquiry actually converts it. A later session's payment issues its
+  // own gift card the exact same way, but must never force the inquiry
+  // backward to SCHEDULING if it's already moved on further than that.
+  const isFirstConversion = depositForm.inquiry.status === InquiryStatus.DEPOSIT_PENDING;
+
   const { giftCard, updatedDepositForm } = await prisma.$transaction(async (tx) => {
     const giftCard = await tx.giftCard.create({
       data: {
@@ -215,7 +223,9 @@ staffRouter.patch("/:id/mark-paid", requireAuth, requireRole(Role.OWNER, Role.FR
       data: { paidManually: true, paidAt, giftCardId: giftCard.id },
     });
 
-    await tx.inquiry.update({ where: { id: depositForm.inquiryId }, data: { status: InquiryStatus.SCHEDULING } });
+    if (isFirstConversion) {
+      await tx.inquiry.update({ where: { id: depositForm.inquiryId }, data: { status: InquiryStatus.SCHEDULING } });
+    }
 
     return { giftCard, updatedDepositForm };
   });
@@ -229,14 +239,16 @@ staffRouter.patch("/:id/mark-paid", requireAuth, requireRole(Role.OWNER, Role.FR
     changes: { depositFormId: id, giftCardId: giftCard.id, amountCents: giftCard.amountCents },
   });
 
-  await logAudit({
-    studioId,
-    actorUserId: req.user!.userId,
-    entityType: "Inquiry",
-    entityId: depositForm.inquiryId,
-    action: "status_change",
-    changes: diffObjects(depositForm.inquiry, { status: InquiryStatus.SCHEDULING }, ["status"]),
-  });
+  if (isFirstConversion) {
+    await logAudit({
+      studioId,
+      actorUserId: req.user!.userId,
+      entityType: "Inquiry",
+      entityId: depositForm.inquiryId,
+      action: "status_change",
+      changes: diffObjects(depositForm.inquiry, { status: InquiryStatus.SCHEDULING }, ["status"]),
+    });
+  }
 
   res.json({ ...updatedDepositForm, giftCardId: giftCard.id });
 });

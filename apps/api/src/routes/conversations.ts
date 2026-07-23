@@ -743,7 +743,11 @@ router.get("/:id/context", requireRole(Role.OWNER, Role.FRONT_DESK), async (req,
           priceEstimateLow: true,
           priceEstimateHigh: true,
           assignedArtist: { select: { id: true, user: { select: { name: true, email: true, avatarUrl: true } } } },
-          depositForm: { select: { id: true, totalCharged: true, signedAt: true, paidManually: true } },
+          // Package M: one per tattoo session now.
+          depositForms: {
+            select: { id: true, sessionNumber: true, totalCharged: true, signedAt: true, paidManually: true },
+            orderBy: { sessionNumber: "asc" },
+          },
         },
         orderBy: { createdAt: "desc" },
       },

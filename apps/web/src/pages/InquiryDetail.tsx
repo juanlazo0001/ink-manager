@@ -78,9 +78,11 @@ interface Inquiry {
     status: string
     artist: { id: string; user: { name: string | null; email: string; avatarUrl: string | null } }
   }[]
-  depositForm: {
+  // Package M: one per tattoo session, oldest first (Session 1, Session 2, ...).
+  depositForms: {
     id: string
     token: string
+    sessionNumber: number
     depositAmount: number
     feeAmount: number
     totalCharged: number
@@ -91,7 +93,8 @@ interface Inquiry {
     paidAt: string | null
     proposedStartAt: string | null
     proposedEndAt: string | null
-  } | null
+    giftCard: { id: string; code: string; amountCents: number; status: string } | null
+  }[]
 }
 
 interface SuggestedTimeCandidate {
@@ -541,7 +544,9 @@ export default function InquiryDetail() {
   const [sendingDeposit, setSendingDeposit] = useState(false)
   const [sendDepositError, setSendDepositError] = useState<string | null>(null)
   const [depositSendNotice, setDepositSendNotice] = useState<string | null>(null)
-  const [markingPaid, setMarkingPaid] = useState(false)
+  // Package M: several deposit forms can exist per inquiry now, so "which
+  // one is being marked paid" needs its own id rather than one shared flag.
+  const [markingPaidId, setMarkingPaidId] = useState<string | null>(null)
   const [markPaidError, setMarkPaidError] = useState<string | null>(null)
 
   // Package D: tentative/informational deposit-form time, via the shared
@@ -950,20 +955,30 @@ export default function InquiryDetail() {
 
   const tentativeTimeValid = isCompleteTimeRange(tentativeTimeRange) && isValidTimeRange(tentativeTimeRange)
 
+  // Package M: one project can carry several deposit forms (one per tattoo
+  // session) -- oldest first from the API, so the last element is always
+  // the most recently generated one. A new session is only ever eligible
+  // to be created (rather than the current one resent) once that latest
+  // session is missing entirely or already signed -- mirrors the backend
+  // route's own isNewSession check exactly.
+  const depositForms = inquiry?.depositForms ?? []
+  const latestDepositForm = depositForms.length > 0 ? depositForms[depositForms.length - 1] : null
+  const isNewDepositSession = !latestDepositForm || latestDepositForm.signedAt != null
+
   async function handleSendDepositForm() {
     if (!id) return
-    // Required only the first time -- resending (token rotation on an
-    // existing, unsigned form) doesn't touch the tentative time at all, see
-    // the API route's own comment.
-    const isFirstSend = !inquiry?.depositForm
-    if (isFirstSend && !tentativeTimeValid) return
+    // Required whenever this would create a fresh session -- resending the
+    // current unsigned session (token rotation on an existing, unsigned
+    // form) doesn't touch the tentative time at all, see the API route's
+    // own comment.
+    if (isNewDepositSession && !tentativeTimeValid) return
 
     setSendingDeposit(true)
     setSendDepositError(null)
     setDepositSendNotice(null)
 
     try {
-      const proposedTime = isFirstSend
+      const proposedTime = isNewDepositSession
         ? {
             proposedStartAt: combineDateAndTime(tentativeTimeRange.date, tentativeTimeRange.startTime)!.toISOString(),
             proposedEndAt: combineDateAndTime(tentativeTimeRange.date, tentativeTimeRange.endTime)!.toISOString(),
@@ -1005,30 +1020,32 @@ export default function InquiryDetail() {
   }
 
   // Pre-send: suggestions load as soon as there's an artist + time estimate
-  // to search with and no deposit form exists yet -- staff shouldn't need an
-  // extra click just to see them, since picking one (or entering a time by
-  // hand) is now required before a deposit form can be generated at all.
+  // to search with and a new session is actually eligible to be created --
+  // staff shouldn't need an extra click just to see them, since picking one
+  // (or entering a time by hand) is required before a fresh deposit form
+  // can be generated at all.
   useEffect(() => {
-    if (inquiry?.depositForm) return
+    if (!isNewDepositSession) return
     if (!inquiry?.assignedArtist || inquiry.timeEstimateHoursMin == null || inquiry.timeEstimateHoursMax == null) return
     fetchSuggestedTimes()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     inquiry?.id,
-    Boolean(inquiry?.depositForm),
+    isNewDepositSession,
     inquiry?.assignedArtist?.id,
     inquiry?.timeEstimateHoursMin,
     inquiry?.timeEstimateHoursMax,
   ])
 
   function handleOpenSuggestTime() {
-    // Seed the shared fields from whatever's already set (editing an
-    // existing tentative time), or blank (never had one, or previously
-    // Cleared) -- either way the modal always offers both the suggested
-    // list and manual entry.
+    // Seed the shared fields from whatever's already set on the current
+    // unsigned session (editing an existing tentative time), or blank
+    // (never had one, previously cleared, or this is a brand new session)
+    // -- either way the modal always offers both the suggested list and
+    // manual entry.
     setTentativeTimeRange(
-      inquiry?.depositForm?.proposedStartAt && inquiry?.depositForm?.proposedEndAt
-        ? isoToTimeRangeParts(inquiry.depositForm.proposedStartAt, inquiry.depositForm.proposedEndAt)
+      latestDepositForm?.proposedStartAt && latestDepositForm?.proposedEndAt && !isNewDepositSession
+        ? isoToTimeRangeParts(latestDepositForm.proposedStartAt, latestDepositForm.proposedEndAt)
         : { date: '', startTime: '', endTime: '' },
     )
     setShowSuggestTime(true)
@@ -1098,19 +1115,17 @@ export default function InquiryDetail() {
     }
   }
 
-  async function handleMarkPaid() {
-    if (!inquiry?.depositForm) return
-
-    setMarkingPaid(true)
+  async function handleMarkPaid(depositFormId: string) {
+    setMarkingPaidId(depositFormId)
     setMarkPaidError(null)
 
     try {
-      await apiFetch(`/deposit-forms/${inquiry.depositForm.id}/mark-paid`, { method: 'PATCH' })
+      await apiFetch(`/deposit-forms/${depositFormId}/mark-paid`, { method: 'PATCH' })
       invalidateInquiry()
     } catch (err) {
       setMarkPaidError(err instanceof Error ? err.message : 'Failed to mark deposit as paid')
     } finally {
-      setMarkingPaid(false)
+      setMarkingPaidId(null)
     }
   }
 
@@ -1125,9 +1140,11 @@ export default function InquiryDetail() {
   }
 
   const estimateUrl = inquiry?.estimateToken ? `${window.location.origin}/estimate/${inquiry.estimateToken}` : null
+  // Only ever the current unsigned session's link -- a signed session has
+  // nothing left to share.
   const depositUrl =
-    inquiry?.depositForm && !inquiry.depositForm.signedAt
-      ? `${window.location.origin}/deposit/${inquiry.depositForm.token}`
+    latestDepositForm && !latestDepositForm.signedAt
+      ? `${window.location.origin}/deposit/${latestDepositForm.token}`
       : null
 
   return (
@@ -1621,65 +1638,185 @@ export default function InquiryDetail() {
                 </div>
               )}
 
-              {(inquiry.status === 'DEPOSIT_PENDING' || inquiry.depositForm) && (
+              {(inquiry.status === 'DEPOSIT_PENDING' || isConverted || depositForms.length > 0) && (
                 <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                  <h2 className="text-base font-semibold text-fg">Deposit</h2>
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-base font-semibold text-fg">Deposit</h2>
+                    {depositForms.length > 1 && (
+                      <span className="text-xs text-fg-muted">
+                        {depositForms.length} session{depositForms.length === 1 ? '' : 's'}
+                      </span>
+                    )}
+                  </div>
 
-                  {inquiry.depositForm && (
-                    <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
-                      <DetailField label="Deposit" value={`$${inquiry.depositForm.depositAmount}`} />
-                      <DetailField label="Fee" value={`$${inquiry.depositForm.feeAmount}`} />
-                      <DetailField label="Total to collect" value={`$${inquiry.depositForm.totalCharged}`} />
-                    </div>
+                  {/* Package M: every deposit form ever generated for this
+                      project, oldest first -- each session's own status,
+                      signature, and (once paid) the gift card it issued. */}
+                  {depositForms.length > 0 && (
+                    <ul className="mt-4 flex flex-col gap-4">
+                      {depositForms.map((form) => (
+                        <li key={form.id} className="rounded-lg border border-border p-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-sm font-semibold text-fg">Session {form.sessionNumber}</span>
+                            <span className="text-xs font-medium text-fg-muted">
+                              {form.paidManually ? 'Paid' : form.signedAt ? 'Signed, awaiting payment' : 'Awaiting signature'}
+                            </span>
+                          </div>
+
+                          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                            <DetailField label="Deposit" value={`$${form.depositAmount}`} />
+                            <DetailField label="Fee" value={`$${form.feeAmount}`} />
+                            <DetailField label="Total to collect" value={`$${form.totalCharged}`} />
+                          </div>
+
+                          {form.signedAt && (
+                            <>
+                              <p className="mt-3 text-sm text-fg-secondary">
+                                Signed by {form.signatureName} on {formatDateTime(form.signedAt)}
+                              </p>
+                              {form.signatureData && (
+                                <img
+                                  src={form.signatureData}
+                                  alt="Client signature"
+                                  className="mt-2 h-20 rounded-lg border border-border bg-white"
+                                />
+                              )}
+                            </>
+                          )}
+
+                          {markPaidError && markingPaidId === form.id && (
+                            <p className="mt-3 text-sm text-danger">{markPaidError}</p>
+                          )}
+
+                          {form.paidManually ? (
+                            <p className="mt-3 text-sm text-success">
+                              Marked paid {form.paidAt ? formatDateTime(form.paidAt) : ''}
+                              {form.giftCard && ` — issued gift card ${form.giftCard.code.slice(0, 8)}…`}
+                            </p>
+                          ) : (
+                            form.signedAt && (
+                              <button
+                                type="button"
+                                onClick={() => handleMarkPaid(form.id)}
+                                disabled={markingPaidId === form.id}
+                                className="mt-3 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                              >
+                                {markingPaidId === form.id ? 'Saving…' : `Mark $${form.totalCharged} as Paid`}
+                              </button>
+                            )
+                          )}
+                        </li>
+                      ))}
+                    </ul>
                   )}
 
-                  {inquiry.depositForm?.signedAt ? (
-                    <>
-                      <p className="mt-4 text-sm text-fg-secondary">
-                        Signed by {inquiry.depositForm.signatureName} on {formatDateTime(inquiry.depositForm.signedAt)}
-                      </p>
+                  {/* What happens next: either the current session is still
+                      awaiting signature (resend its own link/tentative time),
+                      or a fresh session is eligible to be started -- pre-
+                      conversion that's the original send, post-conversion
+                      (Package M) that's "Send Another Deposit Form". */}
+                  {!isNewDepositSession && latestDepositForm ? (
+                    <div className="mt-4">
+                      {sendDepositError && <p className="mb-3 text-sm text-danger">{sendDepositError}</p>}
 
-                      {inquiry.depositForm.signatureData && (
-                        <img
-                          src={inquiry.depositForm.signatureData}
-                          alt="Client signature"
-                          className="mt-2 h-20 rounded-lg border border-border bg-white"
-                        />
+                      <button
+                        type="button"
+                        onClick={handleSendDepositForm}
+                        disabled={sendingDeposit}
+                        className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                      >
+                        {sendingDeposit ? 'Sending…' : 'Resend Deposit Form'}
+                      </button>
+
+                      {depositSendNotice && <p className="mt-3 text-sm text-fg-secondary">{depositSendNotice}</p>}
+
+                      {depositUrl && (
+                        <div className="mt-4 rounded-lg border border-border p-3">
+                          <p className="mb-2 text-xs text-fg-muted">
+                            Share this link with the client — it expires in 48 hours.
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              readOnly
+                              value={depositUrl}
+                              onFocus={(event) => event.target.select()}
+                              className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:outline-none"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleCopyLink(depositUrl)}
+                              aria-label={copied ? 'Copied' : 'Copy link'}
+                              title={copied ? 'Copied!' : 'Copy link'}
+                              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-fg-secondary transition hover:bg-surface-raised hover:text-fg"
+                            >
+                              {copied ? <CheckIcon className="h-4 w-4 text-success" /> : <CopyIcon className="h-4 w-4" />}
+                            </button>
+                          </div>
+                        </div>
                       )}
 
-                      {markPaidError && <p className="mt-3 text-sm text-danger">{markPaidError}</p>}
-
-                      {inquiry.depositForm.paidManually ? (
-                        <p className="mt-3 text-sm text-success">
-                          Marked paid {inquiry.depositForm.paidAt ? formatDateTime(inquiry.depositForm.paidAt) : ''}
+                      <div className="mt-4 rounded-lg border border-border p-3">
+                        <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Tentative time</p>
+                        <p className="mt-1 text-xs text-fg-muted">
+                          Informational only — shown to the client on the deposit page. Not a real booking; real
+                          scheduling still happens after the deposit is paid.
                         </p>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={handleMarkPaid}
-                          disabled={markingPaid}
-                          className="mt-3 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
-                        >
-                          {markingPaid ? 'Saving…' : `Mark $${inquiry.depositForm.totalCharged} as Paid`}
-                        </button>
-                      )}
-                    </>
-                  ) : hasAvailableGiftCard ? (
+
+                        {latestDepositForm.proposedStartAt && latestDepositForm.proposedEndAt ? (
+                          <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                            <p className="text-sm text-fg">
+                              {formatDateTime(latestDepositForm.proposedStartAt)} –{' '}
+                              {formatDateTime(latestDepositForm.proposedEndAt)}
+                            </p>
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={handleOpenSuggestTime}
+                                className="rounded-full border border-border px-3 py-1 text-xs font-medium text-fg transition hover:bg-surface"
+                              >
+                                Change
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleClearProposedTime}
+                                disabled={savingProposedTime}
+                                className="rounded-full border border-border px-3 py-1 text-xs font-medium text-fg-secondary transition hover:bg-surface disabled:opacity-60"
+                              >
+                                Clear
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={handleOpenSuggestTime}
+                            className="mt-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                          >
+                            Set a tentative time
+                          </button>
+                        )}
+
+                        {suggestTimeError && !showSuggestTime && (
+                          <p className="mt-2 text-sm text-danger">{suggestTimeError}</p>
+                        )}
+                      </div>
+                    </div>
+                  ) : inquiry.status === 'DEPOSIT_PENDING' && hasAvailableGiftCard ? (
                     // No point requesting a fresh deposit if the client
                     // already has a card that can secure the booking --
-                    // attaching it moves straight to Scheduling below,
-                    // same status transition mark-paid does, just without
-                    // creating a new card. Still offered even if an unsigned
-                    // DepositForm already exists (staff routinely send one
-                    // before checking for an existing card) -- attaching
-                    // discards that unsigned form server-side.
+                    // attaching it moves straight to Scheduling below, same
+                    // status transition mark-paid does, just without
+                    // creating a new card. Pre-conversion (first session)
+                    // only -- once converted, later sessions always go
+                    // through a real deposit form, matching the backend's
+                    // own attach-gift-card gate.
                     <div className="mt-4">
                       <p className="text-sm text-fg-secondary">
                         {clientGiftCards!.length === 1
                           ? 'This client already has an available gift card'
                           : `This client already has ${clientGiftCards!.length} available gift cards`}{' '}
                         on file — no deposit needs to be requested.
-                        {inquiry.depositForm && ' Attaching it will cancel the deposit form link above.'}
                       </p>
 
                       {clientGiftCards!.length > 1 && (
@@ -1708,9 +1845,9 @@ export default function InquiryDetail() {
                       </button>
                     </div>
                   ) : (
-                    <>
-                      {!inquiry.depositForm && (
-                        <div className="mt-4 rounded-lg border border-border p-3">
+                    (inquiry.status === 'DEPOSIT_PENDING' || isConverted) && (
+                      <div className="mt-4">
+                        <div className="rounded-lg border border-border p-3">
                           <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
                             Tentative appointment time (required)
                           </p>
@@ -1765,95 +1902,51 @@ export default function InquiryDetail() {
 
                           {suggestTimeError && <p className="mt-2 text-sm text-danger">{suggestTimeError}</p>}
                         </div>
-                      )}
 
-                      {sendDepositError && <p className="mt-3 text-sm text-danger">{sendDepositError}</p>}
+                        {sendDepositError && <p className="mt-3 text-sm text-danger">{sendDepositError}</p>}
 
-                      <button
-                        type="button"
-                        onClick={handleSendDepositForm}
-                        disabled={sendingDeposit || (!inquiry.depositForm && !tentativeTimeValid)}
-                        className="mt-4 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
-                      >
-                        {sendingDeposit ? 'Sending…' : inquiry.depositForm ? 'Resend Deposit Form' : 'Send Deposit Form'}
-                      </button>
+                        <button
+                          type="button"
+                          onClick={handleSendDepositForm}
+                          disabled={sendingDeposit || !tentativeTimeValid}
+                          className="mt-4 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                        >
+                          {sendingDeposit
+                            ? 'Sending…'
+                            : isConverted
+                              ? 'Send Another Deposit Form'
+                              : 'Send Deposit Form'}
+                        </button>
 
-                      {depositSendNotice && <p className="mt-3 text-sm text-fg-secondary">{depositSendNotice}</p>}
+                        {depositSendNotice && <p className="mt-3 text-sm text-fg-secondary">{depositSendNotice}</p>}
 
-                      {depositUrl && (
-                        <div className="mt-4 rounded-lg border border-border p-3">
-                          <p className="mb-2 text-xs text-fg-muted">
-                            Share this link with the client — it expires in 48 hours.
-                          </p>
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="text"
-                              readOnly
-                              value={depositUrl}
-                              onFocus={(event) => event.target.select()}
-                              className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:outline-none"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => handleCopyLink(depositUrl)}
-                              aria-label={copied ? 'Copied' : 'Copy link'}
-                              title={copied ? 'Copied!' : 'Copy link'}
-                              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-fg-secondary transition hover:bg-surface-raised hover:text-fg"
-                            >
-                              {copied ? <CheckIcon className="h-4 w-4 text-success" /> : <CopyIcon className="h-4 w-4" />}
-                            </button>
-                          </div>
-                        </div>
-                      )}
-
-                      {inquiry.depositForm && (
-                        <div className="mt-4 rounded-lg border border-border p-3">
-                          <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Tentative time</p>
-                          <p className="mt-1 text-xs text-fg-muted">
-                            Informational only — shown to the client on the deposit page. Not a real booking; real
-                            scheduling still happens after the deposit is paid.
-                          </p>
-
-                          {inquiry.depositForm.proposedStartAt && inquiry.depositForm.proposedEndAt ? (
-                            <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                              <p className="text-sm text-fg">
-                                {formatDateTime(inquiry.depositForm.proposedStartAt)} –{' '}
-                                {formatDateTime(inquiry.depositForm.proposedEndAt)}
-                              </p>
-                              <div className="flex gap-2">
-                                <button
-                                  type="button"
-                                  onClick={handleOpenSuggestTime}
-                                  className="rounded-full border border-border px-3 py-1 text-xs font-medium text-fg transition hover:bg-surface"
-                                >
-                                  Change
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={handleClearProposedTime}
-                                  disabled={savingProposedTime}
-                                  className="rounded-full border border-border px-3 py-1 text-xs font-medium text-fg-secondary transition hover:bg-surface disabled:opacity-60"
-                                >
-                                  Clear
-                                </button>
-                              </div>
+                        {depositUrl && (
+                          <div className="mt-4 rounded-lg border border-border p-3">
+                            <p className="mb-2 text-xs text-fg-muted">
+                              Share this link with the client — it expires in 48 hours.
+                            </p>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="text"
+                                readOnly
+                                value={depositUrl}
+                                onFocus={(event) => event.target.select()}
+                                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:outline-none"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleCopyLink(depositUrl)}
+                                aria-label={copied ? 'Copied' : 'Copy link'}
+                                title={copied ? 'Copied!' : 'Copy link'}
+                                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-fg-secondary transition hover:bg-surface-raised hover:text-fg"
+                              >
+                                {copied ? <CheckIcon className="h-4 w-4 text-success" /> : <CopyIcon className="h-4 w-4" />}
+                              </button>
                             </div>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={handleOpenSuggestTime}
-                              className="mt-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
-                            >
-                              Set a tentative time
-                            </button>
-                          )}
-
-                          {suggestTimeError && !showSuggestTime && (
-                            <p className="mt-2 text-sm text-danger">{suggestTimeError}</p>
-                          )}
-                        </div>
-                      )}
-                    </>
+                          </div>
+                        )}
+                      </div>
+                    )
                   )}
                 </div>
               )}

@@ -78,7 +78,9 @@ router.get("/dashboard", async (req, res) => {
     prisma.inquiry.count({ where: inquiryBaseWhere }),
     prisma.inquiry.count({ where: { ...inquiryBaseWhere, estimateSentAt: { not: null } } }),
     prisma.inquiry.count({ where: { ...inquiryBaseWhere, estimateRespondedAt: { not: null } } }),
-    prisma.inquiry.count({ where: { ...inquiryBaseWhere, depositForm: { isNot: null } } }),
+    // Package M: depositForm is now a to-many relation (depositForms) --
+    // "reached the deposit stage" still just means at least one row exists.
+    prisma.inquiry.count({ where: { ...inquiryBaseWhere, depositForms: { some: {} } } }),
     // Checks both the older 1:1 "scheduled slot" link (appointmentId) and
     // the newer 1:many "sessions under this project" link (sessions, via
     // Appointment.inquiryId) -- the real POST /:id/schedule route sets both

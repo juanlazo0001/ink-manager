@@ -126,16 +126,22 @@ router.get("/:id", async (req, res) => {
           // this inquiry's already-assigned artist when opened from a
           // project context.
           assignedArtistId: true,
-          depositForm: {
+          // Package M: one per tattoo session now, oldest first so the
+          // client profile's list reads "Session 1, Session 2, ..." in the
+          // order they were actually generated.
+          depositForms: {
             select: {
               id: true,
+              sessionNumber: true,
               depositAmount: true,
               feeAmount: true,
               totalCharged: true,
               signedAt: true,
               paidManually: true,
               paidAt: true,
+              giftCard: { select: { id: true, code: true, amountCents: true, status: true } },
             },
+            orderBy: { sessionNumber: "asc" },
           },
         },
         orderBy: { createdAt: "desc" },
@@ -200,7 +206,12 @@ router.get("/:id/shareable-links", async (req, res) => {
           status: true,
           priceEstimateLow: true,
           priceEstimateHigh: true,
-          depositForm: { select: { token: true, tokenExpiresAt: true, signedAt: true } },
+          // Package M: one per session now -- oldest first so "latest" is
+          // reliably the last element below.
+          depositForms: {
+            select: { id: true, sessionNumber: true, token: true, tokenExpiresAt: true, signedAt: true },
+            orderBy: { sessionNumber: "asc" },
+          },
         },
         orderBy: { createdAt: "desc" },
       },
@@ -235,19 +246,22 @@ router.get("/:id/shareable-links", async (req, res) => {
     }),
   );
 
+  // Package M: one row per deposit form, not per inquiry -- a project with
+  // several tattoo sessions can have several of these, each labeled by its
+  // own session number.
   const depositLinks = await Promise.all(
-    client.inquiries
-      .filter((inquiry) => inquiry.depositForm)
-      .map(async (inquiry) => {
-        const form = inquiry.depositForm!;
+    client.inquiries.flatMap((inquiry) =>
+      inquiry.depositForms.map(async (form) => {
         const active = !form.signedAt && form.tokenExpiresAt > now;
         return {
           inquiryId: inquiry.id,
-          label: `Deposit form — ${inquiry.description.slice(0, 40)}`,
+          depositFormId: form.id,
+          label: `Deposit form (Session ${form.sessionNumber}) — ${inquiry.description.slice(0, 40)}`,
           url: active ? await shortenUrl(`${PUBLIC_APP_URL}/deposit/${form.token}`) : null,
           hint: active ? null : form.signedAt ? "Already signed" : "Generate from the inquiry page",
         };
       }),
+    ),
   );
 
   const waiverLinks = await Promise.all(
@@ -301,8 +315,16 @@ router.get("/:id/shareable-links", async (req, res) => {
     .filter((inquiry) => {
       if (inquiry.status !== "DEPOSIT_PENDING") return false;
       if (inquiry.priceEstimateLow == null || inquiry.priceEstimateHigh == null) return false;
-      if (inquiry.depositForm?.signedAt) return false;
-      const hasActiveLink = inquiry.depositForm && inquiry.depositForm.tokenExpiresAt > now;
+      // Package M: still only relevant to the single pre-conversion session
+      // here (this composer trigger is deliberately scoped the same as
+      // before -- "send another deposit form" for a later session is a
+      // Project-page-only action, see InquiryDetail.tsx), so only the
+      // latest form (there's realistically at most one at this stage) matters.
+      const latest = inquiry.depositForms[inquiry.depositForms.length - 1] as
+        | (typeof inquiry.depositForms)[number]
+        | undefined;
+      if (latest?.signedAt) return false;
+      const hasActiveLink = latest && latest.tokenExpiresAt > now;
       return !hasActiveLink;
     })
     .map((inquiry) => ({ inquiryId: inquiry.id, label: inquiry.description }));

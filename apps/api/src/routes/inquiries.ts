@@ -282,10 +282,14 @@ const INQUIRY_INCLUDE = {
     },
     orderBy: { startTime: "asc" },
   },
-  depositForm: {
+  // Package M: one project can now have several, one per tattoo session --
+  // oldest first, so the UI can label them "Session 1", "Session 2", etc.
+  // in the order they were actually generated.
+  depositForms: {
     select: {
       id: true,
       token: true,
+      sessionNumber: true,
       depositAmount: true,
       feeAmount: true,
       totalCharged: true,
@@ -296,7 +300,9 @@ const INQUIRY_INCLUDE = {
       paidAt: true,
       proposedStartAt: true,
       proposedEndAt: true,
+      giftCard: { select: { id: true, code: true, amountCents: true, status: true } },
     },
+    orderBy: { sessionNumber: "asc" },
   },
 } as const;
 
@@ -1111,41 +1117,59 @@ router.post("/:id/reopen", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK)
   res.json(updated);
 });
 
-// Generates (or, if unsigned, regenerates) the client-facing deposit form
-// link. Only valid once staff has scheduled a real appointment
-// (DEPOSIT_PENDING), and the tier is computed from the artist's own
-// estimate, not anything the client stated.
+// Generates (or, if unsigned, regenerates) a client-facing deposit form
+// link. Valid either pre-conversion (DEPOSIT_PENDING, the original
+// session) or post-conversion (PROJECT_STATUSES -- Package M's "send
+// another deposit form" for a later session), and the tier is computed
+// from the artist's own estimate, not anything the client stated.
+//
+// Package M: an inquiry can now carry several DepositForm rows (one per
+// tattoo session) instead of exactly one. This route still does both
+// things it always did -- create the first one, or rotate the token on an
+// existing UNSIGNED one ("Resend") -- it just decides which based on the
+// most recent row rather than a unique-by-inquiry lookup: if that latest
+// row is missing or already signed, a new session gets created (next
+// sessionNumber); if it's still unsigned, that's the one being resent.
+// This also covers the case where an inquiry converted via
+// attach-gift-card (skipping the deposit-form flow entirely for its first
+// session) and only reaches this route for the first time on session 2 --
+// "latest row missing" is true there too, so it still creates session 1.
 router.post("/:id/deposit-form", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
   const id = req.params.id as string;
   const { proposedStartAt, proposedEndAt, autoSend } = req.body ?? {};
 
-  const inquiry = await prisma.inquiry.findUnique({ where: { id }, include: { depositForm: true, client: true } });
+  const inquiry = await prisma.inquiry.findUnique({
+    where: { id },
+    include: { depositForms: { orderBy: { sessionNumber: "desc" }, take: 1 }, client: true },
+  });
   if (!inquiry || inquiry.studioId !== req.user!.studioId) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
 
-  if (inquiry.status !== InquiryStatus.DEPOSIT_PENDING) {
-    return res.status(400).json({ error: "Only an inquiry in DEPOSIT_PENDING can get a deposit form" });
+  if (inquiry.status !== InquiryStatus.DEPOSIT_PENDING && !PROJECT_STATUSES.includes(inquiry.status)) {
+    return res.status(400).json({
+      error: "A deposit form can only be sent while DEPOSIT_PENDING or after the inquiry has converted to a Project",
+    });
   }
 
   if (inquiry.priceEstimateLow == null || inquiry.priceEstimateHigh == null) {
     return res.status(400).json({ error: "This inquiry is missing a price estimate" });
   }
 
-  if (inquiry.depositForm?.signedAt) {
-    return res.status(400).json({ error: "This deposit form has already been signed" });
-  }
+  const latest = inquiry.depositForms[0] as (typeof inquiry.depositForms)[number] | undefined;
+  const isNewSession = !latest || latest.signedAt != null;
 
-  // A tentative time is required the FIRST time a deposit form is generated
-  // -- staff must commit to some proposed slot (suggested or hand-picked)
-  // before the client-facing link is created at all. Resending an existing
-  // form (token rotation only, below) leaves whatever tentative time is
-  // already set untouched -- PATCH .../deposit-form/proposed-time is the
-  // only way to change it after the fact, since that route doesn't rotate
-  // the token and so never invalidates a link already shared with the client.
+  // A tentative time is required whenever this creates a fresh session --
+  // staff must commit to some proposed slot (suggested or hand-picked)
+  // before that session's client-facing link is created at all. Resending
+  // the current unsigned session's form (token rotation only, below)
+  // leaves whatever tentative time is already set untouched -- PATCH
+  // .../deposit-form/proposed-time is the only way to change it after the
+  // fact, since that route doesn't rotate the token and so never
+  // invalidates a link already shared with the client.
   let proposedStart: Date | null = null;
   let proposedEnd: Date | null = null;
-  if (!inquiry.depositForm) {
+  if (isNewSession) {
     if (typeof proposedStartAt !== "string" || typeof proposedEndAt !== "string") {
       return res.status(400).json({ error: "A tentative appointment time is required before generating a deposit form" });
     }
@@ -1166,20 +1190,24 @@ router.post("/:id/deposit-form", requireAuth, requireRole(Role.OWNER, Role.FRONT
   const token = crypto.randomBytes(32).toString("hex");
   const tokenExpiresAt = new Date(Date.now() + DEPOSIT_TOKEN_TTL_HOURS * 60 * 60 * 1000);
 
-  const depositForm = await prisma.depositForm.upsert({
-    where: { inquiryId: id },
-    create: {
-      inquiryId: id,
-      token,
-      tokenExpiresAt,
-      depositAmount,
-      feeAmount,
-      totalCharged,
-      proposedStartAt: proposedStart,
-      proposedEndAt: proposedEnd,
-    },
-    update: { token, tokenExpiresAt, depositAmount, feeAmount, totalCharged },
-  });
+  const depositForm = isNewSession
+    ? await prisma.depositForm.create({
+        data: {
+          inquiryId: id,
+          sessionNumber: (latest?.sessionNumber ?? 0) + 1,
+          token,
+          tokenExpiresAt,
+          depositAmount,
+          feeAmount,
+          totalCharged,
+          proposedStartAt: proposedStart,
+          proposedEndAt: proposedEnd,
+        },
+      })
+    : await prisma.depositForm.update({
+        where: { id: latest!.id },
+        data: { token, tokenExpiresAt, depositAmount, feeAmount, totalCharged },
+      });
 
   const depositUrl = await shortenUrl(`${PUBLIC_APP_URL}/deposit/${token}`);
 
@@ -1227,12 +1255,21 @@ router.patch(
     const body = req.body ?? {};
     const { proposedStartAt, proposedEndAt } = body;
 
-    const inquiry = await prisma.inquiry.findUnique({ where: { id }, include: { depositForm: true } });
+    // Package M: several deposit forms can exist for this inquiry now --
+    // this route only ever makes sense against whichever one is still
+    // awaiting the client's signature (the tentative time is purely
+    // pre-signing, informational context), so it targets the most recent
+    // still-unsigned session rather than assuming there's only one.
+    const inquiry = await prisma.inquiry.findUnique({
+      where: { id },
+      include: { depositForms: { where: { signedAt: null }, orderBy: { sessionNumber: "desc" }, take: 1 } },
+    });
     if (!inquiry || inquiry.studioId !== req.user!.studioId) {
       return res.status(404).json({ error: "Inquiry not found" });
     }
-    if (!inquiry.depositForm) {
-      return res.status(400).json({ error: "This inquiry has no deposit form yet" });
+    const pending = inquiry.depositForms[0];
+    if (!pending) {
+      return res.status(400).json({ error: "This inquiry has no deposit form awaiting signature" });
     }
 
     // Both set or both cleared -- never a dangling start with no end.
@@ -1246,7 +1283,7 @@ router.patch(
     }
 
     const updated = await prisma.depositForm.update({
-      where: { inquiryId: id },
+      where: { id: pending.id },
       data: {
         proposedStartAt: bothStrings ? new Date(proposedStartAt) : null,
         proposedEndAt: bothStrings ? new Date(proposedEndAt) : null,
@@ -1289,7 +1326,10 @@ router.post("/:id/attach-gift-card", requireAuth, requireRole(Role.OWNER, Role.F
     return res.status(400).json({ error: "giftCardId is required" });
   }
 
-  const inquiry = await prisma.inquiry.findUnique({ where: { id }, include: { depositForm: true } });
+  // Only reachable pre-conversion (DEPOSIT_PENDING, gated below), so at
+  // most one DepositForm row can exist for this inquiry at this point --
+  // Package M's multi-session rows only ever get created post-conversion.
+  const inquiry = await prisma.inquiry.findUnique({ where: { id }, include: { depositForms: true } });
   if (!inquiry || inquiry.studioId !== req.user!.studioId) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
@@ -1298,7 +1338,9 @@ router.post("/:id/attach-gift-card", requireAuth, requireRole(Role.OWNER, Role.F
     return res.status(400).json({ error: "Only an inquiry in DEPOSIT_PENDING can skip to an existing gift card" });
   }
 
-  if (inquiry.depositForm?.signedAt) {
+  const existingDepositForm = inquiry.depositForms[0] as (typeof inquiry.depositForms)[number] | undefined;
+
+  if (existingDepositForm?.signedAt) {
     return res.status(400).json({ error: "This client has already signed a deposit form for this inquiry" });
   }
 
@@ -1308,8 +1350,8 @@ router.post("/:id/attach-gift-card", requireAuth, requireRole(Role.OWNER, Role.F
   }
 
   const updated = await prisma.$transaction(async (tx) => {
-    if (inquiry.depositForm) {
-      await tx.depositForm.delete({ where: { id: inquiry.depositForm.id } });
+    if (existingDepositForm) {
+      await tx.depositForm.delete({ where: { id: existingDepositForm.id } });
     }
     return tx.inquiry.update({ where: { id }, data: { status: InquiryStatus.SCHEDULING } });
   });
@@ -1323,7 +1365,7 @@ router.post("/:id/attach-gift-card", requireAuth, requireRole(Role.OWNER, Role.F
     changes: {
       ...diffObjects(inquiry, { status: InquiryStatus.SCHEDULING }, ["status"]),
       satisfiedByExistingGiftCardId: giftCardId,
-      ...(inquiry.depositForm ? { discardedUnsignedDepositFormId: inquiry.depositForm.id } : {}),
+      ...(existingDepositForm ? { discardedUnsignedDepositFormId: existingDepositForm.id } : {}),
     },
   });
 
@@ -1504,9 +1546,10 @@ async function gatherInquiryDeletionSummary(inquiryId: string) {
   const appointments = await prisma.appointment.findMany({ where: { inquiryId }, select: { id: true } });
   const appointmentIds = appointments.map((a) => a.id);
 
-  const [waivers, depositForm, attachedGiftCards, consentFormsToDetachCount, conversationTagCount] = await Promise.all([
+  const [waivers, depositFormCount, attachedGiftCards, consentFormsToDetachCount, conversationTagCount] = await Promise.all([
     prisma.liabilityWaiver.count({ where: { appointmentId: { in: appointmentIds } } }),
-    prisma.depositForm.findUnique({ where: { inquiryId }, select: { id: true, giftCardId: true } }),
+    // Package M: could be several now (one per session), not just 0 or 1.
+    prisma.depositForm.count({ where: { inquiryId } }),
     prisma.giftCard.findMany({
       where: { appointmentId: { in: appointmentIds } },
       select: { id: true, code: true, amountCents: true, status: true },
@@ -1525,7 +1568,7 @@ async function gatherInquiryDeletionSummary(inquiryId: string) {
   return {
     appointments: appointmentIds.length,
     waivers,
-    depositForms: depositForm ? 1 : 0,
+    depositForms: depositFormCount,
     giftCardsToDetach: attachedGiftCards.map((card) => ({ id: card.id, code: card.code, amountCents: card.amountCents, status: card.status })),
     consentFormsToDetach: consentFormsToDetachCount,
     conversationTags: conversationTagCount,

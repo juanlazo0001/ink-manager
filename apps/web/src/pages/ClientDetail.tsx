@@ -36,12 +36,14 @@ interface ConsentForm {
 
 interface DepositFormSummary {
   id: string
+  sessionNumber: number
   depositAmount: number
   feeAmount: number
   totalCharged: number
   signedAt: string | null
   paidManually: boolean
   paidAt: string | null
+  giftCard: { id: string; code: string; amountCents: number; status: string } | null
 }
 
 interface InquirySummary {
@@ -52,7 +54,8 @@ interface InquirySummary {
   createdAt: string
   priceEstimateLow: number | null
   priceEstimateHigh: number | null
-  depositForm: DepositFormSummary | null
+  // Package M: one per tattoo session now, oldest first.
+  depositForms: DepositFormSummary[]
 }
 
 interface GiftCard {
@@ -856,29 +859,11 @@ export default function ClientDetail() {
       setLatestDepositUrl(result.depositUrl)
       setDepositSendNotice(describeSendResult('Deposit form', result.depositSendResult))
       setShowDepositPicker(false)
-      setClient((prev) =>
-        prev
-          ? {
-              ...prev,
-              inquiries: prev.inquiries.map((inquiry) =>
-                inquiry.id === inquiryId
-                  ? {
-                      ...inquiry,
-                      depositForm: {
-                        id: result.id,
-                        depositAmount: result.depositAmount,
-                        feeAmount: result.feeAmount,
-                        totalCharged: result.totalCharged,
-                        signedAt: result.signedAt,
-                        paidManually: result.paidManually,
-                        paidAt: result.paidAt,
-                      },
-                    }
-                  : inquiry,
-              ),
-            }
-          : prev,
-      )
+      // Package M: a send can now either update the existing unsigned
+      // session in place or create a brand new one (next sessionNumber) --
+      // simpler and more correct to just refetch the whole list than to
+      // hand-reconstruct which case just happened.
+      setRefreshIndex((index) => index + 1)
     } catch (err) {
       setDepositSendError(err instanceof Error ? err.message : 'Failed to send deposit form')
     } finally {
@@ -924,20 +909,26 @@ export default function ClientDetail() {
     }
   }
 
-  const depositForms = client?.inquiries.filter((inquiry) => inquiry.depositForm !== null) ?? []
+  // Package M: one row per deposit form (not per inquiry) -- a project with
+  // several tattoo sessions can have several, each labeled by session number.
+  const depositFormRows = (client?.inquiries ?? []).flatMap((inquiry) =>
+    inquiry.depositForms.map((form) => ({ inquiry, form })),
+  )
 
   // Same eligibility rule POST /inquiries/:id/deposit-form itself enforces
   // -- DEPOSIT_PENDING, both price bounds set, not already signed. That
-  // route upserts, so an inquiry that already has an unsigned deposit form
-  // is still eligible (this doubles as "resend").
+  // route upserts the latest unsigned session, so an inquiry that already
+  // has one is still eligible (this doubles as "resend"). Deliberately
+  // stays scoped to the pre-conversion session only, same as the composer's
+  // own depositFormOptions -- "Send Another Deposit Form" for a later
+  // session (Package M) is a Project-page-only action (InquiryDetail.tsx).
   const eligibleDepositInquiries =
-    client?.inquiries.filter(
-      (inquiry) =>
-        inquiry.status === 'DEPOSIT_PENDING' &&
-        inquiry.priceEstimateLow != null &&
-        inquiry.priceEstimateHigh != null &&
-        !inquiry.depositForm?.signedAt,
-    ) ?? []
+    client?.inquiries.filter((inquiry) => {
+      if (inquiry.status !== 'DEPOSIT_PENDING') return false
+      if (inquiry.priceEstimateLow == null || inquiry.priceEstimateHigh == null) return false
+      const latest = inquiry.depositForms[inquiry.depositForms.length - 1] as DepositFormSummary | undefined
+      return !latest?.signedAt
+    }) ?? []
 
   // POST /appointments/:id/waiver rejects outright if one already exists
   // (no upsert/resend there, unlike deposit forms) -- so eligibility here
@@ -1732,35 +1723,38 @@ export default function ClientDetail() {
                   </div>
                 )}
 
-                {depositForms.length === 0 && <p className="mt-4 text-sm text-fg-secondary">No deposit forms yet.</p>}
+                {depositFormRows.length === 0 && <p className="mt-4 text-sm text-fg-secondary">No deposit forms yet.</p>}
 
-                {depositForms.length > 0 && (
+                {depositFormRows.length > 0 && (
                   <div className="mt-4 overflow-x-auto">
                     <table className="w-full text-left text-sm">
                       <thead>
                         <tr className="bg-surface-inset text-xs text-fg-muted">
+                          <th className="pb-3 font-medium">Session</th>
                           <th className="pb-3 font-medium">Deposit</th>
                           <th className="hidden pb-3 font-medium sm:table-cell">Total</th>
                           <th className="hidden pb-3 font-medium md:table-cell">Signed</th>
                           <th className="pb-3 font-medium">Paid</th>
+                          <th className="hidden pb-3 font-medium lg:table-cell">Gift Card</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-border">
-                        {depositForms.map((inquiry) => (
-                          <tr key={inquiry.id}>
-                            <td className="py-3 text-fg">${inquiry.depositForm!.depositAmount}</td>
-                            <td className="hidden py-3 text-fg-secondary sm:table-cell">
-                              ${inquiry.depositForm!.totalCharged}
+                        {depositFormRows.map(({ inquiry, form }) => (
+                          <tr key={form.id}>
+                            <td className="py-3 text-fg-secondary">
+                              Session {form.sessionNumber}
+                              <span className="hidden text-fg-muted sm:inline"> — {inquiry.description.slice(0, 24)}</span>
                             </td>
+                            <td className="py-3 text-fg">${form.depositAmount}</td>
+                            <td className="hidden py-3 text-fg-secondary sm:table-cell">${form.totalCharged}</td>
                             <td className="hidden py-3 text-fg-secondary md:table-cell">
-                              {inquiry.depositForm!.signedAt ? formatDateTime(inquiry.depositForm!.signedAt) : 'Pending'}
+                              {form.signedAt ? formatDateTime(form.signedAt) : 'Pending'}
                             </td>
                             <td className="py-3 text-fg-secondary">
-                              {inquiry.depositForm!.paidManually
-                                ? inquiry.depositForm!.paidAt
-                                  ? formatDateTime(inquiry.depositForm!.paidAt)
-                                  : 'Yes'
-                                : 'Not yet'}
+                              {form.paidManually ? (form.paidAt ? formatDateTime(form.paidAt) : 'Yes') : 'Not yet'}
+                            </td>
+                            <td className="hidden py-3 text-fg-secondary lg:table-cell">
+                              {form.giftCard ? `${form.giftCard.code.slice(0, 8)}…` : '—'}
                             </td>
                           </tr>
                         ))}
