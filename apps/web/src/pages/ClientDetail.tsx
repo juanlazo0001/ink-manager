@@ -1197,12 +1197,12 @@ export default function ClientDetail() {
                         </button>
                       )}
                       {(canManage || isOwner) && (
-                        <div className="relative">
+                        <div className="relative flex self-stretch">
                           <button
                             type="button"
                             onClick={() => setShowMoreMenu((v) => !v)}
                             aria-label="More actions"
-                            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border text-fg-muted transition hover:bg-surface hover:text-fg"
+                            className="flex aspect-square h-full shrink-0 items-center justify-center rounded-full border border-border text-fg-muted transition hover:bg-surface hover:text-fg"
                           >
                             <MoreIcon className="h-4 w-4" />
                           </button>

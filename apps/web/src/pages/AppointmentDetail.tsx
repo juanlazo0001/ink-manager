@@ -591,20 +591,24 @@ export default function AppointmentDetail() {
                     <button
                       type="button"
                       onClick={() => navigate(`/clients/${appointment.client.id}`)}
-                      className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                      aria-label="View Client"
+                      title="View Client"
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-3 md:py-1.5"
                     >
-                      <ClientsIcon className="h-3.5 w-3.5" />
-                      View Client
+                      <ClientsIcon className="h-4 w-4 md:h-3.5 md:w-3.5" />
+                      <span className="hidden text-xs font-medium md:inline">View Client</span>
                     </button>
                     {canManage && (
                       <button
                         type="button"
                         onClick={handleMessage}
                         disabled={startingConversation}
-                        className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                        aria-label="Message"
+                        title="Message"
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface disabled:opacity-60 md:h-auto md:w-auto md:gap-2 md:px-3 md:py-1.5"
                       >
-                        <MessageIcon className="h-3.5 w-3.5" />
-                        Message
+                        <MessageIcon className="h-4 w-4 md:h-3.5 md:w-3.5" />
+                        <span className="hidden text-xs font-medium md:inline">Message</span>
                       </button>
                     )}
                     {canManage ? (
@@ -634,14 +638,14 @@ export default function AppointmentDetail() {
                       <StatusPill status={describeAppointmentStatus(appointment)} />
                     )}
                     {canManage && (
-                      <div className="relative">
+                      <div className="relative flex self-stretch">
                         <button
                           type="button"
                           onClick={() => setShowMoreMenu((v) => !v)}
                           aria-label="More actions"
                           aria-pressed={showMoreMenu}
                           title="More actions"
-                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
+                          className="flex aspect-square h-full shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
                         >
                           <MoreIcon className="h-4 w-4" />
                         </button>
