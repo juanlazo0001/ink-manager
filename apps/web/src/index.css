@@ -46,12 +46,17 @@
 
   /* Semantic status -- used as bg-{name}/15 (translucent tint) +
      text-{name} (solid), per the reference's pill treatment. Mapping is
-     documented in components/StatusPill.tsx, not scattered per-page. */
+     documented in components/StatusPill.tsx, not scattered per-page.
+     progress/highlight exist so status families with more distinct stages
+     than the original 5 tones (InquiryStatus's pipeline, mainly) don't have
+     to double up two genuinely different stages onto the same color. */
   --color-success: #4ade80;
   --color-info: #60a5fa;
   --color-warning: #fbbf24;
   --color-danger: #f87171;
   --color-neutral: #b4b4bd;
+  --color-progress: #a78bfa;
+  --color-highlight: #d97706;
 
   /* Motion -- one shared timing vocabulary instead of each component
      picking its own duration. fast: small state changes (hover, toggle,

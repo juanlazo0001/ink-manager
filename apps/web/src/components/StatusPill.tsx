@@ -1,6 +1,6 @@
 import { formatStatus } from '../lib/format'
 
-export type Tone = 'success' | 'info' | 'warning' | 'danger' | 'neutral'
+export type Tone = 'success' | 'info' | 'warning' | 'danger' | 'neutral' | 'progress' | 'highlight'
 
 // Single source of truth for status -> semantic tone across the whole app.
 // Every status pill everywhere renders through this component so the
@@ -9,15 +9,26 @@ export type Tone = 'success' | 'info' | 'warning' | 'danger' | 'neutral'
 // GiftCardStatus, LiabilityWaiverStatus) -- CONFIRMED is shared by
 // InquiryStatus and AppointmentStatus and both map to the same tone, so a
 // flat lookup is safe.
+//
+// Inquiry pipeline: one tone per pipeline STAGE (see InquiryPipeline.tsx's
+// own PIPELINE_STEPS grouping), not one tone reused across different
+// stages -- previously ARTIST_ASSIGNED/NEW shared info, DEPOSIT_PENDING
+// shared warning with the estimate-sent statuses, and WAITLISTED alone
+// broke from SCHEDULING/CONFIRMED's green despite being the same
+// "Scheduled" step, all of which made the list/Kanban views read as an
+// undifferentiated wash of yellow and green. Every stage below now gets
+// its own distinct color; statuses that are genuinely the same stage
+// (AWAITING_CLIENT_RESPONSE + BUDGET_NEGOTIATION; SCHEDULING + WAITLISTED +
+// CONFIRMED) correctly still share one.
 const STATUS_TONE: Record<string, Tone> = {
   // Inquiry pipeline
   NEW: 'info',
-  ARTIST_ASSIGNED: 'info',
+  ARTIST_ASSIGNED: 'progress',
   AWAITING_CLIENT_RESPONSE: 'warning',
   BUDGET_NEGOTIATION: 'warning',
-  DEPOSIT_PENDING: 'warning',
+  DEPOSIT_PENDING: 'highlight',
   SCHEDULING: 'success',
-  WAITLISTED: 'warning',
+  WAITLISTED: 'success',
   CONFIRMED: 'success',
   // Phase 7A: CLOSED_LOST is a deliberate staff action (or the missing-
   // workflow mark-lost route) and reads as danger/red; COLD_LEAD is the
@@ -28,9 +39,11 @@ const STATUS_TONE: Record<string, Tone> = {
   CLOSED_LOST: 'danger',
   COLD_LEAD: 'neutral',
 
-  // Appointments
+  // Appointments -- COMPLETED gets its own tone (previously the same green
+  // as CONFIRMED, so an appointment that already happened looked identical
+  // to one just booked).
   REQUESTED: 'info',
-  COMPLETED: 'success',
+  COMPLETED: 'progress',
   CANCELLED: 'neutral',
   NO_SHOW: 'danger',
 
@@ -60,6 +73,8 @@ const TONE_CLASSES: Record<Tone, string> = {
   warning: 'bg-warning/15 text-warning',
   danger: 'bg-danger/15 text-danger',
   neutral: 'bg-neutral/15 text-neutral',
+  progress: 'bg-progress/15 text-progress',
+  highlight: 'bg-highlight/15 text-highlight',
 }
 
 // Exported so other components (e.g. the Conversations list's avatar rings)

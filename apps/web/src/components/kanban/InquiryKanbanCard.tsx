@@ -10,6 +10,8 @@ const TONE_BORDER_CLASSES: Record<string, string> = {
   warning: 'border-l-warning',
   danger: 'border-l-danger',
   neutral: 'border-l-neutral',
+  progress: 'border-l-progress',
+  highlight: 'border-l-highlight',
 }
 
 function truncate(text: string, max: number) {

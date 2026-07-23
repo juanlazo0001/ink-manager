@@ -278,6 +278,8 @@ const TONE_RING_CLASSES: Record<Tone, string> = {
   warning: 'ring-warning/60',
   danger: 'ring-danger/60',
   neutral: 'ring-border-strong',
+  progress: 'ring-progress/60',
+  highlight: 'ring-highlight/60',
 }
 
 function truncateText(text: string, max: number): string {
@@ -370,6 +372,8 @@ const TONE_RING_COLORS: Record<Tone, string> = {
   warning: 'var(--color-warning)',
   danger: 'var(--color-danger)',
   neutral: 'var(--color-neutral)',
+  progress: 'var(--color-progress)',
+  highlight: 'var(--color-highlight)',
 }
 
 // Literal, complete class strings per branch (not built from a template) so
