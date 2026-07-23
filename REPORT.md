@@ -1341,4 +1341,60 @@ Not applicable to a database-only hotfix -- no application code changed. `npx ts
 
 No background dev servers were started for this incident (all work was one-off synchronous scripts against production, no lingering processes -- confirmed via `Get-NetTCPConnection` that ports 4001/5183 were already free). One-off investigation/backup/verification scripts (`prod_backup.ts`, `prod_investigate.ts`, `prod_check_indexes.ts`, `prod_dryrun.ts`, `prod_verify_final.ts`, a Playwright live-check script) were all deleted immediately after use; none committed, and the production data backup itself was deliberately kept out of git (real customer PII) and left only at the local path noted above -- the user should move it to a secure, durable location outside of `/tmp`-equivalent scratch storage if it needs to be retained for actual disaster-recovery purposes.
 
+---
+
+# Package P — Delete ConsentForm, consolidate on Waiver
+
+Single session on `main`. Pre-flight: `git status` clean, `git pull` (up to date), `prisma migrate status` clean, no other session mid-migration.
+
+## 1. Confirm zero real usage -- performed before touching anything
+
+The task said this "was stated as confirmed" but to verify independently anyway. Queried both databases directly rather than trusting the premise:
+
+- **Dev**: 2 `ConsentForm` rows -- both unsigned, tied to seeded/session test clients (Casey Testperson, Emily Rodriguez), consistent with Package J's own report noting one was created during that package's live verification and left in place per this session's standing convention.
+- **Production**: **2 real `ConsentForm` rows**, both unsigned, both tied to one real client (`cmrux5ugg002q1zpjir4zwt9p` -- one of the 10 real clients confirmed during the referral-code incident earlier this session). Both signing tokens had already expired.
+
+Per the task's own explicit instruction ("If any are found, STOP and report -- do not delete a model with real data without explicit sign-off"), stopped here and asked the user how to proceed rather than assuming the expired/unsigned status made deletion self-evidently fine. User chose: delete these 2 rows, then proceed. Deleted them directly from production (logged their full contents before deletion, shown above and in this session's own record), confirmed the table was empty (`count = 0`) before touching the schema.
+
+## 2. Remove the model and every reference
+
+**Schema**: dropped `model ConsentForm` entirely; removed `Client.consentForms`/`Appointment.consentForm` relation fields; updated two now-stale design-precedent comments in `DepositForm`/`LiabilityWaiver` that referenced `ConsentForm` as a pattern to follow (a comment citing a deleted model is worse than no comment). Migration `20260723222358_remove_consent_form`: two `DROP CONSTRAINT`s + one `DROP TABLE`, generated via `prisma migrate diff` (dev's 2 test rows made `prisma migrate dev` refuse non-interactively, same wall as every prior destructive-schema package this session) and applied via `migrate deploy`.
+
+**Given the very recent production-migration incident earlier this session**, applied this same migration directly against production too, before pushing to `main` -- a `DROP TABLE` can't fail on data content the way an `ALTER COLUMN ... SET NOT NULL` can, but "can't fail" was exactly the wrong assumption last time, so it was verified empirically here instead of assumed: `migrate status` confirmed production one migration behind, `migrate deploy` applied cleanly, `migrate status` confirmed clean again, and `/health` + a clean `POST /login` round-trip confirmed the API was still fully healthy afterward. This closes the loop on the incident's root cause rather than just fixing this one instance of it.
+
+**Every reference found and removed** (grepped case-insensitively across both apps, `-i` on `ConsentForm|consentForm|consent-form|/sign/` to catch stray variants):
+
+| Location | What changed |
+|---|---|
+| `apps/api/src/index.ts` | Removed the `consentFormsRouter` import and its `/consent-forms` mount |
+| `apps/api/src/routes/consentForms.ts` | Deleted entirely (the dedicated public verify/sign routes) |
+| `apps/api/src/routes/clients.ts` | `GET /:id`'s include, `repointClientRelations` (merge), `gatherClientDeletionSummary`, the permanent-DELETE transaction's `consentForm.deleteMany`, and the entire `POST /:clientId/consent-forms` route all had their ConsentForm involvement removed; `crypto`/`sendClientSms`/`getOrCreateClientConversation` imports and the `CONSENT_FORM_TOKEN_TTL_HOURS` constant removed as newly-dead code (verified via grep each was used nowhere else in the file first) |
+| `apps/api/src/routes/appointments.ts` | `gatherAppointmentDeletionSummary` and the appointment-DELETE transaction's unlink step removed; updated a doc comment that described the now-gone "unlink, don't destroy" consent-form behavior |
+| `apps/api/src/routes/inquiries.ts` | Same shape as appointments.ts, for the inquiry-DELETE transaction (which cascades across all the inquiry's appointments) |
+| `apps/web/src/App.tsx` | Removed the `SignConsentForm` import and its `/sign/:token` route |
+| `apps/web/src/pages/SignConsentForm.tsx` | Deleted entirely (the public signing page) -- confirmed `signature_pad` (the npm dependency it used) is still used by `DepositResponse.tsx`, so the package dependency itself stays |
+| `apps/web/src/pages/ClientDetail.tsx` | Removed the `ConsentForm` interface, the field on `Client`/`MergePreview`/`DeletePreview`, `handleSendConsentForm` and its four dedicated state variables (`sendingForm`/`sendFormError`/`consentSendNotice`/`latestSigningUrl` -- `copied`/`handleCopyLink` stayed, shared with waiver/prefill-link copy buttons), the entire "Consent Forms" card, and both delete/merge-preview list items |
+| `apps/web/src/pages/AppointmentDetail.tsx` | `DeletePreview.consentForms` field + its list item removed |
+| `apps/web/src/pages/InquiryDetail.tsx` | `DeletePreview.consentFormsToDetach` field + its list item removed |
+
+**One item from the task's own list turned out not to apply**: "the composer's shareable-links list (any 'consent form' entry in the '+ menu')" -- grepped `ConversationsPanel.tsx` and the `GET /clients/:id/shareable-links` route it reads from; neither ever had a consent-form entry (Package J's own investigation, re-confirmed here, found consent forms were only ever sent from the ClientDetail page directly, with no composer draft-insert row the way deposit forms and waivers have). Noted rather than silently ignored, matching this session's practice of flagging when a task's stated premise doesn't match the actual codebase.
+
+## Verification
+
+**Typechecks**: `npx tsc --noEmit` (api) -- clean. `npx tsc --noEmit` and `npm run build` (web) -- both clean. As the task noted, this was the most reliable signal of completeness -- a dangling reference to the removed `ConsentForm` type or `consentForms` field would have surfaced as a compile error, and none did on the first pass after the full sweep above.
+
+**Browser** (Playwright, scratch API :4002 since another concurrent session held :4001 this time, scratch web :5183 -- `chromium-cli` unavailable on this Windows environment, same `chromium.launch()` fallback as every prior session):
+- Loaded an existing client's profile -- confirmed via `body.innerText()` that "consent" appears nowhere on the page (the only other "Consent" text anywhere in the app, "SMS Consent: ...", is unrelated and still correctly present).
+- Created a disposable test client, opened its "Delete Permanently" confirmation modal -- confirmed the preview correctly lists inquiries/appointments/waivers/deposit forms/messages with no consent-form line at all, typed the confirm text, and completed the delete -- "DeleteFlow TestP was permanently deleted," zero console errors, and a follow-up load of that client's URL correctly showed "Client not found."
+- API-level spot check of all three delete-preview endpoints (client/inquiry/appointment) against an existing client with real history (5 inquiries, 2 appointments, 8 gift cards, 5 deposit forms) -- none of the three response bodies contain a `consentForms`/`consentFormsToDetach` field anymore.
+- Merge preview flow (touched via `repointClientRelations`) -- opened "Merge with another client," searched, selected a candidate, previewed -- zero console errors, no consent-form mention.
+
+## Commit
+
+`b4366d3` -- Package P: delete ConsentForm, consolidate on Waiver. Pushed immediately (`aaec614..b4366d3`); a concurrent session's small unrelated commit (button-styling reversal) had landed on `main` in the meantime, picked up cleanly as a fast-forward with no conflicts.
+
+## Cleanup
+
+Both scratch dev servers (API :4002 -- :4001 was taken by another concurrent session this time, web :5183) stopped; confirmed via `Get-NetTCPConnection` and force-killed by PID, same recurring pattern as every prior package. Playwright driver scripts and screenshots stayed in the scratchpad only, none committed. The disposable test client created for the live delete-flow verification no longer exists (that was the point of the test). The 2 real `ConsentForm` rows deleted from production (with explicit sign-off) and the whole table's removal are both permanent, intentional outcomes of this package, not incidental data loss.
+
 
