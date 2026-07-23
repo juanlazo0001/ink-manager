@@ -850,3 +850,79 @@ Browser/Playwright pass was skipped: the web dev server in this shared checkout 
 ## Cleanup
 
 Both background dev processes this session started (API :4001, web on whatever port Vite picked since :5173/:5174 were already taken by other concurrent sessions) were stopped; the API one's underlying `tsx watch` child process outlived the shell-level stop and needed an explicit `Stop-Process -Force` by PID before :4001 was actually free. The other concurrent session's API server on :4000 was left running, untouched. Test artifacts from this session's live verification (one new gift card, one new deposit form, one new waiver, one new consent form, one new prefill draft, all against the existing seeded "Emily Rodriguez" client) were left in the dev database, consistent with the standing convention in every prior package's report of not chasing down verification-generated dev-seed data.
+
+---
+
+# Package K — Dashboards & reports
+
+Single session on `main`. No schema changes -- six real-time aggregation queries over existing tables, nothing new persisted.
+
+## What was already there vs. what was built
+
+**Investigated first, per the task's own instruction.** `Dashboard.tsx` existed and was routed/linked (`/dashboard`, Sidebar's first nav item, the post-login and `/` redirect target) -- but every number on it was a hardcoded literal. `STATS` was a fixed array (`'128'` total clients, `'+6 this month'`, etc.); `TodaysAppointmentsTable`/`WeeklyAppointmentsChart`/`ArtistWorkloadCard`/`ReminderCard` each had their own hardcoded fake dataset baked in as a module-level constant (invented names like "Maria Gonzalez"/"Jordan Vega" that don't exist in this studio's real data, a fake Mon-Fri bar chart, etc.) -- zero API calls anywhere in any of these five files. The "View As migration list" pointer in the task turned out to be `c86d1b7` (the View As feature commit), which touched `Dashboard.tsx` only to swap `useAuth()` for `useEffectiveUser()` in the greeting text -- unrelated to metrics, just how the task knew this file existed at all.
+
+Net: nothing here was "partially built" in the sense of real data wiring -- it was a static visual mockup/prototype shell. Kept: the page's overall layout shell (Sidebar + max-w-7xl container + card grid) and the app's existing card styling (`rounded-2xl border border-border bg-surface p-5`, same as every other card in the app). Deleted (confirmed zero other references first): `StatCard.tsx`, `TodaysAppointmentsTable.tsx`, `WeeklyAppointmentsChart.tsx`, `ArtistWorkloadCard.tsx`, `ReminderCard.tsx` -- fabricated data has no place next to real financial figures on the same page. Built fresh: the entire backend aggregation endpoint and all six frontend metric cards.
+
+## Backend: one combined endpoint
+
+`GET /reports/dashboard?start=&end=` (new `apps/api/src/routes/reports.ts`, mounted in `index.ts`), `requireAuth` + `requireRole(OWNER, FRONT_DESK, ARTIST)` -- same all-three-staff-roles precedent as `navCounts.ts`, matching Dashboard's own pre-existing lack of role gating (nobody has ever been blocked from this page, and `/`, `Login.tsx`, `MyInquiries.tsx`'s redirect, and `Team.tsx` all land everyone here regardless of role). **Flagging for review, not deciding here**: this means an ARTIST can see real dollar figures (deposit conversion, gift card liability) that other money-related surfaces in this app (gift card exemption issuance, void, expiration override) restrict to OWNER. Changing that would also mean giving ARTIST a different post-login landing page, which is out of scope for this session -- noted for a follow-up decision.
+
+One endpoint rather than six: the Dashboard loads every section on the same page load, so all six count/aggregate queries run as a single parallel `Promise.all` batch, one round trip. `start`/`end` (same query param names `GET /appointments` already uses for its own range filter) scope four of the six sections; the other two are deliberately global, per the task's own instruction to only put a selector on the first four:
+
+- **Deposit conversion**: an all-time rate is more meaningful than a date-windowed one (a deposit form's "sent" event happens once, and the task didn't ask for a selector here).
+- **Gift card liability**: "right now" by definition -- a snapshot, not a range.
+
+Both are visually captioned "not affected by the date range above" on their cards, so the two different scopes on one page don't read as the numbers disagreeing (the dataviz skill's own filter-composition warning).
+
+## Exact metric definitions (for review -- these are judgment calls)
+
+1. **Inquiry funnel** -- six `Inquiry.count()` queries, all scoped to `createdAt` within the selected range (so it answers "of everything received in this window, how far did it get, as of right now" -- not a true received-in-window-and-fully-resolved-by-window-end funnel, which this data model can't answer without a state-history table):
+   - Received: total in range.
+   - Estimate Sent: `estimateSentAt` not null.
+   - Responded: `estimateRespondedAt` not null.
+   - Deposit Pending: has a `DepositForm` row (`depositForm: { isNot: null }`) -- reached the deposit stage at any point, not "currently DEPOSIT_PENDING" (an inquiry that's since moved on to CONFIRMED still passed through here).
+   - Scheduled: `appointmentId` not null **or** has any row in `sessions` (`Appointment.inquiryId`) -- checks both the older 1:1 "scheduled slot" link and the newer 1:many "sessions under this project" link. Needed both: the real `/schedule` route sets both fields together, but a dev-seed fixture (`[DEV SEED] Back piece, session 1 of 3`) only populated the newer relation directly, and checking just the older field undercounted (0 instead of 5 in initial testing -- caught by the manual spot-check, not assumed correct).
+   - Completed: same both-relations check, requiring `AppointmentStatus.COMPLETED`.
+   - Conversion % at each stage is **cumulative-of-total-received** (stage count ÷ received count), not step-over-previous-step -- the standard "narrowing funnel" reading.
+2. **Lost/cold rate** -- `(CLOSED_LOST count + COLD_LEAD count) ÷ (that + CONFIRMED count)`, all `createdAt`-scoped to the range. Denominator is only inquiries that reached one of these three terminal-ish states -- an inquiry still mid-pipeline (NEW/AWAITING_CLIENT_RESPONSE/DEPOSIT_PENDING/etc.) isn't counted on either side, since it hasn't "ended" either way yet. "Converted" = `CONFIRMED` specifically (the Inquiry model has no post-CONFIRMED status of its own; SCHEDULING/WAITLISTED are pre-conversion, not post-).
+3. **Response time** -- two averages, both `createdAt`-range-scoped: `estimateSentAt − createdAt` (received → estimate sent) and `estimateRespondedAt − estimateSentAt` (estimate sent → response), each only over rows where both relevant timestamps are set. Computed by fetching just the two relevant `DateTime` columns per matching row (`select`, not the whole record) and reducing in Node, rather than a raw SQL `AVG(EXTRACT(EPOCH FROM …))` -- Prisma's query builder has no built-in aggregate for a computed difference between two columns, and this codebase has never used `$queryRaw` before; the two-column `select` still pushes all filtering to the DB and only pulls the minimal projection needed; introducing raw SQL as a first-of-its-kind pattern for one metric felt like more risk than the small compute it would save at this data volume.
+4. **Artist utilization** -- `Appointment.groupBy(['artistId'])` count, scoped to `startTime` (not `createdAt`) within the range -- "how many sessions is this artist actually booked for in this window," not "how many appointment records were created in this window." True DB-level aggregate, no raw SQL needed.
+5. **Deposit conversion** -- `paidManually` true ÷ total `DepositForm` rows for the studio (all-time, see above), plus avg `paidAt − createdAt` over the paid ones.
+6. **Gift card liability** -- `GiftCard.aggregate(_sum: amountCents)` where `status = ACTIVE` **and** (`expiresAt` null or `>= now`) -- the extra expiry check guards the up-to-24-hour window before the existing daily `giftCardExpirationSweep` cron job would have flipped a stale card to EXPIRED; a true DB-level `_sum`, no raw SQL.
+
+## A real bug the manual spot-check caught
+
+Two paid `DepositForm` rows in the dev seed data have `paidAt` set 1-3 days **before** `createdAt` (backdated fixture data, not reachable through the real `mark-paid` route, which always stamps `paidAt: new Date()` at call time -- confirmed by reading that route). The initial avg-time-to-payment implementation clamped any sub-hour result to a floor of 1 minute, which silently turned the resulting negative average into a falsely-plausible **"1m"** -- reading as an impressively fast (and wrong) real number instead of an obviously-anomalous one. Caught via the required manual spot-check, not assumed correct. Fixed: `formatHours` (`Dashboard.tsx`) now buckets on `Math.abs(hours)` for the m/h/d unit choice but keeps the sign, so the same dev-data anomaly now renders `-2.0d` -- visibly wrong instead of invisibly wrong. This only affects this specific dev-seed anomaly; every value from the real `mark-paid` flow is non-negative by construction.
+
+## Frontend
+
+`apps/web/src/pages/Dashboard.tsx` rewritten: a `DateRangePresetFilter` (new component, same button+popover shape as `MultiSelectFilter.tsx`) sits in one row above the whole grid, per the dataviz skill's own filter-composition guidance -- presets (Last 7/30/90 days) listed as rows with a bold checkmark on the active one, a custom start/end range tucked behind a hairline in the footer. `keepPreviousData` (TanStack Query v5) keeps the previous render on screen (no skeleton flash) while a range change refetches; the very first load shows the existing `SkeletonCards`.
+
+Two of the six cards are real charts (funnel, artist utilization) -- both single-series magnitude comparisons, built as one new shared `HorizontalBarList` component: bars capped at 12px thick, 4px rounded data-end / square baseline (`rounded-r`, never `rounded-full`), one hue throughout (`bg-accent`, so it repaints automatically with whichever theme preset the studio has picked), no legend needed for a single series, every value direct-labeled at the tip rather than gated behind hover, a brightness-lift on hover/focus so the mark still visibly responds. The other four are stat-tile-style cards (hero number + secondary context), matching `choosing-a-form.md`'s own "a single ratio/current value is a stat tile, not a one-bar chart" guidance. The Lost/Cold Rate breakdown reuses the app's existing status colors (danger/warning/success) for three small labeled dots -- ran these through the skill's own `validate_palette.js` against the app's dark card surface (`#17171a`): FAILs the lightness-band check and WARNs on CVD separation between the two closest hues. Not changed: these are the app's pre-existing, already-shipped-everywhere semantic tokens (`StatusPill`, the conversation ring colors from Package H), not a new categorical palette this session is free to redesign, and every dot already ships with a text label right next to it (never color-alone), which is exactly the validator's own stated carve-out for a borderline CVD pair ("legal only with secondary encoding").
+
+## Verification
+
+**Manual spot-checks against real seeded data**, each via an independent code path (not the same query being asked to agree with itself):
+- Response count (7): re-derived by fetching each of the 10 estimate-sent inquiries' own detail endpoint individually and counting non-null `estimateRespondedAt` -- matched exactly.
+- Gift card liability ($835.00 / 8 cards): re-queried directly via a standalone script hitting the same dev DB with an independent filter expression -- matched exactly.
+- Artist utilization (Dev Artist One: 4, Maria Chen: 1): same independent-script approach -- matched exactly.
+- Funnel's "scheduled"/"completed" undercount (0 instead of 5/2) caught this way, root-caused to the `appointmentId`-only check missing the `sessions` relation, and fixed (see above).
+
+**Browser** (Playwright, since `chromium-cli` isn't available on this Windows environment -- adapted the fallback the run skill itself names, plain `chromium` launch against a second local dev-server pair on scratch ports 4001/5180, `VITE_API_URL` pointed at the scratch API so as not to touch the other concurrent session's servers on :4000/:5173):
+- Logged in as `owner@dev-studio.test`, landed on `/dashboard`, all six cards rendered with real numbers matching the API responses exactly. Zero console errors.
+- Switched the preset to "Last 7 days": button label and range caption updated correctly; funnel/lost-rate/artist-utilization numbers stayed identical to the 30-day view -- initially looked like a stale-filter bug, but a direct API call against the same narrower range confirmed it's real: every one of this dev studio's 24 inquiries happens to have been created in the last 7 days (heavy concurrent-session testing activity this week), not a bug.
+- Applied a custom range (2020-01-01 to 2020-01-02, before any seed data existed): every range-scoped card correctly went to zero/em-dash/"No appointments scheduled in this range", while Deposit Conversion and Gift Card Liability correctly stayed unchanged -- proving the two non-ranged cards are genuinely unaffected and the four ranged ones are genuinely re-querying, not cached.
+- Page loaded and re-rendered within under a second on each range change against this data volume.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) -- clean. `npm run build` (web) -- clean.
+
+## Commit
+
+`26712b7` -- Package K: real dashboard metrics replacing the static mockup.
+
+## Cleanup
+
+Both scratch dev servers (API :4001, web :5180) stopped; the API one's `tsx watch` child again outlived the background-task stop and needed an explicit `Stop-Process -Force` by PID, same recurring pattern as prior sessions. The other concurrent session's API server on :4000 (a different PID than earlier in the day -- it had been restarted by that session in the meantime) was left running, untouched. Temporary verification scripts (`verify_gc.ts`, `verify_au.ts`, `check_deposits.ts`) were created directly in `apps/api/` for one-off spot-checks against the real Prisma client and deleted immediately after each use -- none left behind. Playwright itself was installed ad hoc into the scratchpad directory (not added as a project dependency) since `chromium-cli` wasn't available; screenshots and the driver script remain in the scratchpad, not the repo. One new gift card issued to an existing seeded client (Emily Rodriguez) during this same conversation's earlier Package J verification is reflected in this session's real gift-card-liability total ($835.00 across 8 cards) -- pre-existing test data, not created for this package, left as-is.
+
