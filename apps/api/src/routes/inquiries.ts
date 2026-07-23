@@ -477,7 +477,7 @@ router.get("/:id", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async 
 // Detail-field edits only -- status transitions stay in their own dedicated
 // routes above/below (assign, respond, schedule, waitlist), never here.
 const REQUIRED_STRING_FIELDS = ["description", "colorOrBlackGrey", "placement", "estimatedSize"] as const;
-const NULLABLE_STRING_FIELDS = ["budget", "desiredTiming", "notes"] as const;
+const NULLABLE_STRING_FIELDS = ["budget", "desiredTiming"] as const;
 const NUMERIC_FIELDS = [
   "priceEstimateLow",
   "priceEstimateHigh",
@@ -503,7 +503,8 @@ router.patch("/:id", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), asyn
   // client actually paid a deposit against -- staff can still see it, but
   // editing it after the fact would silently rewrite the number the client
   // agreed to. Only blocks the estimate fields specifically; description/
-  // placement/budget/etc. and the new notes field above stay editable.
+  // placement/budget/etc. stay editable. Package L's InquiryNote entries
+  // are a separate log with their own routes, not covered by this route.
   const editsEstimate = NUMERIC_FIELDS.some((field) => body[field] !== undefined);
   if (editsEstimate && PROJECT_STATUSES.includes(inquiry.status)) {
     return res.status(400).json({
@@ -1606,6 +1607,149 @@ router.get("/:id/delete-preview", requireAuth, requireRole(Role.OWNER), async (r
 
   const summary = await gatherInquiryDeletionSummary(id);
   res.json(summary);
+});
+
+const NOTE_AUTHOR_SELECT = { select: { id: true, name: true, email: true } } as const;
+
+// RichTextEditor's own empty state is "<p></p>", not "" -- a plain
+// .trim().length check alone would accept that as valid content and save
+// a visibly-blank note. Same tag-stripping approach as Settings.tsx's own
+// stripHtmlPreview (client-side preview text), just used here to test for
+// blankness rather than to render a preview.
+function isBlankHtml(html: string): boolean {
+  return html.replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim().length === 0;
+}
+
+// Manually-written commentary log -- a dedicated GET rather than folding
+// into GET /:id, since bodyHtml can grow (rich text, several entries) and
+// most callers of the inquiry detail fetch don't need it on every load.
+// Same OWNER/FRONT_DESK gate as GET /:id itself (Package L: "ARTIST has no
+// access, matches page-level gating") -- an ARTIST can't load the inquiry
+// detail page at all, so they never reach this route either.
+router.get("/:id/notes", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { id }, select: { studioId: true } });
+  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  const notes = await prisma.inquiryNote.findMany({
+    where: { inquiryId: id },
+    include: { author: NOTE_AUTHOR_SELECT },
+    orderBy: { createdAt: "desc" },
+  });
+
+  res.json(notes);
+});
+
+router.post("/:id/notes", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+  const { bodyHtml } = req.body ?? {};
+
+  if (typeof bodyHtml !== "string" || isBlankHtml(bodyHtml)) {
+    return res.status(400).json({ error: "bodyHtml is required" });
+  }
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { id }, select: { studioId: true } });
+  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  const note = await prisma.inquiryNote.create({
+    data: {
+      studioId: req.user!.studioId,
+      inquiryId: id,
+      authorId: req.user!.userId,
+      bodyHtml: bodyHtml.trim(),
+    },
+    include: { author: NOTE_AUTHOR_SELECT },
+  });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "InquiryNote",
+    entityId: note.id,
+    action: "create",
+    changes: { inquiryId: id },
+  });
+
+  res.status(201).json(note);
+});
+
+// Edit or delete: the note's own author, or any OWNER (not just an OWNER
+// who happens to be assigned to this inquiry -- same "OWNER can always
+// act" precedent as every other author-scoped permission in this app).
+// FRONT_DESK can only touch their own notes; an ARTIST never reaches this
+// route at all (role gate below), consistent with GET/POST above.
+function canModifyNote(note: { authorId: string }, req: import("express").Request): boolean {
+  return note.authorId === req.user!.userId || req.user!.role === Role.OWNER;
+}
+
+router.patch("/:id/notes/:noteId", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+  const noteId = req.params.noteId as string;
+  const { bodyHtml } = req.body ?? {};
+
+  if (typeof bodyHtml !== "string" || isBlankHtml(bodyHtml)) {
+    return res.status(400).json({ error: "bodyHtml is required" });
+  }
+
+  const note = await prisma.inquiryNote.findUnique({ where: { id: noteId } });
+  if (!note || note.studioId !== req.user!.studioId || note.inquiryId !== id) {
+    return res.status(404).json({ error: "Note not found" });
+  }
+
+  if (!canModifyNote(note, req)) {
+    return res.status(403).json({ error: "Only this note's author or an OWNER can edit it" });
+  }
+
+  const trimmed = bodyHtml.trim();
+
+  const updated = await prisma.inquiryNote.update({
+    where: { id: noteId },
+    data: { bodyHtml: trimmed },
+    include: { author: NOTE_AUTHOR_SELECT },
+  });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "InquiryNote",
+    entityId: noteId,
+    action: "update",
+    changes: diffObjects(note, { bodyHtml: trimmed }, ["bodyHtml"]),
+  });
+
+  res.json(updated);
+});
+
+router.delete("/:id/notes/:noteId", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+  const noteId = req.params.noteId as string;
+
+  const note = await prisma.inquiryNote.findUnique({ where: { id: noteId } });
+  if (!note || note.studioId !== req.user!.studioId || note.inquiryId !== id) {
+    return res.status(404).json({ error: "Note not found" });
+  }
+
+  if (!canModifyNote(note, req)) {
+    return res.status(403).json({ error: "Only this note's author or an OWNER can delete it" });
+  }
+
+  await prisma.inquiryNote.delete({ where: { id: noteId } });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "InquiryNote",
+    entityId: noteId,
+    action: "delete",
+    changes: { inquiryId: id, deletedBodyHtml: note.bodyHtml },
+  });
+
+  res.json({ success: true });
 });
 
 export default router;

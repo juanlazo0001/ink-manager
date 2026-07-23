@@ -123,6 +123,7 @@ model Studio {
   locations          Location[]
   rolePermissions    RolePermission[]
   inquiries          Inquiry[]
+  inquiryNotes       InquiryNote[]
   auditLogs          AuditLog[]
   giftCards          GiftCard[]
   settings           StudioSettings?
@@ -222,6 +223,7 @@ model User {
   sectionSeens            SectionSeen[]
   staffConversation       Conversation?             @relation("StaffConversation")
   authoredMessages        Message[]                 @relation("MessageAuthor")
+  authoredInquiryNotes    InquiryNote[]              @relation("InquiryNoteAuthor")
   conversationReads       ConversationRead[]
   conversationParticipant ConversationParticipant[]
   createdConversationTags ConversationTag[]
@@ -523,12 +525,6 @@ model Inquiry {
   lostReason             String?
   lostAt                 DateTime?
 
-  // Free-text staff notes -- internal only, never shown to the client or
-  // included in the artist share projection. Same plain single-field
-  // pattern as Appointment.notes/PersonalTask.notes elsewhere in this
-  // schema, not a timestamped log.
-  notes String?
-
   // Soft, reversible hide -- same pattern as Client.archivedAt.
   archivedAt DateTime?
 
@@ -553,11 +549,44 @@ model Inquiry {
 
   depositForm DepositForm?
 
+  notes InquiryNote[]
+
   @@index([studioId])
   @@index([studioId, status])
   @@index([clientId])
   @@index([studioId, createdAt])
   @@index([assignedArtistId, createdAt])
+}
+
+// Manually-written staff commentary log on an inquiry -- deliberately
+// separate from AuditLog (system-generated, one row per state change,
+// never hand-authored) and rendered as its own distinct feed, never
+// merged into the audit trail display. bodyHtml is stored raw, exactly
+// like every other rich-text field in this schema (CustomPolicy,
+// StudioSettings' policy fields) -- sanitization happens entirely
+// client-side at render time via sanitizeHtml.ts, never on write.
+// Replaces the old single-field Inquiry.notes (one unauthored, untimed
+// text blob) -- the one inquiry that had real content in that field was
+// migrated into a note here (authored by that studio's OWNER, timestamped
+// at the inquiry's own updatedAt, prefixed "Migrated from the previous
+// single-note field:") before the old column was dropped.
+model InquiryNote {
+  id        String   @id @default(cuid())
+  bodyHtml  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  inquiryId String
+  inquiry   Inquiry @relation(fields: [inquiryId], references: [id])
+
+  authorId String
+  author   User   @relation("InquiryNoteAuthor", fields: [authorId], references: [id])
+
+  @@index([studioId])
+  @@index([inquiryId, createdAt])
 }
 
 model StudioSettings {
