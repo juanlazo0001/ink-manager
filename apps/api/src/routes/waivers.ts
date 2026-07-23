@@ -7,6 +7,8 @@ import { logAudit } from "../lib/audit";
 import { isAtLeast18, validateClauseInitials, validateHealthAnswers } from "../lib/waivers";
 import { normalizePhone } from "../lib/phone";
 import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
+import { shortenUrl } from "../lib/shortLinks";
+import { PUBLIC_APP_URL } from "../lib/publicUrl";
 
 function isExpiredOrInvalid(waiver: { signedAt: Date | null; tokenExpiresAt: Date | null } | null) {
   if (!waiver) {
@@ -205,7 +207,14 @@ staffRouter.get("/:id", async (req, res) => {
     return res.status(404).json({ error: "Waiver not found" });
   }
 
-  res.json(waiver);
+  // Same "active" gate and shortLinks.shortenUrl clients.ts's own
+  // shareable-links composer already uses for this exact waiver -- returns
+  // the same short code, not a fresh one. The appointment page previously
+  // reconstructed a full-length URL client-side from the raw token instead.
+  const active = waiver.status === "PENDING" && !!waiver.token && !!waiver.tokenExpiresAt && waiver.tokenExpiresAt > new Date();
+  const signingUrl = active ? await shortenUrl(`${PUBLIC_APP_URL}/waiver/${waiver.token}`) : null;
+
+  res.json({ ...waiver, signingUrl });
 });
 
 staffRouter.post("/:id/verify", async (req, res) => {

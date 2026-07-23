@@ -289,6 +289,7 @@ const INQUIRY_INCLUDE = {
     select: {
       id: true,
       token: true,
+      tokenExpiresAt: true,
       sessionNumber: true,
       depositAmount: true,
       feeAmount: true,
@@ -477,7 +478,26 @@ router.get("/:id", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async 
     return res.status(404).json({ error: "Inquiry not found" });
   }
 
-  res.json(inquiry);
+  // Same shortLinks.shortenUrl every other public link on this server goes
+  // through (SMS sends, the client-facing shareable-links composer) --
+  // idempotent by target URL, so this returns the exact same short code
+  // already handed out elsewhere for the same token, not a new one. The
+  // page previously reconstructed a full-length `${origin}/estimate/...`
+  // URL client-side from the raw token instead, which is what a client
+  // actually saw if they opened the "Share this link" box on a page reload
+  // rather than right after the initial send.
+  const now = new Date();
+  const estimateActive = !!(inquiry.estimateToken && inquiry.estimateTokenExpiresAt && inquiry.estimateTokenExpiresAt > now);
+  const estimateUrl = estimateActive ? await shortenUrl(`${PUBLIC_APP_URL}/estimate/${inquiry.estimateToken}`) : null;
+
+  const depositForms = await Promise.all(
+    inquiry.depositForms.map(async (form) => {
+      const active = !form.signedAt && form.tokenExpiresAt > now;
+      return { ...form, url: active ? await shortenUrl(`${PUBLIC_APP_URL}/deposit/${form.token}`) : null };
+    }),
+  );
+
+  res.json({ ...inquiry, estimateUrl, depositForms });
 });
 
 // Detail-field edits only -- status transitions stay in their own dedicated

@@ -46,6 +46,16 @@ const STATUS_TONE: Record<string, Tone> = {
   COMPLETED: 'progress',
   CANCELLED: 'neutral',
   NO_SHOW: 'danger',
+  // Synthetic keys from describeAppointmentStatus (lib/format.ts) -- never
+  // real AppointmentStatus values, only ever passed as the `status` prop
+  // to substitute a REQUESTED/CONFIRMED pill's tone+label when there's an
+  // unsigned waiver or an unchecked-out session. CHECKOUT_OVERDUE (>24h
+  // past the appointment's own end time with no checkout) is the one case
+  // that escalates to danger/red -- everything else here is still just
+  // "needs an action soon", same warning yellow as other _PENDING statuses.
+  WAIVER_PENDING: 'warning',
+  CHECKOUT_PENDING: 'warning',
+  CHECKOUT_OVERDUE: 'danger',
 
   // Gift cards
   ACTIVE: 'success',

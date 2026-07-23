@@ -26,7 +26,7 @@ import StatusPill from '../components/StatusPill'
 import { ArtistAvatar, FlatArtistAvatar } from '../components/ArtistAvatar'
 import ArtistSelect from '../components/ArtistSelect'
 import { apiFetch, ApiError } from '../lib/api'
-import { formatDateTime } from '../lib/format'
+import { describeAppointmentStatus, formatDateTime } from '../lib/format'
 import { useAuth } from '../context/useAuth'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { appointmentsQueryKey, appointmentsRangeQueryKey } from '../lib/queryKeys'
@@ -137,6 +137,8 @@ interface AppointmentApi {
   startTime: string
   endTime: string
   status: string
+  checkedOutAt: string | null
+  liabilityWaiver: { status: string } | null
   client: { id: string; firstName: string; lastName: string } | null
   artist: { id: string; name: string; avatarUrl: string | null }
   inquiry: { id: string; label: string } | null
@@ -681,7 +683,7 @@ export default function Calendar() {
             </div>
             <div>
               <p className="text-xs font-medium uppercase tracking-wide text-fg-muted">Status</p>
-              <StatusPill status={previewAppointment.status} />
+              <StatusPill status={describeAppointmentStatus(previewAppointment)} />
             </div>
             <Link
               to={`/appointments/${previewAppointment.id}`}

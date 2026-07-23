@@ -13,7 +13,7 @@ import DateAndTimeRangeFields, {
   type DateAndTimeRangeValue,
 } from '../components/DateAndTimeRangeFields'
 import { apiFetch, ApiError } from '../lib/api'
-import { formatDateTime, formatPhoneInput, formatStatus } from '../lib/format'
+import { describeAppointmentStatus, formatDateTime, formatPhoneInput, formatStatus } from '../lib/format'
 import { describeSendResult, type ClientSendResult } from '../lib/sendResult'
 import { formatCents, dollarsToCents } from '../lib/money'
 import { ArrowLeftIcon, CheckIcon, ClientsIcon, CopyIcon, MessageIcon, MoreIcon } from '../components/icons'
@@ -95,6 +95,7 @@ interface WaiverDetail {
   id: string
   status: string
   token: string | null
+  signingUrl: string | null
   legalName: string | null
   dateOfBirth: string | null
   emergencyContactName: string | null
@@ -533,20 +534,30 @@ export default function AppointmentDetail() {
                       </button>
                     )}
                     {canManage ? (
-                      <select
-                        value={appointment.status}
-                        disabled={updatingStatus}
-                        onChange={(event) => handleStatusChange(event.target.value)}
-                        className="rounded-full border border-border bg-surface-inset px-3 py-1.5 text-xs font-medium text-fg-secondary focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-50"
-                      >
-                        {APPOINTMENT_STATUSES.map((status) => (
-                          <option key={status} value={status}>
-                            {formatStatus(status)}
-                          </option>
-                        ))}
-                      </select>
+                      <>
+                        <select
+                          value={appointment.status}
+                          disabled={updatingStatus}
+                          onChange={(event) => handleStatusChange(event.target.value)}
+                          className="rounded-full border border-border bg-surface-inset px-3 py-1.5 text-xs font-medium text-fg-secondary focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-50"
+                        >
+                          {APPOINTMENT_STATUSES.map((status) => (
+                            <option key={status} value={status}>
+                              {formatStatus(status)}
+                            </option>
+                          ))}
+                        </select>
+                        {/* The dropdown above edits the raw status; this
+                            pill is the derived one (waiver/checkout
+                            urgency) -- only shown when it actually differs,
+                            so a normal REQUESTED/CONFIRMED appointment
+                            doesn't get a redundant second badge. */}
+                        {describeAppointmentStatus(appointment) !== appointment.status && (
+                          <StatusPill status={describeAppointmentStatus(appointment)} />
+                        )}
+                      </>
                     ) : (
-                      <StatusPill status={appointment.status} />
+                      <StatusPill status={describeAppointmentStatus(appointment)} />
                     )}
                     {canManage && (
                       <div className="relative">
@@ -766,20 +777,20 @@ export default function AppointmentDetail() {
                       )}
                     </div>
 
-                    {appointment.liabilityWaiver.status === 'PENDING' && canManage && waiverDetail?.token && (
+                    {appointment.liabilityWaiver.status === 'PENDING' && canManage && waiverDetail?.signingUrl && (
                       <div className="mt-3 rounded-lg border border-border p-3">
                         <p className="mb-2 text-xs text-fg-muted">Waiting for the client to sign.</p>
                         <div className="flex items-center gap-2">
                           <input
                             type="text"
                             readOnly
-                            value={`${window.location.origin}/waiver/${waiverDetail.token}`}
+                            value={waiverDetail.signingUrl}
                             onFocus={(event) => event.target.select()}
                             className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:outline-none"
                           />
                           <button
                             type="button"
-                            onClick={() => handleCopyLink(`${window.location.origin}/waiver/${waiverDetail.token}`)}
+                            onClick={() => handleCopyLink(waiverDetail.signingUrl!)}
                             aria-label={copied ? 'Copied' : 'Copy link'}
                             title={copied ? 'Copied!' : 'Copy link'}
                             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-fg-secondary transition hover:bg-surface-raised hover:text-fg"

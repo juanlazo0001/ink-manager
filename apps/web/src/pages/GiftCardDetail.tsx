@@ -20,6 +20,7 @@ interface GiftCard {
   appointment: { id: string; startTime: string; endTime: string } | null
   issuedBy: { id: string; name: string | null; email: string }
   exemptionReason: string | null
+  publicUrl: string
 }
 
 export default function GiftCardDetail() {
@@ -70,7 +71,10 @@ export default function GiftCardDetail() {
     }
   }, [id, refreshIndex])
 
-  const publicUrl = card ? `${window.location.origin}/gift-card/${card.code}` : null
+  // The API's own shortLinks.shortenUrl -- same short code the client's
+  // text-receipt SMS and the shareable-links composer already send them,
+  // not a full-length URL reconstructed from the raw code client-side.
+  const publicUrl = card?.publicUrl ?? null
 
   async function handleCopyLink() {
     if (!publicUrl) return

@@ -194,7 +194,14 @@ router.get("/:id", async (req, res) => {
   }
 
   const synced = await syncExpiredStatus(card);
-  res.json({ ...card, status: synced.status });
+  // Same shortLinks.shortenUrl every other public link goes through --
+  // idempotent by target URL, so this is the same short code already
+  // handed out for this card's link elsewhere (SMS text receipt, the
+  // client's shareable-links composer), not a fresh one. The detail page
+  // previously reconstructed a full-length URL client-side from the raw
+  // code instead.
+  const publicUrl = await shortenUrl(`${PUBLIC_APP_URL}/gift-card/${card.code}`);
+  res.json({ ...card, status: synced.status, publicUrl });
 });
 
 const TEXT_RECEIPT_ERROR_MESSAGES: Record<string, string> = {

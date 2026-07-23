@@ -156,6 +156,10 @@ router.get("/", requirePermission("appointments.view"), async (req, res) => {
       artist: { select: { id: true, user: { select: { name: true, email: true, avatarUrl: true } } } },
       client: { select: { id: true, firstName: true, lastName: true } },
       inquiryProject: { select: { id: true, description: true } },
+      // Derived status (Calendar/ClientDetail's status pills) needs this to
+      // tell "Waiver Pending" apart from a plain CONFIRMED/REQUESTED --
+      // checkedOutAt already comes through as a plain scalar column below.
+      liabilityWaiver: { select: { status: true } },
     },
     orderBy: { startTime: "asc" },
     take: hasValidRange ? 500 : 100,

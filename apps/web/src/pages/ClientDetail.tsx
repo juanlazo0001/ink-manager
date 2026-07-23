@@ -9,7 +9,7 @@ import PhoneInput from '../components/PhoneInput'
 import ClientComparisonView from '../components/ClientComparisonView'
 import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import { apiFetch, ApiError } from '../lib/api'
-import { formatDateTime, formatPhoneInput, formatStatus, isValidPhoneDigits } from '../lib/format'
+import { describeAppointmentStatus, formatDateTime, formatPhoneInput, formatStatus, isValidPhoneDigits } from '../lib/format'
 import { describeSendResult, type ClientSendResult } from '../lib/sendResult'
 import {
   ArrowLeftIcon,
@@ -122,6 +122,8 @@ interface Appointment {
   status: string
   finalCostCents: number | null
   closeoutNotes: string | null
+  checkedOutAt: string | null
+  liabilityWaiver: { status: string } | null
   // Matches GET /appointments's response shape (Phase UI-5) -- a display
   // name, not a nested user/email chain.
   artist: { id: string; name: string; avatarUrl: string | null } | null
@@ -1807,7 +1809,7 @@ export default function ClientDetail() {
                             </td>
                             <td className="py-3 text-fg-secondary">{formatDateTime(appointment.startTime)}</td>
                             <td className="py-3">
-                              <StatusPill status={appointment.status} />
+                              <StatusPill status={describeAppointmentStatus(appointment)} />
                             </td>
                             <td className="hidden py-3 text-fg-secondary md:table-cell">
                               {appointment.finalCostCents != null ? formatCents(appointment.finalCostCents) : '—'}

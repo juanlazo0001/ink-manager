@@ -28,6 +28,38 @@ export function describeInquiryStatus(inquiry: {
   return formatStatus(inquiry.status)
 }
 
+// An appointment can be structurally REQUESTED/CONFIRMED while still
+// needing staff attention -- an unsigned waiver, or a session that already
+// happened but hasn't been checked out -- which the raw AppointmentStatus
+// enum has no way to represent on its own. Unlike describeInquiryStatus
+// above, this returns a synthetic status KEY (mapped in StatusPill's
+// STATUS_TONE, never a real AppointmentStatus value), not a pre-formatted
+// label, since the pill's color needs to change too (red once checkout has
+// been overdue more than 24h), not just its text -- pass the result
+// straight into <StatusPill status={...} />, no label override needed.
+// COMPLETED/CANCELLED/NO_SHOW are terminal and never overridden.
+export function describeAppointmentStatus(appointment: {
+  status: string
+  checkedOutAt?: string | null
+  endTime: string
+  liabilityWaiver?: { status: string } | null
+}): string {
+  if (appointment.status !== 'REQUESTED' && appointment.status !== 'CONFIRMED') {
+    return appointment.status
+  }
+
+  if (!appointment.checkedOutAt && new Date(appointment.endTime) < new Date()) {
+    const hoursSinceEnd = (Date.now() - new Date(appointment.endTime).getTime()) / (1000 * 60 * 60)
+    return hoursSinceEnd > 24 ? 'CHECKOUT_OVERDUE' : 'CHECKOUT_PENDING'
+  }
+
+  if (appointment.liabilityWaiver?.status === 'PENDING') {
+    return 'WAIVER_PENDING'
+  }
+
+  return appointment.status
+}
+
 // Elapsed time between two ISO timestamps, e.g. "3h 12m" or "2d 4h" --
 // used for the estimate timeline's "opened 3h 12m after sending" style notes.
 export function formatDuration(fromIso: string, toIso: string): string {

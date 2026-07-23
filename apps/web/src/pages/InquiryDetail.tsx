@@ -58,6 +58,7 @@ interface Inquiry {
   createdAt: string
   assignedAt: string | null
   estimateToken: string | null
+  estimateUrl: string | null
   estimateSentAt: string | null
   estimateOpenedAt: string | null
   estimateRespondedAt: string | null
@@ -82,6 +83,7 @@ interface Inquiry {
   depositForms: {
     id: string
     token: string
+    url: string | null
     sessionNumber: number
     depositAmount: number
     feeAmount: number
@@ -473,6 +475,11 @@ export default function InquiryDetail() {
   const [scheduling, setScheduling] = useState(false)
   const [scheduleError, setScheduleError] = useState<string | null>(null)
   const [bufferWarning, setBufferWarning] = useState<string | null>(null)
+  // Own state, not the deposit-flow's suggestedTimeCandidates above -- that
+  // one is scoped to isNewDepositSession (pre-payment) and would go stale
+  // by the time the inquiry actually reaches SCHEDULING.
+  const [scheduleSuggestedTimes, setScheduleSuggestedTimes] = useState<SuggestedTimeCandidate[]>([])
+  const [scheduleSuggestLoading, setScheduleSuggestLoading] = useState(false)
 
   const [showWaitlistForm, setShowWaitlistForm] = useState(false)
   const [waitlistNote, setWaitlistNote] = useState('')
@@ -1037,6 +1044,47 @@ export default function InquiryDetail() {
     inquiry?.timeEstimateHoursMax,
   ])
 
+  // Scheduling section: the same getSuggestedTimes source AppointmentForm.tsx
+  // uses for a brand-new appointment -- this inquiry already has an assigned
+  // artist and time estimate by the time it reaches SCHEDULING, so there's
+  // no reason the widget that actually books the session shouldn't offer
+  // the same suggestions.
+  useEffect(() => {
+    if (inquiry?.status !== 'SCHEDULING' || inquiry.appointment) return
+    if (!inquiry.assignedArtist || inquiry.timeEstimateHoursMin == null || inquiry.timeEstimateHoursMax == null) {
+      setScheduleSuggestedTimes([])
+      return
+    }
+
+    let ignore = false
+    setScheduleSuggestLoading(true)
+    const durationMinutes = Math.round(((inquiry.timeEstimateHoursMin + inquiry.timeEstimateHoursMax) / 2) * 60)
+
+    apiFetch<SuggestedTimeCandidate[]>(
+      `/scheduling/suggested-times?artistId=${inquiry.assignedArtist.id}&durationMinutes=${durationMinutes}`,
+    )
+      .then((candidates) => {
+        if (!ignore) setScheduleSuggestedTimes(candidates)
+      })
+      .catch(() => {
+        if (!ignore) setScheduleSuggestedTimes([])
+      })
+      .finally(() => {
+        if (!ignore) setScheduleSuggestLoading(false)
+      })
+
+    return () => {
+      ignore = true
+    }
+  }, [
+    inquiry?.id,
+    inquiry?.status,
+    inquiry?.appointment,
+    inquiry?.assignedArtist?.id,
+    inquiry?.timeEstimateHoursMin,
+    inquiry?.timeEstimateHoursMax,
+  ])
+
   function handleOpenSuggestTime() {
     // Seed the shared fields from whatever's already set on the current
     // unsigned session (editing an existing tentative time), or blank
@@ -1139,13 +1187,14 @@ export default function InquiryDetail() {
     }
   }
 
-  const estimateUrl = inquiry?.estimateToken ? `${window.location.origin}/estimate/${inquiry.estimateToken}` : null
+  // Both already the API's own shortLinks.shortenUrl output -- the same
+  // short code the client's text-receipt SMS and shareable-links composer
+  // already send them, not a full-length URL reconstructed from the raw
+  // token client-side.
+  const estimateUrl = inquiry?.estimateUrl ?? null
   // Only ever the current unsigned session's link -- a signed session has
   // nothing left to share.
-  const depositUrl =
-    latestDepositForm && !latestDepositForm.signedAt
-      ? `${window.location.origin}/deposit/${latestDepositForm.token}`
-      : null
+  const depositUrl = latestDepositForm && !latestDepositForm.signedAt ? latestDepositForm.url : null
 
   return (
     <div className="flex min-h-screen bg-bg text-fg">
@@ -1971,7 +2020,65 @@ export default function InquiryDetail() {
 
                   {inquiry.status === 'SCHEDULING' && !inquiry.appointment && (
                     <>
+                      {(!inquiry.assignedArtist ||
+                        inquiry.timeEstimateHoursMin == null ||
+                        inquiry.timeEstimateHoursMax == null) && (
+                        <p className="mt-4 text-xs text-fg-muted">
+                          Add an assigned artist and a time estimate to see suggested times.
+                        </p>
+                      )}
+
+                      {scheduleSuggestLoading && (
+                        <p className="mt-4 text-sm text-fg-secondary">Checking availability…</p>
+                      )}
+
+                      {!scheduleSuggestLoading && scheduleSuggestedTimes.length > 0 && (
+                        <div className="mt-4 rounded-xl border border-accent/30 bg-accent/5 p-3">
+                          <p className="mb-1.5 text-sm font-semibold text-fg">Suggested times</p>
+                          <div className="flex flex-wrap gap-2">
+                            {scheduleSuggestedTimes.map((candidate) => {
+                              const parts = isoToTimeRangeParts(candidate.startTime, candidate.endTime)
+                              const isSelected =
+                                scheduleTimeRange.date === parts.date &&
+                                scheduleTimeRange.startTime === parts.startTime &&
+                                scheduleTimeRange.endTime === parts.endTime
+                              return (
+                                <button
+                                  key={candidate.startTime}
+                                  type="button"
+                                  onClick={() => setScheduleTimeRange(parts)}
+                                  className={[
+                                    'flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition',
+                                    isSelected
+                                      ? 'border-accent bg-accent/15 text-accent'
+                                      : 'border-border text-fg-secondary hover:bg-surface',
+                                  ].join(' ')}
+                                >
+                                  {formatDateTime(candidate.startTime)} – {formatDateTime(candidate.endTime)}
+                                  {candidate.hasBufferConflict && (
+                                    <span className="rounded-full bg-warning/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-warning">
+                                      Close
+                                    </span>
+                                  )}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {!scheduleSuggestLoading &&
+                        scheduleSuggestedTimes.length === 0 &&
+                        inquiry.assignedArtist &&
+                        inquiry.timeEstimateHoursMin != null &&
+                        inquiry.timeEstimateHoursMax != null && (
+                          <p className="mt-4 text-xs text-fg-muted">
+                            No open slots found in the next few weeks — pick a time manually below.
+                          </p>
+                        )}
+
                       <div className="mt-4">
+                        <p className="mb-1.5 text-xs font-medium text-fg-secondary">Or pick a specific time</p>
                         <DateAndTimeRangeFields value={scheduleTimeRange} onChange={setScheduleTimeRange} />
                       </div>
 
