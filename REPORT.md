@@ -1086,4 +1086,71 @@ The status gate widened from `DEPOSIT_PENDING`-only to also accept `PROJECT_STAT
 
 Both scratch dev servers (API :4001, web :5182) stopped; same recurring `tsx watch` child-outlives-the-task-stop pattern as every prior session, resolved with an explicit `Stop-Process -Force` by PID. The other concurrent session's server on :4000 left untouched. Playwright driver scripts and screenshots stayed in the scratchpad only, deleted at the end; none committed. Test data created during verification (three deposit forms and two gift cards on the existing seeded "Emily Rodriguez" / "Signature pad test piece" inquiry) left in the dev database, consistent with the standing convention in every prior package's report.
 
+---
+
+# Package N — Checkout photos, organized by session
+
+Single session on `main`. One additive schema change: a new `AppointmentPhoto` model.
+
+## Investigation before writing any code
+
+Confirmed the existing Cloudinary signed-upload flow (`apps/api/src/routes/uploads.ts` issuing a folder-scoped signature via `cloudinary.utils.api_sign_request`, `apps/web/src/lib/cloudinary.ts` uploading directly to Cloudinary's API and returning the resulting `secure_url`) is already used for intake reference images, waiver ID images, and artist avatars, each with its own upload-signature route and its own Cloudinary folder. Reused this exact pattern rather than building a second upload mechanism: a new `GET /appointment-photo-signature` route scoped to `ink-manager/appointment-photos`, and a new `uploadAppointmentPhoto()` frontend helper that shares the same underlying upload call as `uploadPortfolioImage`. `apps/web/src/components/ImageUploadSection.tsx` (the shared drag-and-drop/preview/progress component already used by the intake form and inquiry image editors) needed one small change to support this reuse: an optional `uploadFn` prop, defaulting to the existing `uploadImageToCloudinary`, so a caller can swap in a different folder-scoped uploader without forking the component. Existing callers were grepped and confirmed unaffected (none pass the new prop, so they keep their original behavior).
+
+## Schema
+
+```prisma
+model AppointmentPhoto {
+  id         String   @id @default(cuid())
+  url        String
+  uploadedAt DateTime @default(now())
+
+  appointmentId String
+  appointment   Appointment @relation(fields: [appointmentId], references: [id])
+
+  uploadedById String
+  uploadedBy   User   @relation("AppointmentPhotoUploadedBy", fields: [uploadedById], references: [id])
+
+  @@index([appointmentId])
+}
+```
+
+`Appointment` gained a `photos AppointmentPhoto[]` relation; `User` gained the matching `uploadedAppointmentPhotos` back-relation. Migration `20260723193154_appointment_photos` generated pure `CREATE TABLE`/index/FK SQL, no data movement -- verified before applying.
+
+One FK consequence handled directly: `AppointmentPhoto.appointmentId` is `ON DELETE RESTRICT` (matching every other child-of-appointment table in this schema), so `gatherAppointmentDeletionSummary`'s preview gained a real `photos` count, and the appointment-deletion transaction now explicitly deletes an appointment's photos before the appointment row itself.
+
+## Routes
+
+`POST /appointments/:id/photos` and `DELETE /appointments/:id/photos/:photoId`, both `requireRole(OWNER, FRONT_DESK)` (matching this file's existing convention of `requireRole` rather than `requirePermission` for checkout/waiver actions) and both audited (`photos_added` with the new photo ids; `photo_deleted` with the photo's url and id). Upload accepts one or more already-uploaded Cloudinary URLs (the frontend does the actual upload via the signed-URL flow first; this route only persists the resulting `url`s). Delete is scoped through the appointment's `studioId` and 404s (not 403s) on a cross-studio id, consistent with every other studio-scoped lookup in this codebase.
+
+Photo viewing is not role-gated beyond normal appointment access -- `GET /appointments/:id` already returns `photos` in its existing include for anyone who can see the appointment at all (including ARTIST), since the task's access restriction ("OWNER/FRONT_DESK") was written for the mutating actions, not for read access to a photo that may already be visible elsewhere (e.g. the artist who took it). Confirmed live: ARTIST gets a 200 with `photos` populated on GET, and 403 on both POST and DELETE.
+
+`INQUIRY_INCLUDE.sessions` (in `inquiries.ts`, backing the Project page) gained a nested `photos` select, ordered by `uploadedAt desc` -- this is the only change needed to get session-grouped photos onto the Project page, since sessions there are just appointments already grouped by the existing UI.
+
+## Frontend
+
+- **Checkout flow** (`AppointmentDetail.tsx`): the checkout form gained an optional `ImageUploadSection` ("Finished tattoo photos (optional)"), staged locally and POSTed as a best-effort follow-up call after a successful checkout (matching the established best-effort-secondary-action pattern from Package J's auto-SMS-on-checkout) -- a failed photo save does not roll back or block the checkout itself.
+- **Add photos afterward**: a new, always-visible "Photos" card on the appointment detail page (independent of checkout state) with its own `ImageUploadSection` + "Save Photos" button for OWNER/FRONT_DESK, plus a hover-reveal delete button per photo. This is a second, separate upload flow from the checkout-time one (different local state, `addPhotosKey` bump to reset the upload widget after each save) so staff can attach photos to a session at any time, not only at the moment of checkout.
+- **Project page** (`InquiryDetail.tsx`): a new "Photos" card groups each session's photos under a "Session N -- [date]" heading (linking back to that appointment), only rendering sessions that actually have photos and hiding the whole card if none do -- matching the existing convention elsewhere on this page (e.g. Reference Images/Placement Photos) of hiding empty optional sections rather than showing an empty state.
+
+## Verification
+
+**PowerShell, direct API calls** (scratch API on port 4001, other concurrent session's server on :4000 left untouched):
+- FRONT_DESK: `POST .../photos` and `DELETE .../photos/:id` both succeeded (200), with corresponding `photos_added`/`photo_deleted` audit entries.
+- ARTIST: both routes correctly 403'd; `GET` on the same appointment still 200'd with `photos` populated (the deliberate read/write split above).
+- Cross-studio isolation: logged in as the seeded second studio's owner (`owner2@dev-studio2.test`) and attempted both `POST` and `DELETE` against studio 1's appointment/photo ids directly -- both 404'd, never a 403 that would confirm the resource's existence to an unauthorized studio.
+
+**Browser** (Playwright, `chromium-cli` unavailable on this Windows environment, same plain-`chromium.launch()` fallback as every prior session in this report): logged in as OWNER, opened an unchecked-out appointment with an active gift card, filled the final-cost field, attached a photo through the new checkout-time upload widget, watched it upload, and confirmed checkout -- the appointment correctly moved to Completed, the gift card to Redeemed, and the always-visible Photos card showed the one attached photo. Loaded the Project page for that appointment's inquiry and confirmed the photo appeared under a "SESSION 1 -- JUL 21, 2026, 10:00 AM" heading, matching the exact session it belonged to (screenshot confirmed visually). Returned to the now-completed appointment and used the separate "Add photos"/"Save Photos" controls to attach a second photo -- confirmed the count went from 1 to 2 without a page reload. Hovered the first thumbnail and clicked its delete button -- confirmed the count dropped back to 1. Zero console errors throughout. Independently cross-checked against the API directly (`GET /appointments/:id` for the final `photos` array, and `GET /audit?entityType=Appointment&entityId=...` for the full audit trail) rather than trusting the Activity History panel's own display alone (it renders only a partial slice) -- confirmed the surviving photo has a real Cloudinary URL, and the full audit log shows, in order: `photos_added` (checkout upload), `checkout`, `photos_added` (add-afterward), `photo_deleted` (browser delete), all correctly attributed to "Dev Owner".
+
+## Typechecks
+
+`npx tsc --noEmit` (api) -- clean. `npm run build` (web) -- clean.
+
+## Commit
+
+`d6cdd46` -- Package N: checkout photos, organized by session. Pushed immediately (`dfec104..d6cdd46`); no concurrent-session commits had landed in the meantime.
+
+## Cleanup
+
+Both scratch dev servers (API :4001, web :5183) stopped; the underlying `tsx watch`/vite child processes outlived `TaskStop` again as in every prior package, confirmed still holding their ports via `Get-NetTCPConnection` and force-killed by PID. The other concurrent session's server on :4000 left untouched. Playwright driver scripts and screenshots stayed in the scratchpad only, none committed. The one test photo that survived the add/delete verification sequence was left on the existing seeded "Emily Rodriguez" / "Signature pad test piece" appointment, consistent with the standing convention in every prior package's report of leaving legitimate dev-seed test data in place.
+
 
