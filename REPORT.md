@@ -926,3 +926,84 @@ Two of the six cards are real charts (funnel, artist utilization) -- both single
 
 Both scratch dev servers (API :4001, web :5180) stopped; the API one's `tsx watch` child again outlived the background-task stop and needed an explicit `Stop-Process -Force` by PID, same recurring pattern as prior sessions. The other concurrent session's API server on :4000 (a different PID than earlier in the day -- it had been restarted by that session in the meantime) was left running, untouched. Temporary verification scripts (`verify_gc.ts`, `verify_au.ts`, `check_deposits.ts`) were created directly in `apps/api/` for one-off spot-checks against the real Prisma client and deleted immediately after each use -- none left behind. Playwright itself was installed ad hoc into the scratchpad directory (not added as a project dependency) since `chromium-cli` wasn't available; screenshots and the driver script remain in the scratchpad, not the repo. One new gift card issued to an existing seeded client (Emily Rodriguez) during this same conversation's earlier Package J verification is reflected in this session's real gift-card-liability total ($835.00 across 8 cards) -- pre-existing test data, not created for this package, left as-is.
 
+
+---
+
+# Package L — Inquiry notes (free-form, timestamped, WYSIWYG)
+
+Single session on `main`. One schema addition (`InquiryNote`) plus a deliberate removal of the pre-existing `Inquiry.notes` column, via a two-phase migration -- see "The one judgment call" below for why this went beyond the task's own schema section.
+
+## Investigation before touching anything
+
+Confirmed no other session was mid-migration (`prisma migrate status` -- clean, schema in sync) before starting. Read `RichTextEditor.tsx` and `sanitizeHtml.ts` as instructed: the editor is a generic `value`/`onChange` Tiptap wrapper (bold/italic/underline/heading/lists/link, already used for `StudioSettings` policy fields), and sanitization is a single shared `sanitizeHtml()` (DOMPurify, a fixed tag/attribute allow-list) applied only at render time -- `apps/api/src/routes/customPolicies.ts`'s own comment confirms this app's standing convention: **HTML is stored raw and sanitized on render, never on write**. `InquiryNote.bodyHtml` follows that same convention -- no new sanitization mechanism invented.
+
+## The one judgment call: the pre-existing `Inquiry.notes` field
+
+`InquiryDetail.tsx` already had a "Notes" card bound to a legacy `Inquiry.notes` column (one plain-text blob, no author, no timestamp, no history -- added in an earlier phase, unrelated to this task). One inquiry in the dev DB had real content in it ("Client prefers afternoon appointments..."). Since Package L's new feed covers the identical conceptual need but richer, having both on the same page would mean two different "Notes" concepts side by side -- confusing, and the old one would become a silent dead end. Asked the user rather than assumed: chosen option was **replace the old field, migrating its one real row**.
+
+Executed as a two-phase migration to avoid data loss (Prisma refused to auto-drop a column with a non-null-value warning in this non-interactive environment, which is exactly the safety net that's supposed to catch this class of mistake):
+1. `20260723173712_add_inquiry_notes` -- additive only, creates `InquiryNote`. The Inquiry-side relation field was temporarily named `noteEntries` (a virtual, non-column Prisma field) to avoid colliding with the still-present `notes String?` column.
+2. A one-off `tsx` script read every inquiry with non-null `notes`, created one `InquiryNote` per row (authored by that studio's OWNER, `createdAt`/`updatedAt` backdated to the inquiry's own `updatedAt` as the best available proxy for when it was actually written, body prefixed `"Migrated from the previous single-note field:"` so the provenance is visible, not silently attributed as a fresh note). Verified the copied row against the source field before touching anything destructive.
+3. `20260723174119_drop_legacy_inquiry_notes` -- drops the old column (generated via `prisma migrate diff` + a hand-placed migration folder, applied with `prisma migrate deploy`, since `migrate dev`'s interactive data-loss prompt isn't available in this environment). Renamed the relation field `noteEntries` → `notes`.
+4. Grepped both `apps/api/src` and `apps/web/src` for every remaining reference to the removed field. Found and fixed one real breakage `tsc` didn't catch: `inquiries.ts`'s generic `PATCH /:id` route had `"notes"` in its loosely-typed `NULLABLE_STRING_FIELDS` allow-list (`Record<string, ...>`, not checked against Prisma's generated types) -- would have thrown a runtime Prisma validation error on any client still sending `{ notes: "..." }`. Removed it; `InquiryDetail.tsx`'s own `notesForm`/`handleSaveNotes`/etc. were deleted in the same pass since they're superseded entirely.
+
+## Schema
+
+```prisma
+model InquiryNote {
+  id        String   @id @default(cuid())
+  bodyHtml  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  studioId  String
+  studio    Studio   @relation(fields: [studioId], references: [id])
+  inquiryId String
+  inquiry   Inquiry  @relation(fields: [inquiryId], references: [id])
+  authorId  String
+  author    User     @relation("InquiryNoteAuthor", fields: [authorId], references: [id])
+}
+```
+
+## Routes (`apps/api/src/routes/inquiries.ts`)
+
+- `GET /inquiries/:id/notes` -- a dedicated endpoint rather than folding into `GET /:id` (bodyHtml can accumulate; most callers of the inquiry detail fetch don't need every note body on every load). Same `requireRole(OWNER, FRONT_DESK)` gate as `GET /:id` itself.
+- `POST /inquiries/:id/notes` -- create, same role gate, audited (`entityType: "InquiryNote"`, `action: "create"`).
+- `PATCH` / `DELETE /inquiries/:id/notes/:noteId` -- author-or-OWNER enforced in the handler (`note.authorId === req.user.userId || req.user.role === OWNER`), both audited; delete's audit `changes` includes the deleted `bodyHtml` so the content itself isn't lost from the record even after removal.
+- All four validate `bodyHtml` with a shared `isBlankHtml()` tag-stripping check (Tiptap's own empty state is `"<p></p>"`, not `""` -- a plain `.trim().length` check would have accepted a visually-blank note).
+- No `emitInvalidation` call on any of these -- notes are scoped entirely to the single inquiry's own detail page; nothing else in the app (List/Kanban views, nav badges) displays note content or count, so there's no other cache to keep in sync. React Query's own `invalidateQueries` on the dedicated `['inquiry-notes', id]` key handles the page's own refresh.
+
+## Frontend
+
+New `apps/web/src/components/InquiryNotesSection.tsx`, replacing the old inline "Notes" card in `InquiryDetail.tsx` in place. `RichTextEditor` at the top as the composer; the feed below (newest first) shows author name + `formatDateTime(createdAt)` + rendered `sanitizeHtml(bodyHtml)` per entry, with Edit/Delete shown only when `note.author.id === currentUser.userId || currentUser.role === 'OWNER'` (mirrors the backend check; the backend is the actual enforcement, this is just not showing a button that would 403). Editing swaps the entry's body for another `RichTextEditor` instance inline; deleting is a two-step inline confirm ("Delete" → "Confirm delete" / "Cancel"), matching this app's existing avoidance of `window.confirm` and reserving full modals for higher-stakes actions. Disabled outright while impersonating via View As (`readOnly` prop, same pattern the old Notes card used).
+
+**"Edited" indicator**: `updatedAt` and `createdAt` land within a few milliseconds of each other at creation (confirmed empirically -- one test note had them byte-identical, matching a single-transaction insert). A strict `!==` comparison would flag every fresh note as edited. Used a 5-second tolerance instead (`isEdited()` in the component) -- comfortably wider than any real creation-time skew, comfortably narrower than any real subsequent edit.
+
+**Visually distinct from `AuditTrail.tsx`** ("Activity History", further down the same page): the two aren't just differently labeled, they're structurally different renders -- Activity History is system-generated terse one-line field-diffs (`Dev Front Desk create-by-staff`, `Channel: EMAIL`); Notes is full rich-text bodies with an author name, formatting, and clickable links. Confirmed side by side in the same screenshot (see Verification).
+
+## Verification
+
+**PowerShell, direct API calls** (a second local API instance on scratch port 4001, same dev DB, so as not to touch the other concurrent session's server on :4000):
+- FRONT_DESK created a note, then successfully edited their own note (200).
+- FRONT_DESK attempted to edit and delete an OWNER-authored note on the same inquiry -- both correctly 403'd ("Only this note's author or an OWNER can edit/delete it").
+- OWNER successfully edited the FRONT_DESK-authored note (200) -- confirms OWNER's "any note" override, and that editing doesn't reassign authorship (the edited note stayed attributed to the original author).
+- ARTIST (`artist1@dev-studio.test`) got a 403 on `GET /inquiries/:id/notes`, matching the identical 403 on `GET /inquiries/:id` itself -- confirms page-level parity, not a separate/weaker gate.
+- Cross-studio isolation: logged in as a second studio's OWNER (`owner2@dev-studio2.test`, pre-existing dev-seed studio), attempted GET/POST against studio 1's inquiry ID and PATCH/DELETE against studio 1's note ID directly -- all four returned 404 (`"Inquiry not found"` / `"Note not found"`), never a 403 that would confirm the resource's existence to an unauthorized studio.
+
+**Browser** (Playwright against the scratch instance, `chromium-cli` unavailable on this Windows environment so used a plain `chromium.launch()` script instead, per the run skill's own fallback guidance):
+- Added a note with bold text and a link via the real toolbar (`Ctrl+B`, the "Insert link" toolbar button + its `window.prompt`) -- rendered correctly with author "Dev Owner", a real timestamp, bold text inside a clickable accent-colored link, Edit/Delete controls, and "Activity History" visibly distinct below it in the same screenshot.
+- Edited it after a 7-second wait (past the 5-second same-instant threshold) -- confirmed via a fresh page load that the body updated and `(edited)` appeared next to the timestamp.
+- Deleted it -- confirmed "No notes yet." appears in its place.
+- Typed a literal `<script>`/`onerror` payload through the editor itself -- Tiptap treats typed angle brackets as inert text (auto-escaped), so this path was already safe by construction; not the real test.
+- **The real test**: posted a note directly via the API with actual markup -- `<script>window.__real_xss=true</script>`, `<img src=x onerror="...">`, and `<a href="javascript:alert(1)">click me</a>` -- as raw `bodyHtml` (confirmed the server stores it unsanitized, matching the established write-raw/sanitize-on-render convention). Loaded the page: `window.__real_xss`/`__real_xss2` never got set, `<script>` and `<img>` were completely absent from the rendered DOM, and the `<a>` tag survived (allowed tag) but its `href` was stripped to `null` (DOMPurify rejects the `javascript:` URI scheme even for an allowed attribute) -- the link text renders but is inert. Zero page errors.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) -- clean. `npm run build` (web) -- clean.
+
+## Commit
+
+`1a7270f` -- Package L: free-form, timestamped, WYSIWYG inquiry notes. Pushed immediately (`597e6da..1a7270f`); two unrelated concurrent-session commits (inquiry pipeline stage colors, an Assigned Artist list column) had landed on `main` between this session's start and its own push, picked up cleanly as a fast-forward.
+
+## Cleanup
+
+Both scratch dev servers (API :4001, web :5181) stopped; same recurring `tsx watch` child-outlives-the-task-stop pattern as every prior session, resolved with an explicit `Stop-Process -Force` by PID. The other concurrent session's server on :4000 left running, untouched. One-off data-migration and verification scripts (`migrate_legacy_notes.ts`, `verify_migrated_note.ts`, `verify_final.ts`, `check_studios.ts`, `check_studio2.ts`) were written directly in `apps/api/` for direct-Prisma-client checks and deleted immediately after each use. Playwright driver scripts and screenshots (six `notes_*.mjs` iterations, refined down from a first attempt with fragile toolbar-timing selectors) stayed in the scratchpad only, all deleted at the end; none committed. All notes created on the test inquiry (`cmrxmt1r6000l1ci2xebijr5b`, "Backend CheckStaff") during verification -- including the two "click me"/XSS payloads -- were deleted afterward, leaving that inquiry with zero notes, same as before this session touched it.
