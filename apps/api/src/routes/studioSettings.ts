@@ -215,6 +215,13 @@ staffRouter.patch("/", requireRole(Role.OWNER), async (req, res) => {
     data.giftCardDefaultExpirationDays = body.giftCardDefaultExpirationDays;
   }
 
+  if (body.referralRewardAmountCents !== undefined) {
+    if (typeof body.referralRewardAmountCents !== "number" || body.referralRewardAmountCents < 0) {
+      return res.status(400).json({ error: "referralRewardAmountCents must be a non-negative number" });
+    }
+    data.referralRewardAmountCents = body.referralRewardAmountCents;
+  }
+
   if (body.coldLeadDays !== undefined) {
     if (typeof body.coldLeadDays !== "number" || body.coldLeadDays <= 0) {
       return res.status(400).json({ error: "coldLeadDays must be a positive number" });
@@ -313,6 +320,7 @@ staffRouter.patch("/", requireRole(Role.OWNER), async (req, res) => {
       ...TEXT_FIELDS,
       "estimateFollowUpHours",
       "giftCardDefaultExpirationDays",
+      "referralRewardAmountCents",
       "coldLeadDays",
       "timezone",
       "waiverHealthQuestions",

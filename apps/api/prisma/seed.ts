@@ -11,6 +11,7 @@ import "dotenv/config";
 import bcrypt from "bcrypt";
 import crypto from "node:crypto";
 import { prisma } from "../src/lib/prisma";
+import { generateUniqueReferralCode } from "../src/lib/referrals";
 import {
   Role,
   Channel,
@@ -274,7 +275,8 @@ async function main() {
   async function upsertClient(email: string, firstName: string, lastName: string, phone: string) {
     const existing = await prisma.client.findFirst({ where: { studioId: studio.id, email } });
     if (existing) return existing;
-    return prisma.client.create({ data: { studioId: studio.id, firstName, lastName, email, phone } });
+    const referralCode = await generateUniqueReferralCode();
+    return prisma.client.create({ data: { studioId: studio.id, firstName, lastName, email, phone, referralCode } });
   }
 
   const client1 = await upsertClient("client1@dev-studio.test", "Alex", "Testperson", "555-0201");

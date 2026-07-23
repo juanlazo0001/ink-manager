@@ -19,6 +19,7 @@ import { useStudio } from '../context/useStudio'
 import { useUserProfile } from '../context/useUserProfile'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { THEME_PRESETS, applyThemePreset } from '../lib/themePresets'
+import { dollarsToCents } from '../lib/money'
 
 interface HealthQuestion {
   question: string
@@ -104,6 +105,7 @@ interface StudioSettingsData {
   estimateTerms: string | null
   estimateFollowUpHours: number
   giftCardDefaultExpirationDays: number | null
+  referralRewardAmountCents: number
   coldLeadDays: number
   timezone: string
   calendarInviteTemplate: string | null
@@ -248,6 +250,7 @@ function timezoneLabel(value: string): string {
 const EMPTY_DEFAULTS_FORM = {
   estimateFollowUpHours: '24',
   giftCardDefaultExpirationDays: '',
+  referralRewardDollars: '25',
   coldLeadDays: '90',
   timezone: 'America/New_York',
   showSidebarBadges: false,
@@ -778,6 +781,7 @@ export default function Settings() {
     setDefaultsForm({
       estimateFollowUpHours: String(policies.estimateFollowUpHours),
       giftCardDefaultExpirationDays: policies.giftCardDefaultExpirationDays?.toString() ?? '',
+      referralRewardDollars: centsToDollarsInput(policies.referralRewardAmountCents),
       coldLeadDays: String(policies.coldLeadDays),
       timezone: policies.timezone,
       showSidebarBadges: policies.showSidebarBadges,
@@ -797,6 +801,7 @@ export default function Settings() {
           giftCardDefaultExpirationDays: defaultsForm.giftCardDefaultExpirationDays
             ? Number(defaultsForm.giftCardDefaultExpirationDays)
             : null,
+          referralRewardAmountCents: dollarsToCents(Number(defaultsForm.referralRewardDollars) || 0),
           coldLeadDays: Number(defaultsForm.coldLeadDays) || 90,
           timezone: defaultsForm.timezone,
           showSidebarBadges: defaultsForm.showSidebarBadges,
@@ -1549,6 +1554,12 @@ export default function Settings() {
                       {policies.giftCardDefaultExpirationDays
                         ? `${policies.giftCardDefaultExpirationDays} days`
                         : 'Never expires'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Referral reward</p>
+                    <p className="mt-1 text-sm text-fg-secondary">
+                      ${(policies.referralRewardAmountCents / 100).toFixed(2)}
                     </p>
                   </div>
                   <div>
@@ -2311,6 +2322,17 @@ export default function Settings() {
                     onChange={(e) =>
                       setDefaultsForm({ ...defaultsForm, giftCardDefaultExpirationDays: e.target.value })
                     }
+                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-fg-secondary">Referral reward ($)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={defaultsForm.referralRewardDollars}
+                    onChange={(e) => setDefaultsForm({ ...defaultsForm, referralRewardDollars: e.target.value })}
                     className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                   />
                 </div>

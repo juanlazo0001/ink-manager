@@ -35,6 +35,10 @@ enum Channel {
   // behalf (see StaffInquiryForm) -- never selectable on the public intake
   // form, which is always self-reported by the customer.
   PHONE
+  // Package O: "A friend referred me" -- selecting this on either intake
+  // form reveals a text input for the friend's Client.referralCode, looked
+  // up and stored as Client.referredByClientId on the new client.
+  REFERRAL
 }
 
 enum GiftCardStatus {
@@ -305,6 +309,31 @@ model Client {
   mergedIntoId String?
   mergedInto   Client?  @relation("ClientMerge", fields: [mergedIntoId], references: [id])
   mergedFrom   Client[] @relation("ClientMerge")
+
+  // Package O: every client gets one of these, auto-generated at creation
+  // (see lib/referrals.ts) -- short/readable/uppercase, shareable by staff
+  // reading it aloud or texting it. Every existing row was backfilled by a
+  // one-off script in the same session this column was added, before this
+  // NOT NULL constraint landed in a second migration.
+  referralCode String @unique
+
+  // Set once, at creation, from the OTHER client's referralCode entered on
+  // the intake form -- never overwritten afterward (same never-overwritten
+  // pattern as smsConsentGivenAt above). Null means "not referred" or
+  // "predates this feature."
+  referredByClientId String?
+  referredBy          Client?  @relation("ClientReferral", fields: [referredByClientId], references: [id])
+  referredClients     Client[] @relation("ClientReferral")
+
+  // The permanent guard against double-issuing this client's OWN referral
+  // reward to whoever referred them -- checked (must be null) immediately
+  // before issuing a reward at this client's first paid deposit, and set
+  // atomically alongside it in the same transaction. Once set, never
+  // cleared or reused, even if referralRewardGiftCardId's card is later
+  // voided/redeemed/expired -- the reward EVENT already happened.
+  referralRewardIssuedAt   DateTime?
+  referralRewardGiftCardId String?   @unique
+  referralRewardGiftCard   GiftCard? @relation("ReferralRewardGiftCard", fields: [referralRewardGiftCardId], references: [id])
 
   // Soft, reversible hide -- same exclude-from-list-views pattern as
   // mergedIntoId above, but fully intact and unarchivable, unlike a merge.
@@ -684,6 +713,10 @@ model StudioSettings {
   // every existing studio's appearance is unchanged until an OWNER
   // deliberately picks a different one.
   themePreset                   String   @default("onyx-lime")
+  // Package O: the reward issued to a referrer once the client they
+  // referred pays their first deposit. $25 default matches the task's own
+  // spec; OWNER-editable like every other numeric default on this model.
+  referralRewardAmountCents     Int      @default(2500)
   createdAt                     DateTime @default(now())
   updatedAt                     DateTime @updatedAt
 
@@ -822,6 +855,11 @@ model GiftCard {
   // "Sponsor", "Comped -- prior service issue") explaining why the deposit
   // requirement was waived.
   exemptionReason String?
+
+  // Package O: the reverse side of Client.referralRewardGiftCardId -- lets
+  // a referral-reward card be traced back to the specific referral it paid
+  // out for. At most one Client ever points here (that FK is @unique).
+  referralRewardFor Client? @relation("ReferralRewardGiftCard")
 
   @@index([studioId])
   @@index([clientId])

@@ -42,6 +42,7 @@ export default function IntakeForm() {
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
   const [channel, setChannel] = useState('')
+  const [referralCode, setReferralCode] = useState('')
   const [description, setDescription] = useState('')
   const [colorOrBlackGrey, setColorOrBlackGrey] = useState('')
   const [placement, setPlacement] = useState('')
@@ -174,7 +175,8 @@ export default function IntakeForm() {
       !colorOrBlackGrey ||
       !placement ||
       !estimatedSize ||
-      !hasBeenTattooedBefore
+      !hasBeenTattooedBefore ||
+      (channel === 'REFERRAL' && !referralCode)
     ) {
       setSubmitError('Please fill out all required fields.')
       return
@@ -217,6 +219,7 @@ export default function IntakeForm() {
           email,
           phone: phone || undefined,
           channel,
+          referralCode: channel === 'REFERRAL' ? referralCode : undefined,
           description,
           colorOrBlackGrey,
           placement,
@@ -339,7 +342,21 @@ export default function IntakeForm() {
               <option value="EMAIL">Email</option>
               <option value="INSTAGRAM">Instagram</option>
               <option value="FACEBOOK">Facebook</option>
+              <option value="REFERRAL">A friend referred me</option>
             </select>
+            {channel === 'REFERRAL' && (
+              <div className="mt-2">
+                <label className={LABEL_CLASS}>Friend's referral code *</label>
+                <input
+                  type="text"
+                  value={referralCode}
+                  onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
+                  required
+                  placeholder="e.g. AB23CDE"
+                  className={INPUT_CLASS}
+                />
+              </div>
+            )}
           </div>
 
           <div>

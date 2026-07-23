@@ -35,6 +35,7 @@ export default function StaffInquiryForm({ onClose, onCreated }: StaffInquiryFor
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
   const [channel, setChannel] = useState('PHONE')
+  const [referralCode, setReferralCode] = useState('')
   const [description, setDescription] = useState('')
   const [colorOrBlackGrey, setColorOrBlackGrey] = useState('')
   const [placement, setPlacement] = useState('')
@@ -82,7 +83,8 @@ export default function StaffInquiryForm({ onClose, onCreated }: StaffInquiryFor
       !colorOrBlackGrey ||
       !placement ||
       !estimatedSize ||
-      !hasBeenTattooedBefore
+      !hasBeenTattooedBefore ||
+      (channel === 'REFERRAL' && !referralCode)
     ) {
       setSubmitError('Please fill out all required fields.')
       return
@@ -119,6 +121,7 @@ export default function StaffInquiryForm({ onClose, onCreated }: StaffInquiryFor
           email,
           phone: phone || undefined,
           channel,
+          referralCode: channel === 'REFERRAL' ? referralCode : undefined,
           description,
           colorOrBlackGrey,
           placement,
@@ -172,7 +175,21 @@ export default function StaffInquiryForm({ onClose, onCreated }: StaffInquiryFor
             <option value="EMAIL">Email</option>
             <option value="INSTAGRAM">Instagram</option>
             <option value="FACEBOOK">Facebook</option>
+            <option value="REFERRAL">A friend referred them</option>
           </select>
+          {channel === 'REFERRAL' && (
+            <div className="mt-2">
+              <label className={LABEL_CLASS}>Friend's referral code *</label>
+              <input
+                type="text"
+                value={referralCode}
+                onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
+                required
+                placeholder="e.g. AB23CDE"
+                className={INPUT_CLASS}
+              />
+            </div>
+          )}
         </div>
 
         <div>

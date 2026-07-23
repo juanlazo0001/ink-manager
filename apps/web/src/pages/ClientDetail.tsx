@@ -103,6 +103,8 @@ interface Client {
   otherContact: string | null
   mergedIntoId: string | null
   mergedInto: { id: string; firstName: string; lastName: string } | null
+  referralCode: string
+  referredBy: { id: string; firstName: string; lastName: string } | null
   archivedAt: string | null
   smsOptedOutAt: string | null
   smsConsentGivenAt: string | null
@@ -1128,6 +1130,39 @@ export default function ClientDetail() {
                         )}
                         {client.otherContact && (
                           <p className="mt-1 text-xs text-fg-muted">{client.otherContact}</p>
+                        )}
+                        {/* Package O: this client's own shareable referral code -- deliberately
+                            separate from the "prefilled intake link" feature (that's a link
+                            prefilled onto THIS client's own record; this is a code THEY hand out
+                            to a friend, who becomes a different, new client). */}
+                        <div className="mt-2 flex items-center gap-2">
+                          <span className="rounded-full border border-border bg-surface-inset px-3 py-1 text-xs font-mono font-semibold tracking-wider text-fg">
+                            {client.referralCode}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                await navigator.clipboard.writeText(client.referralCode)
+                                showCopyToast('Referral code copied')
+                              } catch {
+                                showCopyToast('Failed to copy — copy manually')
+                              }
+                            }}
+                            aria-label="Copy referral code"
+                            title="Copy referral code"
+                            className="flex h-6 w-6 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface-inset hover:text-fg"
+                          >
+                            <CopyIcon className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                        {client.referredBy && (
+                          <p className="mt-1 text-xs text-fg-muted">
+                            Referred by{' '}
+                            <Link to={`/clients/${client.referredBy.id}`} className="text-accent hover:underline">
+                              {client.referredBy.firstName} {client.referredBy.lastName}
+                            </Link>
+                          </p>
                         )}
                       </div>
                     </div>

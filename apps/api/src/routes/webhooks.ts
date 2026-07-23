@@ -14,6 +14,7 @@ import { getOrCreateClientConversation } from "../lib/conversations";
 import { normalizePhone } from "../lib/phone";
 import { reuploadTwilioMedia } from "../lib/cloudinary";
 import { logAudit } from "../lib/audit";
+import { generateUniqueReferralCode } from "../lib/referrals";
 
 const router = Router();
 
@@ -107,6 +108,7 @@ router.post("/twilio/sms", async (req, res) => {
         firstName: "Unknown",
         lastName: "(new SMS contact)",
         phone: normalizedFrom,
+        referralCode: await generateUniqueReferralCode(),
       },
     });
     await prisma.clientPhone.create({

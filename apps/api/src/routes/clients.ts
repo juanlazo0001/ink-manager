@@ -12,6 +12,7 @@ import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { shortenUrl } from "../lib/shortLinks";
 import { getOrCreateClientConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
+import { generateUniqueReferralCode } from "../lib/referrals";
 
 const router = Router();
 
@@ -29,10 +30,18 @@ router.post("/", async (req, res) => {
   }
 
   const { firstName, lastName, email, phone } = body;
+  const referralCode = await generateUniqueReferralCode();
 
   const client = await prisma.$transaction(async (tx) => {
     const created = await tx.client.create({
-      data: { firstName, lastName, email, phone: phone ? normalizePhone(phone) : phone, studioId: req.user!.studioId },
+      data: {
+        firstName,
+        lastName,
+        email,
+        phone: phone ? normalizePhone(phone) : phone,
+        studioId: req.user!.studioId,
+        referralCode,
+      },
     });
     await syncPrimaryPhone(tx, created.id, created.phone);
     await syncPrimaryEmail(tx, created.id, created.email);
@@ -168,6 +177,11 @@ router.get("/:id", async (req, res) => {
       mergedInto: { select: { id: true, firstName: true, lastName: true } },
       phones: { orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }] },
       emails: { orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }] },
+      // Package O: "who referred this client" (display-only, on this
+      // client's own page) -- distinct from referredClients, which nobody
+      // reads today (the reward is triggered server-side off referredByClientId
+      // directly, not by walking this list).
+      referredBy: { select: { id: true, firstName: true, lastName: true } },
     },
   });
 

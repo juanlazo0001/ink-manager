@@ -16,6 +16,7 @@ import { findBufferConflict, formatBufferWarning } from "../lib/schedulingConfli
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { computeDepositTier, resolveDepositTiers } from "../lib/depositTiers";
+import { generateUniqueReferralCode } from "../lib/referrals";
 
 const router = Router();
 
@@ -140,6 +141,7 @@ router.post("/", optionalAuth, async (req, res) => {
     placementImages,
     draftToken,
     smsConsent,
+    referralCode,
   } = body;
 
   const studio = isStaffRequest
@@ -171,6 +173,26 @@ router.post("/", optionalAuth, async (req, res) => {
     }
   }
 
+  // Package O: "A friend referred me" -- only meaningful for channel ===
+  // REFERRAL (any referralCode riding along on a different channel is
+  // ignored, not honored, so a client can't backdoor a referral relationship
+  // in through e.g. "Instagram"). Scoped to this studio the same way every
+  // other lookup here is -- a code from a different studio 404s exactly
+  // like an unknown one, never leaking whether it exists elsewhere.
+  let referrer: { id: string } | null = null;
+  if (channel === Channel.REFERRAL) {
+    if (typeof referralCode !== "string" || referralCode.trim().length === 0) {
+      return res.status(400).json({ error: "A friend's referral code is required for this option" });
+    }
+    referrer = await prisma.client.findFirst({
+      where: { studioId: studio.id, referralCode: referralCode.trim().toUpperCase() },
+      select: { id: true },
+    });
+    if (!referrer) {
+      return res.status(400).json({ error: "We couldn't find that referral code" });
+    }
+  }
+
   const existingClient = await prisma.client.findFirst({
     where: { studioId: studio.id, email },
   });
@@ -190,6 +212,14 @@ router.post("/", optionalAuth, async (req, res) => {
           })
         : existingClient;
   } else {
+    // Package O: referredByClientId is only ever set here, at the brand-new
+    // client's own creation -- "a NEW client can enter someone else's
+    // code" per the task's own framing. A returning client (the
+    // existingClient branch above) already has an established identity;
+    // retroactively attaching a referrer to them here would be meaningless
+    // (their first deposit, if any, is long past) and isn't what this
+    // channel option represents.
+    const referralCode = await generateUniqueReferralCode();
     client = await prisma.$transaction(async (tx) => {
       const created = await tx.client.create({
         data: {
@@ -198,6 +228,8 @@ router.post("/", optionalAuth, async (req, res) => {
           lastName,
           email,
           phone: phone ? normalizePhone(phone) : phone,
+          referralCode,
+          referredByClientId: referrer?.id ?? null,
           ...(givesConsentNow ? { smsConsentGivenAt: new Date(), smsConsentSource: "intake_form" } : {}),
         },
       });
