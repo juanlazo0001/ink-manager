@@ -230,6 +230,17 @@ export function TagIcon({ className }: IconProps) {
   )
 }
 
+export function GiftCardIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <rect x="2.5" y="7" width="15" height="10.5" rx="1.5" />
+      <line x1="10" y1="7" x2="10" y2="17.5" />
+      <path d="M10 7c-1.1-2.6-2.9-3.7-3.9-2.9-1 .8-.2 2.9 3.9 2.9Z" strokeLinejoin="round" />
+      <path d="M10 7c1.1-2.6 2.9-3.7 3.9-2.9 1 .8.2 2.9-3.9 2.9Z" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 export function MoreIcon({ className }: IconProps) {
   return (
     <svg viewBox="0 0 20 20" fill="currentColor" stroke="none" className={className}>

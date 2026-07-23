@@ -16,12 +16,13 @@ import {
   CheckIcon,
   CopyIcon,
   FacebookIcon,
+  GiftCardIcon,
   InstagramIcon,
   MessageIcon,
   MoreIcon,
   PencilIcon,
-  PlusIcon,
   SearchIcon,
+  SendIcon,
 } from '../components/icons'
 import { useUserProfile } from '../context/useUserProfile'
 import { useEffectiveUser } from '../context/useEffectiveUser'
@@ -1187,10 +1188,12 @@ export default function ClientDetail() {
                         <button
                           type="button"
                           onClick={startEditing}
-                          className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
+                          aria-label="Edit"
+                          title="Edit"
+                          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                         >
                           <PencilIcon className="h-4 w-4" />
-                          Edit
+                          <span className="hidden text-sm font-semibold md:inline">Edit</span>
                         </button>
                       )}
                       {(canManage || isOwner) && (
@@ -1564,7 +1567,7 @@ export default function ClientDetail() {
                         title="Issue Gift Card"
                         className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                       >
-                        <PlusIcon className="h-4 w-4" />
+                        <GiftCardIcon className="h-4 w-4" />
                         <span className="hidden text-sm font-semibold md:inline">Issue Gift Card</span>
                       </button>
                     )}
@@ -1576,7 +1579,7 @@ export default function ClientDetail() {
                         title="Issue Deposit Exemption"
                         className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                       >
-                        <PlusIcon className="h-4 w-4" />
+                        <CheckIcon className="h-4 w-4" />
                         <span className="hidden text-sm font-semibold md:inline">Issue Deposit Exemption</span>
                       </button>
                     )}
@@ -1657,7 +1660,7 @@ export default function ClientDetail() {
                         }
                         className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface disabled:opacity-60 md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                       >
-                        <PlusIcon className="h-4 w-4" />
+                        <SendIcon className="h-4 w-4" />
                         <span className="hidden text-sm font-semibold md:inline">
                           {sendingDepositId ? 'Sending…' : 'Send Deposit Form'}
                         </span>
@@ -1842,7 +1845,7 @@ export default function ClientDetail() {
                         }
                         className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface disabled:opacity-60 md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                       >
-                        <PlusIcon className="h-4 w-4" />
+                        <SendIcon className="h-4 w-4" />
                         <span className="hidden text-sm font-semibold md:inline">
                           {sendingWaiverId ? 'Sending…' : 'Send Waiver'}
                         </span>

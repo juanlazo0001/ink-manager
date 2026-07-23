@@ -22,6 +22,7 @@ import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatDuration, formatPhoneInput, formatStatus, describeInquiryStatus } from '../lib/format'
 import { describeSendResult, type ClientSendResult } from '../lib/sendResult'
 import {
+  AppointmentsIcon,
   ArrowLeftIcon,
   AttachmentIcon,
   CheckIcon,
@@ -31,8 +32,8 @@ import {
   MessageIcon,
   MoreIcon,
   PencilIcon,
-  PlusIcon,
   ShareIcon,
+  TagIcon,
 } from '../components/icons'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useViewAs } from '../context/useViewAs'
@@ -2145,7 +2146,7 @@ export default function InquiryDetail() {
                           title="Add to Waitlist"
                           className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                         >
-                          <PlusIcon className="h-4 w-4" />
+                          <TagIcon className="h-4 w-4" />
                           <span className="hidden text-sm font-semibold md:inline">Add to Waitlist</span>
                         </button>
                       </div>
@@ -2210,7 +2211,7 @@ export default function InquiryDetail() {
                       title="New Appointment"
                       className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                     >
-                      <PlusIcon className="h-4 w-4" />
+                      <AppointmentsIcon className="h-4 w-4" />
                       <span className="hidden text-sm font-semibold md:inline">New Appointment</span>
                     </button>
                   )}
