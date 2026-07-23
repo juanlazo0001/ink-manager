@@ -22,6 +22,7 @@ export default function ImageUploadSection({
   hint,
   initialUrls,
   onChange,
+  uploadFn = uploadImageToCloudinary,
 }: {
   label: string
   hint: string
@@ -29,6 +30,10 @@ export default function ImageUploadSection({
   // entirely for a fresh upload-only flow like the public intake form.
   initialUrls?: string[]
   onChange: (state: ImageUploadState) => void
+  // Defaults to the general inquiries-folder uploader; pass a
+  // folder-scoped one (e.g. uploadAppointmentPhoto) for a different
+  // Cloudinary destination without duplicating this whole component.
+  uploadFn?: (file: File) => Promise<string>
 }) {
   const [items, setItems] = useState<UploadItem[]>(() =>
     (initialUrls ?? []).map((url) => ({ id: crypto.randomUUID(), previewUrl: url, status: 'done' as const, url })),
@@ -46,7 +51,7 @@ export default function ImageUploadSection({
   async function uploadOne(item: UploadItem) {
     if (!item.file) return
     try {
-      const url = await uploadImageToCloudinary(item.file)
+      const url = await uploadFn(item.file)
       setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, status: 'done', url } : i)))
     } catch (err) {
       setItems((prev) =>

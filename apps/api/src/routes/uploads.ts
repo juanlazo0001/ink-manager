@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { cloudinary } from "../lib/cloudinary";
-import { requireAuth } from "../middleware/auth";
+import { requireAuth, requireRole } from "../middleware/auth";
 import { requirePermission } from "../lib/permissions";
+import { Role } from "../../generated/prisma/enums";
 
 const router = Router();
 
@@ -11,6 +12,7 @@ const router = Router();
 // folder — it can't forge uploads elsewhere or overwrite existing assets.
 const INQUIRY_UPLOAD_FOLDER = "ink-manager/inquiries";
 const PORTFOLIO_UPLOAD_FOLDER = "ink-manager/portfolios";
+const APPOINTMENT_PHOTO_UPLOAD_FOLDER = "ink-manager/appointment-photos";
 
 function signFolder(folder: string) {
   const timestamp = Math.round(Date.now() / 1000);
@@ -33,6 +35,14 @@ router.get("/signature", (_req, res) => {
 // upload portfolio images, scoped to their own folder.
 router.get("/portfolio-signature", requireAuth, requirePermission("artists.manage"), (_req, res) => {
   res.json(signFolder(PORTFOLIO_UPLOAD_FOLDER));
+});
+
+// Package N: same OWNER/FRONT_DESK gate as the photo persistence routes
+// themselves (POST/DELETE /appointments/:id/photos) -- this only grants a
+// signature scoped to this folder, the actual studio/appointment
+// ownership check happens when the resulting URL is POSTed there.
+router.get("/appointment-photo-signature", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), (_req, res) => {
+  res.json(signFolder(APPOINTMENT_PHOTO_UPLOAD_FOLDER));
 });
 
 export default router;

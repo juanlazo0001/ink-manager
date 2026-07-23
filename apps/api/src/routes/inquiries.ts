@@ -279,6 +279,14 @@ const INQUIRY_INCLUDE = {
       endTime: true,
       status: true,
       artist: { select: { id: true, user: { select: { name: true, email: true, avatarUrl: true } } } },
+      // Package N: checkout/finished-tattoo photos, grouped by the session
+      // that produced them -- this is what lets the Project page show
+      // "Session 1 -- [date]" with its own photos rather than one flat
+      // ungrouped gallery.
+      photos: {
+        select: { id: true, url: true, uploadedAt: true },
+        orderBy: { uploadedAt: "desc" },
+      },
     },
     orderBy: { startTime: "asc" },
   },

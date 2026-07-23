@@ -224,6 +224,7 @@ model User {
   staffConversation       Conversation?             @relation("StaffConversation")
   authoredMessages        Message[]                 @relation("MessageAuthor")
   authoredInquiryNotes    InquiryNote[]              @relation("InquiryNoteAuthor")
+  uploadedAppointmentPhotos AppointmentPhoto[]       @relation("AppointmentPhotoUploadedBy")
   conversationReads       ConversationRead[]
   conversationParticipant ConversationParticipant[]
   createdConversationTags ConversationTag[]
@@ -448,11 +449,30 @@ model Appointment {
   inquiry         Inquiry?         @relation("InquiryScheduledAppointment")
   giftCard        GiftCard?
   liabilityWaiver LiabilityWaiver?
+  photos          AppointmentPhoto[]
 
   @@index([studioId, startTime])
   @@index([inquiryId])
   @@index([studioId, createdAt])
   @@index([artistId, createdAt])
+}
+
+// Package N: finished-tattoo (or other checkout-time) photos for one
+// session. Reuses the existing Cloudinary signed-upload flow (same as
+// intake reference/placement images, waiver ID photos) -- this table only
+// ever stores the resulting secure_url, never handles the upload itself.
+model AppointmentPhoto {
+  id         String   @id @default(cuid())
+  url        String
+  uploadedAt DateTime @default(now())
+
+  appointmentId String
+  appointment   Appointment @relation(fields: [appointmentId], references: [id])
+
+  uploadedById String
+  uploadedBy   User   @relation("AppointmentPhotoUploadedBy", fields: [uploadedById], references: [id])
+
+  @@index([appointmentId])
 }
 
 model ConsentForm {

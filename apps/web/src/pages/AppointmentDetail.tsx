@@ -21,6 +21,8 @@ import { ArtistAvatar, artistLabel } from '../components/ArtistAvatar'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useConversationPanel } from '../context/useConversationPanel'
 import { appointmentsQueryKey } from '../lib/queryKeys'
+import ImageUploadSection, { type ImageUploadState } from '../components/ImageUploadSection'
+import { uploadAppointmentPhoto } from '../lib/cloudinary'
 
 interface WaiverSummary {
   id: string
@@ -36,6 +38,13 @@ interface GiftCardSummary {
   status: string
   expiresAt: string | null
   exemptionReason: string | null
+}
+
+interface AppointmentPhoto {
+  id: string
+  url: string
+  uploadedAt: string
+  uploadedBy: { id: string; name: string | null; email: string }
 }
 
 interface Appointment {
@@ -63,6 +72,7 @@ interface Appointment {
   }
   giftCard: GiftCardSummary | null
   liabilityWaiver: WaiverSummary | null
+  photos: AppointmentPhoto[]
 }
 
 interface DeletePreview {
@@ -70,6 +80,7 @@ interface DeletePreview {
   consentForms: number
   giftCardToDetach: { id: string; code: string; amountCents: number; status: string } | null
   conversationTags: number
+  photos: number
 }
 
 const DELETE_CONFIRM_TEXT = 'DELETE'
@@ -143,6 +154,17 @@ export default function AppointmentDetail() {
   const [checkoutForm, setCheckoutForm] = useState(EMPTY_CHECKOUT_FORM)
   const [checkingOut, setCheckingOut] = useState(false)
   const [checkoutError, setCheckoutError] = useState<string | null>(null)
+  // Package N: staged during checkout (optional -- staff can skip and add
+  // later), plus a second, always-available upload for "forgot at
+  // checkout" or just adding more later. Two independent pickers so
+  // checkout's own uploading/urls state doesn't get tangled up with the
+  // "add more" one below once the appointment's already complete.
+  const [checkoutPhotos, setCheckoutPhotos] = useState<ImageUploadState>({ urls: [], uploading: false })
+  const [addPhotosKey, setAddPhotosKey] = useState(0)
+  const [addPhotosState, setAddPhotosState] = useState<ImageUploadState>({ urls: [], uploading: false })
+  const [savingPhotos, setSavingPhotos] = useState(false)
+  const [photosError, setPhotosError] = useState<string | null>(null)
+  const [deletingPhotoId, setDeletingPhotoId] = useState<string | null>(null)
 
   const [updatingStatus, setUpdatingStatus] = useState(false)
   const [statusError, setStatusError] = useState<string | null>(null)
@@ -311,12 +333,65 @@ export default function AppointmentDetail() {
         }),
       })
 
+      // Optional -- staff may have skipped the photo picker entirely, or
+      // still be mid-upload (already disabled below in that case). Checkout
+      // itself is already done at this point regardless of whether this
+      // second call succeeds, matching the auto-send-on-generate pattern
+      // elsewhere in this app: the primary action isn't rolled back if a
+      // secondary, best-effort step fails.
+      if (checkoutPhotos.urls.length > 0) {
+        try {
+          await apiFetch(`/appointments/${id}/photos`, {
+            method: 'POST',
+            body: JSON.stringify({ urls: checkoutPhotos.urls }),
+          })
+        } catch {
+          setPhotosError('Checkout succeeded, but the attached photos failed to save -- add them from below instead.')
+        }
+      }
+
       if (user) queryClient.invalidateQueries({ queryKey: appointmentsQueryKey(user.studioId) })
       setRefreshIndex((i) => i + 1)
     } catch (err) {
       setCheckoutError(err instanceof Error ? err.message : 'Failed to check out this appointment')
     } finally {
       setCheckingOut(false)
+    }
+  }
+
+  async function handleAddPhotos() {
+    if (!id || addPhotosState.urls.length === 0) return
+
+    setSavingPhotos(true)
+    setPhotosError(null)
+
+    try {
+      await apiFetch(`/appointments/${id}/photos`, {
+        method: 'POST',
+        body: JSON.stringify({ urls: addPhotosState.urls }),
+      })
+      setAddPhotosState({ urls: [], uploading: false })
+      setAddPhotosKey((k) => k + 1) // remounts ImageUploadSection to clear its picked-files grid
+      setRefreshIndex((i) => i + 1)
+    } catch (err) {
+      setPhotosError(err instanceof Error ? err.message : 'Failed to save photos')
+    } finally {
+      setSavingPhotos(false)
+    }
+  }
+
+  async function handleDeletePhoto(photoId: string) {
+    if (!id) return
+    setDeletingPhotoId(photoId)
+    setPhotosError(null)
+
+    try {
+      await apiFetch(`/appointments/${id}/photos/${photoId}`, { method: 'DELETE' })
+      setRefreshIndex((i) => i + 1)
+    } catch (err) {
+      setPhotosError(err instanceof Error ? err.message : 'Failed to delete photo')
+    } finally {
+      setDeletingPhotoId(null)
     }
   }
 
@@ -1005,11 +1080,18 @@ export default function AppointmentDetail() {
                         />
                       </div>
 
+                      <ImageUploadSection
+                        label="Finished tattoo photos (optional)"
+                        hint="Attach now, or skip and add them later from this same page."
+                        onChange={setCheckoutPhotos}
+                        uploadFn={uploadAppointmentPhoto}
+                      />
+
                       {checkoutError && <p className="text-sm text-danger">{checkoutError}</p>}
 
                       <button
                         type="submit"
-                        disabled={checkingOut || !checkoutForm.finalCostDollars}
+                        disabled={checkingOut || checkoutPhotos.uploading || !checkoutForm.finalCostDollars}
                         className="w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
                       >
                         {checkingOut ? 'Checking out…' : 'Confirm Checkout'}
@@ -1075,6 +1157,63 @@ export default function AppointmentDetail() {
                   )}
                 </div>
               )}
+
+              {/* Package N: separate from the checkout form's own optional
+                  picker above -- this is the "forgot at checkout" path,
+                  always available regardless of checkout state, and also
+                  just the normal way to add more photos later. */}
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                <h2 className="text-base font-semibold text-fg">Photos</h2>
+
+                {appointment.photos.length === 0 && (
+                  <p className="mt-4 text-sm text-fg-secondary">No photos yet.</p>
+                )}
+
+                {appointment.photos.length > 0 && (
+                  <div className="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-4">
+                    {appointment.photos.map((photo) => (
+                      <div key={photo.id} className="group relative aspect-square overflow-hidden rounded-lg border border-border">
+                        <a href={photo.url} target="_blank" rel="noreferrer" className="block h-full w-full">
+                          <img src={photo.url} alt="" className="h-full w-full object-cover transition group-hover:opacity-80" />
+                        </a>
+                        {canManage && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeletePhoto(photo.id)}
+                            disabled={deletingPhotoId === photo.id}
+                            aria-label="Delete photo"
+                            title="Delete photo"
+                            className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-xs text-fg opacity-0 transition hover:bg-danger/80 group-hover:opacity-100 disabled:opacity-100"
+                          >
+                            {deletingPhotoId === photo.id ? '…' : '×'}
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {canManage && (
+                  <div className="mt-4 border-t border-border pt-4">
+                    <ImageUploadSection
+                      key={addPhotosKey}
+                      label="Add photos"
+                      hint="Attach more finished-tattoo photos to this session at any time."
+                      onChange={setAddPhotosState}
+                      uploadFn={uploadAppointmentPhoto}
+                    />
+                    {photosError && <p className="mt-2 text-sm text-danger">{photosError}</p>}
+                    <button
+                      type="button"
+                      onClick={handleAddPhotos}
+                      disabled={savingPhotos || addPhotosState.uploading || addPhotosState.urls.length === 0}
+                      className="mt-3 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {savingPhotos ? 'Saving…' : 'Save Photos'}
+                    </button>
+                  </div>
+                )}
+              </div>
 
               <AuditTrail entityType="Appointment" entityId={appointment.id} />
 
@@ -1144,6 +1283,9 @@ export default function AppointmentDetail() {
                         </p>
                         <ul className="space-y-1 text-fg-secondary">
                           <li>{deletePreview.waivers} signed waiver{deletePreview.waivers === 1 ? '' : 's'}</li>
+                          {deletePreview.photos > 0 && (
+                            <li>{deletePreview.photos} photo{deletePreview.photos === 1 ? '' : 's'}</li>
+                          )}
                         </ul>
                         {deletePreview.consentForms > 0 && (
                           <p className="mt-2 text-fg-secondary">

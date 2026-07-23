@@ -207,6 +207,12 @@ const APPOINTMENT_DETAIL_INCLUDE = {
   // Non-PII summary only -- the health data and ID image behind this
   // waiver live behind GET /waivers/:id, which is OWNER/FRONT_DESK only.
   liabilityWaiver: { select: { id: true, status: true, signedAt: true, verifiedAt: true } },
+  // Package N: checkout/finished-tattoo photos for this one session,
+  // newest first (most recently added at the top of the grid).
+  photos: {
+    select: { id: true, url: true, uploadedAt: true, uploadedBy: { select: { id: true, name: true, email: true } } },
+    orderBy: { uploadedAt: "desc" },
+  },
 } as const;
 
 router.get("/:id", requirePermission("appointments.view"), async (req, res) => {
@@ -276,7 +282,7 @@ router.post("/:id/unarchive", requirePermission("appointments.manage"), async (r
 // will be detached/destroyed) and the audit snapshot written just before
 // the actual DELETE below.
 async function gatherAppointmentDeletionSummary(appointmentId: string) {
-  const [waivers, consentForm, giftCard, conversationTags] = await Promise.all([
+  const [waivers, consentForm, giftCard, conversationTags, photos] = await Promise.all([
     prisma.liabilityWaiver.count({ where: { appointmentId } }),
     prisma.consentForm.findUnique({ where: { appointmentId }, select: { id: true } }),
     prisma.giftCard.findUnique({
@@ -284,6 +290,10 @@ async function gatherAppointmentDeletionSummary(appointmentId: string) {
       select: { id: true, code: true, amountCents: true, status: true },
     }),
     prisma.conversationTag.count({ where: { entityType: "Appointment", entityId: appointmentId } }),
+    // Package N: no FK cascade -- these get destroyed along with the
+    // appointment (a session photo has no life independent of its
+    // session), so the confirmation UI needs to disclose that too.
+    prisma.appointmentPhoto.count({ where: { appointmentId } }),
   ]);
 
   return {
@@ -291,6 +301,7 @@ async function gatherAppointmentDeletionSummary(appointmentId: string) {
     consentForms: consentForm ? 1 : 0,
     giftCardToDetach: giftCard,
     conversationTags,
+    photos,
   };
 }
 
@@ -336,6 +347,10 @@ router.delete("/:id", requireRole(Role.OWNER), async (req, res) => {
 
     await tx.liabilityWaiver.deleteMany({ where: { appointmentId: id } });
     await tx.conversationTag.deleteMany({ where: { entityType: "Appointment", entityId: id } });
+    // No life independent of the session -- destroyed along with it,
+    // same as the liability waiver above. FK is ON DELETE RESTRICT, so
+    // this has to happen before the appointment delete below regardless.
+    await tx.appointmentPhoto.deleteMany({ where: { appointmentId: id } });
 
     // Inquiry.appointmentId is an optional back-reference to this same
     // appointment (the older 1:1 "scheduled slot" link) -- null it before
@@ -511,6 +526,77 @@ router.post("/:id/checkout", requireRole(Role.OWNER, Role.FRONT_DESK), async (re
   });
 
   res.json({ ...updated, amountDueCents, remainderCents });
+});
+
+// Package N: finished-tattoo (or other checkout-time) photos for this
+// session. Reuses the existing Cloudinary signed-upload flow (same as
+// intake reference/placement images) -- the client uploads directly to
+// Cloudinary first (via GET /uploads/appointment-photo-signature) and only
+// POSTs here with the resulting secure_url(s) to persist. Deliberately
+// optional and separate from checkout itself: staff can attach photos
+// while checking out, skip entirely, or come back later from this same
+// route once the appointment is already COMPLETED -- no status
+// requirement here, since "forgot at checkout" is exactly the case this
+// needs to keep working for.
+router.post("/:id/photos", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+  const { urls } = req.body ?? {};
+
+  if (!Array.isArray(urls) || urls.length === 0 || !urls.every((u) => typeof u === "string" && u.trim().length > 0)) {
+    return res.status(400).json({ error: "urls must be a non-empty array of strings" });
+  }
+
+  const appointment = await prisma.appointment.findUnique({ where: { id }, select: { studioId: true } });
+  if (!appointment || appointment.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Appointment not found" });
+  }
+
+  const photos = await prisma.$transaction(
+    (urls as string[]).map((url) =>
+      prisma.appointmentPhoto.create({
+        data: { appointmentId: id, url: url.trim(), uploadedById: req.user!.userId },
+        include: { uploadedBy: { select: { id: true, name: true, email: true } } },
+      }),
+    ),
+  );
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Appointment",
+    entityId: id,
+    action: "photos_added",
+    changes: { count: photos.length, photoIds: photos.map((p) => p.id) },
+  });
+
+  res.status(201).json(photos);
+});
+
+router.delete("/:id/photos/:photoId", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+  const photoId = req.params.photoId as string;
+
+  const photo = await prisma.appointmentPhoto.findUnique({
+    where: { id: photoId },
+    include: { appointment: { select: { studioId: true } } },
+  });
+
+  if (!photo || photo.appointmentId !== id || photo.appointment.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Photo not found" });
+  }
+
+  await prisma.appointmentPhoto.delete({ where: { id: photoId } });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Appointment",
+    entityId: id,
+    action: "photo_deleted",
+    changes: { photoId, url: photo.url },
+  });
+
+  res.json({ success: true });
 });
 
 // Handles both a plain status change (the pre-existing behavior) and a

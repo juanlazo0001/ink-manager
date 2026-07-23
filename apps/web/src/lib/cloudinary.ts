@@ -19,6 +19,10 @@ async function getPortfolioUploadSignature(): Promise<UploadSignature> {
   return apiFetch<UploadSignature>('/uploads/portfolio-signature')
 }
 
+async function getAppointmentPhotoUploadSignature(): Promise<UploadSignature> {
+  return apiFetch<UploadSignature>('/uploads/appointment-photo-signature')
+}
+
 async function uploadWithSignature(file: File, signature: UploadSignature): Promise<string> {
   const formData = new FormData()
   formData.append('file', file)
@@ -47,4 +51,8 @@ export async function uploadImageToCloudinary(file: File): Promise<string> {
 
 export async function uploadPortfolioImage(file: File): Promise<string> {
   return uploadWithSignature(file, await getPortfolioUploadSignature())
+}
+
+export async function uploadAppointmentPhoto(file: File): Promise<string> {
+  return uploadWithSignature(file, await getAppointmentPhotoUploadSignature())
 }

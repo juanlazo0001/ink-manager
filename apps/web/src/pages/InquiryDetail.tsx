@@ -78,6 +78,8 @@ interface Inquiry {
     endTime: string
     status: string
     artist: { id: string; user: { name: string | null; email: string; avatarUrl: string | null } }
+    // Package N: checkout/finished-tattoo photos for this one session.
+    photos: { id: string; url: string; uploadedAt: string }[]
   }[]
   // Package M: one per tattoo session, oldest first (Session 1, Session 2, ...).
   depositForms: {
@@ -2217,6 +2219,48 @@ export default function InquiryDetail() {
                   </div>
                 )}
               </div>
+
+              {/* Package N: grouped by session, not one flat gallery --
+                  each session that actually has photos gets its own
+                  "Session N — [date]" group. Sessions with none yet are
+                  omitted entirely (same convention as Reference
+                  images/Placement photos below, which also only render
+                  when non-empty), rather than showing an empty group for
+                  every session on every project. */}
+              {inquiry.sessions.some((session) => session.photos.length > 0) && (
+                <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                  <h2 className="text-base font-semibold text-fg">Photos</h2>
+
+                  <div className="mt-4 space-y-5">
+                    {inquiry.sessions
+                      .map((session, index) => ({ session, sessionNumber: index + 1 }))
+                      .filter(({ session }) => session.photos.length > 0)
+                      .map(({ session, sessionNumber }) => (
+                        <div key={session.id}>
+                          <Link
+                            to={`/appointments/${session.id}`}
+                            className="text-xs font-medium uppercase tracking-wider text-fg-muted hover:text-fg-secondary"
+                          >
+                            Session {sessionNumber} — {formatDateTime(session.startTime)}
+                          </Link>
+                          <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-6">
+                            {session.photos.map((photo) => (
+                              <a
+                                key={photo.id}
+                                href={photo.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="block aspect-square overflow-hidden rounded-lg border border-border"
+                              >
+                                <img src={photo.url} alt="" className="h-full w-full object-cover transition hover:opacity-80" />
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
 
               <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
                 <div className="flex items-center justify-between">
