@@ -98,6 +98,16 @@ export default function StaffInquiryForm({ onClose, onCreated }: StaffInquiryFor
       return
     }
 
+    if (referenceImages.urls.length === 0) {
+      setSubmitError('Please add at least one reference image.')
+      return
+    }
+
+    if (placementImages.urls.length === 0) {
+      setSubmitError('Please add at least one placement photo.')
+      return
+    }
+
     setSubmitting(true)
 
     try {
@@ -267,8 +277,8 @@ export default function StaffInquiryForm({ onClose, onCreated }: StaffInquiryFor
           </div>
         </div>
 
-        <ImageUploadSection label="Reference images" hint="Photos or designs showing the style." onChange={setReferenceImages} />
-        <ImageUploadSection label="Placement photos" hint="A photo of the area for the tattoo." onChange={setPlacementImages} />
+        <ImageUploadSection label="Reference images *" hint="Photos or designs showing the style." onChange={setReferenceImages} />
+        <ImageUploadSection label="Placement photos *" hint="A photo of the area for the tattoo." onChange={setPlacementImages} />
 
         {submitError && (
           <div className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">{submitError}</div>

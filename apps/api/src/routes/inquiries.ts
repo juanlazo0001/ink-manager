@@ -99,14 +99,15 @@ router.post("/", optionalAuth, async (req, res) => {
     return res.status(400).json({ error: "placementImages must be an array of strings" });
   }
 
-  // Package I: both photo types are now mandatory on the PUBLIC intake form
-  // -- same isStaffRequest carve-out as smsConsent below, since a staff
-  // walk-in/phone log-in through this same route may not have photos on hand.
-  if (!isStaffRequest && (!isStringArray(body.referenceImages) || body.referenceImages.length === 0)) {
+  // Package I: both photo types are now mandatory, on both the public
+  // intake form AND the staff-side "New Inquiry" form (StaffInquiryForm.tsx)
+  // -- unlike smsConsent below, this isn't a public-only consent concern, so
+  // there's no isStaffRequest carve-out here; the two forms stay identical.
+  if (!isStringArray(body.referenceImages) || body.referenceImages.length === 0) {
     return res.status(400).json({ error: "At least one reference image is required" });
   }
 
-  if (!isStaffRequest && (!isStringArray(body.placementImages) || body.placementImages.length === 0)) {
+  if (!isStringArray(body.placementImages) || body.placementImages.length === 0) {
     return res.status(400).json({ error: "At least one placement photo is required" });
   }
 
