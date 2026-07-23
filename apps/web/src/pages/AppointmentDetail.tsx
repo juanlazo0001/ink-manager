@@ -798,7 +798,7 @@ export default function AppointmentDetail() {
                       type="button"
                       onClick={handleCreateWaiver}
                       disabled={creatingWaiver}
-                      className="mt-3 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                      className="mt-3 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
                     >
                       {creatingWaiver ? 'Creating…' : 'Create Waiver'}
                     </button>

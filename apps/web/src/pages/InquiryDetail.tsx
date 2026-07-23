@@ -1889,7 +1889,7 @@ export default function InquiryDetail() {
                         type="button"
                         onClick={handleAttachGiftCard}
                         disabled={attachingGiftCard}
-                        className="mt-3 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                        className="mt-3 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
                       >
                         {attachingGiftCard ? 'Attaching…' : 'Attach Gift Card'}
                       </button>
@@ -2116,14 +2116,14 @@ export default function InquiryDetail() {
                           type="button"
                           onClick={handleSchedule}
                           disabled={scheduling || !isCompleteTimeRange(scheduleTimeRange) || !scheduleGiftCardId}
-                          className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                          className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
                         >
                           {scheduling ? 'Scheduling…' : 'Schedule Appointment'}
                         </button>
                         <button
                           type="button"
                           onClick={() => setShowWaitlistForm((v) => !v)}
-                          className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                          className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
                         >
                           Add to Waitlist
                         </button>
@@ -2185,9 +2185,9 @@ export default function InquiryDetail() {
                     <button
                       type="button"
                       onClick={() => setShowAppointmentModal(true)}
-                      className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                      className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
                     >
-                      <PlusIcon className="h-3.5 w-3.5" />
+                      <PlusIcon className="h-4 w-4" />
                       New Appointment
                     </button>
                   )}

@@ -1142,9 +1142,10 @@ export default function ClientDetail() {
                             onClick={() => setShowCopyMenu((v) => !v)}
                             aria-label="Copy options"
                             title="Copy options"
-                            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-9 md:w-9"
+                            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                           >
                             <CopyIcon className="h-4 w-4" />
+                            <span className="hidden text-sm font-semibold md:inline">Copy</span>
                           </button>
                           {showCopyMenu && (
                             <>
@@ -1559,9 +1560,9 @@ export default function ClientDetail() {
                       <button
                         type="button"
                         onClick={() => setShowIssueGiftCard(true)}
-                        className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                        className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
                       >
-                        <PlusIcon className="h-3.5 w-3.5" />
+                        <PlusIcon className="h-4 w-4" />
                         Issue Gift Card
                       </button>
                     )}
@@ -1569,9 +1570,9 @@ export default function ClientDetail() {
                       <button
                         type="button"
                         onClick={() => setShowIssueExempt(true)}
-                        className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                        className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
                       >
-                        <PlusIcon className="h-3.5 w-3.5" />
+                        <PlusIcon className="h-4 w-4" />
                         Issue Deposit Exemption
                       </button>
                     )}
@@ -1649,9 +1650,9 @@ export default function ClientDetail() {
                             ? 'No inquiry is in Deposit Pending status with a price estimate set'
                             : undefined
                         }
-                        className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                        className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
                       >
-                        <PlusIcon className="h-3.5 w-3.5" />
+                        <PlusIcon className="h-4 w-4" />
                         {sendingDepositId ? 'Sending…' : 'Send Deposit Form'}
                       </button>
                       {showDepositPicker && eligibleDepositInquiries.length > 1 && (
@@ -1831,9 +1832,9 @@ export default function ClientDetail() {
                             ? 'No confirmed appointment without a waiver yet'
                             : undefined
                         }
-                        className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                        className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
                       >
-                        <PlusIcon className="h-3.5 w-3.5" />
+                        <PlusIcon className="h-4 w-4" />
                         {sendingWaiverId ? 'Sending…' : 'Send Waiver'}
                       </button>
                       {showWaiverPicker && eligibleWaiverAppointments.length > 1 && (
