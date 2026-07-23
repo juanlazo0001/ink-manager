@@ -1007,3 +1007,83 @@ New `apps/web/src/components/InquiryNotesSection.tsx`, replacing the old inline 
 ## Cleanup
 
 Both scratch dev servers (API :4001, web :5181) stopped; same recurring `tsx watch` child-outlives-the-task-stop pattern as every prior session, resolved with an explicit `Stop-Process -Force` by PID. The other concurrent session's server on :4000 left running, untouched. One-off data-migration and verification scripts (`migrate_legacy_notes.ts`, `verify_migrated_note.ts`, `verify_final.ts`, `check_studios.ts`, `check_studio2.ts`) were written directly in `apps/api/` for direct-Prisma-client checks and deleted immediately after each use. Playwright driver scripts and screenshots (six `notes_*.mjs` iterations, refined down from a first attempt with fragile toolbar-timing selectors) stayed in the scratchpad only, all deleted at the end; none committed. All notes created on the test inquiry (`cmrxmt1r6000l1ci2xebijr5b`, "Backend CheckStaff") during verification -- including the two "click me"/XSS payloads -- were deleted afterward, leaving that inquiry with zero notes, same as before this session touched it.
+
+---
+
+# Package M — Multiple deposit forms per project (one per session)
+
+Single session on `main`. One schema change: dropped `DepositForm.inquiryId`'s unique constraint, added `sessionNumber Int` (auto-incremented per inquiry, labeling only -- no query or business logic derives from its value).
+
+## Investigation before writing any code
+
+Confirmed `DepositForm.inquiryId String @unique` (a strict 1:1 with `Inquiry`) and the mirrored `Inquiry.depositForm DepositForm?` field -- exactly the constraint the task described. Grepped both `apps/api/src` and `apps/web/src` for every reference to `.depositForm` (singular) and every `include`/`select` naming it, rather than trusting `tsc` alone to find them all -- and it's good that I didn't: the schema change caused real TypeScript errors in `apps/api/src/routes/{clients,inquiries}.ts` (Prisma's generated types caught `where: { inquiryId }` no longer being a valid unique lookup), but it caught **nothing** in three other real gaps, for two different reasons:
+
+1. **`apps/api/src/routes/reports.ts`'s funnel filter** (`depositForm: { isNot: null }`) and **`INQUIRY_INCLUDE`'s own `depositForm: {...}` key** in `inquiries.ts` -- both sit inside plain object literals passed to Prisma calls; TypeScript's excess-property checking didn't flag either as invalid at the call site the way it did for the `where: { inquiryId }` cases. Found only by re-reading my own grep list against the new schema, not by trusting a clean `tsc` run.
+2. **The entire frontend** (`InquiryDetail.tsx`, `ClientDetail.tsx`, `ConversationsPanel.tsx`) -- these hand-maintain their own mirror TypeScript interfaces for API responses (no shared types with the Prisma schema), so `npm run build` stayed **completely clean** even with every one of these files still expecting `depositForm: {...} | null` instead of the new `depositForms: [...]`. This would have shipped as a silent runtime bug (the field simply `undefined`) if I'd stopped at "the build is clean."
+
+A **real logic bug**, not just a type migration, also surfaced during the investigation: `apps/api/src/routes/deposits.ts`'s `mark-paid` unconditionally set `status: SCHEDULING` on every payment. Harmless under the old 1:1 (there was only ever one payment event, and it was always the conversion), but under Package M a second session's payment would have forced an already-`CONFIRMED` (or further along) project backward to `SCHEDULING`. Fixed by gating that transition on `depositForm.inquiry.status === DEPOSIT_PENDING` (i.e., only the very first payment converts).
+
+## Schema
+
+```prisma
+model DepositForm {
+  // ...
+  inquiryId     String        // was: String @unique
+  inquiry       Inquiry @relation(fields: [inquiryId], references: [id])
+  sessionNumber Int @default(1)  // default only backfills existing rows -- every one of
+                                 // them was necessarily the only form for its inquiry
+  @@index([inquiryId, sessionNumber])
+}
+model Inquiry {
+  // ...
+  depositForms DepositForm[]  // was: depositForm DepositForm?
+}
+```
+
+## The route logic: reused, not duplicated
+
+`POST /inquiries/:id/deposit-form` still does exactly the two things it always did -- rotate the token on the current unsigned session ("Resend") or generate a fresh one -- it just decides which based on the **most recent** row instead of a unique-by-inquiry `upsert`: if that latest row is missing or already signed, a new session gets created (`sessionNumber` = latest + 1, tentative time required again); if it's still unsigned, that's the one being resent (token rotated in place, tentative time untouched). This also correctly handles an inquiry that converted via `attach-gift-card` (skipping the deposit-form flow entirely for session 1) reaching this route for the first time on session 2 -- "latest row missing" is true there too, so it still creates session 1, not session 2.
+
+The status gate widened from `DEPOSIT_PENDING`-only to also accept `PROJECT_STATUSES` (`SCHEDULING`/`WAITLISTED`/`CONFIRMED`) -- Package M's "send another deposit form" for a later session, reusing the identical public payment page and gift-card-issuance-on-paid logic (`deposits.ts`'s `mark-paid`, unchanged apart from the status-gate fix above) with no special-casing beyond that.
+
+`PATCH .../deposit-form/proposed-time` now targets "whichever deposit form is currently unsigned" (there's only ever one at a time by construction) rather than a unique-by-inquiry lookup, since the tentative time is only ever meaningful pre-signature.
+
+## Every consumer found in the investigation, and what changed
+
+| File | What changed |
+|---|---|
+| `apps/api/src/routes/inquiries.ts` | `INQUIRY_INCLUDE.depositForm` → `depositForms` (ordered by `sessionNumber`, includes `giftCard`); `POST .../deposit-form` redesigned per above; `PATCH .../deposit-form/proposed-time` targets the latest unsigned row; `POST .../attach-gift-card` reads `depositForms[0]` (still only reachable pre-conversion, so at most one exists); `gatherInquiryDeletionSummary`'s `depositForm ? 1 : 0` → a real `count()` |
+| `apps/api/src/routes/deposits.ts` | `mark-paid`'s status-transition bug, fixed (see above) |
+| `apps/api/src/routes/clients.ts` | `GET /:id` include and `GET /:id/shareable-links` include both pluralized; `depositLinks` now one row per deposit form (not per inquiry), labeled `"Deposit form (Session N) — ..."`; `depositFormOptions` eligibility now reads the latest element of the array (unchanged scope -- still pre-conversion only, "send another" is a Project-page-only action) |
+| `apps/api/src/routes/conversations.ts` | `GET /:id/context`'s include pluralized (backs the composer's tag picker + slash-command palette) |
+| `apps/api/src/routes/reports.ts` | Funnel's `depositForm: { isNot: null }` → `depositForms: { some: {} }` (to-many relation now) -- the deposit-conversion metric itself already used `findMany` and needed no change, it already counted every form as its own event |
+| `apps/web/src/pages/InquiryDetail.tsx` | Deposit card rewritten: a list of every session (own amount/status/signature/mark-paid button/issued gift card), followed by either "Resend" controls (current session still unsigned) or a tentative-time picker + **"Send Another Deposit Form"** button (`isConverted` and eligible for a new session) -- reusing `handleSendDepositForm` unchanged beyond its `isFirstSend` → `isNewDepositSession` rename |
+| `apps/web/src/pages/ClientDetail.tsx` | "Deposit Forms" table flattened to one row per form across every inquiry (`depositFormRows`, a flatMap), each labeled `"Session N — {inquiry description}"`, with its own Gift Card column |
+| `apps/web/src/components/ConversationsPanel.tsx` | `ContextInquiry.depositForm` → `depositForms`; both the slash-command palette and the tag-picker dropdown now `flatMap` over every form instead of assuming one per inquiry; `ShareableLinksResponse.depositLinks` gained `depositFormId` |
+
+## Verification
+
+**PowerShell, direct API calls** (a second local API instance on scratch port 4001, same dev DB, other concurrent session's server on :4000 left untouched):
+- Picked a real `DEPOSIT_PENDING` inquiry with an existing signed-but-unpaid session-1 deposit form. Marked it paid → inquiry converted to `SCHEDULING`, gift card issued, exactly one `status_change` audit entry.
+- `POST .../deposit-form` with no body → correctly 400'd ("A tentative appointment time is required..."); with a proposed time → created `sessionNumber: 2`, auto-sent via SMS (Package J's auto-send-on-generate still wired through unchanged).
+- Signed session 2 via the public `PATCH /deposits/sign/:token`, then marked it paid → **a second, distinct gift card issued, and the inquiry's status stayed `SCHEDULING`** (confirming the mark-paid fix -- before the fix this would have been a no-op re-assignment to the same value here, but the bug is real for any inquiry that had moved past `SCHEDULING` by the time a later session got paid, e.g. `WAITLISTED`/`CONFIRMED`).
+- Generated session 3, then called the same route again with no changes -- confirmed it rotated session 3's token (resend) rather than creating a session 4; deposit form count stayed at 3.
+- `PATCH .../deposit-form/proposed-time` correctly targeted session 3 (the only unsigned one).
+- `GET /clients/:id`, `GET /clients/:id/shareable-links`, and `GET /inquiries/:id/delete-preview` all independently confirmed to reflect all 3 sessions correctly (delete-preview's count went from the old buggy 0/1 to a real `3`).
+- Re-confirmed unrelated access control was untouched: ARTIST still 403s on `POST .../deposit-form` (same `requireRole` gate, not modified this session).
+
+**Browser** (Playwright, `chromium-cli` unavailable on this Windows environment, same plain-`chromium.launch()` fallback as prior sessions): loaded the test inquiry's page -- the Deposit card showed all three sessions labeled "Session 1"/"Session 2"/"Session 3" with a "3 sessions" badge, sessions 1 and 2 showing their signatures/paid timestamps/issued gift card codes, session 3 showing "Resend Deposit Form" + its live link + tentative-time editor. Loaded the client profile -- the "Deposit Forms" table showed every session across every one of the client's inquiries (including older, unrelated single-session inquiries from prior packages' test data, each correctly still labeled "Session 1"), each with its own Gift Card column. Zero console errors either page.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) -- clean. `npm run build` (web) -- clean.
+
+## Commit
+
+`638afa3` -- Package M: multiple deposit forms per project (one per session). Pushed immediately (`abfe042..638afa3`); a concurrent session's small UI tweak to this same file (`InquiryDetail.tsx` -- moving the Notes section to just before Activity History) had landed on `main` in the meantime, picked up cleanly as a fast-forward with no conflicts since it touched a different part of the file (confirmed by re-reading the final committed file's structure, not just trusting the absence of a merge conflict).
+
+## Cleanup
+
+Both scratch dev servers (API :4001, web :5182) stopped; same recurring `tsx watch` child-outlives-the-task-stop pattern as every prior session, resolved with an explicit `Stop-Process -Force` by PID. The other concurrent session's server on :4000 left untouched. Playwright driver scripts and screenshots stayed in the scratchpad only, deleted at the end; none committed. Test data created during verification (three deposit forms and two gift cards on the existing seeded "Emily Rodriguez" / "Signature pad test piece" inquiry) left in the dev database, consistent with the standing convention in every prior package's report.
+
+
