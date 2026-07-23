@@ -30,6 +30,17 @@ publicRouter.get("/public", async (req, res) => {
     studioName: studio.name,
     privacyPolicy: settings?.privacyPolicy ?? null,
     termsAndConditions: settings?.termsAndConditions ?? null,
+    // Package Q: the public intake form's supplementary questions, sorted
+    // for display -- staff-side ordering is whatever array order the
+    // Settings editor left them in, but this is the one place a stored
+    // `order` value actually gets read back out and applied.
+    intakeCustomQuestions: (
+      (settings?.intakeCustomQuestions as
+        | { id: string; question: string; type: string; options?: string[]; required: boolean; order: number }[]
+        | null) ?? []
+    )
+      .slice()
+      .sort((a, b) => a.order - b.order),
   });
 });
 
@@ -111,6 +122,38 @@ function isValidHealthQuestions(value: unknown): boolean {
 
 function isValidClauses(value: unknown): value is string[] {
   return Array.isArray(value) && value.length > 0 && value.every((c) => typeof c === "string" && c.trim().length > 0);
+}
+
+// Package Q: supplementary intake questions -- same shape family as
+// waiverHealthQuestions above, but with its own type set ("select" needs
+// options; there's no "explain if yes" branch here) and an explicit id/
+// order pair, since these get referenced by id from a submitted inquiry's
+// customFieldAnswers (unlike health questions, which are only ever read
+// positionally off the same array they're defined in).
+const INTAKE_QUESTION_TYPES = ["text", "yes_no", "select"];
+
+function isValidIntakeCustomQuestions(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+
+  return value.every((entry) => {
+    if (typeof entry !== "object" || entry === null) return false;
+    const q = entry as Record<string, unknown>;
+
+    if (typeof q.id !== "string" || q.id.trim().length === 0) return false;
+    if (typeof q.question !== "string" || q.question.trim().length === 0) return false;
+    if (!INTAKE_QUESTION_TYPES.includes(q.type as string)) return false;
+    if (typeof q.required !== "boolean") return false;
+    if (typeof q.order !== "number") return false;
+
+    if (q.type === "select") {
+      if (!Array.isArray(q.options) || q.options.length === 0) return false;
+      if (!q.options.every((o) => typeof o === "string" && o.trim().length > 0)) return false;
+    } else if (q.options !== undefined) {
+      return false;
+    }
+
+    return true;
+  });
 }
 
 const BUSINESS_HOURS_TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
@@ -252,6 +295,16 @@ staffRouter.patch("/", requireRole(Role.OWNER), async (req, res) => {
     data.waiverClauses = body.waiverClauses;
   }
 
+  if (body.intakeCustomQuestions !== undefined) {
+    if (body.intakeCustomQuestions !== null && !isValidIntakeCustomQuestions(body.intakeCustomQuestions)) {
+      return res.status(400).json({
+        error:
+          "intakeCustomQuestions must be an array of { id, question, type: 'text' | 'yes_no' | 'select', options? (required, non-empty for 'select'), required, order }",
+      });
+    }
+    data.intakeCustomQuestions = body.intakeCustomQuestions;
+  }
+
   if (body.messageTemplates !== undefined) {
     if (body.messageTemplates !== null && !isValidMessageTemplates(body.messageTemplates)) {
       return res.status(400).json({ error: "messageTemplates must be an array of { id, name, body }" });
@@ -325,6 +378,7 @@ staffRouter.patch("/", requireRole(Role.OWNER), async (req, res) => {
       "timezone",
       "waiverHealthQuestions",
       "waiverClauses",
+      "intakeCustomQuestions",
       "messageTemplates",
       "showSidebarBadges",
       "businessHours",

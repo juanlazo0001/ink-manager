@@ -39,6 +39,63 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
+interface IntakeCustomQuestion {
+  id: string;
+  question: string;
+  type: "text" | "yes_no" | "select";
+  options?: string[];
+  required: boolean;
+  order: number;
+}
+
+interface CustomFieldAnswerSnapshot {
+  question: string;
+  type: IntakeCustomQuestion["type"];
+  answer: string;
+}
+
+// Package Q: re-validates a submitted intake's custom-question answers
+// against the studio's OWN current live question definitions -- never
+// trusts client-supplied question text/type, only the id and the answer
+// value. Builds the snapshot persisted on the Inquiry (question text +
+// type baked in alongside the answer) so an edit or removal of the
+// question later never changes what an already-submitted inquiry shows.
+function validateAndBuildCustomFieldAnswers(
+  questions: IntakeCustomQuestion[],
+  submitted: unknown,
+): { error: string } | { value: Record<string, CustomFieldAnswerSnapshot> | null } {
+  if (questions.length === 0) return { value: null };
+
+  const answers = (submitted && typeof submitted === "object" ? submitted : {}) as Record<string, unknown>;
+  const result: Record<string, CustomFieldAnswerSnapshot> = {};
+
+  for (const q of questions) {
+    const raw = answers[q.id];
+    const hasValue = typeof raw === "string" && raw.trim().length > 0;
+
+    if (!hasValue) {
+      if (q.required) {
+        return { error: `"${q.question}" is required` };
+      }
+      continue;
+    }
+
+    const answer = (raw as string).trim();
+
+    if (q.type === "select" && !(q.options ?? []).includes(answer)) {
+      return { error: `"${q.question}" must be one of the offered options` };
+    }
+
+    if (q.type === "yes_no" && answer !== "YES" && answer !== "NO") {
+      return { error: `"${q.question}" must be answered Yes or No` };
+    }
+
+    result[q.id] = { question: q.question, type: q.type, answer };
+  }
+
+  return { value: Object.keys(result).length > 0 ? result : null };
+}
+
 // Public: the intake form fetches a prefill draft by its capability token
 // (never PII in the URL, just this opaque token) to populate matching
 // fields before the client has typed anything. Invalid/expired/used tokens
@@ -142,11 +199,12 @@ router.post("/", optionalAuth, async (req, res) => {
     draftToken,
     smsConsent,
     referralCode,
+    customFieldAnswers: submittedCustomFieldAnswers,
   } = body;
 
   const studio = isStaffRequest
-    ? await prisma.studio.findUnique({ where: { id: req.user!.studioId } })
-    : await prisma.studio.findUnique({ where: { slug: studioSlug } });
+    ? await prisma.studio.findUnique({ where: { id: req.user!.studioId }, include: { settings: true } })
+    : await prisma.studio.findUnique({ where: { slug: studioSlug }, include: { settings: true } });
   if (!studio) {
     return res.status(404).json({ error: "Studio not found" });
   }
@@ -191,6 +249,26 @@ router.post("/", optionalAuth, async (req, res) => {
     if (!referrer) {
       return res.status(400).json({ error: "We couldn't find that referral code" });
     }
+  }
+
+  // Package Q: re-validated against THIS studio's own current live
+  // question definitions -- never the submitting client's own claims about
+  // what a question says/requires. Required-ness is only enforced on the
+  // PUBLIC path: StaffInquiryForm (a walk-in/phone call logged on the
+  // client's behalf) has no UI for these questions at all -- same
+  // public-only carve-out already applied to smsConsent above, for the
+  // same reason (staff can't be blocked by a question they were never
+  // shown and may not have thought to ask over the phone).
+  const liveIntakeQuestions = (studio.settings?.intakeCustomQuestions as unknown as IntakeCustomQuestion[] | null) ?? [];
+  const effectiveIntakeQuestions = isStaffRequest
+    ? liveIntakeQuestions.map((q) => ({ ...q, required: false }))
+    : liveIntakeQuestions;
+  const customFieldAnswersResult = validateAndBuildCustomFieldAnswers(
+    effectiveIntakeQuestions,
+    submittedCustomFieldAnswers,
+  );
+  if ("error" in customFieldAnswersResult) {
+    return res.status(400).json({ error: customFieldAnswersResult.error });
   }
 
   const existingClient = await prisma.client.findFirst({
@@ -254,6 +332,7 @@ router.post("/", optionalAuth, async (req, res) => {
       preferredArtistId: preferredArtistId || null,
       referenceImages: referenceImages ?? [],
       placementImages: placementImages ?? [],
+      customFieldAnswers: customFieldAnswersResult.value as unknown as Prisma.InputJsonValue | undefined,
     },
   });
 

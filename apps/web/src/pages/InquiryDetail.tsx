@@ -49,6 +49,12 @@ interface Inquiry {
   desiredTiming: string | null
   referenceImages: string[]
   placementImages: string[]
+  // Package Q: a snapshot taken at submission time (question text + type
+  // baked in alongside the answer, keyed by question id) -- deliberately
+  // NOT re-joined against the studio's current live intakeCustomQuestions,
+  // so editing or removing a question later never changes what an
+  // already-submitted inquiry displays.
+  customFieldAnswers: Record<string, { question: string; type: string; answer: string }> | null
   status: string
   priceEstimateLow: number | null
   priceEstimateHigh: number | null
@@ -2477,6 +2483,22 @@ export default function InquiryDetail() {
                   </div>
                 )}
               </div>
+
+              {inquiry.customFieldAnswers && Object.keys(inquiry.customFieldAnswers).length > 0 && (
+                <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                  <h2 className="text-base font-semibold text-fg">Additional Information</h2>
+                  <dl className="mt-4 space-y-3">
+                    {Object.values(inquiry.customFieldAnswers).map(({ question, type, answer }, i) => (
+                      <div key={i}>
+                        <dt className="text-sm text-fg-secondary">{question}</dt>
+                        <dd className="mt-0.5 text-sm font-medium text-fg">
+                          {type === 'yes_no' ? (answer === 'YES' ? 'Yes' : 'No') : answer}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>
+              )}
 
               <InquiryNotesSection inquiryId={inquiry.id} canManage={canMessage} readOnly={!!viewAsTarget} />
 

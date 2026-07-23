@@ -514,6 +514,14 @@ model Inquiry {
   desiredTiming         String?
   referenceImages       String[]
   placementImages       String[]
+  // Package Q: answers to the studio's supplementary intake questions at
+  // the moment THIS inquiry was submitted -- a self-contained snapshot
+  // (question text + type + answer, not just a bare value), keyed by
+  // question id, so editing or removing a question later never changes
+  // what an already-submitted inquiry displays. Never populated by any
+  // route besides the one that creates this row.
+  // Record<string, { question: string, type: "text" | "yes_no" | "select", answer: string }>
+  customFieldAnswers    Json?
   status                InquiryStatus @default(NEW)
   priceEstimateLow      Float?
   priceEstimateHigh     Float?
@@ -651,6 +659,14 @@ model StudioSettings {
   // Liability waiver template (Phase 4), editable by OWNER from Settings.
   // Array<{ question: string, type: "yes_no" | "yes_no_explain", explainPrompt?: string }>
   waiverHealthQuestions         Json?
+  // Package Q: supplementary intake-form questions on top of the fixed
+  // core fields (name/contact/description/placement/size/budget/referral
+  // source/reference images -- none of which are editable or removable
+  // here, by deliberate scope decision -- this is not a form builder).
+  // Same shape family/editor pattern as waiverHealthQuestions above.
+  // Array<{ id: string, question: string, type: "text" | "yes_no" | "select",
+  // options?: string[], required: boolean, order: number }>
+  intakeCustomQuestions         Json?
   // Array<string>, exactly 10 clauses in display/initialing order.
   waiverClauses                 Json?
   waiverAcknowledgment          String?

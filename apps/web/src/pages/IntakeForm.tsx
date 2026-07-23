@@ -30,6 +30,18 @@ interface PublicArtist {
   name: string
 }
 
+// Package Q: supplementary questions on top of the fixed core intake
+// fields above -- rendered after them, in `order`, never reordering or
+// replacing anything in the fixed core.
+interface IntakeCustomQuestion {
+  id: string
+  question: string
+  type: 'text' | 'yes_no' | 'select'
+  options?: string[]
+  required: boolean
+  order: number
+}
+
 type StudioCheck = 'loading' | 'valid' | 'invalid'
 
 export default function IntakeForm() {
@@ -59,6 +71,8 @@ export default function IntakeForm() {
   const [studioCheck, setStudioCheck] = useState<StudioCheck>('loading')
   const [studioName, setStudioName] = useState('')
   const [artists, setArtists] = useState<PublicArtist[]>([])
+  const [customQuestions, setCustomQuestions] = useState<IntakeCustomQuestion[]>([])
+  const [customAnswers, setCustomAnswers] = useState<Record<string, string>>({})
   const [referenceImages, setReferenceImages] = useState<ImageUploadState>({ urls: [], uploading: false })
   const [placementImages, setPlacementImages] = useState<ImageUploadState>({ urls: [], uploading: false })
 
@@ -116,9 +130,13 @@ export default function IntakeForm() {
 
     let ignore = false
 
-    apiFetch<{ studioName: string }>(`/studio-settings/public?studioSlug=${encodeURIComponent(studioSlug)}`)
+    apiFetch<{ studioName: string; intakeCustomQuestions: IntakeCustomQuestion[] }>(
+      `/studio-settings/public?studioSlug=${encodeURIComponent(studioSlug)}`,
+    )
       .then((data) => {
-        if (!ignore) setStudioName(data.studioName)
+        if (ignore) return
+        setStudioName(data.studioName)
+        setCustomQuestions(data.intakeCustomQuestions ?? [])
       })
       .catch(() => {
         // Non-essential -- the checkbox label falls back to generic wording.
@@ -202,6 +220,14 @@ export default function IntakeForm() {
       return
     }
 
+    const missingCustomQuestion = customQuestions.find(
+      (q) => q.required && !(customAnswers[q.id] ?? '').trim(),
+    )
+    if (missingCustomQuestion) {
+      setSubmitError(`Please answer: ${missingCustomQuestion.question}`)
+      return
+    }
+
     if (!smsConsent) {
       setSmsConsentError(true)
       return
@@ -232,6 +258,7 @@ export default function IntakeForm() {
           placementImages: placementImages.urls,
           draftToken: draftToken || undefined,
           smsConsent,
+          customFieldAnswers: customQuestions.length > 0 ? customAnswers : undefined,
         }),
       })
 
@@ -482,6 +509,64 @@ export default function IntakeForm() {
             hint="A photo of the area where you want the tattoo."
             onChange={setPlacementImages}
           />
+
+          {customQuestions.length > 0 && (
+            <div className="space-y-5 border-t border-border pt-5">
+              {customQuestions
+                .slice()
+                .sort((a, b) => a.order - b.order)
+                .map((q) => (
+                  <div key={q.id}>
+                    <label className={LABEL_CLASS}>
+                      {q.question} {q.required ? '*' : ''}
+                    </label>
+                    {q.type === 'text' && (
+                      <input
+                        type="text"
+                        value={customAnswers[q.id] ?? ''}
+                        onChange={(e) => setCustomAnswers({ ...customAnswers, [q.id]: e.target.value })}
+                        required={q.required}
+                        className={INPUT_CLASS}
+                      />
+                    )}
+                    {q.type === 'yes_no' && (
+                      <div className="mt-2 flex gap-4">
+                        {(['YES', 'NO'] as const).map((option) => (
+                          <label key={option} className="flex items-center gap-2 text-sm text-fg-secondary">
+                            <input
+                              type="radio"
+                              name={`custom-${q.id}`}
+                              checked={customAnswers[q.id] === option}
+                              onChange={() => setCustomAnswers({ ...customAnswers, [q.id]: option })}
+                              required={q.required}
+                              className="accent-accent"
+                            />
+                            {option === 'YES' ? 'Yes' : 'No'}
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                    {q.type === 'select' && (
+                      <select
+                        value={customAnswers[q.id] ?? ''}
+                        onChange={(e) => setCustomAnswers({ ...customAnswers, [q.id]: e.target.value })}
+                        required={q.required}
+                        className={INPUT_CLASS}
+                      >
+                        <option value="" disabled>
+                          Select one
+                        </option>
+                        {(q.options ?? []).map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                ))}
+            </div>
+          )}
 
           <div>
             <label className="flex items-start gap-2 text-sm text-fg-secondary">

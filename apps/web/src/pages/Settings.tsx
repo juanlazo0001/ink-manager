@@ -27,6 +27,20 @@ interface HealthQuestion {
   explainPrompt?: string
 }
 
+// Package Q: supplementary intake-form questions -- same shape family as
+// HealthQuestion above, but with its own type set ("select" needs
+// options, there's no "explain if yes" branch) and an explicit id/order
+// pair, since a submitted inquiry's answers reference these by id rather
+// than by array position.
+interface IntakeCustomQuestion {
+  id: string
+  question: string
+  type: 'text' | 'yes_no' | 'select'
+  options?: string[]
+  required: boolean
+  order: number
+}
+
 interface MessageTemplate {
   id: string
   name: string
@@ -111,6 +125,7 @@ interface StudioSettingsData {
   calendarInviteTemplate: string | null
   waiverHealthQuestions: HealthQuestion[] | null
   waiverClauses: string[] | null
+  intakeCustomQuestions: IntakeCustomQuestion[] | null
   waiverAcknowledgment: string | null
   waiverPhotoRelease: string | null
   privacyPolicy: string | null
@@ -524,6 +539,14 @@ export default function Settings() {
   const [waiverListSaving, setWaiverListSaving] = useState(false)
   const [waiverListError, setWaiverListError] = useState<string | null>(null)
 
+  // Package Q: supplementary intake-form questions -- same dedicated
+  // list-editor pattern as the waiver questions above, its own edit
+  // toggle/save (a separate concern, not folded into the same form).
+  const [intakeCustomQuestions, setIntakeCustomQuestions] = useState<IntakeCustomQuestion[]>([])
+  const [editingIntakeQuestions, setEditingIntakeQuestions] = useState(false)
+  const [intakeQuestionsSaving, setIntakeQuestionsSaving] = useState(false)
+  const [intakeQuestionsError, setIntakeQuestionsError] = useState<string | null>(null)
+
   // Message templates: same treatment as the waiver list above.
   const [messageTemplates, setMessageTemplates] = useState<MessageTemplate[]>([])
   const [editingTemplates, setEditingTemplates] = useState(false)
@@ -598,6 +621,7 @@ export default function Settings() {
         setPolicies(data)
         setWaiverHealthQuestions(data.waiverHealthQuestions ?? [])
         setWaiverClauses(data.waiverClauses ?? [])
+        setIntakeCustomQuestions(data.intakeCustomQuestions ?? [])
         setMessageTemplates(data.messageTemplates ?? [])
         setReminderSendTimes(data.reminderSendTimes ?? DEFAULT_REMINDER_SEND_TIMES)
       })
@@ -856,6 +880,43 @@ export default function Settings() {
     }
   }
 
+  async function handleIntakeQuestionsSave() {
+    setIntakeQuestionsSaving(true)
+    setIntakeQuestionsError(null)
+
+    const cleanedQuestions = intakeCustomQuestions
+      .filter((q) => q.question.trim().length > 0)
+      .map((q, i) => ({
+        id: q.id,
+        question: q.question.trim(),
+        type: q.type,
+        required: q.required,
+        order: i,
+        ...(q.type === 'select' ? { options: (q.options ?? []).map((o) => o.trim()).filter((o) => o.length > 0) } : {}),
+      }))
+
+    const invalidSelect = cleanedQuestions.find((q) => q.type === 'select' && (!q.options || q.options.length === 0))
+    if (invalidSelect) {
+      setIntakeQuestionsError(`"${invalidSelect.question}" needs at least one option.`)
+      setIntakeQuestionsSaving(false)
+      return
+    }
+
+    try {
+      const updated = await apiFetch<StudioSettingsData>('/studio-settings', {
+        method: 'PATCH',
+        body: JSON.stringify({ intakeCustomQuestions: cleanedQuestions }),
+      })
+      setPolicies(updated)
+      setIntakeCustomQuestions(updated.intakeCustomQuestions ?? [])
+      setEditingIntakeQuestions(false)
+    } catch (err) {
+      setIntakeQuestionsError(err instanceof Error ? err.message : 'Failed to save')
+    } finally {
+      setIntakeQuestionsSaving(false)
+    }
+  }
+
   async function handleTemplatesSave() {
     setTemplatesSaving(true)
     setTemplatesError(null)
@@ -970,6 +1031,36 @@ export default function Settings() {
 
   function removeClause(index: number) {
     setWaiverClauses((current) => current.filter((_, i) => i !== index))
+  }
+
+  function updateIntakeQuestion(index: number, patch: Partial<IntakeCustomQuestion>) {
+    setIntakeCustomQuestions((current) => current.map((q, i) => (i === index ? { ...q, ...patch } : q)))
+  }
+
+  function addIntakeQuestion() {
+    setIntakeCustomQuestions((current) => [
+      ...current,
+      { id: crypto.randomUUID(), question: '', type: 'text', required: false, order: current.length },
+    ])
+  }
+
+  function removeIntakeQuestion(index: number) {
+    setIntakeCustomQuestions((current) => current.filter((_, i) => i !== index))
+  }
+
+  // No drag-and-drop -- array order IS the order (persisted as each
+  // question's `order` at save time), same as the waiver list's implicit
+  // ordering above; these two buttons are the only addition beyond that
+  // pattern, since intakeCustomQuestions has an explicit `order` field for
+  // the public intake form to sort by.
+  function moveIntakeQuestion(index: number, direction: -1 | 1) {
+    setIntakeCustomQuestions((current) => {
+      const target = index + direction
+      if (target < 0 || target >= current.length) return current
+      const next = [...current]
+      ;[next[index], next[target]] = [next[target]!, next[index]!]
+      return next
+    })
   }
 
   function updateTemplate(index: number, patch: Partial<MessageTemplate>) {
@@ -1716,6 +1807,175 @@ export default function Settings() {
                           setWaiverListError(null)
                         }}
                         disabled={waiverListSaving}
+                        className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-4 rounded-xl border border-border p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-fg">Intake Form Questions</p>
+                    <p className="mt-0.5 text-xs text-fg-secondary">
+                      {intakeCustomQuestions.length} supplementary question
+                      {intakeCustomQuestions.length === 1 ? '' : 's'} &middot; the fixed core intake fields aren't
+                      editable here
+                    </p>
+                  </div>
+                  {canEditPolicies && !editingIntakeQuestions && (
+                    <button
+                      type="button"
+                      onClick={() => setEditingIntakeQuestions(true)}
+                      className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                    >
+                      Edit
+                    </button>
+                  )}
+                </div>
+
+                {editingIntakeQuestions && (
+                  <div className="mt-4 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <label className="text-sm font-medium text-fg-secondary">
+                        Supplementary questions, asked after the fixed core intake fields
+                      </label>
+                      <button
+                        type="button"
+                        onClick={addIntakeQuestion}
+                        className="rounded-full border border-border px-3 py-1 text-xs font-medium text-fg transition hover:bg-surface"
+                      >
+                        Add question
+                      </button>
+                    </div>
+
+                    <div className="space-y-3">
+                      {intakeCustomQuestions.map((q, i) => (
+                        <div key={q.id} className="rounded-lg border border-border p-3">
+                          <div className="flex items-start gap-2">
+                            <div className="flex shrink-0 flex-col gap-1">
+                              <button
+                                type="button"
+                                onClick={() => moveIntakeQuestion(i, -1)}
+                                disabled={i === 0}
+                                aria-label="Move up"
+                                title="Move up"
+                                className="flex h-6 w-6 items-center justify-center rounded-full border border-border text-xs text-fg-secondary transition hover:bg-surface disabled:opacity-30"
+                              >
+                                ↑
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => moveIntakeQuestion(i, 1)}
+                                disabled={i === intakeCustomQuestions.length - 1}
+                                aria-label="Move down"
+                                title="Move down"
+                                className="flex h-6 w-6 items-center justify-center rounded-full border border-border text-xs text-fg-secondary transition hover:bg-surface disabled:opacity-30"
+                              >
+                                ↓
+                              </button>
+                            </div>
+                            <textarea
+                              rows={2}
+                              value={q.question}
+                              onChange={(e) => updateIntakeQuestion(i, { question: e.target.value })}
+                              placeholder="Question text"
+                              className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => removeIntakeQuestion(i)}
+                              className="shrink-0 rounded-full border border-border px-2 py-1 text-xs text-fg-secondary transition hover:bg-surface hover:text-fg"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                          <div className="mt-2 flex flex-wrap items-center gap-3">
+                            <select
+                              value={q.type}
+                              onChange={(e) =>
+                                updateIntakeQuestion(i, { type: e.target.value as IntakeCustomQuestion['type'] })
+                              }
+                              className="rounded-lg border border-border bg-surface-inset px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                            >
+                              <option value="text">Text</option>
+                              <option value="yes_no">Yes/No</option>
+                              <option value="select">Select one</option>
+                            </select>
+                            <label className="flex items-center gap-1.5 text-xs text-fg-secondary">
+                              <input
+                                type="checkbox"
+                                checked={q.required}
+                                onChange={(e) => updateIntakeQuestion(i, { required: e.target.checked })}
+                                className="h-3.5 w-3.5 rounded border-border bg-surface-inset accent-accent"
+                              />
+                              Required
+                            </label>
+                          </div>
+                          {q.type === 'select' && (
+                            <div className="mt-2 space-y-2">
+                              {(q.options ?? []).map((option, oi) => (
+                                <div key={oi} className="flex items-center gap-2">
+                                  <input
+                                    type="text"
+                                    value={option}
+                                    placeholder={`Option ${oi + 1}`}
+                                    onChange={(e) => {
+                                      const nextOptions = [...(q.options ?? [])]
+                                      nextOptions[oi] = e.target.value
+                                      updateIntakeQuestion(i, { options: nextOptions })
+                                    }}
+                                    className="w-full rounded-lg border border-border bg-surface-inset px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      updateIntakeQuestion(i, { options: (q.options ?? []).filter((_, idx) => idx !== oi) })
+                                    }
+                                    className="shrink-0 rounded-full border border-border px-2 py-1 text-xs text-fg-secondary transition hover:bg-surface hover:text-fg"
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                              ))}
+                              <button
+                                type="button"
+                                onClick={() => updateIntakeQuestion(i, { options: [...(q.options ?? []), ''] })}
+                                className="rounded-full border border-border px-3 py-1 text-xs font-medium text-fg transition hover:bg-surface"
+                              >
+                                Add option
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      {intakeCustomQuestions.length === 0 && (
+                        <p className="text-sm text-fg-secondary">No supplementary questions yet.</p>
+                      )}
+                    </div>
+
+                    {intakeQuestionsError && <p className="text-sm text-danger">{intakeQuestionsError}</p>}
+
+                    <div className="flex gap-3">
+                      <button
+                        type="button"
+                        onClick={handleIntakeQuestionsSave}
+                        disabled={intakeQuestionsSaving}
+                        className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                      >
+                        {intakeQuestionsSaving ? 'Saving…' : 'Save'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingIntakeQuestions(false)
+                          setIntakeCustomQuestions(policies.intakeCustomQuestions ?? [])
+                          setIntakeQuestionsError(null)
+                        }}
+                        disabled={intakeQuestionsSaving}
                         className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
                       >
                         Cancel
