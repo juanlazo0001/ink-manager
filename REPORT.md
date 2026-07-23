@@ -647,3 +647,42 @@ Both `npx tsc --noEmit` (api) and `npm run build` (web) are clean.
 ## Cleanup
 
 Both dev servers (API on port 4000, web on 5173 -- the stale API process squatting on port 4000 from earlier in the day was killed first since it predated this session's Prisma client regeneration) killed. All verification gift cards/appointments created during PowerShell and browser testing were voided/cancelled as part of the scripts themselves. Verification scripts lived only in the session scratchpad (`pw-test/test-package-f*.js`), never in the repo.
+
+---
+
+# Package G — Task improvements
+
+Single session, on `main`, run directly in the shared checkout (no schema change, so no worktree needed this time). Confirmed via `DEVELOPMENT.md`/dev `DATABASE_URL` that the dev database is separate from production before touching anything.
+
+## Pre-existing state, checked before writing any code
+
+Two of the three items were already fully built by prior sessions -- confirmed by reading the actual current files rather than assuming the task description was still accurate:
+
+- **Delegated tasks on both people's lists** (item 2) was already complete end to end: `GET /tasks` already returns `assignedByMe` (creator = caller, assignee != caller) alongside `personal`; `Tasks.tsx` already splits "Assigned to Me" into "My tasks" vs. "Assigned by others" (client-side, on `createdBy.id`), and has a separate "Assigned by Me" card for OWNER/FRONT_DESK showing status but only a delete button -- no complete-toggle, and `PATCH /personal/:id` is assignee-only server-side regardless, so it's read-only in both the UI and the API. Nothing to build; verified live instead (see below).
+- **Task due dates** (item 1) had the mutation/edit wiring already done, but both spots (`Tasks.tsx`'s inline per-task editor and the "Add task" form) still used a native `<input type="date">`. A ready-made single-date component already existed for exactly this (`DatePickerField.tsx`, built on the same `DayPicker` calendar as `DateAndTimeRangeFields.tsx`, already used by `ArtistCreate.tsx`/`ArtistDetail.tsx` for guest-artist date ranges) -- swapped both spots to it, added `sr-only` labels since neither spot has room for a visible one (matching the removed `aria-label` on the old native inputs).
+- **Checkout-reminder task** (item 3) genuinely didn't exist -- new addition, see below.
+
+## New derived task source
+
+`apps/api/src/lib/tasks/appointmentNeedsCheckout.ts`, registered in `registry.ts` (one new file + one array entry, nothing else in `/tasks` changes -- same pattern as every other source). Query: `studioId` match, `archivedAt: null`, `checkedOutAt: null`, `endTime < now`, `status NOT IN (CANCELLED, NO_SHOW)` (a cancelled/no-show appointment has no client to check out, and `COMPLETED` already implies `checkedOutAt` is set per the schema's own comment, so it never reaches this filter anyway). Title: "Check out {client} — appointment ended {time}".
+
+**Timezone correctness**: deciding *whether* the task is actionable needs no timezone math at all -- `endTime` is a stored UTC instant, and `now > endTime` compares correctly everywhere regardless of the studio's own timezone (same reasoning `estimateFollowup.ts` already uses for "elapsed time since a real event"). The studio's `StudioSettings.timezone` is used only to *format* the displayed time in the title (`Intl.DateTimeFormat` with the studio's IANA zone, mirroring `reminderTicker.ts`'s existing `formatTimeInTz` helper). Verified live: an appointment with `endTime: 2026-07-20T00:21:25.134Z` (UTC) correctly displayed as "ended 8:21 PM" (America/New_York, UTC-4 in July).
+
+**Derived, not stored -- confirmed live, not just by inspection**: 4 pre-existing seeded appointments already qualified (past `endTime`, `checkedOutAt: null`, non-cancelled) and immediately appeared as tasks with no seed/migration step needed. Completing checkout on one of them (via the existing `POST /appointments/:id/checkout` flow, browser-driven) made its task disappear from `GET /tasks` on the very next fetch, with zero manual cleanup -- proving the whole thing really is computed live off `Appointment.checkedOutAt`, not a stored row that could go stale.
+
+**Dismissal nuance, called out explicitly since it's a deliberate deviation from most other task types**: `dismissalKey` folds in today's studio-local calendar day (`civilDateKey(now, timezone)`) rather than being a stable `appointment.id`. Every other dismissable source uses a stable key (dismiss = gone until the underlying record changes), but this task's condition doesn't go away on its own -- a stable key would let staff dismiss it once and have it silently vanish forever even though the appointment stays un-checked-out indefinitely, which would violate "must persist for as long as the appointment remains un-checked-out." With the day-bucketed key, a manual Dismiss only silences it for the rest of today (studio-local) and it reliably reappears the next day for as long as checkout is still incomplete -- real resolution only ever comes from `checkedOutAt` actually being set.
+
+## Verification (Playwright against the local dev instance)
+
+- Native `<input type="date">` count on the Tasks page confirmed at 0 after the swap; clicking the due-date field opens a real month-grid calendar popover (screenshotted); clicking a day populates the field with a formatted date (e.g. "Wed, Jul 1, 2026") -- no typing anywhere.
+- Delegated tasks: created a task as OWNER assigned to FRONT_DESK; confirmed present under OWNER's own "Assigned by Me" and under FRONT_DESK's "Assigned by others" (via both the API response shape and, after allowing enough time for the query to resolve on this heavily-loaded shared dev machine, the rendered page text).
+- Checkout-reminder task: 4 existing overdue appointments correctly surfaced with correct studio-local times; completing checkout on one via the real UI removed its task immediately on the next `GET /tasks`.
+- Both `npx tsc --noEmit` (api) and `npm run build` (web) clean.
+
+## Commit
+
+`ee99d28` on `main`.
+
+## Cleanup
+
+Both dev servers (API on scratch port 4088, web on 5173 with `VITE_API_URL` overridden inline rather than editing the shared `apps/web/.env` -- several other sessions' dev servers were already running on the standard ports in this same shared checkout) killed, including a `tsx watch` restart-loop artifact (another concurrent session was actively saving `inquiries.ts`, unrelated to this work, causing repeated restarts and PID churn on my own port) -- resolved by killing whatever held port 4088 in a short retry loop rather than hunting through dozens of near-identical `tsx watch` process command lines from every other session's dev server. My own test task and its stray earlier duplicates were deleted; the appointment checked out during verification was left checked out (that's the correct end state of the test, not something to revert), consistent with the standing convention of leaving legitimate verification actions in the dev database.
