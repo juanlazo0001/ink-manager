@@ -2133,8 +2133,6 @@ export default function InquiryDetail() {
                 )}
               </div>
 
-              <InquiryNotesSection inquiryId={inquiry.id} canManage={canMessage} readOnly={!!viewAsTarget} />
-
               <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
                 <div className="flex items-center justify-between">
                   <h2 className="text-base font-semibold text-fg">Reference images</h2>
@@ -2236,6 +2234,8 @@ export default function InquiryDetail() {
                   </div>
                 )}
               </div>
+
+              <InquiryNotesSection inquiryId={inquiry.id} canManage={canMessage} readOnly={!!viewAsTarget} />
 
               <AuditTrail entityType="Inquiry" entityId={inquiry.id} />
 
