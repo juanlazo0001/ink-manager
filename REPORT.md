@@ -1397,4 +1397,85 @@ Per the task's own explicit instruction ("If any are found, STOP and report -- d
 
 Both scratch dev servers (API :4002 -- :4001 was taken by another concurrent session this time, web :5183) stopped; confirmed via `Get-NetTCPConnection` and force-killed by PID, same recurring pattern as every prior package. Playwright driver scripts and screenshots stayed in the scratchpad only, none committed. The disposable test client created for the live delete-flow verification no longer exists (that was the point of the test). The 2 real `ConsentForm` rows deleted from production (with explicit sign-off) and the whole table's removal are both permanent, intentional outcomes of this package, not incidental data loss.
 
+---
+
+# Package Q — Customizable intake form (studio-defined supplementary questions)
+
+Single session on `main`. Pre-flight: `git status` clean, `git pull` (up to date), `prisma migrate status` clean, no other session mid-migration.
+
+## A real gotcha hit before any Package Q work could start
+
+`prisma migrate dev` refused outright: `"The migration 20260723201202_referral_code_required was modified after it was applied. We need to reset the 'public' schema... All data will be lost."` -- direct fallout from the production incident earlier this session, where that exact migration file's content was edited in place *after* dev had already recorded it as successfully applied (different content, different checksum). Did **not** run the suggested `migrate reset` -- that would have destroyed the entire dev database over a bookkeeping mismatch, not a real problem with the data or schema. `prisma migrate status` (the non-shadow-DB path) still reported clean, confirming the drift only affects `migrate dev`'s stricter shadow-database workflow. Fixed it surgically: verified Prisma's checksum algorithm is plain SHA-256 of the migration file's bytes (confirmed against an untouched control migration first), then updated the one drifted row's `checksum` column in dev's own `_prisma_migrations` table to match the file's current, correct content -- a bookkeeping correction, not a data change, and confirmed afterward that `migrate dev` runs clean again (`"Already in sync, no schema change or pending migration was found"`). Production was never touched by this -- it only ever uses `migrate deploy`/`migrate status`, neither of which checks checksums this way.
+
+Also worth noting for the record: this session's shared checkout had a concurrent session actively mid-edit on `ClientDetail.tsx`/`AppointmentDetail.tsx`/`InquiryNotesSection.tsx` (an unrelated button-styling pass, the same effort visible in this log's surrounding commits) the entire time this package was in progress. None of those files needed changes for Package Q, so they were simply left alone -- but `InquiryDetail.tsx` did need a real Package Q change and had that same concurrent editing happening in it simultaneously. Handled via a hand-built two-hunk patch applied with `git apply --cached` (verified with `--check` first) so only this package's own 22 lines landed in the commit -- the other session's in-progress, unstaged button-styling hunks in that same file were left untouched in the working tree for them to commit on their own schedule.
+
+## Schema
+
+```prisma
+model StudioSettings {
+  // ...
+  intakeCustomQuestions Json?
+  // Array<{ id: string, question: string, type: "text" | "yes_no" | "select",
+  // options?: string[], required: boolean, order: number }>
+}
+model Inquiry {
+  // ...
+  customFieldAnswers Json?
+  // Record<string, { question: string, type: "text" | "yes_no" | "select", answer: string }>
+}
+```
+
+Both nullable/additive -- applied via the usual `prisma migrate diff` + hand-placed migration folder + `migrate deploy` (not `migrate dev`, whose checksum check the above section covers) into `20260723225348_intake_custom_questions`.
+
+## Confirmation the fixed core fields were untouched
+
+Per the task's explicit scope decision, the core intake fields (name, contact info, tattoo description, placement, size, budget, referral source, reference images) are non-removable and non-reconfigurable in this feature. Verified this held: `REQUIRED_FIELDS`, the core validation block, and every core field's own input in both `IntakeForm.tsx` and the `POST /inquiries` route are completely unchanged -- Package Q only ever *appends* to them (a new state slice, a new validation check for custom questions specifically, a new section rendered after the existing ones). No core field's name, type, requiredness, or position moved.
+
+## Settings UI -- same list-editor pattern as waiver health questions, reused not rebuilt
+
+New "Intake Form Questions" card in Settings' Policies & Templates tab, right after the existing "Waiver Questions & Clauses" card -- same edit-toggle/add/remove/Save-Cancel shape, same `crypto.randomUUID()` id-generation convention already used by message templates. One real addition beyond a literal copy: **move-up/move-down buttons**. The waiver list has no reorder controls at all (array order is implicit, waiverHealthQuestions has no `order` field) -- but this schema's `intakeCustomQuestions` has an explicit `order` field the public form sorts by, so "reorder" (which the task did ask for) needed an actual mechanism; simple swap-with-neighbor buttons, `order` persisted as array index at save time. Also new versus the waiver pattern: a "select" type needs an options sub-editor (add/edit/remove option rows, only shown for that type) and a "required" checkbox per question.
+
+## Public intake form
+
+Renders custom questions, sorted by `order`, after the fixed core fields (including reference/placement images) and before the SMS consent checkbox. Each question's `required` maps directly to the native HTML `required` attribute on its input/radio-group/select -- the browser's own constraint validation blocks submission before any custom JS check even runs, exactly like every other required field already on this form (confirmed live: a native "Please fill out this field" tooltip appeared on the first unanswered required question, not a custom error message). A JS-level fallback check exists too (`"Please answer: {question}"`), for completeness, though native validation reaches every required field first in practice.
+
+Data source: no new endpoint -- `IntakeForm.tsx` already called `GET /studio-settings/public?studioSlug=` for the studio's display name, so `intakeCustomQuestions` was simply added to that existing response instead of adding a second fetch.
+
+## Backend validation -- re-validated server-side, never trusts the client
+
+`POST /inquiries` re-validates submitted `customFieldAnswers` against the studio's own *live* `intakeCustomQuestions` (fetched fresh, not whatever the client claims a question says or requires): missing-when-required, `select` answers checked against the live `options` list, `yes_no` answers checked against `"YES"/"NO"`. Confirmed live that a hand-crafted request with an answer not in the offered `select` options is rejected with a 400, even bypassing the UI entirely.
+
+**Judgment call, found and fixed during implementation, not assumed away**: `StaffInquiryForm.tsx` (front desk logging a walk-in/phone inquiry) submits through this exact same route but has no UI at all for custom questions. A required custom question would have silently started blocking every staff-logged walk-in the moment a studio added one. Fixed with the same carve-out already used for `smsConsent` a few lines above it in this same route: on the staff path, every custom question's `required` is treated as `false` before validation runs (any answers staff *do* submit are still validated/stored normally, just never required). Confirmed live: a staff-submitted walk-in with two required custom questions defined and zero answers submitted still returns 201, `customFieldAnswers: null`.
+
+The persisted snapshot is keyed by question id but stores `{ question, type, answer }` per entry (not just the bare answer) -- a deliberate reading of "submitted answers keyed by question id" that keeps each answer self-contained. This is what makes the retroactive-display requirement work: an already-submitted inquiry's display never needs to re-join against `StudioSettings.intakeCustomQuestions` (which could have been edited or had the question deleted since), because the question's own text and type traveled with the answer at submission time.
+
+## Display
+
+New "Additional Information" card on the Inquiry detail page, positioned directly before the Notes section (Package L had already landed), only rendered when the inquiry actually has custom answers. `yes_no` answers render as "Yes"/"No"; `text`/`select` answers render as-is.
+
+## Verification
+
+**Browser** (Playwright, scratch API :4003 -- :4000/:4001/:4002 all held by other concurrent sessions this time, web :5183, `chromium-cli` unavailable on this Windows environment, same `chromium.launch()` fallback as every prior session):
+- Added one question of each type (text, yes/no, select with Cash/Card options) via Settings, all marked required -- saved cleanly, card summary updated to "3 supplementary questions."
+- Public intake form: confirmed all three render, in order, after the fixed core fields. Attempted submission with the questions unanswered -- correctly blocked by native browser validation on the first required field. Filled all three ("A trip to Japan" / Yes / Card) and submitted successfully.
+- Confirmed via direct API read that the persisted `customFieldAnswers` snapshot has all three entries with the exact question text, type, and answer baked in.
+- Inquiry detail page: "Additional Information" card renders all three, correctly positioned right before Notes, `yes_no` shown as "Yes" (not the raw stored "YES").
+- Removed the yes/no question via Settings -- saved cleanly, card now shows "2 supplementary questions." Reloaded the public intake form: the removed question no longer appears, the other two still do. Reloaded the *existing* inquiry from before the removal: it still shows all three answers, including the removed question's -- confirming the snapshot approach actually delivers the "not retroactively deleted" requirement rather than just claiming to.
+
+**PowerShell/curl**:
+- Staff walk-in submission (`POST /inquiries` with a staff JWT, zero custom answers, two required questions live) -- 201, not blocked, `customFieldAnswers: null`.
+- Tampered public submission with a `select` answer outside the live `options` list -- 400, `"How would you like to pay?" must be one of the offered options`.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) -- clean. `npx tsc --noEmit` and `npm run build` (web) -- both clean.
+
+## Commit
+
+`f26410b` -- Package Q: customizable intake form (studio-defined supplementary questions). Pushed immediately (`546a880..f26410b`); landed between two of a concurrent session's own button-styling commits, picked up cleanly as a fast-forward -- see the checkout-sharing note above for how the one file both sessions needed (`InquiryDetail.tsx`) was handled without mixing the two unrelated changes into one commit.
+
+## Cleanup
+
+Both scratch dev servers (API :4003, web :5183) stopped; confirmed via `Get-NetTCPConnection` and force-killed by PID, same recurring pattern as every prior package. Playwright driver scripts and screenshots stayed in the scratchpad only, none committed. Test data created during verification (one client/inquiry with all three custom answers, one staff-logged walk-in, one tamper-test attempt that correctly failed) left in the dev database, consistent with the standing convention in every prior package's report.
+
 
