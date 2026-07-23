@@ -172,7 +172,6 @@ interface DeletePreview {
   waivers: number
   depositForms: number
   giftCardsToDetach: { id: string; code: string; amountCents: number; status: string }[]
-  consentFormsToDetach: number
   conversationTags: number
 }
 
@@ -2728,13 +2727,6 @@ export default function InquiryDetail() {
                           <li>{deletePreview.waivers} signed waiver{deletePreview.waivers === 1 ? '' : 's'}</li>
                           <li>{deletePreview.depositForms} deposit form{deletePreview.depositForms === 1 ? '' : 's'}</li>
                         </ul>
-                        {deletePreview.consentFormsToDetach > 0 && (
-                          <p className="mt-2 text-fg-secondary">
-                            {deletePreview.consentFormsToDetach} consent form
-                            {deletePreview.consentFormsToDetach === 1 ? '' : 's'} will be unlinked from the deleted
-                            appointment(s), not destroyed.
-                          </p>
-                        )}
                         {deletePreview.giftCardsToDetach.length > 0 && (
                           <p className="mt-2 font-semibold text-danger">
                             {deletePreview.giftCardsToDetach.length} gift card

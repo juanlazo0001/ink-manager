@@ -356,7 +356,6 @@ model Client {
   smsConsentSource  String?
 
   appointments     Appointment[]
-  consentForms     ConsentForm[]
   inquiries        Inquiry[]
   giftCards        GiftCard[]
   liabilityWaivers LiabilityWaiver[]
@@ -474,7 +473,6 @@ model Appointment {
   inquiryId      String
   inquiryProject Inquiry @relation("InquirySessions", fields: [inquiryId], references: [id])
 
-  consentForm     ConsentForm?
   inquiry         Inquiry?         @relation("InquiryScheduledAppointment")
   giftCard        GiftCard?
   liabilityWaiver LiabilityWaiver?
@@ -502,22 +500,6 @@ model AppointmentPhoto {
   uploadedBy   User   @relation("AppointmentPhotoUploadedBy", fields: [uploadedById], references: [id])
 
   @@index([appointmentId])
-}
-
-model ConsentForm {
-  id            String    @id @default(cuid())
-  signedAt      DateTime?
-  signatureData String?
-  createdAt     DateTime  @default(now())
-
-  signingToken   String?   @unique
-  tokenExpiresAt DateTime?
-
-  clientId String
-  client   Client @relation(fields: [clientId], references: [id])
-
-  appointmentId String?      @unique
-  appointment   Appointment? @relation(fields: [appointmentId], references: [id])
 }
 
 model Inquiry {
@@ -778,9 +760,9 @@ model DepositForm {
   agreedIdAndVoucher          Boolean   @default(false)
   agreedAge18                 Boolean   @default(false)
   signatureName               String?
-  // Base64 PNG from signature_pad, same pattern as ConsentForm.signatureData
-  // -- signatureName stays too (the typed legal name backing the drawn mark,
-  // shown in the audit trail), it's just no longer the signature itself.
+  // Base64 PNG from signature_pad -- signatureName stays too (the typed
+  // legal name backing the drawn mark, shown in the audit trail), it's
+  // just no longer the signature itself.
   signatureData               String?
   signedAt                    DateTime?
   depositAmount               Float
@@ -869,8 +851,8 @@ model LiabilityWaiver {
   id     String                @id @default(cuid())
   status LiabilityWaiverStatus @default(PENDING)
 
-  // Public-flow bearer token (same pattern as ConsentForm) -- unlike
-  // GiftCard.code, this token IS single-use: it's cleared on signing.
+  // Public-flow bearer token -- unlike GiftCard.code, this token IS
+  // single-use: it's cleared on signing.
   token          String?   @unique
   tokenExpiresAt DateTime?
 

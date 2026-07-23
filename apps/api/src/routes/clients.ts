@@ -1,5 +1,4 @@
 import { Router } from "express";
-import crypto from "node:crypto";
 import { prisma } from "../lib/prisma";
 import type { Prisma } from "../../generated/prisma/client";
 import { requireAuth, requireRole } from "../middleware/auth";
@@ -10,13 +9,9 @@ import { normalizePhone } from "../lib/phone";
 import { syncPrimaryEmail, syncPrimaryPhone } from "../lib/clientContacts";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { shortenUrl } from "../lib/shortLinks";
-import { getOrCreateClientConversation } from "../lib/conversations";
-import { sendClientSms } from "../lib/clientSms";
 import { generateUniqueReferralCode } from "../lib/referrals";
 
 const router = Router();
-
-const CONSENT_FORM_TOKEN_TTL_HOURS = 48;
 
 router.use(requireAuth);
 router.use(requirePermission("clients.manage"));
@@ -111,7 +106,6 @@ router.get("/:id", async (req, res) => {
   const client = await prisma.client.findUnique({
     where: { id },
     include: {
-      consentForms: { select: { id: true, signedAt: true, createdAt: true }, orderBy: { createdAt: "desc" } },
       inquiries: {
         select: {
           id: true,
@@ -780,16 +774,14 @@ router.post("/:id/emails/:emailId/make-primary", async (req, res) => {
 // (DepositForm relates via Inquiry, not Client directly, so it moves for
 // free when Inquiry does and doesn't need its own re-point here.)
 async function repointClientRelations(tx: Prisma.TransactionClient, sourceId: string, survivorId: string) {
-  const [appointments, consentForms, inquiries, giftCards] = await Promise.all([
+  const [appointments, inquiries, giftCards] = await Promise.all([
     tx.appointment.updateMany({ where: { clientId: sourceId }, data: { clientId: survivorId } }),
-    tx.consentForm.updateMany({ where: { clientId: sourceId }, data: { clientId: survivorId } }),
     tx.inquiry.updateMany({ where: { clientId: sourceId }, data: { clientId: survivorId } }),
     tx.giftCard.updateMany({ where: { clientId: sourceId }, data: { clientId: survivorId } }),
   ]);
 
   return {
     Appointment: appointments.count,
-    ConsentForm: consentForms.count,
     Inquiry: inquiries.count,
     GiftCard: giftCards.count,
   };
@@ -1022,12 +1014,11 @@ router.post("/:id/unarchive", async (req, res) => {
 // DELETE below -- both need the exact same full picture of this client's
 // history.
 async function gatherClientDeletionSummary(clientId: string) {
-  const [inquiries, appointments, waivers, consentForms, giftCards, depositForms, conversation, phones, emails] =
+  const [inquiries, appointments, waivers, giftCards, depositForms, conversation, phones, emails] =
     await Promise.all([
       prisma.inquiry.count({ where: { clientId } }),
       prisma.appointment.count({ where: { clientId } }),
       prisma.liabilityWaiver.count({ where: { clientId } }),
-      prisma.consentForm.count({ where: { clientId } }),
       prisma.giftCard.findMany({ where: { clientId }, select: { id: true, code: true, amountCents: true, status: true } }),
       prisma.depositForm.count({ where: { inquiry: { clientId } } }),
       prisma.conversation.findUnique({ where: { clientId }, select: { id: true } }),
@@ -1044,7 +1035,6 @@ async function gatherClientDeletionSummary(clientId: string) {
     inquiries,
     appointments,
     waivers,
-    consentForms,
     giftCards: giftCards.map((card) => ({ id: card.id, code: card.code, amountCents: card.amountCents, status: card.status })),
     activeGiftCardCents,
     depositForms,
@@ -1113,7 +1103,6 @@ router.delete("/:id", requireRole(Role.OWNER), async (req, res) => {
     }
 
     await tx.liabilityWaiver.deleteMany({ where: { clientId: id } });
-    await tx.consentForm.deleteMany({ where: { clientId: id } });
     await tx.clientPhone.deleteMany({ where: { clientId: id } });
     await tx.clientEmail.deleteMany({ where: { clientId: id } });
     // DepositForm before GiftCard: DepositForm.giftCardId optionally points
@@ -1140,42 +1129,6 @@ router.delete("/:id", requireRole(Role.OWNER), async (req, res) => {
   });
 
   res.json({ success: true });
-});
-
-router.post("/:clientId/consent-forms", async (req, res) => {
-  const clientId = req.params.clientId as string;
-
-  const client = await prisma.client.findUnique({ where: { id: clientId } });
-
-  if (!client || client.studioId !== req.user!.studioId) {
-    return res.status(404).json({ error: "Client not found" });
-  }
-
-  const signingToken = crypto.randomBytes(32).toString("hex");
-  const tokenExpiresAt = new Date(Date.now() + CONSENT_FORM_TOKEN_TTL_HOURS * 60 * 60 * 1000);
-
-  const consentForm = await prisma.consentForm.create({
-    data: { clientId, signingToken, tokenExpiresAt },
-  });
-
-  const signingUrl = await shortenUrl(`${PUBLIC_APP_URL}/sign/${signingToken}`);
-
-  // Auto-send through the same real-SMS path as the estimate auto-send --
-  // "Send Consent Form" otherwise generated a link with no trace in
-  // Conversations. Best-effort, same as the estimate/deposit-form/waiver
-  // sends: the form itself is already generated above regardless of
-  // whether the text goes out.
-  const studio = await prisma.studio.findUnique({ where: { id: req.user!.studioId }, select: { name: true } });
-  const consentSendResult = await sendClientSms({
-    studioId: req.user!.studioId,
-    clientId,
-    conversationId: (await getOrCreateClientConversation(req.user!.studioId, clientId, req.user!.userId)).conversation
-      .id,
-    body: `Hi ${client.firstName}, please review and sign this consent form from ${studio?.name ?? "our studio"}: ${signingUrl} (expires in 48 hours)`,
-    actorUserId: req.user!.userId,
-  });
-
-  res.status(201).json({ ...consentForm, signingUrl, consentSendResult });
 });
 
 export default router;

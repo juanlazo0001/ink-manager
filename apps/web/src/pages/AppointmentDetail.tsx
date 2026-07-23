@@ -77,7 +77,6 @@ interface Appointment {
 
 interface DeletePreview {
   waivers: number
-  consentForms: number
   giftCardToDetach: { id: string; code: string; amountCents: number; status: string } | null
   conversationTags: number
   photos: number
@@ -1287,12 +1286,6 @@ export default function AppointmentDetail() {
                             <li>{deletePreview.photos} photo{deletePreview.photos === 1 ? '' : 's'}</li>
                           )}
                         </ul>
-                        {deletePreview.consentForms > 0 && (
-                          <p className="mt-2 text-fg-secondary">
-                            {deletePreview.consentForms} consent form{deletePreview.consentForms === 1 ? '' : 's'}{' '}
-                            will be unlinked, not destroyed.
-                          </p>
-                        )}
                         {deletePreview.giftCardToDetach && (
                           <p className="mt-2 font-semibold text-danger">
                             The attached gift card ({formatCents(deletePreview.giftCardToDetach.amountCents)}) will

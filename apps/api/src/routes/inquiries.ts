@@ -1606,7 +1606,7 @@ async function gatherInquiryDeletionSummary(inquiryId: string) {
   const appointments = await prisma.appointment.findMany({ where: { inquiryId }, select: { id: true } });
   const appointmentIds = appointments.map((a) => a.id);
 
-  const [waivers, depositFormCount, attachedGiftCards, consentFormsToDetachCount, conversationTagCount] = await Promise.all([
+  const [waivers, depositFormCount, attachedGiftCards, conversationTagCount] = await Promise.all([
     prisma.liabilityWaiver.count({ where: { appointmentId: { in: appointmentIds } } }),
     // Package M: could be several now (one per session), not just 0 or 1.
     prisma.depositForm.count({ where: { inquiryId } }),
@@ -1614,7 +1614,6 @@ async function gatherInquiryDeletionSummary(inquiryId: string) {
       where: { appointmentId: { in: appointmentIds } },
       select: { id: true, code: true, amountCents: true, status: true },
     }),
-    prisma.consentForm.count({ where: { appointmentId: { in: appointmentIds } } }),
     prisma.conversationTag.count({
       where: {
         OR: [
@@ -1630,7 +1629,6 @@ async function gatherInquiryDeletionSummary(inquiryId: string) {
     waivers,
     depositForms: depositFormCount,
     giftCardsToDetach: attachedGiftCards.map((card) => ({ id: card.id, code: card.code, amountCents: card.amountCents, status: card.status })),
-    consentFormsToDetach: consentFormsToDetachCount,
     conversationTags: conversationTagCount,
   };
 }
@@ -1639,10 +1637,7 @@ async function gatherInquiryDeletionSummary(inquiryId: string) {
 // this inquiry's own tree -- unlike client-delete, any gift card attached
 // to one of this inquiry's appointments is DETACHED (appointmentId ->
 // null), never destroyed: it's the client's money, independent of this
-// one project. Consent forms on these appointments are likewise unlinked
-// (appointmentId -> null) rather than deleted, since they're optionally
-// attached and represent a signed legal document that outlives the
-// session it was originally tied to.
+// one project.
 router.delete("/:id", requireAuth, requireRole(Role.OWNER), async (req, res) => {
   const id = req.params.id as string;
   const { confirm } = req.body ?? {};
@@ -1664,8 +1659,6 @@ router.delete("/:id", requireAuth, requireRole(Role.OWNER), async (req, res) => 
 
     // Detach, don't destroy -- the client's money survives this delete.
     await tx.giftCard.updateMany({ where: { appointmentId: { in: appointmentIds } }, data: { appointmentId: null } });
-    // Unlink, don't destroy -- a signed consent form outlives the session.
-    await tx.consentForm.updateMany({ where: { appointmentId: { in: appointmentIds } }, data: { appointmentId: null } });
 
     await tx.liabilityWaiver.deleteMany({ where: { appointmentId: { in: appointmentIds } } });
     await tx.conversationTag.deleteMany({

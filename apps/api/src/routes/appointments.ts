@@ -282,9 +282,8 @@ router.post("/:id/unarchive", requirePermission("appointments.manage"), async (r
 // will be detached/destroyed) and the audit snapshot written just before
 // the actual DELETE below.
 async function gatherAppointmentDeletionSummary(appointmentId: string) {
-  const [waivers, consentForm, giftCard, conversationTags, photos] = await Promise.all([
+  const [waivers, giftCard, conversationTags, photos] = await Promise.all([
     prisma.liabilityWaiver.count({ where: { appointmentId } }),
-    prisma.consentForm.findUnique({ where: { appointmentId }, select: { id: true } }),
     prisma.giftCard.findUnique({
       where: { appointmentId },
       select: { id: true, code: true, amountCents: true, status: true },
@@ -298,7 +297,6 @@ async function gatherAppointmentDeletionSummary(appointmentId: string) {
 
   return {
     waivers,
-    consentForms: consentForm ? 1 : 0,
     giftCardToDetach: giftCard,
     conversationTags,
     photos,
@@ -319,11 +317,9 @@ router.get("/:id/delete-preview", requireRole(Role.OWNER), async (req, res) => {
 // True permanent delete -- OWNER only. Scoped to just this one appointment,
 // same detach-don't-destroy philosophy as Inquiry's own delete route: a gift
 // card attached here is the client's money, independent of this one
-// session, so it's DETACHED (appointmentId -> null), never destroyed. A
-// consent form is likewise unlinked rather than deleted -- a signed legal
-// document outlives the session it was tied to. The liability waiver, by
-// contrast, has a required (non-nullable) appointmentId -- it cannot exist
-// without this appointment, so it's deleted along with it.
+// session, so it's DETACHED (appointmentId -> null), never destroyed. The
+// liability waiver, by contrast, has a required (non-nullable) appointmentId
+// -- it cannot exist without this appointment, so it's deleted along with it.
 router.delete("/:id", requireRole(Role.OWNER), async (req, res) => {
   const id = req.params.id as string;
   const { confirm } = req.body ?? {};
@@ -342,8 +338,6 @@ router.delete("/:id", requireRole(Role.OWNER), async (req, res) => {
   await prisma.$transaction(async (tx) => {
     // Detach, don't destroy -- the client's money survives this delete.
     await tx.giftCard.updateMany({ where: { appointmentId: id }, data: { appointmentId: null } });
-    // Unlink, don't destroy -- a signed consent form outlives the session.
-    await tx.consentForm.updateMany({ where: { appointmentId: id }, data: { appointmentId: null } });
 
     await tx.liabilityWaiver.deleteMany({ where: { appointmentId: id } });
     await tx.conversationTag.deleteMany({ where: { entityType: "Appointment", entityId: id } });

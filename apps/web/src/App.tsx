@@ -11,7 +11,6 @@ import ArtistCreate from './pages/ArtistCreate'
 import Settings from './pages/Settings'
 import Profile from './pages/Profile'
 import Team from './pages/Team'
-import SignConsentForm from './pages/SignConsentForm'
 import IntakeForm from './pages/IntakeForm'
 import Policies from './pages/Policies'
 import PublicPolicyPage from './pages/PublicPolicyPage'
@@ -38,7 +37,6 @@ function App() {
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/login" element={<Login />} />
-        <Route path="/sign/:token" element={<SignConsentForm />} />
         <Route path="/inquiry/:studioSlug" element={<IntakeForm />} />
         <Route path="/policies/:studioSlug" element={<Policies />} />
         <Route

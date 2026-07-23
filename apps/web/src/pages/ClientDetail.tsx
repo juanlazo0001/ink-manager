@@ -28,12 +28,6 @@ import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useConversationPanel } from '../context/useConversationPanel'
 import { clientsQueryKey } from '../lib/queryKeys'
 
-interface ConsentForm {
-  id: string
-  signedAt: string | null
-  createdAt: string
-}
-
 interface DepositFormSummary {
   id: string
   sessionNumber: number
@@ -109,7 +103,6 @@ interface Client {
   smsOptedOutAt: string | null
   smsConsentGivenAt: string | null
   smsConsentSource: string | null
-  consentForms: ConsentForm[]
   inquiries: InquirySummary[]
   giftCards: GiftCard[]
   liabilityWaivers: WaiverSummary[]
@@ -142,7 +135,6 @@ interface DuplicateCandidate {
 interface MergePreview {
   inquiries: number
   appointments: number
-  consentForms: number
   giftCards: number
 }
 
@@ -150,7 +142,6 @@ interface DeletePreview {
   inquiries: number
   appointments: number
   waivers: number
-  consentForms: number
   giftCards: { id: string; code: string; amountCents: number; status: string }[]
   activeGiftCardCents: number
   depositForms: number
@@ -315,18 +306,13 @@ export default function ClientDetail() {
   const [editError, setEditError] = useState<string | null>(null)
   const [editSubmitting, setEditSubmitting] = useState(false)
 
-  const [sendingForm, setSendingForm] = useState(false)
-  const [sendFormError, setSendFormError] = useState<string | null>(null)
-  const [consentSendNotice, setConsentSendNotice] = useState<string | null>(null)
-  const [latestSigningUrl, setLatestSigningUrl] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
 
-  // Deposit form / waiver both attach to a specific inquiry/appointment
-  // (unlike consent forms, which are client-scoped) -- these track the
-  // "which one" picker popover, in-flight send, and any error, one set per
-  // entity type. showDepositPicker/showWaiverPicker only actually render a
-  // picker when there's more than one eligible entity (see the JSX below);
-  // with exactly one, the button just sends directly.
+  // Deposit form / waiver both attach to a specific inquiry/appointment --
+  // these track the "which one" picker popover, in-flight send, and any
+  // error, one set per entity type. showDepositPicker/showWaiverPicker only
+  // actually render a picker when there's more than one eligible entity
+  // (see the JSX below); with exactly one, the button just sends directly.
   const [showDepositPicker, setShowDepositPicker] = useState(false)
   const [sendingDepositId, setSendingDepositId] = useState<string | null>(null)
   const [depositSendError, setDepositSendError] = useState<string | null>(null)
@@ -595,7 +581,6 @@ export default function ClientDetail() {
 
       setMergePreview({
         inquiries: candidateDetail.inquiries.length,
-        consentForms: candidateDetail.consentForms.length,
         giftCards: candidateDetail.giftCards.length,
         appointments: candidateAppointments.length,
       })
@@ -806,37 +791,6 @@ export default function ClientDetail() {
       setContactActionError(err instanceof Error ? err.message : 'Failed to update primary email')
     } finally {
       setContactActionPendingId(null)
-    }
-  }
-
-  async function handleSendConsentForm() {
-    if (!id) return
-
-    setSendingForm(true)
-    setSendFormError(null)
-    setConsentSendNotice(null)
-    setCopied(false)
-
-    try {
-      const result = await apiFetch<ConsentForm & { signingUrl: string; consentSendResult: ClientSendResult | null }>(
-        `/clients/${id}/consent-forms`,
-        { method: 'POST' },
-      )
-
-      setLatestSigningUrl(result.signingUrl)
-      setConsentSendNotice(describeSendResult('Consent form', result.consentSendResult))
-      setClient((prev) =>
-        prev
-          ? {
-              ...prev,
-              consentForms: [{ id: result.id, signedAt: result.signedAt, createdAt: result.createdAt }, ...prev.consentForms],
-            }
-          : prev,
-      )
-    } catch (err) {
-      setSendFormError(err instanceof Error ? err.message : 'Failed to send consent form')
-    } finally {
-      setSendingForm(false)
     }
   }
 
@@ -1859,77 +1813,6 @@ export default function ClientDetail() {
 
               <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-base font-semibold text-fg">Consent Forms</h2>
-                  {canManage && !client.mergedIntoId && (
-                    <button
-                      type="button"
-                      onClick={handleSendConsentForm}
-                      disabled={sendingForm}
-                      className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:opacity-60"
-                    >
-                      <PlusIcon className="h-3.5 w-3.5" />
-                      {sendingForm ? 'Sending…' : 'Send Consent Form'}
-                    </button>
-                  )}
-                </div>
-
-                {sendFormError && (
-                  <div className="mt-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
-                    {sendFormError}
-                  </div>
-                )}
-
-                {consentSendNotice && <p className="mt-3 text-sm text-fg-secondary">{consentSendNotice}</p>}
-
-                {latestSigningUrl && (
-                  <div className="mt-4 rounded-lg border border-border p-3">
-                    <p className="mb-2 text-xs text-fg-muted">
-                      Share this link with the client — it expires in 48 hours.
-                    </p>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        readOnly
-                        value={latestSigningUrl}
-                        onFocus={(event) => event.target.select()}
-                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:outline-none"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => handleCopyLink(latestSigningUrl)}
-                        aria-label={copied ? 'Copied' : 'Copy link'}
-                        title={copied ? 'Copied!' : 'Copy link'}
-                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-fg-secondary transition hover:bg-surface-raised hover:text-fg"
-                      >
-                        {copied ? <CheckIcon className="h-4 w-4 text-success" /> : <CopyIcon className="h-4 w-4" />}
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                <div className="mt-4">
-                  {client.consentForms.length === 0 && (
-                    <p className="text-sm text-fg-secondary">No consent forms sent yet.</p>
-                  )}
-
-                  {client.consentForms.length > 0 && (
-                    <ul className="divide-y divide-border">
-                      {client.consentForms.map((form) => (
-                        <li key={form.id} className="flex items-center justify-between py-3 text-sm">
-                          <span className="text-fg-secondary">Sent {formatDateTime(form.createdAt)}</span>
-                          <StatusPill
-                            status={form.signedAt ? 'SIGNED' : 'PENDING'}
-                            label={form.signedAt ? `Signed ${formatDateTime(form.signedAt)}` : 'Pending'}
-                          />
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              </div>
-
-              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <div className="flex items-center justify-between">
                   <h2 className="text-base font-semibold text-fg">Waivers</h2>
                   {canManage && !client.mergedIntoId && (
                     <div className="relative">
@@ -2242,7 +2125,6 @@ export default function ClientDetail() {
               <ul className="space-y-1 text-fg-secondary">
                 <li>{mergePreview.inquiries} inquir{mergePreview.inquiries === 1 ? 'y' : 'ies'}</li>
                 <li>{mergePreview.appointments} appointment{mergePreview.appointments === 1 ? '' : 's'}</li>
-                <li>{mergePreview.consentForms} consent form{mergePreview.consentForms === 1 ? '' : 's'}</li>
                 <li>{mergePreview.giftCards} gift card{mergePreview.giftCards === 1 ? '' : 's'}</li>
               </ul>
             </div>
@@ -2295,7 +2177,6 @@ export default function ClientDetail() {
                 <li>{deletePreview.inquiries} inquir{deletePreview.inquiries === 1 ? 'y' : 'ies'}</li>
                 <li>{deletePreview.appointments} appointment{deletePreview.appointments === 1 ? '' : 's'}</li>
                 <li>{deletePreview.waivers} signed waiver{deletePreview.waivers === 1 ? '' : 's'}</li>
-                <li>{deletePreview.consentForms} consent form{deletePreview.consentForms === 1 ? '' : 's'}</li>
                 <li>{deletePreview.depositForms} deposit form{deletePreview.depositForms === 1 ? '' : 's'}</li>
                 <li>{deletePreview.messages} message{deletePreview.messages === 1 ? '' : 's'}</li>
                 {deletePreview.giftCards.length > 0 && (
