@@ -10,6 +10,7 @@ import ClientComparisonView from '../components/ClientComparisonView'
 import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatPhoneInput, formatStatus, isValidPhoneDigits } from '../lib/format'
+import { describeSendResult, type ClientSendResult } from '../lib/sendResult'
 import {
   ArrowLeftIcon,
   CheckIcon,
@@ -184,6 +185,7 @@ export default function ClientDetail() {
   const [startingConversation, setStartingConversation] = useState(false)
   const [copyingPrefillLink, setCopyingPrefillLink] = useState(false)
   const [prefillLinkError, setPrefillLinkError] = useState<string | null>(null)
+  const [prefillSendNotice, setPrefillSendNotice] = useState<string | null>(null)
   const [showCopyMenu, setShowCopyMenu] = useState(false)
   const [copyToast, setCopyToast] = useState<string | null>(null)
 
@@ -248,27 +250,37 @@ export default function ClientDetail() {
   // generating one without an active conversation. Whatever contact fields
   // are populated on this client record go in; missing ones (no email on
   // file, etc.) are simply omitted, still producing a usable, mostly-empty
-  // link rather than erroring.
+  // link rather than erroring. Unlike the composer's insert-only version,
+  // this passes clientId so the API also auto-sends the link via text
+  // (best-effort, logged to Conversations) -- there's no composer draft
+  // here for staff to add their own message around, so this is the one
+  // that actually needs to send.
   async function handleCopyPrefillLink() {
     if (!id || !client) return
 
     setShowCopyMenu(false)
     setCopyingPrefillLink(true)
     setPrefillLinkError(null)
+    setPrefillSendNotice(null)
     try {
-      const draft = await apiFetch<{ prefillUrl: string }>('/prefill-drafts', {
-        method: 'POST',
-        body: JSON.stringify({
-          payload: {
-            firstName: client.firstName,
-            lastName: client.lastName,
-            email: client.email || undefined,
-            phone: client.phone || undefined,
-          },
-        }),
-      })
+      const draft = await apiFetch<{ prefillUrl: string; prefillSendResult: ClientSendResult | null }>(
+        '/prefill-drafts',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            payload: {
+              firstName: client.firstName,
+              lastName: client.lastName,
+              email: client.email || undefined,
+              phone: client.phone || undefined,
+            },
+            clientId: id,
+          }),
+        },
+      )
       await navigator.clipboard.writeText(draft.prefillUrl)
       showCopyToast('Prefilled link copied')
+      setPrefillSendNotice(describeSendResult('Prefilled intake link', draft.prefillSendResult))
     } catch (err) {
       setPrefillLinkError(err instanceof Error ? err.message : 'Failed to generate link')
     } finally {
@@ -298,6 +310,7 @@ export default function ClientDetail() {
 
   const [sendingForm, setSendingForm] = useState(false)
   const [sendFormError, setSendFormError] = useState<string | null>(null)
+  const [consentSendNotice, setConsentSendNotice] = useState<string | null>(null)
   const [latestSigningUrl, setLatestSigningUrl] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
 
@@ -310,11 +323,13 @@ export default function ClientDetail() {
   const [showDepositPicker, setShowDepositPicker] = useState(false)
   const [sendingDepositId, setSendingDepositId] = useState<string | null>(null)
   const [depositSendError, setDepositSendError] = useState<string | null>(null)
+  const [depositSendNotice, setDepositSendNotice] = useState<string | null>(null)
   const [latestDepositUrl, setLatestDepositUrl] = useState<string | null>(null)
 
   const [showWaiverPicker, setShowWaiverPicker] = useState(false)
   const [sendingWaiverId, setSendingWaiverId] = useState<string | null>(null)
   const [waiverSendError, setWaiverSendError] = useState<string | null>(null)
+  const [waiverSendNotice, setWaiverSendNotice] = useState<string | null>(null)
   const [latestWaiverUrl, setLatestWaiverUrl] = useState<string | null>(null)
 
   const [duplicates, setDuplicates] = useState<DuplicateCandidate[] | null>(null)
@@ -792,14 +807,17 @@ export default function ClientDetail() {
 
     setSendingForm(true)
     setSendFormError(null)
+    setConsentSendNotice(null)
     setCopied(false)
 
     try {
-      const result = await apiFetch<ConsentForm & { signingUrl: string }>(`/clients/${id}/consent-forms`, {
-        method: 'POST',
-      })
+      const result = await apiFetch<ConsentForm & { signingUrl: string; consentSendResult: ClientSendResult | null }>(
+        `/clients/${id}/consent-forms`,
+        { method: 'POST' },
+      )
 
       setLatestSigningUrl(result.signingUrl)
+      setConsentSendNotice(describeSendResult('Consent form', result.consentSendResult))
       setClient((prev) =>
         prev
           ? {
@@ -828,13 +846,15 @@ export default function ClientDetail() {
   async function handleSendDepositForm(inquiryId: string) {
     setSendingDepositId(inquiryId)
     setDepositSendError(null)
+    setDepositSendNotice(null)
 
     try {
-      const result = await apiFetch<DepositFormSummary & { depositUrl: string }>(
+      const result = await apiFetch<DepositFormSummary & { depositUrl: string; depositSendResult: ClientSendResult | null }>(
         `/inquiries/${inquiryId}/deposit-form`,
         { method: 'POST' },
       )
       setLatestDepositUrl(result.depositUrl)
+      setDepositSendNotice(describeSendResult('Deposit form', result.depositSendResult))
       setShowDepositPicker(false)
       setClient((prev) =>
         prev
@@ -869,12 +889,15 @@ export default function ClientDetail() {
   async function handleSendWaiver(appointmentId: string) {
     setSendingWaiverId(appointmentId)
     setWaiverSendError(null)
+    setWaiverSendNotice(null)
 
     try {
-      const result = await apiFetch<WaiverSummary & { signingUrl: string }>(`/appointments/${appointmentId}/waiver`, {
-        method: 'POST',
-      })
+      const result = await apiFetch<WaiverSummary & { signingUrl: string; waiverSendResult: ClientSendResult | null }>(
+        `/appointments/${appointmentId}/waiver`,
+        { method: 'POST' },
+      )
       setLatestWaiverUrl(result.signingUrl)
+      setWaiverSendNotice(describeSendResult('Waiver', result.waiverSendResult))
       setShowWaiverPicker(false)
       setClient((prev) =>
         prev
@@ -1229,6 +1252,7 @@ export default function ClientDetail() {
                   </div>
                 )}
                 {prefillLinkError && <p className="mt-2 text-sm text-danger">{prefillLinkError}</p>}
+                {prefillSendNotice && <p className="mt-2 text-sm text-fg-secondary">{prefillSendNotice}</p>}
               </div>
 
               <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
@@ -1683,6 +1707,8 @@ export default function ClientDetail() {
                   </div>
                 )}
 
+                {depositSendNotice && <p className="mt-3 text-sm text-fg-secondary">{depositSendNotice}</p>}
+
                 {latestDepositUrl && (
                   <div className="mt-4 rounded-lg border border-border p-3">
                     <p className="mb-2 text-xs text-fg-muted">Share this link with the client:</p>
@@ -1822,6 +1848,8 @@ export default function ClientDetail() {
                   </div>
                 )}
 
+                {consentSendNotice && <p className="mt-3 text-sm text-fg-secondary">{consentSendNotice}</p>}
+
                 {latestSigningUrl && (
                   <div className="mt-4 rounded-lg border border-border p-3">
                     <p className="mb-2 text-xs text-fg-muted">
@@ -1938,6 +1966,8 @@ export default function ClientDetail() {
                     {waiverSendError}
                   </div>
                 )}
+
+                {waiverSendNotice && <p className="mt-3 text-sm text-fg-secondary">{waiverSendNotice}</p>}
 
                 {latestWaiverUrl && (
                   <div className="mt-4 rounded-lg border border-border p-3">

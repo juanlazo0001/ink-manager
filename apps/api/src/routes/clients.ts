@@ -10,6 +10,8 @@ import { normalizePhone } from "../lib/phone";
 import { syncPrimaryEmail, syncPrimaryPhone } from "../lib/clientContacts";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { shortenUrl } from "../lib/shortLinks";
+import { getOrCreateClientConversation } from "../lib/conversations";
+import { sendClientSms } from "../lib/clientSms";
 
 const router = Router();
 
@@ -1120,7 +1122,24 @@ router.post("/:clientId/consent-forms", async (req, res) => {
     data: { clientId, signingToken, tokenExpiresAt },
   });
 
-  res.status(201).json({ ...consentForm, signingUrl: await shortenUrl(`${PUBLIC_APP_URL}/sign/${signingToken}`) });
+  const signingUrl = await shortenUrl(`${PUBLIC_APP_URL}/sign/${signingToken}`);
+
+  // Auto-send through the same real-SMS path as the estimate auto-send --
+  // "Send Consent Form" otherwise generated a link with no trace in
+  // Conversations. Best-effort, same as the estimate/deposit-form/waiver
+  // sends: the form itself is already generated above regardless of
+  // whether the text goes out.
+  const studio = await prisma.studio.findUnique({ where: { id: req.user!.studioId }, select: { name: true } });
+  const consentSendResult = await sendClientSms({
+    studioId: req.user!.studioId,
+    clientId,
+    conversationId: (await getOrCreateClientConversation(req.user!.studioId, clientId, req.user!.userId)).conversation
+      .id,
+    body: `Hi ${client.firstName}, please review and sign this consent form from ${studio?.name ?? "our studio"}: ${signingUrl} (expires in 48 hours)`,
+    actorUserId: req.user!.userId,
+  });
+
+  res.status(201).json({ ...consentForm, signingUrl, consentSendResult });
 });
 
 export default router;

@@ -1556,13 +1556,17 @@ function ThreadView({
   // AppointmentDetail.tsx themselves call), then insert the link into the
   // draft -- unlike the gift-card resend above, this doesn't send anything
   // by itself, matching every other row in this menu (staff reviews/adds
-  // their own message around it before sending).
+  // their own message around it before sending). autoSend: false opts out
+  // of the route's own auto-send-on-generate (Package J) -- without it,
+  // staff would get the link auto-texted immediately AND a second time
+  // when they hit Send on whatever they compose around it here.
   async function handleCreateDepositForm(inquiryId: string) {
     setCreatingDepositId(inquiryId)
     setCreateFormError(null)
     try {
       const result = await apiFetch<{ depositUrl: string }>(`/inquiries/${inquiryId}/deposit-form`, {
         method: 'POST',
+        body: JSON.stringify({ autoSend: false }),
       })
       setBody((current) => (current ? `${current}\n${result.depositUrl}` : result.depositUrl))
       queryClient.invalidateQueries({ queryKey: ['client-shareable-links', data?.conversation.clientId] })
@@ -1579,6 +1583,7 @@ function ThreadView({
     try {
       const result = await apiFetch<{ signingUrl: string }>(`/appointments/${appointmentId}/waiver`, {
         method: 'POST',
+        body: JSON.stringify({ autoSend: false }),
       })
       setBody((current) => (current ? `${current}\n${result.signingUrl}` : result.signingUrl))
       queryClient.invalidateQueries({ queryKey: ['client-shareable-links', data?.conversation.clientId] })

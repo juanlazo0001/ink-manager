@@ -19,6 +19,7 @@ import DateAndTimeRangeFields, {
 } from '../components/DateAndTimeRangeFields'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatDuration, formatPhoneInput, formatStatus, describeInquiryStatus } from '../lib/format'
+import { describeSendResult, type ClientSendResult } from '../lib/sendResult'
 import {
   ArrowLeftIcon,
   CheckIcon,
@@ -548,6 +549,7 @@ export default function InquiryDetail() {
 
   const [sendingDeposit, setSendingDeposit] = useState(false)
   const [sendDepositError, setSendDepositError] = useState<string | null>(null)
+  const [depositSendNotice, setDepositSendNotice] = useState<string | null>(null)
   const [markingPaid, setMarkingPaid] = useState(false)
   const [markPaidError, setMarkPaidError] = useState<string | null>(null)
 
@@ -989,15 +991,20 @@ export default function InquiryDetail() {
 
     setSendingDeposit(true)
     setSendDepositError(null)
+    setDepositSendNotice(null)
 
     try {
-      const body = isFirstSend
-        ? JSON.stringify({
+      const proposedTime = isFirstSend
+        ? {
             proposedStartAt: combineDateAndTime(tentativeTimeRange.date, tentativeTimeRange.startTime)!.toISOString(),
             proposedEndAt: combineDateAndTime(tentativeTimeRange.date, tentativeTimeRange.endTime)!.toISOString(),
-          })
-        : undefined
-      await apiFetch(`/inquiries/${id}/deposit-form`, { method: 'POST', body })
+          }
+        : {}
+      const result = await apiFetch<{ depositSendResult: ClientSendResult | null }>(`/inquiries/${id}/deposit-form`, {
+        method: 'POST',
+        body: JSON.stringify(proposedTime),
+      })
+      setDepositSendNotice(describeSendResult('Deposit form', result.depositSendResult))
       invalidateInquiry()
     } catch (err) {
       setSendDepositError(err instanceof Error ? err.message : 'Failed to send deposit form')
@@ -1801,6 +1808,8 @@ export default function InquiryDetail() {
                       >
                         {sendingDeposit ? 'Sending…' : inquiry.depositForm ? 'Resend Deposit Form' : 'Send Deposit Form'}
                       </button>
+
+                      {depositSendNotice && <p className="mt-3 text-sm text-fg-secondary">{depositSendNotice}</p>}
 
                       {depositUrl && (
                         <div className="mt-4 rounded-lg border border-border p-3">

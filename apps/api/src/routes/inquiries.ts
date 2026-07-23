@@ -1116,9 +1116,9 @@ router.post("/:id/reopen", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK)
 // estimate, not anything the client stated.
 router.post("/:id/deposit-form", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
   const id = req.params.id as string;
-  const { proposedStartAt, proposedEndAt } = req.body ?? {};
+  const { proposedStartAt, proposedEndAt, autoSend } = req.body ?? {};
 
-  const inquiry = await prisma.inquiry.findUnique({ where: { id }, include: { depositForm: true } });
+  const inquiry = await prisma.inquiry.findUnique({ where: { id }, include: { depositForm: true, client: true } });
   if (!inquiry || inquiry.studioId !== req.user!.studioId) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
@@ -1180,7 +1180,33 @@ router.post("/:id/deposit-form", requireAuth, requireRole(Role.OWNER, Role.FRONT
     update: { token, tokenExpiresAt, depositAmount, feeAmount, totalCharged },
   });
 
-  res.status(201).json({ ...depositForm, depositUrl: await shortenUrl(`${PUBLIC_APP_URL}/deposit/${token}`) });
+  const depositUrl = await shortenUrl(`${PUBLIC_APP_URL}/deposit/${token}`);
+
+  // Auto-send through the same real-SMS path as the estimate auto-send --
+  // "Send Deposit Form"/"Resend Deposit Form" across InquiryDetail/
+  // ClientDetail otherwise generated a link with nothing to show for it in
+  // Conversations. Best-effort, same as the estimate: the form itself is
+  // already generated above regardless of whether the text goes out, so
+  // staff still has depositUrl to share manually if this skips/fails.
+  // autoSend: false is the composer's own "create-then-insert-link" flow
+  // (ConversationsPanel) opting out -- it inserts the link into the draft
+  // for staff to compose their own message around before sending, so an
+  // automatic send here would just duplicate what the composer's own Send
+  // button is about to do.
+  let depositSendResult: Awaited<ReturnType<typeof sendClientSms>> | null = null;
+  if (autoSend !== false) {
+    const studio = await prisma.studio.findUnique({ where: { id: req.user!.studioId }, select: { name: true } });
+    depositSendResult = await sendClientSms({
+      studioId: req.user!.studioId,
+      clientId: inquiry.clientId,
+      conversationId: (await getOrCreateClientConversation(req.user!.studioId, inquiry.clientId, req.user!.userId))
+        .conversation.id,
+      body: `Hi ${inquiry.client.firstName}, here's your deposit form to secure your appointment with ${studio?.name ?? "our studio"}: ${depositUrl} (expires in 48 hours)`,
+      actorUserId: req.user!.userId,
+    });
+  }
+
+  res.status(201).json({ ...depositForm, depositUrl, depositSendResult });
 });
 
 // Package D: staff picks (or clears) a tentative, informational-only time

@@ -14,6 +14,7 @@ import DateAndTimeRangeFields, {
 } from '../components/DateAndTimeRangeFields'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatPhoneInput, formatStatus } from '../lib/format'
+import { describeSendResult, type ClientSendResult } from '../lib/sendResult'
 import { formatCents, dollarsToCents } from '../lib/money'
 import { ArrowLeftIcon, CheckIcon, ClientsIcon, CopyIcon, MessageIcon, MoreIcon } from '../components/icons'
 import { ArtistAvatar, artistLabel } from '../components/ArtistAvatar'
@@ -131,6 +132,7 @@ export default function AppointmentDetail() {
 
   const [creatingWaiver, setCreatingWaiver] = useState(false)
   const [waiverError, setWaiverError] = useState<string | null>(null)
+  const [waiverSendNotice, setWaiverSendNotice] = useState<string | null>(null)
   const [latestSigningUrl, setLatestSigningUrl] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
 
@@ -222,10 +224,15 @@ export default function AppointmentDetail() {
 
     setCreatingWaiver(true)
     setWaiverError(null)
+    setWaiverSendNotice(null)
 
     try {
-      const result = await apiFetch<{ signingUrl: string }>(`/appointments/${id}/waiver`, { method: 'POST' })
+      const result = await apiFetch<{ signingUrl: string; waiverSendResult: ClientSendResult | null }>(
+        `/appointments/${id}/waiver`,
+        { method: 'POST' },
+      )
       setLatestSigningUrl(result.signingUrl)
+      setWaiverSendNotice(describeSendResult('Waiver', result.waiverSendResult))
       setRefreshIndex((i) => i + 1)
     } catch (err) {
       setWaiverError(err instanceof Error ? err.message : 'Failed to create waiver')
@@ -711,6 +718,7 @@ export default function AppointmentDetail() {
                       {creatingWaiver ? 'Creating…' : 'Create Waiver'}
                     </button>
                     {waiverError && <p className="mt-2 text-sm text-danger">{waiverError}</p>}
+                    {waiverSendNotice && <p className="mt-2 text-sm text-fg-secondary">{waiverSendNotice}</p>}
                   </div>
                 )}
 

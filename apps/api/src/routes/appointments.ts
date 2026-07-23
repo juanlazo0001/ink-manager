@@ -9,6 +9,8 @@ import { isSameCalendarDay } from "../lib/dateRange";
 import { findBufferConflict, formatBufferWarning } from "../lib/schedulingConflict";
 import { ensureLiabilityWaiver } from "../lib/waivers";
 import { emitInvalidation } from "../lib/realtime/registry";
+import { getOrCreateClientConversation } from "../lib/conversations";
+import { sendClientSms } from "../lib/clientSms";
 
 const router = Router();
 
@@ -359,10 +361,17 @@ router.delete("/:id", requireRole(Role.OWNER), async (req, res) => {
 router.post("/:id/waiver", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
   const id = req.params.id as string;
   const studioId = req.user!.studioId;
+  const { autoSend } = req.body ?? {};
 
-  const existing = await prisma.appointment.findUnique({ where: { id }, select: { liabilityWaiver: true } });
+  const existing = await prisma.appointment.findUnique({
+    where: { id },
+    select: { liabilityWaiver: true, clientId: true, client: { select: { firstName: true } } },
+  });
   if (existing?.liabilityWaiver) {
     return res.status(400).json({ error: "A waiver already exists for this appointment" });
+  }
+  if (!existing) {
+    return res.status(404).json({ error: "Appointment not found" });
   }
 
   const result = await ensureLiabilityWaiver(id, studioId, req.user!.userId);
@@ -372,7 +381,26 @@ router.post("/:id/waiver", requireRole(Role.OWNER, Role.FRONT_DESK), async (req,
     return res.status(status).json({ error: result.error });
   }
 
-  res.status(201).json({ ...result.waiver, signingUrl: result.signingUrl });
+  // Auto-send through the same real-SMS path as the estimate auto-send --
+  // same reasoning as the deposit-form route: "Create Waiver"/"Send
+  // Waiver" across AppointmentDetail/ClientDetail otherwise generated a
+  // link with no trace in Conversations. autoSend: false is the
+  // composer's own create-then-insert-link flow opting out, same as
+  // deposit-form.
+  let waiverSendResult: Awaited<ReturnType<typeof sendClientSms>> | null = null;
+  if (autoSend !== false) {
+    const studio = await prisma.studio.findUnique({ where: { id: studioId }, select: { name: true } });
+    waiverSendResult = await sendClientSms({
+      studioId,
+      clientId: existing.clientId,
+      conversationId: (await getOrCreateClientConversation(studioId, existing.clientId, req.user!.userId)).conversation
+        .id,
+      body: `Hi ${existing.client.firstName}, please sign your liability waiver before your appointment with ${studio?.name ?? "our studio"}: ${result.signingUrl}`,
+      actorUserId: req.user!.userId,
+    });
+  }
+
+  res.status(201).json({ ...result.waiver, signingUrl: result.signingUrl, waiverSendResult });
 });
 
 // Checkout: confirms the final cost with the artist, settles the deposit

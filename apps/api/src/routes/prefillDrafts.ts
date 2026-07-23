@@ -7,6 +7,8 @@ import { logAudit } from "../lib/audit";
 import { PREFILLABLE_FIELDS, sanitizePrefillPayload } from "../lib/prefill";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { shortenUrl } from "../lib/shortLinks";
+import { getOrCreateClientConversation } from "../lib/conversations";
+import { sendClientSms } from "../lib/clientSms";
 
 const router = Router();
 
@@ -17,7 +19,7 @@ const PREFILL_TOKEN_TTL_DAYS = 7;
 // confirm the extracted fields.
 router.post("/", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
   const { studioId, userId } = req.user!;
-  const { payload, conversationId } = req.body ?? {};
+  const { payload, conversationId, clientId } = req.body ?? {};
 
   const sanitized = sanitizePrefillPayload(payload);
   if (Object.keys(sanitized).length === 0) {
@@ -31,6 +33,24 @@ router.post("/", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (r
     const conversation = await prisma.conversation.findUnique({ where: { id: conversationId } });
     if (!conversation || conversation.studioId !== studioId) {
       return res.status(400).json({ error: "conversationId must belong to your studio" });
+    }
+  }
+
+  // clientId is transient -- used only to route the auto-send below, never
+  // stored on PrefillDraft (which stays client-agnostic, same as before).
+  // Only ClientDetail's standalone "Copy prefilled link" passes it; the
+  // composer's own prefill-link insert passes conversationId instead and
+  // deliberately omits clientId, since that flow inserts the link into the
+  // draft for staff to compose their own message around (same reasoning as
+  // the composer's deposit-form/waiver create-then-insert actions).
+  let client: { firstName: string; studioId: string } | null = null;
+  if (clientId !== undefined && clientId !== null) {
+    if (typeof clientId !== "string") {
+      return res.status(400).json({ error: "clientId must be a string" });
+    }
+    client = await prisma.client.findUnique({ where: { id: clientId }, select: { firstName: true, studioId: true } });
+    if (!client || client.studioId !== studioId) {
+      return res.status(400).json({ error: "clientId must belong to your studio" });
     }
   }
 
@@ -57,11 +77,30 @@ router.post("/", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (r
     changes: { conversationId: conversationId || null, fields: Object.keys(sanitized) },
   });
 
-  const studio = await prisma.studio.findUnique({ where: { id: studioId }, select: { slug: true } });
+  const studio = await prisma.studio.findUnique({ where: { id: studioId }, select: { slug: true, name: true } });
+
+  const prefillUrl = await shortenUrl(`${PUBLIC_APP_URL}/inquiry/${studio!.slug}?draft=${token}`);
+
+  // Auto-send through the same real-SMS path as the estimate auto-send --
+  // only when clientId was passed (ClientDetail's standalone "Copy
+  // prefilled link", the one caller that isn't already headed for a
+  // composer Send). Best-effort, same as the other auto-sends in this
+  // package.
+  let prefillSendResult: Awaited<ReturnType<typeof sendClientSms>> | null = null;
+  if (client) {
+    prefillSendResult = await sendClientSms({
+      studioId,
+      clientId,
+      conversationId: (await getOrCreateClientConversation(studioId, clientId, userId)).conversation.id,
+      body: `Hi ${client.firstName}, here's a link to start a new inquiry with ${studio?.name ?? "our studio"} -- your info's already filled in: ${prefillUrl}`,
+      actorUserId: userId,
+    });
+  }
 
   res.status(201).json({
     ...draft,
-    prefillUrl: await shortenUrl(`${PUBLIC_APP_URL}/inquiry/${studio!.slug}?draft=${token}`),
+    prefillUrl,
+    prefillSendResult,
   });
 });
 
