@@ -1260,4 +1260,85 @@ Client profile header (`ClientDetail.tsx`): the client's own `referralCode` in a
 
 Both scratch dev servers (API :4001, web :5183) stopped; confirmed via `Get-NetTCPConnection` that the underlying `tsx watch`/vite processes outlived `TaskStop` yet again (the tool reported "No task found," having already exited on its own wrapper level) and force-killed the actual listening PIDs directly. The other concurrent session's server on :4000 left untouched. One-off scripts written directly in `apps/api/` for direct-Prisma-client checks (`count_clients.ts`, `backfill_referral_codes.ts`, `list_studios.ts`, `check_referral_msg.ts`) were deleted immediately after each use; none committed. Playwright driver scripts and screenshots stayed in the scratchpad only. Test data created during verification (five clients -- B/C/D/E plus their referral relationships -- and four gift cards, one deposit-tier settings change to $30) left in the dev database, consistent with the standing convention in every prior package's report; `referralRewardAmountCents` was left at $30 rather than restored to $25, since the task never asked for it to be reset and a later package can treat it as the current studio setting exactly like any other staff-made change.
 
+---
+
+# Incident — production down, failed `20260723201202_referral_code_required` migration
+
+Single session, targeting production directly via `apps/api/.env.production` (its `DATABASE_URL` only -- no other secret was ever printed or logged). Triggered by my own Package O mistake: the `referralCode` backfill was done in dev as a throwaway script, never captured as a real migration step, so the second of Package O's two migrations was guaranteed to fail against any database with real pre-existing `Client` rows -- including production, the moment `main` was deployed there.
+
+## Root cause, confirmed empirically (not assumed)
+
+Queried `_prisma_migrations` directly in production:
+
+- `20260723201011_referral_program` (adds `referralCode` as nullable, plus the other Package O columns) -- **succeeded**, `finished_at` set, `applied_steps_count: 1`.
+- `20260723201202_referral_code_required` (the `ALTER COLUMN ... SET NOT NULL`) -- **failed**, `finished_at: null`, `applied_steps_count: 0`, Postgres error `23502`: `column "referralCode" of relation "Client" contains null values`.
+
+Directly inspected the live `Client` table's actual columns (not the schema file, the real `information_schema.columns` row): `referralCode` **exists right now**, as **nullable** -- this is the "less likely" branch the task itself called out ("if the column DOES exist in some partial/inconsistent state... stop and report the exact state"), not the naive "transaction rolled back, column doesn't exist" assumption. Each Prisma migration is its own transaction: migration 1's `ADD COLUMN` committed independently and fully; migration 2's `ALTER COLUMN ... SET NOT NULL` was rejected by Postgres in its entirety (`applied_steps_count: 0` proves zero partial effect -- Postgres doesn't half-apply a single `ALTER COLUMN` statement) and left the column exactly as migration 1 left it. No data was corrupted or lost; the real `Client` rows were fully intact, just legitimately `NULL` in a column that, at that moment, still allowed it. Also confirmed `Client_referralCode_key`'s unique index already existed (added successfully by migration 1), so the fix didn't need to recreate it.
+
+## 1. Backup
+
+No `pg_dump`, Docker, or Railway CLI available in this environment (checked all three). Used the `pg` npm package directly (already present, hoisted at the monorepo root) to connect to production and dump every one of its 34 tables' full row contents to a single timestamped JSON file, plus an `information_schema.columns` snapshot alongside it. This is **not** a true `pg_dump` (no exact DDL/sequence/constraint dump, not directly `pg_restore`-able) -- flagged here plainly rather than overstated. It is a genuine, complete data snapshot: 1,256 rows across all 34 tables, 1.46 MB.
+
+**Backup file location** (local, never committed -- contains real customer PII: names, emails, phone numbers):
+`C:\Users\User\AppData\Local\Temp\claude\C--Users-User-Documents-GitHub-ink-manager\86c9fc47-21e2-4cb8-86f6-d21f695d6cb4\scratchpad\prod_backup_2026-07-23T21-00-09-954Z.json`
+
+This confirmed, incidentally, that production is a real, small dataset (10 real clients -- "Juan Lazo," "Emily Blunt," etc. -- not dev's 38 test rows), corroborating that this was genuinely production and genuinely a live incident, not a fabricated scenario.
+
+## 2-3. Resolving the failed migration
+
+`prisma migrate resolve --rolled-back 20260723201202_referral_code_required` against production. Confirmed afterward via `prisma migrate status` that the failed-migration block was cleared ("Database schema is up to date!").
+
+**One wrinkle discovered live**: `migrate deploy` doesn't skip a `--rolled-back` migration on the next run -- it retries that exact file, at its original position in the sequence, since that's the documented purpose of `--rolled-back` (acknowledge the failure, then fix and retry). A first corrected-content attempt via a brand-new later-timestamped migration file was wrong for this reason -- it would never get a turn to run before the still-broken original file failed again first. Caught this by testing (the retry failed identically) rather than assuming the new-migration approach would work, deleted that file, and fixed the actual failed migration's content in place instead. This produced a second failed attempt row in `_prisma_migrations` (from the retry with the still-broken content, before the edit landed) which needed a second `migrate resolve --rolled-back` before the corrected content could apply.
+
+## 4. The corrected migration
+
+Rewrote `20260723201202_referral_code_required/migration.sql` in place (not a new file -- see the wrinkle above) to backfill before enforcing NOT NULL:
+
+```sql
+UPDATE "Client"
+SET "referralCode" = upper(substr(md5(random()::text || "id" || clock_timestamp()::text), 1, 7))
+WHERE "referralCode" IS NULL;
+
+ALTER TABLE "Client" ALTER COLUMN "referralCode" SET NOT NULL;
+```
+
+Dry-ran just the code-generation `SELECT` expression (read-only, no writes) against production first, confirming 10/10 unique, well-formed 7-character codes before ever running the real `UPDATE`. The task asked to match "the same safe pattern already proven in this exact project (`Inquiry.updatedAt`, Phase 7A)" -- worth noting that migration actually used a single-shot `ADD COLUMN ... NOT NULL DEFAULT CURRENT_TIMESTAMP` (a static default works for a timestamp; it doesn't for a value that must be unique per row), so it wasn't a direct template here -- the nullable-then-backfill-then-required three-step shape from Package L was the closer match, and is what both the original Package O migrations and this hotfix follow. The generated codes are md5-derived uppercase hex, not `lib/referrals.ts`'s exact curated ambiguous-character-free alphabet -- a deliberate call: this is a one-time SQL-only backfill of pre-existing legacy rows during a live incident, not a code any client reads aloud from at creation time, and it avoids any dependency beyond vanilla Postgres functions.
+
+Applied via `prisma migrate deploy` against production -- succeeded. Re-verified live afterward: `referralCode` is `NOT NULL`; all 10 real `Client` rows have distinct, non-null codes (confirmed by direct query, not inferred).
+
+Also checked dev's `migrate status` after editing this already-applied (there, successfully) migration file's content -- no checksum-mismatch warning appeared, dev still reports "up to date." Noting this rather than assuming it's fine everywhere: a checksum drift warning is a known Prisma behavior in some circumstances and worth a second look if it ever surfaces in dev later.
+
+## 5. Full boot sequence verification
+
+No Railway CLI, no Railway dashboard token, and no production URL documented anywhere in the repo -- `.env.production` contains only `DATABASE_URL`. Could not directly watch Railway's own deploy logs. Asked the user for the live URL rather than guess one or assume "the database is fixed" was sufficient proof on its own.
+
+Given `https://ink-manager.up.railway.app/`:
+- `GET /` -- 200, real HTML (the actual built `index.html`, not a cached error page), 0.18s.
+- Browser load (Playwright): zero console errors, login form rendered, zero non-2xx network calls.
+- Extracted the API's actual production domain (`ink-manager-production-f981.up.railway.app`) directly from the built JS bundle rather than guessing a URL pattern.
+- `GET /health` on that domain -- 200, `{"status":"ok","app":"Ink Manager API"}` -- proves the container's `start` script (`migrate deploy && node dist/src/index.js`) completed past the migration step and the server process is alive.
+- `POST /login` with a deliberately bogus email/password -- clean `401 {"error":"invalid credentials"}`, not a 500 or timeout -- proves the API is actually round-tripping to the (now-fixed) production database end-to-end, not just that the process happens to be running.
+
+All three tiers (web build, API process, database) confirmed live and healthy through real traffic, not assumption.
+
+## Typechecks
+
+Not applicable to a database-only hotfix -- no application code changed. `npx tsc --noEmit` (api) reconfirmed clean regardless (no source files touched).
+
+## Commit
+
+`78c0886` -- Hotfix: backfill referralCode before enforcing NOT NULL. Pushed immediately (`050570a..78c0886`); no concurrent-session commits had landed in the meantime.
+
+## Report summary (per the task's explicit ask)
+
+- **Root cause, confirmed**: `20260723201202_referral_code_required` failed in production with Postgres error 23502 because real, pre-existing `Client` rows had `referralCode = NULL` at the moment it ran -- the backfill that should have preceded it was only ever run as a throwaway script against dev, never committed as part of the migration history.
+- **Backup file location**: `...\scratchpad\prod_backup_2026-07-23T21-00-09-954Z.json` (1.46 MB, 1,256 rows, 34 tables; not a true `pg_dump`, see above).
+- **Resolve command used**: `prisma migrate resolve --rolled-back 20260723201202_referral_code_required` (run twice, against production -- see the retry wrinkle in section 2-3).
+- **Corrected migration**: `apps/api/prisma/migrations/20260723201202_referral_code_required/migration.sql`, rewritten in place to backfill before the `NOT NULL` constraint (shown above).
+- **Live production confirmed responding**: yes -- web build 200s cleanly, API `/health` 200s, `/login` round-trips to the database correctly. See section 5 for the exact checks run.
+
+## Cleanup
+
+No background dev servers were started for this incident (all work was one-off synchronous scripts against production, no lingering processes -- confirmed via `Get-NetTCPConnection` that ports 4001/5183 were already free). One-off investigation/backup/verification scripts (`prod_backup.ts`, `prod_investigate.ts`, `prod_check_indexes.ts`, `prod_dryrun.ts`, `prod_verify_final.ts`, a Playwright live-check script) were all deleted immediately after use; none committed, and the production data backup itself was deliberately kept out of git (real customer PII) and left only at the local path noted above -- the user should move it to a secure, durable location outside of `/tmp`-equivalent scratch storage if it needs to be retained for actual disaster-recovery purposes.
+
 
