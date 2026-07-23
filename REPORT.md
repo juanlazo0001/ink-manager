@@ -787,3 +787,66 @@ Playwright against the local dev stack (api :4099, web :5199 -- deliberately off
 ## Cleanup
 
 Both dev servers (api :4099, web :5199) stopped, including their orphaned child processes (confirmed via `netstat` + explicit process kill, same recurring pattern as prior sessions' reports). Test data mutated during verification (Bailey Testperson's `WAITLISTED → SCHEDULING`) left as-is, per the same standing convention noted in every prior session's report -- this is the dev database `DEVELOPMENT.md` describes as being for exactly this kind of testing. `apps/api/src/routes/inquiries.ts` briefly needed a careful hunk-level reconciliation before committing: Package I landed a real commit (`b67f06b`) to this same file mid-session, and my local index still held a stale staged diff from before that commit -- resolved by diffing against the correct current `HEAD` rather than trusting `git status`'s `MM` marker at face value, confirmed clean before staging.
+
+---
+
+# Package J — Every sent form/link must show up in Conversations
+
+Single session on `main`. No schema changes -- `clientId`/`autoSend` are request-body-only additions, nothing persisted beyond what already existed (`PrefillDraft` stays client-agnostic, exactly as before).
+
+## Audit: every place a link/form gets sent to a client
+
+| Send path | Route | Before this session | After |
+|---|---|---|---|
+| Estimate | `POST /inquiries/:id/send-estimate` | Already working -- auto-sends via `sendClientSms`, logged | Unchanged (re-verified live, not broken) |
+| Gift card receipt ("Text receipt") | `POST /gift-cards/:id/text-receipt` | Already working -- same `sendClientSms` pattern | Unchanged (re-verified live) |
+| Deposit form ("Send Deposit Form"/"Resend Deposit Form"/ClientDetail's "Send Deposit Form") | `POST /inquiries/:id/deposit-form` | Generated a link + copy-to-clipboard box only -- despite the button label, nothing was ever sent or logged | **Fixed** -- auto-sends, logged |
+| Liability waiver ("Create Waiver" on AppointmentDetail / "Send Waiver" on ClientDetail -- same route, inconsistently labeled) | `POST /appointments/:id/waiver` | Same gap -- generate + copy box, no send | **Fixed** -- auto-sends, logged |
+| Consent form ("Send Consent Form") | `POST /clients/:clientId/consent-forms` | Same gap | **Fixed** -- auto-sends, logged |
+| Prefilled intake link -- composer's own insert-into-draft row | `POST /prefill-drafts` (with `conversationId`) | Correctly send-nothing-itself by design; staff composes their own message around the inserted link, then the composer's normal Send logs it | Unchanged (still send-nothing; that's correct here, not a gap) |
+| Prefilled intake link -- ClientDetail's standalone "Copy prefilled link" | `POST /prefill-drafts` (no `conversationId`) | Pure clipboard copy, no send, no log | **Fixed** -- auto-sends, logged (per explicit user decision, see below) |
+| Consent-form-adjacent sends elsewhere | grepped `ConsentForm`/`consentForm` across `apps/api/src` and `apps/web/src` | Only the one creation route above exists; no second/duplicate send path found | N/A |
+
+`ConversationsPanel.tsx`'s composer already backs every "insert an *existing* link" row (intake form, estimate, deposit, waiver) with a plain paste-into-draft action -- the actual transmission happens when staff hits the composer's own Send, which already logs correctly via `sendClientSms`. Those rows needed no change.
+
+## The fix, applied uniformly
+
+Reused the exact mechanism the estimate auto-send already proved out -- no second logging path invented:
+
+- `getOrCreateClientConversation` to find/create the client's own thread.
+- `sendClientSms` (`apps/api/src/lib/clientSms.ts`) -- the one real-SMS path, which only creates a `Message` row on actual provider acceptance (best-effort: a `not_connected`/`no_phone`/`opted_out`/`send_failed` result still returns 201 with the generated link, since the record itself is real regardless of whether the text goes out -- identical "generated regardless of send outcome" behavior to the existing estimate route).
+- A body string that names what was sent and includes the link, e.g. "Hi Emily, here's your deposit form to secure your appointment with Dev Studio: [link] (expires in 48 hours)" -- so the thread reads clearly to staff scanning history, matching the estimate send's own wording style. (No new `metadata.kind` tagging was added -- the working estimate/gift-card-receipt sends don't use one either, they rely on this same descriptive body text; inventing a new metadata scheme here would be the "second logging mechanism" the task said not to build.)
+
+**The one real design wrinkle**: the composer's own "create-then-insert-link" rows for deposit form and waiver (`ConversationsPanel.tsx`'s `handleCreateDepositForm`/`handleCreateWaiver`) call these exact same routes, but deliberately want staff to compose their own message around the link before sending -- auto-sending unconditionally would have double-sent (once automatically, once when staff hits the composer's Send). Both routes now take an `autoSend` flag in the request body (default `true`); the composer's two calls pass `autoSend: false` to keep their existing behavior. Verified live that this suppresses the send with zero new messages (see Verification below).
+
+For the prefill-intake-link route, no flag was needed -- the composer's insert-only call never had a `clientId` to auto-send with in the first place (it only ever passed `conversationId`), so it was already a no-op for auto-send purposes. ClientDetail's standalone "Copy prefilled link" now passes `clientId`, which is what triggers the new auto-send there; it's used transiently to look up the client for the send and is never persisted onto the `PrefillDraft` row.
+
+**Judgment call, asked rather than assumed**: ClientDetail's "Copy prefilled link" never claimed to send anything (unlike the other three, which were literally labeled "Send X" while silently not sending) -- it's an honest clipboard-copy utility. Asked the user whether it should gain the same auto-send-and-log treatment or stay copy-only; user chose to add auto-send. Implemented accordingly.
+
+Frontend: each of the four fixed flows (`InquiryDetail.tsx`, `AppointmentDetail.tsx`, `ClientDetail.tsx` x3) now surfaces the send outcome via a new shared `describeSendResult` helper (`apps/web/src/lib/sendResult.ts`, factored out of `InquiryDetail.tsx`'s pre-existing `describeEstimateSendResult` shape) -- "sent via text, check Conversations" on success, or a specific not-connected/no-phone/opted-out/failed reason with "share the link below manually" otherwise, same messaging pattern the estimate flow already used.
+
+## Verification (PowerShell against a second local API instance on the dev DB)
+
+Ran a second `tsx watch` API instance on port 4001 (a different session's dev server was already holding :4000 in this shared checkout -- left untouched) against the same dev Postgres `DEVELOPMENT.md` points at. Logged in as `owner@dev-studio.test`, then for each fixed path, called the route directly and confirmed both the JSON response's `...SendResult: { sent: true, messageId }` and, separately, a fresh `GET /conversations/:id/messages` read showing the new `Message` row in the client's actual thread (used Emily Rodriguez throughout, an existing seeded client with a safe fake `312-555-xxxx` number):
+
+- **Deposit form**: `POST /inquiries/.../deposit-form` -> `depositSendResult: { sent: true }`; conversation thread gained "Hi Emily, here's your deposit form to secure your appointment with Dev Studio: ... (expires in 48 hours)".
+- **Waiver**: `POST /appointments/.../waiver` -> `waiverSendResult: { sent: true }`; thread gained "Hi Emily, please sign your liability waiver before your appointment with Dev Studio: ...".
+- **Consent form**: `POST /clients/.../consent-forms` -> `consentSendResult: { sent: true }`; thread gained "Hi Emily, please review and sign this consent form from Dev Studio: ... (expires in 48 hours)".
+- **Prefill link**: `POST /prefill-drafts` with `clientId` -> `prefillSendResult: { sent: true }`; thread gained "Hi Emily, here's a link to start a new inquiry with Dev Studio -- your info's already filled in: ...".
+- **Composer opt-out**: called the deposit-form route again with `{"autoSend": false}` (same inquiry/client, already had an unsigned form) -- response showed `depositSendResult: null`, and the conversation's message count was unchanged before/after (10 -> 10), confirming no send was attempted.
+- **Estimate re-verified not broken**: `POST /inquiries/.../send-estimate` on the same inquiry -> `estimateSendResult: { sent: true }`, new message logged as before.
+- **Gift card receipt re-verified not broken**: issued a fresh test gift card to Emily (existing seeded cards all had malformed/incomplete phone numbers on other clients, unrelated to this session), then `POST /gift-cards/:id/text-receipt` -> `{ sent: true }`.
+
+Browser/Playwright pass was skipped: the web dev server in this shared checkout points at the *other* concurrent session's API instance on :4000, and pointing a browser at it would have exercised someone else's in-progress server rather than this session's code. The API-level verification above exercises the identical code path (same route handlers, same `sendClientSms` call, same DB) end to end, including reading back the resulting `Message` rows -- the frontend changes themselves are narrow (new state variables + a `<p>` notice + one new shared helper), reviewed by hand and confirmed via a clean `npm run build`.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) -- clean. `npm run build` (web) -- clean.
+
+## Commit
+
+`dcd2020` -- Package J: auto-send-on-generate for deposit form, waiver, consent form, prefill link. Pushed immediately (`5df89f4..dcd2020`); another concurrent session's Package I fix (`5df89f4`) had landed on `main` between this session's start and its own push, picked up cleanly as a fast-forward with no conflicts since this session's `git status` stayed limited to the 8 files it intentionally touched plus 1 new file throughout.
+
+## Cleanup
+
+Both background dev processes this session started (API :4001, web on whatever port Vite picked since :5173/:5174 were already taken by other concurrent sessions) were stopped; the API one's underlying `tsx watch` child process outlived the shell-level stop and needed an explicit `Stop-Process -Force` by PID before :4001 was actually free. The other concurrent session's API server on :4000 was left running, untouched. Test artifacts from this session's live verification (one new gift card, one new deposit form, one new waiver, one new consent form, one new prefill draft, all against the existing seeded "Emily Rodriguez" client) were left in the dev database, consistent with the standing convention in every prior package's report of not chasing down verification-generated dev-seed data.
