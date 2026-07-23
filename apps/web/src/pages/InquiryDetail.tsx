@@ -2186,9 +2186,9 @@ export default function InquiryDetail() {
                     <button
                       type="button"
                       onClick={() => setShowAppointmentModal(true)}
-                      className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                      className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover"
                     >
-                      <PlusIcon className="h-3.5 w-3.5" />
+                      <PlusIcon className="h-4 w-4" />
                       New Appointment
                     </button>
                   )}
