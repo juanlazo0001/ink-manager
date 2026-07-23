@@ -8,6 +8,7 @@ import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useViewAs } from '../context/useViewAs'
 import { tasksQueryKey } from '../lib/queryKeys'
 import { PlusIcon, CloseIcon, CheckIcon } from '../components/icons'
+import DatePickerField from '../components/DatePickerField'
 
 interface SystemTask {
   type: string
@@ -64,6 +65,7 @@ const TASK_TYPE_LABELS: Record<string, string> = {
   READY_TO_SCHEDULE: 'Ready to schedule',
   WAIVER_TO_VERIFY: 'Waivers to verify',
   NEW_CONVERSATION: 'New client messages',
+  APPOINTMENT_NEEDS_CHECKOUT: 'Appointments needing checkout',
 }
 
 function groupByType(tasks: SystemTask[]): [string, SystemTask[]][] {
@@ -207,14 +209,18 @@ export default function Tasks() {
           </div>
         )}
 
-        <input
-          type="date"
-          value={task.dueAt ? task.dueAt.slice(0, 10) : ''}
-          onChange={(e) => updateDueDate(task.id, e.target.value)}
-          disabled={!!viewAsTarget}
-          aria-label="Due date"
-          className="w-[9.5rem] shrink-0 rounded-lg border border-border bg-surface-inset px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent disabled:cursor-not-allowed disabled:opacity-50"
-        />
+        <div className="w-[9.5rem] shrink-0 text-xs [&_button]:px-2 [&_button]:py-1">
+          <label htmlFor={`due-date-${task.id}`} className="sr-only">
+            Due date
+          </label>
+          <DatePickerField
+            id={`due-date-${task.id}`}
+            value={task.dueAt ? task.dueAt.slice(0, 10) : ''}
+            onChange={(value) => updateDueDate(task.id, value)}
+            disabled={!!viewAsTarget}
+            placeholder="Due date"
+          />
+        </div>
 
         <button
           type="button"
@@ -329,12 +335,17 @@ export default function Tasks() {
                         ))}
                     </select>
                   )}
-                  <input
-                    type="date"
-                    value={form.dueAt}
-                    onChange={(e) => setForm({ ...form, dueAt: e.target.value })}
-                    className="rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                  />
+                  <div className="w-40">
+                    <label htmlFor="new-task-due-date" className="sr-only">
+                      Due date
+                    </label>
+                    <DatePickerField
+                      id="new-task-due-date"
+                      value={form.dueAt}
+                      onChange={(value) => setForm({ ...form, dueAt: value })}
+                      placeholder="Due date"
+                    />
+                  </div>
                   <button
                     type="submit"
                     disabled={createMutation.isPending || !!viewAsTarget}
