@@ -782,7 +782,7 @@ Playwright against the local dev stack (api :4099, web :5199 -- deliberately off
 
 ## Commit
 
-Pending at time of writing -- see the immediately-following REPORT.md commit for the hash. This session's diff: `apps/api/src/routes/inquiries.ts`, `apps/web/src/components/ConversationsPanel.tsx`, `apps/web/src/components/MultiSelectFilter.tsx` (new), `apps/web/src/lib/format.ts`, `apps/web/src/pages/Inquiries.tsx`, `apps/web/src/pages/InquiryDetail.tsx`.
+`8ee5678` — Package H: Inquiries & Projects list/display polish.
 
 ## Cleanup
 
