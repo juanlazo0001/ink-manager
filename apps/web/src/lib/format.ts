@@ -10,6 +10,24 @@ export function formatStatus(status: string) {
     .join(' ')
 }
 
+// Package H: AWAITING_CLIENT_RESPONSE covers two meaningfully different
+// moments -- the client hasn't looked yet vs. they've opened it and are
+// deciding -- and investigation confirmed the timestamps to tell them apart
+// (estimateSentAt/estimateOpenedAt) already existed, so this is a display
+// derivation rather than a new stored status. Only that one raw status gets
+// a substituted label; every other status still falls through to
+// formatStatus's generic Title Case.
+export function describeInquiryStatus(inquiry: {
+  status: string
+  estimateSentAt?: string | null
+  estimateOpenedAt?: string | null
+}): string {
+  if (inquiry.status === 'AWAITING_CLIENT_RESPONSE' && inquiry.estimateSentAt) {
+    return inquiry.estimateOpenedAt ? 'Opened, awaiting response' : 'Sent, not opened yet'
+  }
+  return formatStatus(inquiry.status)
+}
+
 // Elapsed time between two ISO timestamps, e.g. "3h 12m" or "2d 4h" --
 // used for the estimate timeline's "opened 3h 12m after sending" style notes.
 export function formatDuration(fromIso: string, toIso: string): string {

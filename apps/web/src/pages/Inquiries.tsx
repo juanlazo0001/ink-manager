@@ -10,13 +10,15 @@ import AppointmentForm from '../components/AppointmentForm'
 import InquiryKanbanBoard from '../components/kanban/InquiryKanbanBoard'
 import { PIPELINE_STEPS } from '../components/InquiryPipeline'
 import type { KanbanColumn, KanbanTransition } from '../lib/kanban'
+import MultiSelectFilter from '../components/MultiSelectFilter'
 import { apiFetch, ApiError } from '../lib/api'
-import { formatDateTime, formatStatus } from '../lib/format'
+import { formatDateTime, formatStatus, describeInquiryStatus } from '../lib/format'
 import { PhotoIcon, PlusIcon, SearchIcon } from '../components/icons'
 import { useAuth } from '../context/useAuth'
 import { useUserProfile } from '../context/useUserProfile'
 import { inquiriesQueryKey, artistsQueryKey } from '../lib/queryKeys'
 import { useMarkSectionSeen } from '../lib/useMarkSectionSeen'
+import { useDebouncedValue } from '../lib/useDebouncedValue'
 import { artistLabel } from '../components/ArtistAvatar'
 
 interface Inquiry {
@@ -28,9 +30,12 @@ interface Inquiry {
   updatedAt: string
   priceEstimateLow: number | null
   priceEstimateHigh: number | null
+  estimateSentAt: string | null
+  estimateOpenedAt: string | null
   referenceImages: string[]
   client: { firstName: string; lastName: string }
   assignedArtist: { id: string; user: { email: string; name: string | null; avatarUrl: string | null } } | null
+  appointment: { startTime: string } | null
 }
 
 type PipelineTab = 'inquiries' | 'projects'
@@ -83,50 +88,19 @@ interface ArtistOption {
   user: { email: string; name: string | null; avatarUrl: string | null }
 }
 
-type SortOption = 'newest' | 'oldest' | 'updated' | 'name-asc' | 'name-desc'
+// Values match the backend's own SORT_OPTIONS (inquiries.ts) exactly --
+// sent straight through as the `sort` query param, no client-side
+// translation. Package H: sorting moved server-side along with the
+// filters below, so this list only drives the dropdown's labels.
+type SortOption = 'createdAt_desc' | 'createdAt_asc' | 'updatedAt_desc' | 'clientName_asc' | 'clientName_desc'
 
 const SORT_LABELS: Record<SortOption, string> = {
-  newest: 'Newest first',
-  oldest: 'Oldest first',
-  updated: 'Recently updated',
-  'name-asc': 'Client name (A–Z)',
-  'name-desc': 'Client name (Z–A)',
+  createdAt_desc: 'Newest first',
+  createdAt_asc: 'Oldest first',
+  updatedAt_desc: 'Recently updated',
+  clientName_asc: 'Client name (A–Z)',
+  clientName_desc: 'Client name (Z–A)',
 }
-
-function clientName(inquiry: { client: { firstName: string; lastName: string } }): string {
-  return `${inquiry.client.firstName} ${inquiry.client.lastName}`
-}
-
-function sortInquiries<T extends { createdAt: string; updatedAt: string; client: { firstName: string; lastName: string } }>(
-  list: T[],
-  sort: SortOption,
-): T[] {
-  const sorted = [...list]
-  switch (sort) {
-    case 'newest':
-      return sorted.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    case 'oldest':
-      return sorted.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
-    case 'updated':
-      return sorted.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
-    case 'name-asc':
-      return sorted.sort((a, b) => clientName(a).localeCompare(clientName(b)))
-    case 'name-desc':
-      return sorted.sort((a, b) => clientName(b).localeCompare(clientName(a)))
-  }
-}
-
-type StatusBucket = 'All' | 'New' | 'Assigned' | 'Closed'
-
-const STATUS_BUCKETS: StatusBucket[] = ['All', 'New', 'Assigned', 'Closed']
-
-function bucketFor(status: string): Exclude<StatusBucket, 'All'> {
-  if (status === 'NEW') return 'New'
-  if (status === 'CLOSED_LOST' || status === 'COLD_LEAD') return 'Closed'
-  return 'Assigned'
-}
-
-type ProjectStatusFilter = 'All' | (typeof PROJECTS_TAB_STATUSES)[number]
 
 function truncate(text: string, max: number) {
   return text.length > max ? `${text.slice(0, max).trimEnd()}…` : text
@@ -158,12 +132,20 @@ export default function Inquiries() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   const activeTab: PipelineTab = searchParams.get('tab') === 'projects' ? 'projects' : 'inquiries'
-  const [bucketFilter, setBucketFilter] = useState<StatusBucket>('All')
-  const [projectStatusFilter, setProjectStatusFilter] = useState<ProjectStatusFilter>('All')
+  // Multi-select (Package H): each tab keeps its own status selection so
+  // switching tabs doesn't lose it; empty means "every status this tab
+  // shows" (sent to the server as the tab's full status list -- see
+  // effectiveStatusFilter below -- rather than as "no filter at all",
+  // which would leak the other tab's statuses into the results).
+  const [inquiryStatusFilter, setInquiryStatusFilter] = useState<string[]>([])
+  const [projectStatusFilter, setProjectStatusFilter] = useState<string[]>([])
   const [groupByStatus, setGroupByStatus] = useState(false)
   const [search, setSearch] = useState('')
-  const [artistFilter, setArtistFilter] = useState<'All' | 'Unassigned' | string>('All')
-  const [sortOption, setSortOption] = useState<SortOption>('newest')
+  const debouncedSearch = useDebouncedValue(search, 300)
+  // 'unassigned' is a synthetic value alongside real artist ids -- the
+  // backend's ?artistId= param treats it specially (assignedArtistId: null).
+  const [artistFilter, setArtistFilter] = useState<string[]>([])
+  const [sortOption, setSortOption] = useState<SortOption>('createdAt_desc')
   // Not URL-persisted deliberately: setTab below replaces searchParams
   // wholesale on every tab switch, which would otherwise wipe a view=kanban
   // param on every click -- local state survives the tab switch instead.
@@ -240,21 +222,58 @@ export default function Inquiries() {
         },
       }
     }
-    // WAITLISTED has no route back into SCHEDULING/CONFIRMED, and CONFIRMED
-    // has no forward route at all -- both are dead ends by design today.
+    // Package H: /unwaitlist is the new reverse of /waitlist above -- also
+    // data-free (no body at all), so this is safe to drag directly too.
+    if (fromColumnKey === 'WAITLISTED' && toColumnKey === 'SCHEDULING') {
+      return {
+        kind: 'direct',
+        run: async () => {
+          await apiFetch(`/inquiries/${inquiry.id}/unwaitlist`, { method: 'POST' })
+          queryClient.invalidateQueries({ queryKey: inquiriesQueryKey(user!.studioId) })
+        },
+      }
+    }
+    // WAITLISTED -> CONFIRMED (skipping SCHEDULING) and CONFIRMED's own
+    // forward have no route -- both stay dead ends by design.
     return {
       kind: 'reject',
       message: `There's no action that moves a card from ${formatStatus(fromColumnKey)} to ${formatStatus(toColumnKey)}.`,
     }
   }
 
+  const tabStatuses: readonly string[] = activeTab === 'projects' ? PROJECTS_TAB_STATUSES : INQUIRIES_TAB_STATUSES
+  const activeStatusFilter = activeTab === 'projects' ? projectStatusFilter : inquiryStatusFilter
+  // Empty selection means "everything this tab shows" -- sent explicitly as
+  // the tab's full status list rather than omitted, so the server still
+  // scopes to this tab (never the other tab's statuses) with nothing
+  // checked. See inquiries.ts's GET / for the server-side counterpart.
+  const effectiveStatusFilter = activeStatusFilter.length > 0 ? activeStatusFilter : tabStatuses
+
+  // Package H: sort + status/artist filters + search all moved server-side
+  // (GET /inquiries now takes status[]/artistId[]/q/sort query params) --
+  // the query key includes every input that changes the request, so a
+  // filter change always refetches instead of silently reusing a stale
+  // cache entry for a different filter combination.
   const {
     data: inquiries,
     isLoading,
     error,
   } = useQuery({
-    queryKey: inquiriesQueryKey(user!.studioId),
-    queryFn: () => apiFetch<Inquiry[]>('/inquiries'),
+    queryKey: [
+      ...inquiriesQueryKey(user!.studioId),
+      [...effectiveStatusFilter].sort(),
+      [...artistFilter].sort(),
+      debouncedSearch.trim(),
+      sortOption,
+    ],
+    queryFn: () => {
+      const params = new URLSearchParams()
+      effectiveStatusFilter.forEach((status) => params.append('status', status))
+      artistFilter.forEach((artistId) => params.append('artistId', artistId))
+      if (debouncedSearch.trim()) params.set('q', debouncedSearch.trim())
+      params.set('sort', sortOption)
+      return apiFetch<Inquiry[]>(`/inquiries?${params.toString()}`)
+    },
   })
 
   const { data: artistOptions } = useQuery({
@@ -268,34 +287,7 @@ export default function Inquiries() {
       : error.message
     : null
 
-  const tabStatuses: readonly string[] = activeTab === 'projects' ? PROJECTS_TAB_STATUSES : INQUIRIES_TAB_STATUSES
-  const tabFilteredInquiries = inquiries?.filter((inquiry) => tabStatuses.includes(inquiry.status))
-
-  const statusFilteredInquiries =
-    activeTab === 'projects'
-      ? tabFilteredInquiries?.filter(
-          (inquiry) => projectStatusFilter === 'All' || inquiry.status === projectStatusFilter,
-        )
-      : tabFilteredInquiries?.filter(
-          (inquiry) => bucketFilter === 'All' || bucketFor(inquiry.status) === bucketFilter,
-        )
-
-  const artistFilteredInquiries = statusFilteredInquiries?.filter((inquiry) => {
-    if (artistFilter === 'All') return true
-    if (artistFilter === 'Unassigned') return !inquiry.assignedArtist
-    return inquiry.assignedArtist?.id === artistFilter
-  })
-
-  const searchTerm = search.trim().toLowerCase()
-  const searchFilteredInquiries = searchTerm
-    ? artistFilteredInquiries?.filter(
-        (inquiry) =>
-          clientName(inquiry).toLowerCase().includes(searchTerm) ||
-          inquiry.description.toLowerCase().includes(searchTerm),
-      )
-    : artistFilteredInquiries
-
-  const filteredInquiries = searchFilteredInquiries ? sortInquiries(searchFilteredInquiries, sortOption) : undefined
+  const filteredInquiries = inquiries
 
   // Groups follow the same pipeline order as the tab's own status list, so
   // "New" always appears above "Assigned" above "Closed", etc. -- not
@@ -340,9 +332,15 @@ export default function Inquiries() {
         </td>
         <td className="hidden py-3 text-fg-secondary md:table-cell">{formatStatus(inquiry.channel)}</td>
         <td className="hidden py-3 text-fg-secondary md:table-cell">{truncate(inquiry.description, 60)}</td>
-        <td className="hidden py-3 text-fg-secondary sm:table-cell">{formatDateTime(inquiry.createdAt)}</td>
+        <td className="hidden py-3 text-fg-secondary sm:table-cell">
+          {activeTab === 'projects'
+            ? inquiry.appointment
+              ? formatDateTime(inquiry.appointment.startTime)
+              : 'Not yet scheduled'
+            : formatDateTime(inquiry.createdAt)}
+        </td>
         <td className="py-3 pr-3">
-          <StatusPill status={inquiry.status} />
+          <StatusPill status={inquiry.status} label={describeInquiryStatus(inquiry)} />
         </td>
       </tr>
     )
@@ -435,34 +433,13 @@ export default function Inquiries() {
           </div>
 
           <div className="mt-6 flex flex-wrap items-center gap-3">
-            <div className="w-full sm:max-w-xs">
-              {activeTab === 'projects' ? (
-                <select
-                  value={projectStatusFilter}
-                  onChange={(event) => setProjectStatusFilter(event.target.value as ProjectStatusFilter)}
-                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                >
-                  <option value="All">All statuses</option>
-                  {PROJECTS_TAB_STATUSES.map((status) => (
-                    <option key={status} value={status}>
-                      {formatStatus(status)}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <select
-                  value={bucketFilter}
-                  onChange={(event) => setBucketFilter(event.target.value as StatusBucket)}
-                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                >
-                  {STATUS_BUCKETS.map((bucket) => (
-                    <option key={bucket} value={bucket}>
-                      {bucket === 'All' ? 'All statuses' : bucket}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </div>
+            <MultiSelectFilter
+              placeholder="All statuses"
+              options={tabStatuses.map((status) => ({ value: status, label: formatStatus(status) }))}
+              selected={activeTab === 'projects' ? projectStatusFilter : inquiryStatusFilter}
+              onChange={activeTab === 'projects' ? setProjectStatusFilter : setInquiryStatusFilter}
+              className="w-full sm:w-48"
+            />
 
             <div className="flex items-center gap-2 rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg sm:w-56">
               <SearchIcon className="h-4 w-4 shrink-0 text-fg-muted" />
@@ -475,19 +452,16 @@ export default function Inquiries() {
               />
             </div>
 
-            <select
-              value={artistFilter}
-              onChange={(event) => setArtistFilter(event.target.value)}
-              className="shrink-0 rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-            >
-              <option value="All">All artists</option>
-              <option value="Unassigned">Unassigned</option>
-              {artistOptions?.map((artist) => (
-                <option key={artist.id} value={artist.id}>
-                  {artistLabel(artist)}
-                </option>
-              ))}
-            </select>
+            <MultiSelectFilter
+              placeholder="All artists"
+              options={[
+                { value: 'unassigned', label: 'Unassigned' },
+                ...(artistOptions?.map((artist) => ({ value: artist.id, label: artistLabel(artist) })) ?? []),
+              ]}
+              selected={artistFilter}
+              onChange={setArtistFilter}
+              className="w-44 shrink-0"
+            />
 
             <select
               value={sortOption}
@@ -548,12 +522,13 @@ export default function Inquiries() {
                 </div>
                 <p className="text-sm text-fg-secondary">
                   {(() => {
-                    const hasExtraFilter = artistFilter !== 'All' || searchTerm.length > 0
+                    const hasExtraFilter =
+                      artistFilter.length > 0 || debouncedSearch.trim().length > 0 || activeStatusFilter.length > 0
                     if (activeTab === 'projects') {
-                      if (projectStatusFilter !== 'All' || hasExtraFilter) return 'No projects match these filters.'
+                      if (hasExtraFilter) return 'No projects match these filters.'
                       return 'No projects yet -- projects appear here once a deposit is paid.'
                     }
-                    if (bucketFilter !== 'All' || hasExtraFilter) return 'No inquiries match these filters.'
+                    if (hasExtraFilter) return 'No inquiries match these filters.'
                     return 'No inquiries yet.'
                   })()}
                 </p>
@@ -586,7 +561,9 @@ export default function Inquiries() {
                       <th className="py-2 font-medium">Client</th>
                       <th className="hidden py-2 font-medium md:table-cell">Channel</th>
                       <th className="hidden py-2 font-medium md:table-cell">Description</th>
-                      <th className="hidden py-2 font-medium sm:table-cell">Submitted</th>
+                      <th className="hidden py-2 font-medium sm:table-cell">
+                        {activeTab === 'projects' ? 'Scheduled Date' : 'Submitted'}
+                      </th>
                       <th className="rounded-r-lg py-2 pr-3 font-medium">Status</th>
                     </tr>
                   </thead>

@@ -2,6 +2,7 @@ import { Router } from "express";
 import crypto from "node:crypto";
 import { prisma } from "../lib/prisma";
 import { AppointmentStatus, Channel, InquiryStatus, MessageChannel, MessageDirection } from "../../generated/prisma/enums";
+import type { Prisma } from "../../generated/prisma/client";
 import { optionalAuth, requireAuth, requireRole } from "../middleware/auth";
 import { Role } from "../../generated/prisma/enums";
 import { diffObjects, logAudit } from "../lib/audit";
@@ -252,6 +253,12 @@ const NON_TERMINAL_STATUSES: InquiryStatus[] = (Object.values(InquiryStatus) as 
   (s) => s !== InquiryStatus.CLOSED_LOST && s !== InquiryStatus.COLD_LEAD,
 );
 
+// The "converted to a Project" line, mirrored from apps/web's own
+// PROJECTS_TAB_STATUSES (Inquiries.tsx) -- deposit paid through completed.
+// Package H: once here, the estimate that got the client to pay is history,
+// not a draft; PATCH /:id below rejects further edits to it.
+const PROJECT_STATUSES: InquiryStatus[] = [InquiryStatus.SCHEDULING, InquiryStatus.WAITLISTED, InquiryStatus.CONFIRMED];
+
 const INQUIRY_INCLUDE = {
   client: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
   preferredArtist: { select: { id: true, user: { select: { name: true, email: true, avatarUrl: true } } } },
@@ -292,12 +299,17 @@ const INQUIRY_INCLUDE = {
   },
 } as const;
 
-// The inbox list only renders these fields -- preferredArtist/appointment/
-// depositForm are detail-page-only, so the list query skips them.
+// The inbox list only renders these fields -- preferredArtist/depositForm
+// are detail-page-only, so the list query skips them.
 // updatedAt/priceEstimateLow/High/assignedArtist were added for the Kanban
 // board's card (Package E): "time in this stage" (updatedAt), the estimate
 // range, and the assigned artist's avatar+name -- the List view simply
-// ignores the extra fields.
+// ignores fields it doesn't render.
+// estimateSentAt/estimateOpenedAt (Package H): distinguishes "estimate sent,
+// not opened yet" from "opened, awaiting response" on the List/Kanban views
+// without a new stored status -- see deriveEstimateSubStatus below.
+// appointment.startTime (Package H): the Projects tab's "Scheduled Date"
+// column.
 const INQUIRY_LIST_SELECT = {
   id: true,
   channel: true,
@@ -307,21 +319,111 @@ const INQUIRY_LIST_SELECT = {
   updatedAt: true,
   priceEstimateLow: true,
   priceEstimateHigh: true,
+  estimateSentAt: true,
+  estimateOpenedAt: true,
   referenceImages: true,
   client: { select: { firstName: true, lastName: true } },
   assignedArtist: { select: { id: true, user: { select: { id: true, name: true, email: true, avatarUrl: true } } } },
+  appointment: { select: { startTime: true } },
 } as const;
 
 // Excluded from the default inbox the same way merged clients are excluded
 // from the client list -- fully intact, still reachable via GET /:id.
 const NOT_ARCHIVED = { archivedAt: null } as const;
 
-// Staff-facing inbox: every inquiry submitted for this studio, newest first.
+const SORT_OPTIONS = ["createdAt_desc", "createdAt_asc", "updatedAt_desc", "clientName_asc", "clientName_desc"] as const;
+type SortOption = (typeof SORT_OPTIONS)[number];
+
+function sortOrderBy(sort: SortOption): Prisma.InquiryOrderByWithRelationInput[] {
+  switch (sort) {
+    case "createdAt_asc":
+      return [{ createdAt: "asc" }];
+    case "updatedAt_desc":
+      return [{ updatedAt: "desc" }];
+    case "clientName_asc":
+      return [{ client: { firstName: "asc" } }, { client: { lastName: "asc" } }];
+    case "clientName_desc":
+      return [{ client: { firstName: "desc" } }, { client: { lastName: "desc" } }];
+    case "createdAt_desc":
+    default:
+      return [{ createdAt: "desc" }];
+  }
+}
+
+// Normalizes a query param that Express may hand back as a single string,
+// an array (repeated ?key=a&key=b), or undefined -- every multi-select
+// filter below (status, artistId) takes this same shape.
+function queryStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((v): v is string => typeof v === "string");
+  if (typeof value === "string" && value.length > 0) return [value];
+  return [];
+}
+
+// Staff-facing inbox: every inquiry submitted for this studio. Package H:
+// sort + multi-select status/artist filters + name/description search all
+// moved server-side here (previously the whole studio's inquiries were
+// fetched once and filtered/sorted client-side) -- the point isn't just
+// performance, it's that filtering a full unpaginated fetch client-side
+// silently stops being correct the moment `take` below ever needs
+// lowering or real pagination gets added; a filter a client applies to
+// only the first page it already has would quietly under-report matches
+// that exist further back. Doing it in the query keeps that always true.
 router.get("/", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const { studioId } = req.user!;
+
+  const statusValues = queryStringArray(req.query.status).filter((s): s is InquiryStatus =>
+    (Object.values(InquiryStatus) as string[]).includes(s),
+  );
+
+  const artistValues = queryStringArray(req.query.artistId);
+  const wantsUnassigned = artistValues.includes("unassigned");
+  const artistIds = artistValues.filter((v) => v !== "unassigned");
+
+  let artistWhere: Prisma.InquiryWhereInput | undefined;
+  if (artistIds.length > 0 && wantsUnassigned) {
+    artistWhere = { OR: [{ assignedArtistId: { in: artistIds } }, { assignedArtistId: null }] };
+  } else if (artistIds.length > 0) {
+    artistWhere = { assignedArtistId: { in: artistIds } };
+  } else if (wantsUnassigned) {
+    artistWhere = { assignedArtistId: null };
+  }
+
+  const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+  // Same multi-word AND-of-OR pattern as clients.ts's own search -- a
+  // two-word query like "Emily Rodriguez" needs both words satisfied,
+  // each by whichever field actually has it.
+  const words = q.split(/\s+/).filter(Boolean);
+  const searchWhere: Prisma.InquiryWhereInput | undefined =
+    words.length > 0
+      ? {
+          AND: words.map((word) => {
+            const contains = { contains: word, mode: "insensitive" as const };
+            return {
+              OR: [
+                { description: contains },
+                { client: { firstName: contains } },
+                { client: { lastName: contains } },
+              ],
+            };
+          }),
+        }
+      : undefined;
+
+  const sortParam = typeof req.query.sort === "string" ? req.query.sort : "createdAt_desc";
+  const sort: SortOption = (SORT_OPTIONS as readonly string[]).includes(sortParam)
+    ? (sortParam as SortOption)
+    : "createdAt_desc";
+
   const inquiries = await prisma.inquiry.findMany({
-    where: { studioId: req.user!.studioId, ...NOT_ARCHIVED },
+    where: {
+      studioId,
+      ...NOT_ARCHIVED,
+      ...(statusValues.length > 0 ? { status: { in: statusValues } } : {}),
+      ...(artistWhere ?? {}),
+      ...(searchWhere ?? {}),
+    },
     select: INQUIRY_LIST_SELECT,
-    orderBy: { createdAt: "desc" },
+    orderBy: sortOrderBy(sort),
     take: 100,
   });
 
@@ -394,6 +496,18 @@ router.patch("/:id", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), asyn
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
   if (!inquiry || inquiry.studioId !== req.user!.studioId) {
     return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  // Package H: once converted to a Project, the estimate is what the
+  // client actually paid a deposit against -- staff can still see it, but
+  // editing it after the fact would silently rewrite the number the client
+  // agreed to. Only blocks the estimate fields specifically; description/
+  // placement/budget/etc. and the new notes field above stay editable.
+  const editsEstimate = NUMERIC_FIELDS.some((field) => body[field] !== undefined);
+  if (editsEstimate && PROJECT_STATUSES.includes(inquiry.status)) {
+    return res.status(400).json({
+      error: "The estimate can't be edited after this inquiry has converted to a Project (deposit already paid).",
+    });
   }
 
   const data: Record<string, string | number | null | string[]> = {};
@@ -867,6 +981,44 @@ router.post("/:id/waitlist", requireAuth, requireRole(Role.OWNER, Role.FRONT_DES
     entityId: id,
     action: "status_change",
     changes: diffObjects(inquiry, waitlistData, ["status", "declineNote"]),
+  });
+
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+
+  res.json(updated);
+});
+
+// Package H: the other missing workflow action -- /waitlist above had no
+// reverse. Symmetric with it: the only thing this undoes is that exact
+// transition, back to SCHEDULING (never straight to CONFIRMED -- picking an
+// actual time slot stays its own deliberate step through /schedule).
+router.post("/:id/unwaitlist", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  if (inquiry.status !== InquiryStatus.WAITLISTED) {
+    return res.status(400).json({ error: "Only a WAITLISTED inquiry can be removed from the waitlist" });
+  }
+
+  const unwaitlistData = { status: InquiryStatus.SCHEDULING };
+
+  const updated = await prisma.inquiry.update({
+    where: { id },
+    data: unwaitlistData,
+    include: INQUIRY_INCLUDE,
+  });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Inquiry",
+    entityId: id,
+    action: "status_change",
+    changes: diffObjects(inquiry, unwaitlistData, ["status"]),
   });
 
   emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });

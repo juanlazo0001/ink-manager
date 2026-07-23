@@ -18,7 +18,7 @@ import DateAndTimeRangeFields, {
   type DateAndTimeRangeValue,
 } from '../components/DateAndTimeRangeFields'
 import { apiFetch, ApiError } from '../lib/api'
-import { formatDateTime, formatDuration, formatPhoneInput, formatStatus } from '../lib/format'
+import { formatDateTime, formatDuration, formatPhoneInput, formatStatus, describeInquiryStatus } from '../lib/format'
 import {
   ArrowLeftIcon,
   CheckIcon,
@@ -338,6 +338,12 @@ export default function InquiryDetail() {
   // recent matching status_change entry from the same endpoint AuditTrail
   // already uses.
   const isTerminal = inquiry?.status === 'CLOSED_LOST' || inquiry?.status === 'COLD_LEAD'
+  // Package H: same "converted to a Project" line as the backend's own
+  // PROJECT_STATUSES (inquiries.ts) and the frontend's PROJECTS_TAB_STATUSES
+  // (Inquiries.tsx) -- kept as a small local literal rather than importing
+  // from a sibling page, since it's a stable, rarely-changing 3-value group.
+  const isConverted =
+    inquiry?.status === 'SCHEDULING' || inquiry?.status === 'WAITLISTED' || inquiry?.status === 'CONFIRMED'
   const { data: inquiryAuditLogs } = useQuery({
     queryKey: ['inquiry-audit', id],
     queryFn: () => apiFetch<AuditLogEntry[]>(`/audit?entityType=Inquiry&entityId=${id}`),
@@ -477,6 +483,12 @@ export default function InquiryDetail() {
   const [waitlistNote, setWaitlistNote] = useState('')
   const [waitlisting, setWaitlisting] = useState(false)
   const [waitlistError, setWaitlistError] = useState<string | null>(null)
+
+  // Package H: the missing reverse of Add to Waitlist above -- there was
+  // previously no visible way to take a WAITLISTED inquiry off the
+  // waitlist at all.
+  const [unwaitlisting, setUnwaitlisting] = useState(false)
+  const [unwaitlistError, setUnwaitlistError] = useState<string | null>(null)
 
   // Phase 7A: mark-as-lost / reopen. canMessage (OWNER/FRONT_DESK) is the
   // same permission level as these two actions, so it's reused directly
@@ -825,6 +837,22 @@ export default function InquiryDetail() {
       setWaitlistError(err instanceof Error ? err.message : 'Failed to waitlist inquiry')
     } finally {
       setWaitlisting(false)
+    }
+  }
+
+  async function handleUnwaitlist() {
+    if (!id) return
+
+    setUnwaitlisting(true)
+    setUnwaitlistError(null)
+
+    try {
+      await apiFetch(`/inquiries/${id}/unwaitlist`, { method: 'POST' })
+      invalidateInquiry()
+    } catch (err) {
+      setUnwaitlistError(err instanceof Error ? err.message : 'Failed to remove from waitlist')
+    } finally {
+      setUnwaitlisting(false)
     }
   }
 
@@ -1217,7 +1245,7 @@ export default function InquiryDetail() {
                         <span className="hidden text-xs font-medium md:inline">Share with Artist</span>
                       </button>
                     )}
-                    <StatusPill status={inquiry.status} />
+                    <StatusPill status={inquiry.status} label={describeInquiryStatus(inquiry)} />
                     {(canMessage || isOwner) && (
                       <div className="relative">
                         <button
@@ -1416,7 +1444,7 @@ export default function InquiryDetail() {
                 <div id="estimate-section" className="mt-6 rounded-2xl border border-border bg-surface p-5">
                   <div className="flex items-center justify-between">
                     <h2 className="text-base font-semibold text-fg">Estimate</h2>
-                    {!isTerminal && canMessage && !editingEstimate && (
+                    {!isTerminal && !isConverted && canMessage && !editingEstimate && (
                       <button
                         type="button"
                         onClick={() => setEditingEstimate(true)}
@@ -1427,6 +1455,13 @@ export default function InquiryDetail() {
                       </button>
                     )}
                   </div>
+
+                  {isConverted && (
+                    <p className="mt-1 text-xs text-fg-muted">
+                      Locked -- this inquiry has converted to a Project (deposit paid), so the estimate can no longer be
+                      edited.
+                    </p>
+                  )}
 
                   {inquiry.clientStatedBudget && (
                     <div className="mt-4 rounded-lg border border-warning/30 bg-warning/10 p-3">
@@ -1444,7 +1479,7 @@ export default function InquiryDetail() {
                     </div>
                   )}
 
-                  {!isTerminal && canMessage && editingEstimate && (
+                  {!isTerminal && !isConverted && canMessage && editingEstimate && (
                     <>
                       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <div>
@@ -1938,6 +1973,28 @@ export default function InquiryDetail() {
                         </div>
                       )}
                     </>
+                  )}
+
+                  {inquiry.status === 'WAITLISTED' && (
+                    <div className="mt-4">
+                      <p className="text-sm text-fg-secondary">
+                        Currently waitlisted -- not actively being scheduled.
+                      </p>
+                      {inquiry.declineNote && (
+                        <p className="mt-2 rounded-lg border border-border bg-surface-inset p-3 text-sm text-fg-secondary">
+                          {inquiry.declineNote}
+                        </p>
+                      )}
+                      {unwaitlistError && <p className="mt-2 text-sm text-danger">{unwaitlistError}</p>}
+                      <button
+                        type="button"
+                        onClick={handleUnwaitlist}
+                        disabled={unwaitlisting}
+                        className="mt-3 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                      >
+                        {unwaitlisting ? 'Removing…' : 'Remove from Waitlist'}
+                      </button>
+                    </div>
                   )}
                 </div>
               )}

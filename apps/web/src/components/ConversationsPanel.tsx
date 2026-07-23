@@ -356,20 +356,20 @@ const RING_PHASE_INDEX: Record<string, number> = {
 }
 const RING_PHASE_COUNT = 5
 
-// One color per active phase (index-matched to RING_PHASE_INDEX above), cool
-// to warm as the inquiry moves forward -- previously every active phase
-// shared the same lime fill and only the *amount* filled changed, so two
-// threads at very different points in the pipeline looked identical at a
-// glance. Ends on the same lime (#c8e04a) the ring always used before this,
-// so an already-scheduled thread's ring is unchanged.
-const RING_PHASE_COLORS = ['#4a90d9', '#4ac9c9', '#e0b84a', '#e08a3c', '#c8e04a']
-
-// Terminal/branch statuses get a full ring in a distinct color instead of a
-// partial lime fill -- CLOSED_LOST reads as declined/closed, COLD_LEAD as a
-// separate "gone quiet" branch, so neither is confused with active progress.
-const RING_TERMINAL_COLORS: Record<string, string> = {
-  CLOSED_LOST: '#e05252',
-  COLD_LEAD: '#6b6b73',
+// Package H: the ring's color now comes from the exact same status->tone
+// mapping StatusPill uses everywhere else (getStatusTone), not an
+// independently-invented palette -- these var() references are the literal
+// CSS custom properties StatusPill's own bg-success/text-success etc.
+// Tailwind utilities already resolve to (see index.css's @theme block), so
+// a theme preset change repaints the ring too, automatically. Terminal
+// statuses (CLOSED_LOST/COLD_LEAD -> danger/neutral) fall out of this same
+// map for free, rather than a separate hardcoded lookup.
+const TONE_RING_COLORS: Record<Tone, string> = {
+  success: 'var(--color-success)',
+  info: 'var(--color-info)',
+  warning: 'var(--color-warning)',
+  danger: 'var(--color-danger)',
+  neutral: 'var(--color-neutral)',
 }
 
 // Literal, complete class strings per branch (not built from a template) so
@@ -485,10 +485,10 @@ function ProgressRingAvatar({
   const size = 52
   const radius = 23
   const circumference = 2 * Math.PI * radius
-  const terminalColor = status ? RING_TERMINAL_COLORS[status] : undefined
+  const isTerminal = status === 'CLOSED_LOST' || status === 'COLD_LEAD'
   const phaseIndex = status ? RING_PHASE_INDEX[status] : undefined
-  const fraction = terminalColor ? 1 : phaseIndex != null ? (phaseIndex + 1) / RING_PHASE_COUNT : 0
-  const ringColor = terminalColor ?? (phaseIndex != null ? RING_PHASE_COLORS[phaseIndex] : '#c8e04a')
+  const fraction = isTerminal ? 1 : phaseIndex != null ? (phaseIndex + 1) / RING_PHASE_COUNT : 0
+  const ringColor = status ? TONE_RING_COLORS[getStatusTone(status)] : TONE_RING_COLORS.success
 
   return (
     <div className="relative h-[52px] w-[52px] shrink-0">

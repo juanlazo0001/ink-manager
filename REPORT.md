@@ -732,3 +732,58 @@ Reused the existing `CurrencyInput`/`formatCurrencyInput` (already built for `pr
 ## Cleanup
 
 Test appointment created during Playwright verification (Emily Rodriguez / Maria Chen, Sun Jul 26) was cancelled afterward via the API, detaching its gift card back to reusable. The gift card issued for that same client to enable the test remains `ACTIVE` and unattached in the dev database (harmless, matches the existing abundance of test gift cards already there). A staff-created verification inquiry (`Backend CheckStaff`) was left in place, consistent with the standing convention of not chasing down every piece of dev-seed test data this deep into the project's test history. Both dev servers (API port 4000, web port 5173) left running since they were shared with other concurrent sessions at the time -- not killed, to avoid disrupting Package H's own live testing against them.
+
+---
+
+# Package H — Inquiries & Projects list/display polish
+
+Single session on `main`. No schema changes -- confirmed during investigation, not assumed (see §2 below).
+
+## 1. Sort + multi-select filters — server-side, as specified
+
+`GET /inquiries` (`apps/api/src/routes/inquiries.ts`) now takes `status` (repeatable), `artistId` (repeatable, `unassigned` is a synthetic value alongside real ids), `q` (multi-word AND-of-OR search across description + client first/last name, same pattern as `clients.ts`'s own search), and `sort` (`createdAt_desc|createdAt_asc|updatedAt_desc|clientName_asc|clientName_desc`) query params, applied in the Prisma `where`/`orderBy` themselves -- not a client-side filter over an unpaginated fetch. `Inquiries.tsx` sends the tab's own full status list whenever nothing is explicitly checked (so an empty multi-select still means "everything this tab shows," never "everything, including the other tab's statuses"). New `MultiSelectFilter.tsx` component (button + checkbox listbox, same interaction shape as the existing artist-picker dropdown) replaces both the old single-value status `<select>` and the artist `<select>`. List/Kanban continue to share one fetch, now keyed on every filter input so a change always refetches instead of serving a stale combination from cache.
+
+## 2. Estimate sub-status — derived from existing timestamps, no new schema
+
+Investigated first, per the task's own instruction: `estimateSentAt`/`estimateOpenedAt`/`estimateRespondedAt` already existed on `Inquiry` and were already populated by `/send-estimate` and the public estimate-response flow. This is purely a display derivation (`describeInquiryStatus` in `apps/web/src/lib/format.ts`): `AWAITING_CLIENT_RESPONSE` + `estimateSentAt` set + `estimateOpenedAt` null → "Sent, not opened yet"; + `estimateOpenedAt` set → "Opened, awaiting response". Every other status still falls through to the existing `formatStatus`. Wired into `StatusPill`'s existing `label` override prop on the List view's rows and `InquiryDetail.tsx`'s header pill -- no new stored status value, no migration.
+
+## 3. Projects tab: Scheduled Date replaces Submitted
+
+`INQUIRY_LIST_SELECT` gained `appointment: { select: { startTime: true } }`. The List view's date column header and cell both switch on `activeTab === 'projects'`; Inquiries tab is untouched (still `createdAt`/"Submitted"). Shows "Not yet scheduled" for a Project with no appointment yet (Scheduling/Waitlisted).
+
+## 4. Estimate editing locked after conversion
+
+Backend: `PATCH /inquiries/:id` now rejects (400) any request touching the price/time estimate fields once `inquiry.status` is in `PROJECT_STATUSES` (`SCHEDULING`/`WAITLISTED`/`CONFIRMED` -- the same line `apps/web`'s own `PROJECTS_TAB_STATUSES` already draws). Every other PATCH-able field (description, placement, budget, the notes field, etc.) stays editable -- only the estimate numbers lock. Frontend: `InquiryDetail.tsx`'s Estimate card hides its Edit button and shows "Locked -- this inquiry has converted to a Project..." once converted; verified the backend guard independently by PATCHing directly against a `CONFIRMED` inquiry (got the 400) rather than trusting the UI alone.
+
+## 5. Per-artist waitlist view + Remove from Waitlist
+
+**View**: no new page -- Package H's own multi-select filters (§1) already do this: Projects tab, check only "Waitlisted", pick one artist. Verified live: narrows to exactly that artist's waitlisted work.
+
+**Remove action — investigated, then added `POST /inquiries/:id/unwaitlist`**: confirmed `/waitlist` (`WAITLISTED` target) had no reverse route at all -- once waitlisted, an inquiry was permanently stuck there through any existing endpoint. Added the symmetric reverse: `WAITLISTED → SCHEDULING` (deliberately not straight to `CONFIRMED` -- picking an actual time slot stays its own deliberate step through the existing `/schedule`), same audit-logging (`logAudit` + `diffObjects`) and `emitInvalidation` pattern as every other status-transition route in the file. Surfaced as a "Remove from Waitlist" button in `InquiryDetail.tsx`'s Scheduling card (previously that card rendered nothing at all for a `WAITLISTED` inquiry -- the actual gap the task flagged). Also rewired the Kanban board's `WAITLISTED → SCHEDULING` drag from a hardcoded rejection to a direct call now that the route exists. Verified end to end: removed Bailey Testperson from Dev Artist One's waitlist, confirmed the status flip via a fresh API read and confirmed they no longer appear in the Waitlisted-filtered view.
+
+## 6. Progress ring color — StatusPill semantics, not invented colors
+
+`ConversationsPanel.tsx`'s `ProgressRingAvatar` previously used its own hardcoded 5-color gradient plus a separate hardcoded terminal-color map (both added in an earlier, unrelated session before this task was written). Replaced both with one `TONE_RING_COLORS` map keyed by `StatusPill`'s own exported `Tone`/`getStatusTone`, using `var(--color-success)` etc. -- the literal CSS custom properties `StatusPill`'s own Tailwind utilities already resolve to, so a theme-preset change repaints the ring automatically instead of drifting out of sync. Verified the resolved computed color of live rings against `getComputedStyle(document.documentElement)` for each theme variable -- exact match, and multiple distinct tones (info/warning) visible across different-stage conversations in the same screenshot.
+
+## Verification
+
+Playwright against the local dev stack (api :4099, web :5199 -- deliberately off the standard ports to avoid colliding with other concurrent sessions' running servers):
+- Sort: confirmed the actual outgoing request URL changes (`sort=createdAt_asc`) and row order changes accordingly.
+- Multi-select status: checked New + Deposit Pending, confirmed the request (`status=NEW&status=DEPOSIT_PENDING`) and that only those two statuses render (button label "2 selected").
+- Estimate sub-status: both "Sent, not opened yet" and "Opened, awaiting response" confirmed present on the List view against real seeded data with each timestamp combination.
+- Projects tab header reads "Scheduled Date", never "Submitted".
+- Estimate lock: Edit button absent + lock message shown on a `CONFIRMED` inquiry; direct PATCH against it returns 400 with the lock message.
+- Waitlist: per-artist filtered view + Remove from Waitlist button both confirmed live, including a fresh re-fetch proving the person actually left WAITLISTED (not just a stale cached view).
+- Ring colors: computed `stroke` on live rings matches `--color-info`/`--color-warning` exactly; distinct colors visible across different pipeline stages in one screenshot.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) -- clean. `npx tsc --noEmit` + `npm run build` (web) -- clean.
+
+## Commit
+
+Pending at time of writing -- see the immediately-following REPORT.md commit for the hash. This session's diff: `apps/api/src/routes/inquiries.ts`, `apps/web/src/components/ConversationsPanel.tsx`, `apps/web/src/components/MultiSelectFilter.tsx` (new), `apps/web/src/lib/format.ts`, `apps/web/src/pages/Inquiries.tsx`, `apps/web/src/pages/InquiryDetail.tsx`.
+
+## Cleanup
+
+Both dev servers (api :4099, web :5199) stopped, including their orphaned child processes (confirmed via `netstat` + explicit process kill, same recurring pattern as prior sessions' reports). Test data mutated during verification (Bailey Testperson's `WAITLISTED → SCHEDULING`) left as-is, per the same standing convention noted in every prior session's report -- this is the dev database `DEVELOPMENT.md` describes as being for exactly this kind of testing. `apps/api/src/routes/inquiries.ts` briefly needed a careful hunk-level reconciliation before committing: Package I landed a real commit (`b67f06b`) to this same file mid-session, and my local index still held a stale staged diff from before that commit -- resolved by diffing against the correct current `HEAD` rather than trusting `git status`'s `MM` marker at face value, confirmed clean before staging.
