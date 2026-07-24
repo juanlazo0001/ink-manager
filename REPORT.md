@@ -1916,3 +1916,33 @@ Direct API calls (owner login): confirmed `colorOrBlackGrey`/`placement` appear 
 ## Cleanup
 
 All ad-hoc Playwright scripts and screenshots deleted from the scratch `pw-test` directory; none committed. No background shells were started this session (the dev API/web servers were already running from prior work and were left as-is).
+
+---
+
+# Feature — Attachments on notes (any file type)
+
+Single session on `main`. Schema change: `attachments Json?` added to both `InquiryNote` and `AppointmentNote` (purely additive migration). User explicitly chose **"Any file type (images, PDFs, documents)"** over an images-only option via AskUserQuestion, overriding what would otherwise have been full consistency with every other attachment feature in this app (conversation messages, waiver ID photos, appointment photos are all image-only, Cloudinary `image/upload` end to end).
+
+## What changed
+
+- **Cloudinary**: new `ink-manager/note-attachments` folder + `/uploads/note-attachment-signature` route (`uploads.ts`, OWNER/FRONT_DESK gated, matching the notes routes' own hardcoded gate). Frontend `uploadNoteAttachment()` (`lib/cloudinary.ts`) posts to Cloudinary's `auto/upload` endpoint instead of every other wrapper's `image/upload` — the one deviation needed for non-image support. No signed-parameter changes were needed: `resource_type` only ever lives in the endpoint URL, never a signed field, so the existing folder+timestamp signing logic works unchanged for both image and non-image uploads.
+- **Data shape**: unlike `Message.attachments` (bare `string[]` of URLs, since those are always images rendered as `<img>`), note attachments are `Array<{url, filename, mimeType}>` — the extra fields are captured client-side off the browser `File` object at upload time, since Cloudinary's own response for a non-image asset doesn't carry a human-readable original filename.
+- **Validation**: `isValidAttachments()` added to the shared `api/src/lib/notes.ts` (alongside the existing `isBlankHtml`/`canModifyNote`), used by both `inquiries.ts` and `appointments.ts`'s notes routes.
+- **PATCH semantics**: attachments omitted from the request body means "leave as-is"; an explicit `[]` means "clear them all" — the latter requires `Prisma.JsonNull` (not plain `null`/`undefined`) to actually null out a `Json?` column, otherwise Prisma just skips the field. Both routes' `Prisma` import had to change from type-only to a value import to use `Prisma.JsonNull`.
+- **UI** (`NotesSection.tsx`): a paperclip button (composer, and again inside each note's own edit mode) uploads immediately on pick — multiple files at once — appending each result to a removable pending-chip strip, matching `ConversationsPanel.tsx`'s existing "upload on pick" composer pattern rather than a bulk-gallery picker. Posted notes render the same chip read-only: an image gets a small thumbnail, anything else gets a generic file icon + filename, both open the file in a new tab. The `AttachmentChip` component is exported and reused as-is by `ClientDetail.tsx`'s consolidated notes view, so attachments show up there too with zero extra work.
+
+## Verification
+
+Direct API: fetched a real signature and uploaded a `.txt` file straight to Cloudinary's `auto/upload` endpoint (confirmed `resource_type: raw` in the response, proving the endpoint distinction works for non-images); posted a note with that attachment and confirmed it round-tripped through `GET /appointments/:id/notes` unchanged. Browser (Playwright, screenshots reviewed): composed a note, attached a real file via the actual paperclip input (after two false starts where the test script's locator picked the wrong file input on the page — the *unrelated* Photos widget's own image uploader — before scoping correctly to the Notes composer's), saw the pending chip, posted it, and confirmed the chip persisted on the rendered note; opened edit mode on that note, removed the attachment via its chip's × button, saved, and confirmed it was gone after reload (proving the `Prisma.JsonNull` clear-path works end to end, not just in isolation). Deleted all test notes afterward.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npx tsc -b --noEmit` + `npm run build` (web) — clean.
+
+## Commit
+
+`ae512bc` — Add file attachments to notes (any file type, not just images). Pushed immediately after a collision check (`git fetch` + `git log HEAD..origin/main`) came back empty.
+
+## Cleanup
+
+All ad-hoc Playwright scripts, the scratch `test.txt` fixture, and screenshots deleted from the `pw-test` directory; none committed. All 4 test notes created during verification deleted via the API. No background shells were started this session (the dev API/web servers were already running from prior work and were left as-is).
