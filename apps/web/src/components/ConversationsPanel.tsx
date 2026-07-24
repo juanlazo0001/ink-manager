@@ -789,6 +789,13 @@ function ConversationListView({
   const [search, setSearch] = useState('')
   const [showFilters, setShowFilters] = useState(false)
   const [quickFilter, setQuickFilter] = useState<'all' | 'unread' | 'needs-action'>('all')
+  // Client-side only -- the full matching list is always fetched in one
+  // shot (no pagination on GET /conversations), so there's no missing-data
+  // cutoff to worry about re-sorting after the fact. 'recent' matches the
+  // backend's own default order (lastMessageAt desc); kept as an explicit
+  // case rather than a "no sort" no-op so all four options share one
+  // comparator.
+  const [sortOption, setSortOption] = useState<'recent' | 'oldest' | 'unread' | 'name'>('recent')
   const [showNewChat, setShowNewChat] = useState(false)
   const [newChatSearch, setNewChatSearch] = useState('')
   const [newChatError, setNewChatError] = useState<string | null>(null)
@@ -922,16 +929,32 @@ function ConversationListView({
   // or the featured inquiry sitting in a stage where the studio (not the
   // client) is the one expected to move it forward next.
   const NEEDS_ACTION_STATUSES = ['NEW', 'BUDGET_NEGOTIATION']
-  const visibleConversations = (conversations ?? []).filter((conversation) => {
-    if (quickFilter === 'unread') return conversation.unreadCount > 0
-    if (quickFilter === 'needs-action') {
-      return (
-        conversation.unreadCount > 0 ||
-        (conversation.primaryInquiry != null && NEEDS_ACTION_STATUSES.includes(conversation.primaryInquiry.status))
-      )
-    }
-    return true
-  })
+  const visibleConversations = (conversations ?? [])
+    .filter((conversation) => {
+      if (quickFilter === 'unread') return conversation.unreadCount > 0
+      if (quickFilter === 'needs-action') {
+        return (
+          conversation.unreadCount > 0 ||
+          (conversation.primaryInquiry != null && NEEDS_ACTION_STATUSES.includes(conversation.primaryInquiry.status))
+        )
+      }
+      return true
+    })
+    .sort((a, b) => {
+      switch (sortOption) {
+        case 'oldest':
+          return new Date(a.lastMessageAt ?? 0).getTime() - new Date(b.lastMessageAt ?? 0).getTime()
+        case 'unread':
+          // Unread before read, most-recent-first within each group.
+          if ((a.unreadCount > 0) !== (b.unreadCount > 0)) return a.unreadCount > 0 ? -1 : 1
+          return new Date(b.lastMessageAt ?? 0).getTime() - new Date(a.lastMessageAt ?? 0).getTime()
+        case 'name':
+          return (a.counterpart?.name ?? '').localeCompare(b.counterpart?.name ?? '')
+        case 'recent':
+        default:
+          return new Date(b.lastMessageAt ?? 0).getTime() - new Date(a.lastMessageAt ?? 0).getTime()
+      }
+    })
 
   return (
     <>
@@ -1102,20 +1125,35 @@ function ConversationListView({
           ))}
         </div>
 
-        {tab === 'CLIENT' && (
-          <button
-            type="button"
-            onClick={() => setShowFilters((v) => !v)}
-            aria-label="More filters"
-            aria-pressed={showFilters}
-            className={[
-              'flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition hover:bg-surface hover:text-fg',
-              hasActiveFilter ? 'text-accent' : 'text-fg-muted',
-            ].join(' ')}
+        <div className="flex shrink-0 items-center gap-1.5">
+          <select
+            value={sortOption}
+            onChange={(e) => setSortOption(e.target.value as typeof sortOption)}
+            aria-label="Sort conversations"
+            title="Sort conversations"
+            className="rounded-full border border-border bg-surface-inset px-2.5 py-1.5 text-[12.5px] font-medium text-fg-secondary focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
           >
-            <TagIcon className="h-3.5 w-3.5" />
-          </button>
-        )}
+            <option value="recent">Most recent</option>
+            <option value="oldest">Oldest</option>
+            <option value="unread">Unread first</option>
+            <option value="name">Name (A–Z)</option>
+          </select>
+
+          {tab === 'CLIENT' && (
+            <button
+              type="button"
+              onClick={() => setShowFilters((v) => !v)}
+              aria-label="More filters"
+              aria-pressed={showFilters}
+              className={[
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition hover:bg-surface hover:text-fg',
+                hasActiveFilter ? 'text-accent' : 'text-fg-muted',
+              ].join(' ')}
+            >
+              <TagIcon className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
       </div>
 
       {tab === 'CLIENT' && showFilters && (
