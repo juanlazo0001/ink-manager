@@ -1,11 +1,12 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import RichTextEditor from './RichTextEditor'
-import { DocumentIcon, PencilIcon } from './icons'
+import { AttachmentIcon, CloseIcon, DocumentIcon, PencilIcon } from './icons'
 import { sanitizeHtml } from '../lib/sanitizeHtml'
 import { apiFetch } from '../lib/api'
 import { formatDateTime } from '../lib/format'
 import { useEffectiveUser } from '../context/useEffectiveUser'
+import { uploadNoteAttachment, type NoteAttachment } from '../lib/cloudinary'
 
 interface NoteAuthor {
   id: string
@@ -21,6 +22,7 @@ interface Note {
   // Null once the staff member who wrote it has been deleted from the
   // studio -- the note content itself survives, only the author link goes.
   author: NoteAuthor | null
+  attachments: NoteAttachment[] | null
 }
 
 interface NotesSectionProps {
@@ -66,6 +68,103 @@ function isEdited(note: Note): boolean {
   return new Date(note.updatedAt).getTime() - new Date(note.createdAt).getTime() > EDITED_THRESHOLD_MS
 }
 
+// One already-uploaded attachment, shown either as a removable pending
+// chip (composer/edit mode) or a plain link (posted note, no onRemove).
+// Images get a small thumbnail; anything else gets a generic file icon --
+// unlike Message.attachments (always images), a note attachment can be a
+// PDF or any other file type, so there's no guarantee it's renderable as
+// an <img>.
+export function AttachmentChip({ attachment, onRemove }: { attachment: NoteAttachment; onRemove?: () => void }) {
+  const isImage = attachment.mimeType.startsWith('image/')
+
+  return (
+    <span className="group relative inline-flex max-w-[10rem] items-center gap-1.5 rounded-lg border border-border bg-surface-inset py-1 pl-1.5 pr-2 text-xs">
+      {isImage ? (
+        <img src={attachment.url} alt="" className="h-5 w-5 shrink-0 rounded object-cover" />
+      ) : (
+        <DocumentIcon className="h-4 w-4 shrink-0 text-fg-muted" />
+      )}
+      <a
+        href={attachment.url}
+        target="_blank"
+        rel="noreferrer"
+        className="truncate text-fg-secondary hover:text-fg hover:underline"
+        title={attachment.filename}
+      >
+        {attachment.filename}
+      </a>
+      {onRemove && (
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label={`Remove ${attachment.filename}`}
+          className="ml-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-surface text-fg-muted hover:text-danger"
+        >
+          <CloseIcon className="h-2 w-2" />
+        </button>
+      )}
+    </span>
+  )
+}
+
+// Hidden file input behind a paperclip button, shared by the composer and
+// each note's own edit mode -- uploads immediately on pick (same pattern
+// as ConversationsPanel.tsx's message composer) rather than waiting for
+// an explicit "upload" step, appending each result to the caller's
+// pending-attachments list as it resolves.
+function AttachButton({
+  onUploaded,
+  uploading,
+  setUploading,
+  setError,
+  disabled,
+}: {
+  onUploaded: (attachment: NoteAttachment) => void
+  uploading: boolean
+  setUploading: (value: boolean) => void
+  setError: (value: string | null) => void
+  disabled?: boolean
+}) {
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  async function handleChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? [])
+    event.target.value = ''
+    if (files.length === 0) return
+
+    setUploading(true)
+    setError(null)
+    try {
+      for (const file of files) {
+        onUploaded(await uploadNoteAttachment(file))
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'File upload failed')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  return (
+    <label
+      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface-inset hover:text-fg ${
+        disabled || uploading ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+      }`}
+      title="Attach a file"
+    >
+      <AttachmentIcon className="h-4 w-4" />
+      <input
+        ref={inputRef}
+        type="file"
+        multiple
+        onChange={handleChange}
+        className="hidden"
+        disabled={disabled || uploading}
+      />
+    </label>
+  )
+}
+
 // Distinct from AuditTrail.tsx's "Activity History" card (system-generated,
 // terse field-diffs, one line per change) -- this is a manually-written
 // commentary feed: full rich-text bodies, an author name up top, its own
@@ -88,11 +187,17 @@ export default function NotesSection({ notesPath, queryKeyId, canManage, readOnl
   })
 
   const [composerValue, setComposerValue] = useState('')
+  const [composerAttachments, setComposerAttachments] = useState<NoteAttachment[]>([])
+  const [attachingComposer, setAttachingComposer] = useState(false)
+  const [attachComposerError, setAttachComposerError] = useState<string | null>(null)
   const [posting, setPosting] = useState(false)
   const [postError, setPostError] = useState<string | null>(null)
 
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
+  const [editAttachments, setEditAttachments] = useState<NoteAttachment[]>([])
+  const [attachingEdit, setAttachingEdit] = useState(false)
+  const [attachEditError, setAttachEditError] = useState<string | null>(null)
   const [savingEditId, setSavingEditId] = useState<string | null>(null)
   const [editError, setEditError] = useState<string | null>(null)
 
@@ -107,9 +212,13 @@ export default function NotesSection({ notesPath, queryKeyId, canManage, readOnl
     try {
       await apiFetch(notesPath, {
         method: 'POST',
-        body: JSON.stringify({ bodyHtml: composerValue }),
+        body: JSON.stringify({
+          bodyHtml: composerValue,
+          attachments: composerAttachments.length > 0 ? composerAttachments : undefined,
+        }),
       })
       setComposerValue('')
+      setComposerAttachments([])
       queryClient.invalidateQueries({ queryKey })
     } catch (err) {
       setPostError(err instanceof Error ? err.message : 'Failed to post note')
@@ -121,6 +230,8 @@ export default function NotesSection({ notesPath, queryKeyId, canManage, readOnl
   function startEdit(note: Note) {
     setEditingNoteId(note.id)
     setEditValue(note.bodyHtml)
+    setEditAttachments(note.attachments ?? [])
+    setAttachEditError(null)
     setEditError(null)
   }
 
@@ -129,9 +240,12 @@ export default function NotesSection({ notesPath, queryKeyId, canManage, readOnl
     setSavingEditId(noteId)
     setEditError(null)
     try {
+      // Always sent explicitly (even []) -- the edit form owns the full,
+      // current attachment list, so an empty array here means "the user
+      // removed every attachment," not "leave attachments untouched."
       await apiFetch(`${notesPath}/${noteId}`, {
         method: 'PATCH',
-        body: JSON.stringify({ bodyHtml: editValue }),
+        body: JSON.stringify({ bodyHtml: editValue, attachments: editAttachments }),
       })
       setEditingNoteId(null)
       queryClient.invalidateQueries({ queryKey })
@@ -164,18 +278,41 @@ export default function NotesSection({ notesPath, queryKeyId, canManage, readOnl
 
       <div className="mt-4">
         <RichTextEditor value={composerValue} onChange={setComposerValue} />
+
+        {composerAttachments.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {composerAttachments.map((attachment) => (
+              <AttachmentChip
+                key={attachment.url}
+                attachment={attachment}
+                onRemove={() => setComposerAttachments((current) => current.filter((a) => a.url !== attachment.url))}
+              />
+            ))}
+          </div>
+        )}
+        {attachComposerError && <p className="mt-2 text-sm text-danger">{attachComposerError}</p>}
         {postError && <p className="mt-2 text-sm text-danger">{postError}</p>}
-        <button
-          type="button"
-          onClick={handlePost}
-          disabled={posting || readOnly || isBlank(composerValue)}
-          aria-label="Add Note"
-          title="Add Note"
-          className="mt-3 flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60 md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
-        >
-          <DocumentIcon className="h-4 w-4" />
-          <span className="hidden text-sm font-semibold md:inline">{posting ? 'Posting…' : 'Add Note'}</span>
-        </button>
+
+        <div className="mt-3 flex items-center gap-2">
+          <AttachButton
+            onUploaded={(attachment) => setComposerAttachments((current) => [...current, attachment])}
+            uploading={attachingComposer}
+            setUploading={setAttachingComposer}
+            setError={setAttachComposerError}
+            disabled={readOnly}
+          />
+          <button
+            type="button"
+            onClick={handlePost}
+            disabled={posting || readOnly || isBlank(composerValue)}
+            aria-label="Add Note"
+            title="Add Note"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60 md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
+          >
+            <DocumentIcon className="h-4 w-4" />
+            <span className="hidden text-sm font-semibold md:inline">{posting ? 'Posting…' : 'Add Note'}</span>
+          </button>
+        </div>
       </div>
 
       <div className="mt-6 border-t border-border pt-4">
@@ -204,8 +341,29 @@ export default function NotesSection({ notesPath, queryKeyId, canManage, readOnl
                 {isEditingThis ? (
                   <div className="mt-3">
                     <RichTextEditor value={editValue} onChange={setEditValue} />
+
+                    {editAttachments.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {editAttachments.map((attachment) => (
+                          <AttachmentChip
+                            key={attachment.url}
+                            attachment={attachment}
+                            onRemove={() => setEditAttachments((current) => current.filter((a) => a.url !== attachment.url))}
+                          />
+                        ))}
+                      </div>
+                    )}
+                    {attachEditError && <p className="mt-2 text-sm text-danger">{attachEditError}</p>}
                     {editError && <p className="mt-2 text-sm text-danger">{editError}</p>}
-                    <div className="mt-3 flex flex-wrap gap-3">
+
+                    <div className="mt-3 flex flex-wrap items-center gap-3">
+                      <AttachButton
+                        onUploaded={(attachment) => setEditAttachments((current) => [...current, attachment])}
+                        uploading={attachingEdit}
+                        setUploading={setAttachingEdit}
+                        setError={setAttachEditError}
+                        disabled={readOnly}
+                      />
                       <button
                         type="button"
                         onClick={() => handleSaveEdit(note.id)}
@@ -229,6 +387,13 @@ export default function NotesSection({ notesPath, queryKeyId, canManage, readOnl
                       className="tiptap-content mt-2 text-sm text-fg"
                       dangerouslySetInnerHTML={{ __html: sanitizeHtml(note.bodyHtml) }}
                     />
+                    {note.attachments && note.attachments.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {note.attachments.map((attachment) => (
+                          <AttachmentChip key={attachment.url} attachment={attachment} />
+                        ))}
+                      </div>
+                    )}
                     {canModify && (
                       <div className="mt-3 flex flex-wrap items-center gap-3">
                         <button

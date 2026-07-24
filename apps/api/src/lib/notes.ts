@@ -26,3 +26,27 @@ export function isBlankHtml(html: string): boolean {
 export function canModifyNote(note: { authorId: string | null }, req: Request): boolean {
   return note.authorId === req.user!.userId || req.user!.role === Role.OWNER;
 }
+
+export interface NoteAttachment {
+  url: string;
+  filename: string;
+  mimeType: string;
+}
+
+// Any file type, not just images (Message.attachments' bare-URL-array
+// convention only works because those are always images, rendered as
+// <img> unconditionally) -- filename/mimeType let the frontend show a
+// thumbnail for an image and a name + generic file icon for anything
+// else. Validated defensively since this lands straight in a Json?
+// column with no schema-level shape enforcement.
+export function isValidAttachments(value: unknown): value is NoteAttachment[] {
+  if (!Array.isArray(value)) return false;
+  return value.every(
+    (item) =>
+      typeof item === "object" &&
+      item !== null &&
+      typeof (item as NoteAttachment).url === "string" &&
+      typeof (item as NoteAttachment).filename === "string" &&
+      typeof (item as NoteAttachment).mimeType === "string",
+  );
+}

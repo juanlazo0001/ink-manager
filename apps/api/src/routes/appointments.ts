@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
+import { Prisma } from "../../generated/prisma/client";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { Role, AppointmentStatus, GiftCardStatus } from "../../generated/prisma/enums";
 import { requirePermission } from "../lib/permissions";
@@ -13,7 +14,7 @@ import { emitInvalidation } from "../lib/realtime/registry";
 import { getOrCreateClientConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
 import { resolveImageMeta } from "../lib/imageMeta";
-import { NOTE_AUTHOR_SELECT, canModifyNote, isBlankHtml } from "../lib/notes";
+import { NOTE_AUTHOR_SELECT, canModifyNote, isBlankHtml, isValidAttachments } from "../lib/notes";
 
 const router = Router();
 
@@ -821,10 +822,14 @@ router.get("/:id/notes", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, r
 
 router.post("/:id/notes", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
   const id = req.params.id as string;
-  const { bodyHtml } = req.body ?? {};
+  const { bodyHtml, attachments } = req.body ?? {};
 
   if (typeof bodyHtml !== "string" || isBlankHtml(bodyHtml)) {
     return res.status(400).json({ error: "bodyHtml is required" });
+  }
+
+  if (attachments !== undefined && !isValidAttachments(attachments)) {
+    return res.status(400).json({ error: "attachments must be an array of {url, filename, mimeType}" });
   }
 
   const appointment = await prisma.appointment.findUnique({ where: { id }, select: { studioId: true } });
@@ -838,6 +843,7 @@ router.post("/:id/notes", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, 
       appointmentId: id,
       authorId: req.user!.userId,
       bodyHtml: bodyHtml.trim(),
+      attachments: attachments && attachments.length > 0 ? attachments : undefined,
     },
     include: { author: NOTE_AUTHOR_SELECT },
   });
@@ -857,10 +863,14 @@ router.post("/:id/notes", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, 
 router.patch("/:id/notes/:noteId", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
   const id = req.params.id as string;
   const noteId = req.params.noteId as string;
-  const { bodyHtml } = req.body ?? {};
+  const { bodyHtml, attachments } = req.body ?? {};
 
   if (typeof bodyHtml !== "string" || isBlankHtml(bodyHtml)) {
     return res.status(400).json({ error: "bodyHtml is required" });
+  }
+
+  if (attachments !== undefined && !isValidAttachments(attachments)) {
+    return res.status(400).json({ error: "attachments must be an array of {url, filename, mimeType}" });
   }
 
   const note = await prisma.appointmentNote.findUnique({ where: { id: noteId } });
@@ -873,10 +883,16 @@ router.patch("/:id/notes/:noteId", requireRole(Role.OWNER, Role.FRONT_DESK), asy
   }
 
   const trimmed = bodyHtml.trim();
+  // See the identical comment in inquiries.ts's PATCH /:id/notes/:noteId --
+  // undefined means "leave attachments untouched", an explicit [] means
+  // "clear them" (requires Prisma.JsonNull, not plain null/undefined, to
+  // actually null out a Json? column).
+  const attachmentsUpdate: Prisma.InputJsonValue | typeof Prisma.JsonNull | undefined =
+    attachments === undefined ? undefined : attachments.length > 0 ? attachments : Prisma.JsonNull;
 
   const updated = await prisma.appointmentNote.update({
     where: { id: noteId },
-    data: { bodyHtml: trimmed },
+    data: { bodyHtml: trimmed, attachments: attachmentsUpdate },
     include: { author: NOTE_AUTHOR_SELECT },
   });
 

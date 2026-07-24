@@ -13,6 +13,8 @@ import { apiFetch, ApiError } from '../lib/api'
 import { describeAppointmentStatus, formatDateTime, formatPhoneInput, formatStatus, isValidPhoneDigits } from '../lib/format'
 import { describeSendResult, type ClientSendResult } from '../lib/sendResult'
 import { sanitizeHtml } from '../lib/sanitizeHtml'
+import { AttachmentChip } from '../components/NotesSection'
+import type { NoteAttachment } from '../lib/cloudinary'
 import {
   ArrowLeftIcon,
   CheckIcon,
@@ -146,6 +148,7 @@ interface ConsolidatedNote {
   createdAt: string
   updatedAt: string
   author: { id: string; name: string | null; email: string } | null
+  attachments: NoteAttachment[] | null
   // startTime only set for an "appointment" source -- appended after the
   // label for that bucket only (an inquiry/project's own label is already
   // its description, with no separate date to disambiguate).
@@ -227,6 +230,13 @@ function NoteGroup({
               className="tiptap-content mt-2 text-sm text-fg"
               dangerouslySetInnerHTML={{ __html: sanitizeHtml(note.bodyHtml) }}
             />
+            {note.attachments && note.attachments.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {note.attachments.map((attachment) => (
+                  <AttachmentChip key={attachment.url} attachment={attachment} />
+                ))}
+              </div>
+            )}
           </li>
         ))}
       </ul>

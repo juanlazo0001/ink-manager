@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
+import type { Prisma } from "../../generated/prisma/client";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { Role, InquiryStatus } from "../../generated/prisma/enums";
 import { requirePermission } from "../lib/permissions";
@@ -248,6 +249,7 @@ router.get("/:id/notes", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, r
     createdAt: Date;
     updatedAt: Date;
     author: { id: string; name: string | null; email: string } | null;
+    attachments: Prisma.JsonValue;
     // startTime only ever set for an "appointment" source -- the frontend
     // formats it (this app's dates are always formatted client-side, e.g.
     // via lib/format.ts's formatDateTime, never pre-formatted in a route

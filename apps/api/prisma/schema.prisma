@@ -786,6 +786,14 @@ model InquiryNote {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Array<{url, filename, mimeType}> -- unlike Message.attachments (bare
+  // Cloudinary URLs, images only, uploaded via the image/upload endpoint),
+  // note attachments can be any file type (uploaded via Cloudinary's
+  // auto/upload instead), so each entry also carries the original
+  // filename/mimeType for a file-icon + name display whenever it isn't an
+  // image the frontend can just render as a thumbnail.
+  attachments Json?
+
   studioId String
   studio   Studio @relation(fields: [studioId], references: [id])
 
@@ -813,6 +821,9 @@ model AppointmentNote {
   bodyHtml  String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // Same shape/reasoning as InquiryNote.attachments above.
+  attachments Json?
 
   studioId String
   studio   Studio @relation(fields: [studioId], references: [id])

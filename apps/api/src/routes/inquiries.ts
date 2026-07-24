@@ -2,7 +2,7 @@ import { Router } from "express";
 import crypto from "node:crypto";
 import { prisma } from "../lib/prisma";
 import { AppointmentStatus, Channel, InquiryStatus, MessageChannel, MessageDirection } from "../../generated/prisma/enums";
-import type { Prisma } from "../../generated/prisma/client";
+import { Prisma } from "../../generated/prisma/client";
 import { optionalAuth, requireAuth, requireRole } from "../middleware/auth";
 import { Role } from "../../generated/prisma/enums";
 import { diffObjects, logAudit } from "../lib/audit";
@@ -18,7 +18,7 @@ import { emitInvalidation } from "../lib/realtime/registry";
 import { computeDepositTier, computeRequiredDepositCents, resolveDepositTiers } from "../lib/depositTiers";
 import { generateUniqueReferralCode } from "../lib/referrals";
 import { IntakeFieldKind } from "../../generated/prisma/enums";
-import { NOTE_AUTHOR_SELECT, canModifyNote, isBlankHtml } from "../lib/notes";
+import { NOTE_AUTHOR_SELECT, canModifyNote, isBlankHtml, isValidAttachments } from "../lib/notes";
 import { getEffectiveIntakeFormFields, validateCustomFieldAnswers } from "../lib/intakeFormFields";
 import { buildImageMeta, mergeImageMeta, resolveImageMeta } from "../lib/imageMeta";
 
@@ -1834,10 +1834,14 @@ router.get("/:id/notes", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), 
 
 router.post("/:id/notes", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
   const id = req.params.id as string;
-  const { bodyHtml } = req.body ?? {};
+  const { bodyHtml, attachments } = req.body ?? {};
 
   if (typeof bodyHtml !== "string" || isBlankHtml(bodyHtml)) {
     return res.status(400).json({ error: "bodyHtml is required" });
+  }
+
+  if (attachments !== undefined && !isValidAttachments(attachments)) {
+    return res.status(400).json({ error: "attachments must be an array of {url, filename, mimeType}" });
   }
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id }, select: { studioId: true } });
@@ -1851,6 +1855,7 @@ router.post("/:id/notes", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK),
       inquiryId: id,
       authorId: req.user!.userId,
       bodyHtml: bodyHtml.trim(),
+      attachments: attachments && attachments.length > 0 ? attachments : undefined,
     },
     include: { author: NOTE_AUTHOR_SELECT },
   });
@@ -1870,10 +1875,14 @@ router.post("/:id/notes", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK),
 router.patch("/:id/notes/:noteId", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
   const id = req.params.id as string;
   const noteId = req.params.noteId as string;
-  const { bodyHtml } = req.body ?? {};
+  const { bodyHtml, attachments } = req.body ?? {};
 
   if (typeof bodyHtml !== "string" || isBlankHtml(bodyHtml)) {
     return res.status(400).json({ error: "bodyHtml is required" });
+  }
+
+  if (attachments !== undefined && !isValidAttachments(attachments)) {
+    return res.status(400).json({ error: "attachments must be an array of {url, filename, mimeType}" });
   }
 
   const note = await prisma.inquiryNote.findUnique({ where: { id: noteId } });
@@ -1886,10 +1895,17 @@ router.patch("/:id/notes/:noteId", requireAuth, requireRole(Role.OWNER, Role.FRO
   }
 
   const trimmed = bodyHtml.trim();
+  // attachments is only ever sent as the edit form's full, current list
+  // (additions and removals already applied client-side) -- undefined
+  // means "this PATCH doesn't touch attachments at all" (kept as-is),
+  // distinct from an explicit [] meaning "remove them all" (Prisma.JsonNull,
+  // not plain null/undefined, is required to actually clear a Json? column).
+  const attachmentsUpdate: Prisma.InputJsonValue | typeof Prisma.JsonNull | undefined =
+    attachments === undefined ? undefined : attachments.length > 0 ? attachments : Prisma.JsonNull;
 
   const updated = await prisma.inquiryNote.update({
     where: { id: noteId },
-    data: { bodyHtml: trimmed },
+    data: { bodyHtml: trimmed, attachments: attachmentsUpdate },
     include: { author: NOTE_AUTHOR_SELECT },
   });
 

@@ -13,6 +13,7 @@ const router = Router();
 const INQUIRY_UPLOAD_FOLDER = "ink-manager/inquiries";
 const PORTFOLIO_UPLOAD_FOLDER = "ink-manager/portfolios";
 const APPOINTMENT_PHOTO_UPLOAD_FOLDER = "ink-manager/appointment-photos";
+const NOTE_ATTACHMENT_UPLOAD_FOLDER = "ink-manager/note-attachments";
 
 function signFolder(folder: string) {
   const timestamp = Math.round(Date.now() / 1000);
@@ -43,6 +44,16 @@ router.get("/portfolio-signature", requireAuth, requirePermission("artists.manag
 // ownership check happens when the resulting URL is POSTed there.
 router.get("/appointment-photo-signature", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), (_req, res) => {
   res.json(signFolder(APPOINTMENT_PHOTO_UPLOAD_FOLDER));
+});
+
+// Same OWNER/FRONT_DESK gate as the notes routes themselves (POST/PATCH
+// /inquiries|appointments/:id/notes) -- this only grants a signature
+// scoped to this folder; the frontend posts straight to Cloudinary's
+// auto/upload endpoint (not image/upload, since attachments can be any
+// file type), so no resource_type needs signing here -- only folder and
+// timestamp are ever signed params.
+router.get("/note-attachment-signature", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), (_req, res) => {
+  res.json(signFolder(NOTE_ATTACHMENT_UPLOAD_FOLDER));
 });
 
 export default router;
