@@ -2110,3 +2110,43 @@ The historical-answer-rendering risk was real but narrower than it first looked:
 ## Cleanup
 
 Both scratch dev servers (API :5501, web :6501) stopped by PID after confirming the ports freed. All temporary verification scripts (`verify_intake_forms.mjs`, `verify_intake_forms_ui.mjs`/`ui2`/`ui3`/`ui4`) and screenshots left scratchpad-only, none committed. Test data (several intake forms and inquiries created across repeated verification runs, including one form literally named "UI Check Form {timestamp}") left in the dev database, consistent with this session's standing convention.
+
+---
+
+# Feature — Artist profile page: reorderable/collapsible widgets
+
+Single session on `main`. No schema changes. Request was "apply the same formatting we did for inquiries and projects to be done in client page... and all pages" -- surveyed every page in the app first to scope "all pages" concretely rather than guessing.
+
+## Scoping "all pages"
+
+Grepped every page under `apps/web/src/pages` for repeated `rounded-2xl border border-border bg-surface p-5/p-6` card blocks (the signature of this page shape) to find genuine candidates beyond what was already done (Inquiry/Appointment/Client detail pages, done in earlier turns this session). Found: `ArtistDetail.tsx` (8 cards, a real match -- single artist, several independent informational sections, explicitly named in the request) plus several false positives that don't share the shape this pattern is built for and were left alone:
+
+- **Settings.tsx** -- a tabbed configuration page, just reorganized into cleaner sections in the immediately prior turn; not a single-entity detail view.
+- **Team.tsx / Tasks.tsx / MyInquiries.tsx** -- list/roster views, not a single entity's detail page.
+- **ArtistCreate.tsx** -- a creation form; reordering or collapsing a form's own required fields mid-fill would be actively unhelpful.
+- **GiftCardDetail.tsx** -- only one real card (the header); the "2 cards" the grep matched was that header plus an error/loading state div, not genuine additional sections.
+- **WaiverSign.tsx** -- a public, unauthenticated, one-time client signing flow, not an internal staff page revisited repeatedly (the whole premise of "remember my preferred layout" doesn't apply).
+
+## What changed
+
+`ArtistDetail.tsx`: Guest Artist, Bio, Social Links, Specialties, Preferred Schedule, and Portfolio are now `Widget`s inside `ReorderableWidgetList` (`pageKey: "artist-detail"`), same drag handle/collapse chevron/persistence as the other three pages, same minimal-diff strategy (each widget's inner content stayed in its original source position).
+
+One structural difference from the other three pages: this page has a single page-level "Save changes" button that saves Bio/Social Links/Specialties/Guest Artist together in one call, rather than a per-widget save action. Kept it as a sibling *after* `ReorderableWidgetList` closes, rather than folding it into any one widget, since it isn't the content of any single section and needs to stay reachable regardless of how the widgets above get reordered. Preferred Schedule's own already-separate "Save schedule" button stayed exactly where it was, inside that one widget, since it only ever saved that section.
+
+No ellipsis/"more actions" button exists on this page, so there was no equivalent squished-button bug to fix here (unlike the Inquiry/Appointment/Client pages, which all had the same `self-stretch` + `aspect-square h-full` overflow bug).
+
+## Verification
+
+Browser (Playwright, screenshots reviewed): confirmed all 6 widgets render with drag handles and collapse chevrons in their original order, with "Save changes" fixed at the bottom. Verified reorder + collapse persistence via a direct `PUT /widget-layouts/artist-detail` call (moved Portfolio to the top, collapsed Social Links) followed by a reload screenshot showing both changes applied, with "Save changes" still correctly anchored after the widget list regardless of the new order -- then reset the layout back to default.
+
+## Typechecks
+
+`npx tsc -b --noEmit` + `npm run build` (web) — clean. (No API changes this turn.)
+
+## Commit
+
+`1d9ac45` — Make Artist profile page widgets reorderable and collapsible. Pushed immediately after a collision check (`git fetch` + `git log HEAD..origin/main`) came back empty.
+
+## Cleanup
+
+All ad-hoc Playwright scripts and screenshots deleted from the scratch `pw-test` directory; none committed. The per-account widget-layout row for `artist-detail` used during verification was reset to its default (empty) state before finishing. No background shells were started this session (the dev API/web servers were already running from prior work and were left as-is).
