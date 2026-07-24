@@ -3,7 +3,7 @@ import { prisma } from "../lib/prisma";
 import { GiftCardStatus, Role } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { diffObjects, logAudit } from "../lib/audit";
-import { computeGiftCardExpiration, generateUniqueGiftCardCode, isExpired, syncExpiredStatus } from "../lib/giftCards";
+import { computeGiftCardExpiration, generateUniqueGiftCardCode, syncExpiredStatus } from "../lib/giftCards";
 import { getOrCreateClientConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
@@ -69,18 +69,15 @@ router.post("/", async (req, res) => {
     return res.status(400).json({ error: "clientId must belong to an active client in your studio" });
   }
 
+  // Stackable gift cards: no "this appointment already has a card" guard
+  // here anymore -- several cards can legitimately share one appointmentId
+  // now, so a studio issuing a brand-new card straight onto an appointment
+  // that already has others attached is expected, not an error.
   if (appointmentId) {
-    const [appointment, existingCard] = await Promise.all([
-      prisma.appointment.findUnique({ where: { id: appointmentId } }),
-      prisma.giftCard.findUnique({ where: { appointmentId } }),
-    ]);
+    const appointment = await prisma.appointment.findUnique({ where: { id: appointmentId } });
 
     if (!appointment || appointment.studioId !== studioId || appointment.clientId !== clientId) {
       return res.status(400).json({ error: "appointmentId must belong to this client in your studio" });
-    }
-
-    if (existingCard && !isExpired(existingCard) && existingCard.status === GiftCardStatus.ACTIVE) {
-      return res.status(400).json({ error: "This appointment already has an active gift card attached" });
     }
   }
 
@@ -280,18 +277,14 @@ router.patch("/:id/attachment", async (req, res) => {
 
   const fromAppointmentId = card.appointmentId;
 
+  // Stackable gift cards: no "that appointment already has a card" guard
+  // here anymore -- moving this card onto an appointment that already has
+  // others attached is expected now, not an error.
   if (appointmentId) {
-    const [appointment, existingCard] = await Promise.all([
-      prisma.appointment.findUnique({ where: { id: appointmentId } }),
-      prisma.giftCard.findUnique({ where: { appointmentId } }),
-    ]);
+    const appointment = await prisma.appointment.findUnique({ where: { id: appointmentId } });
 
     if (!appointment || appointment.studioId !== req.user!.studioId || appointment.clientId !== card.clientId) {
       return res.status(400).json({ error: "appointmentId must belong to this card's client in your studio" });
-    }
-
-    if (existingCard && existingCard.id !== id) {
-      return res.status(400).json({ error: "That appointment already has a gift card attached" });
     }
   }
 

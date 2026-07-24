@@ -4,7 +4,8 @@ import { requireAuth, requireRole } from "../middleware/auth";
 import { Role, AppointmentStatus, GiftCardStatus } from "../../generated/prisma/enums";
 import { requirePermission } from "../lib/permissions";
 import { diffObjects, logAudit } from "../lib/audit";
-import { validateGiftCardForAttachment } from "../lib/giftCards";
+import { validateGiftCardsForAttachment, generateUniqueGiftCardCode, computeGiftCardExpiration } from "../lib/giftCards";
+import { computeRequiredDepositCents, resolveDepositTiers } from "../lib/depositTiers";
 import { isSameCalendarDay } from "../lib/dateRange";
 import { findBufferConflict, formatBufferWarning } from "../lib/schedulingConflict";
 import { ensureLiabilityWaiver } from "../lib/waivers";
@@ -22,20 +23,24 @@ router.use(requireAuth);
 const NOT_ARCHIVED = { archivedAt: null } as const;
 
 // Every appointment needs both an inquiry (the project it belongs to) and
-// an attached ACTIVE gift card (the deposit) -- N appointments require N
-// gift cards. A client with no available card can't get an appointment
-// booked here; the error says so explicitly rather than a generic 400.
+// one or more attached ACTIVE (or EXEMPT) gift cards together meeting or
+// exceeding the required deposit for that inquiry's price estimate -- N
+// appointments require their own N card stacks. A client with no available
+// card (or not enough of one) can't get an appointment booked here; the
+// error says so explicitly rather than a generic 400.
 router.post("/", requirePermission("appointments.create"), async (req, res) => {
   const body = req.body ?? {};
 
-  const missing = ["artistId", "clientId", "startTime", "endTime", "inquiryId", "giftCardId"].filter(
-    (field) => !body[field],
-  );
+  const missing = ["artistId", "clientId", "startTime", "endTime", "inquiryId"].filter((field) => !body[field]);
   if (missing.length > 0) {
     return res.status(400).json({ error: `Missing required field(s): ${missing.join(", ")}` });
   }
 
-  const { artistId, clientId, startTime, endTime, notes, inquiryId, giftCardId } = body;
+  const { artistId, clientId, startTime, endTime, notes, inquiryId, giftCardIds } = body;
+
+  if (!Array.isArray(giftCardIds) || giftCardIds.length === 0 || !giftCardIds.every((v) => typeof v === "string")) {
+    return res.status(400).json({ error: "giftCardIds must be a non-empty array of strings" });
+  }
 
   const start = new Date(startTime);
   const end = new Date(endTime);
@@ -46,11 +51,11 @@ router.post("/", requirePermission("appointments.create"), async (req, res) => {
 
   const studioId = req.user!.studioId;
 
-  const studioSettingsForDayCheck = await prisma.studioSettings.findUnique({
+  const studioSettings = await prisma.studioSettings.findUnique({
     where: { studioId },
-    select: { timezone: true },
+    select: { timezone: true, depositTiers: true },
   });
-  if (!isSameCalendarDay(start, end, studioSettingsForDayCheck?.timezone ?? "America/New_York")) {
+  if (!isSameCalendarDay(start, end, studioSettings?.timezone ?? "America/New_York")) {
     return res.status(400).json({ error: "An appointment cannot span more than one day" });
   }
 
@@ -72,7 +77,13 @@ router.post("/", requirePermission("appointments.create"), async (req, res) => {
     return res.status(400).json({ error: "inquiryId must belong to this client in your studio" });
   }
 
-  const giftCardResult = await validateGiftCardForAttachment(giftCardId, studioId, clientId);
+  const requiredCents = computeRequiredDepositCents(
+    inquiry.priceEstimateLow,
+    inquiry.priceEstimateHigh,
+    resolveDepositTiers(studioSettings?.depositTiers),
+  );
+
+  const giftCardResult = await validateGiftCardsForAttachment(giftCardIds, studioId, clientId, requiredCents);
   if ("error" in giftCardResult) {
     return res.status(400).json({
       error: `${giftCardResult.error} — collect a deposit or issue a gift card for this client first.`,
@@ -93,7 +104,11 @@ router.post("/", requirePermission("appointments.create"), async (req, res) => {
       },
     });
 
-    await tx.giftCard.update({ where: { id: giftCardId }, data: { appointmentId: created.id } });
+    await Promise.all(
+      giftCardIds.map((giftCardId: string) =>
+        tx.giftCard.update({ where: { id: giftCardId }, data: { appointmentId: created.id } }),
+      ),
+    );
 
     return created;
   });
@@ -104,7 +119,7 @@ router.post("/", requirePermission("appointments.create"), async (req, res) => {
     entityType: "Appointment",
     entityId: appointment.id,
     action: "create",
-    changes: { artistId, clientId, inquiryId, giftCardId, startTime: start, endTime: end },
+    changes: { artistId, clientId, inquiryId, giftCardIds, startTime: start, endTime: end },
   });
 
   const conflict = await findBufferConflict(artistId, start, end, appointment.id);
@@ -202,7 +217,9 @@ const APPOINTMENT_DETAIL_INCLUDE = {
       placementImages: true,
     },
   },
-  giftCard: { select: { id: true, code: true, amountCents: true, status: true, expiresAt: true, exemptionReason: true } },
+  giftCards: {
+    select: { id: true, code: true, amountCents: true, status: true, expiresAt: true, exemptionReason: true },
+  },
   checkedOutBy: { select: { id: true, name: true, email: true } },
   // Non-PII summary only -- the health data and ID image behind this
   // waiver live behind GET /waivers/:id, which is OWNER/FRONT_DESK only.
@@ -282,9 +299,9 @@ router.post("/:id/unarchive", requirePermission("appointments.manage"), async (r
 // will be detached/destroyed) and the audit snapshot written just before
 // the actual DELETE below.
 async function gatherAppointmentDeletionSummary(appointmentId: string) {
-  const [waivers, giftCard, conversationTags, photos] = await Promise.all([
+  const [waivers, giftCards, conversationTags, photos] = await Promise.all([
     prisma.liabilityWaiver.count({ where: { appointmentId } }),
-    prisma.giftCard.findUnique({
+    prisma.giftCard.findMany({
       where: { appointmentId },
       select: { id: true, code: true, amountCents: true, status: true },
     }),
@@ -297,7 +314,7 @@ async function gatherAppointmentDeletionSummary(appointmentId: string) {
 
   return {
     waivers,
-    giftCardToDetach: giftCard,
+    giftCardsToDetach: giftCards,
     conversationTags,
     photos,
   };
@@ -365,7 +382,7 @@ router.delete("/:id", requireRole(Role.OWNER), async (req, res) => {
     },
   });
 
-  res.json({ success: true, detachedGiftCard: summary.giftCardToDetach });
+  res.json({ success: true, detachedGiftCards: summary.giftCardsToDetach });
 });
 
 // Day-of liability waiver: one per appointment, front desk creates it and
@@ -417,25 +434,35 @@ router.post("/:id/waiver", requireRole(Role.OWNER, Role.FRONT_DESK), async (req,
 });
 
 // Checkout: confirms the final cost with the artist, settles the deposit
-// (redeem now vs. roll to a future appointment), and records closeout
-// notes. Phase 3 guarantees every appointment has an attached ACTIVE gift
-// card, but the guard below still checks -- if it's somehow missing, that's
-// a data problem to resolve manually rather than something to paper over.
+// stack (a separate REDEEM-or-ROLL choice per attached card, not one
+// choice for the whole stack), and records closeout notes. Every
+// appointment should have at least one attached gift card, but the guard
+// below still checks -- if it's somehow missing, that's a data problem to
+// resolve manually rather than something to paper over.
 router.post("/:id/checkout", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
   const id = req.params.id as string;
   const studioId = req.user!.studioId;
   const body = req.body ?? {};
-  const { finalCostCents, depositDecision, closeoutNotes } = body;
+  const { finalCostCents, decisions, closeoutNotes } = body;
 
   if (typeof finalCostCents !== "number" || !Number.isFinite(finalCostCents) || finalCostCents < 0) {
     return res.status(400).json({ error: "finalCostCents must be a non-negative number" });
   }
 
-  if (depositDecision !== "REDEEM" && depositDecision !== "ROLL") {
-    return res.status(400).json({ error: "depositDecision must be 'REDEEM' or 'ROLL'" });
+  if (
+    !Array.isArray(decisions) ||
+    decisions.some(
+      (d) =>
+        typeof d !== "object" ||
+        d === null ||
+        typeof d.giftCardId !== "string" ||
+        (d.action !== "REDEEM" && d.action !== "ROLL"),
+    )
+  ) {
+    return res.status(400).json({ error: "decisions must be an array of { giftCardId, action: 'REDEEM' | 'ROLL' }" });
   }
 
-  const appointment = await prisma.appointment.findUnique({ where: { id }, include: { giftCard: true } });
+  const appointment = await prisma.appointment.findUnique({ where: { id }, include: { giftCards: true } });
 
   if (!appointment || appointment.studioId !== studioId) {
     return res.status(404).json({ error: "Appointment not found" });
@@ -445,43 +472,94 @@ router.post("/:id/checkout", requireRole(Role.OWNER, Role.FRONT_DESK), async (re
     return res.status(400).json({ error: "This appointment has already been checked out" });
   }
 
-  if (!appointment.giftCard) {
+  if (appointment.giftCards.length === 0) {
     return res.status(400).json({
       error:
-        "This appointment has no attached gift card to redeem or roll. Every appointment should have one (Phase 3) -- resolve this manually before checking out.",
+        "This appointment has no attached gift card to redeem or roll. Every appointment should have one -- resolve this manually before checking out.",
     });
   }
 
-  const card = appointment.giftCard;
-  // An EXEMPT card has no real value to redeem or preserve -- regardless of
-  // what depositDecision was sent, it's always detached (never redeemed) so
-  // it stays EXEMPT and immediately reusable for this client's next
-  // appointment. The frontend hides the REDEEM/ROLL choice for these, but
-  // this guard makes that the actual server-enforced behavior, not just a UI
-  // convention.
-  const isExempt = card.status === GiftCardStatus.EXEMPT;
-  const redeem = depositDecision === "REDEEM" && !isExempt;
-  let amountDueCents = 0;
-  let remainderCents = 0;
+  // An EXEMPT card has no real value to redeem or preserve -- it's always
+  // detached (never redeemed) regardless of what the client sends, so it
+  // stays EXEMPT and immediately reusable for this client's next
+  // appointment. It's excluded from the REDEEM/ROLL choice entirely -- the
+  // frontend never shows it in that list, and this route rejects a
+  // decision that names one, rather than silently ignoring bad input.
+  const exemptCards = appointment.giftCards.filter((c) => c.status === GiftCardStatus.EXEMPT);
+  const decidableCards = appointment.giftCards.filter((c) => c.status !== GiftCardStatus.EXEMPT);
 
-  if (redeem) {
-    amountDueCents = Math.max(0, finalCostCents - card.amountCents);
-    remainderCents = Math.max(0, card.amountCents - finalCostCents);
-  } else {
-    amountDueCents = finalCostCents;
+  const decisionByCardId = new Map<string, "REDEEM" | "ROLL">();
+  for (const d of decisions as { giftCardId: string; action: "REDEEM" | "ROLL" }[]) {
+    if (decisionByCardId.has(d.giftCardId)) {
+      return res.status(400).json({ error: `Duplicate decision for gift card ${d.giftCardId}` });
+    }
+    decisionByCardId.set(d.giftCardId, d.action);
   }
 
-  const updated = await prisma.$transaction(async (tx) => {
-    if (redeem) {
+  for (const [giftCardId] of decisionByCardId) {
+    const card = appointment.giftCards.find((c) => c.id === giftCardId);
+    if (!card) {
+      return res.status(400).json({ error: `Gift card ${giftCardId} is not attached to this appointment` });
+    }
+    if (card.status === GiftCardStatus.EXEMPT) {
+      return res
+        .status(400)
+        .json({ error: `Gift card ${giftCardId} is an EXEMPT card and is never redeemed or rolled explicitly` });
+    }
+  }
+
+  const missingDecision = decidableCards.find((c) => !decisionByCardId.has(c.id));
+  if (missingDecision) {
+    return res.status(400).json({ error: `Missing a REDEEM/ROLL decision for gift card ${missingDecision.id}` });
+  }
+
+  const redeemedCards = decidableCards.filter((c) => decisionByCardId.get(c.id) === "REDEEM");
+  const rolledCards = decidableCards.filter((c) => decisionByCardId.get(c.id) === "ROLL");
+
+  const redeemedTotalCents = redeemedCards.reduce((sum, c) => sum + c.amountCents, 0);
+  const amountDueCents = Math.max(0, finalCostCents - redeemedTotalCents);
+  const overageCents = Math.max(0, redeemedTotalCents - finalCostCents);
+
+  // Resolved before the transaction, same established pattern as every
+  // other gift-card issuance in this codebase (routes/deposits.ts,
+  // routes/giftCards.ts) -- generateUniqueGiftCardCode does its own
+  // uniqueness-checking DB read, which shouldn't run inside a transaction
+  // it doesn't need to be part of.
+  const [studioSettings, overageCode] = await Promise.all([
+    prisma.studioSettings.findUnique({ where: { studioId }, select: { giftCardDefaultExpirationDays: true } }),
+    overageCents > 0 ? generateUniqueGiftCardCode() : Promise.resolve(null),
+  ]);
+
+  const { updated, newGiftCard } = await prisma.$transaction(async (tx) => {
+    for (const card of redeemedCards) {
       await tx.giftCard.update({
         where: { id: card.id },
         data: { status: GiftCardStatus.REDEEMED, redeemedAt: new Date() },
       });
-    } else {
+    }
+    for (const card of [...rolledCards, ...exemptCards]) {
       await tx.giftCard.update({ where: { id: card.id }, data: { appointmentId: null } });
     }
 
-    return tx.appointment.update({
+    // Overage becomes ONE new gift card for the combined leftover -- not
+    // one per redeemed card -- reusing the exact same issuance shape every
+    // other gift card in this codebase is created with (code, studio-
+    // default expiration, issuedById), just fed the combined sum.
+    let newGiftCard = null;
+    if (overageCents > 0 && overageCode) {
+      newGiftCard = await tx.giftCard.create({
+        data: {
+          studioId,
+          clientId: appointment.clientId,
+          code: overageCode,
+          amountCents: overageCents,
+          expiresAt: computeGiftCardExpiration(studioSettings?.giftCardDefaultExpirationDays ?? null),
+          issuedById: req.user!.userId,
+        },
+      });
+    }
+
+    const updated = await tx.appointment.update({
       where: { id },
       data: {
         finalCostCents,
@@ -491,6 +569,8 @@ router.post("/:id/checkout", requireRole(Role.OWNER, Role.FRONT_DESK), async (re
         status: AppointmentStatus.COMPLETED,
       },
     });
+
+    return { updated, newGiftCard };
   });
 
   await logAudit({
@@ -501,25 +581,57 @@ router.post("/:id/checkout", requireRole(Role.OWNER, Role.FRONT_DESK), async (re
     action: "checkout",
     changes: {
       finalCostCents,
-      depositDecision,
-      giftCardId: card.id,
+      decisions: decidableCards.map((c) => ({ giftCardId: c.id, action: decisionByCardId.get(c.id) })),
+      exemptGiftCardIds: exemptCards.map((c) => c.id),
+      redeemedTotalCents,
       amountDueCents,
-      ...(remainderCents > 0 ? { remainderCents } : {}),
+      ...(overageCents > 0 ? { overageCents, newGiftCardId: newGiftCard?.id } : {}),
     },
   });
 
-  await logAudit({
-    studioId,
-    actorUserId: req.user!.userId,
-    entityType: "GiftCard",
-    entityId: card.id,
-    action: redeem ? "redeemed" : "rollover",
-    changes: redeem
-      ? { status: { from: card.status, to: GiftCardStatus.REDEEMED }, appointmentId: id, finalCostCents, remainderCents }
-      : { fromAppointmentId: id, toAppointmentId: null, reason: isExempt ? "exempt_card_detach" : "checkout_roll" },
-  });
+  // One audit entry per affected card, keyed to that card's own id -- this
+  // is what GiftCardDetail's own AuditTrail (entityType: "GiftCard",
+  // entityId: card.id) reads, so each card's individual history stays
+  // legible even though the decision was made as part of one combined
+  // checkout. This is IN ADDITION to (not a per-card duplicate of) the
+  // single combined Appointment-level entry above.
+  for (const card of redeemedCards) {
+    await logAudit({
+      studioId,
+      actorUserId: req.user!.userId,
+      entityType: "GiftCard",
+      entityId: card.id,
+      action: "redeemed",
+      changes: {
+        status: { from: card.status, to: GiftCardStatus.REDEEMED },
+        appointmentId: id,
+        finalCostCents,
+        redeemedTotalCents,
+      },
+    });
+  }
+  for (const card of rolledCards) {
+    await logAudit({
+      studioId,
+      actorUserId: req.user!.userId,
+      entityType: "GiftCard",
+      entityId: card.id,
+      action: "rollover",
+      changes: { fromAppointmentId: id, toAppointmentId: null, reason: "checkout_roll" },
+    });
+  }
+  for (const card of exemptCards) {
+    await logAudit({
+      studioId,
+      actorUserId: req.user!.userId,
+      entityType: "GiftCard",
+      entityId: card.id,
+      action: "rollover",
+      changes: { fromAppointmentId: id, toAppointmentId: null, reason: "exempt_card_detach" },
+    });
+  }
 
-  res.json({ ...updated, amountDueCents, remainderCents });
+  res.json({ ...updated, amountDueCents, overageCents, newGiftCard });
 });
 
 // Package N: finished-tattoo (or other checkout-time) photos for this

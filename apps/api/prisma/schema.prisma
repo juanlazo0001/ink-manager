@@ -612,7 +612,10 @@ model Appointment {
   inquiryProject Inquiry @relation("InquirySessions", fields: [inquiryId], references: [id])
 
   inquiry         Inquiry?         @relation("InquiryScheduledAppointment")
-  giftCard        GiftCard?
+  // Stackable gift cards: several can attach to one appointment now (was a
+  // to-one GiftCard? before this package, enforced by GiftCard.appointmentId
+  // being @unique).
+  giftCards       GiftCard[]
   liabilityWaiver LiabilityWaiver?
   photos          AppointmentPhoto[]
 
@@ -985,8 +988,12 @@ model GiftCard {
 
   // Nullable is deliberate: a card can sit unattached (purchased as an
   // actual gift, or left over after a deposit rollover) until it's used
-  // toward a specific appointment.
-  appointmentId String?      @unique
+  // toward a specific appointment. Stackable gift cards: no longer @unique
+  // as of the stacking package -- several cards can share one appointmentId,
+  // together needing only to meet or exceed the required deposit, not match
+  // it exactly. Plain index instead, since lookups by appointmentId
+  // (delete-preview, checkout, the attachment-move route) stay common.
+  appointmentId String?
   appointment   Appointment? @relation(fields: [appointmentId], references: [id])
 
   issuedById String
@@ -1006,6 +1013,7 @@ model GiftCard {
 
   @@index([studioId])
   @@index([clientId])
+  @@index([appointmentId])
 }
 
 model LiabilityWaiver {

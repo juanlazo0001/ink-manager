@@ -50,6 +50,47 @@ export async function validateGiftCardForAttachment(
   return { card: synced };
 }
 
+// Stackable gift cards: validates a whole proposed stack at once, reusing
+// the exact same per-card checks validateGiftCardForAttachment already
+// enforces (ownership, ACTIVE/EXEMPT status, unexpired, not already
+// attached elsewhere) -- then additionally requires the SUM of the stack to
+// meet or exceed requiredCents. A single sufficiently-large card is just
+// the length-1 case of this, so this supersedes (and single-card callers
+// can go through it too) rather than duplicating the old single-card path.
+export async function validateGiftCardsForAttachment(
+  giftCardIds: string[],
+  studioId: string,
+  clientId: string,
+  requiredCents: number,
+): Promise<{ error: string } | { cards: GiftCard[] }> {
+  if (!Array.isArray(giftCardIds) || giftCardIds.length === 0) {
+    return { error: "At least one gift card is required" };
+  }
+
+  if (new Set(giftCardIds).size !== giftCardIds.length) {
+    return { error: "The same gift card was selected more than once" };
+  }
+
+  const cards: GiftCard[] = [];
+  for (const giftCardId of giftCardIds) {
+    const result = await validateGiftCardForAttachment(giftCardId, studioId, clientId);
+    if ("error" in result) return { error: result.error };
+    cards.push(result.card);
+  }
+
+  const totalCents = cards.reduce((sum, c) => sum + c.amountCents, 0);
+  if (totalCents < requiredCents) {
+    const shortfallCents = requiredCents - totalCents;
+    return {
+      error:
+        `The attached gift card(s) total $${(totalCents / 100).toFixed(2)}, which is ` +
+        `$${(shortfallCents / 100).toFixed(2)} short of the required $${(requiredCents / 100).toFixed(2)} deposit.`,
+    };
+  }
+
+  return { cards };
+}
+
 // No scheduler exists yet (a later phase adds a background sweep). Until
 // then, expiration is handled lazily: anywhere a card is read or validated,
 // a still-ACTIVE (or still-EXEMPT, e.g. a time-limited comp) card whose

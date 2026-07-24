@@ -92,3 +92,26 @@ export function computeDepositTier(
   const feeAmount = DEPOSIT_FEE_CENTS / 100;
   return { depositAmount, totalCharged: depositAmount + feeAmount };
 }
+
+// Gift-card stacking: the amount a stack of attached cards must meet or
+// exceed. This is computeDepositTier's own depositAmount -- NOT
+// totalCharged, which additionally bakes in the flat processing fee a
+// client pays through a deposit form's card-payment flow (DEPOSIT_FEE_CENTS
+// on top). A gift card's face value is never issued at that inflated
+// amount (see routes/deposits.ts's own `amountCents: dollarsToCents(
+// depositForm.depositAmount)`), so sufficiency has to be checked against
+// the same, non-fee-inflated number a card can actually be worth.
+// null/missing price-estimate bounds (an inquiry that hasn't been quoted
+// yet) resolve to a $0 requirement rather than blocking attachment on data
+// that isn't there -- any card, including a $0 EXEMPT one, trivially
+// satisfies that.
+export function computeRequiredDepositCents(
+  priceEstimateLow: number | null,
+  priceEstimateHigh: number | null,
+  tiers: DepositTier[] = DEFAULT_DEPOSIT_TIERS,
+): number {
+  if (priceEstimateLow == null || priceEstimateHigh == null) return 0;
+  const average = (priceEstimateLow + priceEstimateHigh) / 2;
+  const { depositAmount } = computeDepositTier(average, tiers);
+  return Math.round(depositAmount * 100);
+}
