@@ -1946,3 +1946,41 @@ Direct API: fetched a real signature and uploaded a `.txt` file straight to Clou
 ## Cleanup
 
 All ad-hoc Playwright scripts, the scratch `test.txt` fixture, and screenshots deleted from the `pw-test` directory; none committed. All 4 test notes created during verification deleted via the API. No background shells were started this session (the dev API/web servers were already running from prior work and were left as-is).
+
+---
+
+# Feature — Revise a Project's estimate (reason required, client approval)
+
+Single session on `main`. Schema change: 6 new `estimateRevision*` fields on `Inquiry` (purely additive migration). User explicitly chose, via two AskUserQuestion prompts: (1) the customer must actively click to approve the revision (not just be notified), and (2) a decline/objection only flags it for staff follow-up rather than auto-cancelling anything.
+
+## Design
+
+Before this, `PATCH /:id` hard-blocked the estimate fields entirely once an inquiry converted to a Project (`SCHEDULING`/`WAITLISTED`/`CONFIRMED`/`DEPOSIT_PENDING`) — the client already paid a deposit against those numbers, so silently rewriting them was disallowed with no exception. This adds the deliberate, controlled exception: a new `POST /inquiries/:id/revise-estimate` route, requiring a reason, that's the *only* sanctioned way to change a Project's estimate.
+
+**Why not reuse `POST /:id/send-estimate`**: that route always flips `status` to `AWAITING_CLIENT_RESPONSE` — correct for a pre-conversion inquiry, but wrong for a Project, since it would yank an already-scheduled/deposited row out of the Projects tab back into Inquiries. The new route never touches `status` at all.
+
+**Why not reuse the existing `/estimate/:token` public flow**: its `PROCEED` branch sets `status: DEPOSIT_PENDING`, assuming a pre-conversion inquiry with no deposit or scheduling yet. A Project's revision response needs to record "did the client accept this change" without disturbing any of that already-in-place state, so it gets its own token/fields (`estimateRevisionToken` etc., distinct from `estimateToken`) and its own public page/routes.
+
+**No new revision-history table**: every past revision's old values, new values, and the staff's reason are permanent via `AuditLog` (`action: "estimate_revised"`, `diffObjects` output merged with a `reason` key) — the `Inquiry`-level `estimateRevision*` fields only track the *current/latest* pending-approval state, overwritten by each new revision.
+
+## What changed
+
+- **Backend** (`inquiries.ts`): `POST /:id/revise-estimate` — reason required (unlike Mark as Lost's optional one), gated to `PROJECT_STATUSES` only, same price/time range validation as `send-estimate` (with the same "fall back to current value" convenience), generates a new revision token (7-day expiry, same TTL as the original estimate token), logs the audit entry, and sends a real text via the existing `sendClientSms`/`getOrCreateClientConversation` infra with the new numbers + reason + a shortened link.
+- **Backend** (`estimates.ts`): `GET /revision/verify/:token` and `PATCH /revision/respond/:token` (decision: `APPROVE` | `FLAG`) — mirrors the existing verify/respond pair's shape but never touches `status`; `FLAG` deliberately does nothing beyond recording the response (audit log + `estimateRevisionApproved: false`) since auto-cancelling a paid deposit or scheduled appointment would be unsafe.
+- **Frontend**: new public page `EstimateRevisionResponse.tsx` (route `/estimate-revision/:token`) — simpler than `EstimateResponse.tsx`, just the new range + reason + "I approve this change" / "I have a concern about this". `InquiryDetail.tsx`'s Estimate widget: the previously-empty `isConverted` action slot now shows a "Revise Estimate" button opening a modal (price/time inputs identical to the existing edit form + a required reason textarea), and a color-coded banner (warning while pending, success once approved, danger if flagged) showing the current revision's state and reason. Added `reason: 'Reason'` to `AuditTrail.tsx`'s `FIELD_LABELS` so the new audit action renders with a clean label instead of raw camelCase.
+
+## Verification
+
+Full browser flow (Playwright, screenshots reviewed) on a real dev-seed Project: opened "Revise Estimate", confirmed the form pre-filled current values, confirmed client-side validation correctly blocked submission when a genuinely-unset field (time estimate, null on this seed record) was left empty, filled it in and submitted — confirmed the warning banner appeared on the Inquiry page ("Awaiting client approval..."), confirmed the audit trail logged both the old→new diff and the reason. Visited the actual public revision link and approved it — confirmed the banner turned green ("Client approved...") and the audit trail logged a second, system-attributed entry. Created a second revision and used the public page's "I have a concern" path — confirmed the banner turned red/flagged, and confirmed via direct API check that `status` stayed `CONFIRMED` throughout (never reverted to an Inquiry-stage status) and nothing about the deposit/scheduling was touched. Reverted the test inquiry's estimate back to its original values afterward using the feature itself (not a direct DB edit), leaving an honest audit trail rather than silently mutating test data.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npx tsc -b --noEmit` + `npm run build` (web) — clean.
+
+## Commit
+
+`1fba9a0` — Allow staff to revise a Project's estimate via a reason-required modal, with client approval. Pushed immediately after a collision check (`git fetch` + `git log HEAD..origin/main`) came back empty.
+
+## Cleanup
+
+All ad-hoc Playwright scripts and screenshots deleted from the scratch `pw-test` directory; none committed. The dev-seed Project used for verification was left with one pending-flagged revision from the FLAG-path test (dev/seed data, consistent with this session's standing convention of leaving harmless test artifacts in the dev database). No background shells were started this session (the dev API/web servers were already running from prior work and were left as-is).
