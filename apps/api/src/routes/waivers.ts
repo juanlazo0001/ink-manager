@@ -84,8 +84,10 @@ publicRouter.patch("/sign/:token", async (req, res) => {
     idImageUrl,
     clauseInitials,
     signatureName,
+    signatureData,
     photoReleaseAccepted,
     photoReleaseSignatureName,
+    photoReleaseSignatureData,
   } = body;
 
   if (typeof legalName !== "string" || legalName.trim().length === 0) {
@@ -138,8 +140,13 @@ publicRouter.patch("/sign/:token", async (req, res) => {
     return res.status(400).json({ error: "Signature is required", field: "signatureName" });
   }
 
+  if (typeof signatureData !== "string" || signatureData.trim().length === 0) {
+    return res.status(400).json({ error: "Please sign before submitting", field: "signatureData" });
+  }
+
   let releaseAccepted = false;
   let releaseSignature: string | null = null;
+  let releaseSignatureData: string | null = null;
 
   if (photoReleaseAccepted === true) {
     if (typeof photoReleaseSignatureName !== "string" || photoReleaseSignatureName.trim().length === 0) {
@@ -148,8 +155,15 @@ publicRouter.patch("/sign/:token", async (req, res) => {
         field: "photoReleaseSignatureName",
       });
     }
+    if (typeof photoReleaseSignatureData !== "string" || photoReleaseSignatureData.trim().length === 0) {
+      return res.status(400).json({
+        error: "Please sign before accepting the photo/video release",
+        field: "photoReleaseSignatureData",
+      });
+    }
     releaseAccepted = true;
     releaseSignature = photoReleaseSignatureName.trim();
+    releaseSignatureData = photoReleaseSignatureData;
   }
 
   await prisma.liabilityWaiver.update({
@@ -163,8 +177,10 @@ publicRouter.patch("/sign/:token", async (req, res) => {
       idImageUrl: idImageUrl.trim(),
       clauseInitials: clauseResult.value as unknown as Prisma.InputJsonValue,
       signatureName: signatureName.trim(),
+      signatureData,
       photoReleaseAccepted: releaseAccepted,
       photoReleaseSignatureName: releaseSignature,
+      photoReleaseSignatureData: releaseSignatureData,
       signedAt: new Date(),
       status: LiabilityWaiverStatus.SIGNED,
       token: null,

@@ -132,8 +132,10 @@ interface WaiverDetail {
   idImageUrl: string | null
   clauseInitials: ClauseInitial[] | null
   signatureName: string | null
+  signatureData: string | null
   photoReleaseAccepted: boolean
   photoReleaseSignatureName: string | null
+  photoReleaseSignatureData: string | null
   healthQuestionsSnapshot: HealthQuestionSnapshot[]
   clausesSnapshot: string[]
   signedAt: string | null
@@ -957,6 +959,17 @@ export default function AppointmentDetail() {
                           </div>
                         </div>
 
+                        {waiverDetail.signatureData && (
+                          <div>
+                            <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Signed</p>
+                            <img
+                              src={waiverDetail.signatureData}
+                              alt="Client signature"
+                              className="mt-2 h-20 rounded-lg border border-border bg-white"
+                            />
+                          </div>
+                        )}
+
                         {waiverDetail.idImageUrl && (
                           <div>
                             <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
@@ -1016,6 +1029,13 @@ export default function AppointmentDetail() {
                               ? `Accepted — signed by ${waiverDetail.photoReleaseSignatureName}`
                               : 'Declined'}
                           </p>
+                          {waiverDetail.photoReleaseAccepted && waiverDetail.photoReleaseSignatureData && (
+                            <img
+                              src={waiverDetail.photoReleaseSignatureData}
+                              alt="Client signature for photo/video release"
+                              className="mt-2 h-20 rounded-lg border border-border bg-white"
+                            />
+                          )}
                         </div>
 
                         {waiverDetail.verifiedBy && (

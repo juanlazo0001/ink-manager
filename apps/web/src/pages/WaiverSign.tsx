@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { apiFetch, ApiError } from '../lib/api'
 import { uploadImageToCloudinary } from '../lib/cloudinary'
@@ -7,6 +7,7 @@ import { sanitizeHtml } from '../lib/sanitizeHtml'
 import PhoneInput from '../components/PhoneInput'
 import { applyThemePreset } from '../lib/themePresets'
 import PublicPageFooter from '../components/PublicPageFooter'
+import SignaturePadField, { type SignaturePadHandle } from '../components/SignaturePadField'
 
 const INPUT_CLASS =
   'mt-1 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
@@ -58,8 +59,12 @@ export default function WaiverSign() {
   const [healthAnswers, setHealthAnswers] = useState<Record<number, HealthAnswerState>>({})
   const [clauseInitials, setClauseInitials] = useState<Record<number, string>>({})
   const [signatureName, setSignatureName] = useState('')
+  const [signatureEmptyError, setSignatureEmptyError] = useState(false)
+  const signaturePadRef = useRef<SignaturePadHandle | null>(null)
   const [photoReleaseAccepted, setPhotoReleaseAccepted] = useState(false)
   const [photoReleaseSignatureName, setPhotoReleaseSignatureName] = useState('')
+  const [photoReleaseSignatureEmptyError, setPhotoReleaseSignatureEmptyError] = useState(false)
+  const photoReleaseSignaturePadRef = useRef<SignaturePadHandle | null>(null)
 
   const [idImagePreview, setIdImagePreview] = useState<string | null>(null)
   const [idImageUrl, setIdImageUrl] = useState<string | null>(null)
@@ -151,6 +156,23 @@ export default function WaiverSign() {
       return
     }
 
+    if (!signaturePadRef.current || signaturePadRef.current.isEmpty()) {
+      setSignatureEmptyError(true)
+      setSubmitError('Please sign before submitting.')
+      return
+    }
+
+    if (
+      photoReleaseAccepted &&
+      (!photoReleaseSignaturePadRef.current || photoReleaseSignaturePadRef.current.isEmpty())
+    ) {
+      setPhotoReleaseSignatureEmptyError(true)
+      setSubmitError('Please sign the photo/video release before submitting.')
+      return
+    }
+
+    setSignatureEmptyError(false)
+    setPhotoReleaseSignatureEmptyError(false)
     setSubmitting(true)
 
     try {
@@ -169,8 +191,12 @@ export default function WaiverSign() {
           idImageUrl,
           clauseInitials: data.clauses.map((_, i) => ({ clauseIndex: i, initials: clauseInitials[i]?.trim() })),
           signatureName: signatureName.trim(),
+          signatureData: signaturePadRef.current.toDataURL(),
           photoReleaseAccepted,
           photoReleaseSignatureName: photoReleaseAccepted ? photoReleaseSignatureName.trim() : undefined,
+          photoReleaseSignatureData: photoReleaseAccepted
+            ? photoReleaseSignaturePadRef.current!.toDataURL()
+            : undefined,
         }),
       })
 
@@ -359,7 +385,7 @@ export default function WaiverSign() {
                 </section>
               )}
 
-              <section className="border-t border-border pt-6">
+              <section className="space-y-3 border-t border-border pt-6">
                 <label className={LABEL_CLASS}>Signature — type your full legal name *</label>
                 <input
                   type="text"
@@ -367,6 +393,12 @@ export default function WaiverSign() {
                   onChange={(e) => setSignatureName(e.target.value)}
                   required
                   className={INPUT_CLASS}
+                />
+                <SignaturePadField
+                  ref={signaturePadRef}
+                  label="Sign below *"
+                  showError={signatureEmptyError}
+                  onClear={() => setSignatureEmptyError(false)}
                 />
               </section>
 
@@ -392,13 +424,19 @@ export default function WaiverSign() {
                   </label>
 
                   {photoReleaseAccepted && (
-                    <div>
+                    <div className="space-y-3">
                       <label className={LABEL_CLASS}>Signature for photo release *</label>
                       <input
                         type="text"
                         value={photoReleaseSignatureName}
                         onChange={(e) => setPhotoReleaseSignatureName(e.target.value)}
                         className={INPUT_CLASS}
+                      />
+                      <SignaturePadField
+                        ref={photoReleaseSignaturePadRef}
+                        label="Sign below *"
+                        showError={photoReleaseSignatureEmptyError}
+                        onClear={() => setPhotoReleaseSignatureEmptyError(false)}
                       />
                     </div>
                   )}

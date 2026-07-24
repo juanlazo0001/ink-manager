@@ -1184,9 +1184,14 @@ model LiabilityWaiver {
   // Array<{ clauseIndex: number, initials: string }>
   clauseInitials        Json?
   signatureName         String?
+  // Base64 PNG from signature_pad -- same convention as DepositForm's own
+  // signatureName/signatureData pair above (signatureName stays too, the
+  // typed legal name backing the drawn mark).
+  signatureData         String?
 
   photoReleaseAccepted      Boolean @default(false)
   photoReleaseSignatureName String?
+  photoReleaseSignatureData String?
 
   // Snapshots of the template exactly as the client saw it at signing time,
   // so a later edit to StudioSettings' waiver template never retroactively

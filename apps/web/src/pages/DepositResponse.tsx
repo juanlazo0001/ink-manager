@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import SignaturePad from 'signature_pad'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime } from '../lib/format'
 import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import { applyThemePreset } from '../lib/themePresets'
 import PublicPageFooter from '../components/PublicPageFooter'
+import SignaturePadField, { type SignaturePadHandle } from '../components/SignaturePadField'
 
 const INPUT_CLASS =
   'mt-1 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
@@ -46,8 +46,7 @@ export default function DepositResponse() {
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
-  const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  const signaturePadRef = useRef<SignaturePad | null>(null)
+  const signaturePadRef = useRef<SignaturePadHandle | null>(null)
 
   useEffect(() => {
     if (!token) return
@@ -71,29 +70,6 @@ export default function DepositResponse() {
       ignore = true
     }
   }, [token])
-
-  useEffect(() => {
-    if (state !== 'ready' || !canvasRef.current) return
-
-    const canvas = canvasRef.current
-    const ratio = Math.max(window.devicePixelRatio || 1, 1)
-    canvas.width = canvas.offsetWidth * ratio
-    canvas.height = canvas.offsetHeight * ratio
-    canvas.getContext('2d')?.scale(ratio, ratio)
-
-    const pad = new SignaturePad(canvas, { backgroundColor: 'rgb(255, 255, 255)' })
-    signaturePadRef.current = pad
-
-    return () => {
-      pad.off()
-      signaturePadRef.current = null
-    }
-  }, [state])
-
-  function handleClearSignature() {
-    signaturePadRef.current?.clear()
-    setSignatureEmptyError(false)
-  }
 
   const allAgreed = verifyData ? verifyData.terms.every((term) => agreed[term.key]) : false
 
@@ -122,7 +98,7 @@ export default function DepositResponse() {
     setSubmitting(true)
 
     try {
-      const signatureData = signaturePadRef.current.toDataURL('image/png')
+      const signatureData = signaturePadRef.current.toDataURL()
 
       await apiFetch(`/deposits/sign/${token}`, {
         method: 'PATCH',
@@ -244,20 +220,12 @@ export default function DepositResponse() {
                 />
               </div>
 
-              <div>
-                <label className="mb-1 block text-sm font-medium text-fg-secondary">Sign below</label>
-                <div className="overflow-hidden rounded-lg border border-border">
-                  <canvas ref={canvasRef} className="h-32 w-full touch-none" />
-                </div>
-                {signatureEmptyError && <p className="mt-2 text-sm text-danger">Please sign before submitting.</p>}
-                <button
-                  type="button"
-                  onClick={handleClearSignature}
-                  className="mt-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg-secondary transition hover:bg-surface"
-                >
-                  Clear
-                </button>
-              </div>
+              <SignaturePadField
+                ref={signaturePadRef}
+                label="Sign below"
+                showError={signatureEmptyError}
+                onClear={() => setSignatureEmptyError(false)}
+              />
 
               {submitError && (
                 <div className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
