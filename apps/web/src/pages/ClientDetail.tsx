@@ -15,6 +15,8 @@ import { describeSendResult, type ClientSendResult } from '../lib/sendResult'
 import { sanitizeHtml } from '../lib/sanitizeHtml'
 import { AttachmentChip } from '../components/NotesSection'
 import type { NoteAttachment } from '../lib/cloudinary'
+import Widget from '../components/Widget'
+import ReorderableWidgetList from '../components/ReorderableWidgetList'
 import {
   ArrowLeftIcon,
   CheckIcon,
@@ -256,6 +258,20 @@ const EMPTY_EDIT_FORM = {
 
 const EMPTY_GIFT_CARD_FORM = { amountDollars: '', expiresAt: '' }
 const EMPTY_EXEMPT_FORM = { reason: '', expiresAt: '' }
+
+// Built-in fallback order for a user who's never customized this page's
+// layout -- same reorder/collapse system already used on the Inquiry and
+// Appointment detail pages (see ReorderableWidgetList's own comments).
+const CLIENT_WIDGET_ORDER = [
+  'contact-info',
+  'inquiries',
+  'gift-cards',
+  'deposit-forms',
+  'appointments',
+  'waivers',
+  'notes',
+  'activity-history',
+]
 
 export default function ClientDetail() {
   const { id } = useParams<{ id: string }>()
@@ -1299,12 +1315,12 @@ export default function ClientDetail() {
                         </button>
                       )}
                       {(canManage || isOwner) && (
-                        <div className="relative flex self-stretch">
+                        <div className="relative">
                           <button
                             type="button"
                             onClick={() => setShowMoreMenu((v) => !v)}
                             aria-label="More actions"
-                            className="flex aspect-square h-full shrink-0 items-center justify-center rounded-full border border-border text-fg-muted transition hover:bg-surface hover:text-fg"
+                            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border text-fg-muted transition hover:bg-surface hover:text-fg"
                           >
                             <MoreIcon className="h-4 w-4" />
                           </button>
@@ -1343,9 +1359,8 @@ export default function ClientDetail() {
                 {prefillSendNotice && <p className="mt-2 text-sm text-fg-secondary">{prefillSendNotice}</p>}
               </div>
 
-              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <h2 className="text-base font-semibold text-fg">Contact Info</h2>
-
+              <ReorderableWidgetList pageKey="client-detail" defaultOrder={CLIENT_WIDGET_ORDER}>
+              <Widget key="contact-info" id="contact-info" title="Contact Info">
                 <p className="mt-2 text-xs font-medium text-fg-secondary">
                   SMS Consent:{' '}
                   {client.smsConsentGivenAt ? (
@@ -1559,65 +1574,67 @@ export default function ClientDetail() {
                 </div>
 
                 {contactActionError && <p className="mt-3 text-sm text-danger">{contactActionError}</p>}
-              </div>
 
-              {canManage && !client.mergedIntoId && (
-                <div className="mt-6 flex justify-end">
-                  <button
-                    type="button"
-                    onClick={() => setShowMergeSearch(true)}
-                    className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
-                  >
-                    <SearchIcon className="h-4 w-4" />
-                    Merge with another client
-                  </button>
-                </div>
-              )}
+                {canManage && !client.mergedIntoId && (
+                  <div className="mt-6 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => setShowMergeSearch(true)}
+                      className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
+                    >
+                      <SearchIcon className="h-4 w-4" />
+                      Merge with another client
+                    </button>
+                  </div>
+                )}
 
-              {canManage && !client.mergedIntoId && duplicates && duplicates.length > 0 && (
-                <div className="mt-6 rounded-2xl border border-warning/30 bg-warning/10 p-4">
-                  <p className="text-sm font-medium text-warning">
-                    {duplicates.length} potential duplicate{duplicates.length > 1 ? 's' : ''} found
-                  </p>
-                  {dismissError && <p className="mt-2 text-sm text-danger">{dismissError}</p>}
-                  <ul className="mt-3 space-y-2">
-                    {duplicates.map((candidate) => (
-                      <li
-                        key={candidate.id}
-                        className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-sm"
-                      >
-                        <span className="text-warning">
-                          {candidate.firstName} {candidate.lastName}
-                          {candidate.email ? ` — ${candidate.email}` : ''}
-                          {candidate.phone ? ` — ${formatPhoneInput(candidate.phone)}` : ''}
-                        </span>
-                        <span className="flex shrink-0 gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setCompareTarget(candidate)}
-                            className="rounded-full border border-warning/40 px-3 py-1 text-xs font-semibold text-warning transition hover:bg-warning/10"
-                          >
-                            Merge into this client
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDismissDuplicate(candidate)}
-                            disabled={dismissingId === candidate.id}
-                            className="rounded-full border border-border px-3 py-1 text-xs font-medium text-fg-secondary transition hover:bg-surface disabled:opacity-60"
-                          >
-                            {dismissingId === candidate.id ? 'Dismissing…' : 'Not a duplicate'}
-                          </button>
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+                {canManage && !client.mergedIntoId && duplicates && duplicates.length > 0 && (
+                  <div className="mt-6 rounded-2xl border border-warning/30 bg-warning/10 p-4">
+                    <p className="text-sm font-medium text-warning">
+                      {duplicates.length} potential duplicate{duplicates.length > 1 ? 's' : ''} found
+                    </p>
+                    {dismissError && <p className="mt-2 text-sm text-danger">{dismissError}</p>}
+                    <ul className="mt-3 space-y-2">
+                      {duplicates.map((candidate) => (
+                        <li
+                          key={candidate.id}
+                          className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-sm"
+                        >
+                          <span className="text-warning">
+                            {candidate.firstName} {candidate.lastName}
+                            {candidate.email ? ` — ${candidate.email}` : ''}
+                            {candidate.phone ? ` — ${formatPhoneInput(candidate.phone)}` : ''}
+                          </span>
+                          <span className="flex shrink-0 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setCompareTarget(candidate)}
+                              className="rounded-full border border-warning/40 px-3 py-1 text-xs font-semibold text-warning transition hover:bg-warning/10"
+                            >
+                              Merge into this client
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDismissDuplicate(candidate)}
+                              disabled={dismissingId === candidate.id}
+                              className="rounded-full border border-border px-3 py-1 text-xs font-medium text-fg-secondary transition hover:bg-surface disabled:opacity-60"
+                            >
+                              {dismissingId === candidate.id ? 'Dismissing…' : 'Not a duplicate'}
+                            </button>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </Widget>
 
-              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-base font-semibold text-fg">Inquiries</h2>
-                  {canManage && !client.mergedIntoId && (
+              <Widget
+                key="inquiries"
+                id="inquiries"
+                title="Inquiries"
+                actions={
+                  canManage && !client.mergedIntoId ? (
                     <div className="flex shrink-0 items-center gap-2">
                       <button
                         type="button"
@@ -1643,9 +1660,9 @@ export default function ClientDetail() {
                         <span className="hidden text-sm font-semibold md:inline">New Inquiry</span>
                       </button>
                     </div>
-                  )}
-                </div>
-
+                  ) : null
+                }
+              >
                 {client.inquiries.length === 0 && <p className="mt-4 text-sm text-fg-secondary">No inquiries yet.</p>}
 
                 {client.inquiries.length > 0 && (
@@ -1684,11 +1701,13 @@ export default function ClientDetail() {
                     </table>
                   </div>
                 )}
-              </div>
+              </Widget>
 
-              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-base font-semibold text-fg">Gift Cards</h2>
+              <Widget
+                key="gift-cards"
+                id="gift-cards"
+                title="Gift Cards"
+                actions={
                   <div className="flex items-center gap-2">
                     {canIssueGiftCards && (
                       <button
@@ -1715,7 +1734,8 @@ export default function ClientDetail() {
                       </button>
                     )}
                   </div>
-                </div>
+                }
+              >
 
                 {client.giftCards.length === 0 && <p className="mt-4 text-sm text-fg-secondary">No gift cards yet.</p>}
 
@@ -1782,12 +1802,14 @@ export default function ClientDetail() {
                     </table>
                   </div>
                 )}
-              </div>
+              </Widget>
 
-              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-base font-semibold text-fg">Deposit Forms</h2>
-                  {canManage && !client.mergedIntoId && (
+              <Widget
+                key="deposit-forms"
+                id="deposit-forms"
+                title="Deposit Forms"
+                actions={
+                  canManage && !client.mergedIntoId ? (
                     <div className="relative">
                       <button
                         type="button"
@@ -1838,8 +1860,9 @@ export default function ClientDetail() {
                         </>
                       )}
                     </div>
-                  )}
-                </div>
+                  ) : null
+                }
+              >
 
                 {depositSendError && (
                   <div className="mt-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
@@ -1911,11 +1934,9 @@ export default function ClientDetail() {
                     </table>
                   </div>
                 )}
-              </div>
+              </Widget>
 
-              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <h2 className="text-base font-semibold text-fg">Appointments</h2>
-
+              <Widget key="appointments" id="appointments" title="Appointments">
                 {appointments === null && <p className="mt-4 text-sm text-fg-secondary">Loading appointments…</p>}
 
                 {appointments !== null && appointments.length === 0 && (
@@ -1967,12 +1988,14 @@ export default function ClientDetail() {
                     </table>
                   </div>
                 )}
-              </div>
+              </Widget>
 
-              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-base font-semibold text-fg">Waivers</h2>
-                  {canManage && !client.mergedIntoId && (
+              <Widget
+                key="waivers"
+                id="waivers"
+                title="Waivers"
+                actions={
+                  canManage && !client.mergedIntoId ? (
                     <div className="relative">
                       <button
                         type="button"
@@ -2033,8 +2056,9 @@ export default function ClientDetail() {
                         </>
                       )}
                     </div>
-                  )}
-                </div>
+                  ) : null
+                }
+              >
 
                 {waiverSendError && (
                   <div className="mt-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
@@ -2087,11 +2111,10 @@ export default function ClientDetail() {
                     ))}
                   </ul>
                 )}
-              </div>
+              </Widget>
 
               {canMessage && consolidatedNotes && (
-                <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                  <h2 className="text-base font-semibold text-fg">Notes</h2>
+                <Widget key="notes" id="notes" title="Notes">
                   <p className="mt-1 text-xs text-fg-muted">
                     Every note written on this client's inquiries, projects, and appointments -- consolidated here,
                     grouped by where it was written. Internal only -- never shown to the client or shared with an
@@ -2101,10 +2124,13 @@ export default function ClientDetail() {
                   <NoteGroup title="Inquiry notes" notes={consolidatedNotes.inquiry} navigate={navigate} />
                   <NoteGroup title="Project notes" notes={consolidatedNotes.project} navigate={navigate} />
                   <NoteGroup title="Appointment notes" notes={consolidatedNotes.appointment} navigate={navigate} />
-                </div>
+                </Widget>
               )}
 
-              <AuditTrail entityType="Client" entityId={client.id} />
+              <Widget key="activity-history" id="activity-history" title="Activity History">
+                <AuditTrail bare entityType="Client" entityId={client.id} />
+              </Widget>
+              </ReorderableWidgetList>
             </>
           )}
         </div>
