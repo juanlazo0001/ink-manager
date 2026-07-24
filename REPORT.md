@@ -1876,3 +1876,43 @@ Browser (Playwright, owner login): screenshot confirmed the header-to-Pipeline g
 ## Cleanup
 
 All ad-hoc Playwright scripts (`screenshot-header.js`, `crop-header.js`, `measure-header.js`, `screenshot-appt.js`) and screenshots deleted from the scratch `pw-test` directory; none committed. No background shells were started this session (the dev API/web servers were already running from prior work and were left as-is).
+
+---
+
+# Feature — Appointment notes, Project details fields, consolidated client notes
+
+Single session on `main`. Schema change: new `AppointmentNote` model (purely additive migration).
+
+## 1. Project details widget (AppointmentDetail.tsx)
+
+Replaced **Budget** with **Estimate** (`priceEstimateLow`/`priceEstimateHigh`, no longer falling back to the free-text `budget` field per the request's "Not budget"), and added **Description**, **Color or Black & Grey**, and **Placement** — all read from the same `appointment.inquiry.*` nested object the reference/placement image grids already used. Backend: added `colorOrBlackGrey`/`placement` to `APPOINTMENT_DETAIL_INCLUDE.inquiryProject.select` in `appointments.ts` (both already existed on `Inquiry`, just weren't selected for this route).
+
+## 2. Per-appointment notes
+
+New `AppointmentNote` model, identical shape/rules to the existing `InquiryNote` (rich-text `bodyHtml`, nullable `authorId` so a note survives its author's deletion, OWNER/FRONT_DESK only) but scoped to a single `Appointment` (session) rather than the whole project — kept as a separate model rather than widening `InquiryNote` with a nullable `appointmentId`, since a client can have several appointments per inquiry and "note about this 2pm session" is a different scope than "note about the whole back-piece project." New `GET/POST/PATCH/DELETE /appointments/:id/notes` routes mirror `inquiries.ts`'s note routes exactly, hardcoded `requireRole(OWNER, FRONT_DESK)` rather than the customizable `appointments.manage` permission — matches `InquiryNote`'s own "internal only, never shown to an artist" precedent even though an ARTIST can otherwise view (not manage) the same appointment.
+
+Refactored rather than duplicated: `InquiryNotesSection.tsx` generalized into `NotesSection.tsx` (parameterized by REST path instead of a hardcoded `inquiryId`), now shared by both the Inquiry and Appointment detail pages. The three tiny backend helpers it depended on (`NOTE_AUTHOR_SELECT`, `isBlankHtml`, `canModifyNote`) moved from `inquiries.ts` into a new `api/src/lib/notes.ts`, imported by both route files, for the same reason.
+
+## 3. Consolidated notes on the Client page
+
+New `GET /clients/:id/notes` (OWNER/FRONT_DESK only, same hardcoded-role reasoning as above, bypassing the router's own customizable `clients.manage` gate) returns every note this client has anywhere, grouped into three buckets: `inquiry`, `project`, `appointment`. There is no separate "Project note" table — Inquiry and "Project" are the same row at different points in its status (`PROJECTS_TAB_STATUSES`/`PROJECT_STATUSES`, already duplicated across `Inquiries.tsx` and `inquiries.ts`, now a third time here per this codebase's existing precedent for that value rather than a cross-route-file import), so a note is bucketed "inquiry" vs. "project" purely off its parent inquiry's *current* status, not whatever it was when the note was written (not tracked). Appointment notes come from the new `AppointmentNote` table, tagged with which specific session they're on. Rendered read-only on the Client page (editing happens on the note's actual originating page); each note links back to its source via a small `NoteGroup` helper.
+
+## Cleanup extraction (touched while already in this code)
+
+The reference/placement image grid (hover caption showing upload timestamp/uploader) was previously duplicated: a local, non-exported `ImageGrid` function in `InquiryDetail.tsx`, and a second hand-rolled copy of the same markup inline in `AppointmentDetail.tsx`'s Project details widget. Extracted into a shared `components/ImageGrid.tsx` (grid density configurable via a `gridClassName` prop, since the two pages used different column counts), used by both pages now. Similarly extracted `InquiryDetail.tsx`'s small `DetailField` (uppercase label + value) into `components/DetailField.tsx`, reused for the new Estimate/Description/Color/Placement fields so both pages' "detail field" look is pixel-identical.
+
+## Verification
+
+Direct API calls (owner login): confirmed `colorOrBlackGrey`/`placement` appear on `GET /appointments/:id`; posted an appointment note and an inquiry note, confirmed both round-trip through their respective GET routes; confirmed `GET /clients/:id/notes` correctly bucketed the inquiry note as "project" (its appointment had already reached CONFIRMED) and the appointment note under "appointment"; confirmed ARTIST gets 403 from both `/appointments/:id/notes` and `/clients/:id/notes`. Browser (Playwright, screenshots reviewed): Project details widget shows all 6 requested fields; Notes widget on the Appointment page shows composer + posted note with author/timestamp and working Edit (verified the edit form opens with Save/Cancel) and Delete; Client page's Notes section renders "Project Notes" and "Appointment Notes" groups correctly, and clicking a note's "On: ..." source link navigates to the right appointment. Deleted both test notes afterward.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npx tsc -b --noEmit` + `npm run build` (web) — clean.
+
+## Commit
+
+`f7cc046` — Add per-appointment notes, Estimate/Description/Color/Placement on Project details, and consolidated client notes. Pushed immediately after a collision check (`git fetch` + `git log HEAD..origin/main`) came back empty.
+
+## Cleanup
+
+All ad-hoc Playwright scripts and screenshots deleted from the scratch `pw-test` directory; none committed. No background shells were started this session (the dev API/web servers were already running from prior work and were left as-is).
