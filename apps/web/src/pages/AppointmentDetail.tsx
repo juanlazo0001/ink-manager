@@ -25,24 +25,21 @@ import ImageUploadSection, { type ImageUploadState } from '../components/ImageUp
 import { uploadAppointmentPhoto } from '../lib/cloudinary'
 import Widget from '../components/Widget'
 import ReorderableWidgetList from '../components/ReorderableWidgetList'
+import ImageGrid, { type ImageDetail } from '../components/ImageGrid'
+import DetailField from '../components/DetailField'
+import NotesSection from '../components/NotesSection'
 
 // Built-in fallback order for a user who's never customized this page's
 // layout (or one shipped after their last save) -- "checkout" is simply
 // absent from presentIds for an ARTIST (canManage false), same as any
 // other conditionally-hidden widget.
-const APPOINTMENT_WIDGET_ORDER = ['project-details', 'liability-waiver', 'checkout', 'photos', 'activity-history']
+const APPOINTMENT_WIDGET_ORDER = ['project-details', 'liability-waiver', 'checkout', 'photos', 'notes', 'activity-history']
 
 interface WaiverSummary {
   id: string
   status: string
   signedAt: string | null
   verifiedAt: string | null
-}
-
-interface ImageDetail {
-  url: string
-  uploadedAt: string | null
-  uploadedBy: { id: string; name: string | null; email: string } | null
 }
 
 interface GiftCardSummary {
@@ -81,6 +78,8 @@ interface Appointment {
     id: string
     description: string
     clientId: string
+    colorOrBlackGrey: string
+    placement: string
     budget: string | null
     priceEstimateLow: number | null
     priceEstimateHigh: number | null
@@ -797,79 +796,41 @@ export default function AppointmentDetail() {
               <ReorderableWidgetList pageKey="appointment-detail" defaultOrder={APPOINTMENT_WIDGET_ORDER}>
               {/* Package I: parent project context surfaced inline, no navigation away needed */}
               <Widget key="project-details" id="project-details" title="Project details">
-                <div className="mt-3">
-                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Budget</p>
-                  <p className="mt-1 text-sm text-fg">
-                    {appointment.inquiry.budget ??
-                      (appointment.inquiry.priceEstimateLow != null && appointment.inquiry.priceEstimateHigh != null
+                <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <DetailField
+                    label="Estimate"
+                    value={
+                      appointment.inquiry.priceEstimateLow != null && appointment.inquiry.priceEstimateHigh != null
                         ? `$${appointment.inquiry.priceEstimateLow.toLocaleString('en-US')} – $${appointment.inquiry.priceEstimateHigh.toLocaleString('en-US')}`
-                        : 'Not provided')}
-                  </p>
+                        : 'Not provided'
+                    }
+                  />
+                  <DetailField label="Description" value={appointment.inquiry.description || 'Not provided'} />
+                  <DetailField label="Color or Black & Grey" value={appointment.inquiry.colorOrBlackGrey || 'Not provided'} />
+                  <DetailField label="Placement" value={appointment.inquiry.placement || 'Not provided'} />
                 </div>
 
-                {appointment.inquiry.referenceImages.length > 0 && (
-                  <div className="mt-4">
-                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Reference images</p>
-                    <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-6">
-                      {appointment.inquiry.referenceImages.map((url) => {
-                        const detail = appointment.inquiry.referenceImagesDetail.find((d) => d.url === url)
-                        return (
-                          <a
-                            key={url}
-                            href={url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="group relative block aspect-square overflow-hidden rounded-lg border border-border"
-                          >
-                            <img src={url} alt="" className="h-full w-full object-cover transition group-hover:opacity-80" />
-                            <div className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/80 to-transparent px-1.5 pb-1 pt-4 text-[10px] leading-tight text-fg opacity-0 transition group-hover:opacity-100">
-                              {detail?.uploadedAt ? (
-                                <>
-                                  {formatDateTime(detail.uploadedAt)}
-                                  {detail.uploadedBy ? ` · ${detail.uploadedBy.name ?? detail.uploadedBy.email}` : ' · Client'}
-                                </>
-                              ) : (
-                                'No upload data'
-                              )}
-                            </div>
-                          </a>
-                        )
-                      })}
-                    </div>
+                <div className="mt-4">
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Reference images</p>
+                  <div className="mt-2">
+                    <ImageGrid
+                      images={appointment.inquiry.referenceImages}
+                      details={appointment.inquiry.referenceImagesDetail}
+                      gridClassName="grid-cols-3 gap-2 sm:grid-cols-6"
+                    />
                   </div>
-                )}
+                </div>
 
-                {appointment.inquiry.placementImages.length > 0 && (
-                  <div className="mt-4">
-                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Placement photos</p>
-                    <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-6">
-                      {appointment.inquiry.placementImages.map((url) => {
-                        const detail = appointment.inquiry.placementImagesDetail.find((d) => d.url === url)
-                        return (
-                          <a
-                            key={url}
-                            href={url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="group relative block aspect-square overflow-hidden rounded-lg border border-border"
-                          >
-                            <img src={url} alt="" className="h-full w-full object-cover transition group-hover:opacity-80" />
-                            <div className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/80 to-transparent px-1.5 pb-1 pt-4 text-[10px] leading-tight text-fg opacity-0 transition group-hover:opacity-100">
-                              {detail?.uploadedAt ? (
-                                <>
-                                  {formatDateTime(detail.uploadedAt)}
-                                  {detail.uploadedBy ? ` · ${detail.uploadedBy.name ?? detail.uploadedBy.email}` : ' · Client'}
-                                </>
-                              ) : (
-                                'No upload data'
-                              )}
-                            </div>
-                          </a>
-                        )
-                      })}
-                    </div>
+                <div className="mt-4">
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Placement photos</p>
+                  <div className="mt-2">
+                    <ImageGrid
+                      images={appointment.inquiry.placementImages}
+                      details={appointment.inquiry.placementImagesDetail}
+                      gridClassName="grid-cols-3 gap-2 sm:grid-cols-6"
+                    />
                   </div>
-                )}
+                </div>
               </Widget>
 
               {/* Waiver section */}
@@ -1334,6 +1295,18 @@ export default function AppointmentDetail() {
                   </div>
                 )}
               </Widget>
+
+              {canManage && (
+                <Widget key="notes" id="notes" title="Notes">
+                  <NotesSection
+                    notesPath={`/appointments/${appointment.id}/notes`}
+                    queryKeyId={appointment.id}
+                    canManage={canManage}
+                    readOnly={false}
+                    bare
+                  />
+                </Widget>
+              )}
 
               <Widget key="activity-history" id="activity-history" title="Activity History">
                 <AuditTrail bare entityType="Appointment" entityId={appointment.id} />

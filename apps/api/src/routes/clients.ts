@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { requireAuth, requireRole } from "../middleware/auth";
-import { Role } from "../../generated/prisma/enums";
+import { Role, InquiryStatus } from "../../generated/prisma/enums";
 import { requirePermission } from "../lib/permissions";
 import { diffObjects, logAudit } from "../lib/audit";
 import { normalizePhone } from "../lib/phone";
@@ -182,6 +182,101 @@ router.get("/:id", async (req, res) => {
   // a stale bookmark, an old audit-log link, or a duplicate-detection result
   // should be able to show what it was merged into rather than dead-end.
   res.json(client);
+});
+
+// Mirrored from apps/web's own PROJECTS_TAB_STATUSES (Inquiries.tsx) and
+// inquiries.ts's own PROJECT_STATUSES -- same "converted to a Project"
+// line, duplicated rather than imported across route files per this
+// codebase's existing precedent for this exact value. There is no
+// separate "Project note" table -- Inquiry and "Project" are the same
+// row at different points in its status, so an inquiry's notes land in
+// the "inquiry" or "project" bucket below purely off its *current*
+// status, not whatever it was when each note was written (not tracked).
+const PROJECT_STATUSES: InquiryStatus[] = [InquiryStatus.SCHEDULING, InquiryStatus.WAITLISTED, InquiryStatus.CONFIRMED];
+
+// Consolidated, read-only view of every manually-written note this client
+// has anywhere in the app -- InquiryNote (bucketed "inquiry" vs "project"
+// by the parent inquiry's current status) and AppointmentNote (one
+// bucket, tagged with which specific session it came from since a client
+// can have many appointments per project). Own dedicated route rather
+// than folded into GET /:id, same reasoning as /inquiries/:id/notes: most
+// callers of the client profile fetch don't need every note body on
+// every load. Hardcoded OWNER/FRONT_DESK, not the customizable
+// clients.manage permission this router otherwise runs under -- matches
+// InquiryNote/AppointmentNote's own hardcoded "internal only, never shown
+// to an artist" rule at the route level, even if a studio granted ARTIST
+// clients.manage.
+router.get("/:id/notes", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+
+  const client = await prisma.client.findUnique({ where: { id }, select: { studioId: true } });
+  if (!client || client.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Client not found" });
+  }
+
+  const inquiries = await prisma.inquiry.findMany({
+    where: { clientId: id },
+    select: {
+      id: true,
+      description: true,
+      status: true,
+      notes: {
+        include: { author: { select: { id: true, name: true, email: true } } },
+        orderBy: { createdAt: "desc" },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  const appointments = await prisma.appointment.findMany({
+    where: { clientId: id },
+    select: {
+      id: true,
+      startTime: true,
+      inquiryProject: { select: { description: true } },
+      noteEntries: {
+        include: { author: { select: { id: true, name: true, email: true } } },
+        orderBy: { createdAt: "desc" },
+      },
+    },
+    orderBy: { startTime: "desc" },
+  });
+
+  type ConsolidatedNote = {
+    id: string;
+    bodyHtml: string;
+    createdAt: Date;
+    updatedAt: Date;
+    author: { id: string; name: string | null; email: string } | null;
+    // startTime only ever set for an "appointment" source -- the frontend
+    // formats it (this app's dates are always formatted client-side, e.g.
+    // via lib/format.ts's formatDateTime, never pre-formatted in a route
+    // response) and appends it after the label for that bucket only.
+    source: { type: "inquiry" | "appointment"; id: string; label: string; startTime?: Date };
+  };
+
+  const inquiryNotes: ConsolidatedNote[] = [];
+  const projectNotes: ConsolidatedNote[] = [];
+  const appointmentNotes: ConsolidatedNote[] = [];
+
+  for (const inquiry of inquiries) {
+    const bucket = PROJECT_STATUSES.includes(inquiry.status) ? projectNotes : inquiryNotes;
+    for (const note of inquiry.notes) {
+      bucket.push({ ...note, source: { type: "inquiry", id: inquiry.id, label: inquiry.description } });
+    }
+  }
+
+  for (const appointment of appointments) {
+    const label = appointment.inquiryProject?.description ?? "Appointment";
+    for (const note of appointment.noteEntries) {
+      appointmentNotes.push({
+        ...note,
+        source: { type: "appointment", id: appointment.id, label, startTime: appointment.startTime },
+      });
+    }
+  }
+
+  res.json({ inquiry: inquiryNotes, project: projectNotes, appointment: appointmentNotes });
 });
 
 // Backs the conversation composer's "+" form-link menu: every shareable

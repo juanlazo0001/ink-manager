@@ -13,6 +13,7 @@ import { emitInvalidation } from "../lib/realtime/registry";
 import { getOrCreateClientConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
 import { resolveImageMeta } from "../lib/imageMeta";
+import { NOTE_AUTHOR_SELECT, canModifyNote, isBlankHtml } from "../lib/notes";
 
 const router = Router();
 
@@ -211,6 +212,8 @@ const APPOINTMENT_DETAIL_INCLUDE = {
       id: true,
       description: true,
       clientId: true,
+      colorOrBlackGrey: true,
+      placement: true,
       budget: true,
       priceEstimateLow: true,
       priceEstimateHigh: true,
@@ -790,6 +793,130 @@ router.patch("/:id", requirePermission("appointments.manage"), async (req, res) 
   emitInvalidation({ type: "appointment.changed", studioId: req.user!.studioId });
 
   res.json({ ...updated, bufferWarning: formatBufferWarning(conflict) });
+});
+
+// Manually-written commentary log scoped to this one session -- same
+// shape/rules as InquiryNote (routes/inquiries.ts), just against
+// AppointmentNote. Deliberately OWNER/FRONT_DESK only via requireRole, not
+// requirePermission("appointments.manage") -- matches InquiryNote's own
+// hardcoded "internal only, never shown to an artist" precedent rather
+// than a studio's customizable appointments.manage grants, since an
+// ARTIST can otherwise view (though not manage) this same appointment.
+router.get("/:id/notes", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+
+  const appointment = await prisma.appointment.findUnique({ where: { id }, select: { studioId: true } });
+  if (!appointment || appointment.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Appointment not found" });
+  }
+
+  const notes = await prisma.appointmentNote.findMany({
+    where: { appointmentId: id },
+    include: { author: NOTE_AUTHOR_SELECT },
+    orderBy: { createdAt: "desc" },
+  });
+
+  res.json(notes);
+});
+
+router.post("/:id/notes", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+  const { bodyHtml } = req.body ?? {};
+
+  if (typeof bodyHtml !== "string" || isBlankHtml(bodyHtml)) {
+    return res.status(400).json({ error: "bodyHtml is required" });
+  }
+
+  const appointment = await prisma.appointment.findUnique({ where: { id }, select: { studioId: true } });
+  if (!appointment || appointment.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Appointment not found" });
+  }
+
+  const note = await prisma.appointmentNote.create({
+    data: {
+      studioId: req.user!.studioId,
+      appointmentId: id,
+      authorId: req.user!.userId,
+      bodyHtml: bodyHtml.trim(),
+    },
+    include: { author: NOTE_AUTHOR_SELECT },
+  });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "AppointmentNote",
+    entityId: note.id,
+    action: "create",
+    changes: { appointmentId: id },
+  });
+
+  res.status(201).json(note);
+});
+
+router.patch("/:id/notes/:noteId", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+  const noteId = req.params.noteId as string;
+  const { bodyHtml } = req.body ?? {};
+
+  if (typeof bodyHtml !== "string" || isBlankHtml(bodyHtml)) {
+    return res.status(400).json({ error: "bodyHtml is required" });
+  }
+
+  const note = await prisma.appointmentNote.findUnique({ where: { id: noteId } });
+  if (!note || note.studioId !== req.user!.studioId || note.appointmentId !== id) {
+    return res.status(404).json({ error: "Note not found" });
+  }
+
+  if (!canModifyNote(note, req)) {
+    return res.status(403).json({ error: "Only this note's author or an OWNER can edit it" });
+  }
+
+  const trimmed = bodyHtml.trim();
+
+  const updated = await prisma.appointmentNote.update({
+    where: { id: noteId },
+    data: { bodyHtml: trimmed },
+    include: { author: NOTE_AUTHOR_SELECT },
+  });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "AppointmentNote",
+    entityId: noteId,
+    action: "update",
+    changes: diffObjects(note, { bodyHtml: trimmed }, ["bodyHtml"]),
+  });
+
+  res.json(updated);
+});
+
+router.delete("/:id/notes/:noteId", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+  const noteId = req.params.noteId as string;
+
+  const note = await prisma.appointmentNote.findUnique({ where: { id: noteId } });
+  if (!note || note.studioId !== req.user!.studioId || note.appointmentId !== id) {
+    return res.status(404).json({ error: "Note not found" });
+  }
+
+  if (!canModifyNote(note, req)) {
+    return res.status(403).json({ error: "Only this note's author or an OWNER can delete it" });
+  }
+
+  await prisma.appointmentNote.delete({ where: { id: noteId } });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "AppointmentNote",
+    entityId: noteId,
+    action: "delete",
+    changes: { appointmentId: id, deletedBodyHtml: note.bodyHtml },
+  });
+
+  res.json({ success: true });
 });
 
 export default router;

@@ -12,6 +12,7 @@ import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import { apiFetch, ApiError } from '../lib/api'
 import { describeAppointmentStatus, formatDateTime, formatPhoneInput, formatStatus, isValidPhoneDigits } from '../lib/format'
 import { describeSendResult, type ClientSendResult } from '../lib/sendResult'
+import { sanitizeHtml } from '../lib/sanitizeHtml'
 import {
   ArrowLeftIcon,
   CheckIcon,
@@ -139,6 +140,29 @@ interface DuplicateCandidate {
   phone: string | null
 }
 
+interface ConsolidatedNote {
+  id: string
+  bodyHtml: string
+  createdAt: string
+  updatedAt: string
+  author: { id: string; name: string | null; email: string } | null
+  // startTime only set for an "appointment" source -- appended after the
+  // label for that bucket only (an inquiry/project's own label is already
+  // its description, with no separate date to disambiguate).
+  source: { type: 'inquiry' | 'appointment'; id: string; label: string; startTime?: string }
+}
+
+// Grouped server-side by GET /clients/:id/notes -- "inquiry" vs "project"
+// is the SAME InquiryNote table, split purely by the parent inquiry's
+// current status (there's no separate Project note type, "Project" is
+// just the UI name for an Inquiry once scheduled/confirmed); "appointment"
+// is the separate, per-session AppointmentNote table.
+interface ConsolidatedNotes {
+  inquiry: ConsolidatedNote[]
+  project: ConsolidatedNote[]
+  appointment: ConsolidatedNote[]
+}
+
 interface MergePreview {
   inquiries: number
   appointments: number
@@ -161,6 +185,53 @@ const DELETE_CONFIRM_TEXT = 'DELETE'
 
 function formatCents(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`
+}
+
+// One bucket of GET /clients/:id/notes's grouped response -- read-only
+// here (editing/deleting a note happens on the inquiry/appointment page
+// it actually belongs to, via NotesSection). Each note links back to its
+// source via `navigate`, since a client can have several inquiries and
+// appointments and a bare note body alone wouldn't say which one it's on.
+function NoteGroup({
+  title,
+  notes,
+  navigate,
+}: {
+  title: string
+  notes: ConsolidatedNote[]
+  navigate: ReturnType<typeof useNavigate>
+}) {
+  if (notes.length === 0) return null
+
+  return (
+    <div className="mt-4 border-t border-border pt-4">
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-fg-muted">{title}</h3>
+      <ul className="mt-3 space-y-3">
+        {notes.map((note) => (
+          <li key={note.id} className="rounded-lg border border-border p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+              <span className="font-medium text-fg">
+                {note.author ? note.author.name || note.author.email : 'Deleted user'}
+              </span>
+              <span className="text-xs text-fg-muted">{formatDateTime(note.createdAt)}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => navigate(note.source.type === 'inquiry' ? `/inquiries/${note.source.id}` : `/appointments/${note.source.id}`)}
+              className="mt-1 text-xs font-medium text-fg-secondary hover:text-fg hover:underline"
+            >
+              On: {note.source.label}
+              {note.source.startTime ? ` — ${formatDateTime(note.source.startTime)}` : ''}
+            </button>
+            <div
+              className="tiptap-content mt-2 text-sm text-fg"
+              dangerouslySetInnerHTML={{ __html: sanitizeHtml(note.bodyHtml) }}
+            />
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
 }
 
 const EMPTY_EDIT_FORM = {
@@ -298,6 +369,7 @@ export default function ClientDetail() {
   const queryClient = useQueryClient()
   const [client, setClient] = useState<Client | null>(null)
   const [appointments, setAppointments] = useState<Appointment[] | null>(null)
+  const [consolidatedNotes, setConsolidatedNotes] = useState<ConsolidatedNotes | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [refreshIndex, setRefreshIndex] = useState(0)
 
@@ -389,19 +461,28 @@ export default function ClientDetail() {
     async function load() {
       setClient(null)
       setAppointments(null)
+      setConsolidatedNotes(null)
       setError(null)
 
       try {
-        const [clientData, appointmentsData, duplicatesData] = await Promise.all([
+        const [clientData, appointmentsData, duplicatesData, notesData] = await Promise.all([
           apiFetch<Client>(`/clients/${id}`),
           apiFetch<Appointment[]>(`/appointments?clientId=${id}`),
           apiFetch<DuplicateCandidate[]>(`/clients/${id}/potential-duplicates`).catch(() => []),
+          // OWNER/FRONT_DESK only server-side (same "internal only, never
+          // shown to an artist" rule InquiryNote/AppointmentNote already
+          // enforce) -- skipped entirely for anyone else rather than
+          // firing a request that's just going to 403.
+          canMessage
+            ? apiFetch<ConsolidatedNotes>(`/clients/${id}/notes`).catch(() => null)
+            : Promise.resolve(null),
         ])
 
         if (ignore) return
         setClient(clientData)
         setAppointments(appointmentsData)
         setDuplicates(duplicatesData)
+        setConsolidatedNotes(notesData)
       } catch (err) {
         if (ignore) return
 
@@ -1997,6 +2078,21 @@ export default function ClientDetail() {
                   </ul>
                 )}
               </div>
+
+              {canMessage && consolidatedNotes && (
+                <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                  <h2 className="text-base font-semibold text-fg">Notes</h2>
+                  <p className="mt-1 text-xs text-fg-muted">
+                    Every note written on this client's inquiries, projects, and appointments -- consolidated here,
+                    grouped by where it was written. Internal only -- never shown to the client or shared with an
+                    artist.
+                  </p>
+
+                  <NoteGroup title="Inquiry notes" notes={consolidatedNotes.inquiry} navigate={navigate} />
+                  <NoteGroup title="Project notes" notes={consolidatedNotes.project} navigate={navigate} />
+                  <NoteGroup title="Appointment notes" notes={consolidatedNotes.appointment} navigate={navigate} />
+                </div>
+              )}
 
               <AuditTrail entityType="Client" entityId={client.id} />
             </>

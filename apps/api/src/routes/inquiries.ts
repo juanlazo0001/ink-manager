@@ -18,6 +18,7 @@ import { emitInvalidation } from "../lib/realtime/registry";
 import { computeDepositTier, computeRequiredDepositCents, resolveDepositTiers } from "../lib/depositTiers";
 import { generateUniqueReferralCode } from "../lib/referrals";
 import { IntakeFieldKind } from "../../generated/prisma/enums";
+import { NOTE_AUTHOR_SELECT, canModifyNote, isBlankHtml } from "../lib/notes";
 import { getEffectiveIntakeFormFields, validateCustomFieldAnswers } from "../lib/intakeFormFields";
 import { buildImageMeta, mergeImageMeta, resolveImageMeta } from "../lib/imageMeta";
 
@@ -1808,17 +1809,6 @@ router.get("/:id/delete-preview", requireAuth, requireRole(Role.OWNER), async (r
   res.json(summary);
 });
 
-const NOTE_AUTHOR_SELECT = { select: { id: true, name: true, email: true } } as const;
-
-// RichTextEditor's own empty state is "<p></p>", not "" -- a plain
-// .trim().length check alone would accept that as valid content and save
-// a visibly-blank note. Same tag-stripping approach as Settings.tsx's own
-// stripHtmlPreview (client-side preview text), just used here to test for
-// blankness rather than to render a preview.
-function isBlankHtml(html: string): boolean {
-  return html.replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim().length === 0;
-}
-
 // Manually-written commentary log -- a dedicated GET rather than folding
 // into GET /:id, since bodyHtml can grow (rich text, several entries) and
 // most callers of the inquiry detail fetch don't need it on every load.
@@ -1876,19 +1866,6 @@ router.post("/:id/notes", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK),
 
   res.status(201).json(note);
 });
-
-// Edit or delete: the note's own author, or any OWNER (not just an OWNER
-// who happens to be assigned to this inquiry -- same "OWNER can always
-// act" precedent as every other author-scoped permission in this app).
-// FRONT_DESK can only touch their own notes; an ARTIST never reaches this
-// route at all (role gate below), consistent with GET/POST above.
-// authorId is nullable (the author's account may have since been deleted
-// from the studio) -- a null-author note simply never matches the
-// req.user!.userId comparison, so it naturally falls through to
-// OWNER-only, same as any other note whose author isn't the caller.
-function canModifyNote(note: { authorId: string | null }, req: import("express").Request): boolean {
-  return note.authorId === req.user!.userId || req.user!.role === Role.OWNER;
-}
 
 router.patch("/:id/notes/:noteId", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
   const id = req.params.id as string;

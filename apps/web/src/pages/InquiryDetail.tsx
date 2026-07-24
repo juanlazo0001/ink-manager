@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import AuditTrail from '../components/AuditTrail'
-import InquiryNotesSection from '../components/InquiryNotesSection'
+import NotesSection from '../components/NotesSection'
 import InquiryDetailsSection from '../components/InquiryDetailsSection'
 import Modal from '../components/Modal'
 import StatusPill from '../components/StatusPill'
@@ -44,12 +44,8 @@ import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useViewAs } from '../context/useViewAs'
 import { useConversationPanel } from '../context/useConversationPanel'
 import { artistsQueryKey, inquiriesQueryKey, inquiryQueryKey } from '../lib/queryKeys'
-
-interface ImageDetail {
-  url: string
-  uploadedAt: string | null
-  uploadedBy: { id: string; name: string | null; email: string } | null
-}
+import ImageGrid, { type ImageDetail } from '../components/ImageGrid'
+import DetailField from '../components/DetailField'
 
 interface Inquiry {
   id: string
@@ -226,15 +222,6 @@ function formatCents(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`
 }
 
-function DetailField({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{label}</p>
-      <p className="mt-1 text-sm text-fg">{value}</p>
-    </div>
-  )
-}
-
 // Same label styling as DetailField, but the value row is an avatar+name
 // (or the plain emptyLabel text when there's no artist to show one for).
 function ArtistDetailField({ label, artist, emptyLabel }: { label: string; artist: ArtistLike | null; emptyLabel: string }) {
@@ -249,46 +236,6 @@ function ArtistDetailField({ label, artist, emptyLabel }: { label: string; artis
       ) : (
         <p className="mt-1 text-sm text-fg">{emptyLabel}</p>
       )}
-    </div>
-  )
-}
-
-// details is optional (and falls back to bare urls with no caption) purely
-// so any other, older call site that only has a plain string[] handy still
-// compiles -- every call site in this file now passes the resolved detail.
-function ImageGrid({ images, details }: { images: string[]; details?: ImageDetail[] }) {
-  if (images.length === 0) {
-    return <p className="text-sm text-fg-secondary">None uploaded.</p>
-  }
-
-  const detailByUrl = new Map((details ?? []).map((d) => [d.url, d]))
-
-  return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      {images.map((url) => {
-        const detail = detailByUrl.get(url)
-        return (
-          <a
-            key={url}
-            href={url}
-            target="_blank"
-            rel="noreferrer"
-            className="group relative block aspect-square overflow-hidden rounded-lg border border-border"
-          >
-            <img src={url} alt="" className="h-full w-full object-cover transition group-hover:opacity-80" />
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/80 to-transparent px-1.5 pb-1 pt-4 text-[10px] leading-tight text-fg opacity-0 transition group-hover:opacity-100">
-              {detail?.uploadedAt ? (
-                <>
-                  {formatDateTime(detail.uploadedAt)}
-                  {detail.uploadedBy ? ` · ${detail.uploadedBy.name ?? detail.uploadedBy.email}` : ' · Client'}
-                </>
-              ) : (
-                'No upload data'
-              )}
-            </div>
-          </a>
-        )
-      })}
     </div>
   )
 }
@@ -2606,7 +2553,13 @@ export default function InquiryDetail() {
 
               {canMessage && (
                 <Widget key="notes" id="notes" title="Notes">
-                  <InquiryNotesSection inquiryId={inquiry.id} canManage={canMessage} readOnly={!!viewAsTarget} bare />
+                  <NotesSection
+                    notesPath={`/inquiries/${inquiry.id}/notes`}
+                    queryKeyId={inquiry.id}
+                    canManage={canMessage}
+                    readOnly={!!viewAsTarget}
+                    bare
+                  />
                 </Widget>
               )}
 

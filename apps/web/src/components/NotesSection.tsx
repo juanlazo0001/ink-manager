@@ -13,7 +13,7 @@ interface NoteAuthor {
   email: string
 }
 
-interface InquiryNote {
+interface Note {
   id: string
   bodyHtml: string
   createdAt: string
@@ -23,24 +23,34 @@ interface InquiryNote {
   author: NoteAuthor | null
 }
 
-interface InquiryNotesSectionProps {
-  inquiryId: string
-  // OWNER/FRONT_DESK page-level gate (same boolean InquiryDetail.tsx's
-  // other staff-only actions already use) -- an ARTIST can't load this
-  // page at all (GET /inquiries/:id is OWNER/FRONT_DESK only server-side),
-  // so this is a defensive no-op in practice, not the real enforcement.
+interface NotesSectionProps {
+  // e.g. `/inquiries/${id}/notes` or `/appointments/${id}/notes` -- the
+  // full REST path this note list lives at (GET/POST here, PATCH/DELETE
+  // at `${notesPath}/${noteId}`). Both InquiryNote and AppointmentNote are
+  // the exact same shape/rules server-side (see api/src/lib/notes.ts), so
+  // one component covers both call sites; only the path differs.
+  notesPath: string
+  // Distinct react-query cache entry per call site -- pass the parent
+  // entity's own id (inquiryId/appointmentId) so switching between two
+  // different inquiries/appointments doesn't show stale notes from
+  // whichever was open previously.
+  queryKeyId: string
+  // OWNER/FRONT_DESK page-level gate (same boolean the page's other
+  // staff-only actions already use) -- an ARTIST can't load the Inquiry
+  // detail page at all server-side, and the Appointment detail page's
+  // notes routes are hardcoded OWNER/FRONT_DESK too, so this is a
+  // defensive no-op in practice, not the real enforcement.
   canManage: boolean
   readOnly: boolean
   // True when wrapped in the page's own <Widget> (this section's
   // visibility already matches canManage exactly, which the parent
-  // already knows synchronously -- unlike InquiryDetailsSection, no
-  // callback is needed to decide whether to render the wrapper at all).
-  // Skips this component's own card/title so there's exactly one of each.
+  // already knows synchronously). Skips this component's own card/title
+  // so there's exactly one of each.
   bare?: boolean
 }
 
 // RichTextEditor's own empty state is "<p></p>", not "" -- same
-// tag-stripping check the API route uses (isBlankHtml in inquiries.ts) to
+// tag-stripping check the API route uses (isBlankHtml in lib/notes.ts) to
 // decide whether the composer/edit Save button should be enabled.
 function isBlank(html: string): boolean {
   return html.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim().length === 0
@@ -52,18 +62,20 @@ function isBlank(html: string): boolean {
 // edits happen at least seconds (usually much longer) after creation.
 const EDITED_THRESHOLD_MS = 5000
 
-function isEdited(note: InquiryNote): boolean {
+function isEdited(note: Note): boolean {
   return new Date(note.updatedAt).getTime() - new Date(note.createdAt).getTime() > EDITED_THRESHOLD_MS
 }
 
 // Distinct from AuditTrail.tsx's "Activity History" card (system-generated,
 // terse field-diffs, one line per change) -- this is a manually-written
 // commentary feed: full rich-text bodies, an author name up top, its own
-// composer. Never merged into that display.
-export default function InquiryNotesSection({ inquiryId, canManage, readOnly, bare = false }: InquiryNotesSectionProps) {
+// composer. Never merged into that display. Shared by InquiryDetail.tsx
+// (Inquiry-level notes) and AppointmentDetail.tsx (per-session notes) --
+// same UX, same backend note shape, only the REST path differs.
+export default function NotesSection({ notesPath, queryKeyId, canManage, readOnly, bare = false }: NotesSectionProps) {
   const user = useEffectiveUser()
   const queryClient = useQueryClient()
-  const queryKey = ['inquiry-notes', inquiryId] as const
+  const queryKey = ['notes', notesPath, queryKeyId] as const
 
   const {
     data: notes,
@@ -71,7 +83,7 @@ export default function InquiryNotesSection({ inquiryId, canManage, readOnly, ba
     error,
   } = useQuery({
     queryKey,
-    queryFn: () => apiFetch<InquiryNote[]>(`/inquiries/${inquiryId}/notes`),
+    queryFn: () => apiFetch<Note[]>(notesPath),
     enabled: canManage,
   })
 
@@ -93,7 +105,7 @@ export default function InquiryNotesSection({ inquiryId, canManage, readOnly, ba
     setPosting(true)
     setPostError(null)
     try {
-      await apiFetch(`/inquiries/${inquiryId}/notes`, {
+      await apiFetch(notesPath, {
         method: 'POST',
         body: JSON.stringify({ bodyHtml: composerValue }),
       })
@@ -106,7 +118,7 @@ export default function InquiryNotesSection({ inquiryId, canManage, readOnly, ba
     }
   }
 
-  function startEdit(note: InquiryNote) {
+  function startEdit(note: Note) {
     setEditingNoteId(note.id)
     setEditValue(note.bodyHtml)
     setEditError(null)
@@ -117,7 +129,7 @@ export default function InquiryNotesSection({ inquiryId, canManage, readOnly, ba
     setSavingEditId(noteId)
     setEditError(null)
     try {
-      await apiFetch(`/inquiries/${inquiryId}/notes/${noteId}`, {
+      await apiFetch(`${notesPath}/${noteId}`, {
         method: 'PATCH',
         body: JSON.stringify({ bodyHtml: editValue }),
       })
@@ -134,7 +146,7 @@ export default function InquiryNotesSection({ inquiryId, canManage, readOnly, ba
     setDeletingId(noteId)
     setDeleteError(null)
     try {
-      await apiFetch(`/inquiries/${inquiryId}/notes/${noteId}`, { method: 'DELETE' })
+      await apiFetch(`${notesPath}/${noteId}`, { method: 'DELETE' })
       setConfirmingDeleteId(null)
       queryClient.invalidateQueries({ queryKey })
     } catch (err) {

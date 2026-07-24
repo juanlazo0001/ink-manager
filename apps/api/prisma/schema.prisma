@@ -154,30 +154,31 @@ model Studio {
   website   String?
   createdAt DateTime @default(now())
 
-  users              User[]
-  clients            Client[]
-  appointments       Appointment[]
-  locations          Location[]
-  rolePermissions    RolePermission[]
-  inquiries          Inquiry[]
-  inquiryNotes       InquiryNote[]
-  auditLogs          AuditLog[]
-  giftCards          GiftCard[]
-  settings           StudioSettings?
-  liabilityWaivers   LiabilityWaiver[]
-  taskDismissals     TaskDismissal[]
-  personalTasks      PersonalTask[]
-  sectionSeens       SectionSeen[]
-  conversations      Conversation[]
-  messages           Message[]
-  conversationTags   ConversationTag[]
-  prefillDrafts      PrefillDraft[]
-  integrations       StudioIntegration[]
-  artistReminderLogs ArtistReminderLog[]
+  users                   User[]
+  clients                 Client[]
+  appointments            Appointment[]
+  locations               Location[]
+  rolePermissions         RolePermission[]
+  inquiries               Inquiry[]
+  inquiryNotes            InquiryNote[]
+  appointmentNotes        AppointmentNote[]
+  auditLogs               AuditLog[]
+  giftCards               GiftCard[]
+  settings                StudioSettings?
+  liabilityWaivers        LiabilityWaiver[]
+  taskDismissals          TaskDismissal[]
+  personalTasks           PersonalTask[]
+  sectionSeens            SectionSeen[]
+  conversations           Conversation[]
+  messages                Message[]
+  conversationTags        ConversationTag[]
+  prefillDrafts           PrefillDraft[]
+  integrations            StudioIntegration[]
+  artistReminderLogs      ArtistReminderLog[]
   dismissedDuplicatePairs DismissedDuplicatePair[]
-  customPolicies     CustomPolicy[]
-  importBatches      ImportBatch[]
-  intakeFormFields   IntakeFormField[]
+  customPolicies          CustomPolicy[]
+  importBatches           ImportBatch[]
+  intakeFormFields        IntakeFormField[]
 }
 
 // Self-serve provider connections -- a studio owner connects their OWN
@@ -252,25 +253,26 @@ model User {
   artist Artist?
   client Client?
 
-  auditLogs               AuditLog[]
-  issuedGiftCards         GiftCard[]
-  verifiedWaivers         LiabilityWaiver[]         @relation("WaiverVerifiedBy")
-  checkedOutAppointments  Appointment[]             @relation("AppointmentCheckedOutBy")
-  taskDismissals          TaskDismissal[]
-  personalTasks           PersonalTask[]
-  createdPersonalTasks    PersonalTask[]            @relation("PersonalTaskCreatedBy")
-  sectionSeens            SectionSeen[]
-  staffConversation       Conversation?             @relation("StaffConversation")
-  authoredMessages        Message[]                 @relation("MessageAuthor")
-  authoredInquiryNotes    InquiryNote[]              @relation("InquiryNoteAuthor")
-  uploadedAppointmentPhotos AppointmentPhoto[]       @relation("AppointmentPhotoUploadedBy")
-  conversationReads       ConversationRead[]
-  conversationParticipant ConversationParticipant[]
-  createdConversationTags ConversationTag[]
-  createdPrefillDrafts    PrefillDraft[]
-  dismissedDuplicatePairs DismissedDuplicatePair[]
-  uploadedImportBatches   ImportBatch[]
-  widgetLayouts           UserWidgetLayout[]
+  auditLogs                 AuditLog[]
+  issuedGiftCards           GiftCard[]
+  verifiedWaivers           LiabilityWaiver[]         @relation("WaiverVerifiedBy")
+  checkedOutAppointments    Appointment[]             @relation("AppointmentCheckedOutBy")
+  taskDismissals            TaskDismissal[]
+  personalTasks             PersonalTask[]
+  createdPersonalTasks      PersonalTask[]            @relation("PersonalTaskCreatedBy")
+  sectionSeens              SectionSeen[]
+  staffConversation         Conversation?             @relation("StaffConversation")
+  authoredMessages          Message[]                 @relation("MessageAuthor")
+  authoredInquiryNotes      InquiryNote[]             @relation("InquiryNoteAuthor")
+  authoredAppointmentNotes  AppointmentNote[]         @relation("AppointmentNoteAuthor")
+  uploadedAppointmentPhotos AppointmentPhoto[]        @relation("AppointmentPhotoUploadedBy")
+  conversationReads         ConversationRead[]
+  conversationParticipant   ConversationParticipant[]
+  createdConversationTags   ConversationTag[]
+  createdPrefillDrafts      PrefillDraft[]
+  dismissedDuplicatePairs   DismissedDuplicatePair[]
+  uploadedImportBatches     ImportBatch[]
+  widgetLayouts             UserWidgetLayout[]
 
   locationId String?
   location   Location? @relation(fields: [locationId], references: [id])
@@ -333,7 +335,7 @@ model Client {
   // Free-text catch-all for any other contact channel not worth a
   // dedicated column (TikTok, personal website, etc.) -- informational
   // display only, no validation beyond basic length.
-  otherContact String?
+  otherContact       String?
 
   studioId String
   studio   Studio @relation(fields: [studioId], references: [id])
@@ -359,8 +361,8 @@ model Client {
   // pattern as smsConsentGivenAt above). Null means "not referred" or
   // "predates this feature."
   referredByClientId String?
-  referredBy          Client?  @relation("ClientReferral", fields: [referredByClientId], references: [id])
-  referredClients     Client[] @relation("ClientReferral")
+  referredBy         Client?  @relation("ClientReferral", fields: [referredByClientId], references: [id])
+  referredClients    Client[] @relation("ClientReferral")
 
   // The permanent guard against double-issuing this client's OWN referral
   // reward to whoever referred them -- checked (must be null) immediately
@@ -392,13 +394,13 @@ model Client {
   smsConsentGivenAt DateTime?
   smsConsentSource  String?
 
-  appointments     Appointment[]
-  inquiries        Inquiry[]
-  giftCards        GiftCard[]
-  liabilityWaivers LiabilityWaiver[]
-  conversation     Conversation?
-  phones           ClientPhone[]
-  emails           ClientEmail[]
+  appointments      Appointment[]
+  inquiries         Inquiry[]
+  giftCards         GiftCard[]
+  liabilityWaivers  LiabilityWaiver[]
+  conversation      Conversation?
+  phones            ClientPhone[]
+  emails            ClientEmail[]
   // Package R: rows from a mass import whose duplicate-detection matched
   // THIS client -- purely informational (which import(s) proposed
   // merging into this client); nothing about this client's own fields is
@@ -466,7 +468,7 @@ model ImportRow {
 // display position on the public form -- system and custom rows are
 // freely interleaved.
 model IntakeFormField {
-  id       String          @id @default(cuid())
+  id        String          @id @default(cuid())
   fieldKind IntakeFieldKind
 
   // Set only when fieldKind: SYSTEM. One of: name, email, phone,
@@ -612,13 +614,19 @@ model Appointment {
   inquiryId      String
   inquiryProject Inquiry @relation("InquirySessions", fields: [inquiryId], references: [id])
 
-  inquiry         Inquiry?         @relation("InquiryScheduledAppointment")
+  inquiry         Inquiry?           @relation("InquiryScheduledAppointment")
   // Stackable gift cards: several can attach to one appointment now (was a
   // to-one GiftCard? before this package, enforced by GiftCard.appointmentId
   // being @unique).
   giftCards       GiftCard[]
   liabilityWaiver LiabilityWaiver?
   photos          AppointmentPhoto[]
+  // Manually-written staff commentary on this specific session -- named
+  // noteEntries (not `notes`) to avoid colliding with the existing scalar
+  // `notes` field above (a single free-text field set at booking time,
+  // left untouched). Same InquiryNote pattern/model shape, one row per
+  // AppointmentNote model below.
+  noteEntries     AppointmentNote[]
 
   @@index([studioId, startTime])
   @@index([inquiryId])
@@ -794,6 +802,33 @@ model InquiryNote {
   @@index([inquiryId, createdAt])
 }
 
+// Same shape and purpose as InquiryNote above, one level down -- manually-
+// written staff commentary scoped to a single Appointment (session), not
+// the whole Inquiry/project. Kept as its own model rather than widening
+// InquiryNote with a nullable appointmentId: a note about "this specific
+// 2pm session" and a note about "the whole back-piece project" are
+// different scopes, and a client can have many Appointments per Inquiry.
+model AppointmentNote {
+  id        String   @id @default(cuid())
+  bodyHtml  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  appointmentId String
+  appointment   Appointment @relation(fields: [appointmentId], references: [id])
+
+  // Nullable for the same reason as InquiryNote.authorId -- survives its
+  // author's deletion from the studio.
+  authorId String?
+  author   User?   @relation("AppointmentNoteAuthor", fields: [authorId], references: [id])
+
+  @@index([studioId])
+  @@index([appointmentId, createdAt])
+}
+
 model StudioSettings {
   id                            String   @id @default(cuid())
   refundPolicy                  String?
@@ -966,8 +1001,8 @@ model DepositForm {
   // gift-card requirement -- this is not a scheduling commitment, real
   // scheduling still only happens via POST /inquiries/:id/schedule after
   // the deposit is paid. Either both set or both null.
-  proposedStartAt              DateTime?
-  proposedEndAt                DateTime?
+  proposedStartAt DateTime?
+  proposedEndAt   DateTime?
 
   // Package M: one project (Inquiry) can now have several deposit forms
   // over time -- one per tattoo session, not just one at conversion. No
@@ -975,15 +1010,15 @@ model DepositForm {
   // 3... in creation order for this inquiry) -- nothing else derives from
   // it, so a gap or out-of-order value from manual data repair would be
   // cosmetic, never a correctness issue.
-  inquiryId String
-  inquiry   Inquiry @relation(fields: [inquiryId], references: [id])
+  inquiryId     String
+  inquiry       Inquiry @relation(fields: [inquiryId], references: [id])
   // Default only matters for backfilling existing rows at migration time --
   // every one of them was necessarily the only DepositForm for its inquiry
   // (the unique constraint this replaces guaranteed it), so 1 is exactly
   // correct for all of them, not a guess. The application always sets this
   // explicitly on create; the default is just a safety net, not a relied-on
   // behavior.
-  sessionNumber Int @default(1)
+  sessionNumber Int     @default(1)
 
   // One-way optional link to the gift card issued for this deposit, once
   // one exists. Nullable: older/unsigned deposit forms won't have one yet.
