@@ -945,7 +945,16 @@ router.delete("/:id", requireRole(Role.OWNER), async (req, res) => {
     // appointment -- null it before deleting appointments, or that FK
     // blocks the appointment delete below.
     await tx.inquiry.updateMany({ where: { clientId: id }, data: { appointmentId: null } });
+    // AppointmentPhoto.appointmentId is required (RESTRICT at the DB
+    // level, unlike every other FK pointing at Client/Appointment in this
+    // transaction, which are all SET NULL) -- any appointment with a
+    // checkout-time photo attached would otherwise block the delete below.
+    await tx.appointmentPhoto.deleteMany({ where: { appointment: { clientId: id } } });
     await tx.appointment.deleteMany({ where: { clientId: id } });
+    // InquiryNote.inquiryId is also required/RESTRICT, same as
+    // AppointmentPhoto above -- any inquiry with a staff note on it would
+    // otherwise block the inquiry delete below.
+    await tx.inquiryNote.deleteMany({ where: { inquiry: { clientId: id } } });
     await tx.inquiry.deleteMany({ where: { clientId: id } });
     await tx.client.delete({ where: { id } });
   });
