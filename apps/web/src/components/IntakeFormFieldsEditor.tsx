@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { DragDropProvider, type DragEndEvent } from '@dnd-kit/react'
-import { useSortable } from '@dnd-kit/react/sortable'
+import { useSortable, isSortable } from '@dnd-kit/react/sortable'
 import { DragHandleIcon } from './icons'
 import { apiFetch } from '../lib/api'
 
@@ -264,13 +264,20 @@ export default function IntakeFormFieldsEditor({ canEdit }: { canEdit: boolean }
     ])
   }
 
+  // The default OptimisticSortingPlugin (dnd-kit's own, always-on unless
+  // overridden) already reorders items live as you drag -- by drop time the
+  // dragged item's OWN sortable index already equals wherever it's hovering,
+  // so matching source/target BY ID here is unreliable (they're frequently
+  // already equal). initialIndex (captured at drag start, untouched by the
+  // live optimistic reorder) vs. the current index is the correct pair to
+  // splice with.
   function handleDragEnd(event: DragEndEvent) {
-    const { source, target } = event.operation
-    if (!source || !target || source.id === target.id) return
+    const { source } = event.operation
+    if (!source || !isSortable(source)) return
+    const fromIndex = source.initialIndex
+    const toIndex = source.index
+    if (fromIndex === toIndex) return
     setDraft((current) => {
-      const fromIndex = current.findIndex((f) => f.id === source.id)
-      const toIndex = current.findIndex((f) => f.id === target.id)
-      if (fromIndex === -1 || toIndex === -1) return current
       const next = [...current]
       const [moved] = next.splice(fromIndex, 1)
       next.splice(toIndex, 0, moved)

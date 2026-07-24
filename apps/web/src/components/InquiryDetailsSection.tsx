@@ -71,7 +71,10 @@ function systemFieldValue(key: string, inquiry: InquiryForDetails): string {
 
 function formatCustomAnswer(answer: { type: string; answer: string | string[] }): string {
   if (Array.isArray(answer.answer)) return answer.answer.join(', ') || 'Not provided'
-  if (answer.type === 'YES_NO') return answer.answer === 'YES' ? 'Yes' : 'No'
+  // 'yes_no' (lowercase) is the pre-Package-Q-revised type string, still
+  // baked into any snapshot taken before this migration -- both spellings
+  // are checked so an old and a new YES_NO answer render identically.
+  if (answer.type === 'YES_NO' || answer.type === 'yes_no') return answer.answer === 'YES' ? 'Yes' : 'No'
   return answer.answer
 }
 
