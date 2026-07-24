@@ -1257,10 +1257,10 @@ export default function InquiryDetail() {
                       onClick={() => navigate(`/clients/${inquiry.clientId}`)}
                       aria-label="View Client"
                       title="View Client"
-                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-3 md:py-1.5"
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                     >
-                      <ClientsIcon className="h-4 w-4 md:h-3.5 md:w-3.5" />
-                      <span className="hidden text-xs font-medium md:inline">View Client</span>
+                      <ClientsIcon className="h-4 w-4" />
+                      <span className="hidden text-sm font-semibold md:inline">View Client</span>
                     </button>
                     {canMessage && (
                       <button
@@ -1269,10 +1269,10 @@ export default function InquiryDetail() {
                         disabled={startingConversation}
                         aria-label="Message"
                         title="Message"
-                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface disabled:opacity-60 md:h-auto md:w-auto md:gap-2 md:px-3 md:py-1.5"
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface disabled:opacity-60 md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                       >
-                        <MessageIcon className="h-4 w-4 md:h-3.5 md:w-3.5" />
-                        <span className="hidden text-xs font-medium md:inline">Message</span>
+                        <MessageIcon className="h-4 w-4" />
+                        <span className="hidden text-sm font-semibold md:inline">Message</span>
                       </button>
                     )}
                     {canMessage && (
@@ -1293,10 +1293,10 @@ export default function InquiryDetail() {
                         }}
                         aria-label="Share with Artist"
                         title="Share with Artist"
-                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-3 md:py-1.5"
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                       >
-                        <ShareIcon className="h-4 w-4 md:h-3.5 md:w-3.5" />
-                        <span className="hidden text-xs font-medium md:inline">Share with Artist</span>
+                        <ShareIcon className="h-4 w-4" />
+                        <span className="hidden text-sm font-semibold md:inline">Share with Artist</span>
                       </button>
                     )}
                     <StatusPill status={inquiry.status} label={describeInquiryStatus(inquiry)} />
