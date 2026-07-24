@@ -6,6 +6,7 @@ interface PhoneInputProps {
   value: string
   onChange: (digits: string) => void
   required?: boolean
+  disabled?: boolean
   className?: string
   placeholder?: string
 }
@@ -19,7 +20,7 @@ interface PhoneInputProps {
 // everywhere rather than a comparison-time-only transform. Every phone
 // field in the app should render through this component instead of a
 // bare `<input type="tel">`.
-export default function PhoneInput({ id, value, onChange, required, className, placeholder }: PhoneInputProps) {
+export default function PhoneInput({ id, value, onChange, required, disabled, className, placeholder }: PhoneInputProps) {
   const [touched, setTouched] = useState(false)
   const incomplete = value.length > 0 && value.length < 10
 
@@ -30,6 +31,7 @@ export default function PhoneInput({ id, value, onChange, required, className, p
         type="tel"
         inputMode="numeric"
         required={required}
+        disabled={disabled}
         placeholder={placeholder ?? '(910) 555-0123'}
         value={formatPhoneInput(value)}
         onChange={(event) => {

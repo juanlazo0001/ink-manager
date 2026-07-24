@@ -7,7 +7,7 @@ import ImageUploadSection, { type ImageUploadState } from './ImageUploadSection'
 import ArtistSelect from './ArtistSelect'
 
 const INPUT_CLASS =
-  'mt-1 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
+  'mt-1 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent disabled:cursor-not-allowed disabled:opacity-60'
 const LABEL_CLASS = 'block text-sm font-medium text-fg-secondary'
 
 interface StaffArtist {
@@ -22,6 +22,14 @@ interface CreatedInquiry {
 interface StaffInquiryFormProps {
   onClose: () => void
   onCreated: (inquiryId: string) => void
+  // Set when opened from an existing client's own page (e.g. ClientDetail's
+  // "New Inquiry" button) -- pre-fills identity fields and locks whichever
+  // of them already have a value, so this inquiry can only ever attach to
+  // THIS client (POST /inquiries matches an existing client by email, then
+  // phone -- an edited email here could silently attach to a different
+  // client, or spawn a duplicate). A field with no value on file (e.g. no
+  // phone on record) stays editable rather than blocking submission.
+  lockedClient?: { firstName: string; lastName: string; email: string; phone: string }
 }
 
 // Staff-side counterpart to the public IntakeForm -- front desk fills this
@@ -29,11 +37,11 @@ interface StaffInquiryFormProps {
 // and validation as the public form, submitted to the same POST /inquiries
 // (optionalAuth on that route attributes the create to this staff member
 // and skips the studioSlug requirement since the JWT already carries it).
-export default function StaffInquiryForm({ onClose, onCreated }: StaffInquiryFormProps) {
-  const [firstName, setFirstName] = useState('')
-  const [lastName, setLastName] = useState('')
-  const [email, setEmail] = useState('')
-  const [phone, setPhone] = useState('')
+export default function StaffInquiryForm({ onClose, onCreated, lockedClient }: StaffInquiryFormProps) {
+  const [firstName, setFirstName] = useState(lockedClient?.firstName ?? '')
+  const [lastName, setLastName] = useState(lockedClient?.lastName ?? '')
+  const [email, setEmail] = useState(lockedClient?.email ?? '')
+  const [phone, setPhone] = useState(lockedClient?.phone ?? '')
   const [channel, setChannel] = useState('PHONE')
   const [referralCode, setReferralCode] = useState('')
   const [description, setDescription] = useState('')
@@ -144,27 +152,51 @@ export default function StaffInquiryForm({ onClose, onCreated }: StaffInquiryFor
   }
 
   return (
-    <Modal title="New Inquiry" onClose={onClose}>
+    <Modal
+      title={lockedClient ? `New Inquiry — ${lockedClient.firstName} ${lockedClient.lastName}` : 'New Inquiry'}
+      onClose={onClose}
+    >
       <form onSubmit={handleSubmit} className="max-h-[70vh] space-y-5 overflow-y-auto pr-1">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <label className={LABEL_CLASS}>First name *</label>
-            <input type="text" value={firstName} onChange={(e) => setFirstName(e.target.value)} required className={INPUT_CLASS} />
+            <input
+              type="text"
+              value={firstName}
+              onChange={(e) => setFirstName(e.target.value)}
+              required
+              disabled={!!lockedClient?.firstName}
+              className={INPUT_CLASS}
+            />
           </div>
           <div>
             <label className={LABEL_CLASS}>Last name *</label>
-            <input type="text" value={lastName} onChange={(e) => setLastName(e.target.value)} required className={INPUT_CLASS} />
+            <input
+              type="text"
+              value={lastName}
+              onChange={(e) => setLastName(e.target.value)}
+              required
+              disabled={!!lockedClient?.lastName}
+              className={INPUT_CLASS}
+            />
           </div>
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <label className={LABEL_CLASS}>Email *</label>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className={INPUT_CLASS} />
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              disabled={!!lockedClient?.email}
+              className={INPUT_CLASS}
+            />
           </div>
           <div>
             <label className={LABEL_CLASS}>Phone</label>
-            <PhoneInput value={phone} onChange={setPhone} className={INPUT_CLASS} />
+            <PhoneInput value={phone} onChange={setPhone} disabled={!!lockedClient?.phone} className={INPUT_CLASS} />
           </div>
         </div>
 

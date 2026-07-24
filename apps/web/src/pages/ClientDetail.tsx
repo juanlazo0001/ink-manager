@@ -7,6 +7,7 @@ import AuditTrail from '../components/AuditTrail'
 import StatusPill from '../components/StatusPill'
 import PhoneInput from '../components/PhoneInput'
 import ClientComparisonView from '../components/ClientComparisonView'
+import StaffInquiryForm from '../components/StaffInquiryForm'
 import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import { apiFetch, ApiError } from '../lib/api'
 import { describeAppointmentStatus, formatDateTime, formatPhoneInput, formatStatus, isValidPhoneDigits } from '../lib/format'
@@ -21,6 +22,7 @@ import {
   MessageIcon,
   MoreIcon,
   PencilIcon,
+  PlusIcon,
   SearchIcon,
   SendIcon,
 } from '../components/icons'
@@ -301,6 +303,8 @@ export default function ClientDetail() {
   const [exemptForm, setExemptForm] = useState(EMPTY_EXEMPT_FORM)
   const [issuingExempt, setIssuingExempt] = useState(false)
   const [exemptError, setExemptError] = useState<string | null>(null)
+
+  const [showNewInquiry, setShowNewInquiry] = useState(false)
 
   const [editing, setEditing] = useState(false)
   const [editForm, setEditForm] = useState(EMPTY_EDIT_FORM)
@@ -1513,7 +1517,21 @@ export default function ClientDetail() {
               )}
 
               <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <h2 className="text-base font-semibold text-fg">Inquiries</h2>
+                <div className="flex items-center justify-between">
+                  <h2 className="text-base font-semibold text-fg">Inquiries</h2>
+                  {canManage && !client.mergedIntoId && (
+                    <button
+                      type="button"
+                      onClick={() => setShowNewInquiry(true)}
+                      aria-label="New Inquiry"
+                      title="New Inquiry"
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
+                    >
+                      <PlusIcon className="h-4 w-4" />
+                      <span className="hidden text-sm font-semibold md:inline">New Inquiry</span>
+                    </button>
+                  )}
+                </div>
 
                 {client.inquiries.length === 0 && <p className="mt-4 text-sm text-fg-secondary">No inquiries yet.</p>}
 
@@ -2047,6 +2065,22 @@ export default function ClientDetail() {
             </button>
           </form>
         </Modal>
+      )}
+
+      {showNewInquiry && client && (
+        <StaffInquiryForm
+          onClose={() => setShowNewInquiry(false)}
+          onCreated={(inquiryId) => {
+            setShowNewInquiry(false)
+            navigate(`/inquiries/${inquiryId}`)
+          }}
+          lockedClient={{
+            firstName: client.firstName,
+            lastName: client.lastName,
+            email: client.email ?? '',
+            phone: client.phone ?? '',
+          }}
+        />
       )}
 
       {showMergeSearch && (
