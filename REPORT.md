@@ -1691,4 +1691,68 @@ Full script output and screenshots were reviewed directly (not summarized from a
 
 Both scratch dev servers (API :4901, web :5901) stopped by PID after confirming the ports freed. All temporary verification scripts (`verify_giftcards.mjs`, `verify_cross_studio.mjs`, `verify_gc_ui.mjs`, `verify_gc_ui2.mjs`, `verify_checkout_ui.mjs`, `create_checkout_test.mjs`) and screenshots stayed in the scratchpad only, none committed. Test data created during verification (several gift cards, several appointments across their full REDEEM/ROLL/overage lifecycle, on the dev studio's existing `FullTest Submission` test client) left in the dev database, consistent with the standing convention in every prior package's report — this package did not touch production.
 
+---
+
+# Fix — YES opt-in keyword, opt-in confirmation reply, HELP keyword
+
+Single session on `main`. No schema migration (JSON field only), confirmed via pre-flight.
+
+## Pre-flight finding: item 1 was already done
+
+Before writing any code, read `apps/api/src/routes/webhooks.ts` directly rather than assuming the task's premise held. `START_KEYWORDS` was already `new Set(["START", "UNSTOP", "YES"])` — **YES was already a recognized opt-in keyword**. The two genuine gaps, confirmed by the same read: START/YES/UNSTOP cleared `Client.smsOptedOutAt` completely silently (no reply sent, confirmed — the only response anywhere in the route is empty TwiML), and there was no `HELP` keyword at all (no `HELP_KEYWORDS` set, no branch referencing it).
+
+## What changed
+
+- **`lib/reminderTemplates.ts`** (new): `ReminderTemplates` interface + `renderTemplate()`, extracted from `lib/jobs/reminderTicker.ts`'s own local (unexported) copies of both, so the webhook's new auto-replies and the existing cron ticker share one implementation rather than two that happen to agree. `reminderTicker.ts` now imports both from here.
+- **Schema / seed**: `StudioSettings.reminderTemplates`'s doc-comment shape extended with `optInConfirmation` and `helpResponse`. `seed.ts`'s template literal gets both, with the task's exact wording. `studioSettings.ts`'s `REMINDER_TEMPLATE_KEYS` (the all-required-non-empty-string validation array) extended to match.
+- **Dev backfill**: the one existing dev `StudioSettings` row predated this change (`upsert`'s `update: {}` wouldn't have reached it on a re-seed) — backfilled via a one-off idempotent script (checked before/after keys, not just log output) to add the 2 new keys without touching the other 5.
+- **`lib/clientSms.ts`**: `sendClientSms` gains an optional `bypassOptOutCheck` flag. This is the one sanctioned exception to its normal opted-out gate — HELP must work regardless of current opt-in/opt-out status per CTIA convention (and this task's own explicit instruction), and every other caller (reminders, composer, the new opt-in confirmation itself) leaves it unset and gets the normal enforcement.
+- **`routes/webhooks.ts`**: `HELP_KEYWORDS = new Set(["HELP"])`. On a successful START/YES/UNSTOP transition (the existing `else if (... && client.smsOptedOutAt)` branch, unchanged condition), renders `optInConfirmation` with `{{studioName}}` and sends it via `sendClientSms`. A new `else if (HELP_KEYWORDS.has(keyword))` branch (fires independent of opt-in/opt-out status) renders `helpResponse` with `{{studioName}}`/`{{studioPhone}}`/`{{studioEmail}}` (sourced from the studio's first `Location` row — neither `Studio` nor `StudioSettings` has a dedicated phone/email field) and sends it with `bypassOptOutCheck: true`. Both silently no-op if the studio's `reminderTemplates` doesn't have the relevant key yet (same "skip if not configured" spirit `reminderTicker.ts`'s own `if (sendTimes && templates)` gate already uses), rather than sending a broken/empty message.
+- **Settings.tsx**: two new entries in `REMINDER_TEMPLATE_FIELDS` (`optInConfirmation` → placeholders `['studioName']`; `helpResponse` → `['studioName', 'studioPhone', 'studioEmail']`) and the `ReminderTemplatesData` interface. The editor's render loop is already generic over this array — no other UI code needed, confirmed by reading `Settings.tsx` before assuming.
+- **Dev seed**: added one `Location` row for the dev studio (none existed at all) with a real phone/email, so the HELP reply's placeholders render actual values in dev instead of coming out blank.
+
+## Discrepancy found and escalated: production's studio name didn't match the submitted campaign text
+
+Checked production directly (read-only) before assuming anything: `Studio.name` there was **"Black Hive Ink"** — not "Black Hive Ink and Arts" as the task's exact-submitted-to-Twilio text names. Since `{{studioName}}` renders from `Studio.name`, production would have sent "Black Hive Ink: You are now opted-in..." — not matching what the task says was actually submitted to carriers for the A2P campaign, which is exactly the kind of mismatch this task's own framing ("must match reality exactly") was written to catch. Stopped and asked rather than guessing or silently hardcoding around the placeholder. User chose to update `Studio.name` to `"Black Hive Ink and Arts"` in production.
+
+Separately, production's `StudioSettings.reminderTemplates` was **entirely `null`** (no SMS integration is connected there yet either) — since the field is validated all-or-nothing (7 required non-empty-string keys), making `optInConfirmation`/`helpResponse` usable at all meant the other 5 (client/artist reminder cadence, unrelated to this task) needed real text too, not just the two this task asked for. Flagged this as a distinct decision rather than bundling it into the name-mismatch question. User chose to populate all 7 with the same generic defaults used in dev.
+
+**Applied to production** (verified read-only first, then applied, then re-verified):
+- `Studio.name`: `"Black Hive Ink"` → `"Black Hive Ink and Arts"`.
+- `StudioSettings.reminderTemplates`: `null` → the same 7-key object seeded in dev.
+- Confirmed after: `/health` 200, and a bogus-credential `POST /login` returns `401` (not 500), confirming the API is still round-tripping to the database correctly post-change.
+
+Production has no connected SMS integration at present, so none of this fires live yet — it's now correctly staged for the moment Twilio is connected there, rather than needing this same discrepancy re-discovered later.
+
+## Verification
+
+**Live-signature Twilio simulation** (PowerShell/live send wasn't practical in this environment; a Node script instead computed real `X-Twilio-Signature` HMAC-SHA1 signatures using the dev studio's actual decrypted Twilio auth token — the exact algorithm `verifyTwilioSignature`/the `twilio` package checks against — so the webhook's real signature-verification path was genuinely exercised, not bypassed):
+
+| # | Scenario | Result |
+|---|---|---|
+| 1 | STOP opts a client out (regression check) | **PASS** |
+| 2 | YES from an opted-out client → opt-out cleared | **PASS** |
+| 3 | YES → opt-in confirmation auto-reply actually sent (real outbound `Message` row, exact seeded text with `{{studioName}}` rendered as `"Dev Studio"`) | **PASS** |
+| 4 | START → opt-out cleared, confirmation reply sent | **PASS** (still working, no regression) |
+| 5 | UNSTOP → opt-out cleared | **PASS** (still working, no regression) |
+| 6 | HELP while opted out → `200`, reply sent, opt-out status **unchanged** | **PASS** |
+| 7 | HELP while opted in → `200`, reply sent, opted-in status **unchanged** | **PASS** |
+| 8 | HELP reply renders the real studio phone number (`{{studioPhone}}` → the seeded dev Location's `555-0100`) | **PASS** |
+
+18/18 individual assertions passed (some scenarios above check multiple things — status code, DB state, and actual message content — each recorded separately). First run had 2 test-script bugs of my own (an over-loose regex matching "for help" inside the opt-in text too, and phone-number reuse across script runs colliding client lookups) — both caught, fixed, and the full suite re-run clean rather than accepting a false pass.
+
+**Settings editor UI** (Playwright, screenshots reviewed directly): both new templates appear in the "Reminder Templates & Send Times" list; opening "SMS Opt-In Confirmation" shows the `{{studioName}}` placeholder chip, the exact seeded text, and a working character/segment counter (`150/160 characters · 1 SMS segment`) identical in behavior to the existing 5; "SMS HELP Reply" shows its `{{studioPhone}}` chip correctly too.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npx tsc --noEmit` + `npm run build` (web) — clean.
+
+## Commit
+
+`d2fd1b9` — Fix: YES opt-in keyword, opt-in confirmation reply, HELP keyword. Pushed immediately. Production `Studio.name`/`reminderTemplates` changes (see above) were applied directly via script against `.env.production`'s `DATABASE_URL`, not through a migration — there's no schema change to commit for that part, only the data change itself, executed and verified as described above.
+
+## Cleanup
+
+Scratch API (:5001) and web (:6001) servers stopped by PID. The decrypted Twilio auth token, fetched once to sign test webhook requests, was written to a scratchpad-only file and deleted immediately after use — never printed to any persistent log. All temporary scripts (`verify_sms.mjs`, `verify_settings_ui.mjs`, `get_token_script.ts`, `check_prod_templates.ts`, `check_prod_studio.ts`, `prod_apply.ts`) deleted or left scratchpad-only, none committed. Test data (one throwaway client per test client per verification run, `SmsKeyword TestClient`) left in the dev database, consistent with this session's standing convention.
+
 
