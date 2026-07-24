@@ -27,6 +27,7 @@ import {
   InfoIcon,
   MessageIcon,
   MoreIcon,
+  PencilIcon,
   PlusIcon,
   SendIcon,
   SparkleIcon,
@@ -120,8 +121,17 @@ interface MessageItem {
   attachments: string[] | null
   metadata: MessageMetadata | null
   createdAt: string
+  updatedAt: string
   authorUserId: string | null
   author: { id: string; name: string | null; email: string } | null
+}
+
+// One row per (conversation, user) who has ever read it -- STAFF/GROUP
+// threads only (see GET /:id/messages), used to derive a "Read" receipt
+// for the current user's own last message.
+interface ConversationReadRow {
+  userId: string
+  lastReadAt: string
 }
 
 interface ConversationTag {
@@ -149,6 +159,7 @@ interface ThreadResponse {
     tags: ConversationTag[]
   }
   messages: MessageItem[]
+  reads: ConversationReadRow[]
   nextCursor: string | null
 }
 
@@ -317,6 +328,24 @@ function dayLabel(iso: string): string {
 // repeating its own timestamp/channel line.
 function sameMinute(a: string, b: string): boolean {
   return Math.floor(new Date(a).getTime() / 60_000) === Math.floor(new Date(b).getTime() / 60_000)
+}
+
+// createdAt/updatedAt land within a few ms of each other at creation time
+// (two separate `now()` defaults resolved in the same insert) -- a strict
+// !== would flag every fresh message as "edited". Same idiom/threshold as
+// InquiryNotesSection's isEdited.
+const MESSAGE_EDITED_THRESHOLD_MS = 5000
+function isMessageEdited(message: MessageItem): boolean {
+  return new Date(message.updatedAt).getTime() - new Date(message.createdAt).getTime() > MESSAGE_EDITED_THRESHOLD_MS
+}
+
+// Twilio's terminal SMS statuses only -- queued/sending/sent are
+// deliberately unlabeled (no indicator) rather than a noisy "Sending…"
+// that would need a matching removal once the real terminal status lands.
+function smsStatusLabel(status: string | undefined): string | null {
+  if (status === 'delivered') return 'Delivered'
+  if (status === 'failed' || status === 'undelivered') return 'Not delivered'
+  return null
 }
 
 // Per-channel dot colors for the thread's meta row and the composer's
@@ -1328,6 +1357,13 @@ function ThreadView({
   const [tagError, setTagError] = useState<string | null>(null)
   const [imagePickerFor, setImagePickerFor] = useState<string | null>(null)
   const [imageAttachError, setImageAttachError] = useState<string | null>(null)
+  // Message editing: STAFF/GROUP only, author-only (see PATCH route) --
+  // only one message editable at a time, matching InquiryNotesSection's
+  // single-editingNoteId pattern.
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
+  const [editValue, setEditValue] = useState('')
+  const [savingEdit, setSavingEdit] = useState(false)
+  const [editError, setEditError] = useState<string | null>(null)
   const [showMoreMenu, setShowMoreMenu] = useState(false)
   const [showDraftModal, setShowDraftModal] = useState(false)
   const [draftLoading, setDraftLoading] = useState(false)
@@ -1934,6 +1970,30 @@ function ThreadView({
     }
   }
 
+  function startEditingMessage(message: MessageItem) {
+    setEditingMessageId(message.id)
+    setEditValue(message.body)
+    setEditError(null)
+  }
+
+  async function handleSaveEdit(messageId: string) {
+    if (editValue.trim().length === 0) return
+    setSavingEdit(true)
+    setEditError(null)
+    try {
+      await apiFetch(`/conversations/${conversationId}/messages/${messageId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ body: editValue.trim() }),
+      })
+      setEditingMessageId(null)
+      queryClient.invalidateQueries({ queryKey: ['conversation-thread', conversationId] })
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : 'Failed to save message')
+    } finally {
+      setSavingEdit(false)
+    }
+  }
+
   const counterpartName = data?.conversation.counterpart?.name ?? 'Conversation'
   const primaryInquiry = data?.conversation.primaryInquiry ?? null
   const headerTone = primaryInquiry ? getStatusTone(primaryInquiry.status) : null
@@ -1970,6 +2030,28 @@ function ThreadView({
         prevGroup.messages.push(message)
       } else {
         messageGroups.push({ messages: [message], isOutboundSide, showDaySeparator })
+      }
+    }
+  }
+
+  // Read receipt for the very last message in the thread, STAFF/GROUP only
+  // -- "Read" once ANY other participant's lastReadAt is at/after it
+  // (matches a 1:1 STAFF thread exactly; for GROUP this is "seen by at
+  // least one person" rather than "seen by everyone", a deliberate
+  // simplification over per-person seen-by lists). Shown only under the
+  // last message of the whole thread (iMessage-style), not per message.
+  let lastMessageReadLabel: string | null = null
+  {
+    const veryLastMessage = data?.messages[data.messages.length - 1]
+    if (!isClientThread && veryLastMessage && veryLastMessage.authorUserId === user?.userId) {
+      const latestOtherRead = (data?.reads ?? [])
+        .filter((r) => r.userId !== veryLastMessage.authorUserId)
+        .reduce<string | null>(
+          (latest, r) => (!latest || new Date(r.lastReadAt) > new Date(latest) ? r.lastReadAt : latest),
+          null,
+        )
+      if (latestOtherRead && new Date(latestOtherRead) >= new Date(veryLastMessage.createdAt)) {
+        lastMessageReadLabel = `Read ${formatDateTime(latestOtherRead)}`
       }
     }
   }
@@ -2400,7 +2482,7 @@ function ThreadView({
         <div ref={scrollRef} className="h-full min-w-0 flex-1 space-y-2 overflow-y-auto px-3 py-3">
           {isLoading && <p className="text-sm text-fg-secondary">Loading…</p>}
 
-          {messageGroups.map((group) => {
+          {messageGroups.map((group, groupIndex) => {
             const firstMessage = group.messages[0]
             const lastMessage = group.messages[group.messages.length - 1]
             const sharedInquiryId =
@@ -2445,10 +2527,15 @@ function ThreadView({
                               ? 'rounded-tl-[18px] rounded-tr-[18px] rounded-bl-[18px] rounded-br-[5px]'
                               : 'rounded-tl-[18px] rounded-tr-[18px] rounded-br-[18px] rounded-bl-[5px]'
 
+                        const canEditMessage =
+                          !isClientThread && !sharedInquiryId && message.authorUserId === user?.userId && !viewAsTarget
+                        const isEditingThis = editingMessageId === message.id
+
                         return (
                           <div
                             key={message.id}
                             className={[
+                              'group relative',
                               i === 0 ? '' : 'mt-[3px]',
                               'max-w-full px-4 py-2.5 text-sm text-[#f2f2f0]',
                               cornerClass,
@@ -2460,13 +2547,72 @@ function ThreadView({
                               recentlyAddedIds.has(message.id) ? 'animate-fade-slide-up' : '',
                             ].join(' ')}
                           >
+                            {canEditMessage && !isEditingThis && (
+                              <button
+                                type="button"
+                                onClick={() => startEditingMessage(message)}
+                                aria-label="Edit message"
+                                title="Edit message"
+                                className="absolute -top-2 -left-2 flex h-6 w-6 items-center justify-center rounded-full border border-border bg-surface-raised text-fg-muted opacity-0 shadow transition group-hover:opacity-100 hover:text-fg"
+                              >
+                                <PencilIcon className="h-3 w-3" />
+                              </button>
+                            )}
                             {sharedInquiryId && i === 0 && (
                               <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-fg-secondary">
                                 Shared inquiry
                               </p>
                             )}
-                            {message.body && (
-                              <p className="whitespace-pre-wrap break-words">{linkifyText(message.body)}</p>
+                            {isEditingThis ? (
+                              <div className="min-w-[160px]">
+                                <textarea
+                                  autoFocus
+                                  rows={2}
+                                  value={editValue}
+                                  onChange={(e) => setEditValue(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter' && !e.shiftKey) {
+                                      e.preventDefault()
+                                      handleSaveEdit(message.id)
+                                    } else if (e.key === 'Escape') {
+                                      setEditingMessageId(null)
+                                    }
+                                  }}
+                                  className="w-full resize-none rounded-lg border border-border bg-surface-inset px-2 py-1 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                                />
+                                {editError && <p className="mt-1 text-[10.5px] text-danger">{editError}</p>}
+                                <div className="mt-1 flex gap-3">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSaveEdit(message.id)}
+                                    disabled={savingEdit || editValue.trim().length === 0}
+                                    className="text-[10.5px] font-semibold text-fg hover:underline disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    {savingEdit ? 'Saving…' : 'Save'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingMessageId(null)}
+                                    className="text-[10.5px] font-medium text-fg-secondary hover:underline"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              message.body && (
+                                <p className="whitespace-pre-wrap break-words">
+                                  {linkifyText(message.body)}
+                                  {/* CLIENT threads' updatedAt can legitimately move without a body
+                                      edit -- the Twilio status webhook bumps it via a metadata-only
+                                      update (see the Message model's doc comment). Only STAFF/GROUP
+                                      messages can ever be body-edited, so only they should ever earn
+                                      this tag. */}
+                                  {!isClientThread && isMessageEdited(message) && (
+                                    <span className="ml-1 text-[10.5px] italic text-[#8a8a92]">(edited)</span>
+                                  )}
+                                </p>
+                              )
                             )}
                             {message.attachments && message.attachments.length > 0 && (
                               <div className={sharedInquiryId ? 'mt-1.5 grid grid-cols-2 gap-1' : 'mt-1.5 space-y-1.5'}>
@@ -2523,10 +2669,18 @@ function ThreadView({
                               </Link>
                             )}
                             {message.channel === 'SMS' &&
-                              (message.metadata?.deliveryStatus === 'failed' ||
-                                message.metadata?.deliveryStatus === 'undelivered') && (
-                                <p className="mt-1 text-[10.5px] font-medium text-danger">Not delivered</p>
-                              )}
+                              smsStatusLabel(message.metadata?.deliveryStatus) &&
+                              (() => {
+                                const label = smsStatusLabel(message.metadata?.deliveryStatus)
+                                const isFailure = message.metadata?.deliveryStatus !== 'delivered'
+                                return (
+                                  <p
+                                    className={`mt-1 text-[10.5px] font-medium ${isFailure ? 'text-danger' : 'text-[#8a8a92]'}`}
+                                  >
+                                    {label}
+                                  </p>
+                                )
+                              })()}
                           </div>
                         )
                       })}
@@ -2538,7 +2692,11 @@ function ThreadView({
                           <span>{formatDateTime(lastMessage.createdAt)}</span>
                         </div>
                       ) : (
-                        <p className="mt-1 px-1 text-[10.5px] text-[#8a8a92]">{formatDateTime(lastMessage.createdAt)}</p>
+                        <p className="mt-1 px-1 text-[10.5px] text-[#8a8a92]">
+                          {groupIndex === messageGroups.length - 1 && group.isOutboundSide && lastMessageReadLabel
+                            ? lastMessageReadLabel
+                            : formatDateTime(lastMessage.createdAt)}
+                        </p>
                       )}
                     </div>
                   </div>

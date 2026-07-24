@@ -1048,8 +1048,16 @@ model ConversationTag {
   @@index([studioId])
 }
 
-// Immutable once created -- a communications record, not an editable
-// document. No PATCH/DELETE route exists for this model, deliberately.
+// Immutable communications record for CLIENT threads -- no PATCH/DELETE
+// route touches body/channel/direction/attachments there, deliberately: an
+// edited copy would no longer match what was actually sent to/received
+// from the client over SMS/Email. STAFF/GROUP (internal Team chat)
+// messages ARE editable in place (PATCH /:id/messages/:messageId, author
+// only) since there's no external channel to drift out of sync with --
+// updatedAt distinguishes an edited message from a fresh one, same
+// edited-detection idiom as InquiryNote (compare updatedAt to createdAt
+// with a small threshold, since the two naturally differ by a few ms even
+// on an unedited row).
 model Message {
   id          String           @id @default(cuid())
   channel     MessageChannel
@@ -1063,6 +1071,12 @@ model Message {
   // card instead of a plain text bubble.
   metadata    Json?
   createdAt   DateTime         @default(now())
+  // @default(now()) alongside @updatedAt (not just @updatedAt alone) so
+  // the migration adding this column can backfill every existing row
+  // in-place instead of needing an interactive "what default for existing
+  // rows" prompt -- Prisma Client still auto-bumps it on every update
+  // regardless of the column default.
+  updatedAt   DateTime         @default(now()) @updatedAt
 
   studioId String
   studio   Studio @relation(fields: [studioId], references: [id])

@@ -12,7 +12,7 @@ import {
   Role,
 } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
-import { logAudit } from "../lib/audit";
+import { diffObjects, logAudit } from "../lib/audit";
 import { emitInvalidation } from "../lib/realtime/registry";
 import {
   canViewConversation,
@@ -416,6 +416,17 @@ router.get("/:id/messages", async (req, res) => {
   const hasMore = page.length > MESSAGES_PAGE_SIZE;
   const messages = page.slice(0, MESSAGES_PAGE_SIZE).reverse();
 
+  // Read receipts: only meaningful for STAFF/GROUP (internal, IN_APP) --
+  // CLIENT threads have no logged-in counterpart to have "read" anything,
+  // so skip the query there entirely rather than return an always-empty array.
+  const reads =
+    conversation.type === ConversationType.CLIENT
+      ? []
+      : await prisma.conversationRead.findMany({
+          where: { conversationId: id },
+          select: { userId: true, lastReadAt: true },
+        });
+
   const tags = await Promise.all(
     conversation.tags.map(async (tag) => ({
       id: tag.id,
@@ -437,6 +448,7 @@ router.get("/:id/messages", async (req, res) => {
       tags,
     },
     messages,
+    reads,
     nextCursor: hasMore ? page[MESSAGES_PAGE_SIZE].id : null,
   });
 });
@@ -708,6 +720,63 @@ router.post("/:id/messages", async (req, res) => {
   emitInvalidation({ type: "conversation.updated", studioId, conversationId: id });
 
   res.status(201).json(message);
+});
+
+// Edits are STAFF/GROUP-only (internal Team chat) and author-only -- see
+// the Message model's doc comment for why CLIENT threads stay immutable.
+// Not an OWNER-override like InquiryNote's edit permission: unlike a
+// shared internal note, a chat message you didn't write isn't yours to
+// silently rewrite, even for an OWNER.
+router.patch("/:id/messages/:messageId", async (req, res) => {
+  const id = req.params.id as string;
+  const messageId = req.params.messageId as string;
+  const { studioId, userId, role } = req.user!;
+  const payload = req.body ?? {};
+
+  const conversation = await prisma.conversation.findUnique({
+    where: { id },
+    include: { participants: { select: { userId: true } } },
+  });
+  if (!conversation || !canViewConversation(conversation, studioId, userId, role)) {
+    return res.status(404).json({ error: "Conversation not found" });
+  }
+
+  if (conversation.type === ConversationType.CLIENT) {
+    return res.status(400).json({ error: "Client messages can't be edited" });
+  }
+
+  const message = await prisma.message.findUnique({ where: { id: messageId } });
+  if (!message || message.studioId !== studioId || message.conversationId !== id) {
+    return res.status(404).json({ error: "Message not found" });
+  }
+
+  if (message.authorUserId !== userId) {
+    return res.status(403).json({ error: "Only this message's author can edit it" });
+  }
+
+  const bodyText = typeof payload.body === "string" ? payload.body.trim() : "";
+  if (bodyText.length === 0) {
+    return res.status(400).json({ error: "body is required" });
+  }
+
+  const updated = await prisma.message.update({
+    where: { id: messageId },
+    data: { body: bodyText },
+    include: { author: { select: { id: true, name: true, email: true } } },
+  });
+
+  await logAudit({
+    studioId,
+    actorUserId: userId,
+    entityType: "Message",
+    entityId: messageId,
+    action: "update",
+    changes: diffObjects(message, { body: bodyText }, ["body"]),
+  });
+
+  emitInvalidation({ type: "conversation.updated", studioId, conversationId: id });
+
+  res.json(updated);
 });
 
 // Aggregate, summary-only view backing the quick-details drawer AND the
