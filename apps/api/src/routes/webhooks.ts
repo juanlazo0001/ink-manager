@@ -15,6 +15,8 @@ import { normalizePhone } from "../lib/phone";
 import { reuploadTwilioMedia } from "../lib/cloudinary";
 import { logAudit } from "../lib/audit";
 import { generateUniqueReferralCode } from "../lib/referrals";
+import { sendClientSms } from "../lib/clientSms";
+import { renderTemplate, type ReminderTemplates } from "../lib/reminderTemplates";
 
 const router = Router();
 
@@ -27,6 +29,62 @@ function twiml(res: import("express").Response) {
 
 const STOP_KEYWORDS = new Set(["STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"]);
 const START_KEYWORDS = new Set(["START", "UNSTOP", "YES"]);
+const HELP_KEYWORDS = new Set(["HELP"]);
+
+// Both auto-replies render the studio's own saved template (the same
+// StudioSettings.reminderTemplates JSON field/editor as the reminder
+// cadence, just two more keys) and send it through the exact same
+// sendClientSms path every other outbound SMS in this app uses. If a
+// studio hasn't got the template saved yet (predates this feature, or
+// simply left it blank -- though the Settings validation requires a
+// non-empty string once the object is touched at all), this silently
+// no-ops rather than sending a broken/empty message -- same "skip if not
+// configured" spirit reminderTicker.ts's own `if (sendTimes && templates)`
+// gate already uses for the cadence.
+async function sendOptInConfirmation(studioId: string, clientId: string): Promise<void> {
+  const [studio, settings] = await Promise.all([
+    prisma.studio.findUnique({ where: { id: studioId }, select: { name: true } }),
+    prisma.studioSettings.findUnique({ where: { studioId }, select: { reminderTemplates: true } }),
+  ]);
+  const templates = settings?.reminderTemplates as unknown as ReminderTemplates | null;
+  if (!templates?.optInConfirmation) return;
+
+  const body = renderTemplate(templates.optInConfirmation, { studioName: studio?.name ?? "our studio" });
+  const { conversation } = await getOrCreateClientConversation(studioId, clientId, null);
+  await sendClientSms({ studioId, clientId, conversationId: conversation.id, body, actorUserId: null });
+}
+
+// HELP fires regardless of current opt-in/opt-out status -- basic
+// customer service, not a marketing message, per CTIA convention (and
+// this task) -- bypassOptOutCheck is the one sanctioned exception to
+// sendClientSms's normal opted-out gate. Studio contact info comes from
+// its first Location (Studio/StudioSettings have no dedicated phone/email
+// field of their own); a studio with none seeded just renders those two
+// placeholders empty rather than blocking the reply entirely.
+async function sendHelpResponse(studioId: string, clientId: string): Promise<void> {
+  const [studio, settings, location] = await Promise.all([
+    prisma.studio.findUnique({ where: { id: studioId }, select: { name: true } }),
+    prisma.studioSettings.findUnique({ where: { studioId }, select: { reminderTemplates: true } }),
+    prisma.location.findFirst({ where: { studioId }, select: { phone: true, email: true } }),
+  ]);
+  const templates = settings?.reminderTemplates as unknown as ReminderTemplates | null;
+  if (!templates?.helpResponse) return;
+
+  const body = renderTemplate(templates.helpResponse, {
+    studioName: studio?.name ?? "our studio",
+    studioPhone: location?.phone ?? "",
+    studioEmail: location?.email ?? "",
+  });
+  const { conversation } = await getOrCreateClientConversation(studioId, clientId, null);
+  await sendClientSms({
+    studioId,
+    clientId,
+    conversationId: conversation.id,
+    body,
+    actorUserId: null,
+    bypassOptOutCheck: true,
+  });
+}
 
 // Public: no requireAuth. Twilio POSTs application/x-www-form-urlencoded --
 // index.ts registers express.urlencoded() globally so req.body is already
@@ -148,6 +206,9 @@ router.post("/twilio/sms", async (req, res) => {
       action: "sms_opted_in",
       changes: { via: "inbound_keyword", keyword },
     });
+    await sendOptInConfirmation(studioId, client.id);
+  } else if (HELP_KEYWORDS.has(keyword)) {
+    await sendHelpResponse(studioId, client.id);
   }
 
   const { conversation } = await getOrCreateClientConversation(studioId, client.id, null);

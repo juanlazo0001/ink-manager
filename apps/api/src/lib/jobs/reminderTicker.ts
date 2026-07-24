@@ -8,6 +8,7 @@ import { getOrCreateClientConversation, getOrCreateStaffConversation } from "../
 import { PUBLIC_APP_URL } from "../publicUrl";
 import { shortenUrl } from "../shortLinks";
 import { logAudit } from "../audit";
+import { renderTemplate, type ReminderTemplates } from "../reminderTemplates";
 
 // Three separately-registered jobs (rather than one combined ticker) so
 // each shows its own friendly name/description/Run Now in Settings ->
@@ -17,14 +18,6 @@ import { logAudit } from "../audit";
 export const CLIENT_REMINDER_JOB_NAME = "clientAppointmentReminders";
 export const ARTIST_REMINDER_JOB_NAME = "artistAppointmentReminders";
 export const ESTIMATE_FOLLOWUP_JOB_NAME = "estimateFollowUpReminder";
-
-interface ReminderTemplates {
-  clientWeekBefore: string;
-  clientNightBefore: string;
-  clientMorningOf: string;
-  artistDayBefore: string;
-  estimateFollowUp: string;
-}
 
 interface ReminderSendTimes {
   weekBeforeTime: string;
@@ -50,10 +43,6 @@ function recordSkip(counts: StudioCounts, reason: string): void {
   else if (reason === "opted_out") counts.skippedOptedOut += 1;
   else if (reason === "no_phone") counts.skippedNoPhone += 1;
   else counts.skippedSendFailed += 1;
-}
-
-function renderTemplate(template: string, vars: Record<string, string>): string {
-  return template.replace(/\{\{(\w+)\}\}/g, (match, key: string) => vars[key] ?? match);
 }
 
 function formatDateInTz(date: Date, timeZone: string): string {

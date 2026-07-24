@@ -834,8 +834,12 @@ model StudioSettings {
   // cadence -- deliberately separate from messageTemplates above (that's
   // the composer's own manual "insert template" menu, a different
   // concept). Shape: { clientWeekBefore, clientNightBefore, clientMorningOf,
-  // artistDayBefore, estimateFollowUp }, each a plain string with
-  // {{placeholder}} tokens filled in at send time.
+  // artistDayBefore, estimateFollowUp, optInConfirmation, helpResponse },
+  // each a plain string with {{placeholder}} tokens filled in at send
+  // time. The last two are Twilio inbound-keyword auto-replies (sent from
+  // routes/webhooks.ts on a matched START/YES/UNSTOP or HELP message, not
+  // on the ticker's 15-minute cadence) -- same shape/editor, different
+  // trigger, added specifically so they're never silently missing.
   reminderTemplates             Json?
   // Shape: { weekBeforeTime, nightBeforeTime, morningOfTime,
   // artistDayBeforeTime }, each "HH:MM" in this studio's own timezone

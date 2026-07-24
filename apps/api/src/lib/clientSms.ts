@@ -94,20 +94,28 @@ export type SendClientSmsResult =
 // Client-facing wrapper: refuses an opted-out or phoneless client before
 // ever reaching Twilio, regardless of connection status or what the UI
 // happens to show -- this is the actual enforcement point.
+//
+// bypassOptOutCheck exists for exactly one caller: the inbound HELP-keyword
+// auto-reply (routes/webhooks.ts). CTIA/A2P convention (and the task that
+// added it) requires HELP to work regardless of current opt-in/opt-out
+// status -- it's basic customer service, not a marketing message. Every
+// other caller (reminders, composer, opt-in confirmation) leaves this
+// false/omitted and gets the normal enforcement.
 export async function sendClientSms(params: {
   studioId: string;
   clientId: string;
   conversationId: string;
   body: string;
   actorUserId: string | null;
+  bypassOptOutCheck?: boolean;
 }): Promise<SendClientSmsResult> {
-  const { studioId, clientId, conversationId, body, actorUserId } = params;
+  const { studioId, clientId, conversationId, body, actorUserId, bypassOptOutCheck } = params;
 
   const client = await prisma.client.findUnique({ where: { id: clientId } });
   if (!client) {
     return { sent: false, reason: "no_phone" };
   }
-  if (client.smsOptedOutAt) {
+  if (client.smsOptedOutAt && !bypassOptOutCheck) {
     return { sent: false, reason: "opted_out" };
   }
   if (!client.phone) {

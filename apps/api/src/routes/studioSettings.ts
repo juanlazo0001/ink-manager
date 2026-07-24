@@ -160,16 +160,22 @@ function isValidBusinessHours(value: unknown): boolean {
 // Phase 7B-2: the automated reminder cadence's own plain-text SMS
 // templates -- a fixed-shape object (one field per reminder type), unlike
 // messageTemplates above (an open-ended array the composer's "insert
-// template" menu lists). All 5 keys are required non-empty strings: the
+// template" menu lists). All keys are required non-empty strings: the
 // frontend always sends the complete object (merging in whichever one
-// template it just edited), so the ticker job never has to fall back to
-// a hardcoded default at send time.
+// template it just edited), so the ticker job (and the Twilio inbound
+// webhook, for the two keyword auto-replies below) never has to fall back
+// to a hardcoded default at send time. optInConfirmation/helpResponse are
+// sent from routes/webhooks.ts on a matched inbound START/YES/UNSTOP or
+// HELP keyword, not on the ticker's own 15-minute cadence -- same shape,
+// same editor, different trigger.
 const REMINDER_TEMPLATE_KEYS = [
   "clientWeekBefore",
   "clientNightBefore",
   "clientMorningOf",
   "artistDayBefore",
   "estimateFollowUp",
+  "optInConfirmation",
+  "helpResponse",
 ] as const;
 
 function isValidReminderTemplates(value: unknown): boolean {

@@ -148,6 +148,12 @@ const reminderTemplates = {
   artistDayBefore: "Hi {{artistName}}, here's your schedule for tomorrow at {{studioName}}:",
   estimateFollowUp:
     "Hi {{clientFirstName}}, just following up on the estimate we sent for your tattoo -- you can view and respond here: {{estimateLink}}. Let us know if you have any questions! - {{studioName}}",
+  // Twilio inbound-keyword auto-replies, sent from routes/webhooks.ts on a
+  // matched START/YES/UNSTOP or HELP message -- exact wording is what's
+  // actually submitted to Twilio for this A2P campaign, not placeholder text.
+  optInConfirmation:
+    "{{studioName}}: You are now opted-in to receive text messages. Msg frequency varies. Msg & data rates may apply. Reply HELP for help, STOP to opt out.",
+  helpResponse: "{{studioName}}: For help, contact us at {{studioPhone}}. Reply STOP to opt out.",
 };
 
 const reminderSendTimes = {
@@ -173,6 +179,23 @@ async function main() {
     update: {},
     create: { name: "Dev Studio", slug: "dev-studio", website: "https://dev-studio.test" },
   });
+
+  // No natural unique key on Location besides id, so find-then-create
+  // rather than upsert -- gives the HELP auto-reply template's
+  // {{studioPhone}}/{{studioEmail}} placeholders something real to render
+  // in dev instead of coming out blank.
+  const existingLocation = await prisma.location.findFirst({ where: { studioId: studio.id } });
+  if (!existingLocation) {
+    await prisma.location.create({
+      data: {
+        studioId: studio.id,
+        name: "Main Location",
+        address: "123 Main St, Suite 2, Portland, OR 97201",
+        phone: "555-0100",
+        email: "hello@dev-studio.test",
+      },
+    });
+  }
 
   await prisma.studioSettings.upsert({
     where: { studioId: studio.id },

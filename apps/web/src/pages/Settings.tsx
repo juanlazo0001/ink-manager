@@ -134,6 +134,11 @@ interface ReminderTemplatesData {
   clientMorningOf: string
   artistDayBefore: string
   estimateFollowUp: string
+  // Twilio inbound-keyword auto-replies -- sent from the webhook on a
+  // matched START/YES/UNSTOP or HELP message, not the ticker's own
+  // 15-minute cadence, but same JSON field/editor.
+  optInConfirmation: string
+  helpResponse: string
 }
 
 interface ReminderSendTimesData {
@@ -179,6 +184,16 @@ const REMINDER_TEMPLATE_FIELDS: { key: keyof ReminderTemplatesData; label: strin
     key: 'estimateFollowUp',
     label: 'Estimate Follow-Up',
     placeholders: ['clientFirstName', 'estimateLink', 'studioName'],
+  },
+  {
+    key: 'optInConfirmation',
+    label: 'SMS Opt-In Confirmation',
+    placeholders: ['studioName'],
+  },
+  {
+    key: 'helpResponse',
+    label: 'SMS HELP Reply',
+    placeholders: ['studioName', 'studioPhone', 'studioEmail'],
   },
 ]
 
