@@ -2182,10 +2182,13 @@ export default function Settings() {
             <Modal
               title={`Edit ${POLICY_HTML_FIELDS.find((f) => f.key === editingField)?.label ?? ''}`}
               onClose={() => setEditingField(null)}
+              size="large"
             >
-              <RichTextEditor value={fieldDraft} onChange={setFieldDraft} />
-              {fieldError && <p className="mt-3 text-sm text-danger">{fieldError}</p>}
-              <div className="mt-4 flex gap-3">
+              <div className="flex min-h-0 flex-1 flex-col">
+                <RichTextEditor value={fieldDraft} onChange={setFieldDraft} fill />
+              </div>
+              {fieldError && <p className="mt-3 shrink-0 text-sm text-danger">{fieldError}</p>}
+              <div className="mt-4 flex shrink-0 gap-3">
                 <button
                   type="button"
                   onClick={handleFieldSave}
@@ -2210,19 +2213,22 @@ export default function Settings() {
             <Modal
               title={editingCustomPolicy === 'new' ? 'Add Custom Policy' : `Edit ${editingCustomPolicy.title}`}
               onClose={() => setEditingCustomPolicy(null)}
+              size="large"
             >
-              <label className="mb-1 block text-sm font-medium text-fg-secondary">Title</label>
+              <label className="mb-1 block shrink-0 text-sm font-medium text-fg-secondary">Title</label>
               <input
                 type="text"
                 value={customPolicyTitleDraft}
                 onChange={(e) => setCustomPolicyTitleDraft(e.target.value)}
-                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                className="w-full shrink-0 rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               />
 
-              <label className="mb-1 mt-4 block text-sm font-medium text-fg-secondary">Body</label>
-              <RichTextEditor value={customPolicyBodyDraft} onChange={setCustomPolicyBodyDraft} />
+              <label className="mb-1 mt-4 block shrink-0 text-sm font-medium text-fg-secondary">Body</label>
+              <div className="flex min-h-0 flex-1 flex-col">
+                <RichTextEditor value={customPolicyBodyDraft} onChange={setCustomPolicyBodyDraft} fill />
+              </div>
 
-              <label className="mt-4 flex items-center gap-2 text-sm text-fg">
+              <label className="mt-4 flex shrink-0 items-center gap-2 text-sm text-fg">
                 <input
                   type="checkbox"
                   checked={customPolicyPublicDraft}
@@ -2231,9 +2237,9 @@ export default function Settings() {
                 Public (visible on the studio's /policies page)
               </label>
 
-              {customPolicyError && <p className="mt-3 text-sm text-danger">{customPolicyError}</p>}
+              {customPolicyError && <p className="mt-3 shrink-0 text-sm text-danger">{customPolicyError}</p>}
 
-              <div className="mt-4 flex gap-3">
+              <div className="mt-4 flex shrink-0 gap-3">
                 <button
                   type="button"
                   onClick={handleCustomPolicySave}

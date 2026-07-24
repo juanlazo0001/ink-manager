@@ -5,6 +5,11 @@ interface ModalProps {
   title: string
   onClose: () => void
   children: ReactNode
+  // 'large' is for content that wants real room to work in (WYSIWYG
+  // editors) -- 80% viewport height, 60% width, with the body area
+  // flexed so a `fill`-mode child (e.g. RichTextEditor) can grow into
+  // the space instead of the dialog just growing with its content.
+  size?: 'default' | 'large'
 }
 
 const FOCUSABLE_SELECTOR =
@@ -15,7 +20,7 @@ const FOCUSABLE_SELECTOR =
 // needs to carry it -- no per-call-site animation work anywhere else.
 const CLOSE_ANIMATION_MS = 200
 
-export default function Modal({ title, onClose, children }: ModalProps) {
+export default function Modal({ title, onClose, children, size = 'default' }: ModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
   // Mounts in its "before" state (invisible/scaled down) on the very first
   // render, then flips to "entered" a tick later so the transition to that
@@ -125,7 +130,10 @@ export default function Modal({ title, onClose, children }: ModalProps) {
         aria-modal="true"
         aria-label={title}
         className={[
-          'w-full max-w-md rounded-2xl border border-border bg-surface p-6 duration-base',
+          size === 'large'
+            ? 'flex w-[92vw] max-w-[92vw] flex-col md:w-[60vw] md:max-w-[60vw] h-[80vh] max-h-[80vh]'
+            : 'w-full max-w-md',
+          'rounded-2xl border border-border bg-surface p-6 duration-base',
           // Transform is driven by the inline style below (translate for
           // dragging, composed with scale for the enter/exit animation) --
           // while actively dragging, the transform transition is dropped
@@ -155,7 +163,7 @@ export default function Modal({ title, onClose, children }: ModalProps) {
           </button>
         </div>
 
-        <div className="mt-4">{children}</div>
+        <div className={size === 'large' ? 'mt-4 flex min-h-0 flex-1 flex-col' : 'mt-4'}>{children}</div>
       </div>
     </div>
   )

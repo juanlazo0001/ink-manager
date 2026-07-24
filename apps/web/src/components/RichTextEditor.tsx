@@ -7,6 +7,10 @@ import { useEffect } from 'react'
 interface RichTextEditorProps {
   value: string
   onChange: (html: string) => void
+  // Grows to fill its parent's height instead of the default fixed
+  // max-height -- for use inside a `size="large"` Modal, whose body area
+  // is flexed specifically so this can expand into the extra room.
+  fill?: boolean
 }
 
 // Small, obviously-labeled toolbar (Phase UI-3's standing design mandate:
@@ -15,7 +19,7 @@ interface RichTextEditorProps {
 // not a general-purpose document editor, so the feature set is
 // deliberately narrow. See sanitizeHtml.ts's ALLOWED_TAGS: anything this
 // toolbar can produce must stay in sync with what that allow-list permits.
-export default function RichTextEditor({ value, onChange }: RichTextEditorProps) {
+export default function RichTextEditor({ value, onChange, fill = false }: RichTextEditorProps) {
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ heading: { levels: [2, 3] } }),
@@ -52,8 +56,13 @@ export default function RichTextEditor({ value, onChange }: RichTextEditorProps)
   if (!editor) return null
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-surface-inset">
-      <div className="flex flex-wrap items-center gap-1 border-b border-border p-1.5">
+    <div
+      className={[
+        'overflow-hidden rounded-lg border border-border bg-surface-inset',
+        fill ? 'flex h-full flex-col' : '',
+      ].join(' ')}
+    >
+      <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border p-1.5">
         <ToolbarButton editor={editor} active={editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()} label="Bold">
           <strong>B</strong>
         </ToolbarButton>
@@ -95,7 +104,10 @@ export default function RichTextEditor({ value, onChange }: RichTextEditorProps)
       </div>
       <EditorContent
         editor={editor}
-        className="tiptap-content max-h-80 min-h-[160px] overflow-y-auto px-3 py-2 text-sm text-fg [&_.ProseMirror]:min-h-[140px] [&_.ProseMirror]:outline-none"
+        className={[
+          'tiptap-content overflow-y-auto px-3 py-2 text-sm text-fg [&_.ProseMirror]:outline-none',
+          fill ? 'flex-1 min-h-0 [&_.ProseMirror]:min-h-full' : 'max-h-80 min-h-[160px] [&_.ProseMirror]:min-h-[140px]',
+        ].join(' ')}
       />
     </div>
   )
