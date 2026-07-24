@@ -20,6 +20,7 @@ import { generateUniqueReferralCode } from "../lib/referrals";
 import { IntakeFieldKind } from "../../generated/prisma/enums";
 import { NOTE_AUTHOR_SELECT, canModifyNote, isBlankHtml, isValidAttachments } from "../lib/notes";
 import { getEffectiveIntakeFormFields, validateCustomFieldAnswers } from "../lib/intakeFormFields";
+import { resolveIntakeForm } from "../lib/intakeForms";
 import { buildImageMeta, mergeImageMeta, resolveImageMeta } from "../lib/imageMeta";
 
 const router = Router();
@@ -81,15 +82,26 @@ router.post("/", optionalAuth, async (req, res) => {
     return res.status(404).json({ error: "Studio not found" });
   }
 
-  // Package Q (revised): every SYSTEM field on this studio's live,
-  // configured intake form drives what's required/shown here -- a field
-  // the studio has disabled is dropped entirely (never validated, never
-  // extracted from the body), the same list the public form itself
-  // rendered from. Two keys have no data-safe "unspecified" value at the
-  // DB layer (Channel has no such enum member; a NOT NULL Boolean can't
-  // represent "unanswered") -- see the channel/hasBeenTattooedBefore
-  // handling below, documented in REPORT.md as a deliberate judgment call.
-  const liveFields = await getEffectiveIntakeFormFields(studio.id);
+  // Which of this studio's (possibly several) named forms this submission
+  // is for -- a specific one by formSlug (public path only; staff logging
+  // a walk-in/phone inquiry has no form-picker UI, so always resolves to
+  // the studio's current default) or the default when omitted, same
+  // resolution GET /studio-settings/public and POST /prefill-drafts use.
+  const requestedFormSlug = !isStaffRequest && typeof body.formSlug === "string" ? body.formSlug : null;
+  const form = await resolveIntakeForm(studio.id, requestedFormSlug);
+  if (!form) {
+    return res.status(404).json({ error: "Intake form not found" });
+  }
+
+  // Package Q (revised): every SYSTEM field on this FORM's live, configured
+  // set drives what's required/shown here -- a field the studio has
+  // disabled is dropped entirely (never validated, never extracted from
+  // the body), the same list the public form itself rendered from. Two
+  // keys have no data-safe "unspecified" value at the DB layer (Channel has
+  // no such enum member; a NOT NULL Boolean can't represent "unanswered")
+  // -- see the channel/hasBeenTattooedBefore handling below, documented in
+  // REPORT.md as a deliberate judgment call.
+  const liveFields = await getEffectiveIntakeFormFields(form.id);
   const enabledSystemFields = new Map(
     liveFields
       .filter((f) => f.fieldKind === IntakeFieldKind.SYSTEM && f.enabled && f.systemFieldKey)
@@ -307,6 +319,7 @@ router.post("/", optionalAuth, async (req, res) => {
     data: {
       studioId: studio.id,
       clientId: client.id,
+      intakeFormId: form.id,
       channel,
       description,
       colorOrBlackGrey,

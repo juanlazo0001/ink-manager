@@ -17,6 +17,8 @@ import { AttachmentChip } from '../components/NotesSection'
 import type { NoteAttachment } from '../lib/cloudinary'
 import Widget from '../components/Widget'
 import ReorderableWidgetList from '../components/ReorderableWidgetList'
+import IntakeFormPicker from '../components/IntakeFormPicker'
+import { useIntakeForms, type IntakeFormOption } from '../lib/useIntakeForms'
 import {
   ArrowLeftIcon,
   CheckIcon,
@@ -288,6 +290,8 @@ export default function ClientDetail() {
   const [copyingPrefillLink, setCopyingPrefillLink] = useState(false)
   const [prefillLinkError, setPrefillLinkError] = useState<string | null>(null)
   const [prefillSendNotice, setPrefillSendNotice] = useState<string | null>(null)
+  const { data: intakeForms } = useIntakeForms(canGeneratePrefillLink)
+  const [showFormPicker, setShowFormPicker] = useState(false)
   const [showCopyMenu, setShowCopyMenu] = useState(false)
   const [copyToast, setCopyToast] = useState<string | null>(null)
 
@@ -357,10 +361,23 @@ export default function ClientDetail() {
   // (best-effort, logged to Conversations) -- there's no composer draft
   // here for staff to add their own message around, so this is the one
   // that actually needs to send.
-  async function handleCopyPrefillLink() {
+  //
+  // Only asks WHICH form when the studio actually has more than one --
+  // the common single-form case skips the picker entirely, same "advisory,
+  // doesn't disrupt simple usage" philosophy as preferredSchedule.
+  function handleCopyPrefillLink() {
+    if ((intakeForms?.length ?? 0) > 1) {
+      setShowFormPicker(true)
+      return
+    }
+    generateAndCopyPrefillLink()
+  }
+
+  async function generateAndCopyPrefillLink(formSlug?: string) {
     if (!id || !client) return
 
     setShowCopyMenu(false)
+    setShowFormPicker(false)
     setCopyingPrefillLink(true)
     setPrefillLinkError(null)
     setPrefillSendNotice(null)
@@ -380,6 +397,7 @@ export default function ClientDetail() {
               preferredArtistId: client.inquiries[0]?.preferredArtistId || undefined,
             },
             clientId: id,
+            formSlug,
           }),
         },
       )
@@ -2437,6 +2455,14 @@ export default function ClientDetail() {
             </button>
           )}
         </Modal>
+      )}
+
+      {showFormPicker && intakeForms && (
+        <IntakeFormPicker
+          forms={intakeForms}
+          onClose={() => setShowFormPicker(false)}
+          onSelect={(form: IntakeFormOption) => generateAndCopyPrefillLink(form.slug)}
+        />
       )}
     </div>
   )

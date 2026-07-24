@@ -211,16 +211,28 @@ function Row({
   )
 }
 
-export default function IntakeFormFieldsEditor({ canEdit }: { canEdit: boolean }) {
+export default function IntakeFormFieldsEditor({
+  intakeFormId,
+  canEdit,
+}: {
+  intakeFormId: string
+  canEdit: boolean
+}) {
   const [saved, setSaved] = useState<IntakeFormField[] | null>(null)
   const [draft, setDraft] = useState<IntakeFormField[]>([])
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Re-fetches (and resets any in-progress edit) whenever the selected
+  // form changes -- this component is parameterized by intakeFormId now
+  // that a studio can have more than one form, but stays otherwise
+  // identical to its original studio-wide-list self.
   useEffect(() => {
     let ignore = false
-    apiFetch<IntakeFormField[]>('/studio-settings/intake-form-fields')
+    setSaved(null)
+    setEditing(false)
+    apiFetch<IntakeFormField[]>(`/intake-forms/${intakeFormId}/fields`)
       .then((data) => {
         if (!ignore) setSaved(data)
       })
@@ -230,7 +242,7 @@ export default function IntakeFormFieldsEditor({ canEdit }: { canEdit: boolean }
     return () => {
       ignore = true
     }
-  }, [])
+  }, [intakeFormId])
 
   function startEditing() {
     setDraft(saved ?? [])
@@ -316,7 +328,7 @@ export default function IntakeFormFieldsEditor({ canEdit }: { canEdit: boolean }
     }
 
     try {
-      const updated = await apiFetch<IntakeFormField[]>('/studio-settings/intake-form-fields', {
+      const updated = await apiFetch<IntakeFormField[]>(`/intake-forms/${intakeFormId}/fields`, {
         method: 'PUT',
         body: JSON.stringify(cleaned),
       })

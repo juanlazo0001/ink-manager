@@ -13,6 +13,7 @@ import { validateImageDataUrl } from "../lib/images";
 import { diffObjects, logAudit } from "../lib/audit";
 import { normalizePhone } from "../lib/phone";
 import { isStringArray, isValidDateOrNull, isValidPreferredSchedule } from "../lib/artistValidation";
+import { slugify } from "../lib/slug";
 
 const router = Router();
 
@@ -26,13 +27,6 @@ const SALT_ROUNDS = 10;
 // permissions.ts) intentionally still includes CUSTOMER -- that's the
 // separate Permissions-matrix tab, unrelated to who can be a team member.
 const STAFF_ROLES = [Role.OWNER, Role.FRONT_DESK, Role.ARTIST] as const;
-
-function slugify(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
 
 // Generates a unique, stable public slug for a new studio's intake-form URL
 // (/inquiry/:studioSlug). Appends -2, -3, ... on collision; never reused

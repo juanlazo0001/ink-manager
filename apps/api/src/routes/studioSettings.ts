@@ -1,16 +1,12 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { requireAuth, requireRole } from "../middleware/auth";
-import { Role, IntakeFieldKind, IntakeCustomQuestionType } from "../../generated/prisma/enums";
+import { Role } from "../../generated/prisma/enums";
 import { diffObjects, logAudit } from "../lib/audit";
 import { DEFAULT_DEPOSIT_TIERS, validateDepositTiers } from "../lib/depositTiers";
 import { THEME_PRESET_KEYS, isValidThemePreset } from "../lib/themePresets";
-import {
-  ensureDefaultSystemFields,
-  validateIntakeFormFieldsPayload,
-  getEffectiveIntakeFormFields,
-  IntakeFormFieldInput,
-} from "../lib/intakeFormFields";
+import { getEffectiveIntakeFormFields } from "../lib/intakeFormFields";
+import { resolveIntakeForm } from "../lib/intakeForms";
 
 // Public: /privacy/:studioSlug and /terms/:studioSlug (unauthenticated) need
 // to read these two fields by slug, same "public sub-router mounted first"
@@ -32,15 +28,27 @@ publicRouter.get("/public", async (req, res) => {
 
   const settings = await prisma.studioSettings.findUnique({ where: { studioId: studio.id } });
 
+  // formSlug absent -> whichever form is currently the default, same
+  // resolution POST /inquiries and POST /prefill-drafts use -- so
+  // /inquiry/{studio-slug} (no form-slug segment) keeps resolving to
+  // exactly what it always has, zero disruption for every already-shared
+  // or bookmarked link.
+  const formSlug = typeof req.query.formSlug === "string" ? req.query.formSlug : null;
+  const form = await resolveIntakeForm(studio.id, formSlug);
+  if (!form) {
+    return res.status(404).json({ error: "Intake form not found" });
+  }
+
   // Package Q (revised): every enabled field (system + custom), in the
-  // studio's own configured order -- a disabled field is dropped entirely
+  // form's own configured order -- a disabled field is dropped entirely
   // here, never sent to the public form at all. Same fallback-to-defaults
   // helper POST /inquiries validates submissions against, so the two never
-  // disagree about what a studio with zero rows requires.
-  const allFields = await getEffectiveIntakeFormFields(studio.id);
+  // disagree about what a form with zero rows requires.
+  const allFields = await getEffectiveIntakeFormFields(form.id);
 
   res.json({
     studioName: studio.name,
+    formName: form.name,
     privacyPolicy: settings?.privacyPolicy ?? null,
     termsAndConditions: settings?.termsAndConditions ?? null,
     refundPolicy: settings?.refundPolicy ?? null,
@@ -362,76 +370,8 @@ staffRouter.patch("/", requireRole(Role.OWNER), async (req, res) => {
   res.json(updated);
 });
 
-// Staff-facing counterpart to publicRouter's "/public" -- returns every
-// field including disabled ones, since the Settings editor needs to show
-// (and let OWNER re-enable) a field a studio previously turned off, not
-// just what the public form currently renders.
-staffRouter.get("/intake-form-fields", requireRole(Role.OWNER, Role.FRONT_DESK, Role.ARTIST), async (req, res) => {
-  const studioId = req.user!.studioId;
-  await ensureDefaultSystemFields(studioId);
-  const fields = await prisma.intakeFormField.findMany({
-    where: { studioId },
-    orderBy: { order: "asc" },
-  });
-  res.json(fields);
-});
-
-// Full-list replace: the drag-and-drop editor always sends the complete
-// ordered list back (system rows can never be removed from the payload,
-// only reordered/disabled -- enforced below), so delete-all-then-recreate
-// is safe and simpler than diffing. IDs are preserved because the client
-// always round-trips each row's existing id (and mints one client-side for
-// a brand-new custom question via crypto.randomUUID(), matching the create
-// pattern createMany already relies on for id-preserving migration) --
-// nothing here generates a fresh id itself, so a CUSTOM row's id -- and
-// therefore its historical Inquiry.customFieldAnswers linkage -- never
-// changes just because the list around it was reordered or edited.
-staffRouter.put("/intake-form-fields", requireRole(Role.OWNER), async (req, res) => {
-  const studioId = req.user!.studioId;
-  const body = req.body as IntakeFormFieldInput[];
-
-  const validationError = validateIntakeFormFieldsPayload(body);
-  if (validationError) {
-    return res.status(400).json({ error: validationError });
-  }
-
-  const before = await prisma.intakeFormField.findMany({ where: { studioId }, orderBy: { order: "asc" } });
-
-  const rows = body.map((row, i) => ({
-    id: row.id || undefined,
-    studioId,
-    fieldKind: row.fieldKind as IntakeFieldKind,
-    systemFieldKey: row.fieldKind === IntakeFieldKind.SYSTEM ? row.systemFieldKey! : null,
-    customQuestionType:
-      row.fieldKind === IntakeFieldKind.CUSTOM ? (row.customQuestionType as IntakeCustomQuestionType) : null,
-    label: row.label.trim(),
-    helpText: row.helpText?.trim() || null,
-    required: row.required,
-    enabled: row.enabled,
-    options: row.fieldKind === IntakeFieldKind.CUSTOM ? row.options ?? undefined : undefined,
-    order: i,
-  }));
-
-  await prisma.$transaction([
-    prisma.intakeFormField.deleteMany({ where: { studioId } }),
-    prisma.intakeFormField.createMany({ data: rows }),
-  ]);
-
-  const after = await prisma.intakeFormField.findMany({ where: { studioId }, orderBy: { order: "asc" } });
-
-  await logAudit({
-    studioId,
-    actorUserId: req.user!.userId,
-    entityType: "IntakeFormField",
-    entityId: studioId,
-    action: "update",
-    changes: {
-      fieldCount: { from: before.length, to: after.length },
-      labels: { from: before.map((f) => f.label), to: after.map((f) => f.label) },
-    },
-  });
-
-  res.json(after);
-});
+// GET/PUT for a specific form's own field list moved to routes/
+// intakeForms.ts (/intake-forms/:formId/fields) once a studio could have
+// more than one form -- see that file.
 
 export { publicRouter, staffRouter };

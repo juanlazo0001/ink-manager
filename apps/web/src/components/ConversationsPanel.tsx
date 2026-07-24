@@ -13,6 +13,8 @@ import { useUserProfile } from '../context/useUserProfile'
 import { useConversationPanel } from '../context/useConversationPanel'
 import { useSocket } from '../context/useSocket'
 import { useStudio } from '../context/useStudio'
+import { useIntakeForms, type IntakeFormOption } from '../lib/useIntakeForms'
+import IntakeFormPicker from './IntakeFormPicker'
 import Modal from './Modal'
 import PresenceDot from './PresenceDot'
 import ArtistSelect from './ArtistSelect'
@@ -1613,6 +1615,8 @@ function ThreadView({
     enabled: isOpen && isClientThread && showLinkMenu && !!data?.conversation.clientId,
   })
   const [generatingPrefillLink, setGeneratingPrefillLink] = useState(false)
+  const { data: intakeForms } = useIntakeForms(isOpen && isClientThread && showLinkMenu)
+  const [showFormPicker, setShowFormPicker] = useState(false)
   const [resendingReceiptId, setResendingReceiptId] = useState<string | null>(null)
   const [receiptResendResult, setReceiptResendResult] = useState<{ giftCardId: string; error: string | null } | null>(
     null,
@@ -1628,9 +1632,21 @@ function ThreadView({
   // client's name/phone sitting in a plain URL lands in browser history,
   // referrer headers, and server logs in cleartext, which is exactly what
   // the token design exists to avoid.
-  async function handleInsertPrefillLink() {
+  // Only asks WHICH form when the studio actually has more than one -- the
+  // common single-form case skips the picker entirely, same "advisory,
+  // doesn't disrupt simple usage" philosophy as preferredSchedule.
+  function handleInsertPrefillLink() {
+    if ((intakeForms?.length ?? 0) > 1) {
+      setShowFormPicker(true)
+      return
+    }
+    insertPrefillLink()
+  }
+
+  async function insertPrefillLink(formSlug?: string) {
     if (!data?.conversation.clientId || !clientContact) return
 
+    setShowFormPicker(false)
     setGeneratingPrefillLink(true)
     try {
       const draft = await apiFetch<{ prefillUrl: string }>('/prefill-drafts', {
@@ -1643,6 +1659,7 @@ function ThreadView({
             phone: clientContact.phone || undefined,
           },
           conversationId: data.conversation.id,
+          formSlug,
         }),
       })
       setBody((current) => (current ? `${current}\n${draft.prefillUrl}` : draft.prefillUrl))
@@ -3360,6 +3377,14 @@ function ThreadView({
             )}
           </div>
         </div>
+      )}
+
+      {showFormPicker && intakeForms && (
+        <IntakeFormPicker
+          forms={intakeForms}
+          onClose={() => setShowFormPicker(false)}
+          onSelect={(form: IntakeFormOption) => insertPrefillLink(form.slug)}
+        />
       )}
     </>
   )

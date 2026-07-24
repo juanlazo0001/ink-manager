@@ -40,6 +40,7 @@ function App() {
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/login" element={<Login />} />
         <Route path="/inquiry/:studioSlug" element={<IntakeForm />} />
+        <Route path="/inquiry/:studioSlug/:formSlug" element={<IntakeForm />} />
         <Route path="/policies/:studioSlug" element={<Policies />} />
         <Route
           path="/privacy/:studioSlug"

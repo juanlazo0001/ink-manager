@@ -179,6 +179,7 @@ model Studio {
   customPolicies          CustomPolicy[]
   importBatches           ImportBatch[]
   intakeFormFields        IntakeFormField[]
+  intakeForms             IntakeForm[]
 }
 
 // Self-serve provider connections -- a studio owner connects their OWN
@@ -460,11 +461,42 @@ model ImportRow {
   @@index([importBatchId])
 }
 
-// Package Q (revised): one unified, ordered list per studio, mixing two
-// kinds of rows -- SYSTEM rows represent an existing, unchanging Inquiry/
-// Client column (systemFieldKey identifies which one; the column itself
-// never changes shape, only how the FORM presents it does), CUSTOM rows
-// are studio-authored questions of their own. `order` alone controls
+// Multiple named forms per studio (e.g. "Standard Inquiry," "Cover-up
+// Consultation"), each with its own independent set of IntakeFormField
+// rows. Every studio must always have exactly one isDefault: true form --
+// enforced server-side (create/update/delete), never a DB constraint,
+// same "application-layer invariant" convention as validateFieldListConstraint
+// below. /inquiry/{studio-slug} (no form-slug segment) always resolves to
+// whichever form is currently the default, so every already-shared link
+// keeps working with zero disruption as new named forms are added.
+model IntakeForm {
+  id        String   @id @default(cuid())
+  name      String
+  // URL-safe, unique per studio (not globally -- unlike Studio.slug) --
+  // set once at creation from the name and never changed afterward, same
+  // "slug is immutable once assigned, since it may already be shared
+  // publicly" convention Studio.slug itself follows.
+  slug      String
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  fields    IntakeFormField[]
+  inquiries Inquiry[]
+
+  @@unique([studioId, slug])
+  @@index([studioId])
+}
+
+// Package Q (revised): one unified, ordered list per FORM (originally per
+// studio, before multiple named forms existed -- see IntakeForm above),
+// mixing two kinds of rows -- SYSTEM rows represent an existing, unchanging
+// Inquiry/Client column (systemFieldKey identifies which one; the column
+// itself never changes shape, only how the FORM presents it does), CUSTOM
+// rows are studio-authored questions of their own. `order` alone controls
 // display position on the public form -- system and custom rows are
 // freely interleaved.
 model IntakeFormField {
@@ -478,7 +510,12 @@ model IntakeFormField {
   // SYSTEM_FIELD_KEYS for the authoritative list.
   systemFieldKey String?
 
-  // Set only when fieldKind: CUSTOM.
+  // Set only when fieldKind: CUSTOM. Freely editable after creation (the
+  // Settings editor's type dropdown already allowed this) -- a changed
+  // type only affects future submissions; historical Inquiry.
+  // customFieldAnswers snapshots keep their own originally-captured type
+  // tag and render from that, never this live value (see
+  // InquiryDetailsSection.tsx's formatCustomAnswer).
   customQuestionType IntakeCustomQuestionType?
 
   // SYSTEM: overrides the field's default display label (kept close to
@@ -505,7 +542,11 @@ model IntakeFormField {
   studioId String
   studio   Studio @relation(fields: [studioId], references: [id])
 
+  intakeFormId String
+  intakeForm   IntakeForm @relation(fields: [intakeFormId], references: [id])
+
   @@index([studioId, order])
+  @@index([intakeFormId, order])
 }
 
 // Additive secondary-contact layer -- Client.phone stays the "primary"
@@ -782,6 +823,17 @@ model Inquiry {
   depositForms DepositForm[]
 
   notes InquiryNote[]
+
+  // Which of the studio's (possibly several) named intake forms this
+  // inquiry was submitted through -- nullable PERMANENTLY, unlike
+  // IntakeFormField.intakeFormId above. Historical inquiries genuinely
+  // don't have this information (they predate multiple forms existing at
+  // all) and that's fine -- no backfill attempted or needed. Deleting the
+  // IntakeForm this points at nulls this out (ON DELETE SET NULL, the
+  // default for a nullable relation) rather than blocking the delete or
+  // touching the inquiry's own real submitted data.
+  intakeFormId String?
+  intakeForm   IntakeForm? @relation(fields: [intakeFormId], references: [id])
 
   @@index([studioId])
   @@index([studioId, status])

@@ -63,7 +63,7 @@ type CustomAnswerValue = string | string[]
 type StudioCheck = 'loading' | 'valid' | 'invalid'
 
 export default function IntakeForm() {
-  const { studioSlug } = useParams<{ studioSlug: string }>()
+  const { studioSlug, formSlug } = useParams<{ studioSlug: string; formSlug?: string }>()
   const [searchParams] = useSearchParams()
   const draftToken = searchParams.get('draft')
 
@@ -147,30 +147,39 @@ export default function IntakeForm() {
 
   // Studio display name (for the consent checkbox label) and the studio's
   // own configured field list -- same public endpoint the /privacy and
-  // /terms pages read from.
+  // /terms pages read from. formSlug absent -> whichever form is currently
+  // the default, so /inquiry/{studio-slug} (no form-slug segment) keeps
+  // resolving exactly like it always has.
   useEffect(() => {
     if (!studioSlug) return
 
     let ignore = false
+    const query = new URLSearchParams({ studioSlug })
+    if (formSlug) query.set("formSlug", formSlug)
 
-    apiFetch<{ studioName: string; intakeFormFields: IntakeFormFieldPublic[] }>(
-      `/studio-settings/public?studioSlug=${encodeURIComponent(studioSlug)}`,
-    )
+    apiFetch<{ studioName: string; intakeFormFields: IntakeFormFieldPublic[] }>(`/studio-settings/public?${query}`)
       .then((data) => {
         if (ignore) return
         setStudioName(data.studioName)
         setFields((data.intakeFormFields ?? []).slice().sort((a, b) => a.order - b.order))
       })
-      .catch(() => {
-        // Non-essential -- the checkbox label falls back to generic wording,
-        // and an empty field list just renders nothing above the consent
-        // checkbox rather than blocking the page.
+      .catch((err) => {
+        // A named formSlug that doesn't resolve to a real form is a broken/
+        // stale link -- shown the same "invalid" full-page state as an
+        // unknown studio, rather than silently rendering a fieldless form.
+        // Any OTHER failure (network hiccup, studio genuinely has no
+        // formSlug segment) stays non-essential: the checkbox label falls
+        // back to generic wording and an empty field list just renders
+        // nothing above the consent checkbox.
+        if (formSlug && err instanceof ApiError && err.status === 404) {
+          setStudioCheck('invalid')
+        }
       })
 
     return () => {
       ignore = true
     }
-  }, [studioSlug])
+  }, [studioSlug, formSlug])
 
   // Prefill data never rides in the URL as field values -- just this
   // opaque, single-use token. An invalid/expired token quietly falls back
@@ -290,6 +299,7 @@ export default function IntakeForm() {
         method: 'POST',
         body: JSON.stringify({
           studioSlug,
+          formSlug: formSlug || undefined,
           firstName,
           lastName,
           email,

@@ -71,6 +71,10 @@ interface Inquiry {
   // already-submitted inquiry displays. answer is string[] for the
   // MULTI_SELECT/PHOTO_UPLOAD types Package Q (revised) added.
   customFieldAnswers: Record<string, { question: string; type: string; answer: string | string[] }> | null
+  // Which of the studio's (possibly several) named forms this was
+  // submitted through -- null for anything predating multiple forms, or a
+  // staff-logged walk-in with no form context.
+  intakeFormId: string | null
   status: string
   priceEstimateLow: number | null
   priceEstimateHigh: number | null

@@ -5,7 +5,7 @@ import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
 import RichTextEditor from '../components/RichTextEditor'
 import PhoneInput from '../components/PhoneInput'
-import IntakeFormFieldsEditor from '../components/IntakeFormFieldsEditor'
+import IntakeFormsManager from '../components/IntakeFormsManager'
 import { CheckIcon, ChevronDownIcon, ClockIcon, CloseIcon, CopyIcon, PencilIcon, SpinnerIcon } from '../components/icons'
 import { apiFetch } from '../lib/api'
 import {
@@ -1824,7 +1824,7 @@ export default function Settings() {
           )}
 
           {activeTab === 'policies' && canViewPolicies && policies && (
-            <IntakeFormFieldsEditor canEdit={canEditPolicies} />
+            <IntakeFormsManager canEdit={canEditPolicies} />
           )}
 
           {activeTab === 'policies' && canViewPolicies && policies && (

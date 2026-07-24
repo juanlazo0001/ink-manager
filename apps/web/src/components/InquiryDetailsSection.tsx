@@ -22,6 +22,11 @@ interface InquiryForDetails {
   budget: string | null
   desiredTiming: string | null
   customFieldAnswers: Record<string, { question: string; type: string; answer: string | string[] }> | null
+  // Which of the studio's (possibly several) named forms this was
+  // submitted through -- null for anything predating multiple forms, or a
+  // staff-logged walk-in with no form context. Drives which form's live
+  // field list this section maps the answers onto (see the effect below).
+  intakeFormId: string | null
   client: { firstName: string; lastName: string; email: string | null; phone: string | null }
   preferredArtist: { user: { name: string | null; email: string } } | null
 }
@@ -69,13 +74,39 @@ function systemFieldValue(key: string, inquiry: InquiryForDetails): string {
   }
 }
 
-function formatCustomAnswer(answer: { type: string; answer: string | string[] }): string {
-  if (Array.isArray(answer.answer)) return answer.answer.join(', ') || 'Not provided'
-  // 'yes_no' (lowercase) is the pre-Package-Q-revised type string, still
-  // baked into any snapshot taken before this migration -- both spellings
-  // are checked so an old and a new YES_NO answer render identically.
-  if (answer.type === 'YES_NO' || answer.type === 'yes_no') return answer.answer === 'YES' ? 'Yes' : 'No'
-  return answer.answer
+// Defensive by construction, same discipline as AuditTrail.tsx's own
+// formatValue (the "AuditTrail crash fix"): a historical snapshot's answer
+// always renders from its OWN captured `type` (immutable at submission,
+// see the Inquiry.customFieldAnswers doc comment), never the field's
+// current/live customQuestionType -- so retyping a field after the fact
+// (e.g. YES_NO -> SELECT) can never make an old answer mismatch what this
+// function expects. This still guards the shape defensively regardless,
+// since `answer` is untrusted historical JSON, not a value this app's own
+// current type system can vouch for (an old pre-Package-Q row, or any
+// future data drift, could have `answer` in a shape this function's own
+// declared parameter type doesn't actually guarantee at runtime) -- a
+// genuinely unexpected shape (e.g. an object where a string was expected)
+// falls back to JSON.stringify rather than ever handing a raw object to
+// React as a child, which would crash the page.
+function formatCustomAnswer(answer: { type: string; answer: unknown }): string {
+  const raw = answer.answer
+
+  if (Array.isArray(raw)) {
+    if (raw.every((v) => typeof v === 'string')) return raw.join(', ') || 'Not provided'
+    return JSON.stringify(raw)
+  }
+
+  if (typeof raw === 'string') {
+    // 'yes_no' (lowercase) is the pre-Package-Q-revised type string, still
+    // baked into any snapshot taken before this migration -- both spellings
+    // are checked so an old and a new YES_NO answer render identically.
+    if (answer.type === 'YES_NO' || answer.type === 'yes_no') return raw === 'YES' ? 'Yes' : 'No'
+    return raw || 'Not provided'
+  }
+
+  if (raw === null || raw === undefined) return 'Not provided'
+  if (typeof raw === 'object') return JSON.stringify(raw)
+  return String(raw)
 }
 
 // Package Q (revised) §5: one unified view of every field on this studio's
@@ -111,19 +142,32 @@ interface InquiryDetailsSectionProps {
 export default function InquiryDetailsSection({ inquiry, bare = false, onVisibilityChange }: InquiryDetailsSectionProps) {
   const [fields, setFields] = useState<LiveIntakeField[] | null>(null)
 
+  // Maps this inquiry's answers onto the SAME form it was actually
+  // submitted through (inquiry.intakeFormId) when known. Older inquiries
+  // (predating multiple named forms) and staff-logged walk-ins have no
+  // form recorded -- for those, falls back to the studio's current default
+  // form, matching this section's own pre-multiple-forms behavior exactly
+  // (there was only ever one studio-wide list before).
   useEffect(() => {
     let ignore = false
-    apiFetch<LiveIntakeField[]>('/studio-settings/intake-form-fields')
-      .then((data) => {
-        if (!ignore) setFields(data.filter((f) => f.enabled).sort((a, b) => a.order - b.order))
-      })
-      .catch(() => {
-        /* Section just doesn't render if this fails; not critical page content. */
-      })
+
+    async function load() {
+      const formId =
+        inquiry.intakeFormId ??
+        (await apiFetch<{ id: string; isDefault: boolean }[]>('/intake-forms')).find((f) => f.isDefault)?.id
+
+      if (!formId) return
+      const data = await apiFetch<LiveIntakeField[]>(`/intake-forms/${formId}/fields`)
+      if (!ignore) setFields(data.filter((f) => f.enabled).sort((a, b) => a.order - b.order))
+    }
+
+    load().catch(() => {
+      /* Section just doesn't render if this fails; not critical page content. */
+    })
     return () => {
       ignore = true
     }
-  }, [])
+  }, [inquiry.intakeFormId])
 
   const rows: { key: string; label: string; value: string }[] = []
 

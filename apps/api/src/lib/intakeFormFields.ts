@@ -30,13 +30,15 @@ export const SYSTEM_FIELD_DEFAULTS: SystemFieldDefault[] = [
 export const SYSTEM_FIELD_KEYS = SYSTEM_FIELD_DEFAULTS.map((f) => f.key);
 
 // The one place both the public form (GET /studio-settings/public) and
-// submission validation (POST /inquiries) get a studio's field list from --
-// keeps their "studio has zero rows yet" fallback identical, so a studio
-// that hasn't been backfilled never sees the public form and the
-// server-side validator disagree about what's required.
-export async function getEffectiveIntakeFormFields(studioId: string) {
+// submission validation (POST /inquiries) get a FORM's field list from --
+// keeps their "form has zero rows yet" fallback identical, so a
+// brand-new form (just created, not yet opened in the field editor) never
+// sees the public form and the server-side validator disagree about what's
+// required. Scoped by intakeFormId, not studioId -- see IntakeForm's own
+// doc comment for why the field list moved from per-studio to per-form.
+export async function getEffectiveIntakeFormFields(intakeFormId: string) {
   const fields = await prisma.intakeFormField.findMany({
-    where: { studioId },
+    where: { intakeFormId },
     orderBy: { order: "asc" },
   });
   if (fields.length > 0) return fields;
@@ -78,19 +80,20 @@ export function validateFieldListConstraint(
   return null;
 }
 
-// Idempotent -- only creates rows for a studio with zero SYSTEM rows, so
-// re-running this (a fresh dev seed, a repeated production backfill)
-// never duplicates a studio's fields or clobbers customizations already
-// made on top of the defaults.
-export async function ensureDefaultSystemFields(studioId: string): Promise<number> {
+// Idempotent -- only creates rows for a FORM with zero SYSTEM rows, so
+// re-running this (a fresh dev seed, opening a brand-new form's field
+// editor for the first time) never duplicates a form's fields or clobbers
+// customizations already made on top of the defaults.
+export async function ensureDefaultSystemFields(studioId: string, intakeFormId: string): Promise<number> {
   const existingCount = await prisma.intakeFormField.count({
-    where: { studioId, fieldKind: IntakeFieldKind.SYSTEM },
+    where: { intakeFormId, fieldKind: IntakeFieldKind.SYSTEM },
   });
   if (existingCount > 0) return 0;
 
   await prisma.intakeFormField.createMany({
     data: SYSTEM_FIELD_DEFAULTS.map((f, i) => ({
       studioId,
+      intakeFormId,
       fieldKind: IntakeFieldKind.SYSTEM,
       systemFieldKey: f.key,
       label: f.label,
@@ -171,62 +174,6 @@ export function validateIntakeFormFieldsPayload(body: unknown): string | null {
   }
 
   return validateFieldListConstraint(rows.map((r) => ({ systemFieldKey: r.systemFieldKey ?? null, enabled: r.enabled })));
-}
-
-interface OldCustomQuestion {
-  id: string;
-  question: string;
-  type: "text" | "yes_no" | "select";
-  options?: string[];
-  required: boolean;
-  order: number;
-}
-
-const OLD_TYPE_MAP: Record<OldCustomQuestion["type"], IntakeCustomQuestionType> = {
-  text: IntakeCustomQuestionType.TEXT,
-  yes_no: IntakeCustomQuestionType.YES_NO,
-  select: IntakeCustomQuestionType.SELECT,
-};
-
-// Converts every entry in a studio's (deprecated) StudioSettings.
-// intakeCustomQuestions into a CUSTOM IntakeFormField row -- crucially
-// PRESERVING the original question's id, since historical Inquiry.
-// customFieldAnswers is keyed by it. Idempotent by id (re-running skips
-// any question already migrated), and ordered after every default
-// SYSTEM field so a studio's existing public-form layout is completely
-// unchanged until they deliberately drag something.
-export async function migrateExistingCustomQuestions(studioId: string): Promise<number> {
-  const settings = await prisma.studioSettings.findUnique({
-    where: { studioId },
-    select: { intakeCustomQuestions: true },
-  });
-  const oldQuestions = (settings?.intakeCustomQuestions as unknown as OldCustomQuestion[] | null) ?? [];
-  if (oldQuestions.length === 0) return 0;
-
-  const existing = await prisma.intakeFormField.findMany({
-    where: { id: { in: oldQuestions.map((q) => q.id) } },
-    select: { id: true },
-  });
-  const existingIds = new Set(existing.map((r) => r.id));
-
-  const toCreate = oldQuestions.filter((q) => !existingIds.has(q.id));
-  if (toCreate.length === 0) return 0;
-
-  await prisma.intakeFormField.createMany({
-    data: toCreate.map((q) => ({
-      id: q.id,
-      studioId,
-      fieldKind: IntakeFieldKind.CUSTOM,
-      customQuestionType: OLD_TYPE_MAP[q.type],
-      label: q.question,
-      required: q.required,
-      enabled: true,
-      options: q.options && q.options.length > 0 ? q.options : undefined,
-      order: SYSTEM_FIELD_DEFAULTS.length + q.order,
-    })),
-  });
-
-  return toCreate.length;
 }
 
 export interface LiveIntakeFormField {

@@ -9,6 +9,7 @@ import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { shortenUrl } from "../lib/shortLinks";
 import { getOrCreateClientConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
+import { resolveIntakeForm } from "../lib/intakeForms";
 
 const router = Router();
 
@@ -19,7 +20,11 @@ const PREFILL_TOKEN_TTL_DAYS = 7;
 // confirm the extracted fields.
 router.post("/", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
   const { studioId, userId } = req.user!;
-  const { payload, conversationId, clientId } = req.body ?? {};
+  const { payload, conversationId, clientId, formSlug } = req.body ?? {};
+
+  if (formSlug !== undefined && formSlug !== null && typeof formSlug !== "string") {
+    return res.status(400).json({ error: "formSlug must be a string" });
+  }
 
   const sanitized = sanitizePrefillPayload(payload);
   if (Object.keys(sanitized).length === 0) {
@@ -79,7 +84,22 @@ router.post("/", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (r
 
   const studio = await prisma.studio.findUnique({ where: { id: studioId }, select: { slug: true, name: true } });
 
-  const prefillUrl = await shortenUrl(`${PUBLIC_APP_URL}/inquiry/${studio!.slug}?draft=${token}`);
+  // Absent formSlug -> the plain /inquiry/{studio-slug} shape, resolving
+  // to whichever form is currently the default -- same "no disruption to
+  // the common single-form case" the picker itself follows on the
+  // frontend. A given formSlug that doesn't actually belong to this
+  // studio is rejected rather than silently falling back to the default,
+  // since that would send a link to the wrong form without any indication.
+  let formPathSegment = "";
+  if (typeof formSlug === "string" && formSlug.length > 0) {
+    const form = await resolveIntakeForm(studioId, formSlug);
+    if (!form) {
+      return res.status(400).json({ error: "formSlug must belong to your studio" });
+    }
+    formPathSegment = `/${form.slug}`;
+  }
+
+  const prefillUrl = await shortenUrl(`${PUBLIC_APP_URL}/inquiry/${studio!.slug}${formPathSegment}?draft=${token}`);
 
   // Auto-send through the same real-SMS path as the estimate auto-send --
   // only when clientId was passed (ClientDetail's standalone "Copy
