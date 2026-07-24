@@ -19,6 +19,7 @@ import Inquiries from './pages/Inquiries'
 import InquiryDetail from './pages/InquiryDetail'
 import MyInquiries from './pages/MyInquiries'
 import EstimateResponse from './pages/EstimateResponse'
+import EstimateRevisionResponse from './pages/EstimateRevisionResponse'
 import DepositResponse from './pages/DepositResponse'
 import GiftCardResponse from './pages/GiftCardResponse'
 import GiftCardDetail from './pages/GiftCardDetail'
@@ -65,6 +66,7 @@ function App() {
           element={<PublicPolicyPage field="communicationPolicy" title="Communication Policy" />}
         />
         <Route path="/estimate/:token" element={<EstimateResponse />} />
+        <Route path="/estimate-revision/:token" element={<EstimateRevisionResponse />} />
         <Route path="/deposit/:token" element={<DepositResponse />} />
         <Route path="/gift-card/:code" element={<GiftCardResponse />} />
         <Route path="/waiver/:token" element={<WaiverSign />} />

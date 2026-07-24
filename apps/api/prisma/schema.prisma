@@ -734,6 +734,28 @@ model Inquiry {
   lostReason             String?
   lostAt                 DateTime?
 
+  // Staff revising the estimate on an already-converted Project
+  // (SCHEDULING/WAITLISTED/CONFIRMED/DEPOSIT_PENDING) -- distinct from
+  // estimateToken/estimateOpenedAt/estimateRespondedAt above, which govern
+  // the pre-conversion first-estimate approval flow (PROCEED -> DEPOSIT_
+  // PENDING). A revision on a Project must NOT change `status` -- it's
+  // already scheduled/deposited, so these fields track the customer's
+  // response to the *change* separately, without touching the Project's
+  // real lifecycle status. Every revision overwrites these (only the
+  // latest revision's pending-approval state matters); full history of
+  // every past revision -- old values, new values, staff's reason -- lives
+  // permanently in AuditLog via the "estimate_revised" action instead of a
+  // dedicated revision-history table.
+  estimateRevisionReason         String?
+  estimateRevisionToken          String?   @unique
+  estimateRevisionTokenExpiresAt DateTime?
+  estimateRevisionSentAt         DateTime?
+  estimateRevisionRespondedAt    DateTime?
+  // null = no response yet, true = customer approved, false = customer
+  // flagged/objected (staff follow-up needed -- nothing auto-cancels the
+  // deposit/schedule).
+  estimateRevisionApproved       Boolean?
+
   // Soft, reversible hide -- same pattern as Client.archivedAt.
   archivedAt DateTime?
 

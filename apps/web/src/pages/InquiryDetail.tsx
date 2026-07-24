@@ -88,6 +88,10 @@ interface Inquiry {
   closedReason: string | null
   lostReason: string | null
   lostAt: string | null
+  estimateRevisionReason: string | null
+  estimateRevisionSentAt: string | null
+  estimateRevisionRespondedAt: string | null
+  estimateRevisionApproved: boolean | null
   archivedAt: string | null
   clientId: string
   client: { firstName: string; lastName: string; email: string | null; phone: string | null }
@@ -459,6 +463,23 @@ export default function InquiryDetail() {
   const [sendEstimateError, setSendEstimateError] = useState<string | null>(null)
   const [estimateSendNotice, setEstimateSendNotice] = useState<string | null>(null)
 
+  // The only sanctioned way to change a Project's (already-converted
+  // inquiry's) estimate -- distinct from editingEstimate/estimateForm
+  // above, which are locked out entirely once isConverted. Requires a
+  // reason (unlike Mark as Lost's optional one) and never touches
+  // `status`, unlike Generate & Send Estimate.
+  const [showReviseEstimateModal, setShowReviseEstimateModal] = useState(false)
+  const [reviseEstimateForm, setReviseEstimateForm] = useState({
+    priceEstimateLow: '',
+    priceEstimateHigh: '',
+    timeEstimateHoursMin: '',
+    timeEstimateHoursMax: '',
+  })
+  const [reviseReasonInput, setReviseReasonInput] = useState('')
+  const [revisingEstimate, setRevisingEstimate] = useState(false)
+  const [reviseEstimateError, setReviseEstimateError] = useState<string | null>(null)
+  const [revisionSendNotice, setRevisionSendNotice] = useState<string | null>(null)
+
   const [editingDetails, setEditingDetails] = useState(false)
   const [detailsForm, setDetailsForm] = useState({
     description: '',
@@ -666,6 +687,37 @@ export default function InquiryDetail() {
     return null
   })()
 
+  // Same shape as effectiveEstimate/estimateValidationError above, keyed to
+  // the separate Revise Estimate modal's own form state instead.
+  const effectiveRevisedEstimate = {
+    priceEstimateLow: reviseEstimateForm.priceEstimateLow
+      ? Number(reviseEstimateForm.priceEstimateLow)
+      : inquiry?.priceEstimateLow,
+    priceEstimateHigh: reviseEstimateForm.priceEstimateHigh
+      ? Number(reviseEstimateForm.priceEstimateHigh)
+      : inquiry?.priceEstimateHigh,
+    timeEstimateHoursMin: reviseEstimateForm.timeEstimateHoursMin
+      ? Number(reviseEstimateForm.timeEstimateHoursMin)
+      : inquiry?.timeEstimateHoursMin,
+    timeEstimateHoursMax: reviseEstimateForm.timeEstimateHoursMax
+      ? Number(reviseEstimateForm.timeEstimateHoursMax)
+      : inquiry?.timeEstimateHoursMax,
+  }
+
+  const reviseEstimateValidationError = (() => {
+    if (reviseReasonInput.trim().length === 0) return 'A reason is required to revise the estimate.'
+    const values = Object.values(effectiveRevisedEstimate)
+    if (values.some((v) => v == null)) return 'Price and time ranges are required.'
+    if (values.some((v) => v! <= 0)) return 'All range values must be positive.'
+    if (effectiveRevisedEstimate.priceEstimateLow! > effectiveRevisedEstimate.priceEstimateHigh!) {
+      return 'Price low must be less than or equal to price high.'
+    }
+    if (effectiveRevisedEstimate.timeEstimateHoursMin! > effectiveRevisedEstimate.timeEstimateHoursMax!) {
+      return 'Minimum hours must be less than or equal to maximum hours.'
+    }
+    return null
+  })()
+
   async function handleAssign() {
     if (!id || !selectedArtistId) return
 
@@ -724,6 +776,62 @@ export default function InquiryDetail() {
       setSendEstimateError(err instanceof Error ? err.message : 'Failed to send estimate')
     } finally {
       setSendingEstimate(false)
+    }
+  }
+
+  function openReviseEstimateModal() {
+    if (!inquiry) return
+    setReviseEstimateForm({
+      priceEstimateLow: inquiry.priceEstimateLow?.toString() ?? '',
+      priceEstimateHigh: inquiry.priceEstimateHigh?.toString() ?? '',
+      timeEstimateHoursMin: inquiry.timeEstimateHoursMin?.toString() ?? '',
+      timeEstimateHoursMax: inquiry.timeEstimateHoursMax?.toString() ?? '',
+    })
+    setReviseReasonInput('')
+    setReviseEstimateError(null)
+    setShowReviseEstimateModal(true)
+  }
+
+  async function handleReviseEstimate() {
+    if (!id) return
+
+    if (reviseEstimateValidationError) {
+      setReviseEstimateError(reviseEstimateValidationError)
+      return
+    }
+
+    setRevisingEstimate(true)
+    setReviseEstimateError(null)
+
+    try {
+      const result = await apiFetch<{
+        revisionSendResult:
+          | { sent: true }
+          | { sent: false; reason: 'not_connected' | 'no_phone' | 'opted_out' | 'send_failed'; error?: string }
+      }>(`/inquiries/${id}/revise-estimate`, {
+        method: 'POST',
+        body: JSON.stringify({
+          priceEstimateLow: reviseEstimateForm.priceEstimateLow ? Number(reviseEstimateForm.priceEstimateLow) : undefined,
+          priceEstimateHigh: reviseEstimateForm.priceEstimateHigh
+            ? Number(reviseEstimateForm.priceEstimateHigh)
+            : undefined,
+          timeEstimateHoursMin: reviseEstimateForm.timeEstimateHoursMin
+            ? Number(reviseEstimateForm.timeEstimateHoursMin)
+            : undefined,
+          timeEstimateHoursMax: reviseEstimateForm.timeEstimateHoursMax
+            ? Number(reviseEstimateForm.timeEstimateHoursMax)
+            : undefined,
+          reason: reviseReasonInput.trim(),
+        }),
+      })
+
+      setRevisionSendNotice(describeEstimateSendResult(result.revisionSendResult))
+      setShowReviseEstimateModal(false)
+      invalidateInquiry()
+    } catch (err) {
+      setReviseEstimateError(err instanceof Error ? err.message : 'Failed to revise estimate')
+    } finally {
+      setRevisingEstimate(false)
     }
   }
 
@@ -1533,14 +1641,69 @@ export default function InquiryDetail() {
                         <PencilIcon className="h-4 w-4" />
                         <span className="hidden text-sm font-semibold md:inline">Edit</span>
                       </button>
+                    ) : isConverted && canMessage ? (
+                      <button
+                        type="button"
+                        onClick={openReviseEstimateModal}
+                        aria-label="Revise Estimate"
+                        title="Revise Estimate"
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
+                      >
+                        <PencilIcon className="h-4 w-4" />
+                        <span className="hidden text-sm font-semibold md:inline">Revise Estimate</span>
+                      </button>
                     ) : null
                   }
                 >
                   {isConverted && (
-                    <p className="mt-1 text-xs text-fg-muted">
-                      Locked -- this inquiry has converted to a Project (deposit paid), so the estimate can no longer be
-                      edited.
-                    </p>
+                    <>
+                      <p className="mt-1 text-xs text-fg-muted">
+                        Locked -- this inquiry has converted to a Project (deposit paid). Use "Revise Estimate" above
+                        to change it; that requires a reason and re-sends the new estimate to the client for
+                        approval.
+                      </p>
+
+                      {inquiry.estimateRevisionReason && (
+                        <div
+                          className={`mt-4 rounded-lg border p-3 ${
+                            inquiry.estimateRevisionRespondedAt == null
+                              ? 'border-warning/30 bg-warning/10'
+                              : inquiry.estimateRevisionApproved
+                                ? 'border-success/30 bg-success/10'
+                                : 'border-danger/30 bg-danger/10'
+                          }`}
+                        >
+                          <p
+                            className={`text-xs font-medium uppercase tracking-wider ${
+                              inquiry.estimateRevisionRespondedAt == null
+                                ? 'text-warning'
+                                : inquiry.estimateRevisionApproved
+                                  ? 'text-success'
+                                  : 'text-danger'
+                            }`}
+                          >
+                            {inquiry.estimateRevisionRespondedAt == null
+                              ? `Awaiting client approval of a revised estimate (sent ${formatDateTime(inquiry.estimateRevisionSentAt!)})`
+                              : inquiry.estimateRevisionApproved
+                                ? `Client approved the revised estimate on ${formatDateTime(inquiry.estimateRevisionRespondedAt)}`
+                                : `Client flagged a concern about the revised estimate on ${formatDateTime(inquiry.estimateRevisionRespondedAt)} -- follow up with them`}
+                          </p>
+                          <p
+                            className={`mt-1 text-sm ${
+                              inquiry.estimateRevisionRespondedAt == null
+                                ? 'text-warning'
+                                : inquiry.estimateRevisionApproved
+                                  ? 'text-success'
+                                  : 'text-danger'
+                            }`}
+                          >
+                            Reason: {inquiry.estimateRevisionReason}
+                          </p>
+                        </div>
+                      )}
+
+                      {revisionSendNotice && <p className="mt-3 text-sm text-fg-secondary">{revisionSendNotice}</p>}
+                    </>
                   )}
 
                   {inquiry.clientStatedBudget && (
@@ -2672,6 +2835,104 @@ export default function InquiryDetail() {
                         type="button"
                         onClick={() => setShowMarkLostModal(false)}
                         disabled={markingLost}
+                        className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                </Modal>
+              )}
+
+              {showReviseEstimateModal && (
+                <Modal title="Revise Estimate" onClose={() => setShowReviseEstimateModal(false)}>
+                  <div className="space-y-4">
+                    <p className="text-sm text-fg-secondary">
+                      This is already a Project -- revising the estimate re-sends it to the client with your reason,
+                      and requires their approval.
+                    </p>
+
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-fg-secondary">Price low</label>
+                        <CurrencyInput
+                          value={reviseEstimateForm.priceEstimateLow}
+                          onChange={(digits) => setReviseEstimateForm({ ...reviseEstimateForm, priceEstimateLow: digits })}
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-fg-secondary">Price high</label>
+                        <CurrencyInput
+                          value={reviseEstimateForm.priceEstimateHigh}
+                          onChange={(digits) => setReviseEstimateForm({ ...reviseEstimateForm, priceEstimateHigh: digits })}
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-fg-secondary">Time min (hours)</label>
+                        <select
+                          value={reviseEstimateForm.timeEstimateHoursMin}
+                          onChange={(e) =>
+                            setReviseEstimateForm({ ...reviseEstimateForm, timeEstimateHoursMin: e.target.value })
+                          }
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                        >
+                          <option value="">Select…</option>
+                          {HOUR_OPTIONS.map((hours) => (
+                            <option key={hours} value={hours}>
+                              {hours} {hours === 1 ? 'hour' : 'hours'}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-fg-secondary">Time max (hours)</label>
+                        <select
+                          value={reviseEstimateForm.timeEstimateHoursMax}
+                          onChange={(e) =>
+                            setReviseEstimateForm({ ...reviseEstimateForm, timeEstimateHoursMax: e.target.value })
+                          }
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                        >
+                          <option value="">Select…</option>
+                          {HOUR_OPTIONS.map((hours) => (
+                            <option key={hours} value={hours}>
+                              {hours} {hours === 1 ? 'hour' : 'hours'}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-fg-secondary">
+                        Reason for the change (shown to the client)
+                      </label>
+                      <textarea
+                        rows={3}
+                        value={reviseReasonInput}
+                        onChange={(e) => setReviseReasonInput(e.target.value)}
+                        placeholder="e.g. Design ended up larger than originally scoped"
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                      />
+                    </div>
+
+                    {reviseEstimateError && <p className="text-sm text-danger">{reviseEstimateError}</p>}
+
+                    <div className="flex gap-3">
+                      <button
+                        type="button"
+                        onClick={handleReviseEstimate}
+                        disabled={revisingEstimate}
+                        className="flex-1 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {revisingEstimate ? 'Sending…' : 'Revise & Send for Approval'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowReviseEstimateModal(false)}
+                        disabled={revisingEstimate}
                         className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
                       >
                         Cancel

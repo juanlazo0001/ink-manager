@@ -1010,6 +1010,144 @@ router.post("/:id/send-estimate", requireAuth, requireRole(Role.OWNER, Role.FRON
   res.status(201).json({ ...updated, estimateUrl, estimateSendResult });
 });
 
+const REVISION_TOKEN_TTL_DAYS = 7;
+
+// The ONLY sanctioned way to change a Project's (already-converted
+// inquiry's) estimate -- PATCH /:id above hard-blocks the estimate fields
+// once PROJECT_STATUSES.includes(status), specifically so a number the
+// client already paid a deposit against can't be silently rewritten. This
+// route is the deliberate, controlled exception: requires a staff-typed
+// reason, never touches `status` (unlike send-estimate, which moves a
+// pre-conversion inquiry to AWAITING_CLIENT_RESPONSE -- that would yank an
+// already-scheduled/deposited Project out of the Projects tab), and sends
+// the client a message with both the new numbers and the reason so they
+// can see why it changed, plus a link to a separate approve/flag page
+// (distinct token/fields from the pre-conversion estimateToken flow -- see
+// estimateRevision* fields on the schema and routes/estimates.ts's
+// /revision/verify + /revision/respond).
+router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+  const { priceEstimateLow, priceEstimateHigh, timeEstimateHoursMin, timeEstimateHoursMax, reason } = req.body ?? {};
+
+  if (typeof reason !== "string" || reason.trim().length === 0) {
+    return res.status(400).json({ error: "A reason is required to revise a Project's estimate" });
+  }
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  if (!PROJECT_STATUSES.includes(inquiry.status)) {
+    return res.status(400).json({
+      error: "This route is only for revising the estimate on an already-converted Project -- use Generate & Send Estimate before conversion.",
+    });
+  }
+
+  for (const [field, value] of Object.entries({
+    priceEstimateLow,
+    priceEstimateHigh,
+    timeEstimateHoursMin,
+    timeEstimateHoursMax,
+  })) {
+    if (value !== undefined && typeof value !== "number") {
+      return res.status(400).json({ error: `${field} must be a number` });
+    }
+  }
+
+  // Same "effective value" fallback as send-estimate -- staff can revise
+  // just the price and leave the time estimate (or vice versa) without
+  // resubmitting every field.
+  const effective = {
+    priceEstimateLow: priceEstimateLow ?? inquiry.priceEstimateLow,
+    priceEstimateHigh: priceEstimateHigh ?? inquiry.priceEstimateHigh,
+    timeEstimateHoursMin: timeEstimateHoursMin ?? inquiry.timeEstimateHoursMin,
+    timeEstimateHoursMax: timeEstimateHoursMax ?? inquiry.timeEstimateHoursMax,
+  };
+
+  for (const [field, value] of Object.entries(effective)) {
+    if (value == null) {
+      return res.status(400).json({ error: `${field} is required to revise the estimate` });
+    }
+    if (value <= 0) {
+      return res.status(400).json({ error: `${field} must be a positive number` });
+    }
+  }
+
+  if (effective.priceEstimateLow! > effective.priceEstimateHigh!) {
+    return res.status(400).json({ error: "priceEstimateLow must be less than or equal to priceEstimateHigh" });
+  }
+
+  if (effective.timeEstimateHoursMin! > effective.timeEstimateHoursMax!) {
+    return res
+      .status(400)
+      .json({ error: "timeEstimateHoursMin must be less than or equal to timeEstimateHoursMax" });
+  }
+
+  const trimmedReason = reason.trim();
+  const estimateRevisionToken = crypto.randomBytes(32).toString("hex");
+  const estimateRevisionTokenExpiresAt = new Date(Date.now() + REVISION_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000);
+
+  const reviseData = {
+    priceEstimateLow: effective.priceEstimateLow,
+    priceEstimateHigh: effective.priceEstimateHigh,
+    timeEstimateHoursMin: effective.timeEstimateHoursMin,
+    timeEstimateHoursMax: effective.timeEstimateHoursMax,
+    estimateRevisionReason: trimmedReason,
+    estimateRevisionToken,
+    estimateRevisionTokenExpiresAt,
+    estimateRevisionSentAt: new Date(),
+    // A fresh revision supersedes whatever the client made of the last one
+    // -- reset so the new numbers/reason get their own, unanswered
+    // approve/flag prompt rather than inheriting a stale response.
+    estimateRevisionRespondedAt: null,
+    estimateRevisionApproved: null,
+  };
+
+  const updated = await prisma.inquiry.update({
+    where: { id },
+    data: reviseData,
+    include: INQUIRY_INCLUDE,
+  });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Inquiry",
+    entityId: id,
+    action: "estimate_revised",
+    changes: {
+      ...diffObjects(inquiry, reviseData, [
+        "priceEstimateLow",
+        "priceEstimateHigh",
+        "timeEstimateHoursMin",
+        "timeEstimateHoursMax",
+      ]),
+      reason: trimmedReason,
+    },
+  });
+
+  const revisionUrl = await shortenUrl(`${PUBLIC_APP_URL}/estimate-revision/${estimateRevisionToken}`);
+
+  // Same best-effort real-SMS path as send-estimate (see that route's own
+  // comment) -- the revision is already saved and audited above regardless
+  // of whether the text goes out; staff still has the link on-screen to
+  // share manually either way.
+  const studio = await prisma.studio.findUnique({ where: { id: req.user!.studioId }, select: { name: true } });
+  const revisionSendResult = await sendClientSms({
+    studioId: req.user!.studioId,
+    clientId: updated.clientId,
+    conversationId: (await getOrCreateClientConversation(req.user!.studioId, updated.clientId, req.user!.userId))
+      .conversation.id,
+    body: `Hi ${updated.client.firstName}, the estimate for your tattoo with ${studio?.name ?? "us"} has been updated to $${effective.priceEstimateLow}-$${effective.priceEstimateHigh} (${effective.timeEstimateHoursMin}-${effective.timeEstimateHoursMax} hrs). Reason: ${trimmedReason}. Please review: ${revisionUrl}`,
+    actorUserId: req.user!.userId,
+  });
+
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+
+  res.status(201).json({ ...updated, revisionUrl, revisionSendResult });
+});
+
 // Creates the real Appointment once the deposit's been paid (SCHEDULING is
 // only reachable after mark-paid issues a gift card -- Phase 3), links it
 // back to the Inquiry, and attaches the gift card in the same transaction.

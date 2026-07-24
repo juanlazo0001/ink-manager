@@ -31,6 +31,7 @@ const FIELD_LABELS: Record<string, string> = {
   estimateSentAt: 'Estimate sent',
   estimateOpenedAt: 'Estimate opened',
   estimateRespondedAt: 'Estimate responded',
+  reason: 'Reason',
   completedAt: 'Completed at',
   expiresAt: 'Expires',
   locationId: 'Location',

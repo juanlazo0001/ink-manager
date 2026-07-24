@@ -125,4 +125,103 @@ router.patch("/respond/:token", async (req, res) => {
   res.json({ success: true });
 });
 
+// Distinct token/fields (estimateRevisionToken/estimateRevisionTokenExpiresAt)
+// from the pre-conversion flow above -- a revision only ever happens on an
+// already-converted Project (see POST /inquiries/:id/revise-estimate),
+// and its response must never touch `status` the way PROCEED/DECLINE
+// above do, since the Project is already scheduled/deposited.
+function isRevisionExpiredOrInvalid(inquiry: { estimateRevisionTokenExpiresAt: Date | null } | null) {
+  if (!inquiry) {
+    return { code: "invalid", error: "This link is invalid." } as const;
+  }
+
+  if (!inquiry.estimateRevisionTokenExpiresAt || inquiry.estimateRevisionTokenExpiresAt < new Date()) {
+    return { code: "expired", error: "This link has expired." } as const;
+  }
+
+  return null;
+}
+
+router.get("/revision/verify/:token", async (req, res) => {
+  const token = req.params.token as string;
+
+  const inquiry = await prisma.inquiry.findUnique({
+    where: { estimateRevisionToken: token },
+    include: {
+      client: true,
+      studio: { include: { settings: { select: { themePreset: true } } } },
+      assignedArtist: { include: { user: true } },
+    },
+  });
+
+  const invalidity = isRevisionExpiredOrInvalid(inquiry);
+  if (invalidity) {
+    const status = invalidity.code === "invalid" ? 404 : 410;
+    return res.status(status).json(invalidity);
+  }
+
+  res.json({
+    clientFirstName: inquiry!.client.firstName,
+    studioName: inquiry!.studio.name,
+    studioSlug: inquiry!.studio.slug,
+    studioLogoUrl: inquiry!.studio.logoUrl,
+    themePreset: inquiry!.studio.settings?.themePreset ?? DEFAULT_THEME_PRESET,
+    artistName: inquiry!.assignedArtist?.user.name ?? null,
+    artistAvatarUrl: inquiry!.assignedArtist?.user.avatarUrl ?? null,
+    priceEstimateLow: inquiry!.priceEstimateLow,
+    priceEstimateHigh: inquiry!.priceEstimateHigh,
+    timeEstimateHoursMin: inquiry!.timeEstimateHoursMin,
+    timeEstimateHoursMax: inquiry!.timeEstimateHoursMax,
+    reason: inquiry!.estimateRevisionReason,
+  });
+});
+
+const REVISION_DECISIONS = ["APPROVE", "FLAG"] as const;
+
+router.patch("/revision/respond/:token", async (req, res) => {
+  const token = req.params.token as string;
+  const { decision } = req.body ?? {};
+
+  if (!REVISION_DECISIONS.includes(decision)) {
+    return res.status(400).json({ error: `decision must be one of: ${REVISION_DECISIONS.join(", ")}` });
+  }
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { estimateRevisionToken: token } });
+
+  const invalidity = isRevisionExpiredOrInvalid(inquiry);
+  if (invalidity) {
+    const status = invalidity.code === "invalid" ? 404 : 410;
+    return res.status(status).json(invalidity);
+  }
+
+  // Status is deliberately never touched here -- this Project is already
+  // scheduled/deposited; a revision response only records how the client
+  // reacted to the *change*, never the Project's own lifecycle status
+  // (contrast with PROCEED/BUDGET_TOO_HIGH/DECLINE above, which do move
+  // status, because those happen on a still-pre-conversion inquiry).
+  // FLAG intentionally does nothing beyond recording the response --
+  // unwinding a paid deposit or scheduled appointment automatically would
+  // be unsafe; staff sees the flag (Inquiry detail page + audit trail)
+  // and follows up manually.
+  await prisma.inquiry.update({
+    where: { id: inquiry!.id },
+    data: {
+      estimateRevisionToken: null,
+      estimateRevisionTokenExpiresAt: null,
+      estimateRevisionRespondedAt: new Date(),
+      estimateRevisionApproved: decision === "APPROVE",
+    },
+  });
+
+  await logAudit({
+    studioId: inquiry!.studioId,
+    actorUserId: null,
+    entityType: "Inquiry",
+    entityId: inquiry!.id,
+    action: decision === "APPROVE" ? "estimate_revision_approved" : "estimate_revision_flagged",
+  });
+
+  res.json({ success: true });
+});
+
 export default router;
