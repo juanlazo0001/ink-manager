@@ -1842,3 +1842,37 @@ Browser (Playwright against the running dev servers, owner login): screenshot of
 ## Cleanup
 
 All ad-hoc Playwright screenshot scripts (`screenshot-pipeline.js`, `screenshot-pipeline-crop.js`, `crop-pipeline.js`) and their screenshots deleted from the scratch `pw-test` directory; none committed. No new background shells were started this session (the dev API/web servers were already running from prior work and were left as-is, not started or stopped by this session). The per-account widget-layout row for `inquiry-detail` used during drag verification was reset to its default (empty) state before finishing.
+
+---
+
+# Fix — Inquiry page: missing gap above widget list, cramped ellipsis button
+
+Single session on `main`. No schema changes. Confirmed as a direct side effect of the immediately prior session's Pipeline-widget refactor before making any changes.
+
+## 1. Missing gap between header card and widget list — root cause confirmed
+
+Hypothesis in the task was correct. Before the prior session's refactor, the Pipeline lived in its own standalone `<div className="mt-6 rounded-2xl ...">` sitting directly after the header card — that `mt-6` was the only thing providing the gap. Once Pipeline moved inside `<ReorderableWidgetList>` as its first child, that wrapper div (and its `mt-6`) disappeared; `ReorderableWidgetList`'s own root div was just `flex flex-col gap-6`, with nothing above it. Confirmed by reading both files side by side and reproducing the zero-gap boundary in a screenshot before touching any code.
+
+Fixed at the shared-component level (`ReorderableWidgetList.tsx`'s root div, now `mt-6 flex flex-col gap-6`) rather than patching `InquiryDetail.tsx`'s header individually, since `AppointmentDetail.tsx` has the exact same "plain header div immediately followed by `<ReorderableWidgetList>`" pattern and was carrying the identical latent bug (not yet reported by the user, found while confirming the hypothesis) — fixing it in the one shared component resolves both pages consistently and matches the `gap-6` value already used between widgets, per the task's instruction.
+
+## 2. Cramped ellipsis button — root cause
+
+Not simply a missing padding value. The button's wrapper div used `self-stretch` (to dynamically match its sibling buttons' height) and the button itself used `aspect-square h-full` (to derive a square box from that stretched height). Measured the actual rendered boxes via Playwright: the wrapper resolved to only 16px wide while the button inside it rendered at 38px wide — the button overflowed its own parent by 22px and spilled 1px past the header card's own outer edge, past the `p-5` padding boundary every sibling button respects. This is a known interaction where a flex container's shrink-to-fit width computation runs before an `aspect-ratio`-driven child size (sourced from `align-self: stretch`) has resolved, so the two disagree.
+
+Replaced with the same fixed `h-9 w-9`, no-border, icon-only circular button pattern already used for equivalent kebab-style actions elsewhere in the codebase (`ConversationsPanel.tsx`, `Settings.tsx`) — sidesteps the aspect-ratio/stretch interaction entirely rather than trying to patch it, and reuses an existing convention instead of inventing a new size.
+
+## Verification
+
+Browser (Playwright, owner login): screenshot confirmed the header-to-Pipeline gap now visually matches the Pipeline-to-Assignment and Assignment-to-Estimate gaps. Re-measured the ellipsis button's bounding box after the fix: wrapper and button both resolve to exactly 36×36px, right edge at 1279px against a card whose padded content boundary is 1280px (`p-5` = 20px inset from the 1300px card edge) — sitting flush with the padding boundary, matching its siblings, no more overflow. Also screenshotted `AppointmentDetail.tsx` to confirm the shared-component fix resolved the identical bug there too.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npx tsc -b --noEmit` + `npm run build` (web) — clean.
+
+## Commit
+
+`18ec76c` — Fix missing header-to-widget-list gap and cramped ellipsis button. Pushed immediately after a collision check (`git fetch` + `git log HEAD..origin/main`) came back empty.
+
+## Cleanup
+
+All ad-hoc Playwright scripts (`screenshot-header.js`, `crop-header.js`, `measure-header.js`, `screenshot-appt.js`) and screenshots deleted from the scratch `pw-test` directory; none committed. No background shells were started this session (the dev API/web servers were already running from prior work and were left as-is).
