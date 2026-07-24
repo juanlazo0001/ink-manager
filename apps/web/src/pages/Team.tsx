@@ -51,6 +51,30 @@ interface TeamUser {
   artist?: { bio: string | null; specialties: string[] }
 }
 
+interface StaffDeletePreview {
+  isArtist: boolean
+  artistAppointments: number
+  artistAssignedInquiries: number
+  giftCardsIssued: number
+  inquiryNotes: number
+  appointmentPhotos: number
+  conversationTags: number
+  personalTasksCreatedForOthers: number
+  personalTasksOwn: number
+  taskDismissals: number
+  sectionSeens: number
+  conversationReads: number
+  conversationParticipants: number
+  dismissedDuplicatePairs: number
+  prefillDrafts: number
+  importBatches: number
+  isSelf: boolean
+  isLastActiveOwner: boolean
+  blockedByArtistHistory: boolean
+}
+
+const DELETE_CONFIRM_TEXT = 'DELETE'
+
 interface LocationOption {
   id: string
   name: string
@@ -160,6 +184,14 @@ export default function Team() {
   const [editAvatarUrl, setEditAvatarUrl] = useState<string | null>(null)
   const [editFormError, setEditFormError] = useState<string | null>(null)
   const [editSubmitting, setEditSubmitting] = useState(false)
+
+  const [deletingUser, setDeletingUser] = useState<TeamUser | null>(null)
+  const [deletePreview, setDeletePreview] = useState<StaffDeletePreview | null>(null)
+  const [deletePreviewLoading, setDeletePreviewLoading] = useState(false)
+  const [deletePreviewError, setDeletePreviewError] = useState<string | null>(null)
+  const [deleteConfirmText, setDeleteConfirmText] = useState('')
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   const [permissionsMatrix, setPermissionsMatrix] = useState<PermissionMatrix | null>(null)
   const [permissionsError, setPermissionsError] = useState<string | null>(null)
@@ -330,6 +362,43 @@ export default function Team() {
     setEditForm(emptyEditForm(teamUser))
     setEditAvatarUrl(teamUser.avatarUrl)
     setEditFormError(null)
+  }
+
+  async function openDeleteModal(teamUser: TeamUser) {
+    if (!user?.studioId) return
+    setDeletingUser(teamUser)
+    setDeleteConfirmText('')
+    setDeleteError(null)
+    setDeletePreview(null)
+    setDeletePreviewError(null)
+    setDeletePreviewLoading(true)
+    try {
+      const preview = await apiFetch<StaffDeletePreview>(`/studios/${user.studioId}/users/${teamUser.id}/delete-preview`)
+      setDeletePreview(preview)
+    } catch (err) {
+      setDeletePreviewError(err instanceof Error ? err.message : 'Failed to load what will be deleted')
+    } finally {
+      setDeletePreviewLoading(false)
+    }
+  }
+
+  async function handleConfirmDelete() {
+    if (!user?.studioId || !deletingUser) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await apiFetch(`/studios/${user.studioId}/users/${deletingUser.id}`, {
+        method: 'DELETE',
+        body: JSON.stringify({ confirm: deleteConfirmText }),
+      })
+      setDeletingUser(null)
+      setRefreshIndex((index) => index + 1)
+      if (deletingUser.role === 'ARTIST') queryClient.invalidateQueries({ queryKey: artistsQueryKey(user.studioId) })
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Failed to delete team member')
+    } finally {
+      setDeleting(false)
+    }
   }
 
   async function handleViewAs(targetUserId: string) {
@@ -515,6 +584,15 @@ export default function Team() {
                               >
                                 Edit
                               </button>
+                              <button
+                                type="button"
+                                onClick={() => openDeleteModal(teamUser)}
+                                disabled={isSelf}
+                                title={isSelf ? "You can't delete your own account" : undefined}
+                                className="rounded-full border border-danger/40 px-3 py-1.5 text-xs font-medium text-danger transition hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                Delete
+                              </button>
                             </div>
                           </td>
                         </tr>
@@ -690,6 +768,20 @@ export default function Team() {
                           >
                             Edit account
                           </button>
+                          {artist.user.id !== realUser?.userId && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                const teamUser = users?.find((u) => u.id === artist.user.id)
+                                if (teamUser) openDeleteModal(teamUser)
+                              }}
+                              disabled={!users?.some((u) => u.id === artist.user.id)}
+                              className="rounded-full border border-danger/40 px-3 py-1.5 text-xs font-medium text-danger transition hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              Delete
+                            </button>
+                          )}
                         </div>
                       )}
                             </div>
@@ -1053,6 +1145,122 @@ export default function Team() {
               {editSubmitting ? 'Saving…' : 'Save changes'}
             </button>
           </form>
+        </Modal>
+      )}
+
+      {deletingUser && (
+        <Modal
+          title={`Delete ${deletingUser.name || deletingUser.email}`}
+          onClose={() => {
+            setDeletingUser(null)
+            setDeletePreview(null)
+            setDeletePreviewError(null)
+            setDeleteError(null)
+          }}
+        >
+          <p className="text-sm text-fg-secondary">
+            Permanently delete <span className="font-semibold">{deletingUser.name || deletingUser.email}</span>?
+            This cannot be undone.
+          </p>
+
+          {deletePreviewLoading && <p className="mt-4 text-sm text-fg-secondary">Checking what will be affected…</p>}
+          {deletePreviewError && <p className="mt-3 text-sm text-danger">{deletePreviewError}</p>}
+
+          {deletePreview && deletePreview.isLastActiveOwner && (
+            <div className="mt-4 rounded-lg border border-danger/30 bg-danger/10 p-3 text-sm text-danger">
+              This studio must have at least one active owner. Make another user an owner first, or deactivate this
+              account instead once that's done.
+            </div>
+          )}
+
+          {deletePreview && !deletePreview.isLastActiveOwner && deletePreview.blockedByArtistHistory && (
+            <div className="mt-4 rounded-lg border border-danger/30 bg-danger/10 p-3 text-sm text-danger">
+              This artist has {deletePreview.artistAppointments} appointment
+              {deletePreview.artistAppointments === 1 ? '' : 's'} and {deletePreview.artistAssignedInquiries} assigned
+              or preferred inquir{deletePreview.artistAssignedInquiries === 1 ? 'y' : 'ies'} — deleting their full
+              history isn't supported here. Deactivate their account instead (Edit → uncheck "Active").
+            </div>
+          )}
+
+          {deletePreview && !deletePreview.isLastActiveOwner && !deletePreview.blockedByArtistHistory && (
+            <div className="mt-4 rounded-lg border border-border bg-surface-inset p-3 text-sm">
+              <p className="mb-2 text-xs font-medium uppercase tracking-wider text-fg-muted">
+                This will permanently remove
+              </p>
+              <ul className="space-y-1 text-fg-secondary">
+                <li>The account itself, and its Artist profile{deletePreview.isArtist ? '' : ' (n/a)'}</li>
+                <li>
+                  {deletePreview.personalTasksOwn} of their own personal task
+                  {deletePreview.personalTasksOwn === 1 ? '' : 's'}
+                </li>
+                <li>
+                  {deletePreview.taskDismissals + deletePreview.sectionSeens + deletePreview.conversationReads}{' '}
+                  read-receipt / dismissal record{deletePreview.taskDismissals + deletePreview.sectionSeens + deletePreview.conversationReads === 1 ? '' : 's'}
+                </li>
+              </ul>
+              {(deletePreview.giftCardsIssued > 0 ||
+                deletePreview.inquiryNotes > 0 ||
+                deletePreview.appointmentPhotos > 0 ||
+                deletePreview.personalTasksCreatedForOthers > 0) && (
+                <>
+                  <p className="mb-2 mt-3 text-xs font-medium uppercase tracking-wider text-fg-muted">
+                    Preserved (just loses the author link)
+                  </p>
+                  <ul className="space-y-1 text-fg-secondary">
+                    {deletePreview.giftCardsIssued > 0 && (
+                      <li>
+                        {deletePreview.giftCardsIssued} gift card{deletePreview.giftCardsIssued === 1 ? '' : 's'} issued
+                      </li>
+                    )}
+                    {deletePreview.inquiryNotes > 0 && (
+                      <li>
+                        {deletePreview.inquiryNotes} inquiry note{deletePreview.inquiryNotes === 1 ? '' : 's'}
+                      </li>
+                    )}
+                    {deletePreview.appointmentPhotos > 0 && (
+                      <li>
+                        {deletePreview.appointmentPhotos} appointment photo{deletePreview.appointmentPhotos === 1 ? '' : 's'}{' '}
+                        uploaded
+                      </li>
+                    )}
+                    {deletePreview.personalTasksCreatedForOthers > 0 && (
+                      <li>
+                        {deletePreview.personalTasksCreatedForOthers} task
+                        {deletePreview.personalTasksCreatedForOthers === 1 ? '' : 's'} created for a teammate
+                      </li>
+                    )}
+                  </ul>
+                </>
+              )}
+            </div>
+          )}
+
+          {deletePreview && !deletePreview.isLastActiveOwner && !deletePreview.blockedByArtistHistory && (
+            <div className="mt-4">
+              <label className="mb-1 block text-sm font-medium text-fg-secondary">
+                Type <span className="font-mono font-semibold text-fg">DELETE</span> to confirm
+              </label>
+              <input
+                type="text"
+                value={deleteConfirmText}
+                onChange={(e) => setDeleteConfirmText(e.target.value)}
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-danger focus:outline-none focus:ring-1 focus:ring-danger"
+              />
+            </div>
+          )}
+
+          {deleteError && <p className="mt-3 text-sm text-danger">{deleteError}</p>}
+
+          {deletePreview && !deletePreview.isLastActiveOwner && !deletePreview.blockedByArtistHistory && (
+            <button
+              type="button"
+              onClick={handleConfirmDelete}
+              disabled={deleting || deleteConfirmText !== DELETE_CONFIRM_TEXT}
+              className="mt-5 w-full rounded-full bg-danger px-4 py-2 text-sm font-medium text-bg transition hover:bg-danger/90 disabled:opacity-50"
+            >
+              {deleting ? 'Deleting…' : 'Delete Permanently'}
+            </button>
+          )}
         </Modal>
       )}
     </div>

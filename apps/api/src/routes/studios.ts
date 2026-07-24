@@ -444,6 +444,226 @@ router.patch("/:studioId/users/:userId", requireAuth, requireRole(Role.OWNER), a
   res.json(serializeUser(safeUser));
 });
 
+// Shared between the delete-preview and the audit snapshot written just
+// before the actual DELETE below -- both need the same full picture.
+// Distinguishes what's preserved (business content, now nullable-authored
+// per the migration that shipped alongside this feature) from what's
+// deleted outright (ephemeral, per-user records with no value once the
+// account is gone) -- see the DELETE route for exactly which is which.
+async function gatherStaffDeletionSummary(userId: string) {
+  const [
+    artist,
+    giftCardsIssued,
+    inquiryNotes,
+    appointmentPhotos,
+    conversationTags,
+    personalTasksCreatedForOthers,
+    personalTasksOwn,
+    taskDismissals,
+    sectionSeens,
+    conversationReads,
+    conversationParticipants,
+    dismissedDuplicatePairs,
+    prefillDrafts,
+    importBatches,
+  ] = await Promise.all([
+    prisma.artist.findUnique({ where: { userId }, select: { id: true } }),
+    prisma.giftCard.count({ where: { issuedById: userId } }),
+    prisma.inquiryNote.count({ where: { authorId: userId } }),
+    prisma.appointmentPhoto.count({ where: { uploadedById: userId } }),
+    prisma.conversationTag.count({ where: { createdById: userId } }),
+    prisma.personalTask.count({ where: { createdById: userId, userId: { not: userId } } }),
+    prisma.personalTask.count({ where: { userId } }),
+    prisma.taskDismissal.count({ where: { userId } }),
+    prisma.sectionSeen.count({ where: { userId } }),
+    prisma.conversationRead.count({ where: { userId } }),
+    prisma.conversationParticipant.count({ where: { userId } }),
+    prisma.dismissedDuplicatePair.count({ where: { dismissedById: userId } }),
+    prisma.prefillDraft.count({ where: { createdById: userId } }),
+    prisma.importBatch.count({ where: { uploadedById: userId } }),
+  ]);
+
+  // An artist's own appointment/inquiry history is categorically bigger
+  // than "remove a staff account" -- unwinding it isn't something this
+  // route attempts. Checked regardless of whether the underlying FK is
+  // itself nullable (Inquiry's artist fields are); an inquiry that was
+  // actually assigned to or preferred this specific artist is real
+  // workflow history worth protecting, not just an FK technicality.
+  let artistAppointments = 0;
+  let artistAssignedInquiries = 0;
+  if (artist) {
+    [artistAppointments, artistAssignedInquiries] = await Promise.all([
+      prisma.appointment.count({ where: { artistId: artist.id } }),
+      prisma.inquiry.count({
+        where: { OR: [{ assignedArtistId: artist.id }, { preferredArtistId: artist.id }] },
+      }),
+    ]);
+  }
+
+  return {
+    isArtist: !!artist,
+    artistAppointments,
+    artistAssignedInquiries,
+    // Preserved (nullable author/creator), not destroyed:
+    giftCardsIssued,
+    inquiryNotes,
+    appointmentPhotos,
+    conversationTags,
+    personalTasksCreatedForOthers,
+    // Deleted outright, ephemeral/no value once the account is gone:
+    personalTasksOwn,
+    taskDismissals,
+    sectionSeens,
+    conversationReads,
+    conversationParticipants,
+    dismissedDuplicatePairs,
+    prefillDrafts,
+    importBatches,
+  };
+}
+
+function blockedByArtistHistory(summary: { isArtist: boolean; artistAppointments: number; artistAssignedInquiries: number }) {
+  return summary.isArtist && (summary.artistAppointments > 0 || summary.artistAssignedInquiries > 0);
+}
+
+// OWNER only, always available regardless of attached history (except the
+// one hard block below) -- the strong in-app confirmation (exact-match
+// "DELETE" text input) is the safeguard, same convention as Client/
+// Inquiry/Appointment delete elsewhere in this app.
+router.get("/:studioId/users/:userId/delete-preview", requireAuth, requireRole(Role.OWNER), async (req, res) => {
+  const studioId = req.params.studioId as string;
+  const userId = req.params.userId as string;
+
+  if (studioId !== req.user!.studioId) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const existing = await loadStudioUser(studioId, userId);
+  if (!existing) {
+    return res.status(404).json({ error: "User not found" });
+  }
+
+  const isLastActiveOwner =
+    existing.role === Role.OWNER && existing.isActive
+      ? (await prisma.user.count({
+          where: { studioId, role: Role.OWNER, isActive: true, id: { not: userId } },
+        })) === 0
+      : false;
+
+  const summary = await gatherStaffDeletionSummary(userId);
+
+  res.json({
+    ...summary,
+    isSelf: userId === req.user!.userId,
+    isLastActiveOwner,
+    blockedByArtistHistory: blockedByArtistHistory(summary),
+  });
+});
+
+// True permanent delete -- OWNER only. Business content this user merely
+// touched (gift cards issued, inquiry notes authored, appointment photos
+// uploaded, conversation tags created, personal tasks created for a
+// teammate) survives with a null author/creator -- see this schema's
+// nullable-FK migration alongside this route. Ephemeral per-user records
+// (task dismissals, read receipts, own personal tasks, duplicate-pair
+// dismissals, prefill drafts, import batches) are destroyed outright, same
+// "no life independent of the user" reasoning already used elsewhere for
+// e.g. AppointmentPhoto vs. its parent Appointment. An artist with any
+// appointment or assigned/preferred-inquiry history is hard-blocked --
+// deactivation is the only option for them here (see blockedByArtistHistory).
+router.delete("/:studioId/users/:userId", requireAuth, requireRole(Role.OWNER), async (req, res) => {
+  const studioId = req.params.studioId as string;
+  const userId = req.params.userId as string;
+  const { confirm } = req.body ?? {};
+
+  if (confirm !== "DELETE") {
+    return res.status(400).json({ error: 'Type "DELETE" to confirm this action.' });
+  }
+
+  if (studioId !== req.user!.studioId) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  if (userId === req.user!.userId) {
+    return res.status(400).json({
+      error: "You cannot delete your own account. Have another owner do it, or use your Profile page instead.",
+    });
+  }
+
+  const existing = await loadStudioUser(studioId, userId);
+  if (!existing) {
+    return res.status(404).json({ error: "User not found" });
+  }
+
+  // Same last-active-owner guard as the PATCH route above -- a studio can
+  // never be left without at least one active owner.
+  if (existing.role === Role.OWNER && existing.isActive) {
+    const otherActiveOwners = await prisma.user.count({
+      where: { studioId, role: Role.OWNER, isActive: true, id: { not: userId } },
+    });
+    if (otherActiveOwners === 0) {
+      return res.status(400).json({ error: "This studio must have at least one active owner." });
+    }
+  }
+
+  const summary = await gatherStaffDeletionSummary(userId);
+  if (blockedByArtistHistory(summary)) {
+    return res.status(400).json({
+      error:
+        `This artist has ${summary.artistAppointments} appointment(s) and ${summary.artistAssignedInquiries} ` +
+        `assigned/preferred inquiry(ies) -- deleting their full history isn't supported here. ` +
+        `Deactivate their account instead (Edit → uncheck "Active").`,
+    });
+  }
+
+  await prisma.$transaction(async (tx) => {
+    // Ephemeral, per-user records with no value once the account is gone.
+    await tx.taskDismissal.deleteMany({ where: { userId } });
+    await tx.sectionSeen.deleteMany({ where: { userId } });
+    await tx.conversationRead.deleteMany({ where: { userId } });
+    await tx.conversationParticipant.deleteMany({ where: { userId } });
+    await tx.dismissedDuplicatePair.deleteMany({ where: { dismissedById: userId } });
+    await tx.prefillDraft.deleteMany({ where: { createdById: userId } });
+
+    // ImportRow.importBatchId is required (RESTRICT) -- rows before batch.
+    const batches = await tx.importBatch.findMany({ where: { uploadedById: userId }, select: { id: true } });
+    if (batches.length > 0) {
+      await tx.importRow.deleteMany({ where: { importBatchId: { in: batches.map((b) => b.id) } } });
+      await tx.importBatch.deleteMany({ where: { uploadedById: userId } });
+    }
+
+    // This user's OWN personal to-dos go with them; a task they merely
+    // created for a teammate survives (createdById -> null automatically,
+    // via the FK's ON DELETE SET NULL, when the User row is deleted below
+    // -- no explicit reassignment needed).
+    await tx.personalTask.deleteMany({ where: { userId } });
+
+    // Confirmed zero appointment/inquiry history above -- safe to remove
+    // the Artist profile itself along with its own ephemeral digest log.
+    if (summary.isArtist) {
+      await tx.artistReminderLog.deleteMany({ where: { artist: { userId } } });
+      await tx.artist.delete({ where: { userId } });
+    }
+
+    // GiftCard.issuedById, InquiryNote.authorId, AppointmentPhoto.
+    // uploadedById, ConversationTag.createdById, and any remaining
+    // PersonalTask.createdById all SET NULL automatically at the database
+    // level the moment this row is gone -- no explicit reassignment here.
+    await tx.user.delete({ where: { id: userId } });
+  });
+
+  await logAudit({
+    studioId,
+    actorUserId: req.user!.userId,
+    entityType: "User",
+    entityId: userId,
+    action: "permanently_deleted",
+    changes: { email: existing.email, name: existing.name, role: existing.role, ...summary },
+  });
+
+  res.json({ success: true });
+});
+
 async function buildPermissionMatrix(studioId: string) {
   const overrides = await prisma.rolePermission.findMany({ where: { studioId } });
   const overrideMap = new Map(overrides.map((o: RolePermission) => [`${o.role}:${o.permissionKey}`, o.allowed]));

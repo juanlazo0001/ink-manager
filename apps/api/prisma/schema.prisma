@@ -637,8 +637,11 @@ model AppointmentPhoto {
   appointmentId String
   appointment   Appointment @relation(fields: [appointmentId], references: [id])
 
-  uploadedById String
-  uploadedBy   User   @relation("AppointmentPhotoUploadedBy", fields: [uploadedById], references: [id])
+  // Nullable so a finished-tattoo photo survives if the staff member who
+  // uploaded it is later deleted -- the photo is real client-facing
+  // content, unlike the account that happened to upload it.
+  uploadedById String?
+  uploadedBy   User?   @relation("AppointmentPhotoUploadedBy", fields: [uploadedById], references: [id])
 
   @@index([appointmentId])
 }
@@ -767,8 +770,11 @@ model InquiryNote {
   inquiryId String
   inquiry   Inquiry @relation(fields: [inquiryId], references: [id])
 
-  authorId String
-  author   User   @relation("InquiryNoteAuthor", fields: [authorId], references: [id])
+  // Nullable so a note about a client's project survives if its author is
+  // later deleted from the studio -- the note content is real business
+  // record, unlike the account that wrote it.
+  authorId String?
+  author   User?   @relation("InquiryNoteAuthor", fields: [authorId], references: [id])
 
   @@index([studioId])
   @@index([inquiryId, createdAt])
@@ -1000,8 +1006,13 @@ model GiftCard {
   appointmentId String?
   appointment   Appointment? @relation(fields: [appointmentId], references: [id])
 
-  issuedById String
-  issuedBy   User   @relation(fields: [issuedById], references: [id])
+  // Nullable so a gift card survives (with its full financial value intact)
+  // if the staff member who issued it is later deleted from the studio --
+  // the card itself is real business/customer money, unlike the account
+  // that happened to issue it. Same "preserve content, anonymize actor"
+  // precedent already used for Message.authorUserId/AuditLog.actorUserId.
+  issuedById String?
+  issuedBy   User?   @relation(fields: [issuedById], references: [id])
 
   depositForm DepositForm?
 
@@ -1129,8 +1140,12 @@ model ConversationTag {
   conversationId String
   conversation   Conversation @relation(fields: [conversationId], references: [id])
 
-  createdById String
-  createdBy   User   @relation(fields: [createdById], references: [id])
+  // Nullable so a tag (cross-referencing a conversation to an Inquiry/
+  // Appointment/etc.) survives if whoever created it is later deleted --
+  // the cross-reference is real business record, unlike the account that
+  // made it.
+  createdById String?
+  createdBy   User?   @relation(fields: [createdById], references: [id])
 
   @@unique([conversationId, entityType, entityId])
   @@index([studioId])
@@ -1296,9 +1311,13 @@ model PersonalTask {
   user   User   @relation(fields: [userId], references: [id])
 
   // Who created it. Equal to userId for a self-created task; different
-  // when OWNER/FRONT_DESK assigned it to a teammate.
-  createdById String
-  createdBy   User   @relation("PersonalTaskCreatedBy", fields: [createdById], references: [id])
+  // when OWNER/FRONT_DESK assigned it to a teammate. Nullable so a live
+  // task assigned to someone else survives if its creator is later
+  // deleted from the studio -- only the assignee's OWN tasks (userId
+  // above, required) are deleted along with them; a task they merely
+  // created for a teammate keeps existing with a null creator.
+  createdById String?
+  createdBy   User?   @relation("PersonalTaskCreatedBy", fields: [createdById], references: [id])
 
   @@index([studioId])
   @@index([userId])

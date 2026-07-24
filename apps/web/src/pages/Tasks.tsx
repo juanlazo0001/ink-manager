@@ -28,7 +28,9 @@ interface PersonalTask {
   completedAt: string | null
   createdAt: string
   updatedAt: string
-  createdBy: { id: string; name: string | null; email: string }
+  // Null once the staff member who created it (for someone else) has been
+  // deleted from the studio -- the task itself survives for its assignee.
+  createdBy: { id: string; name: string | null; email: string } | null
 }
 
 // The flip side of PersonalTask, from GET /tasks' new assignedByMe array --
@@ -203,8 +205,10 @@ export default function Tasks() {
             >
               {task.title}
             </button>
-            {task.createdBy.id !== user?.userId && (
-              <p className="mt-0.5 text-xs text-fg-muted">Assigned by {task.createdBy.name ?? task.createdBy.email}</p>
+            {task.createdBy?.id !== user?.userId && (
+              <p className="mt-0.5 text-xs text-fg-muted">
+                Assigned by {task.createdBy ? (task.createdBy.name ?? task.createdBy.email) : 'a deleted user'}
+              </p>
             )}
           </div>
         )}
@@ -241,8 +245,8 @@ export default function Tasks() {
   // "Assigned to Me" groups into what's actually mine to plan vs. what
   // someone else handed me -- same flat list from the API, split client-
   // side purely on who created each row.
-  const myOwnIncomplete = incompletePersonal.filter((t) => t.createdBy.id === user?.userId)
-  const assignedByOthersIncomplete = incompletePersonal.filter((t) => t.createdBy.id !== user?.userId)
+  const myOwnIncomplete = incompletePersonal.filter((t) => t.createdBy?.id === user?.userId)
+  const assignedByOthersIncomplete = incompletePersonal.filter((t) => t.createdBy?.id !== user?.userId)
 
   const assignedByMe = data?.assignedByMe ?? []
   const incompleteAssignedByMe = assignedByMe.filter((t) => !t.completedAt)

@@ -44,7 +44,10 @@ interface AppointmentPhoto {
   id: string
   url: string
   uploadedAt: string
-  uploadedBy: { id: string; name: string | null; email: string }
+  // Null once the staff member who uploaded it has been deleted from the
+  // studio -- the photo itself survives regardless. Not currently
+  // rendered on this page, kept accurate for future readers.
+  uploadedBy: { id: string; name: string | null; email: string } | null
 }
 
 interface Appointment {

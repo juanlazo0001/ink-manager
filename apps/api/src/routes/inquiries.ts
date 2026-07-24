@@ -1855,7 +1855,11 @@ router.post("/:id/notes", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK),
 // act" precedent as every other author-scoped permission in this app).
 // FRONT_DESK can only touch their own notes; an ARTIST never reaches this
 // route at all (role gate below), consistent with GET/POST above.
-function canModifyNote(note: { authorId: string }, req: import("express").Request): boolean {
+// authorId is nullable (the author's account may have since been deleted
+// from the studio) -- a null-author note simply never matches the
+// req.user!.userId comparison, so it naturally falls through to
+// OWNER-only, same as any other note whose author isn't the caller.
+function canModifyNote(note: { authorId: string | null }, req: import("express").Request): boolean {
   return note.authorId === req.user!.userId || req.user!.role === Role.OWNER;
 }
 

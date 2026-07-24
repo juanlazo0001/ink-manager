@@ -18,7 +18,9 @@ interface InquiryNote {
   bodyHtml: string
   createdAt: string
   updatedAt: string
-  author: NoteAuthor
+  // Null once the staff member who wrote it has been deleted from the
+  // studio -- the note content itself survives, only the author link goes.
+  author: NoteAuthor | null
 }
 
 interface InquiryNotesSectionProps {
@@ -166,14 +168,16 @@ export default function InquiryNotesSection({ inquiryId, canManage, readOnly }: 
 
         <ul className="space-y-4">
           {(notes ?? []).map((note) => {
-            const canModify = note.author.id === user?.userId || user?.role === 'OWNER'
+            const canModify = note.author?.id === user?.userId || user?.role === 'OWNER'
             const isEditingThis = editingNoteId === note.id
             const isConfirmingDelete = confirmingDeleteId === note.id
 
             return (
               <li key={note.id} className="rounded-lg border border-border p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-                  <span className="font-medium text-fg">{note.author.name || note.author.email}</span>
+                  <span className="font-medium text-fg">
+                    {note.author ? note.author.name || note.author.email : 'Deleted user'}
+                  </span>
                   <span className="text-xs text-fg-muted">
                     {formatDateTime(note.createdAt)}
                     {isEdited(note) && <span className="ml-1 italic">(edited)</span>}
