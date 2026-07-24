@@ -23,6 +23,8 @@ import {
 import { TAGGABLE_ENTITY_TYPES, resolveTagLabel, validateTaggableEntity } from "../lib/conversationTags";
 import { sanitizePrefillPayload } from "../lib/prefill";
 import { sendClientSms } from "../lib/clientSms";
+import { decryptSecret } from "../lib/secrets";
+import { getRfc822MessageId, getValidAccessToken, sendGmailMessage } from "../lib/gmail";
 
 const router = Router();
 router.use(requireAuth);
@@ -625,6 +627,124 @@ router.post("/:id/messages", async (req, res) => {
         where: { id: result.messageId },
         include: { author: { select: { id: true, name: true, email: true } } },
       });
+      emitInvalidation({ type: "conversation.updated", studioId, conversationId: id });
+      return res.status(201).json(created);
+    }
+  }
+
+  // Real send: same shape as the SMS block above, via Gmail instead of
+  // Twilio. Not connected falls through to the log-only path below,
+  // completely unchanged -- zero regression, same as SMS's disconnected
+  // state. Subject defaults to "Re: {last subject}" when this conversation
+  // already has an EMAIL message (continuing that Gmail thread via
+  // threadId/In-Reply-To/References), or "Message from {Studio Name}" for
+  // a fresh one -- the client-supplied subject (if the composer's subject
+  // field was edited) always wins over either default.
+  if (
+    conversation.type === ConversationType.CLIENT &&
+    channel === MessageChannel.EMAIL &&
+    direction === MessageDirection.OUTBOUND
+  ) {
+    const integration = await prisma.studioIntegration.findUnique({
+      where: { studioId_channel: { studioId, channel: IntegrationChannel.EMAIL } },
+    });
+
+    if (integration?.status === IntegrationStatus.CONNECTED) {
+      if (bodyText.length === 0) {
+        return res.status(400).json({ error: "A message body is required to send a real email" });
+      }
+      if (!integration.encryptedSecret) {
+        return res.status(400).json({ error: "Email is not connected for this studio" });
+      }
+
+      const client = await prisma.client.findUnique({ where: { id: conversation.clientId! } });
+      if (!client?.email) {
+        return res.status(400).json({ error: "This client has no email address on file" });
+      }
+
+      const metadata = (integration.metadata as { emailAddress?: string } | null) ?? {};
+      if (!metadata.emailAddress) {
+        return res.status(400).json({ error: "Email integration is missing its connected address" });
+      }
+
+      const lastEmailMessage = await prisma.message.findFirst({
+        where: { conversationId: id, channel: MessageChannel.EMAIL },
+        orderBy: { createdAt: "desc" },
+      });
+      const lastEmailMeta =
+        (lastEmailMessage?.metadata as { subject?: string; gmailThreadId?: string; rfc822MessageId?: string } | null) ??
+        null;
+
+      const studio = await prisma.studio.findUnique({ where: { id: studioId }, select: { name: true } });
+      const requestedSubject = typeof body.subject === "string" ? body.subject.trim() : "";
+      const defaultSubject = lastEmailMeta?.subject
+        ? /^re:/i.test(lastEmailMeta.subject)
+          ? lastEmailMeta.subject
+          : `Re: ${lastEmailMeta.subject}`
+        : `Message from ${studio?.name ?? "our studio"}`;
+      const subject = requestedSubject || defaultSubject;
+
+      let refreshToken: string;
+      try {
+        refreshToken = decryptSecret(integration.encryptedSecret);
+      } catch {
+        return res.status(500).json({ error: "Stored credentials could not be read" });
+      }
+
+      let accessToken: string;
+      try {
+        accessToken = await getValidAccessToken(studioId, refreshToken);
+      } catch {
+        return res.status(400).json({ error: "Could not authenticate with Gmail -- try reconnecting Email in Settings" });
+      }
+
+      let sendResult;
+      try {
+        sendResult = await sendGmailMessage({
+          accessToken,
+          from: metadata.emailAddress,
+          to: client.email,
+          subject,
+          body: bodyText,
+          threadId: lastEmailMeta?.gmailThreadId,
+          inReplyTo: lastEmailMeta?.rfc822MessageId ?? undefined,
+          references: lastEmailMeta?.rfc822MessageId ?? undefined,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to send the email";
+        return res.status(400).json({ error: message });
+      }
+
+      const rfc822MessageId = await getRfc822MessageId(accessToken, sendResult.id).catch(() => null);
+
+      const now = new Date();
+      const created = await prisma.$transaction(async (tx) => {
+        const createdMessage = await tx.message.create({
+          data: {
+            studioId,
+            conversationId: id,
+            channel: MessageChannel.EMAIL,
+            direction: MessageDirection.OUTBOUND,
+            body: bodyText,
+            authorUserId: userId,
+            metadata: { subject, gmailMessageId: sendResult.id, gmailThreadId: sendResult.threadId, rfc822MessageId },
+            createdAt: now,
+          },
+          include: { author: { select: { id: true, name: true, email: true } } },
+        });
+        await tx.conversation.update({ where: { id }, data: { lastMessageAt: now } });
+        return createdMessage;
+      });
+
+      await logAudit({
+        studioId,
+        actorUserId: userId,
+        entityType: "Message",
+        entityId: created.id,
+        action: "email_sent",
+        changes: { conversationId: id, gmailMessageId: sendResult.id, subject },
+      });
+
       emitInvalidation({ type: "conversation.updated", studioId, conversationId: id });
       return res.status(201).json(created);
     }

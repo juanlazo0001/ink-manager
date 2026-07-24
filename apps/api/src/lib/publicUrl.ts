@@ -99,3 +99,11 @@ const TWILIO_STATUS_CALLBACK_URL_RAW = `${API_PUBLIC_URL}/webhooks/twilio/status
 export const TWILIO_STATUS_CALLBACK_URL = API_PUBLIC_URL.includes("localhost")
   ? null
   : TWILIO_STATUS_CALLBACK_URL_RAW;
+
+// The Gmail OAuth callback -- this exact value must be registered as an
+// "Authorized redirect URI" in the Google Cloud Console OAuth client, or
+// Google rejects the whole flow with redirect_uri_mismatch before it ever
+// reaches this server. Built from API_PUBLIC_URL for the same reason the
+// Twilio webhook URL above is: it must match whatever this API's real
+// deployed domain actually is, dev or prod.
+export const GMAIL_OAUTH_REDIRECT_URI = `${API_PUBLIC_URL}/integrations/email/callback`;

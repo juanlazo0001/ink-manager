@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
@@ -413,6 +414,7 @@ export default function Settings() {
     { key: 'system' as const, label: 'System', visible: canViewSystem },
   ]
   const [activeTab, setActiveTab] = useState<'general' | 'policies' | 'integrations' | 'system'>('general')
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const [integrations, setIntegrations] = useState<IntegrationInfo[] | null>(null)
   const [smsWebhookUrl, setSmsWebhookUrl] = useState<string | null>(null)
@@ -424,12 +426,47 @@ export default function Settings() {
   const [smsConnecting, setSmsConnecting] = useState(false)
   const [smsConnectError, setSmsConnectError] = useState<string | null>(null)
 
-  const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false)
+  // Generalized across channels (SMS/EMAIL) -- same confirm-modal shape,
+  // just a different title/body/disconnect call per channel.
+  const [showDisconnectConfirm, setShowDisconnectConfirm] = useState<IntegrationChannelValue | null>(null)
   const [disconnecting, setDisconnecting] = useState(false)
 
   const [testMessageTo, setTestMessageTo] = useState('')
   const [testMessageSending, setTestMessageSending] = useState(false)
   const [testMessageResult, setTestMessageResult] = useState<string | null>(null)
+
+  const [connectingGmail, setConnectingGmail] = useState(false)
+  const [gmailOAuthNotice, setGmailOAuthNotice] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
+  const [testEmailTo, setTestEmailTo] = useState('')
+  const [testEmailSending, setTestEmailSending] = useState(false)
+  const [testEmailResult, setTestEmailResult] = useState<string | null>(null)
+
+  // Picks up after the Gmail OAuth redirect lands back here (see
+  // routes/integrations.ts's publicRouter callback) -- reads the query
+  // params it was redirected with, shows a one-time banner, refreshes the
+  // integration list, then strips the params so a page refresh doesn't
+  // re-show the same banner.
+  useEffect(() => {
+    const tab = searchParams.get('tab')
+    const email = searchParams.get('email')
+    if (tab !== 'integrations' && !email) return
+
+    if (tab === 'integrations') setActiveTab('integrations')
+    if (email === 'connected') {
+      setGmailOAuthNotice({ kind: 'success', message: 'Gmail connected.' })
+      setIntegrationsRefreshIndex((i) => i + 1)
+    } else if (email === 'error') {
+      setGmailOAuthNotice({ kind: 'error', message: searchParams.get('message') || 'Failed to connect Gmail.' })
+    }
+
+    setSearchParams((params) => {
+      params.delete('tab')
+      params.delete('email')
+      params.delete('message')
+      return params
+    }, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const [copiedWebhook, setCopiedWebhook] = useState(false)
 
@@ -472,12 +509,13 @@ export default function Settings() {
     }
   }
 
-  async function handleDisconnectSms() {
+  async function handleDisconnectChannel(channel: IntegrationChannelValue) {
     setDisconnecting(true)
     try {
-      await apiFetch('/integrations/SMS/disconnect', { method: 'POST' })
-      setShowDisconnectConfirm(false)
+      await apiFetch(`/integrations/${channel}/disconnect`, { method: 'POST' })
+      setShowDisconnectConfirm(null)
       setTestMessageResult(null)
+      setTestEmailResult(null)
       setIntegrationsRefreshIndex((i) => i + 1)
     } catch (err) {
       setIntegrationsError(err instanceof Error ? err.message : 'Failed to disconnect')
@@ -501,6 +539,39 @@ export default function Settings() {
       setTestMessageResult(err instanceof Error ? err.message : 'Failed to send the test message')
     } finally {
       setTestMessageSending(false)
+    }
+  }
+
+  // Full-page redirect to Google's own consent screen -- this can't be a
+  // normal fetch, since only the browser holds the session that then comes
+  // back through Google's own redirect to the public callback route.
+  async function handleConnectGmail() {
+    setConnectingGmail(true)
+    setGmailOAuthNotice(null)
+    try {
+      const { url } = await apiFetch<{ url: string }>('/integrations/email/connect-url')
+      window.location.href = url
+    } catch (err) {
+      setGmailOAuthNotice({ kind: 'error', message: err instanceof Error ? err.message : 'Failed to start connecting Gmail' })
+      setConnectingGmail(false)
+    }
+  }
+
+  async function handleSendTestEmail(event: FormEvent) {
+    event.preventDefault()
+    setTestEmailSending(true)
+    setTestEmailResult(null)
+
+    try {
+      await apiFetch('/integrations/EMAIL/test-message', {
+        method: 'POST',
+        body: JSON.stringify({ to: testEmailTo }),
+      })
+      setTestEmailResult('Test email sent.')
+    } catch (err) {
+      setTestEmailResult(err instanceof Error ? err.message : 'Failed to send the test email')
+    } finally {
+      setTestEmailSending(false)
     }
   }
 
@@ -2447,9 +2518,94 @@ export default function Settings() {
               </p>
 
               {integrationsError && <p className="mt-4 text-sm text-danger">{integrationsError}</p>}
+              {gmailOAuthNotice && (
+                <p className={`mt-4 text-sm ${gmailOAuthNotice.kind === 'success' ? 'text-success' : 'text-danger'}`}>
+                  {gmailOAuthNotice.message}
+                </p>
+              )}
 
               <div className="mt-4 space-y-4">
                 {integrations?.map((integration) => {
+                  if (integration.channel === 'EMAIL') {
+                    const metadataEmail = (integration.metadata as { emailAddress?: string } | null)?.emailAddress ?? null
+
+                    return (
+                      <div key="EMAIL" className="rounded-xl border border-border p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold text-fg">{CHANNEL_LABELS.EMAIL}</p>
+                            {integration.status === 'CONNECTED' && integration.displayName && (
+                              <p className="mt-0.5 text-xs text-fg-secondary">{integration.displayName}</p>
+                            )}
+                            {integration.status === 'ERROR' && integration.lastError && (
+                              <p className="mt-0.5 text-xs text-danger">Last attempt failed: {integration.lastError}</p>
+                            )}
+                          </div>
+
+                          <div className="flex shrink-0 items-center gap-2">
+                            {integration.status === 'CONNECTED' ? (
+                              <>
+                                <span className="rounded-full bg-success/15 px-3 py-1 text-xs font-medium text-success">
+                                  Connected
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => setShowDisconnectConfirm('EMAIL')}
+                                  className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                                >
+                                  Disconnect
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={handleConnectGmail}
+                                disabled={connectingGmail}
+                                className="rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                              >
+                                {connectingGmail ? 'Redirecting…' : integration.status === 'ERROR' ? 'Try again' : 'Connect Gmail'}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {integration.status === 'CONNECTED' && (
+                          <div className="mt-4 space-y-4 border-t border-border pt-4">
+                            {integration.connectedAt && (
+                              <p className="text-xs text-fg-muted">Connected {formatDateTime(integration.connectedAt)}</p>
+                            )}
+
+                            <form onSubmit={handleSendTestEmail} className="flex flex-wrap items-end gap-2">
+                              <div className="min-w-[200px] flex-1">
+                                <label className="mb-1 block text-xs font-medium text-fg-secondary">
+                                  Send test email to
+                                </label>
+                                <input
+                                  type="email"
+                                  required
+                                  value={testEmailTo}
+                                  onChange={(e) => setTestEmailTo(e.target.value)}
+                                  placeholder="you@example.com"
+                                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                                />
+                              </div>
+                              <button
+                                type="submit"
+                                disabled={testEmailSending || !testEmailTo.trim()}
+                                className="rounded-full border border-border px-3 py-2 text-xs font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                              >
+                                {testEmailSending ? 'Sending…' : 'Send test email'}
+                              </button>
+                            </form>
+                            {testEmailResult && <p className="text-xs text-fg-secondary">{testEmailResult}</p>}
+
+                            {metadataEmail && <p className="text-xs text-fg-muted">Connected address: {metadataEmail}</p>}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  }
+
                   if (integration.channel !== 'SMS') {
                     return (
                       <div key={integration.channel} className="rounded-xl border border-border p-4">
@@ -2487,7 +2643,7 @@ export default function Settings() {
                               </span>
                               <button
                                 type="button"
-                                onClick={() => setShowDisconnectConfirm(true)}
+                                onClick={() => setShowDisconnectConfirm('SMS')}
                                 className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
                               >
                                 Disconnect
@@ -2648,15 +2804,16 @@ export default function Settings() {
           )}
 
           {showDisconnectConfirm && (
-            <Modal title="Disconnect SMS" onClose={() => setShowDisconnectConfirm(false)}>
+            <Modal title={`Disconnect ${CHANNEL_LABELS[showDisconnectConfirm]}`} onClose={() => setShowDisconnectConfirm(null)}>
               <p className="text-sm text-fg-secondary">
-                Outbound messages will fall back to log-only (no real send) until SMS is reconnected. Inbound texts
-                will no longer be validated or land in threads.
+                {showDisconnectConfirm === 'EMAIL'
+                  ? 'Outbound messages will fall back to log-only (no real send) until Email is reconnected. Inbound emails will no longer be polled or land in threads.'
+                  : 'Outbound messages will fall back to log-only (no real send) until SMS is reconnected. Inbound texts will no longer be validated or land in threads.'}
               </p>
               <div className="mt-5 flex gap-3">
                 <button
                   type="button"
-                  onClick={handleDisconnectSms}
+                  onClick={() => handleDisconnectChannel(showDisconnectConfirm)}
                   disabled={disconnecting}
                   className="flex-1 rounded-full border border-danger/40 px-4 py-2 text-sm font-medium text-danger transition hover:bg-danger/10 disabled:opacity-60"
                 >
@@ -2664,7 +2821,7 @@ export default function Settings() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setShowDisconnectConfirm(false)}
+                  onClick={() => setShowDisconnectConfirm(null)}
                   disabled={disconnecting}
                   className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
                 >

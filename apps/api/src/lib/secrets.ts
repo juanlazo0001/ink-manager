@@ -71,3 +71,14 @@ export function maskAccountSid(sid: string): string {
   if (sid.length <= 6) return "*".repeat(sid.length);
   return `${sid.slice(0, 2)}…${"*".repeat(4)}`;
 }
+
+// Same masking spirit as maskAccountSid above, for the Gmail integration's
+// connected address -- keeps the domain (so staff can confirm it's the
+// right account) with the local part mostly hidden, e.g. "j***@studio.com".
+export function maskEmail(email: string): string {
+  const at = email.indexOf("@");
+  if (at <= 0) return "*".repeat(email.length);
+  const local = email.slice(0, at);
+  const domain = email.slice(at);
+  return `${local[0]}${"*".repeat(Math.max(local.length - 1, 3))}${domain}`;
+}

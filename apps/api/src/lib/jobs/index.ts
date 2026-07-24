@@ -6,5 +6,6 @@
 import "./giftCardExpirationSweep";
 import "./coldLeadSweep";
 import "./reminderTicker";
+import "./emailPoller";
 
 export { startScheduler, runJob, getJob, listJobs } from "./registry";

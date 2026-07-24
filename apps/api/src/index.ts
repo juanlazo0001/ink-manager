@@ -25,7 +25,7 @@ import conversationsRouter from "./routes/conversations";
 import prefillDraftsRouter from "./routes/prefillDrafts";
 import viewAsRouter from "./routes/viewAs";
 import jobsRouter from "./routes/jobs";
-import integrationsRouter from "./routes/integrations";
+import { publicRouter as integrationsPublicRouter, staffRouter as integrationsStaffRouter } from "./routes/integrations";
 import webhooksRouter from "./routes/webhooks";
 import searchRouter from "./routes/search";
 import shortLinksRouter from "./routes/shortLinks";
@@ -99,7 +99,12 @@ app.use("/conversations", conversationsRouter);
 app.use("/prefill-drafts", prefillDraftsRouter);
 app.use("/view-as", viewAsRouter);
 app.use("/jobs", jobsRouter);
-app.use("/integrations", integrationsRouter);
+// Public router first: /integrations/email/callback (Google's OAuth
+// redirect, no Bearer JWT available) must match before the staff router's
+// requireAuth, same public-router-first convention as gift-cards/waivers/
+// custom-policies/studio-settings above.
+app.use("/integrations", integrationsPublicRouter);
+app.use("/integrations", integrationsStaffRouter);
 app.use("/search", searchRouter);
 // Public router first, same reasoning as gift-cards/waivers above: the
 // public /policies page's studioSlug-keyed GET must be reachable before

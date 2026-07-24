@@ -4,10 +4,141 @@ import { Prisma } from "../../generated/prisma/client";
 import { IntegrationChannel, IntegrationStatus, Role } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
-import { decryptSecret, encryptSecret, isEncryptionConfigured, maskAccountSid } from "../lib/secrets";
+import { decryptSecret, encryptSecret, isEncryptionConfigured, maskAccountSid, maskEmail } from "../lib/secrets";
 import { sendSms, validateTwilioAccount, type TwilioCredentials } from "../lib/twilio";
-import { TWILIO_SMS_WEBHOOK_URL, TWILIO_STATUS_CALLBACK_URL } from "../lib/publicUrl";
+import { TWILIO_SMS_WEBHOOK_URL, TWILIO_STATUS_CALLBACK_URL, GMAIL_OAUTH_REDIRECT_URI, PUBLIC_APP_URL } from "../lib/publicUrl";
 import { normalizePhone } from "../lib/phone";
+import {
+  buildGmailAuthUrl,
+  exchangeCodeForTokens,
+  getGmailProfile,
+  getValidAccessToken,
+  isGmailConfigured,
+  revokeGmailToken,
+  sendGmailMessage,
+  signGmailOAuthState,
+  verifyGmailOAuthState,
+} from "../lib/gmail";
+
+// Public: Google's redirect after the user grants (or denies) consent hits
+// this directly -- it can't carry this app's own Bearer JWT (a full-page
+// browser navigation, not an authenticated fetch), so identity for "which
+// studio/user started this" travels entirely through the signed `state`
+// param instead. Mounted before the authenticated router below in index.ts,
+// same public-router-first convention as gift-cards/waivers/custom-policies.
+const publicRouter = Router();
+
+publicRouter.get("/email/callback", async (req, res) => {
+  const code = typeof req.query.code === "string" ? req.query.code : null;
+  const state = typeof req.query.state === "string" ? req.query.state : null;
+  const oauthError = typeof req.query.error === "string" ? req.query.error : null;
+
+  const redirectTo = (params: Record<string, string>) =>
+    res.redirect(`${PUBLIC_APP_URL}/settings?${new URLSearchParams({ tab: "integrations", ...params }).toString()}`);
+
+  if (!state) {
+    // No verifiable claim of which studio this belongs to -- nothing to
+    // mark ERROR against, just bounce back with a generic failure.
+    return redirectTo({ email: "error", message: "Invalid or expired connection attempt -- please try again." });
+  }
+
+  const claim = verifyGmailOAuthState(state);
+  if (!claim) {
+    return redirectTo({ email: "error", message: "Invalid or expired connection attempt -- please try again." });
+  }
+
+  const { studioId, actorUserId } = claim;
+
+  async function fail(message: string) {
+    // On failure, nothing secret is ever stored -- only status/error,
+    // matching the SMS connect route's own "nothing half-stored" rule.
+    await prisma.studioIntegration.upsert({
+      where: { studioId_channel: { studioId, channel: IntegrationChannel.EMAIL } },
+      create: { studioId, channel: IntegrationChannel.EMAIL, status: IntegrationStatus.ERROR, lastError: message },
+      update: {
+        status: IntegrationStatus.ERROR,
+        lastError: message,
+        encryptedSecret: null,
+        metadata: Prisma.JsonNull,
+        displayName: null,
+        connectedAt: null,
+      },
+    });
+    return redirectTo({ email: "error", message });
+  }
+
+  if (oauthError) {
+    return fail(oauthError === "access_denied" ? "Google sign-in was cancelled." : oauthError);
+  }
+  if (!code) {
+    return fail("Google did not return an authorization code.");
+  }
+
+  let tokens;
+  try {
+    tokens = await exchangeCodeForTokens(code, GMAIL_OAUTH_REDIRECT_URI);
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : "Could not exchange the authorization code with Google");
+  }
+
+  if (!tokens.refreshToken) {
+    return fail(
+      "Google did not return a refresh token -- if this Google account already granted access before, remove Ink Manager under your Google Account's third-party app settings and try connecting again.",
+    );
+  }
+
+  let emailAddress: string;
+  try {
+    const profile = await getGmailProfile(tokens.accessToken);
+    emailAddress = profile.emailAddress;
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : "Could not read the connected Gmail address");
+  }
+
+  const encryptedSecret = encryptSecret(tokens.refreshToken);
+  const displayName = maskEmail(emailAddress);
+  const connectedAt = new Date();
+  const metadata = {
+    emailAddress,
+    tokenExpiresAt: new Date(Date.now() + tokens.expiresIn * 1000).toISOString(),
+    lastPolledAt: connectedAt.toISOString(),
+  };
+
+  await prisma.studioIntegration.upsert({
+    where: { studioId_channel: { studioId, channel: IntegrationChannel.EMAIL } },
+    create: {
+      studioId,
+      channel: IntegrationChannel.EMAIL,
+      status: IntegrationStatus.CONNECTED,
+      encryptedSecret,
+      metadata,
+      displayName,
+      connectedAt,
+      lastError: null,
+    },
+    update: {
+      status: IntegrationStatus.CONNECTED,
+      encryptedSecret,
+      metadata,
+      displayName,
+      connectedAt,
+      lastError: null,
+    },
+  });
+
+  // No secret material in the audit entry -- channel + masked display only,
+  // same as every other integration connect.
+  await logAudit({
+    studioId,
+    actorUserId,
+    entityType: "StudioIntegration",
+    entityId: `${studioId}:EMAIL`,
+    action: "integration_connected",
+    changes: { channel: "EMAIL", displayName },
+  });
+
+  return redirectTo({ email: "connected" });
+});
 
 const router = Router();
 router.use(requireAuth);
@@ -42,6 +173,20 @@ router.get("/status", requireRole(Role.OWNER, Role.FRONT_DESK, Role.ARTIST), asy
 });
 
 router.use(requireRole(Role.OWNER));
+
+// Returns the Google consent URL to navigate the browser to -- a full-page
+// redirect, not something this JSON route can do itself, since only the
+// browser holds the session that then comes back through Google's own
+// redirect to the public callback above.
+router.get("/email/connect-url", async (req, res) => {
+  if (!isGmailConfigured()) {
+    return res.status(503).json({ error: "Email integration isn't available right now -- ask an admin to check the server configuration" });
+  }
+
+  const state = signGmailOAuthState(req.user!.studioId, req.user!.userId);
+  const url = buildGmailAuthUrl(GMAIL_OAUTH_REDIRECT_URI, state);
+  res.json({ url });
+});
 
 // Every channel shows a card, even ones with nothing connected yet --
 // synthesized as NOT_CONNECTED when no StudioIntegration row exists,
@@ -168,6 +313,17 @@ router.post("/:channel/disconnect", async (req, res) => {
     return res.status(404).json({ error: "This channel is not connected" });
   }
 
+  if (channel === IntegrationChannel.EMAIL && existing.encryptedSecret) {
+    try {
+      const refreshToken = decryptSecret(existing.encryptedSecret);
+      await revokeGmailToken(refreshToken);
+    } catch {
+      // Best-effort -- local state is cleared regardless below. Local
+      // status is the source of truth for "connected" in this app, not
+      // whatever Google's revoke endpoint did or didn't do.
+    }
+  }
+
   await prisma.studioIntegration.update({
     where: { studioId_channel: { studioId, channel } },
     data: {
@@ -195,6 +351,47 @@ router.post("/:channel/disconnect", async (req, res) => {
 router.post("/:channel/test-message", async (req, res) => {
   const studioId = req.user!.studioId;
   const channel = req.params.channel as string;
+
+  if (channel === IntegrationChannel.EMAIL) {
+    const { to } = req.body ?? {};
+    if (typeof to !== "string" || !to.trim()) {
+      return res.status(400).json({ error: "An email address to send to is required" });
+    }
+
+    const integration = await prisma.studioIntegration.findUnique({
+      where: { studioId_channel: { studioId, channel: IntegrationChannel.EMAIL } },
+    });
+    if (!integration || integration.status !== IntegrationStatus.CONNECTED || !integration.encryptedSecret) {
+      return res.status(400).json({ error: "Email is not connected for this studio" });
+    }
+
+    const metadata = (integration.metadata as { emailAddress?: string } | null) ?? {};
+    if (!metadata.emailAddress) {
+      return res.status(400).json({ error: "Email integration is missing its connected address" });
+    }
+
+    let refreshToken: string;
+    try {
+      refreshToken = decryptSecret(integration.encryptedSecret);
+    } catch {
+      return res.status(500).json({ error: "Stored credentials could not be read" });
+    }
+
+    try {
+      const accessToken = await getValidAccessToken(studioId, refreshToken);
+      const result = await sendGmailMessage({
+        accessToken,
+        from: metadata.emailAddress,
+        to: to.trim(),
+        subject: "Test email from Ink Manager",
+        body: "This is a test email from Ink Manager -- your Gmail integration is connected.",
+      });
+      return res.json({ sent: true, id: result.id });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to send the test email";
+      return res.status(400).json({ error: message });
+    }
+  }
 
   if (channel !== IntegrationChannel.SMS) {
     return res.status(400).json({ error: `${channel} does not support test messages yet` });
@@ -242,4 +439,4 @@ router.post("/:channel/test-message", async (req, res) => {
   }
 });
 
-export default router;
+export { publicRouter, router as staffRouter };

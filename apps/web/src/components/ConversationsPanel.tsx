@@ -12,6 +12,7 @@ import { useViewAs } from '../context/useViewAs'
 import { useUserProfile } from '../context/useUserProfile'
 import { useConversationPanel } from '../context/useConversationPanel'
 import { useSocket } from '../context/useSocket'
+import { useStudio } from '../context/useStudio'
 import Modal from './Modal'
 import PresenceDot from './PresenceDot'
 import ArtistSelect from './ArtistSelect'
@@ -111,6 +112,13 @@ interface MessageMetadata {
   // status-callback webhook as Twilio reports queued -> sent -> delivered/failed.
   providerSid?: string
   deliveryStatus?: string
+  // Email channel: set on a real Gmail send/receive. gmailThreadId/
+  // rfc822MessageId are what let a later reply in this same conversation
+  // thread correctly (both via the Gmail API's own threadId and the RFC822
+  // In-Reply-To/References headers for non-Gmail recipients).
+  subject?: string
+  gmailMessageId?: string
+  gmailThreadId?: string
 }
 
 interface MessageItem {
@@ -1379,6 +1387,7 @@ function ThreadView({
   const user = useEffectiveUser()
   const { target: viewAsTarget } = useViewAs()
   const { onlineUserIds } = useSocket()
+  const { studio } = useStudio()
   const queryClient = useQueryClient()
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -1394,6 +1403,7 @@ function ThreadView({
   })
 
   const [body, setBody] = useState('')
+  const [subject, setSubject] = useState('')
   const [attachments, setAttachments] = useState<string[]>([])
   const [uploading, setUploading] = useState(false)
   const [channel, setChannel] = useState<string>('SMS')
@@ -1484,6 +1494,29 @@ function ThreadView({
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
   }, [data?.messages])
+
+  // Updated every render (not via its own effect) so the subject-default
+  // effect below can read the CURRENT thread without depending on
+  // data?.messages directly -- that array changes on every 15s poll, and
+  // depending on it here would reset a user's in-progress subject edit out
+  // from under them mid-poll. Only switching the channel to EMAIL, or
+  // switching conversations while already on EMAIL, should recompute it.
+  const messagesRef = useRef(data?.messages)
+  messagesRef.current = data?.messages
+
+  useEffect(() => {
+    if (channel !== 'EMAIL') return
+    const lastEmail = [...(messagesRef.current ?? [])].reverse().find((m) => m.channel === 'EMAIL')
+    const lastSubject = lastEmail?.metadata?.subject
+    setSubject(
+      lastSubject
+        ? /^re:/i.test(lastSubject)
+          ? lastSubject
+          : `Re: ${lastSubject}`
+        : `Message from ${studio?.name ?? 'our studio'}`,
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channel, conversationId])
 
   // Tracks which message ids should play the insert animation (fade+
   // slight-slide-up), so it fires only for messages that actually just
@@ -2005,6 +2038,7 @@ function ThreadView({
           body: body.trim(),
           attachments: attachments.length > 0 ? attachments : undefined,
           ...(isClientThread ? { channel, direction } : {}),
+          ...(isClientThread && channel === 'EMAIL' ? { subject: subject.trim() } : {}),
           ...(!isClientThread && mentionedUserIds.length > 0 ? { mentionedUserIds } : {}),
         }),
       })
@@ -2614,6 +2648,9 @@ function ThreadView({
                                 Shared inquiry
                               </p>
                             )}
+                            {message.channel === 'EMAIL' && message.metadata?.subject && i === 0 && (
+                              <p className="mb-1 text-[13px] font-semibold text-fg-secondary">{message.metadata.subject}</p>
+                            )}
                             {isEditingThis ? (
                               <div className="min-w-[160px]">
                                 <textarea
@@ -3043,6 +3080,15 @@ function ThreadView({
             the bottom (attach/+ menu on the left, channel + mode pickers
             and send on the right). */}
         <div className="rounded-[22px] border border-border bg-surface px-3 pb-2 pt-3">
+          {isClientThread && channel === 'EMAIL' && (
+            <input
+              type="text"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              placeholder="Subject"
+              className="mb-1.5 w-full border-0 border-b border-border bg-transparent px-1 pb-2 text-sm font-medium text-fg placeholder:text-fg-muted focus:outline-none"
+            />
+          )}
           <textarea
             ref={bodyInputRef}
             rows={1}
@@ -3146,9 +3192,8 @@ function ThreadView({
                     <span className="ml-0.5 font-medium text-[#5a5a62]">
                       {direction === 'OUTBOUND' ? 'Our reply' : 'Their message'}
                     </span>
-                    {channel === 'SMS' && direction === 'OUTBOUND' && integrationStatus?.sms && (
-                      <span className="ml-0.5 font-medium text-success">· Sends live</span>
-                    )}
+                    {((channel === 'SMS' && integrationStatus?.sms) || (channel === 'EMAIL' && integrationStatus?.email)) &&
+                      direction === 'OUTBOUND' && <span className="ml-0.5 font-medium text-success">· Sends live</span>}
                   </button>
                   {showChannelModeMenu && (
                     <>
