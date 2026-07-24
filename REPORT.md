@@ -1802,3 +1802,43 @@ Migration `20260724124132_nullable_user_refs_for_staff_delete` — confirmed pur
 Both scratch dev servers (API :5501, web :6501) stopped by PID. Temporary verification scripts (`verify_staff_delete.mjs`, `verify_team_ui.mjs`) and screenshots left scratchpad-only, none committed. Test users/gift cards/tasks created during verification were deleted as part of the delete flow itself being tested, or left in the dev database consistent with this session's standing convention.
 
 
+
+---
+
+# Fix — Inquiry page progress timeline: connector gaps, spacing, reorderability
+
+Single session on `main`. No schema changes.
+
+## 1. Connector lines not touching the circles — root cause
+
+The desktop/horizontal pipeline (`InquiryPipeline.tsx`) laid out each step as a `flex-1` box containing a "circle + label" column (auto-width, sized to fit the label text) followed by a separate connector box. The connector's actual line had an explicit `mx-1.5` (6px) margin on both sides, which is what created the visible gap between the line and each circle — confirmed with a before/after screenshot of the raw connector geometry (`shots/pipeline-crop.png` during verification, not committed) showing a uniform ~6px gap on every circle, on every step, regardless of label length. This was a separate, distinct bug from the earlier centering fix mentioned in the task — that one addressed vertical centering of the connector against the circle; this one is a horizontal margin baked into the line itself.
+
+Rather than just deleting the margin (which would still leave the line stopping short of the circle's actual edge whenever a step's label is wider than its circle, since the circle sits centered inside a label-width column), the horizontal layout was restructured to a CSS grid of equal-width columns (`grid-template-columns: repeat(5, minmax(0, 1fr))`), with each connector absolutely positioned at `left-1/2 w-full` inside its own column. Since every column is now exactly the same width, a connector spanning from its own circle's center outward by exactly one column-width lands precisely on the *next* circle's center — it disappears entirely behind that circle (`z-10`), so there's no gap on either side regardless of how long any given label is. The previous flex layout gave the last step `flex-none` (right-hugging, content-width) instead of an equal share; the grid now sizes all 5 steps equally, which also makes the row's overall step spacing more even/symmetric as a side effect.
+
+## 2. Spacing between the timeline and the next widget
+
+The pipeline previously lived in its own fixed `<div className="mt-6 rounded-2xl ...">`, immediately followed by `<ReorderableWidgetList>` — a plain sibling with no bottom margin, sitting flush against the widget list's first child (widget-to-widget spacing comes entirely from the list's own `gap-6`, which doesn't apply to elements outside it). Moving the pipeline inside the list as its own `<Widget>` fixes this as a side effect of fix #3 below, rather than needing a separate margin patch.
+
+## 3. Made it a reorderable/collapsible widget — reused the existing system, no new mechanism
+
+Wrapped the timeline in the same `<Widget>`/`<ReorderableWidgetList>` components already used by every other section on this page (added earlier this project for "Tattoo details," "Reference images," etc. — see the widget-layout persistence work in prior commits). No second drag/collapse system was built: `'pipeline'` was simply added to the front of `InquiryDetail.tsx`'s existing `INQUIRY_WIDGET_ORDER` array and the timeline JSX wrapped in `<Widget key="pipeline" id="pipeline" title="Pipeline">`, giving it the same drag handle, collapse chevron, and persisted per-account order/collapsed state (`UserWidgetLayout`) as every neighboring card, with no other page or backend changes required.
+
+Kept it collapsible for full consistency with its neighbors — there's no functional reason collapsing a progress strip would be harmful, so no special-cased "non-collapsible" variant was added to `Widget`.
+
+`InquiryPipeline.tsx` gained one new prop, `hideLabel` (default `false`), to suppress its own internal "Pipeline" caption when the caller already supplies an external title (now true only for `InquiryDetail.tsx`'s horizontal usage, which passes `hideLabel`) — avoids a duplicate heading on the `<md` fallback and the closed-inquiry state, without touching the two other (unchanged, still-labelled) `orientation="vertical"` consumers: the Conversations context panel and the Kanban board's Inquiries columns.
+
+## Verification
+
+Browser (Playwright against the running dev servers, owner login): screenshot of the pipeline card at 2x zoom confirmed every connector line touches its circles with zero gap on both sides, and confirmed clear `gap-6` spacing now exists between the Pipeline card, Assignment, and Estimate cards below it (previously flush). Confirmed the drag handle + collapse chevron now render identically to "Assignment"/"Estimate". Reorder mechanism verified via a direct `PUT /widget-layouts/inquiry-detail` (same technique used to verify the original widget-reorder feature, since simulating a raw pointer drag through Playwright against `@dnd-kit/react` doesn't reliably trigger a real drag) moving `pipeline` to the second slot — screenshot confirmed it rendered between Assignment and Estimate — then reset back to the default order and confirmed it returned to the top.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npx tsc -b --noEmit` + `npm run build` (web) — clean.
+
+## Commit
+
+`f936f15` — Fix Inquiry pipeline timeline: connector gaps, spacing, and make it a reorderable widget. Pushed immediately after a collision check (`git fetch` + `git log HEAD..origin/main`) came back empty.
+
+## Cleanup
+
+All ad-hoc Playwright screenshot scripts (`screenshot-pipeline.js`, `screenshot-pipeline-crop.js`, `crop-pipeline.js`) and their screenshots deleted from the scratch `pw-test` directory; none committed. No new background shells were started this session (the dev API/web servers were already running from prior work and were left as-is, not started or stopped by this session). The per-account widget-layout row for `inquiry-detail` used during drag verification was reset to its default (empty) state before finishing.
