@@ -1984,3 +1984,35 @@ Full browser flow (Playwright, screenshots reviewed) on a real dev-seed Project:
 ## Cleanup
 
 All ad-hoc Playwright scripts and screenshots deleted from the scratch `pw-test` directory; none committed. The dev-seed Project used for verification was left with one pending-flagged revision from the FLAG-path test (dev/seed data, consistent with this session's standing convention of leaving harmless test artifacts in the dev database). No background shells were started this session (the dev API/web servers were already running from prior work and were left as-is).
+
+---
+
+# Fix — Separate Policies and Defaults in Settings, plus a gap in estimate revision links
+
+Single session on `main`. No schema changes. `apps/web/src/pages/Settings.tsx` was concurrently being edited by another session (Gmail/email integration work, entirely in the imports/state area and the Integrations tab) -- isolated my change via the established git-index technique (reconstruct clean base from `HEAD`, apply the same edit there, verify the diff matches exactly, stage via `git hash-object` + `git update-index --cacheinfo`) so the other session's in-progress work on disk was never touched.
+
+## 1. Policies and Defaults separated into their own sections
+
+The Settings → Policies & Templates tab had one oversized card literally titled "Policies & Defaults" that mixed policy wording (Refund Policy, Deposit Policy, etc.) with unrelated numeric/behavioral defaults (estimate follow-up hours, gift card expiration, referral reward, cold lead days, timezone, sidebar badges). Split into two top-level cards -- "Policies" and "Defaults" -- matching the page's own established convention where every other concern on this tab already gets its own `rounded-2xl` card (Reminder Templates & Send Times, Custom Policies, Deposit Tiers were already separate; this card was the one inconsistent holdout).
+
+While in there, also promoted **Waiver Questions & Clauses**, **Intake Form Fields**, and **Message Templates** from nested sub-cards inside that same oversized card to their own top-level sections -- none of the three are "Policies" or "Defaults" either, and leaving them arbitrarily attached to one of the two new cards would've just relocated the inconsistency rather than fixed it. `IntakeFormFieldsEditor.tsx` (a component used at exactly this one call site) had its own outer wrapper bumped from the sub-card styling (`rounded-xl`, plain `<p>` title) to the top-level card convention (`rounded-2xl`/`bg-surface`/`<h2>`) to match its new siblings.
+
+## 2. Gap in the Project estimate-revision feature (from the immediately prior session)
+
+User-reported: after revising a Project's estimate, the client-facing SMS text says "share the link below manually" as a fallback, but no link was actually shown anywhere on the Inquiry page. Root cause: `POST /inquiries/:id/revise-estimate`'s response included a `revisionUrl`, but that value only ever lived in that one request/response -- nothing persisted it for a later page load to redisplay, unlike the original (pre-conversion) estimate flow, where `GET /inquiries/:id` re-derives `estimateUrl` fresh on every fetch by re-shortening the stored `estimateToken` (gated on it being unexpired). Added the identical computation for `revisionUrl` off `estimateRevisionToken`/`estimateRevisionTokenExpiresAt`, and added the matching "Share this link" input+copy-button box (byte-identical style to the existing `estimateUrl` box) to `InquiryDetail.tsx`'s revision banner.
+
+## Verification
+
+Browser (Playwright, screenshots reviewed): confirmed the Settings Policies & Templates tab now renders 8 distinct top-level cards (Policies, Defaults, Waiver Questions & Clauses, Intake Form Fields, Message Templates, Reminder Templates & Send Times, Custom Policies, Deposit Tiers) with consistent spacing/styling; opened the "Edit defaults" modal and confirmed it still pre-fills and matches correctly. For the link fix: revised a test Project's estimate via the API, confirmed the POST response's `revisionUrl` and a subsequent fresh `GET /:id` call both returned the identical link (simulating a page reload); confirmed in the browser that the "Share this link" box now renders with a working copy button. Resolved the test revision (approved) afterward to leave the dev-seed Project in a clean state.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npx tsc -b --noEmit` + `npm run build` (web) — clean.
+
+## Commit
+
+`9da4927` — Separate Policies and Defaults into their own sections in Settings (also includes the revisionUrl fix). Pushed immediately after a collision check (`git fetch` + `git log HEAD..origin/main`) came back empty.
+
+## Cleanup
+
+All ad-hoc Playwright scripts and screenshots deleted from the scratch `pw-test` directory; the isolation scratch copy of Settings.tsx deleted from the session scratchpad. None committed. No background shells were started this session (the dev API/web servers were already running from prior work and were left as-is).
