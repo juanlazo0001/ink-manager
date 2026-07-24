@@ -29,6 +29,12 @@ interface InquiryPipelineProps {
   closedReason?: string | null
   orientation?: 'horizontal' | 'vertical'
   className?: string
+  // True when the caller already renders its own "Pipeline" heading above
+  // this component (InquiryDetail.tsx wraps it in a <Widget title="Pipeline">)
+  // -- suppresses this component's own label so there's exactly one. The
+  // other two (labelless-wrapper) callers -- the Conversations context
+  // panel and the Kanban board -- leave this false and keep their label.
+  hideLabel?: boolean
 }
 
 export default function InquiryPipeline({
@@ -36,6 +42,7 @@ export default function InquiryPipeline({
   closedReason,
   orientation = 'vertical',
   className = '',
+  hideLabel = false,
 }: InquiryPipelineProps) {
   const isClosed = CLOSED_STATUSES.includes(status)
   const activeIndex = currentStepIndex(status)
@@ -43,8 +50,8 @@ export default function InquiryPipeline({
   if (isClosed) {
     return (
       <div className={className}>
-        <p className="text-xs font-semibold uppercase tracking-wider text-fg-muted">Pipeline</p>
-        <div className="mt-2 flex items-center gap-2">
+        {!hideLabel && <p className="text-xs font-semibold uppercase tracking-wider text-fg-muted">Pipeline</p>}
+        <div className={`flex items-center gap-2 ${hideLabel ? '' : 'mt-2'}`}>
           <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-neutral" />
           <span className="text-sm font-semibold text-fg">
             {status === 'COLD_LEAD' ? 'Cold lead' : 'Closed -- not moving forward'}
@@ -55,11 +62,13 @@ export default function InquiryPipeline({
     )
   }
 
-  const vertical = (
-    <div className={className}>
-      <p className="text-xs font-semibold uppercase tracking-wider text-fg-muted">Pipeline</p>
-      <ol className="mt-3">
-        {PIPELINE_STEPS.map((step, index) => {
+  // Shared between the true vertical orientation and horizontal's <md
+  // fallback -- factored out (rather than left inside `vertical` below) so
+  // the fallback can render it without the "Pipeline" label when hideLabel
+  // is set, without affecting the label on the true vertical callers.
+  const stepsList = (
+    <ol className="mt-3">
+      {PIPELINE_STEPS.map((step, index) => {
           const done = index < activeIndex
           const current = index === activeIndex
           const isLast = index === PIPELINE_STEPS.length - 1
@@ -90,7 +99,13 @@ export default function InquiryPipeline({
             </li>
           )
         })}
-      </ol>
+    </ol>
+  )
+
+  const vertical = (
+    <div className={className}>
+      {!hideLabel && <p className="text-xs font-semibold uppercase tracking-wider text-fg-muted">Pipeline</p>}
+      {stepsList}
     </div>
   )
 
@@ -100,41 +115,49 @@ export default function InquiryPipeline({
     // chat context panel uses instead of squeezing/wrapping horizontally.
     return (
       <>
-        <div className="md:hidden">{vertical}</div>
-        <div className={`hidden items-start md:flex ${className}`}>
+        <div className="md:hidden">{hideLabel ? stepsList : vertical}</div>
+        {/* Grid, not flex-1 siblings sized off label content -- every
+            column is the exact same width regardless of label length, so
+            each connector (absolutely positioned at left-1/2, spanning
+            w-full of its own column) lands precisely on the *next*
+            column's horizontal center, i.e. exactly under the next circle,
+            with zero gap on either side (it disappears behind the circle,
+            which sits on top via z-10). The previous flex layout centered
+            each circle inside a column sized to its own label's width and
+            then added a separate mx-1.5 gap before the connector line,
+            which is what produced the visible gap on both sides. */}
+        <div
+          className={`hidden md:grid ${className}`}
+          style={{ gridTemplateColumns: `repeat(${PIPELINE_STEPS.length}, minmax(0, 1fr))` }}
+        >
           {PIPELINE_STEPS.map((step, index) => {
             const done = index < activeIndex
             const current = index === activeIndex
+            const isLast = index === PIPELINE_STEPS.length - 1
             return (
-              <div key={step.label} className="flex flex-1 items-start last:flex-none">
-                {/* Circle + label stay their own tight, centered column so the
-                    label centers under the circle -- the connector is a
-                    separate sibling, height-matched to the circle (not
-                    centered against this whole column) so it lines up with
-                    the circle's vertical center regardless of label width. */}
-                <div className="flex flex-col items-center gap-1.5">
-                  <span
-                    className={[
-                      'flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold',
-                      done || current ? 'bg-accent text-bg' : 'border border-border bg-surface-inset text-fg-muted',
-                    ].join(' ')}
-                  >
-                    {done ? <CheckIcon className="h-3 w-3" /> : index + 1}
-                  </span>
-                  <span
-                    className={[
-                      'whitespace-nowrap text-[11px] font-medium',
-                      current ? 'text-fg' : done ? 'text-fg-secondary' : 'text-fg-muted',
-                    ].join(' ')}
-                  >
-                    {step.label}
-                  </span>
-                </div>
-                {index < PIPELINE_STEPS.length - 1 && (
-                  <div className="flex h-6 flex-1 items-center">
-                    <div className={`mx-1.5 h-0.5 w-full rounded-full ${done ? 'bg-accent' : 'bg-border'}`} />
-                  </div>
+              <div key={step.label} className="relative flex flex-col items-center">
+                {!isLast && (
+                  <div
+                    className={`absolute left-1/2 top-3 h-0.5 w-full ${done ? 'bg-accent' : 'bg-border'}`}
+                    aria-hidden="true"
+                  />
                 )}
+                <span
+                  className={[
+                    'z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold',
+                    done || current ? 'bg-accent text-bg' : 'border border-border bg-surface-inset text-fg-muted',
+                  ].join(' ')}
+                >
+                  {done ? <CheckIcon className="h-3 w-3" /> : index + 1}
+                </span>
+                <span
+                  className={[
+                    'mt-1.5 whitespace-nowrap text-[11px] font-medium',
+                    current ? 'text-fg' : done ? 'text-fg-secondary' : 'text-fg-muted',
+                  ].join(' ')}
+                >
+                  {step.label}
+                </span>
               </div>
             )
           })}

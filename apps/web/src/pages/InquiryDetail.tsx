@@ -299,6 +299,7 @@ function ImageGrid({ images, details }: { images: string[]; details?: ImageDetai
 // scroll targets further down -- Widget also sets these as the real HTML
 // id, so that feature keeps working unchanged.
 const INQUIRY_WIDGET_ORDER = [
+  'pipeline',
   'assignment-section',
   'estimate-section',
   'deposit',
@@ -1510,11 +1511,16 @@ export default function InquiryDetail() {
                 )}
               </div>
 
-              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <InquiryPipeline status={inquiry.status} closedReason={inquiry.closedReason} orientation="horizontal" />
-              </div>
-
               <ReorderableWidgetList pageKey="inquiry-detail" defaultOrder={INQUIRY_WIDGET_ORDER}>
+              <Widget key="pipeline" id="pipeline" title="Pipeline">
+                <InquiryPipeline
+                  status={inquiry.status}
+                  closedReason={inquiry.closedReason}
+                  orientation="horizontal"
+                  hideLabel
+                />
+              </Widget>
+
               <Widget key="assignment-section" id="assignment-section" title="Assignment">
 
                 {inquiry.status === 'NEW' ? (
