@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
@@ -124,14 +124,22 @@ export default function Clients() {
             </div>
 
             {canManage && (
-              <button
-                type="button"
-                onClick={() => setShowAddModal(true)}
-                className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover"
-              >
-                <PlusIcon className="h-4 w-4" />
-                Add Client
-              </button>
+              <div className="flex items-center gap-2">
+                <Link
+                  to="/clients/import"
+                  className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
+                >
+                  Import Clients
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => setShowAddModal(true)}
+                  className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover"
+                >
+                  <PlusIcon className="h-4 w-4" />
+                  Add Client
+                </button>
+              </div>
             )}
           </div>
 

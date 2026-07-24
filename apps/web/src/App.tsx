@@ -3,6 +3,7 @@ import ProtectedRoute from './components/ProtectedRoute'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Clients from './pages/Clients'
+import ClientImport from './pages/ClientImport'
 import ClientDetail from './pages/ClientDetail'
 import Calendar from './pages/Calendar'
 import AppointmentDetail from './pages/AppointmentDetail'
@@ -73,6 +74,14 @@ function App() {
           element={
             <ProtectedRoute>
               <Clients />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/clients/import"
+          element={
+            <ProtectedRoute>
+              <ClientImport />
             </ProtectedRoute>
           }
         />

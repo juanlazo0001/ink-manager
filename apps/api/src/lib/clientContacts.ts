@@ -68,3 +68,44 @@ export async function syncPrimaryEmail(
     create: { clientId, email: normalized, isPrimary: true },
   });
 }
+
+// Shared client-creation routine -- direct "Add Client" (POST /clients),
+// mass-import ADD rows, and mass-import MERGE rows (which create a
+// throwaway client from the CSV row first, then genuinely merge it into
+// the matched client via the real merge logic) all go through this one
+// path, rather than three copies of the same create-plus-alias-sync
+// sequence. referralCode is a parameter, not generated in here, because
+// generateUniqueReferralCode's own uniqueness check queries the raw
+// prisma client (not a transaction client) -- callers generate it BEFORE
+// opening their transaction, same as the direct-add route always has.
+export async function createClientFromFields(
+  tx: Prisma.TransactionClient,
+  params: {
+    studioId: string;
+    firstName: string;
+    lastName: string;
+    email?: string | null;
+    phone?: string | null;
+    instagramHandle?: string | null;
+    facebookProfileUrl?: string | null;
+    otherContact?: string | null;
+    referralCode: string;
+  },
+) {
+  const created = await tx.client.create({
+    data: {
+      studioId: params.studioId,
+      firstName: params.firstName,
+      lastName: params.lastName,
+      email: params.email || null,
+      phone: params.phone ? normalizePhone(params.phone) : null,
+      instagramHandle: params.instagramHandle || null,
+      facebookProfileUrl: params.facebookProfileUrl || null,
+      otherContact: params.otherContact || null,
+      referralCode: params.referralCode,
+    },
+  });
+  await syncPrimaryPhone(tx, created.id, created.phone);
+  await syncPrimaryEmail(tx, created.id, created.email);
+  return created;
+}

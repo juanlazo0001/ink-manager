@@ -30,10 +30,16 @@ export function getViewAsUserId() {
 export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = localStorage.getItem(TOKEN_STORAGE_KEY)
 
+  // A FormData body (Package R's CSV upload) needs the browser to set its
+  // own multipart/form-data Content-Type with the correct boundary --
+  // forcing application/json here would break the request. Every other
+  // caller still gets the JSON default unchanged.
+  const isFormData = options.body instanceof FormData
+
   const response = await fetch(`${API_URL}${path}`, {
     ...options,
     headers: {
-      'Content-Type': 'application/json',
+      ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(viewAsUserId ? { 'X-View-As-User': viewAsUserId } : {}),
       ...options.headers,

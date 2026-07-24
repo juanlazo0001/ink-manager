@@ -55,6 +55,19 @@ enum LiabilityWaiverStatus {
   VERIFIED
 }
 
+// Package R: mass client import.
+enum ImportBatchStatus {
+  PENDING_REVIEW
+  COMPLETED
+  CANCELLED
+}
+
+enum ImportRowDecision {
+  ADD
+  MERGE
+  SKIP
+}
+
 enum ConversationType {
   CLIENT
   STAFF
@@ -143,6 +156,7 @@ model Studio {
   artistReminderLogs ArtistReminderLog[]
   dismissedDuplicatePairs DismissedDuplicatePair[]
   customPolicies     CustomPolicy[]
+  importBatches      ImportBatch[]
 }
 
 // Self-serve provider connections -- a studio owner connects their OWN
@@ -234,6 +248,7 @@ model User {
   createdConversationTags ConversationTag[]
   createdPrefillDrafts    PrefillDraft[]
   dismissedDuplicatePairs DismissedDuplicatePair[]
+  uploadedImportBatches   ImportBatch[]
 
   locationId String?
   location   Location? @relation(fields: [locationId], references: [id])
@@ -362,9 +377,63 @@ model Client {
   conversation     Conversation?
   phones           ClientPhone[]
   emails           ClientEmail[]
+  // Package R: rows from a mass import whose duplicate-detection matched
+  // THIS client -- purely informational (which import(s) proposed
+  // merging into this client); nothing about this client's own fields is
+  // affected by having one.
+  matchedImportRows ImportRow[]
 
   @@index([studioId])
   @@index([studioId, createdAt])
+}
+
+// Package R: mass client import -- a staged review before anything is
+// actually written. Uploading a CSV creates one ImportRow per parsed
+// line, immediately duplicate-checked (matchedClientId) but not yet
+// acted on; nothing touches the real Client table until staff reviews
+// every row, sets a decision, and confirms (POST .../execute).
+model ImportBatch {
+  id        String            @id @default(cuid())
+  status    ImportBatchStatus @default(PENDING_REVIEW)
+  createdAt DateTime          @default(now())
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  uploadedById String
+  uploadedBy   User   @relation(fields: [uploadedById], references: [id])
+
+  rows ImportRow[]
+
+  @@index([studioId])
+}
+
+model ImportRow {
+  id String @id @default(cuid())
+
+  // The parsed CSV row, verbatim -- whatever columns were present, keyed
+  // by their normalized header. This is what the review table renders;
+  // it's never partially applied to a Client until execute time, and even
+  // then only the recognized fields (firstName/lastName/email/phone/
+  // instagramHandle/facebookProfileUrl/otherContact) are read from it.
+  rawData Json
+
+  // Set at upload time by the existing per-client duplicate-detection
+  // logic (see lib/duplicateDetection.ts), run against this row's parsed
+  // phone/email -- null means no match was found, not "not yet checked."
+  matchedClientId String?
+  matchedClient   Client? @relation(fields: [matchedClientId], references: [id])
+
+  // Null until staff reviews this specific row -- execute refuses to run
+  // while any row in the batch is still null (see the route for the exact
+  // error), rather than silently skipping undecided rows.
+  decision    ImportRowDecision?
+  processedAt DateTime?
+
+  importBatchId String
+  importBatch   ImportBatch @relation(fields: [importBatchId], references: [id])
+
+  @@index([importBatchId])
 }
 
 // Additive secondary-contact layer -- Client.phone stays the "primary"
