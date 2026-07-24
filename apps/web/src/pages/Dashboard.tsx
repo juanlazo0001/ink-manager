@@ -89,7 +89,7 @@ export default function Dashboard() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h1 className="text-2xl font-bold text-fg sm:text-3xl">
-                Welcome, {profile?.name ?? (user ? formatStatus(user.role) : '')}
+                Welcome, {profile?.name?.trim().split(' ')[0] || (user ? formatStatus(user.role) : '')}
               </h1>
               <p className="mt-1 text-sm text-fg-secondary">Here's how the studio is doing.</p>
             </div>
