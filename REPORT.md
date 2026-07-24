@@ -1755,4 +1755,50 @@ Production has no connected SMS integration at present, so none of this fires li
 
 Scratch API (:5001) and web (:6001) servers stopped by PID. The decrypted Twilio auth token, fetched once to sign test webhook requests, was written to a scratchpad-only file and deleted immediately after use — never printed to any persistent log. All temporary scripts (`verify_sms.mjs`, `verify_settings_ui.mjs`, `get_token_script.ts`, `check_prod_templates.ts`, `check_prod_studio.ts`, `prod_apply.ts`) deleted or left scratchpad-only, none committed. Test data (one throwaway client per test client per verification run, `SmsKeyword TestClient`) left in the dev database, consistent with this session's standing convention.
 
+---
+
+# Feature — Owner can permanently delete staff
+
+Single session on `main`.
+
+## Design decision
+
+`User` is referenced by ~13 other tables, most via required (RESTRICT) foreign keys, so a raw `DELETE` would fail immediately on any staff member with real history. Rather than guess at the right tradeoff, asked the user directly (AskUserQuestion) between three approaches: (1) full delete, loosening the small number of FKs that point at genuine business content so it survives with a "deleted user" placeholder; (2) full delete but hard-block whenever there's any meaningful history at all; (3) full delete for non-artists but always hard-block artists with any appointment history. **User chose (1).**
+
+## Schema change
+
+Five FKs made nullable (matching relation made optional), each documented in-schema as following the existing `Message.authorUserId` / `AuditLog.actorUserId` "preserve content, anonymize actor" precedent:
+
+- `GiftCard.issuedById` — a gift card is real customer money; it survives its issuer's deletion.
+- `AppointmentPhoto.uploadedById`, `InquiryNote.authorId`, `ConversationTag.createdById` — same reasoning for their respective content.
+- `PersonalTask.createdById` — only if the task was created *for a teammate*; `PersonalTask.userId` (the assignee) was deliberately left required, since a user's own tasks are deleted along with them.
+
+Migration `20260724124132_nullable_user_refs_for_staff_delete` — confirmed purely additive: 5 `DROP NOT NULL` + FK re-adds with `ON DELETE SET NULL`, no backfill needed. This let the delete transaction skip explicit reassignment logic for these 5 relations entirely — Postgres handles it once the `User` row is deleted.
+
+`inquiries.ts`'s `canModifyNote` helper widened to accept `authorId: string | null` (a null-author note simply never matches the caller, falling through to OWNER-only — no other logic change needed).
+
+## What changed
+
+- **`routes/studios.ts`**: `GET /:studioId/users/:userId/delete-preview` (counts everything that will be deleted or preserved, plus block flags) and `DELETE /:studioId/users/:userId` (typed `"DELETE"` confirmation required, same pattern as Client/Inquiry/Appointment deletes). Guards: rejects deleting yourself; reuses the existing last-active-owner count check; hard-blocks deleting an ARTIST with any real appointment or assigned/preferred-inquiry history (my own judgment applying the "preserve business records" choice to this specific cascade risk — unwinding an artist's full history is out of scope for a staff-removal feature; deactivation is offered as the alternative in the error message). Ephemeral records (task dismissals, section-seen/read receipts, conversation-participant rows, dismissed-duplicate markers, prefill drafts, import batches + rows, the user's own personal tasks, their `Artist` row if any) are deleted in one transaction; the 5 business-content relations are left for Postgres's `ON DELETE SET NULL`. Full audit log entry recorded before deletion (email/name/role + the full summary).
+- **Frontend (`Team.tsx`)**: red "Delete" button next to "Edit" in both the Staff table and Artists cards, disabled (with a title tooltip) on the current user's own row. A confirmation modal fetches the preview, shows a hard-block banner for the last-owner or artist-history cases, otherwise a two-part breakdown ("will permanently remove" vs. "preserved, just loses the author link"), and requires typing `DELETE` before enabling the submit button.
+- **Frontend null-safety**: 4 files (`InquiryNotesSection.tsx`, `GiftCardDetail.tsx`, `Tasks.tsx`, `AppointmentDetail.tsx`) had their `author`/`issuedBy`/`createdBy`/`uploadedBy` display types widened to `| null` with a "Deleted user" fallback. `tsc --noEmit` did not catch these on its own since the frontend interfaces predated the schema change — found by grepping for direct (non-optional-chained) property access on all 4 fields across `apps/web/src` and fixing every real hit before running any tests.
+
+## Verification
+
+**Backend** (direct-API script, 24/24 assertions passed): fresh user with zero history deletes cleanly; self-delete rejected (400); last-active-owner flagged correctly in preview; artist with zero history fully deletes including their `Artist` row; artist with real appointment history hard-blocked (400, exact counts in the message); gift card and a task-created-for-a-teammate both genuinely survive their creator's deletion with the author field nulled and all other data (amount, title) intact; FRONT_DESK gets 403 on the preview/delete routes; cross-studio access gets 403.
+
+**Frontend** (Playwright, screenshots reviewed directly): Team page renders both Delete buttons — confirmed the current owner's own row's button is present but disabled. Clicking an enabled Delete button on a teammate's row opens the confirmation modal showing the correct live counts ("4 of their own personal tasks", "2 read-receipt / dismissal records", correctly reporting "no Artist profile" for this non-artist user) and a working type-`DELETE`-to-confirm input.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) — clean. `npx tsc --noEmit` + `npm run build` (web) — clean.
+
+## Commit
+
+`6185823` — Allow owner to permanently delete staff accounts. Pushed immediately after the collision check (`git fetch` + `git log HEAD..origin/main`) came back empty.
+
+## Cleanup
+
+Both scratch dev servers (API :5501, web :6501) stopped by PID. Temporary verification scripts (`verify_staff_delete.mjs`, `verify_team_ui.mjs`) and screenshots left scratchpad-only, none committed. Test users/gift cards/tasks created during verification were deleted as part of the delete flow itself being tested, or left in the dev database consistent with this session's standing convention.
+
 
