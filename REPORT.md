@@ -1478,4 +1478,88 @@ New "Additional Information" card on the Inquiry detail page, positioned directl
 
 Both scratch dev servers (API :4003, web :5183) stopped; confirmed via `Get-NetTCPConnection` and force-killed by PID, same recurring pattern as every prior package. Playwright driver scripts and screenshots stayed in the scratchpad only, none committed. Test data created during verification (one client/inquiry with all three custom answers, one staff-logged walk-in, one tamper-test attempt that correctly failed) left in the dev database, consistent with the standing convention in every prior package's report.
 
+---
+
+# Package R — Mass client import with duplicate-detection review
+
+Single session on `main`. Pre-flight: `git status` clean, `git pull` (up to date), `prisma migrate status` clean, no other session mid-migration.
+
+## A second `migrate dev` gotcha, fixed the same way as Package Q's
+
+Same checksum-drift wall as last package, this time on a brand-new migration rather than an edited old one -- `migrate dev` for the new schema below hung past its own timeout against the remote Railway shadow-database round-trip (not an error, just slow); it completed successfully in the background a short while later. No data risk either way; noted here only because it's the second time this exact shape of "looks stuck, isn't" has shown up this session, and it's a known, harmless characteristic of this project's remote-only Postgres setup (no local Docker available), not a bug worth chasing.
+
+## A real incident: uncommitted work wiped mid-session by the shared checkout
+
+Partway through implementation, a large chunk of this package's edits to already-tracked files (`schema.prisma`, `clients.ts`, `clientContacts.ts`, `index.ts`, `App.tsx`, `api.ts`, `Clients.tsx`, `package.json`) vanished from the working tree -- `git status` showed them reverted to `HEAD`, while this session's brand-new *untracked* files (the new lib/route/page files) were untouched. That specific pattern -- tracked files reverted, untracked files intact -- is exactly what a broad `git checkout`/`git restore` on the shared checkout produces, and this repo has had a concurrent session actively committing unrelated button-styling work throughout this whole package (visible in the surrounding commit log). Checked `git stash list` first in case the missing work had landed there instead of being destroyed -- found a stash, but its content (`smsConsentGivenAt`, a still-present `ConsentForm` reference) was clearly a stale, unrelated entry from well before Package P, not this session's lost work. Concluded the edits were genuinely gone, not recoverable, and redid them directly from what was still in this session's own context -- verified via `tsc` immediately after, then **committed and pushed right away** rather than leaving the recovered work uncommitted and exposed to the same risk twice.
+
+## Investigation before writing any code
+
+Reused, not reimplemented, per the task's explicit instruction:
+
+- **Duplicate detection**: `GET /clients/:id/potential-duplicates`'s exact-match phone/email predicate (including the Package B alias tables, `ClientPhone`/`ClientEmail`) was extracted into `lib/duplicateDetection.ts` (`clientMatchesPhoneOrEmail` + `findStudioClientsForMatching`), and that existing route was refactored to call the extracted functions -- confirmed via `git diff` that its own behavior is byte-for-byte unchanged, just no longer a second copy of the same filter logic.
+- **Merge**: `POST /clients/:id/merge`'s three transaction helpers (`repointClientRelations`, `mergeConversations`, `carryOverContactAliases`) plus its validation preconditions were extracted into `lib/clientMerge.ts` (`performMerge`, `validateMergePair`), and that route was refactored to call them too. Same exact error messages/status codes preserved for every precondition (self-merge, not-found, already-merged-either-side).
+- **Client creation**: not explicitly named in the task, but `POST /clients` (direct add) already had a "create + sync contact aliases + generate a referral code" sequence that the import's ADD and MERGE (source-client) paths both also need -- extracted to `lib/clientContacts.ts`'s `createClientFromFields` rather than writing it a third time.
+
+## Schema
+
+```prisma
+enum ImportBatchStatus { PENDING_REVIEW COMPLETED CANCELLED }
+enum ImportRowDecision { ADD MERGE SKIP }
+
+model ImportBatch {
+  id           String            @id @default(cuid())
+  status       ImportBatchStatus @default(PENDING_REVIEW)
+  createdAt    DateTime          @default(now())
+  studioId     String
+  uploadedById String
+  rows         ImportRow[]
+}
+model ImportRow {
+  id              String   @id @default(cuid())
+  rawData         Json
+  matchedClientId String?
+  decision        ImportRowDecision?
+  processedAt     DateTime?
+  importBatchId   String
+}
+```
+
+`CANCELLED` had no route that would ever set it in the task's own numbered list -- added `POST .../cancel` (same OWNER/FRONT_DESK gate as upload/review, since nothing's actually been written yet) so that declared status value is reachable rather than dead.
+
+## Routes (`clientImport.ts`, mounted alongside `clients.ts` at the same `/clients` prefix)
+
+- `POST /clients/import` -- multipart CSV (via `multer`, memory storage, 5MB cap -- and `csv-parse`; neither existed in this codebase before, since every other upload here is a Cloudinary direct-upload signature, never real bytes hitting this server). Header names are normalized case/whitespace-insensitively (firstName/First Name/first_name, etc.); unrecognized columns are preserved in `rawData` but never read. Every parsed row is duplicate-checked immediately via the shared lib and stored with its `matchedClientId`; a row missing first/last name is still stored (never silently dropped) and flagged via a computed `isMalformed` field in the GET response.
+- `GET /clients/import/:batchId` -- full batch + rows + matched-client summaries + the malformed flag.
+- `PATCH /clients/import/:batchId/rows/:rowId` -- sets a decision, with guardrails: `ADD` rejected on a malformed row (no name to create with), `MERGE` rejected with no detected match.
+- `POST /clients/import/:batchId/execute` (`requireRole(Role.OWNER)` on top of the file's usual `clients.manage` gate) -- rejects if any row still lacks a decision (reporting the exact count), rejects an already-completed or cancelled batch. Processes rows individually rather than one giant transaction (each row's own write -- a create, or a create-plus-merge -- is still fully atomic) so one bad row can't roll back an entire large import; failures are collected per-row in the response rather than thrown.
+
+**The MERGE path, confirmed to be the real thing and not a shortcut**: a `MERGE`-decided row first becomes a genuine new `Client` (via the same `createClientFromFields` the ADD path uses), which is then merged into the matched client through `performMerge` -- the identical function `POST /clients/:id/merge` calls. Verified live (see below) that the row's freshly-created client ends up with `mergedIntoId` pointing at the matched client, exactly like any manual merge.
+
+## Verification
+
+**PowerShell/curl** (scratch API :4004, other concurrent sessions holding :4000-:4003):
+- Uploaded a 4-row CSV (two new, one matching an existing seeded client by email, one missing a first name) -- all four parsed correctly, the match detected correctly, the malformed row flagged (`isMalformed: true`) rather than dropped.
+- FRONT_DESK: `GET`/`PATCH` both 200 (review access); `POST .../execute` 403 (Forbidden).
+- Cross-studio: studio 2's owner gets 404 (not 403) on both `GET` and `POST .../execute` against studio 1's batch.
+- Incomplete batch: executing with 3 of 4 rows still undecided -- 400, `"3 row(s) still need a decision..."`.
+- Decision guardrails: `ADD` on the malformed row -- 400; `MERGE` on a no-match row -- 400.
+- Executed the fully-decided batch -- `ADD` created a real client (with a real generated `referralCode`); `MERGE` row's freshly-created client confirmed `mergedIntoId` pointing at the matched client (Alex Testperson), and Alex's own `phones`/`emails` alias arrays were correctly deduplicated against the merge's carried-over contacts (no duplicate rows, since the CSV row's phone/email were identical to Alex's already-primary ones) -- this dedup behavior only happens because the REAL `carryOverContactAliases` ran, not a hand-rolled shortcut. Both `SKIP` rows created nothing. Audit log shows `create-from-import` and `merge-from-import` entries with the batch/row IDs.
+- Re-executing the same (now `COMPLETED`) batch -- 400, `"This batch has already been executed"`. Cancel flow on a fresh batch -- `PENDING_REVIEW` → `CANCELLED`, then executing it -- 400, `"This batch has been cancelled"`.
+
+**Browser** (Playwright, scratch web :5183, `chromium-cli` unavailable on this Windows environment, same `chromium.launch()` fallback as every prior session): uploaded a 3-row CSV via the new Import Clients page (linked from the Clients list) -- review table correctly showed "1 possible match" / "1 flagged row", a working link to the matched client (Bailey Testperson), and the malformed row's warning in red. Set decisions via the table's own selects (Add/Merge/Skip), clicked Confirm Import, and confirmed the resulting "Import complete: 1 added, 1 merged, 1 skipped" summary -- zero console errors throughout both this run and a second single-row run.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) -- clean. `npx tsc --noEmit` and `npm run build` (web) -- both clean, re-confirmed against the actual final committed state after the mid-session data-loss incident above, not just the pre-incident work.
+
+## Commit
+
+`58dfa7c` -- Package R: mass client import with duplicate-detection review. Pushed immediately (`9c6d3f0..58dfa7c`) straight after committing, deliberately not leaving the recovered work uncommitted for any longer than necessary.
+
+**Merge-reuse, confirmed**: `performMerge`/`validateMergePair` in `lib/clientMerge.ts` are called by both `POST /clients/:id/merge` (unchanged behavior, verified via preserved error messages) and the import execute step's `MERGE` decisions -- one real implementation, proven live by the merged row-client's `mergedIntoId` and Alex Testperson's correctly-deduplicated contact aliases after the import merge.
+
+## Cleanup
+
+Both scratch dev servers (API :4004, web :5183) stopped; confirmed via `Get-NetTCPConnection` (including stray zero-PID TIME_WAIT-style entries that needed filtering out first) and force-killed by PID. Playwright driver scripts, screenshots, and test CSVs stayed in the scratchpad only, none committed. Test data created during verification (several new clients across the PowerShell and browser passes, one soft-merge, one cancelled batch) left in the dev database, consistent with the standing convention in every prior package's report.
+
 
