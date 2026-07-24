@@ -6,7 +6,7 @@ import type { Prisma } from "../../generated/prisma/client";
 import { optionalAuth, requireAuth, requireRole } from "../middleware/auth";
 import { Role } from "../../generated/prisma/enums";
 import { diffObjects, logAudit } from "../lib/audit";
-import { validateGiftCardForAttachment } from "../lib/giftCards";
+import { validateGiftCardForAttachment, validateGiftCardsForAttachment } from "../lib/giftCards";
 import { getOrCreateClientConversation, getOrCreateStaffConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
 import { shortenUrl } from "../lib/shortLinks";
@@ -15,7 +15,7 @@ import { syncPrimaryEmail, syncPrimaryPhone } from "../lib/clientContacts";
 import { findBufferConflict, formatBufferWarning } from "../lib/schedulingConflict";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { emitInvalidation } from "../lib/realtime/registry";
-import { computeDepositTier, resolveDepositTiers } from "../lib/depositTiers";
+import { computeDepositTier, computeRequiredDepositCents, resolveDepositTiers } from "../lib/depositTiers";
 import { generateUniqueReferralCode } from "../lib/referrals";
 import { IntakeFieldKind } from "../../generated/prisma/enums";
 import { getEffectiveIntakeFormFields, validateCustomFieldAnswers } from "../lib/intakeFormFields";
@@ -989,16 +989,14 @@ router.post("/:id/send-estimate", requireAuth, requireRole(Role.OWNER, Role.FRON
 // it via bufferWarning so staff can decide.
 router.post("/:id/schedule", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
   const id = req.params.id as string;
-  const { startTime, endTime, giftCardId } = req.body ?? {};
+  const { startTime, endTime, giftCardIds } = req.body ?? {};
 
   if (!startTime || !endTime) {
     return res.status(400).json({ error: "startTime and endTime are required" });
   }
 
-  if (!giftCardId) {
-    return res
-      .status(400)
-      .json({ error: "giftCardId is required — collect a deposit or issue a gift card for this client first." });
+  if (!Array.isArray(giftCardIds) || giftCardIds.length === 0 || !giftCardIds.every((v) => typeof v === "string")) {
+    return res.status(400).json({ error: "giftCardIds must be a non-empty array of strings" });
   }
 
   const start = new Date(startTime);
@@ -1021,7 +1019,22 @@ router.post("/:id/schedule", requireAuth, requireRole(Role.OWNER, Role.FRONT_DES
     return res.status(400).json({ error: "This inquiry has no assigned artist" });
   }
 
-  const giftCardResult = await validateGiftCardForAttachment(giftCardId, req.user!.studioId, inquiry.clientId);
+  const studioSettings = await prisma.studioSettings.findUnique({
+    where: { studioId: req.user!.studioId },
+    select: { depositTiers: true },
+  });
+  const requiredCents = computeRequiredDepositCents(
+    inquiry.priceEstimateLow,
+    inquiry.priceEstimateHigh,
+    resolveDepositTiers(studioSettings?.depositTiers),
+  );
+
+  const giftCardResult = await validateGiftCardsForAttachment(
+    giftCardIds,
+    req.user!.studioId,
+    inquiry.clientId,
+    requiredCents,
+  );
   if ("error" in giftCardResult) {
     return res.status(400).json({ error: giftCardResult.error });
   }
@@ -1041,7 +1054,11 @@ router.post("/:id/schedule", requireAuth, requireRole(Role.OWNER, Role.FRONT_DES
       },
     });
 
-    await tx.giftCard.update({ where: { id: giftCardId }, data: { appointmentId: created.id } });
+    await Promise.all(
+      giftCardIds.map((giftCardId: string) =>
+        tx.giftCard.update({ where: { id: giftCardId }, data: { appointmentId: created.id } }),
+      ),
+    );
 
     return created;
   });
