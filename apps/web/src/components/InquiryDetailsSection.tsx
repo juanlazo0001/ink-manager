@@ -94,7 +94,21 @@ function formatCustomAnswer(answer: { type: string; answer: string | string[] })
 // since edited or deleted -- an orphaned answer (question deleted, no
 // longer in the live field list) has no current position to sort by, so
 // it's appended at the end under its original label.
-export default function InquiryDetailsSection({ inquiry }: { inquiry: InquiryForDetails }) {
+interface InquiryDetailsSectionProps {
+  inquiry: InquiryForDetails
+  // True when wrapped in the page's own <Widget> -- skips this
+  // component's own card/title. Unlike InquiryNotesSection's canManage,
+  // whether this section has anything to show is only known once its own
+  // fetch resolves (this studio's live intake fields, cross-referenced
+  // against this inquiry's answers) -- onVisibilityChange reports that
+  // back to the parent so it can decide whether to render the Widget
+  // wrapper at all, same "hide entirely when empty" behavior as before
+  // this was wrapped, just decided one level up.
+  bare?: boolean
+  onVisibilityChange?: (visible: boolean) => void
+}
+
+export default function InquiryDetailsSection({ inquiry, bare = false, onVisibilityChange }: InquiryDetailsSectionProps) {
   const [fields, setFields] = useState<LiveIntakeField[] | null>(null)
 
   useEffect(() => {
@@ -111,32 +125,38 @@ export default function InquiryDetailsSection({ inquiry }: { inquiry: InquiryFor
     }
   }, [])
 
-  if (!fields) return null
-
   const rows: { key: string; label: string; value: string }[] = []
 
-  for (const field of fields) {
-    if (field.fieldKind === 'SYSTEM' && field.systemFieldKey) {
-      if (field.systemFieldKey === 'referenceImages' || field.systemFieldKey === 'placementImages') continue
-      rows.push({ key: field.id, label: field.label, value: systemFieldValue(field.systemFieldKey, inquiry) })
-    } else if (field.fieldKind === 'CUSTOM') {
-      const answer = inquiry.customFieldAnswers?.[field.id]
-      if (!answer) continue
-      rows.push({ key: field.id, label: field.label, value: formatCustomAnswer(answer) })
+  if (fields) {
+    for (const field of fields) {
+      if (field.fieldKind === 'SYSTEM' && field.systemFieldKey) {
+        if (field.systemFieldKey === 'referenceImages' || field.systemFieldKey === 'placementImages') continue
+        rows.push({ key: field.id, label: field.label, value: systemFieldValue(field.systemFieldKey, inquiry) })
+      } else if (field.fieldKind === 'CUSTOM') {
+        const answer = inquiry.customFieldAnswers?.[field.id]
+        if (!answer) continue
+        rows.push({ key: field.id, label: field.label, value: formatCustomAnswer(answer) })
+      }
+    }
+
+    const liveCustomIds = new Set(fields.filter((f) => f.fieldKind === 'CUSTOM').map((f) => f.id))
+    for (const [id, answer] of Object.entries(inquiry.customFieldAnswers ?? {})) {
+      if (liveCustomIds.has(id)) continue
+      rows.push({ key: id, label: answer.question, value: formatCustomAnswer(answer) })
     }
   }
 
-  const liveCustomIds = new Set(fields.filter((f) => f.fieldKind === 'CUSTOM').map((f) => f.id))
-  for (const [id, answer] of Object.entries(inquiry.customFieldAnswers ?? {})) {
-    if (liveCustomIds.has(id)) continue
-    rows.push({ key: id, label: answer.question, value: formatCustomAnswer(answer) })
-  }
+  const isVisible = rows.length > 0
 
-  if (rows.length === 0) return null
+  useEffect(() => {
+    onVisibilityChange?.(isVisible)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isVisible])
 
-  return (
-    <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-      <h2 className="text-base font-semibold text-fg">Inquiry Details</h2>
+  if (!fields || !isVisible) return null
+
+  const content = (
+    <>
       <p className="mt-0.5 text-xs text-fg-secondary">
         Every field from this studio's intake form, in its current configured order and labels.
       </p>
@@ -148,6 +168,15 @@ export default function InquiryDetailsSection({ inquiry }: { inquiry: InquiryFor
           </div>
         ))}
       </dl>
+    </>
+  )
+
+  if (bare) return content
+
+  return (
+    <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+      <h2 className="text-base font-semibold text-fg">Inquiry Details</h2>
+      {content}
     </div>
   )
 }

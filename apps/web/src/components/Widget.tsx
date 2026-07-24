@@ -48,6 +48,11 @@ export default function Widget({
 
   return (
     <div
+      // Also the plain HTML id, not just dnd-kit's sortable identity --
+      // InquiryDetail.tsx's ?openFlow= deep links scroll to these sections
+      // by getElementById, same ids ("assignment-section" etc.) they used
+      // before this component existed.
+      id={id}
       ref={ref}
       className={`rounded-2xl border border-border bg-surface p-5 ${className ?? ''}`}
       style={{ opacity: isDragging ? 0.5 : 1 }}

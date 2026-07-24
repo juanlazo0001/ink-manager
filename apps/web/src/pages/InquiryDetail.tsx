@@ -8,6 +8,8 @@ import InquiryDetailsSection from '../components/InquiryDetailsSection'
 import Modal from '../components/Modal'
 import StatusPill from '../components/StatusPill'
 import InquiryPipeline from '../components/InquiryPipeline'
+import Widget from '../components/Widget'
+import ReorderableWidgetList from '../components/ReorderableWidgetList'
 import AppointmentForm from '../components/AppointmentForm'
 import GiftCardStackPicker, { isCardAvailable, type GiftCardOption } from '../components/GiftCardStackPicker'
 import { computeRequiredDepositCents, resolveDepositTiers, type DepositTier } from '../lib/depositTiers'
@@ -291,6 +293,26 @@ function ImageGrid({ images, details }: { images: string[]; details?: ImageDetai
   )
 }
 
+// Built-in fallback order for a user who's never customized this page's
+// layout (or one shipped after their last save). "assignment-section"/
+// "estimate-section"/"scheduling-section" match the ?openFlow= deep-link
+// scroll targets further down -- Widget also sets these as the real HTML
+// id, so that feature keeps working unchanged.
+const INQUIRY_WIDGET_ORDER = [
+  'assignment-section',
+  'estimate-section',
+  'deposit',
+  'scheduling-section',
+  'appointments',
+  'photos',
+  'tattoo-details',
+  'reference-images',
+  'placement-photos',
+  'custom-fields',
+  'notes',
+  'activity-history',
+]
+
 export default function InquiryDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -547,6 +569,15 @@ export default function InquiryDetail() {
   // rather than defining a second identical role check.
   const [showMoreMenu, setShowMoreMenu] = useState(false)
   const [copied, setCopied] = useState(false)
+  // InquiryDetailsSection decides its own visibility asynchronously (it
+  // fetches this studio's live intake fields before it knows whether
+  // there's anything to show) -- reported back here via onVisibilityChange
+  // so the "custom-fields" Widget wrapper can be omitted entirely when
+  // empty, same "hide completely" behavior as before it was wrapped.
+  // Defaults true so the widget doesn't visibly flash away for the common
+  // case (something to show); a genuinely-empty inquiry disappears once
+  // the callback fires.
+  const [showCustomFieldsWidget, setShowCustomFieldsWidget] = useState(true)
   const [showMarkLostModal, setShowMarkLostModal] = useState(false)
   const [lostReasonInput, setLostReasonInput] = useState('')
   const [markingLost, setMarkingLost] = useState(false)
@@ -1483,8 +1514,8 @@ export default function InquiryDetail() {
                 <InquiryPipeline status={inquiry.status} closedReason={inquiry.closedReason} orientation="horizontal" />
               </div>
 
-              <div id="assignment-section" className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <h2 className="text-base font-semibold text-fg">Assignment</h2>
+              <ReorderableWidgetList pageKey="inquiry-detail" defaultOrder={INQUIRY_WIDGET_ORDER}>
+              <Widget key="assignment-section" id="assignment-section" title="Assignment">
 
                 {inquiry.status === 'NEW' ? (
                   <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -1524,7 +1555,7 @@ export default function InquiryDetail() {
                     <p className="mt-1 text-sm text-warning">{inquiry.declineNote}</p>
                   </div>
                 )}
-              </div>
+              </Widget>
 
               {((!isTerminal && canMessage) ||
                 inquiry.estimateSentAt ||
@@ -1533,10 +1564,12 @@ export default function InquiryDetail() {
                 inquiry.priceEstimateHigh != null ||
                 inquiry.timeEstimateHoursMin != null ||
                 inquiry.timeEstimateHoursMax != null) && (
-                <div id="estimate-section" className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                  <div className="flex items-center justify-between">
-                    <h2 className="text-base font-semibold text-fg">Estimate</h2>
-                    {!isTerminal && !isConverted && canMessage && !editingEstimate && (
+                <Widget
+                  key="estimate-section"
+                  id="estimate-section"
+                  title="Estimate"
+                  actions={
+                    !isTerminal && !isConverted && canMessage && !editingEstimate ? (
                       <button
                         type="button"
                         onClick={() => setEditingEstimate(true)}
@@ -1547,9 +1580,9 @@ export default function InquiryDetail() {
                         <PencilIcon className="h-4 w-4" />
                         <span className="hidden text-sm font-semibold md:inline">Edit</span>
                       </button>
-                    )}
-                  </div>
-
+                    ) : null
+                  }
+                >
                   {isConverted && (
                     <p className="mt-1 text-xs text-fg-muted">
                       Locked -- this inquiry has converted to a Project (deposit paid), so the estimate can no longer be
@@ -1736,19 +1769,22 @@ export default function InquiryDetail() {
                       )}
                     </div>
                   )}
-                </div>
+                </Widget>
               )}
 
               {(inquiry.status === 'DEPOSIT_PENDING' || isConverted || depositForms.length > 0) && (
-                <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                  <div className="flex items-center justify-between">
-                    <h2 className="text-base font-semibold text-fg">Deposit</h2>
-                    {depositForms.length > 1 && (
+                <Widget
+                  key="deposit"
+                  id="deposit"
+                  title="Deposit"
+                  actions={
+                    depositForms.length > 1 ? (
                       <span className="text-xs text-fg-muted">
                         {depositForms.length} session{depositForms.length === 1 ? '' : 's'}
                       </span>
-                    )}
-                  </div>
+                    ) : null
+                  }
+                >
 
                   {/* Package M: every deposit form ever generated for this
                       project, oldest first -- each session's own status,
@@ -2054,12 +2090,11 @@ export default function InquiryDetail() {
                       </div>
                     )
                   )}
-                </div>
+                </Widget>
               )}
 
               {(inquiry.status === 'SCHEDULING' || inquiry.status === 'WAITLISTED' || inquiry.appointment) && (
-                <div id="scheduling-section" className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                  <h2 className="text-base font-semibold text-fg">Scheduling</h2>
+                <Widget key="scheduling-section" id="scheduling-section" title="Scheduling">
 
                   {bufferWarning && (
                     <div className="mt-4 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
@@ -2231,13 +2266,15 @@ export default function InquiryDetail() {
                       </button>
                     </div>
                   )}
-                </div>
+                </Widget>
               )}
 
-              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-base font-semibold text-fg">Appointments</h2>
-                  {canMessage && (
+              <Widget
+                key="appointments"
+                id="appointments"
+                title="Appointments"
+                actions={
+                  canMessage ? (
                     <button
                       type="button"
                       onClick={() => setShowAppointmentModal(true)}
@@ -2248,8 +2285,9 @@ export default function InquiryDetail() {
                       <AppointmentsIcon className="h-4 w-4" />
                       <span className="hidden text-sm font-semibold md:inline">New Appointment</span>
                     </button>
-                  )}
-                </div>
+                  ) : null
+                }
+              >
 
                 {inquiry.sessions.length === 0 && (
                   <p className="mt-4 text-sm text-fg-secondary">No appointments booked for this project yet.</p>
@@ -2275,7 +2313,7 @@ export default function InquiryDetail() {
                     ))}
                   </div>
                 )}
-              </div>
+              </Widget>
 
               {/* Package N: grouped by session, not one flat gallery --
                   each session that actually has photos gets its own
@@ -2285,8 +2323,7 @@ export default function InquiryDetail() {
                   when non-empty), rather than showing an empty group for
                   every session on every project. */}
               {inquiry.sessions.some((session) => session.photos.length > 0) && (
-                <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                  <h2 className="text-base font-semibold text-fg">Photos</h2>
+                <Widget key="photos" id="photos" title="Photos">
 
                   <div className="mt-4 space-y-5">
                     {inquiry.sessions
@@ -2320,13 +2357,15 @@ export default function InquiryDetail() {
                         </div>
                       ))}
                   </div>
-                </div>
+                </Widget>
               )}
 
-              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-base font-semibold text-fg">Tattoo details</h2>
-                  {!editingDetails && (
+              <Widget
+                key="tattoo-details"
+                id="tattoo-details"
+                title="Tattoo details"
+                actions={
+                  !editingDetails ? (
                     <button
                       type="button"
                       onClick={() => setEditingDetails(true)}
@@ -2337,8 +2376,9 @@ export default function InquiryDetail() {
                       <PencilIcon className="h-4 w-4" />
                       <span className="hidden text-sm font-semibold md:inline">Edit</span>
                     </button>
-                  )}
-                </div>
+                  ) : null
+                }
+              >
 
                 {editingDetails ? (
                   <div className="mt-4 space-y-4">
@@ -2438,12 +2478,14 @@ export default function InquiryDetail() {
                     </div>
                   </>
                 )}
-              </div>
+              </Widget>
 
-              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-base font-semibold text-fg">Reference images</h2>
-                  {!editingReferenceImages && (
+              <Widget
+                key="reference-images"
+                id="reference-images"
+                title="Reference images"
+                actions={
+                  !editingReferenceImages ? (
                     <button
                       type="button"
                       onClick={() => setEditingReferenceImages(true)}
@@ -2454,8 +2496,9 @@ export default function InquiryDetail() {
                       <PencilIcon className="h-4 w-4" />
                       <span className="hidden text-sm font-semibold md:inline">Edit</span>
                     </button>
-                  )}
-                </div>
+                  ) : null
+                }
+              >
 
                 {editingReferenceImages ? (
                   <div className="mt-4 space-y-4">
@@ -2491,12 +2534,14 @@ export default function InquiryDetail() {
                     <ImageGrid images={inquiry.referenceImages} details={inquiry.referenceImagesDetail} />
                   </div>
                 )}
-              </div>
+              </Widget>
 
-              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-base font-semibold text-fg">Placement photos</h2>
-                  {!editingPlacementImages && (
+              <Widget
+                key="placement-photos"
+                id="placement-photos"
+                title="Placement photos"
+                actions={
+                  !editingPlacementImages ? (
                     <button
                       type="button"
                       onClick={() => setEditingPlacementImages(true)}
@@ -2507,8 +2552,9 @@ export default function InquiryDetail() {
                       <PencilIcon className="h-4 w-4" />
                       <span className="hidden text-sm font-semibold md:inline">Edit</span>
                     </button>
-                  )}
-                </div>
+                  ) : null
+                }
+              >
 
                 {editingPlacementImages ? (
                   <div className="mt-4 space-y-4">
@@ -2544,13 +2590,24 @@ export default function InquiryDetail() {
                     <ImageGrid images={inquiry.placementImages} details={inquiry.placementImagesDetail} />
                   </div>
                 )}
-              </div>
+              </Widget>
 
-              <InquiryDetailsSection inquiry={inquiry} />
+              {showCustomFieldsWidget && (
+                <Widget key="custom-fields" id="custom-fields" title="Inquiry Details">
+                  <InquiryDetailsSection inquiry={inquiry} bare onVisibilityChange={setShowCustomFieldsWidget} />
+                </Widget>
+              )}
 
-              <InquiryNotesSection inquiryId={inquiry.id} canManage={canMessage} readOnly={!!viewAsTarget} />
+              {canMessage && (
+                <Widget key="notes" id="notes" title="Notes">
+                  <InquiryNotesSection inquiryId={inquiry.id} canManage={canMessage} readOnly={!!viewAsTarget} bare />
+                </Widget>
+              )}
 
-              <AuditTrail entityType="Inquiry" entityId={inquiry.id} />
+              <Widget key="activity-history" id="activity-history" title="Activity History">
+                <AuditTrail bare entityType="Inquiry" entityId={inquiry.id} />
+              </Widget>
+              </ReorderableWidgetList>
 
               {showShareModal && (
                 <Modal title="Share with artist" onClose={() => setShowShareModal(false)}>

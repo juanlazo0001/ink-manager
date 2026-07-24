@@ -31,6 +31,12 @@ interface InquiryNotesSectionProps {
   // so this is a defensive no-op in practice, not the real enforcement.
   canManage: boolean
   readOnly: boolean
+  // True when wrapped in the page's own <Widget> (this section's
+  // visibility already matches canManage exactly, which the parent
+  // already knows synchronously -- unlike InquiryDetailsSection, no
+  // callback is needed to decide whether to render the wrapper at all).
+  // Skips this component's own card/title so there's exactly one of each.
+  bare?: boolean
 }
 
 // RichTextEditor's own empty state is "<p></p>", not "" -- same
@@ -54,7 +60,7 @@ function isEdited(note: InquiryNote): boolean {
 // terse field-diffs, one line per change) -- this is a manually-written
 // commentary feed: full rich-text bodies, an author name up top, its own
 // composer. Never merged into that display.
-export default function InquiryNotesSection({ inquiryId, canManage, readOnly }: InquiryNotesSectionProps) {
+export default function InquiryNotesSection({ inquiryId, canManage, readOnly, bare = false }: InquiryNotesSectionProps) {
   const user = useEffectiveUser()
   const queryClient = useQueryClient()
   const queryKey = ['inquiry-notes', inquiryId] as const
@@ -140,9 +146,8 @@ export default function InquiryNotesSection({ inquiryId, canManage, readOnly }: 
 
   if (!canManage) return null
 
-  return (
-    <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-      <h2 className="text-base font-semibold text-fg">Notes</h2>
+  const content = (
+    <>
       <p className="mt-1 text-xs text-fg-muted">Internal only -- never shown to the client or shared with an artist.</p>
 
       <div className="mt-4">
@@ -263,6 +268,15 @@ export default function InquiryNotesSection({ inquiryId, canManage, readOnly }: 
           })}
         </ul>
       </div>
+    </>
+  )
+
+  if (bare) return content
+
+  return (
+    <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+      <h2 className="text-base font-semibold text-fg">Notes</h2>
+      {content}
     </div>
   )
 }
