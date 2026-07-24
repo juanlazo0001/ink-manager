@@ -15,6 +15,8 @@ import ScheduleEditor, {
   scheduleDaysToBlocks,
   type ScheduleBlock,
 } from '../components/ScheduleEditor'
+import Widget from '../components/Widget'
+import ReorderableWidgetList from '../components/ReorderableWidgetList'
 
 interface Artist {
   id: string
@@ -36,6 +38,11 @@ interface UploadItem {
   status: 'uploading' | 'error'
   error?: string
 }
+
+// Built-in fallback order for a user who's never customized this page's
+// layout -- same reorder/collapse system already used on the Inquiry,
+// Appointment, and Client detail pages.
+const ARTIST_WIDGET_ORDER = ['guest-artist', 'bio', 'social-links', 'specialties', 'preferred-schedule', 'portfolio']
 
 export default function ArtistDetail() {
   const { id } = useParams<{ id: string }>()
@@ -294,9 +301,9 @@ export default function ArtistDetail() {
                 )}
               </div>
 
+              <ReorderableWidgetList pageKey="artist-detail" defaultOrder={ARTIST_WIDGET_ORDER}>
               {canManage && (
-                <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                  <h2 className="text-base font-semibold text-fg">Guest Artist</h2>
+                <Widget key="guest-artist" id="guest-artist" title="Guest Artist">
                   <p className="mt-1 text-xs text-fg-muted">
                     A guest artist working a limited window. Once their end date passes, they drop out of Calendar's
                     default resource columns and default assignment pickers (but stay fully visible here, and their
@@ -325,11 +332,10 @@ export default function ArtistDetail() {
                       </div>
                     </div>
                   )}
-                </div>
+                </Widget>
               )}
 
-              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <h2 className="text-base font-semibold text-fg">Bio</h2>
+              <Widget key="bio" id="bio" title="Bio">
                 {canManage ? (
                   <textarea
                     rows={4}
@@ -341,10 +347,9 @@ export default function ArtistDetail() {
                 ) : (
                   <p className="mt-3 whitespace-pre-wrap text-sm text-fg-secondary">{artist.bio || 'No bio yet.'}</p>
                 )}
-              </div>
+              </Widget>
 
-              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <h2 className="text-base font-semibold text-fg">Social Links</h2>
+              <Widget key="social-links" id="social-links" title="Social Links">
                 {canManage ? (
                   <div className="mt-3 space-y-3">
                     <div>
@@ -404,10 +409,9 @@ export default function ArtistDetail() {
                 ) : (
                   <p className="mt-3 text-sm text-fg-secondary">No social links yet.</p>
                 )}
-              </div>
+              </Widget>
 
-              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <h2 className="text-base font-semibold text-fg">Specialties</h2>
+              <Widget key="specialties" id="specialties" title="Specialties">
                 <div className="mt-3">
                   {canManage ? (
                     <SpecialtiesInput value={specialties} onChange={setSpecialties} />
@@ -426,10 +430,9 @@ export default function ArtistDetail() {
                     <p className="text-sm text-fg-secondary">No specialties listed.</p>
                   )}
                 </div>
-              </div>
+              </Widget>
 
-              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <h2 className="text-base font-semibold text-fg">Preferred Schedule</h2>
+              <Widget key="preferred-schedule" id="preferred-schedule" title="Preferred Schedule">
                 <p className="mt-1 text-xs text-fg-muted">
                   Advisory availability only — doesn't block scheduling, just informs staff.
                 </p>
@@ -452,11 +455,9 @@ export default function ArtistDetail() {
                     {scheduleSuccess && !scheduleError && <p className="text-sm text-success">Saved.</p>}
                   </div>
                 )}
-              </div>
+              </Widget>
 
-              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <h2 className="text-base font-semibold text-fg">Portfolio</h2>
-
+              <Widget key="portfolio" id="portfolio" title="Portfolio">
                 {canManage && (
                   <input
                     type="file"
@@ -515,7 +516,8 @@ export default function ArtistDetail() {
                     ))}
                   </div>
                 )}
-              </div>
+              </Widget>
+              </ReorderableWidgetList>
 
               {canManage && (
                 <div className="mt-6 flex items-center gap-3">
