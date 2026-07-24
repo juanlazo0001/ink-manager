@@ -1500,10 +1500,12 @@ export default function InquiryDetail() {
                       <button
                         type="button"
                         onClick={() => setEditingEstimate(true)}
-                        className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                        aria-label="Edit Estimate"
+                        title="Edit Estimate"
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                       >
-                        <PencilIcon className="h-3.5 w-3.5" />
-                        Edit
+                        <PencilIcon className="h-4 w-4" />
+                        <span className="hidden text-sm font-semibold md:inline">Edit</span>
                       </button>
                     )}
                   </div>
@@ -2292,10 +2294,12 @@ export default function InquiryDetail() {
                     <button
                       type="button"
                       onClick={() => setEditingDetails(true)}
-                      className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                      aria-label="Edit Tattoo Details"
+                      title="Edit Tattoo Details"
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                     >
-                      <PencilIcon className="h-3.5 w-3.5" />
-                      Edit
+                      <PencilIcon className="h-4 w-4" />
+                      <span className="hidden text-sm font-semibold md:inline">Edit</span>
                     </button>
                   )}
                 </div>
@@ -2407,10 +2411,12 @@ export default function InquiryDetail() {
                     <button
                       type="button"
                       onClick={() => setEditingReferenceImages(true)}
-                      className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                      aria-label="Edit Reference Images"
+                      title="Edit Reference Images"
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                     >
-                      <PencilIcon className="h-3.5 w-3.5" />
-                      Edit
+                      <PencilIcon className="h-4 w-4" />
+                      <span className="hidden text-sm font-semibold md:inline">Edit</span>
                     </button>
                   )}
                 </div>
@@ -2458,10 +2464,12 @@ export default function InquiryDetail() {
                     <button
                       type="button"
                       onClick={() => setEditingPlacementImages(true)}
-                      className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                      aria-label="Edit Placement Photos"
+                      title="Edit Placement Photos"
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                     >
-                      <PencilIcon className="h-3.5 w-3.5" />
-                      Edit
+                      <PencilIcon className="h-4 w-4" />
+                      <span className="hidden text-sm font-semibold md:inline">Edit</span>
                     </button>
                   )}
                 </div>
