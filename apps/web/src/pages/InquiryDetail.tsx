@@ -81,6 +81,7 @@ interface Inquiry {
   assignedAt: string | null
   estimateToken: string | null
   estimateUrl: string | null
+  revisionUrl: string | null
   estimateSentAt: string | null
   estimateOpenedAt: string | null
   estimateRespondedAt: string | null
@@ -1329,6 +1330,7 @@ export default function InquiryDetail() {
   // already send them, not a full-length URL reconstructed from the raw
   // token client-side.
   const estimateUrl = inquiry?.estimateUrl ?? null
+  const revisionUrl = inquiry?.revisionUrl ?? null
   // Only ever the current unsigned session's link -- a signed session has
   // nothing left to share.
   const depositUrl = latestDepositForm && !latestDepositForm.signedAt ? latestDepositForm.url : null
@@ -1703,6 +1705,32 @@ export default function InquiryDetail() {
                       )}
 
                       {revisionSendNotice && <p className="mt-3 text-sm text-fg-secondary">{revisionSendNotice}</p>}
+
+                      {revisionUrl && (
+                        <div className="mt-4 rounded-lg border border-border p-3">
+                          <p className="mb-2 text-xs text-fg-muted">
+                            Share this link with the client — it expires in 7 days.
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              readOnly
+                              value={revisionUrl}
+                              onFocus={(event) => event.target.select()}
+                              className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:outline-none"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleCopyLink(revisionUrl)}
+                              aria-label={copied ? 'Copied' : 'Copy link'}
+                              title={copied ? 'Copied!' : 'Copy link'}
+                              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-fg-secondary transition hover:bg-surface-raised hover:text-fg"
+                            >
+                              {copied ? <CheckIcon className="h-4 w-4 text-success" /> : <CopyIcon className="h-4 w-4" />}
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </>
                   )}
 

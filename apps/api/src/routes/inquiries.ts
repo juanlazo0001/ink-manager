@@ -602,6 +602,20 @@ router.get("/:id", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async 
   const estimateActive = !!(inquiry.estimateToken && inquiry.estimateTokenExpiresAt && inquiry.estimateTokenExpiresAt > now);
   const estimateUrl = estimateActive ? await shortenUrl(`${PUBLIC_APP_URL}/estimate/${inquiry.estimateToken}`) : null;
 
+  // Same reasoning as estimateUrl above, for a Project's revised-estimate
+  // link (POST /:id/revise-estimate) -- without this, the "share the link
+  // below manually" fallback text on a resent revision had no actual link
+  // to show once the initial POST response (which only lived in that
+  // request's memory) was gone, e.g. after a page reload.
+  const revisionActive = !!(
+    inquiry.estimateRevisionToken &&
+    inquiry.estimateRevisionTokenExpiresAt &&
+    inquiry.estimateRevisionTokenExpiresAt > now
+  );
+  const revisionUrl = revisionActive
+    ? await shortenUrl(`${PUBLIC_APP_URL}/estimate-revision/${inquiry.estimateRevisionToken}`)
+    : null;
+
   const depositForms = await Promise.all(
     inquiry.depositForms.map(async (form) => {
       const active = !form.signedAt && form.tokenExpiresAt > now;
@@ -618,7 +632,7 @@ router.get("/:id", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async 
     resolveImageMeta(inquiry.placementImages, inquiry.placementImagesMeta),
   ]);
 
-  res.json({ ...inquiry, estimateUrl, depositForms, referenceImagesDetail, placementImagesDetail });
+  res.json({ ...inquiry, estimateUrl, revisionUrl, depositForms, referenceImagesDetail, placementImagesDetail });
 });
 
 // Detail-field edits only -- status transitions stay in their own dedicated

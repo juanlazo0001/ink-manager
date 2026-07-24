@@ -1514,9 +1514,9 @@ export default function Settings() {
           {activeTab === 'policies' && canViewPolicies && policies && (
             <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
               <div>
-                <h2 className="text-lg font-semibold text-fg">Policies &amp; Defaults</h2>
+                <h2 className="text-lg font-semibold text-fg">Policies</h2>
                 <p className="mt-1 text-sm text-fg-secondary">
-                  Wording and defaults used across estimates, deposits, and gift cards.
+                  Wording used across estimates, deposits, gift cards, and waivers.
                 </p>
               </div>
 
@@ -1543,61 +1543,71 @@ export default function Settings() {
                   </div>
                 ))}
               </div>
+            </div>
+          )}
 
-              <div className="mt-4 rounded-xl border border-border p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold text-fg">Defaults</p>
-                  {canEditPolicies && (
-                    <button
-                      type="button"
-                      onClick={openDefaultsModal}
-                      aria-label="Edit defaults"
-                      title="Edit defaults"
-                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface-inset hover:text-fg"
-                    >
-                      <PencilIcon className="h-4 w-4" />
-                    </button>
-                  )}
+          {activeTab === 'policies' && canViewPolicies && policies && (
+            <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-semibold text-fg">Defaults</h2>
+                  <p className="mt-1 text-sm text-fg-secondary">
+                    Studio-wide defaults for estimates, gift cards, referrals, and lead handling.
+                  </p>
                 </div>
-                <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
-                  <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Estimate follow-up</p>
-                    <p className="mt-1 text-sm text-fg-secondary">{policies.estimateFollowUpHours} hours</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Gift card expiration</p>
-                    <p className="mt-1 text-sm text-fg-secondary">
-                      {policies.giftCardDefaultExpirationDays
-                        ? `${policies.giftCardDefaultExpirationDays} days`
-                        : 'Never expires'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Referral reward</p>
-                    <p className="mt-1 text-sm text-fg-secondary">
-                      ${(policies.referralRewardAmountCents / 100).toFixed(2)}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Cold lead after</p>
-                    <p className="mt-1 text-sm text-fg-secondary">{policies.coldLeadDays} days of no activity</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Timezone</p>
-                    <p className="mt-1 text-sm text-fg-secondary">{timezoneLabel(policies.timezone)}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Sidebar badges</p>
-                    <p className="mt-1 text-sm text-fg-secondary">{policies.showSidebarBadges ? 'On' : 'Off'}</p>
-                  </div>
+                {canEditPolicies && (
+                  <button
+                    type="button"
+                    onClick={openDefaultsModal}
+                    aria-label="Edit defaults"
+                    title="Edit defaults"
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface-inset hover:text-fg"
+                  >
+                    <PencilIcon className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Estimate follow-up</p>
+                  <p className="mt-1 text-sm text-fg-secondary">{policies.estimateFollowUpHours} hours</p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Gift card expiration</p>
+                  <p className="mt-1 text-sm text-fg-secondary">
+                    {policies.giftCardDefaultExpirationDays
+                      ? `${policies.giftCardDefaultExpirationDays} days`
+                      : 'Never expires'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Referral reward</p>
+                  <p className="mt-1 text-sm text-fg-secondary">
+                    ${(policies.referralRewardAmountCents / 100).toFixed(2)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Cold lead after</p>
+                  <p className="mt-1 text-sm text-fg-secondary">{policies.coldLeadDays} days of no activity</p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Timezone</p>
+                  <p className="mt-1 text-sm text-fg-secondary">{timezoneLabel(policies.timezone)}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Sidebar badges</p>
+                  <p className="mt-1 text-sm text-fg-secondary">{policies.showSidebarBadges ? 'On' : 'Off'}</p>
                 </div>
               </div>
+            </div>
+          )}
 
-              <div className="mt-4 rounded-xl border border-border p-4">
+          {activeTab === 'policies' && canViewPolicies && policies && (
+            <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <p className="text-sm font-semibold text-fg">Waiver Questions &amp; Clauses</p>
-                    <p className="mt-0.5 text-xs text-fg-secondary">
+                    <h2 className="text-lg font-semibold text-fg">Waiver Questions &amp; Clauses</h2>
+                    <p className="mt-1 text-sm text-fg-secondary">
                       {waiverHealthQuestions.length} health question{waiverHealthQuestions.length === 1 ? '' : 's'},{' '}
                       {waiverClauses.length} clause{waiverClauses.length === 1 ? '' : 's'}
                     </p>
@@ -1740,14 +1750,18 @@ export default function Settings() {
                   </div>
                 )}
               </div>
+          )}
 
-              <IntakeFormFieldsEditor canEdit={canEditPolicies} />
+          {activeTab === 'policies' && canViewPolicies && policies && (
+            <IntakeFormFieldsEditor canEdit={canEditPolicies} />
+          )}
 
-              <div className="mt-4 rounded-xl border border-border p-4">
+          {activeTab === 'policies' && canViewPolicies && policies && (
+            <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <p className="text-sm font-semibold text-fg">Message Templates</p>
-                    <p className="mt-0.5 text-xs text-fg-secondary">
+                    <h2 className="text-lg font-semibold text-fg">Message Templates</h2>
+                    <p className="mt-1 text-sm text-fg-secondary">
                       {messageTemplates.length} template{messageTemplates.length === 1 ? '' : 's'} &middot; available
                       in the conversation composer
                     </p>
@@ -1835,7 +1849,6 @@ export default function Settings() {
                   </div>
                 )}
               </div>
-            </div>
           )}
 
           {activeTab === 'policies' && canViewPolicies && policies && (

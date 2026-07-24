@@ -332,11 +332,11 @@ export default function IntakeFormFieldsEditor({ canEdit }: { canEdit: boolean }
   if (saved === null) return null
 
   return (
-    <div className="mt-4 rounded-xl border border-border p-4">
+    <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <p className="text-sm font-semibold text-fg">Intake Form Fields</p>
-          <p className="mt-0.5 text-xs text-fg-secondary">
+          <h2 className="text-lg font-semibold text-fg">Intake Form Fields</h2>
+          <p className="mt-1 text-sm text-fg-secondary">
             {saved.length} field{saved.length === 1 ? '' : 's'} &middot; drag to reorder, mix built-in and custom
             questions freely
           </p>
