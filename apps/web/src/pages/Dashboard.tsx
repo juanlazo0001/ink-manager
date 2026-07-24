@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useEffectiveUser } from '../context/useEffectiveUser'
+import { useUserProfile } from '../context/useUserProfile'
 import Sidebar from '../components/Sidebar'
 import DateRangePresetFilter, { presetRange, type DateRange } from '../components/DateRangePresetFilter'
 import HorizontalBarList from '../components/HorizontalBarList'
@@ -8,6 +9,7 @@ import { SkeletonCards } from '../components/Skeleton'
 import { apiFetch } from '../lib/api'
 import { reportsDashboardQueryKey } from '../lib/queryKeys'
 import { formatCents } from '../lib/money'
+import { formatStatus } from '../lib/format'
 import { ArtistsIcon, CheckIcon, ClockIcon, DocumentIcon, TagIcon } from '../components/icons'
 
 interface FunnelStage {
@@ -65,6 +67,7 @@ function CardShell({ title, caption, children }: { title: string; caption?: stri
 
 export default function Dashboard() {
   const user = useEffectiveUser()
+  const { profile } = useUserProfile()
   const [range, setRange] = useState<DateRange>(() => presetRange(30))
   const [activeDays, setActiveDays] = useState<number | null>(30)
 
@@ -85,7 +88,9 @@ export default function Dashboard() {
         <div className="mx-auto max-w-7xl px-6 py-6 sm:px-10 sm:py-8">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h1 className="text-2xl font-bold text-fg sm:text-3xl">Welcome, {user?.role}</h1>
+              <h1 className="text-2xl font-bold text-fg sm:text-3xl">
+                Welcome, {profile?.name ?? (user ? formatStatus(user.role) : '')}
+              </h1>
               <p className="mt-1 text-sm text-fg-secondary">Here's how the studio is doing.</p>
             </div>
 
