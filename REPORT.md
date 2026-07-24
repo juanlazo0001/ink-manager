@@ -1629,4 +1629,66 @@ The new section fetches the studio's *current* live field list (`GET /studio-set
 
 Both scratch dev servers (API :4801, web :5801) stopped by PID after confirming the ports freed. All temporary verification/backfill scripts (`check_before_migration.ts`, `backfill_intake_form_fields.ts`, `verify_migration.ts`, `verify_state.ts`, `check_historical.ts`, `prod_check_before.ts`, `prod_backfill.ts`, and every Playwright driver script) deleted from the repo or left only in the scratchpad — none committed. A stray background `find /` filesystem search (launched while checking for a local Playwright install, irrelevant once `npx playwright` proved available) was stopped. Test data created during verification (one full end-to-end inquiry submission on the dev studio, the reordered field list itself) left in the dev database, consistent with the standing convention in every prior package's report; production received only the schema migration (already applied by a concurrent session) and the system-field data backfill, both idempotent and safe to leave in place.
 
+---
+
+# Package: Stackable gift cards (multiple cards, one appointment, per-card redeem/roll)
+
+Single session on `main`. Money-math session — every scenario in the Verification section below was checked against actual computed numbers (a direct-API test script), not just typechecks, per the task's own explicit emphasis.
+
+## Pre-flight investigation (answering the task's own question first)
+
+**A migration WAS needed.** `GiftCard.appointmentId String? @unique` — a real database-level constraint preventing more than one card from ever sharing an appointment, confirmed by reading the schema before writing any code. This is a constraint *drop* (loosening, not tightening), so none of the nullable→backfill→required discipline applies — it's not a new required column on a populated table, just removing a uniqueness rule. Migration `20260724050332_gift_card_stacking`, generated via `prisma migrate dev`, is exactly two statements:
+
+```sql
+DROP INDEX "GiftCard_appointmentId_key";
+CREATE INDEX "GiftCard_appointmentId_idx" ON "GiftCard"("appointmentId");
+```
+
+The `Appointment.giftCard GiftCard?` back-relation became `giftCards GiftCard[]` (Prisma requires the relation cardinality to agree on both sides) — every route selecting or including it needed pluralizing, which turned out to be a bigger share of the actual work than the schema change itself: three `prisma.giftCard.findUnique({ where: { appointmentId } })` calls (in `giftCards.ts`'s manual-issue and attachment-move routes) no longer typecheck once `appointmentId` isn't unique, and both routes' old "reject if this appointment already has a card" guards are now actively wrong under the new model (removed, not just fixed to compile).
+
+## The exact required-amount computation reused from Package C1
+
+`computeDepositTier(averageEstimate, tiers)` (unchanged, `apps/api/src/lib/depositTiers.ts`) is the sole source of truth. A new one-line wrapper, `computeRequiredDepositCents(priceEstimateLow, priceEstimateHigh, tiers)`, averages the inquiry's price bounds and calls it — returning `depositAmount` in cents, **not** `totalCharged`. This distinction mattered: `totalCharged` bakes in a flat `$10` processing fee a client pays when they pay a deposit form *by card*; a gift card's face value is never issued at that inflated number (`routes/deposits.ts`'s own `amountCents: dollarsToCents(depositForm.depositAmount)` confirms this) — so stack sufficiency has to be checked against the same, non-fee-inflated number a card can actually be worth. Missing/null price-estimate bounds resolve to a `$0` requirement (any card, including a `$0` EXEMPT one, trivially satisfies that) rather than blocking attachment on data that isn't there. A client-side mirror (`apps/web/src/lib/depositTiers.ts`) drives the live running-total preview using the identical algorithm — same "mirror the exact server math for a live preview, server stays authoritative" pattern `AppointmentDetail.tsx`'s own checkout amount-due preview already used before this package touched it.
+
+## What changed
+
+- **Schema**: see above.
+- **`lib/giftCards.ts`**: new `validateGiftCardsForAttachment(giftCardIds, studioId, clientId, requiredCents)` — reuses the existing per-card `validateGiftCardForAttachment` (ownership, ACTIVE/EXEMPT status, unexpired, not already attached) in a loop, then additionally requires the stack's `amountCents` sum to meet or exceed `requiredCents`, returning a shortfall message naming the exact dollar gap if not.
+- **`routes/appointments.ts` `POST /`**: `giftCardIds: string[]` replaces `giftCardId`; looks up the inquiry's price estimate + the studio's deposit tiers, computes `requiredCents`, validates the stack, attaches every card to the new appointment in one transaction. `GET /:id`'s include and the delete-preview/delete-summary helper both pluralized (`giftCards`/`giftCardsToDetach`).
+- **`routes/appointments.ts` `POST /:id/checkout`**: request body is now `{ finalCostCents, decisions: [{ giftCardId, action: "REDEEM" | "ROLL" }], closeoutNotes }`. Every non-EXEMPT attached card must have exactly one decision (missing/duplicate/unknown-card/EXEMPT-card decisions are all rejected with a specific error); EXEMPT cards are excluded from the decision set entirely and always auto-detach. Combined REDEEM total is applied against `finalCostCents` (floored at zero for amount due); if the combined REDEEMED total exceeds the final cost, **exactly one** new gift card is issued for the leftover — this is genuinely new logic, not a generalization of something that existed: the pre-stacking checkout route only ever computed and returned `remainderCents` for staff to "handle manually (no refund processing yet)," confirmed by reading the code before assuming the task's "reuse the exact existing overage-to-new-card logic" premise held (it didn't — the new-card issuance shape was instead modeled on the closest analogous code, `routes/deposits.ts`'s own gift-card issuance: `generateUniqueGiftCardCode()` + `computeGiftCardExpiration(studioSettings.giftCardDefaultExpirationDays)` + `issuedById`). Audit: one combined `Appointment`/`checkout` entry with the full decision set (every card, its decision, the combined redeemed total, final cost, amount due, new card id if any) plus one lightweight per-card `GiftCard` entry each (so each card's own `AuditTrail` on its detail page stays legible) — not a duplicate of the combined entry, a genuinely different scope.
+- **`routes/inquiries.ts` `POST /:id/schedule`**: same `giftCardIds`/sufficiency treatment as standalone creation. **Deliberately left untouched**: `POST /:id/attach-gift-card` (the pre-conversion, no-appointment-yet route) stays single-card with no amount check — it only signals "some deposit exists" to unlock the `SCHEDULING` transition; the real attach + sufficiency enforcement happens at `/schedule`, where an `Appointment` row actually gets created. Not in the task's explicit scope, and touching it would have meant re-deriving a sufficiency check with no real `Appointment` object yet to attach to.
+- **Frontend**: new shared `GiftCardStackPicker.tsx` (checkboxes + live running total vs. required amount) replaces the single `<select>` in both `AppointmentForm.tsx` (already the one shared component behind standalone creation, the calendar's click-to-create, and the project-detail "add a session" flow — fixing it once covers all three) and `InquiryDetail.tsx`'s own `/schedule` flow, which had its own separate picker. `AppointmentDetail.tsx`'s checkout form got a REDEEM/ROLL radio pair per attached card (EXEMPT cards show a plain informational line, never a toggle), a live amount-due total reflecting the current mix, and an overage banner that links straight to the newly-issued card right after submission (falling back to descriptive text on a later page load, since the new card isn't attached to this appointment and so isn't otherwise reachable from it post-refresh).
+- **Display** (§5): `GiftCardDetail.tsx`'s "Attached" row now reads "`[date]`, alongside 2 other cards" (a new `appointment.giftCards` sibling list added to `GET /gift-cards/:id`'s include) instead of implying a solitary relationship. `ClientDetail.tsx`'s own gift-card table computes the identical stacked count purely from the client's own already-loaded card list (grouping by `appointmentId`) — no extra fetch needed, since any sibling card sharing an appointment necessarily belongs to the same client and is therefore already in that list.
+
+## Verification — pass/fail per scenario (direct-API test script + a browser pass for the UI)
+
+| # | Scenario | Result |
+|---|---|---|
+| 1 | Single sufficiently-large card still creates an appointment (no regression) | **PASS** — `201` |
+| 2 | Two cards summing to *exactly* the required amount | **PASS** — `201` ($60 + $40 = $100 required) |
+| 3 | Two cards summing to *less than* required | **PASS** — `400`, `"...total $50.00, which is $50.00 short of the required $100.00 deposit."` |
+| 4 | Many (6) cards stacking | **PASS** — `201` (6 × $20 = $120 ≥ $100 required); confirmed usable in the browser (screenshot, §UI below) |
+| 5 | Mixed checkout: one card REDEEMED, one ROLLED | **PASS** — checkout `200`; redeemed card status → `REDEEMED`; rolled card confirmed `ACTIVE` **and** unattached (`appointment: null`); `amountDueCents: 0` for a $60 final cost against a $60 redeemed card |
+| 6 | Combined REDEEMED total exceeds final cost | **PASS** — 6 cards × $20 redeemed = $120 against a $50 final cost → `amountDueCents: 0`, `overageCents: 7000`, **exactly one** new gift card issued with `amountCents: 7000` (verified by id, not just count) |
+| 7 | EXEMPT card in a real-value stack | **PASS** — appointment with 1 EXEMPT + 1 real card creates fine (`201`); a checkout request naming the EXEMPT card in `decisions` is rejected (`400`); a checkout omitting it succeeds and the EXEMPT card is confirmed auto-detached (`appointment: null`) while remaining `status: EXEMPT` |
+| 8 | Cross-studio isolation | **PASS** — a dev-studio-2 OWNER token against a dev-studio appointment gets `404` on both `GET` and `POST .../checkout` (never `403` — existence isn't leaked) |
+| 9 | Role gating | **PASS** — an ARTIST token attempting `POST /appointments` gets `403` |
+| UI | `GiftCardStackPicker` renders and works in-browser | **PASS** — screenshot shows 6 selectable cards, a live "$200.00 selected of $100.00 required" banner (green, sufficient) updating as checkboxes toggle |
+| UI | Checkout form's per-card REDEEM/ROLL toggles | **PASS** — screenshot shows two independent radio pairs (one per attached card), both defaulting to Redeem, with a live "Amount due today: $0.00 / Redeemed total exceeds final cost by $110.00 — a new gift card will be issued" banner that updates as `finalCostCents` and per-card decisions change |
+| UI | Stacked-context display | **PASS** — `ClientDetail.tsx`'s gift-card table screenshot shows 6 redeemed cards from scenario 6 each reading "Yes, alongside 5 others"; rolled/EXEMPT cards correctly read "Unattached" post-checkout |
+
+Full script output and screenshots were reviewed directly (not summarized from a sub-agent) before writing this table.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npx tsc --noEmit` + `npm run build` (web) — all clean, checked after every commit in this package, not just once at the end.
+
+## Commits
+
+`f214818` — part 1: schema, `lib/depositTiers.ts` + `lib/giftCards.ts` additions, `routes/appointments.ts` (`POST /`, `GET /:id`, delete-preview, `POST /:id/checkout`), `routes/giftCards.ts` guard removals. `55c2a40` — part 2: `routes/inquiries.ts` `POST /:id/schedule`. `2fb6e7b` — part 3: the full frontend (`GiftCardStackPicker.tsx`, `AppointmentForm.tsx`, `AppointmentDetail.tsx`, `InquiryDetail.tsx`, `GiftCardDetail.tsx`, `ClientDetail.tsx`, `lib/depositTiers.ts`). Split into three commits and pushed immediately after each, rather than one large commit at the end, specifically because of a recurring risk this session: a concurrent session sharing this same working directory ran at least one broad `git checkout`/similar operation mid-session that silently reverted several already-edited-but-uncommitted files back to `HEAD` more than once (caught each time via an unexpected-clean `git status`/`git diff --stat`, confirmed against the intended content still visible in this session's own context, and redone identically) — committing each completed, typechecked slice immediately kept the exposure window small rather than risking the entire session's work at once.
+
+## Cleanup
+
+Both scratch dev servers (API :4901, web :5901) stopped by PID after confirming the ports freed. All temporary verification scripts (`verify_giftcards.mjs`, `verify_cross_studio.mjs`, `verify_gc_ui.mjs`, `verify_gc_ui2.mjs`, `verify_checkout_ui.mjs`, `create_checkout_test.mjs`) and screenshots stayed in the scratchpad only, none committed. Test data created during verification (several gift cards, several appointments across their full REDEEM/ROLL/overage lifecycle, on the dev studio's existing `FullTest Submission` test client) left in the dev database, consistent with the standing convention in every prior package's report — this package did not touch production.
+
 
