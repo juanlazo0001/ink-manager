@@ -270,6 +270,7 @@ model User {
   createdPrefillDrafts    PrefillDraft[]
   dismissedDuplicatePairs DismissedDuplicatePair[]
   uploadedImportBatches   ImportBatch[]
+  widgetLayouts           UserWidgetLayout[]
 
   locationId String?
   location   Location? @relation(fields: [locationId], references: [id])
@@ -658,6 +659,19 @@ model Inquiry {
   desiredTiming         String?
   referenceImages       String[]
   placementImages       String[]
+  // Sidecar upload metadata, tracked going forward only -- referenceImages/
+  // placementImages themselves stay plain URL arrays (touched by too many
+  // call sites -- the public intake form, the staff create form, this same
+  // route's create/PATCH handlers, the read-only Project view, and list-
+  // view thumbnails -- to justify migrating to a real per-image table).
+  // Record<url, { uploadedAt: ISO string, uploadedById: string | null }>;
+  // uploadedById null means the client submitted it themselves (the public
+  // intake form has no authenticated staff user to attribute it to). A url
+  // with no entry here predates this feature -- shown as "no data" in the
+  // UI, never backfilled, since who uploaded it was genuinely never
+  // recorded.
+  referenceImagesMeta   Json?
+  placementImagesMeta   Json?
   // Answers to the studio's CUSTOM IntakeFormField questions at the
   // moment THIS inquiry was submitted -- a self-contained snapshot
   // (question text + type + answer, not just a bare value), keyed by the
@@ -1337,6 +1351,32 @@ model SectionSeen {
   user   User   @relation(fields: [userId], references: [id])
 
   @@unique([userId, section])
+}
+
+// Per-user, per-page-type widget layout preference (order + collapsed
+// state) for the Inquiry/Project detail pages' reorderable/collapsible
+// section cards. pageKey is a plain string ("inquiry-detail",
+// "appointment-detail") rather than an enum -- a future third page adopting
+// the same layout system needs no migration, just a new key.
+model UserWidgetLayout {
+  id                 String   @id @default(cuid())
+  pageKey            String
+  // Array<string> of widget ids, in the user's chosen display order.
+  // Widgets whose id isn't present here (new ones added after the user's
+  // last save, or ones simply never reordered) render after the listed
+  // ones, in their built-in default order -- a saved layout can never
+  // hide a widget it doesn't know about.
+  widgetOrder        Json
+  // Array<string> of currently-collapsed widget ids. An array rather than
+  // a Record<string, boolean> since collapsed is the less-common state and
+  // stays short; missing from the array means expanded (the default).
+  collapsedWidgetIds Json
+  updatedAt          DateTime @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@unique([userId, pageKey])
 }
 
 // Phase 7A scheduler foundation. One row per (jobName, scheduledFor) slot --

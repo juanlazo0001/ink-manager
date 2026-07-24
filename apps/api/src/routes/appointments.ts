@@ -12,6 +12,7 @@ import { ensureLiabilityWaiver } from "../lib/waivers";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { getOrCreateClientConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
+import { resolveImageMeta } from "../lib/imageMeta";
 
 const router = Router();
 
@@ -215,6 +216,8 @@ const APPOINTMENT_DETAIL_INCLUDE = {
       priceEstimateHigh: true,
       referenceImages: true,
       placementImages: true,
+      referenceImagesMeta: true,
+      placementImagesMeta: true,
     },
   },
   giftCards: {
@@ -242,7 +245,12 @@ router.get("/:id", requirePermission("appointments.view"), async (req, res) => {
   }
 
   const { inquiryProject, ...rest } = appointment;
-  res.json({ ...rest, inquiry: inquiryProject });
+  const inquiry = inquiryProject && {
+    ...inquiryProject,
+    referenceImagesDetail: await resolveImageMeta(inquiryProject.referenceImages, inquiryProject.referenceImagesMeta),
+    placementImagesDetail: await resolveImageMeta(inquiryProject.placementImages, inquiryProject.placementImagesMeta),
+  };
+  res.json({ ...rest, inquiry });
 });
 
 // Archive: soft, reversible hide -- same treatment as Client.archivedAt /

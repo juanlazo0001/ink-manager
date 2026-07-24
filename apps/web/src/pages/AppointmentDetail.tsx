@@ -31,6 +31,12 @@ interface WaiverSummary {
   verifiedAt: string | null
 }
 
+interface ImageDetail {
+  url: string
+  uploadedAt: string | null
+  uploadedBy: { id: string; name: string | null; email: string } | null
+}
+
 interface GiftCardSummary {
   id: string
   code: string
@@ -72,6 +78,8 @@ interface Appointment {
     priceEstimateHigh: number | null
     referenceImages: string[]
     placementImages: string[]
+    referenceImagesDetail: ImageDetail[]
+    placementImagesDetail: ImageDetail[]
   }
   giftCards: GiftCardSummary[]
   liabilityWaiver: WaiverSummary | null
@@ -795,17 +803,30 @@ export default function AppointmentDetail() {
                   <div className="mt-4">
                     <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Reference images</p>
                     <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-6">
-                      {appointment.inquiry.referenceImages.map((url) => (
-                        <a
-                          key={url}
-                          href={url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="block aspect-square overflow-hidden rounded-lg border border-border"
-                        >
-                          <img src={url} alt="" className="h-full w-full object-cover transition hover:opacity-80" />
-                        </a>
-                      ))}
+                      {appointment.inquiry.referenceImages.map((url) => {
+                        const detail = appointment.inquiry.referenceImagesDetail.find((d) => d.url === url)
+                        return (
+                          <a
+                            key={url}
+                            href={url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="group relative block aspect-square overflow-hidden rounded-lg border border-border"
+                          >
+                            <img src={url} alt="" className="h-full w-full object-cover transition group-hover:opacity-80" />
+                            <div className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/80 to-transparent px-1.5 pb-1 pt-4 text-[10px] leading-tight text-fg opacity-0 transition group-hover:opacity-100">
+                              {detail?.uploadedAt ? (
+                                <>
+                                  {formatDateTime(detail.uploadedAt)}
+                                  {detail.uploadedBy ? ` · ${detail.uploadedBy.name ?? detail.uploadedBy.email}` : ' · Client'}
+                                </>
+                              ) : (
+                                'No upload data'
+                              )}
+                            </div>
+                          </a>
+                        )
+                      })}
                     </div>
                   </div>
                 )}
@@ -814,17 +835,30 @@ export default function AppointmentDetail() {
                   <div className="mt-4">
                     <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Placement photos</p>
                     <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-6">
-                      {appointment.inquiry.placementImages.map((url) => (
-                        <a
-                          key={url}
-                          href={url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="block aspect-square overflow-hidden rounded-lg border border-border"
-                        >
-                          <img src={url} alt="" className="h-full w-full object-cover transition hover:opacity-80" />
-                        </a>
-                      ))}
+                      {appointment.inquiry.placementImages.map((url) => {
+                        const detail = appointment.inquiry.placementImagesDetail.find((d) => d.url === url)
+                        return (
+                          <a
+                            key={url}
+                            href={url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="group relative block aspect-square overflow-hidden rounded-lg border border-border"
+                          >
+                            <img src={url} alt="" className="h-full w-full object-cover transition group-hover:opacity-80" />
+                            <div className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/80 to-transparent px-1.5 pb-1 pt-4 text-[10px] leading-tight text-fg opacity-0 transition group-hover:opacity-100">
+                              {detail?.uploadedAt ? (
+                                <>
+                                  {formatDateTime(detail.uploadedAt)}
+                                  {detail.uploadedBy ? ` · ${detail.uploadedBy.name ?? detail.uploadedBy.email}` : ' · Client'}
+                                </>
+                              ) : (
+                                'No upload data'
+                              )}
+                            </div>
+                          </a>
+                        )
+                      })}
                     </div>
                   </div>
                 )}
@@ -1253,6 +1287,10 @@ export default function AppointmentDetail() {
                         <a href={photo.url} target="_blank" rel="noreferrer" className="block h-full w-full">
                           <img src={photo.url} alt="" className="h-full w-full object-cover transition group-hover:opacity-80" />
                         </a>
+                        <div className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/80 to-transparent px-1.5 pb-1 pt-4 text-[10px] leading-tight text-fg opacity-0 transition group-hover:opacity-100">
+                          {formatDateTime(photo.uploadedAt)}
+                          {photo.uploadedBy && ` · ${photo.uploadedBy.name ?? photo.uploadedBy.email}`}
+                        </div>
                         {canManage && (
                           <button
                             type="button"

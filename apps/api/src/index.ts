@@ -20,6 +20,7 @@ import { publicRouter as giftCardsPublicRouter, staffRouter as giftCardsStaffRou
 import { publicRouter as waiversPublicRouter, staffRouter as waiversStaffRouter } from "./routes/waivers";
 import tasksRouter from "./routes/tasks";
 import navCountsRouter from "./routes/navCounts";
+import widgetLayoutsRouter from "./routes/widgetLayouts";
 import conversationsRouter from "./routes/conversations";
 import prefillDraftsRouter from "./routes/prefillDrafts";
 import viewAsRouter from "./routes/viewAs";
@@ -93,6 +94,7 @@ app.use("/waivers", waiversPublicRouter);
 app.use("/waivers", waiversStaffRouter);
 app.use("/tasks", tasksRouter);
 app.use("/nav-counts", navCountsRouter);
+app.use("/widget-layouts", widgetLayoutsRouter);
 app.use("/conversations", conversationsRouter);
 app.use("/prefill-drafts", prefillDraftsRouter);
 app.use("/view-as", viewAsRouter);

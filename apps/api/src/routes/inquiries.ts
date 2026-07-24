@@ -19,6 +19,7 @@ import { computeDepositTier, computeRequiredDepositCents, resolveDepositTiers } 
 import { generateUniqueReferralCode } from "../lib/referrals";
 import { IntakeFieldKind } from "../../generated/prisma/enums";
 import { getEffectiveIntakeFormFields, validateCustomFieldAnswers } from "../lib/intakeFormFields";
+import { buildImageMeta, mergeImageMeta, resolveImageMeta } from "../lib/imageMeta";
 
 const router = Router();
 
@@ -297,6 +298,10 @@ router.post("/", optionalAuth, async (req, res) => {
     });
   }
 
+  // uploadedById null on the public path -- the client submitted these
+  // themselves, no authenticated staff user to attribute them to.
+  const imageUploaderId = isStaffRequest ? req.user!.userId : null;
+
   const inquiry = await prisma.inquiry.create({
     data: {
       studioId: studio.id,
@@ -312,6 +317,8 @@ router.post("/", optionalAuth, async (req, res) => {
       preferredArtistId,
       referenceImages,
       placementImages,
+      referenceImagesMeta: buildImageMeta(referenceImages, imageUploaderId) as unknown as Prisma.InputJsonValue,
+      placementImagesMeta: buildImageMeta(placementImages, imageUploaderId) as unknown as Prisma.InputJsonValue,
       customFieldAnswers: customFieldAnswersResult.value as unknown as Prisma.InputJsonValue | undefined,
     },
   });
@@ -375,7 +382,12 @@ const INQUIRY_INCLUDE = {
       // "Session 1 -- [date]" with its own photos rather than one flat
       // ungrouped gallery.
       photos: {
-        select: { id: true, url: true, uploadedAt: true },
+        select: {
+          id: true,
+          url: true,
+          uploadedAt: true,
+          uploadedBy: { select: { id: true, name: true, email: true } },
+        },
         orderBy: { uploadedAt: "desc" },
       },
     },
@@ -596,7 +608,16 @@ router.get("/:id", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async 
     }),
   );
 
-  res.json({ ...inquiry, estimateUrl, depositForms });
+  // Read-only, resolved-metadata companions to the plain referenceImages/
+  // placementImages arrays above -- those stay untouched (every edit/upload
+  // call site still reads/writes the bare url list), these are additive,
+  // for the detail page's display only.
+  const [referenceImagesDetail, placementImagesDetail] = await Promise.all([
+    resolveImageMeta(inquiry.referenceImages, inquiry.referenceImagesMeta),
+    resolveImageMeta(inquiry.placementImages, inquiry.placementImagesMeta),
+  ]);
+
+  res.json({ ...inquiry, estimateUrl, depositForms, referenceImagesDetail, placementImagesDetail });
 });
 
 // Detail-field edits only -- status transitions stay in their own dedicated
@@ -610,6 +631,10 @@ const NUMERIC_FIELDS = [
   "timeEstimateHoursMax",
 ] as const;
 const IMAGE_ARRAY_FIELDS = ["referenceImages", "placementImages"] as const;
+const IMAGE_META_FIELDS = {
+  referenceImages: "referenceImagesMeta",
+  placementImages: "placementImagesMeta",
+} as const;
 
 router.patch("/:id", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
   const id = req.params.id as string;
@@ -637,7 +662,7 @@ router.patch("/:id", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), asyn
     });
   }
 
-  const data: Record<string, string | number | null | string[]> = {};
+  const data: Record<string, string | number | null | string[] | Prisma.InputJsonValue> = {};
 
   for (const field of REQUIRED_STRING_FIELDS) {
     if (body[field] === undefined) continue;
@@ -669,6 +694,8 @@ router.patch("/:id", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), asyn
       return res.status(400).json({ error: `${field} must be an array of strings` });
     }
     data[field] = body[field];
+    const metaField = IMAGE_META_FIELDS[field];
+    data[metaField] = mergeImageMeta(inquiry[metaField], body[field], req.user!.userId) as unknown as Prisma.InputJsonValue;
   }
 
   const updated = await prisma.inquiry.update({ where: { id }, data, include: INQUIRY_INCLUDE });

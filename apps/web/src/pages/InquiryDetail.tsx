@@ -43,6 +43,12 @@ import { useViewAs } from '../context/useViewAs'
 import { useConversationPanel } from '../context/useConversationPanel'
 import { artistsQueryKey, inquiriesQueryKey, inquiryQueryKey } from '../lib/queryKeys'
 
+interface ImageDetail {
+  url: string
+  uploadedAt: string | null
+  uploadedBy: { id: string; name: string | null; email: string } | null
+}
+
 interface Inquiry {
   id: string
   channel: string
@@ -55,6 +61,11 @@ interface Inquiry {
   desiredTiming: string | null
   referenceImages: string[]
   placementImages: string[]
+  // Sidecar upload metadata, resolved server-side -- tracked going forward
+  // only, so a url uploaded before this feature shipped has uploadedAt/
+  // uploadedBy both null (rendered as "no data", never backfilled).
+  referenceImagesDetail: ImageDetail[]
+  placementImagesDetail: ImageDetail[]
   // Package Q: a snapshot taken at submission time (question text + type
   // baked in alongside the answer, keyed by field id) -- deliberately NOT
   // re-joined against the studio's current live IntakeFormField rows, so
@@ -92,7 +103,12 @@ interface Inquiry {
     status: string
     artist: { id: string; user: { name: string | null; email: string; avatarUrl: string | null } }
     // Package N: checkout/finished-tattoo photos for this one session.
-    photos: { id: string; url: string; uploadedAt: string }[]
+    photos: {
+      id: string
+      url: string
+      uploadedAt: string
+      uploadedBy: { id: string; name: string | null; email: string } | null
+    }[]
   }[]
   // Package M: one per tattoo session, oldest first (Session 1, Session 2, ...).
   depositForms: {
@@ -235,24 +251,42 @@ function ArtistDetailField({ label, artist, emptyLabel }: { label: string; artis
   )
 }
 
-function ImageGrid({ images }: { images: string[] }) {
+// details is optional (and falls back to bare urls with no caption) purely
+// so any other, older call site that only has a plain string[] handy still
+// compiles -- every call site in this file now passes the resolved detail.
+function ImageGrid({ images, details }: { images: string[]; details?: ImageDetail[] }) {
   if (images.length === 0) {
     return <p className="text-sm text-fg-secondary">None uploaded.</p>
   }
 
+  const detailByUrl = new Map((details ?? []).map((d) => [d.url, d]))
+
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      {images.map((url) => (
-        <a
-          key={url}
-          href={url}
-          target="_blank"
-          rel="noreferrer"
-          className="block aspect-square overflow-hidden rounded-lg border border-border"
-        >
-          <img src={url} alt="" className="h-full w-full object-cover transition hover:opacity-80" />
-        </a>
-      ))}
+      {images.map((url) => {
+        const detail = detailByUrl.get(url)
+        return (
+          <a
+            key={url}
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            className="group relative block aspect-square overflow-hidden rounded-lg border border-border"
+          >
+            <img src={url} alt="" className="h-full w-full object-cover transition group-hover:opacity-80" />
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/80 to-transparent px-1.5 pb-1 pt-4 text-[10px] leading-tight text-fg opacity-0 transition group-hover:opacity-100">
+              {detail?.uploadedAt ? (
+                <>
+                  {formatDateTime(detail.uploadedAt)}
+                  {detail.uploadedBy ? ` · ${detail.uploadedBy.name ?? detail.uploadedBy.email}` : ' · Client'}
+                </>
+              ) : (
+                'No upload data'
+              )}
+            </div>
+          </a>
+        )
+      })}
     </div>
   )
 }
@@ -2273,9 +2307,13 @@ export default function InquiryDetail() {
                                 href={photo.url}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="block aspect-square overflow-hidden rounded-lg border border-border"
+                                className="group relative block aspect-square overflow-hidden rounded-lg border border-border"
                               >
-                                <img src={photo.url} alt="" className="h-full w-full object-cover transition hover:opacity-80" />
+                                <img src={photo.url} alt="" className="h-full w-full object-cover transition group-hover:opacity-80" />
+                                <div className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/80 to-transparent px-1.5 pb-1 pt-4 text-[10px] leading-tight text-fg opacity-0 transition group-hover:opacity-100">
+                                  {formatDateTime(photo.uploadedAt)}
+                                  {photo.uploadedBy && ` · ${photo.uploadedBy.name ?? photo.uploadedBy.email}`}
+                                </div>
                               </a>
                             ))}
                           </div>
@@ -2450,7 +2488,7 @@ export default function InquiryDetail() {
                   </div>
                 ) : (
                   <div className="mt-4">
-                    <ImageGrid images={inquiry.referenceImages} />
+                    <ImageGrid images={inquiry.referenceImages} details={inquiry.referenceImagesDetail} />
                   </div>
                 )}
               </div>
@@ -2503,7 +2541,7 @@ export default function InquiryDetail() {
                   </div>
                 ) : (
                   <div className="mt-4">
-                    <ImageGrid images={inquiry.placementImages} />
+                    <ImageGrid images={inquiry.placementImages} details={inquiry.placementImagesDetail} />
                   </div>
                 )}
               </div>
