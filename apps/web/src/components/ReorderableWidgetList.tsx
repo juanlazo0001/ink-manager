@@ -68,7 +68,15 @@ export default function ReorderableWidgetList({ pageKey, defaultOrder, children 
 
   return (
     <DragDropProvider onDragEnd={handleDragEnd}>
-      <div className="flex flex-col gap-6">
+      {/* mt-6 matches the gap-6 used between widgets below -- this list
+          used to be preceded by each widget's own standalone `mt-6
+          rounded-2xl ...` wrapper div, which carried the gap against
+          whatever came before it (the page header card). Once widgets
+          became children of this shared list instead, nothing above
+          replaced that margin, so the header sat flush against the list
+          with zero gap -- lives here, once, rather than on every
+          call site's header. */}
+      <div className="mt-6 flex flex-col gap-6">
         {order.map((id, index) => {
           const item = itemsById.get(id)
           if (!item) return null

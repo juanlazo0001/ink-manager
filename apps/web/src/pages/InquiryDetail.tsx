@@ -1371,14 +1371,14 @@ export default function InquiryDetail() {
                     )}
                     <StatusPill status={inquiry.status} label={describeInquiryStatus(inquiry)} />
                     {(canMessage || isOwner) && (
-                      <div className="relative flex self-stretch">
+                      <div className="relative">
                         <button
                           type="button"
                           onClick={() => setShowMoreMenu((v) => !v)}
                           aria-label="More actions"
                           aria-pressed={showMoreMenu}
                           title="More actions"
-                          className="flex aspect-square h-full shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
+                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
                         >
                           <MoreIcon className="h-4 w-4" />
                         </button>
