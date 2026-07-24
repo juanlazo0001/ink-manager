@@ -48,6 +48,22 @@ function App() {
           path="/terms/:studioSlug"
           element={<PublicPolicyPage field="termsAndConditions" title="Terms & Conditions" />}
         />
+        <Route
+          path="/refund-policy/:studioSlug"
+          element={<PublicPolicyPage field="refundPolicy" title="Refund Policy" />}
+        />
+        <Route
+          path="/deposit-policy/:studioSlug"
+          element={<PublicPolicyPage field="depositPolicy" title="Deposit Policy" />}
+        />
+        <Route
+          path="/reschedule-policy/:studioSlug"
+          element={<PublicPolicyPage field="reschedulePolicy" title="Reschedule Policy" />}
+        />
+        <Route
+          path="/communication-policy/:studioSlug"
+          element={<PublicPolicyPage field="communicationPolicy" title="Communication Policy" />}
+        />
         <Route path="/estimate/:token" element={<EstimateResponse />} />
         <Route path="/deposit/:token" element={<DepositResponse />} />
         <Route path="/gift-card/:code" element={<GiftCardResponse />} />

@@ -43,6 +43,10 @@ publicRouter.get("/public", async (req, res) => {
     studioName: studio.name,
     privacyPolicy: settings?.privacyPolicy ?? null,
     termsAndConditions: settings?.termsAndConditions ?? null,
+    refundPolicy: settings?.refundPolicy ?? null,
+    depositPolicy: settings?.depositPolicy ?? null,
+    reschedulePolicy: settings?.reschedulePolicy ?? null,
+    communicationPolicy: settings?.communicationPolicy ?? null,
     intakeFormFields: allFields.filter((f) => f.enabled),
   });
 });

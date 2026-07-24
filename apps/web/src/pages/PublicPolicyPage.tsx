@@ -7,19 +7,30 @@ interface PublicStudioPoliciesResponse {
   studioName: string
   privacyPolicy: string | null
   termsAndConditions: string | null
+  refundPolicy: string | null
+  depositPolicy: string | null
+  reschedulePolicy: string | null
+  communicationPolicy: string | null
 }
 
 type PageState = 'loading' | 'invalid' | 'ready'
 
 interface PublicPolicyPageProps {
-  field: 'privacyPolicy' | 'termsAndConditions'
+  field:
+    | 'privacyPolicy'
+    | 'termsAndConditions'
+    | 'refundPolicy'
+    | 'depositPolicy'
+    | 'reschedulePolicy'
+    | 'communicationPolicy'
   title: string
 }
 
-// Public, unauthenticated: backs both /privacy/:studioSlug and
-// /terms/:studioSlug -- same studioSlug-keyed GET + sanitize-at-render-time
-// pattern as Policies.tsx (the CustomPolicy list page), just for these two
-// fixed StudioSettings fields instead of an open-ended list.
+// Public, unauthenticated: backs /privacy/:studioSlug, /terms/:studioSlug,
+// and (now) the four other fixed StudioSettings policy fields, each at its
+// own dedicated URL -- same studioSlug-keyed GET + sanitize-at-render-time
+// pattern as Policies.tsx (the CustomPolicy list page), just for one fixed
+// field instead of an open-ended list.
 export default function PublicPolicyPage({ field, title }: PublicPolicyPageProps) {
   const { studioSlug } = useParams<{ studioSlug: string }>()
   const [state, setState] = useState<PageState>('loading')

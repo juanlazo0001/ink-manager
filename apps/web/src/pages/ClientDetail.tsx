@@ -51,6 +51,10 @@ interface InquirySummary {
   createdAt: string
   priceEstimateLow: number | null
   priceEstimateHigh: number | null
+  // The client's own stated preference on this inquiry -- used to default
+  // "New Inquiry"/"Send Inquiry" to whoever they asked for last time
+  // (inquiries is already ordered createdAt desc, so [0] is "last time").
+  preferredArtistId: string | null
   // Package M: one per tattoo session now, oldest first.
   depositForms: DepositFormSummary[]
 }
@@ -274,6 +278,9 @@ export default function ClientDetail() {
               lastName: client.lastName,
               email: client.email || undefined,
               phone: client.phone || undefined,
+              // Most recent inquiry's stated preference, if any -- inquiries
+              // is already ordered createdAt desc, so [0] is "last time".
+              preferredArtistId: client.inquiries[0]?.preferredArtistId || undefined,
             },
             clientId: id,
           }),
@@ -1520,16 +1527,31 @@ export default function ClientDetail() {
                 <div className="flex items-center justify-between">
                   <h2 className="text-base font-semibold text-fg">Inquiries</h2>
                   {canManage && !client.mergedIntoId && (
-                    <button
-                      type="button"
-                      onClick={() => setShowNewInquiry(true)}
-                      aria-label="New Inquiry"
-                      title="New Inquiry"
-                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
-                    >
-                      <PlusIcon className="h-4 w-4" />
-                      <span className="hidden text-sm font-semibold md:inline">New Inquiry</span>
-                    </button>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleCopyPrefillLink}
+                        disabled={copyingPrefillLink}
+                        aria-label="Send Inquiry"
+                        title="Send Inquiry"
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface disabled:opacity-60 md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
+                      >
+                        <SendIcon className="h-4 w-4" />
+                        <span className="hidden text-sm font-semibold md:inline">
+                          {copyingPrefillLink ? 'Sending…' : 'Send Inquiry'}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowNewInquiry(true)}
+                        aria-label="New Inquiry"
+                        title="New Inquiry"
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
+                      >
+                        <PlusIcon className="h-4 w-4" />
+                        <span className="hidden text-sm font-semibold md:inline">New Inquiry</span>
+                      </button>
+                    </div>
                   )}
                 </div>
 
@@ -2096,6 +2118,7 @@ export default function ClientDetail() {
             email: client.email ?? '',
             phone: client.phone ?? '',
           }}
+          initialPreferredArtistId={client.inquiries[0]?.preferredArtistId ?? ''}
         />
       )}
 

@@ -118,6 +118,12 @@ router.get("/:id", async (req, res) => {
           // this inquiry's already-assigned artist when opened from a
           // project context.
           assignedArtistId: true,
+          // Client's own stated preference (distinct from assignedArtistId
+          // above) -- lets ClientDetail's "New Inquiry"/"Send Inquiry"
+          // actions default to whoever this client asked for last time,
+          // since inquiries is already ordered createdAt desc (most recent
+          // first).
+          preferredArtistId: true,
           // Package M: one per tattoo session now, oldest first so the
           // client profile's list reads "Session 1, Session 2, ..." in the
           // order they were actually generated.
@@ -191,7 +197,19 @@ router.get("/:id/shareable-links", async (req, res) => {
     where: { id },
     include: {
       studio: {
-        select: { slug: true, settings: { select: { privacyPolicy: true, termsAndConditions: true } } },
+        select: {
+          slug: true,
+          settings: {
+            select: {
+              privacyPolicy: true,
+              termsAndConditions: true,
+              refundPolicy: true,
+              depositPolicy: true,
+              reschedulePolicy: true,
+              communicationPolicy: true,
+            },
+          },
+        },
       },
       inquiries: {
         select: {
@@ -366,6 +384,22 @@ router.get("/:id/shareable-links", async (req, res) => {
     ? await shortenUrl(`${PUBLIC_APP_URL}/terms/${client.studio.slug}`)
     : null;
 
+  const refundPolicyUrl = client.studio.settings?.refundPolicy
+    ? await shortenUrl(`${PUBLIC_APP_URL}/refund-policy/${client.studio.slug}`)
+    : null;
+
+  const depositPolicyUrl = client.studio.settings?.depositPolicy
+    ? await shortenUrl(`${PUBLIC_APP_URL}/deposit-policy/${client.studio.slug}`)
+    : null;
+
+  const reschedulePolicyUrl = client.studio.settings?.reschedulePolicy
+    ? await shortenUrl(`${PUBLIC_APP_URL}/reschedule-policy/${client.studio.slug}`)
+    : null;
+
+  const communicationPolicyUrl = client.studio.settings?.communicationPolicy
+    ? await shortenUrl(`${PUBLIC_APP_URL}/communication-policy/${client.studio.slug}`)
+    : null;
+
   res.json({
     intakeFormUrl: await shortenUrl(`${PUBLIC_APP_URL}/inquiry/${client.studio.slug}`),
     estimateLinks,
@@ -378,6 +412,10 @@ router.get("/:id/shareable-links", async (req, res) => {
     policyLinks,
     privacyPolicyUrl,
     termsUrl,
+    refundPolicyUrl,
+    depositPolicyUrl,
+    reschedulePolicyUrl,
+    communicationPolicyUrl,
   });
 });
 

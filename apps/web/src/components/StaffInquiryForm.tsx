@@ -30,6 +30,12 @@ interface StaffInquiryFormProps {
   // client, or spawn a duplicate). A field with no value on file (e.g. no
   // phone on record) stays editable rather than blocking submission.
   lockedClient?: { firstName: string; lastName: string; email: string; phone: string }
+  // Most recent inquiry's stated preference, if any (ClientDetail passes
+  // client.inquiries[0]?.preferredArtistId -- inquiries is already ordered
+  // createdAt desc). Pre-fills the dropdown but stays fully editable,
+  // unlike lockedClient's fields above -- there's no "wrong client"
+  // failure mode from changing who this new project's preference is.
+  initialPreferredArtistId?: string
 }
 
 // Staff-side counterpart to the public IntakeForm -- front desk fills this
@@ -37,7 +43,12 @@ interface StaffInquiryFormProps {
 // and validation as the public form, submitted to the same POST /inquiries
 // (optionalAuth on that route attributes the create to this staff member
 // and skips the studioSlug requirement since the JWT already carries it).
-export default function StaffInquiryForm({ onClose, onCreated, lockedClient }: StaffInquiryFormProps) {
+export default function StaffInquiryForm({
+  onClose,
+  onCreated,
+  lockedClient,
+  initialPreferredArtistId,
+}: StaffInquiryFormProps) {
   const [firstName, setFirstName] = useState(lockedClient?.firstName ?? '')
   const [lastName, setLastName] = useState(lockedClient?.lastName ?? '')
   const [email, setEmail] = useState(lockedClient?.email ?? '')
@@ -51,7 +62,7 @@ export default function StaffInquiryForm({ onClose, onCreated, lockedClient }: S
   const [hasBeenTattooedBefore, setHasBeenTattooedBefore] = useState('')
   const [budget, setBudget] = useState('')
   const [desiredTiming, setDesiredTiming] = useState('')
-  const [preferredArtistId, setPreferredArtistId] = useState('')
+  const [preferredArtistId, setPreferredArtistId] = useState(initialPreferredArtistId ?? '')
 
   const [artists, setArtists] = useState<StaffArtist[]>([])
   const [referenceImages, setReferenceImages] = useState<ImageUploadState>({ urls: [], uploading: false })

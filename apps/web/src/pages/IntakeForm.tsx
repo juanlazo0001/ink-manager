@@ -19,6 +19,7 @@ interface PrefillPayload {
   estimatedSize?: string
   budget?: string
   desiredTiming?: string
+  preferredArtistId?: string
 }
 
 const INPUT_CLASS =
@@ -191,6 +192,7 @@ export default function IntakeForm() {
         if (payload.estimatedSize) setEstimatedSize(payload.estimatedSize)
         if (payload.budget) setBudget(payload.budget.replace(/\D/g, ''))
         if (payload.desiredTiming) setDesiredTiming(payload.desiredTiming)
+        if (payload.preferredArtistId) setPreferredArtistId(payload.preferredArtistId)
       })
       .catch(() => {
         // Invalid/expired/used token -- form just loads empty.

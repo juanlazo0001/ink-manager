@@ -13,6 +13,7 @@ export const PREFILLABLE_FIELDS = [
   "estimatedSize",
   "budget",
   "desiredTiming",
+  "preferredArtistId",
 ] as const;
 
 // Built as an explicit projection of named fields, same allowlist

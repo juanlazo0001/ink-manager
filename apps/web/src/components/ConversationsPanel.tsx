@@ -274,6 +274,10 @@ interface ShareableLinksResponse {
   policyLinks: { label: string; url: string }[]
   privacyPolicyUrl: string | null
   termsUrl: string | null
+  refundPolicyUrl: string | null
+  depositPolicyUrl: string | null
+  reschedulePolicyUrl: string | null
+  communicationPolicyUrl: string | null
 }
 
 const CLIENT_CHANNELS = ['SMS', 'EMAIL', 'INSTAGRAM', 'FACEBOOK', 'PHONE', 'OTHER'] as const
@@ -2907,6 +2911,10 @@ function ThreadView({
             {[
               { label: 'All policies', url: linksData?.allPoliciesUrl ?? null },
               ...(linksData?.policyLinks ?? []),
+              { label: 'Refund Policy', url: linksData?.refundPolicyUrl ?? null },
+              { label: 'Deposit Policy', url: linksData?.depositPolicyUrl ?? null },
+              { label: 'Reschedule Policy', url: linksData?.reschedulePolicyUrl ?? null },
+              { label: 'Communication Policy', url: linksData?.communicationPolicyUrl ?? null },
               { label: 'Privacy Policy', url: linksData?.privacyPolicyUrl ?? null },
               { label: 'Terms & Conditions', url: linksData?.termsUrl ?? null },
             ]
