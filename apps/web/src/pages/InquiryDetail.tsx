@@ -9,6 +9,8 @@ import Modal from '../components/Modal'
 import StatusPill from '../components/StatusPill'
 import InquiryPipeline from '../components/InquiryPipeline'
 import AppointmentForm from '../components/AppointmentForm'
+import GiftCardStackPicker, { isCardAvailable, type GiftCardOption } from '../components/GiftCardStackPicker'
+import { computeRequiredDepositCents, resolveDepositTiers, type DepositTier } from '../lib/depositTiers'
 import CurrencyInput from '../components/CurrencyInput'
 import ImageUploadSection, { type ImageUploadState } from '../components/ImageUploadSection'
 import { ArtistAvatar, artistLabel, type ArtistLike } from '../components/ArtistAvatar'
@@ -135,20 +137,6 @@ function isEndedGuest(artist: ArtistOption): boolean {
 interface SharePreview {
   body: string
   attachments: string[]
-}
-
-interface GiftCardOption {
-  id: string
-  code: string
-  amountCents: number
-  status: string
-  expiresAt: string | null
-  appointmentId: string | null
-}
-
-function isCardAvailable(card: GiftCardOption): boolean {
-  if ((card.status !== 'ACTIVE' && card.status !== 'EXEMPT') || card.appointmentId) return false
-  return !card.expiresAt || new Date(card.expiresAt) > new Date()
 }
 
 function giftCardOptionLabel(card: GiftCardOption): string {
@@ -437,6 +425,17 @@ export default function InquiryDetail() {
   })
   const hasAvailableGiftCard = !!clientGiftCards && clientGiftCards.length > 0
 
+  const { data: depositTiers } = useQuery({
+    queryKey: ['studio-deposit-tiers'],
+    queryFn: () => apiFetch<{ depositTiers: DepositTier[] }>('/studio-settings'),
+    select: (data) => resolveDepositTiers(data.depositTiers),
+  })
+  const requiredDepositCents = computeRequiredDepositCents(
+    inquiry?.priceEstimateLow,
+    inquiry?.priceEstimateHigh,
+    depositTiers,
+  )
+
   const [selectedArtistId, setSelectedArtistId] = useState('')
   const [assigning, setAssigning] = useState(false)
   const [assignError, setAssignError] = useState<string | null>(null)
@@ -483,7 +482,12 @@ export default function InquiryDetail() {
     startTime: '',
     endTime: '',
   })
-  const [scheduleGiftCardId, setScheduleGiftCardId] = useState('')
+  const [scheduleGiftCardIds, setScheduleGiftCardIds] = useState<string[]>([])
+  const scheduleGiftCardTotalCents = (clientGiftCards ?? [])
+    .filter((c) => scheduleGiftCardIds.includes(c.id))
+    .reduce((sum, c) => sum + c.amountCents, 0)
+  const hasSufficientScheduleGiftCards =
+    scheduleGiftCardIds.length > 0 && scheduleGiftCardTotalCents >= requiredDepositCents
   const [scheduling, setScheduling] = useState(false)
   const [scheduleError, setScheduleError] = useState<string | null>(null)
   const [bufferWarning, setBufferWarning] = useState<string | null>(null)
@@ -781,7 +785,7 @@ export default function InquiryDetail() {
   }
 
   async function handleSchedule() {
-    if (!id || !scheduleGiftCardId || !isCompleteTimeRange(scheduleTimeRange)) return
+    if (!id || !hasSufficientScheduleGiftCards || !isCompleteTimeRange(scheduleTimeRange)) return
     if (!isValidTimeRange(scheduleTimeRange)) {
       setScheduleError('End time must be after start time.')
       return
@@ -800,7 +804,7 @@ export default function InquiryDetail() {
         body: JSON.stringify({
           startTime: start.toISOString(),
           endTime: end.toISOString(),
-          giftCardId: scheduleGiftCardId,
+          giftCardIds: scheduleGiftCardIds,
         }),
       })
 
@@ -2103,27 +2107,19 @@ export default function InquiryDetail() {
 
                       <div className="mt-3">
                         <label className="mb-1 block text-xs font-medium text-fg-secondary">
-                          Gift card (deposit) to attach
+                          Gift card(s) (deposit) to attach
                         </label>
                         {clientGiftCards && clientGiftCards.length === 0 ? (
                           <p className="text-sm text-fg-secondary">
                             No available gift card for this client yet — the deposit should have issued one.
                           </p>
                         ) : (
-                          <select
-                            value={scheduleGiftCardId}
-                            onChange={(e) => setScheduleGiftCardId(e.target.value)}
-                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                          >
-                            <option value="" disabled>
-                              {clientGiftCards === undefined ? 'Loading…' : 'Select a gift card'}
-                            </option>
-                            {clientGiftCards?.map((card) => (
-                              <option key={card.id} value={card.id}>
-                                {giftCardOptionLabel(card)} — {card.code.slice(0, 8)}…
-                              </option>
-                            ))}
-                          </select>
+                          <GiftCardStackPicker
+                            cards={clientGiftCards ?? []}
+                            selectedIds={scheduleGiftCardIds}
+                            onChange={setScheduleGiftCardIds}
+                            requiredCents={requiredDepositCents}
+                          />
                         )}
                       </div>
 
@@ -2133,7 +2129,7 @@ export default function InquiryDetail() {
                         <button
                           type="button"
                           onClick={handleSchedule}
-                          disabled={scheduling || !isCompleteTimeRange(scheduleTimeRange) || !scheduleGiftCardId}
+                          disabled={scheduling || !isCompleteTimeRange(scheduleTimeRange) || !hasSufficientScheduleGiftCards}
                           aria-label="Schedule Appointment"
                           title="Schedule Appointment"
                           className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface disabled:opacity-60 md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"

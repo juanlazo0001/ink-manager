@@ -17,7 +17,12 @@ interface GiftCard {
   expiresAt: string | null
   createdAt: string
   client: { id: string; firstName: string; lastName: string }
-  appointment: { id: string; startTime: string; endTime: string } | null
+  appointment: {
+    id: string
+    startTime: string
+    endTime: string
+    giftCards: { id: string; code: string; amountCents: number; status: string }[]
+  } | null
   issuedBy: { id: string; name: string | null; email: string }
   exemptionReason: string | null
   publicUrl: string
@@ -194,7 +199,17 @@ export default function GiftCardDetail() {
                       <div>
                         <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Attached</p>
                         <p className="mt-1 text-sm text-fg">
-                          {card.appointment ? formatDateTime(card.appointment.startTime) : 'Unattached'}
+                          {card.appointment ? (
+                            <>
+                              <Link to={`/appointments/${card.appointment.id}`} className="hover:underline">
+                                {formatDateTime(card.appointment.startTime)}
+                              </Link>
+                              {card.appointment.giftCards.length > 1 &&
+                                `, alongside ${card.appointment.giftCards.length - 1} other card${card.appointment.giftCards.length - 1 === 1 ? '' : 's'}`}
+                            </>
+                          ) : (
+                            'Unattached'
+                          )}
                         </p>
                       </div>
                       <div>

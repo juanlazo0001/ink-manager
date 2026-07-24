@@ -1619,36 +1619,52 @@ export default function ClientDetail() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-border">
-                        {client.giftCards.map((card) => (
-                          <tr
-                            key={card.id}
-                            onClick={() => navigate(`/gift-cards/${card.id}`)}
-                            className="cursor-pointer hover:bg-surface/40"
-                          >
-                            <td className="py-3 font-mono text-xs text-fg">{card.code}</td>
-                            <td className="py-3 text-fg-secondary">
-                              {card.status === 'EXEMPT' ? (
-                                <>
-                                  Deposit Exemption
-                                  {card.exemptionReason && (
-                                    <span className="text-fg-muted"> — {card.exemptionReason}</span>
-                                  )}
-                                </>
-                              ) : (
-                                formatCents(card.amountCents)
-                              )}
-                            </td>
-                            <td className="py-3">
-                              <StatusPill status={card.status} />
-                            </td>
-                            <td className="hidden py-3 text-fg-secondary sm:table-cell">
-                              {card.expiresAt ? formatDateTime(card.expiresAt) : 'No expiration'}
-                            </td>
-                            <td className="hidden py-3 text-fg-secondary md:table-cell">
-                              {card.appointmentId ? 'Yes' : 'Unattached'}
-                            </td>
-                          </tr>
-                        ))}
+                        {client.giftCards.map((card) => {
+                          // Stackable gift cards: computed purely from this
+                          // client's own already-loaded list -- any sibling
+                          // sharing the same appointmentId is necessarily in
+                          // here too, no separate fetch needed to make the
+                          // stacked context ("alongside 2 other cards")
+                          // legible instead of a plain "Yes".
+                          const stackMateCount = card.appointmentId
+                            ? client.giftCards.filter((c) => c.id !== card.id && c.appointmentId === card.appointmentId)
+                                .length
+                            : 0
+                          return (
+                            <tr
+                              key={card.id}
+                              onClick={() => navigate(`/gift-cards/${card.id}`)}
+                              className="cursor-pointer hover:bg-surface/40"
+                            >
+                              <td className="py-3 font-mono text-xs text-fg">{card.code}</td>
+                              <td className="py-3 text-fg-secondary">
+                                {card.status === 'EXEMPT' ? (
+                                  <>
+                                    Deposit Exemption
+                                    {card.exemptionReason && (
+                                      <span className="text-fg-muted"> — {card.exemptionReason}</span>
+                                    )}
+                                  </>
+                                ) : (
+                                  formatCents(card.amountCents)
+                                )}
+                              </td>
+                              <td className="py-3">
+                                <StatusPill status={card.status} />
+                              </td>
+                              <td className="hidden py-3 text-fg-secondary sm:table-cell">
+                                {card.expiresAt ? formatDateTime(card.expiresAt) : 'No expiration'}
+                              </td>
+                              <td className="hidden py-3 text-fg-secondary md:table-cell">
+                                {card.appointmentId
+                                  ? stackMateCount > 0
+                                    ? `Yes, alongside ${stackMateCount} other${stackMateCount === 1 ? '' : 's'}`
+                                    : 'Yes'
+                                  : 'Unattached'}
+                              </td>
+                            </tr>
+                          )
+                        })}
                       </tbody>
                     </table>
                   </div>

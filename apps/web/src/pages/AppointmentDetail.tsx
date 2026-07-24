@@ -70,14 +70,14 @@ interface Appointment {
     referenceImages: string[]
     placementImages: string[]
   }
-  giftCard: GiftCardSummary | null
+  giftCards: GiftCardSummary[]
   liabilityWaiver: WaiverSummary | null
   photos: AppointmentPhoto[]
 }
 
 interface DeletePreview {
   waivers: number
-  giftCardToDetach: { id: string; code: string; amountCents: number; status: string } | null
+  giftCardsToDetach: { id: string; code: string; amountCents: number; status: string }[]
   conversationTags: number
   photos: number
 }
@@ -123,7 +123,8 @@ interface WaiverDetail {
   verifiedBy: { id: string; name: string | null; email: string } | null
 }
 
-const EMPTY_CHECKOUT_FORM = { finalCostDollars: '', depositDecision: 'REDEEM' as 'REDEEM' | 'ROLL', closeoutNotes: '' }
+const EMPTY_CHECKOUT_FORM = { finalCostDollars: '', closeoutNotes: '' }
+type CardDecision = 'REDEEM' | 'ROLL'
 const APPOINTMENT_STATUSES = ['REQUESTED', 'CONFIRMED', 'COMPLETED', 'CANCELLED', 'NO_SHOW'] as const
 
 export default function AppointmentDetail() {
@@ -151,8 +152,18 @@ export default function AppointmentDetail() {
   const [verifyError, setVerifyError] = useState<string | null>(null)
 
   const [checkoutForm, setCheckoutForm] = useState(EMPTY_CHECKOUT_FORM)
+  // Stackable gift cards: a separate REDEEM-or-ROLL choice per attached
+  // card, not one choice for the whole stack -- keyed by giftCardId,
+  // defaulting every non-EXEMPT card to REDEEM (same default the old
+  // single-card radio started on) once the appointment loads.
+  const [cardDecisions, setCardDecisions] = useState<Record<string, CardDecision>>({})
   const [checkingOut, setCheckingOut] = useState(false)
   const [checkoutError, setCheckoutError] = useState<string | null>(null)
+  const [checkoutResult, setCheckoutResult] = useState<{
+    amountDueCents: number
+    overageCents: number
+    newGiftCard: { id: string; code: string; amountCents: number } | null
+  } | null>(null)
   // Package N: staged during checkout (optional -- staff can skip and add
   // later), plus a second, always-available upload for "forgot at
   // checkout" or just adding more later. Two independent pickers so
@@ -215,6 +226,18 @@ export default function AppointmentDetail() {
       ignore = true
     }
   }, [id, refreshIndex])
+
+  // Seed once per appointment (not on every render) -- an in-progress
+  // staff edit to a card's decision shouldn't get clobbered by an
+  // unrelated refresh, same "seed per id" pattern used elsewhere on this
+  // page (rescheduleRange, etc.).
+  const [seededDecisionsForId, setSeededDecisionsForId] = useState<string | null>(null)
+  if (appointment && appointment.id !== seededDecisionsForId) {
+    setSeededDecisionsForId(appointment.id)
+    setCardDecisions(
+      Object.fromEntries(appointment.giftCards.filter((c) => c.status !== 'EXEMPT').map((c) => [c.id, 'REDEEM'])),
+    )
+  }
 
   // Full waiver detail (health answers, ID image, clause initials) is
   // OWNER/FRONT_DESK only server-side too -- skip the request entirely for
@@ -306,14 +329,17 @@ export default function AppointmentDetail() {
   }
 
   const finalCostCents = Number(checkoutForm.finalCostDollars) ? dollarsToCents(Number(checkoutForm.finalCostDollars)) : 0
-  const cardAmountCents = appointment?.giftCard?.amountCents ?? 0
-  const isExemptCard = appointment?.giftCard?.status === 'EXEMPT'
-  const amountDuePreview =
-    checkoutForm.depositDecision === 'REDEEM' && !isExemptCard
-      ? Math.max(0, finalCostCents - cardAmountCents)
-      : finalCostCents
-  const remainderPreview =
-    checkoutForm.depositDecision === 'REDEEM' && !isExemptCard ? Math.max(0, cardAmountCents - finalCostCents) : 0
+  const exemptCards = (appointment?.giftCards ?? []).filter((c) => c.status === 'EXEMPT')
+  const decidableCards = (appointment?.giftCards ?? []).filter((c) => c.status !== 'EXEMPT')
+  const redeemedTotalPreviewCents = decidableCards
+    .filter((c) => (cardDecisions[c.id] ?? 'REDEEM') === 'REDEEM')
+    .reduce((sum, c) => sum + c.amountCents, 0)
+  const amountDuePreview = Math.max(0, finalCostCents - redeemedTotalPreviewCents)
+  const overagePreview = Math.max(0, redeemedTotalPreviewCents - finalCostCents)
+
+  function setCardDecision(cardId: string, decision: CardDecision) {
+    setCardDecisions((current) => ({ ...current, [cardId]: decision }))
+  }
 
   async function handleCheckout(event: FormEvent) {
     event.preventDefault()
@@ -323,14 +349,18 @@ export default function AppointmentDetail() {
     setCheckoutError(null)
 
     try {
-      await apiFetch(`/appointments/${id}/checkout`, {
-        method: 'POST',
-        body: JSON.stringify({
-          finalCostCents,
-          depositDecision: isExemptCard ? 'ROLL' : checkoutForm.depositDecision,
-          closeoutNotes: checkoutForm.closeoutNotes || undefined,
-        }),
-      })
+      const result = await apiFetch<{ amountDueCents: number; overageCents: number; newGiftCard: { id: string; code: string; amountCents: number } | null }>(
+        `/appointments/${id}/checkout`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            finalCostCents,
+            decisions: decidableCards.map((c) => ({ giftCardId: c.id, action: cardDecisions[c.id] ?? 'REDEEM' })),
+            closeoutNotes: checkoutForm.closeoutNotes || undefined,
+          }),
+        },
+      )
+      setCheckoutResult(result)
 
       // Optional -- staff may have skipped the photo picker entirely, or
       // still be mid-upload (already disabled below in that case). Checkout
@@ -528,23 +558,20 @@ export default function AppointmentDetail() {
     }
   }
 
-  const checkoutDecision: 'REDEEM' | 'ROLL' | null = appointment?.checkedOutAt
-    ? appointment.giftCard && appointment.giftCard.status === 'REDEEMED'
-      ? 'REDEEM'
-      : 'ROLL'
-    : null
+  // Post-checkout, appointment.giftCards only ever contains cards that
+  // STAYED attached -- ROLL/EXEMPT cards were detached at checkout time
+  // (appointmentId -> null), so whatever's left in this relation on a
+  // later fetch IS exactly the redeemed set. Simpler than trying to
+  // reconstruct "what was decided" from a value this page doesn't
+  // separately persist.
+  const checkoutRedeemedCards = appointment?.checkedOutAt ? (appointment.giftCards ?? []) : []
+  const checkoutRedeemedTotalCents = checkoutRedeemedCards.reduce((sum, c) => sum + c.amountCents, 0)
 
   const checkoutAmountDue =
-    appointment?.finalCostCents != null
-      ? checkoutDecision === 'REDEEM'
-        ? Math.max(0, appointment.finalCostCents - (appointment.giftCard?.amountCents ?? 0))
-        : appointment.finalCostCents
-      : null
+    appointment?.finalCostCents != null ? Math.max(0, appointment.finalCostCents - checkoutRedeemedTotalCents) : null
 
-  const checkoutRemainder =
-    appointment?.finalCostCents != null && checkoutDecision === 'REDEEM'
-      ? Math.max(0, (appointment.giftCard?.amountCents ?? 0) - appointment.finalCostCents)
-      : 0
+  const checkoutOverage =
+    appointment?.finalCostCents != null ? Math.max(0, checkoutRedeemedTotalCents - appointment.finalCostCents) : 0
 
   return (
     <div className="flex min-h-screen bg-bg text-fg">
@@ -727,14 +754,23 @@ export default function AppointmentDetail() {
                   <p className="mt-4 border-t border-border pt-4 text-sm text-fg-secondary">{appointment.notes}</p>
                 )}
 
-                {appointment.giftCard && (
+                {appointment.giftCards.length > 0 && (
                   <div className="mt-4 border-t border-border pt-4 text-sm">
-                    <span className="text-fg-muted">Gift card: </span>
-                    <Link to={`/gift-cards/${appointment.giftCard.id}`} className="text-fg hover:underline">
-                      {appointment.giftCard.status === 'EXEMPT'
-                        ? `Deposit Exemption${appointment.giftCard.exemptionReason ? ` (${appointment.giftCard.exemptionReason})` : ''}`
-                        : `${formatCents(appointment.giftCard.amountCents)} (${formatStatus(appointment.giftCard.status)})`}
-                    </Link>
+                    <span className="text-fg-muted">
+                      Gift card{appointment.giftCards.length === 1 ? '' : `s (${appointment.giftCards.length})`}:{' '}
+                    </span>
+                    <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1">
+                      {appointment.giftCards.map((card, i) => (
+                        <span key={card.id}>
+                          <Link to={`/gift-cards/${card.id}`} className="text-fg hover:underline">
+                            {card.status === 'EXEMPT'
+                              ? `Deposit Exemption${card.exemptionReason ? ` (${card.exemptionReason})` : ''}`
+                              : `${formatCents(card.amountCents)} (${formatStatus(card.status)})`}
+                          </Link>
+                          {i < appointment.giftCards.length - 1 ? ',' : ''}
+                        </span>
+                      ))}
+                    </span>
                   </div>
                 )}
               </div>
@@ -1011,13 +1047,13 @@ export default function AppointmentDetail() {
                 <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
                   <h2 className="text-base font-semibold text-fg">Checkout</h2>
 
-                  {!appointment.checkedOutAt && !appointment.giftCard && (
+                  {!appointment.checkedOutAt && appointment.giftCards.length === 0 && (
                     <p className="mt-4 text-sm text-fg-secondary">
                       This appointment has no attached gift card — checkout is unavailable until that's resolved.
                     </p>
                   )}
 
-                  {!appointment.checkedOutAt && appointment.giftCard && (
+                  {!appointment.checkedOutAt && appointment.giftCards.length > 0 && (
                     <form onSubmit={handleCheckout} className="mt-4 space-y-4">
                       <div>
                         <label className="mb-1 block text-sm font-medium text-fg-secondary">Final cost ($)</label>
@@ -1032,36 +1068,52 @@ export default function AppointmentDetail() {
                         />
                       </div>
 
-                      {isExemptCard ? (
+                      {exemptCards.length > 0 && (
                         <p className="rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg-secondary">
-                          Deposit exemption — no charge applied from this card
+                          {exemptCards.length === 1 ? 'A deposit exemption' : `${exemptCards.length} deposit exemptions`}{' '}
+                          on this appointment — no charge applied, handled automatically.
                         </p>
-                      ) : (
+                      )}
+
+                      {decidableCards.length > 0 && (
                         <div>
                           <span className="mb-2 block text-sm font-medium text-fg-secondary">
-                            Deposit ({formatCents(appointment.giftCard.amountCents)})
+                            Deposit cards — redeem or roll each individually
                           </span>
-                          <div className="flex gap-4">
-                            <label className="flex items-center gap-2 text-sm text-fg-secondary">
-                              <input
-                                type="radio"
-                                name="depositDecision"
-                                checked={checkoutForm.depositDecision === 'REDEEM'}
-                                onChange={() => setCheckoutForm({ ...checkoutForm, depositDecision: 'REDEEM' })}
-                                className="accent-accent"
-                              />
-                              Redeem toward today's cost
-                            </label>
-                            <label className="flex items-center gap-2 text-sm text-fg-secondary">
-                              <input
-                                type="radio"
-                                name="depositDecision"
-                                checked={checkoutForm.depositDecision === 'ROLL'}
-                                onChange={() => setCheckoutForm({ ...checkoutForm, depositDecision: 'ROLL' })}
-                                className="accent-accent"
-                              />
-                              Roll to a future appointment
-                            </label>
+                          <div className="space-y-2">
+                            {decidableCards.map((card) => (
+                              <div
+                                key={card.id}
+                                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-2.5"
+                              >
+                                <span className="text-sm text-fg">
+                                  {formatCents(card.amountCents)}{' '}
+                                  <span className="text-xs text-fg-muted">{card.code.slice(0, 8)}…</span>
+                                </span>
+                                <div className="flex gap-4">
+                                  <label className="flex items-center gap-1.5 text-sm text-fg-secondary">
+                                    <input
+                                      type="radio"
+                                      name={`decision-${card.id}`}
+                                      checked={(cardDecisions[card.id] ?? 'REDEEM') === 'REDEEM'}
+                                      onChange={() => setCardDecision(card.id, 'REDEEM')}
+                                      className="accent-accent"
+                                    />
+                                    Redeem
+                                  </label>
+                                  <label className="flex items-center gap-1.5 text-sm text-fg-secondary">
+                                    <input
+                                      type="radio"
+                                      name={`decision-${card.id}`}
+                                      checked={cardDecisions[card.id] === 'ROLL'}
+                                      onChange={() => setCardDecision(card.id, 'ROLL')}
+                                      className="accent-accent"
+                                    />
+                                    Roll forward
+                                  </label>
+                                </div>
+                              </div>
+                            ))}
                           </div>
                         </div>
                       )}
@@ -1070,10 +1122,10 @@ export default function AppointmentDetail() {
                         <p className="text-fg-secondary">
                           Amount due today: <span className="font-semibold text-fg">{formatCents(amountDuePreview)}</span>
                         </p>
-                        {remainderPreview > 0 && (
+                        {overagePreview > 0 && (
                           <p className="mt-1 text-warning">
-                            Deposit exceeds final cost by {formatCents(remainderPreview)} — handle the remainder
-                            manually (no refund processing yet).
+                            Redeemed total exceeds final cost by {formatCents(overagePreview)} — a new gift card will
+                            be issued to this client for the difference.
                           </p>
                         )}
                       </div>
@@ -1116,7 +1168,11 @@ export default function AppointmentDetail() {
                         </div>
                         <div>
                           <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Deposit</p>
-                          <p className="mt-1 text-fg">{checkoutDecision === 'REDEEM' ? 'Redeemed' : 'Rolled forward'}</p>
+                          <p className="mt-1 text-fg">
+                            {checkoutRedeemedCards.length > 0
+                              ? `${checkoutRedeemedCards.length} card${checkoutRedeemedCards.length === 1 ? '' : 's'} redeemed (${formatCents(checkoutRedeemedTotalCents)})`
+                              : 'Rolled forward'}
+                          </p>
                         </div>
                         <div>
                           <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
@@ -1135,11 +1191,21 @@ export default function AppointmentDetail() {
                         </div>
                       </div>
 
-                      {checkoutRemainder > 0 && (
-                        <p className="text-warning">
-                          Deposit exceeded final cost by {formatCents(checkoutRemainder)} — handled manually.
-                        </p>
-                      )}
+                      {checkoutOverage > 0 &&
+                        (checkoutResult?.newGiftCard ? (
+                          <p className="rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-success">
+                            Redeemed total exceeded final cost by {formatCents(checkoutOverage)} — a new{' '}
+                            <Link to={`/gift-cards/${checkoutResult.newGiftCard.id}`} className="underline">
+                              {formatCents(checkoutResult.newGiftCard.amountCents)} gift card
+                            </Link>{' '}
+                            was issued to this client for the difference.
+                          </p>
+                        ) : (
+                          <p className="text-warning">
+                            Redeemed total exceeded final cost by {formatCents(checkoutOverage)} — a new gift card was
+                            issued to this client for the difference (see their profile).
+                          </p>
+                        ))}
 
                       {appointment.closeoutNotes && (
                         <div>
@@ -1295,10 +1361,12 @@ export default function AppointmentDetail() {
                             <li>{deletePreview.photos} photo{deletePreview.photos === 1 ? '' : 's'}</li>
                           )}
                         </ul>
-                        {deletePreview.giftCardToDetach && (
+                        {deletePreview.giftCardsToDetach.length > 0 && (
                           <p className="mt-2 font-semibold text-danger">
-                            The attached gift card ({formatCents(deletePreview.giftCardToDetach.amountCents)}) will
-                            be detached and kept active — not destroyed. It's the client's money, independent of
+                            {deletePreview.giftCardsToDetach.length === 1
+                              ? `The attached gift card (${formatCents(deletePreview.giftCardsToDetach[0].amountCents)})`
+                              : `The ${deletePreview.giftCardsToDetach.length} attached gift cards (${formatCents(deletePreview.giftCardsToDetach.reduce((sum, c) => sum + c.amountCents, 0))} total)`}{' '}
+                            will be detached and kept active — not destroyed. It's the client's money, independent of
                             this session.
                           </p>
                         )}

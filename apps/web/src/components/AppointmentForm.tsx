@@ -7,6 +7,8 @@ import { clientsQueryKey, artistsQueryKey } from '../lib/queryKeys'
 import { artistLabel } from './ArtistAvatar'
 import ArtistSelect from './ArtistSelect'
 import MiniScheduleSnippet from './MiniScheduleSnippet'
+import GiftCardStackPicker, { isCardAvailable, type GiftCardOption } from './GiftCardStackPicker'
+import { computeRequiredDepositCents, resolveDepositTiers, type DepositTier } from '../lib/depositTiers'
 import DateAndTimeRangeFields, {
   combineDateAndTime,
   isCompleteTimeRange,
@@ -80,25 +82,13 @@ interface InquiryOption {
   timeEstimateHoursMin: number | null
   timeEstimateHoursMax: number | null
   assignedArtistId: string | null
-}
-
-interface GiftCardOption {
-  id: string
-  code: string
-  amountCents: number
-  status: string
-  expiresAt: string | null
-  appointmentId: string | null
+  priceEstimateLow: number | null
+  priceEstimateHigh: number | null
 }
 
 interface ClientWithProjects {
   inquiries: InquiryOption[]
   giftCards: GiftCardOption[]
-}
-
-function isCardAvailable(card: GiftCardOption): boolean {
-  if ((card.status !== 'ACTIVE' && card.status !== 'EXEMPT') || card.appointmentId) return false
-  return !card.expiresAt || new Date(card.expiresAt) > new Date()
 }
 
 interface AppointmentFormProps {
@@ -143,7 +133,7 @@ export default function AppointmentForm({
 
   const [clientId, setClientId] = useState(fixedClientId ?? '')
   const [inquiryId, setInquiryId] = useState(fixedInquiryId ?? '')
-  const [giftCardId, setGiftCardId] = useState('')
+  const [giftCardIds, setGiftCardIds] = useState<string[]>([])
   const [artistId, setArtistId] = useState(initialArtistId ?? '')
   const [timeRange, setTimeRange] = useState<DateAndTimeRangeValue>({
     date: initialDate ?? '',
@@ -188,6 +178,12 @@ export default function AppointmentForm({
     enabled: !!effectiveClientId,
   })
 
+  const { data: depositTiers } = useQuery({
+    queryKey: ['studio-deposit-tiers', user!.studioId],
+    queryFn: () => apiFetch<{ depositTiers: DepositTier[] }>('/studio-settings'),
+    select: (data) => resolveDepositTiers(data.depositTiers),
+  })
+
   const availableInquiries = clientDetail?.inquiries ?? []
   const availableGiftCards = (clientDetail?.giftCards ?? []).filter(isCardAvailable)
 
@@ -198,6 +194,16 @@ export default function AppointmentForm({
   // time estimate are picked (see the JSX gating below).
   const effectiveInquiryId = fixedInquiryId ?? inquiryId
   const selectedInquiry = availableInquiries.find((i) => i.id === effectiveInquiryId)
+
+  const requiredDepositCents = computeRequiredDepositCents(
+    selectedInquiry?.priceEstimateLow,
+    selectedInquiry?.priceEstimateHigh,
+    depositTiers,
+  )
+  const selectedGiftCardTotalCents = availableGiftCards
+    .filter((c) => giftCardIds.includes(c.id))
+    .reduce((sum, c) => sum + c.amountCents, 0)
+  const hasSufficientGiftCards = selectedGiftCardTotalCents >= requiredDepositCents && giftCardIds.length > 0
 
   // Package I: default the artist picker to the inquiry's already-assigned
   // artist when opened from a project context -- the calendar's own
@@ -239,8 +245,10 @@ export default function AppointmentForm({
   // Per the task spec, suggestions only show once a gift card is actually
   // available or already attached -- a project that can't be scheduled at
   // all yet (no card) shouldn't be shown times to book, that would imply a
-  // commitment the client hasn't secured.
-  const hasGiftCardAvailable = giftCardId !== '' || availableGiftCards.length > 0
+  // commitment the client hasn't secured. Any card selected/available is
+  // enough to unlock this preview; full stack sufficiency is what actually
+  // gates submission below.
+  const hasGiftCardAvailable = giftCardIds.length > 0 || availableGiftCards.length > 0
 
   // The one shared service behind both Package D consumers -- see
   // apps/api/src/lib/schedulingAssistant.ts. Replaces the prior client-side
@@ -313,14 +321,14 @@ export default function AppointmentForm({
   function handleClientChange(nextClientId: string) {
     setClientId(nextClientId)
     setInquiryId('')
-    setGiftCardId('')
+    setGiftCardIds([])
   }
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
     setError(null)
 
-    if (!effectiveClientId || !(fixedInquiryId || inquiryId) || !giftCardId || !artistId) return
+    if (!effectiveClientId || !(fixedInquiryId || inquiryId) || !hasSufficientGiftCards || !artistId) return
 
     if (!isCompleteTimeRange(timeRange)) {
       setError('Select a date, start time, and end time.')
@@ -351,7 +359,7 @@ export default function AppointmentForm({
         body: JSON.stringify({
           clientId: effectiveClientId,
           inquiryId: fixedInquiryId ?? inquiryId,
-          giftCardId,
+          giftCardIds,
           artistId,
           startTime: start.toISOString(),
           endTime: end.toISOString(),
@@ -436,9 +444,7 @@ export default function AppointmentForm({
 
       {effectiveClientId && (
         <div className="mb-3">
-          <label htmlFor="apptGiftCardId" className="mb-1 block text-sm font-medium text-fg-secondary">
-            Gift card (deposit)
-          </label>
+          <label className="mb-1 block text-sm font-medium text-fg-secondary">Gift card(s) (deposit)</label>
           {availableGiftCards.length === 0 ? (
             <p className="text-sm text-fg-secondary">
               This client has no available gift card — collect a deposit or{' '}
@@ -448,24 +454,12 @@ export default function AppointmentForm({
               first.
             </p>
           ) : (
-            <select
-              id="apptGiftCardId"
-              required
-              value={giftCardId}
-              onChange={(event) => setGiftCardId(event.target.value)}
-              className={INPUT_CLASS}
-            >
-              <option value="" disabled>
-                Select a gift card to attach
-              </option>
-              {availableGiftCards.map((card) => (
-                <option key={card.id} value={card.id}>
-                  {card.status === 'EXEMPT' ? 'Deposit Exemption' : `$${(card.amountCents / 100).toFixed(2)}`} —{' '}
-                  {card.code.slice(0, 8)}…
-                  {card.expiresAt ? ` (expires ${new Date(card.expiresAt).toLocaleDateString()})` : ''}
-                </option>
-              ))}
-            </select>
+            <GiftCardStackPicker
+              cards={availableGiftCards}
+              selectedIds={giftCardIds}
+              onChange={setGiftCardIds}
+              requiredCents={requiredDepositCents}
+            />
           )}
         </div>
       )}
@@ -609,7 +603,7 @@ export default function AppointmentForm({
             submitting ||
             !effectiveClientId ||
             (!fixedInquiryId && availableInquiries.length === 0) ||
-            availableGiftCards.length === 0 ||
+            !hasSufficientGiftCards ||
             (outsideHours && !confirmedOutsideHours) ||
             (isDifferentFromAssigned && !confirmedDifferentArtist)
           }

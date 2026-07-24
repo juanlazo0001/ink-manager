@@ -11,7 +11,18 @@ import { shortenUrl } from "../lib/shortLinks";
 import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 
 const GIFT_CARD_DETAIL_INCLUDE = {
-  appointment: { select: { id: true, startTime: true, endTime: true } },
+  // Stackable gift cards: giftCards here is every OTHER card (this one
+  // included) attached to the same appointment -- lets the detail page
+  // show stacked context ("alongside 2 other cards") instead of implying
+  // a solitary 1:1 relationship that no longer holds.
+  appointment: {
+    select: {
+      id: true,
+      startTime: true,
+      endTime: true,
+      giftCards: { select: { id: true, code: true, amountCents: true, status: true } },
+    },
+  },
   issuedBy: { select: { id: true, name: true, email: true } },
   client: { select: { id: true, firstName: true, lastName: true } },
 } as const;
