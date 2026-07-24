@@ -2016,3 +2016,33 @@ Browser (Playwright, screenshots reviewed): confirmed the Settings Policies & Te
 ## Cleanup
 
 All ad-hoc Playwright scripts and screenshots deleted from the scratch `pw-test` directory; the isolation scratch copy of Settings.tsx deleted from the session scratchpad. None committed. No background shells were started this session (the dev API/web servers were already running from prior work and were left as-is).
+
+---
+
+# Feature — Client detail page: reorderable/collapsible widgets, ellipsis button fix
+
+Single session on `main`. No schema changes. Applied the same treatment already built for the Inquiry and Project (Appointment) detail pages earlier this session to the Client detail page, per explicit request.
+
+## What changed
+
+All 8 sections on the Client page -- Contact Info, Inquiries, Gift Cards, Deposit Forms, Appointments, Waivers, Notes, Activity History -- are now `Widget`s inside a `ReorderableWidgetList` (`pageKey: "client-detail"`), reusing the exact same components/persistence (`UserWidgetLayout`) built for the other two pages. Same minimal-diff strategy as before: each widget's inner content (tables, forms, buttons) stayed exactly where it was in the source; only the outer `rounded-2xl` card wrapper, `<h2>` title, and header action-button row were swapped for `<Widget key id title actions={...}>`.
+
+One wrinkle not present on the other two pages: `ReorderableWidgetList` only renders children that are `Widget` elements carrying a string `id` prop (`Children.toArray(children).filter(...)`) -- anything else is silently dropped, not just rendered out of place. The "Merge with another client" button and the potential-duplicates warning banner were previously free-standing siblings between the Contact Info and Inquiries cards; both were folded into the Contact Info widget's own content (they're both about client identity, a reasonable thematic fit) rather than left as bare children, which would have made them vanish entirely once the page went through the widget system.
+
+Also fixed the identical cramped-ellipsis-button bug already fixed twice this session on the Inquiry and Appointment pages: `self-stretch` + `aspect-square h-full` let the "..." button render wider (38px) than its own shrink-to-fit wrapper (18px), overflowing past the card's own padding boundary. Replaced with a fixed `h-9 w-9` -- this instance already had `border-border` (unlike the other two, which didn't), so the border was kept for consistency with its own sibling buttons rather than removed.
+
+## Verification
+
+Browser (Playwright, screenshots reviewed): confirmed all 8 widgets render with a drag handle and collapse chevron, in their original visual order, with Contact Info correctly showing the folded-in Merge button. Measured the ellipsis button's bounding box directly (before: 38px button in an 18px wrapper, overflowing to the card's edge; after: 36px button in a 36px wrapper, sitting flush at the padded boundary). Verified reorder + collapse persistence via a direct `PUT /widget-layouts/client-detail` call (moved Appointments to the top, collapsed Gift Cards) followed by a page reload screenshot showing both changes applied -- then reset the layout back to default.
+
+## Typechecks
+
+`npx tsc -b --noEmit` + `npm run build` (web) — clean. (No API changes this turn.)
+
+## Commit
+
+`19bcabf` — Make Client detail page widgets reorderable/collapsible and fix the cramped ellipsis button. Pushed immediately after a collision check (`git fetch` + `git log HEAD..origin/main`) came back empty.
+
+## Cleanup
+
+All ad-hoc Playwright scripts and screenshots deleted from the scratch `pw-test` directory; none committed. The per-account widget-layout row for `client-detail` used during verification was reset to its default (empty) state before finishing. No background shells were started this session (the dev API/web servers were already running from prior work and were left as-is).
