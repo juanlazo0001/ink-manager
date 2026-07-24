@@ -30,17 +30,34 @@ interface PublicArtist {
   name: string
 }
 
-// Package Q: supplementary questions on top of the fixed core intake
-// fields above -- rendered after them, in `order`, never reordering or
-// replacing anything in the fixed core.
-interface IntakeCustomQuestion {
+// Package Q (revised): the studio's own configured intake form -- system
+// fields (backed by a fixed Inquiry/Client column, rendered through the
+// SAME specialized components the form always used) and custom questions
+// (backed by IntakeFormField.customQuestionType) freely mixed, in exactly
+// this order. This replaces the old "fixed core fields, then supplementary
+// questions after" two-section layout entirely.
+interface IntakeFormFieldPublic {
   id: string
-  question: string
-  type: 'text' | 'yes_no' | 'select'
-  options?: string[]
+  fieldKind: 'SYSTEM' | 'CUSTOM'
+  systemFieldKey: string | null
+  customQuestionType:
+    | 'TEXT'
+    | 'PARAGRAPH'
+    | 'NUMBER'
+    | 'DATE'
+    | 'YES_NO'
+    | 'SELECT'
+    | 'MULTI_SELECT'
+    | 'PHOTO_UPLOAD'
+    | null
+  label: string
+  helpText: string | null
   required: boolean
+  options: string[] | null
   order: number
 }
+
+type CustomAnswerValue = string | string[]
 
 type StudioCheck = 'loading' | 'valid' | 'invalid'
 
@@ -64,15 +81,19 @@ export default function IntakeForm() {
   const [desiredTiming, setDesiredTiming] = useState('')
   const [preferredArtistId, setPreferredArtistId] = useState('')
   // Unchecked by default, deliberately -- a pre-checked box is not valid
-  // A2P 10DLC opt-in consent.
+  // A2P 10DLC opt-in consent. Deliberately kept OUTSIDE the configurable
+  // field list -- always rendered, fixed position right before submit,
+  // never reorderable/disableable (a legal requirement, not a business
+  // preference a studio can turn off).
   const [smsConsent, setSmsConsent] = useState(false)
   const [smsConsentError, setSmsConsentError] = useState(false)
 
   const [studioCheck, setStudioCheck] = useState<StudioCheck>('loading')
   const [studioName, setStudioName] = useState('')
   const [artists, setArtists] = useState<PublicArtist[]>([])
-  const [customQuestions, setCustomQuestions] = useState<IntakeCustomQuestion[]>([])
-  const [customAnswers, setCustomAnswers] = useState<Record<string, string>>({})
+  const [fields, setFields] = useState<IntakeFormFieldPublic[]>([])
+  const [customAnswers, setCustomAnswers] = useState<Record<string, CustomAnswerValue>>({})
+  const [customImageUploading, setCustomImageUploading] = useState<Record<string, boolean>>({})
   const [referenceImages, setReferenceImages] = useState<ImageUploadState>({ urls: [], uploading: false })
   const [placementImages, setPlacementImages] = useState<ImageUploadState>({ urls: [], uploading: false })
 
@@ -123,23 +144,26 @@ export default function IntakeForm() {
     }
   }, [studioSlug])
 
-  // Studio display name for the consent checkbox label -- same public
-  // endpoint the /privacy and /terms pages read from, just the name field.
+  // Studio display name (for the consent checkbox label) and the studio's
+  // own configured field list -- same public endpoint the /privacy and
+  // /terms pages read from.
   useEffect(() => {
     if (!studioSlug) return
 
     let ignore = false
 
-    apiFetch<{ studioName: string; intakeCustomQuestions: IntakeCustomQuestion[] }>(
+    apiFetch<{ studioName: string; intakeFormFields: IntakeFormFieldPublic[] }>(
       `/studio-settings/public?studioSlug=${encodeURIComponent(studioSlug)}`,
     )
       .then((data) => {
         if (ignore) return
         setStudioName(data.studioName)
-        setCustomQuestions(data.intakeCustomQuestions ?? [])
+        setFields((data.intakeFormFields ?? []).slice().sort((a, b) => a.order - b.order))
       })
       .catch(() => {
-        // Non-essential -- the checkbox label falls back to generic wording.
+        // Non-essential -- the checkbox label falls back to generic wording,
+        // and an empty field list just renders nothing above the consent
+        // checkbox rather than blocking the page.
       })
 
     return () => {
@@ -177,25 +201,44 @@ export default function IntakeForm() {
     }
   }, [draftToken])
 
-  const imagesUploading = referenceImages.uploading || placementImages.uploading
+  const systemFieldByKey = new Map(
+    fields.filter((f) => f.fieldKind === 'SYSTEM' && f.systemFieldKey).map((f) => [f.systemFieldKey as string, f]),
+  )
+  const isRequired = (key: string) => systemFieldByKey.get(key)?.required ?? false
+
+  const imagesUploading =
+    referenceImages.uploading || placementImages.uploading || Object.values(customImageUploading).some(Boolean)
+
+  function setCustomAnswer(fieldId: string, value: CustomAnswerValue) {
+    setCustomAnswers((current) => ({ ...current, [fieldId]: value }))
+  }
+
+  function handleCustomPhotoUploadChange(fieldId: string, state: ImageUploadState) {
+    setCustomAnswer(fieldId, state.urls)
+    setCustomImageUploading((current) => ({ ...current, [fieldId]: state.uploading }))
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setSubmitError(null)
     setSmsConsentError(false)
 
-    if (
-      !firstName ||
-      !lastName ||
-      !email ||
-      !channel ||
-      !description ||
-      !colorOrBlackGrey ||
-      !placement ||
-      !estimatedSize ||
-      !hasBeenTattooedBefore ||
-      (channel === 'REFERRAL' && !referralCode)
-    ) {
+    const missingSystem: string[] = []
+    if (isRequired('name') && (!firstName || !lastName)) missingSystem.push('name')
+    if (isRequired('email') && !email) missingSystem.push('email')
+    if (isRequired('phone') && !phone) missingSystem.push('phone')
+    if (isRequired('referralSource') && !channel) missingSystem.push('referral source')
+    if (isRequired('description') && !description) missingSystem.push('description')
+    if (isRequired('colorOrBlackGrey') && !colorOrBlackGrey) missingSystem.push('color')
+    if (isRequired('placement') && !placement) missingSystem.push('placement')
+    if (isRequired('size') && !estimatedSize) missingSystem.push('size')
+    if (isRequired('hasBeenTattooedBefore') && !hasBeenTattooedBefore) missingSystem.push('tattoo history')
+    if (isRequired('budget') && !budget) missingSystem.push('budget')
+    if (isRequired('desiredTiming') && !desiredTiming) missingSystem.push('desired timing')
+    if (isRequired('preferredArtist') && !preferredArtistId) missingSystem.push('preferred artist')
+    if (channel === 'REFERRAL' && !referralCode) missingSystem.push('referral code')
+
+    if (missingSystem.length > 0) {
       setSubmitError('Please fill out all required fields.')
       return
     }
@@ -210,21 +253,26 @@ export default function IntakeForm() {
       return
     }
 
-    if (referenceImages.urls.length === 0) {
+    if (isRequired('referenceImages') && referenceImages.urls.length === 0) {
       setSubmitError('Please add at least one reference image.')
       return
     }
 
-    if (placementImages.urls.length === 0) {
+    if (isRequired('placementImages') && placementImages.urls.length === 0) {
       setSubmitError('Please add at least one placement photo.')
       return
     }
 
-    const missingCustomQuestion = customQuestions.find(
-      (q) => q.required && !(customAnswers[q.id] ?? '').trim(),
-    )
-    if (missingCustomQuestion) {
-      setSubmitError(`Please answer: ${missingCustomQuestion.question}`)
+    const missingCustomField = fields.find((f) => {
+      if (f.fieldKind !== 'CUSTOM' || !f.required) return false
+      const value = customAnswers[f.id]
+      if (f.customQuestionType === 'MULTI_SELECT' || f.customQuestionType === 'PHOTO_UPLOAD') {
+        return !Array.isArray(value) || value.length === 0
+      }
+      return !(typeof value === 'string' && value.trim())
+    })
+    if (missingCustomField) {
+      setSubmitError(`Please answer: ${missingCustomField.label}`)
       return
     }
 
@@ -244,7 +292,7 @@ export default function IntakeForm() {
           lastName,
           email,
           phone: phone || undefined,
-          channel,
+          channel: channel || undefined,
           referralCode: channel === 'REFERRAL' ? referralCode : undefined,
           description,
           colorOrBlackGrey,
@@ -258,7 +306,7 @@ export default function IntakeForm() {
           placementImages: placementImages.urls,
           draftToken: draftToken || undefined,
           smsConsent,
-          customFieldAnswers: customQuestions.length > 0 ? customAnswers : undefined,
+          customFieldAnswers: Object.keys(customAnswers).length > 0 ? customAnswers : undefined,
         }),
       })
 
@@ -268,6 +316,378 @@ export default function IntakeForm() {
     } finally {
       setSubmitting(false)
     }
+  }
+
+  function renderSystemField(field: IntakeFormFieldPublic) {
+    const asterisk = field.required ? ' *' : ''
+
+    switch (field.systemFieldKey) {
+      case 'name':
+        return (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label className={LABEL_CLASS}>First name{asterisk}</label>
+              <input
+                type="text"
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                required={field.required}
+                className={INPUT_CLASS}
+              />
+            </div>
+            <div>
+              <label className={LABEL_CLASS}>Last name{asterisk}</label>
+              <input
+                type="text"
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                required={field.required}
+                className={INPUT_CLASS}
+              />
+            </div>
+          </div>
+        )
+      case 'email':
+        return (
+          <div>
+            <label className={LABEL_CLASS}>
+              {field.label}
+              {asterisk}
+            </label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required={field.required}
+              className={INPUT_CLASS}
+            />
+            {field.helpText && <p className="mt-1 text-[11px] leading-snug text-fg-muted">{field.helpText}</p>}
+          </div>
+        )
+      case 'phone':
+        return (
+          <div>
+            <label className={LABEL_CLASS}>
+              {field.label}
+              {asterisk}
+            </label>
+            <PhoneInput value={phone} onChange={setPhone} className={INPUT_CLASS} />
+            <p className="mt-1 text-[11px] leading-snug text-fg-muted">
+              {field.helpText ||
+                'By providing your phone number, you consent to receive SMS messages about your inquiry and appointment. Message and data rates may apply. Reply STOP to opt out.'}
+            </p>
+          </div>
+        )
+      case 'referralSource':
+        return (
+          <div>
+            <label className={LABEL_CLASS}>
+              {field.label}
+              {asterisk}
+            </label>
+            <select value={channel} onChange={(e) => setChannel(e.target.value)} required={field.required} className={INPUT_CLASS}>
+              <option value="" disabled>
+                Select one
+              </option>
+              <option value="EMAIL">Email</option>
+              <option value="INSTAGRAM">Instagram</option>
+              <option value="FACEBOOK">Facebook</option>
+              <option value="REFERRAL">A friend referred me</option>
+            </select>
+            {channel === 'REFERRAL' && (
+              <div className="mt-2">
+                <label className={LABEL_CLASS}>Friend's referral code *</label>
+                <input
+                  type="text"
+                  value={referralCode}
+                  onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
+                  required
+                  placeholder="e.g. AB23CDE"
+                  className={INPUT_CLASS}
+                />
+              </div>
+            )}
+          </div>
+        )
+      case 'description':
+        return (
+          <div>
+            <label className={LABEL_CLASS}>
+              {field.label}
+              {asterisk}
+            </label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              required={field.required}
+              rows={4}
+              className={INPUT_CLASS}
+            />
+          </div>
+        )
+      case 'colorOrBlackGrey':
+        return (
+          <div>
+            <span className={LABEL_CLASS}>
+              {field.label}
+              {asterisk}
+            </span>
+            <div className="mt-2 flex gap-4">
+              {['Color', 'Black & Grey'].map((option) => (
+                <label key={option} className="flex items-center gap-2 text-sm text-fg-secondary">
+                  <input
+                    type="radio"
+                    name="colorOrBlackGrey"
+                    value={option}
+                    checked={colorOrBlackGrey === option}
+                    onChange={(e) => setColorOrBlackGrey(e.target.value)}
+                    required={field.required}
+                    className="accent-accent"
+                  />
+                  {option}
+                </label>
+              ))}
+            </div>
+          </div>
+        )
+      case 'placement':
+        return (
+          <div>
+            <label className={LABEL_CLASS}>
+              {field.label}
+              {asterisk}
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. forearm, left side"
+              value={placement}
+              onChange={(e) => setPlacement(e.target.value)}
+              required={field.required}
+              className={INPUT_CLASS}
+            />
+          </div>
+        )
+      case 'size':
+        return (
+          <div>
+            <label className={LABEL_CLASS}>
+              {field.label}
+              {asterisk}
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. palm-sized"
+              value={estimatedSize}
+              onChange={(e) => setEstimatedSize(e.target.value)}
+              required={field.required}
+              className={INPUT_CLASS}
+            />
+          </div>
+        )
+      case 'hasBeenTattooedBefore':
+        return (
+          <div>
+            <span className={LABEL_CLASS}>
+              {field.label}
+              {asterisk}
+            </span>
+            <div className="mt-2 flex gap-4">
+              {[
+                { value: 'yes', label: 'Yes' },
+                { value: 'no', label: 'No' },
+              ].map((option) => (
+                <label key={option.value} className="flex items-center gap-2 text-sm text-fg-secondary">
+                  <input
+                    type="radio"
+                    name="hasBeenTattooedBefore"
+                    value={option.value}
+                    checked={hasBeenTattooedBefore === option.value}
+                    onChange={(e) => setHasBeenTattooedBefore(e.target.value)}
+                    required={field.required}
+                    className="accent-accent"
+                  />
+                  {option.label}
+                </label>
+              ))}
+            </div>
+          </div>
+        )
+      case 'preferredArtist':
+        return (
+          <div>
+            <label className={LABEL_CLASS}>{field.label}</label>
+            <select value={preferredArtistId} onChange={(e) => setPreferredArtistId(e.target.value)} className={INPUT_CLASS}>
+              <option value="">No preference</option>
+              {artists.map((artist) => (
+                <option key={artist.id} value={artist.id}>
+                  {artist.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )
+      case 'budget':
+        return (
+          <div>
+            <label className={LABEL_CLASS}>{field.label}</label>
+            <CurrencyInput value={budget} onChange={setBudget} placeholder="$0" className={INPUT_CLASS} />
+          </div>
+        )
+      case 'desiredTiming':
+        return (
+          <div>
+            <label className={LABEL_CLASS}>{field.label}</label>
+            <input
+              type="text"
+              placeholder="e.g. within a month"
+              value={desiredTiming}
+              onChange={(e) => setDesiredTiming(e.target.value)}
+              className={INPUT_CLASS}
+            />
+          </div>
+        )
+      case 'referenceImages':
+        return (
+          <ImageUploadSection
+            label={`${field.label}${asterisk}`}
+            hint={field.helpText || "Photos or designs that show the style you're going for."}
+            onChange={setReferenceImages}
+          />
+        )
+      case 'placementImages':
+        return (
+          <ImageUploadSection
+            label={`${field.label}${asterisk}`}
+            hint={field.helpText || 'A photo of the area where you want the tattoo.'}
+            onChange={setPlacementImages}
+          />
+        )
+      default:
+        return null
+    }
+  }
+
+  function renderCustomField(field: IntakeFormFieldPublic) {
+    const asterisk = field.required ? ' *' : ''
+    const value = customAnswers[field.id]
+
+    if (field.customQuestionType === 'PHOTO_UPLOAD') {
+      return (
+        <ImageUploadSection
+          label={`${field.label}${asterisk}`}
+          hint={field.helpText || ''}
+          onChange={(state) => handleCustomPhotoUploadChange(field.id, state)}
+        />
+      )
+    }
+
+    return (
+      <div>
+        <label className={LABEL_CLASS}>
+          {field.label}
+          {asterisk}
+        </label>
+        {field.helpText && <p className="mt-0.5 text-xs text-fg-muted">{field.helpText}</p>}
+
+        {field.customQuestionType === 'TEXT' && (
+          <input
+            type="text"
+            value={(value as string) ?? ''}
+            onChange={(e) => setCustomAnswer(field.id, e.target.value)}
+            required={field.required}
+            className={INPUT_CLASS}
+          />
+        )}
+
+        {field.customQuestionType === 'PARAGRAPH' && (
+          <textarea
+            value={(value as string) ?? ''}
+            onChange={(e) => setCustomAnswer(field.id, e.target.value)}
+            required={field.required}
+            rows={3}
+            className={INPUT_CLASS}
+          />
+        )}
+
+        {field.customQuestionType === 'NUMBER' && (
+          <input
+            type="number"
+            value={(value as string) ?? ''}
+            onChange={(e) => setCustomAnswer(field.id, e.target.value)}
+            required={field.required}
+            className={INPUT_CLASS}
+          />
+        )}
+
+        {field.customQuestionType === 'DATE' && (
+          <input
+            type="date"
+            value={(value as string) ?? ''}
+            onChange={(e) => setCustomAnswer(field.id, e.target.value)}
+            required={field.required}
+            className={INPUT_CLASS}
+          />
+        )}
+
+        {field.customQuestionType === 'YES_NO' && (
+          <div className="mt-2 flex gap-4">
+            {(['YES', 'NO'] as const).map((option) => (
+              <label key={option} className="flex items-center gap-2 text-sm text-fg-secondary">
+                <input
+                  type="radio"
+                  name={`custom-${field.id}`}
+                  checked={value === option}
+                  onChange={() => setCustomAnswer(field.id, option)}
+                  required={field.required}
+                  className="accent-accent"
+                />
+                {option === 'YES' ? 'Yes' : 'No'}
+              </label>
+            ))}
+          </div>
+        )}
+
+        {field.customQuestionType === 'SELECT' && (
+          <select
+            value={(value as string) ?? ''}
+            onChange={(e) => setCustomAnswer(field.id, e.target.value)}
+            required={field.required}
+            className={INPUT_CLASS}
+          >
+            <option value="" disabled>
+              Select one
+            </option>
+            {(field.options ?? []).map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        )}
+
+        {field.customQuestionType === 'MULTI_SELECT' && (
+          <div className="mt-2 space-y-1">
+            {(field.options ?? []).map((option) => {
+              const selected = Array.isArray(value) ? value : []
+              return (
+                <label key={option} className="flex items-center gap-2 text-sm text-fg-secondary">
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(option)}
+                    onChange={(e) => {
+                      const next = e.target.checked ? [...selected, option] : selected.filter((o) => o !== option)
+                      setCustomAnswer(field.id, next)
+                    }}
+                    className="accent-accent"
+                  />
+                  {option}
+                </label>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    )
   }
 
   if (!studioSlug || studioCheck === 'invalid') {
@@ -316,257 +736,13 @@ export default function IntakeForm() {
         </div>
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-5">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <label className={LABEL_CLASS}>First name *</label>
-              <input
-                type="text"
-                value={firstName}
-                onChange={(e) => setFirstName(e.target.value)}
-                required
-                className={INPUT_CLASS}
-              />
-            </div>
-            <div>
-              <label className={LABEL_CLASS}>Last name *</label>
-              <input
-                type="text"
-                value={lastName}
-                onChange={(e) => setLastName(e.target.value)}
-                required
-                className={INPUT_CLASS}
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <label className={LABEL_CLASS}>Email *</label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                className={INPUT_CLASS}
-              />
-            </div>
-            <div>
-              <label className={LABEL_CLASS}>Phone</label>
-              <PhoneInput value={phone} onChange={setPhone} className={INPUT_CLASS} />
-              <p className="mt-1 text-[11px] leading-snug text-fg-muted">
-                By providing your phone number, you consent to receive SMS messages about your inquiry and
-                appointment. Message and data rates may apply. Reply STOP to opt out.
-              </p>
-            </div>
-          </div>
-
-          <div>
-            <label className={LABEL_CLASS}>How did you hear about us? *</label>
-            <select value={channel} onChange={(e) => setChannel(e.target.value)} required className={INPUT_CLASS}>
-              <option value="" disabled>
-                Select one
-              </option>
-              <option value="EMAIL">Email</option>
-              <option value="INSTAGRAM">Instagram</option>
-              <option value="FACEBOOK">Facebook</option>
-              <option value="REFERRAL">A friend referred me</option>
-            </select>
-            {channel === 'REFERRAL' && (
-              <div className="mt-2">
-                <label className={LABEL_CLASS}>Friend's referral code *</label>
-                <input
-                  type="text"
-                  value={referralCode}
-                  onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
-                  required
-                  placeholder="e.g. AB23CDE"
-                  className={INPUT_CLASS}
-                />
-              </div>
-            )}
-          </div>
-
-          <div>
-            <label className={LABEL_CLASS}>Describe the tattoo you want *</label>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              required
-              rows={4}
-              className={INPUT_CLASS}
-            />
-          </div>
-
-          <div>
-            <span className={LABEL_CLASS}>Color or Black &amp; Grey? *</span>
-            <div className="mt-2 flex gap-4">
-              {['Color', 'Black & Grey'].map((option) => (
-                <label key={option} className="flex items-center gap-2 text-sm text-fg-secondary">
-                  <input
-                    type="radio"
-                    name="colorOrBlackGrey"
-                    value={option}
-                    checked={colorOrBlackGrey === option}
-                    onChange={(e) => setColorOrBlackGrey(e.target.value)}
-                    required
-                    className="accent-accent"
-                  />
-                  {option}
-                </label>
-              ))}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <label className={LABEL_CLASS}>Placement *</label>
-              <input
-                type="text"
-                placeholder="e.g. forearm, left side"
-                value={placement}
-                onChange={(e) => setPlacement(e.target.value)}
-                required
-                className={INPUT_CLASS}
-              />
-            </div>
-            <div>
-              <label className={LABEL_CLASS}>Estimated size *</label>
-              <input
-                type="text"
-                placeholder="e.g. palm-sized"
-                value={estimatedSize}
-                onChange={(e) => setEstimatedSize(e.target.value)}
-                required
-                className={INPUT_CLASS}
-              />
-            </div>
-          </div>
-
-          <div>
-            <span className={LABEL_CLASS}>Have you been tattooed before? *</span>
-            <div className="mt-2 flex gap-4">
-              {[
-                { value: 'yes', label: 'Yes' },
-                { value: 'no', label: 'No' },
-              ].map((option) => (
-                <label key={option.value} className="flex items-center gap-2 text-sm text-fg-secondary">
-                  <input
-                    type="radio"
-                    name="hasBeenTattooedBefore"
-                    value={option.value}
-                    checked={hasBeenTattooedBefore === option.value}
-                    onChange={(e) => setHasBeenTattooedBefore(e.target.value)}
-                    required
-                    className="accent-accent"
-                  />
-                  {option.label}
-                </label>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <label className={LABEL_CLASS}>Preferred artist</label>
-            <select
-              value={preferredArtistId}
-              onChange={(e) => setPreferredArtistId(e.target.value)}
-              className={INPUT_CLASS}
-            >
-              <option value="">No preference</option>
-              {artists.map((artist) => (
-                <option key={artist.id} value={artist.id}>
-                  {artist.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <label className={LABEL_CLASS}>Budget</label>
-              <CurrencyInput value={budget} onChange={setBudget} placeholder="$0" className={INPUT_CLASS} />
-            </div>
-            <div>
-              <label className={LABEL_CLASS}>Desired timing</label>
-              <input
-                type="text"
-                placeholder="e.g. within a month"
-                value={desiredTiming}
-                onChange={(e) => setDesiredTiming(e.target.value)}
-                className={INPUT_CLASS}
-              />
-            </div>
-          </div>
-
-          <ImageUploadSection
-            label="Reference images *"
-            hint="Photos or designs that show the style you're going for."
-            onChange={setReferenceImages}
-          />
-
-          <ImageUploadSection
-            label="Placement photos *"
-            hint="A photo of the area where you want the tattoo."
-            onChange={setPlacementImages}
-          />
-
-          {customQuestions.length > 0 && (
-            <div className="space-y-5 border-t border-border pt-5">
-              {customQuestions
-                .slice()
-                .sort((a, b) => a.order - b.order)
-                .map((q) => (
-                  <div key={q.id}>
-                    <label className={LABEL_CLASS}>
-                      {q.question} {q.required ? '*' : ''}
-                    </label>
-                    {q.type === 'text' && (
-                      <input
-                        type="text"
-                        value={customAnswers[q.id] ?? ''}
-                        onChange={(e) => setCustomAnswers({ ...customAnswers, [q.id]: e.target.value })}
-                        required={q.required}
-                        className={INPUT_CLASS}
-                      />
-                    )}
-                    {q.type === 'yes_no' && (
-                      <div className="mt-2 flex gap-4">
-                        {(['YES', 'NO'] as const).map((option) => (
-                          <label key={option} className="flex items-center gap-2 text-sm text-fg-secondary">
-                            <input
-                              type="radio"
-                              name={`custom-${q.id}`}
-                              checked={customAnswers[q.id] === option}
-                              onChange={() => setCustomAnswers({ ...customAnswers, [q.id]: option })}
-                              required={q.required}
-                              className="accent-accent"
-                            />
-                            {option === 'YES' ? 'Yes' : 'No'}
-                          </label>
-                        ))}
-                      </div>
-                    )}
-                    {q.type === 'select' && (
-                      <select
-                        value={customAnswers[q.id] ?? ''}
-                        onChange={(e) => setCustomAnswers({ ...customAnswers, [q.id]: e.target.value })}
-                        required={q.required}
-                        className={INPUT_CLASS}
-                      >
-                        <option value="" disabled>
-                          Select one
-                        </option>
-                        {(q.options ?? []).map((option) => (
-                          <option key={option} value={option}>
-                            {option}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                  </div>
-                ))}
-            </div>
-          )}
+          {/* Package Q (revised): exact studio-configured order, system and
+              custom fields freely mixed -- no fixed section boundaries, so a
+              studio that drags "email" below a custom question sees that
+              order on the live form, not just in the builder. */}
+          {fields.map((field) => (
+            <div key={field.id}>{field.fieldKind === 'SYSTEM' ? renderSystemField(field) : renderCustomField(field)}</div>
+          ))}
 
           <div>
             <label className="flex items-start gap-2 text-sm text-fg-secondary">

@@ -1,10 +1,16 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { requireAuth, requireRole } from "../middleware/auth";
-import { Role } from "../../generated/prisma/enums";
+import { Role, IntakeFieldKind, IntakeCustomQuestionType } from "../../generated/prisma/enums";
 import { diffObjects, logAudit } from "../lib/audit";
 import { DEFAULT_DEPOSIT_TIERS, validateDepositTiers } from "../lib/depositTiers";
 import { THEME_PRESET_KEYS, isValidThemePreset } from "../lib/themePresets";
+import {
+  ensureDefaultSystemFields,
+  validateIntakeFormFieldsPayload,
+  getEffectiveIntakeFormFields,
+  IntakeFormFieldInput,
+} from "../lib/intakeFormFields";
 
 // Public: /privacy/:studioSlug and /terms/:studioSlug (unauthenticated) need
 // to read these two fields by slug, same "public sub-router mounted first"
@@ -26,21 +32,18 @@ publicRouter.get("/public", async (req, res) => {
 
   const settings = await prisma.studioSettings.findUnique({ where: { studioId: studio.id } });
 
+  // Package Q (revised): every enabled field (system + custom), in the
+  // studio's own configured order -- a disabled field is dropped entirely
+  // here, never sent to the public form at all. Same fallback-to-defaults
+  // helper POST /inquiries validates submissions against, so the two never
+  // disagree about what a studio with zero rows requires.
+  const allFields = await getEffectiveIntakeFormFields(studio.id);
+
   res.json({
     studioName: studio.name,
     privacyPolicy: settings?.privacyPolicy ?? null,
     termsAndConditions: settings?.termsAndConditions ?? null,
-    // Package Q: the public intake form's supplementary questions, sorted
-    // for display -- staff-side ordering is whatever array order the
-    // Settings editor left them in, but this is the one place a stored
-    // `order` value actually gets read back out and applied.
-    intakeCustomQuestions: (
-      (settings?.intakeCustomQuestions as
-        | { id: string; question: string; type: string; options?: string[]; required: boolean; order: number }[]
-        | null) ?? []
-    )
-      .slice()
-      .sort((a, b) => a.order - b.order),
+    intakeFormFields: allFields.filter((f) => f.enabled),
   });
 });
 
@@ -122,38 +125,6 @@ function isValidHealthQuestions(value: unknown): boolean {
 
 function isValidClauses(value: unknown): value is string[] {
   return Array.isArray(value) && value.length > 0 && value.every((c) => typeof c === "string" && c.trim().length > 0);
-}
-
-// Package Q: supplementary intake questions -- same shape family as
-// waiverHealthQuestions above, but with its own type set ("select" needs
-// options; there's no "explain if yes" branch here) and an explicit id/
-// order pair, since these get referenced by id from a submitted inquiry's
-// customFieldAnswers (unlike health questions, which are only ever read
-// positionally off the same array they're defined in).
-const INTAKE_QUESTION_TYPES = ["text", "yes_no", "select"];
-
-function isValidIntakeCustomQuestions(value: unknown): boolean {
-  if (!Array.isArray(value)) return false;
-
-  return value.every((entry) => {
-    if (typeof entry !== "object" || entry === null) return false;
-    const q = entry as Record<string, unknown>;
-
-    if (typeof q.id !== "string" || q.id.trim().length === 0) return false;
-    if (typeof q.question !== "string" || q.question.trim().length === 0) return false;
-    if (!INTAKE_QUESTION_TYPES.includes(q.type as string)) return false;
-    if (typeof q.required !== "boolean") return false;
-    if (typeof q.order !== "number") return false;
-
-    if (q.type === "select") {
-      if (!Array.isArray(q.options) || q.options.length === 0) return false;
-      if (!q.options.every((o) => typeof o === "string" && o.trim().length > 0)) return false;
-    } else if (q.options !== undefined) {
-      return false;
-    }
-
-    return true;
-  });
 }
 
 const BUSINESS_HOURS_TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
@@ -295,16 +266,6 @@ staffRouter.patch("/", requireRole(Role.OWNER), async (req, res) => {
     data.waiverClauses = body.waiverClauses;
   }
 
-  if (body.intakeCustomQuestions !== undefined) {
-    if (body.intakeCustomQuestions !== null && !isValidIntakeCustomQuestions(body.intakeCustomQuestions)) {
-      return res.status(400).json({
-        error:
-          "intakeCustomQuestions must be an array of { id, question, type: 'text' | 'yes_no' | 'select', options? (required, non-empty for 'select'), required, order }",
-      });
-    }
-    data.intakeCustomQuestions = body.intakeCustomQuestions;
-  }
-
   if (body.messageTemplates !== undefined) {
     if (body.messageTemplates !== null && !isValidMessageTemplates(body.messageTemplates)) {
       return res.status(400).json({ error: "messageTemplates must be an array of { id, name, body }" });
@@ -378,7 +339,6 @@ staffRouter.patch("/", requireRole(Role.OWNER), async (req, res) => {
       "timezone",
       "waiverHealthQuestions",
       "waiverClauses",
-      "intakeCustomQuestions",
       "messageTemplates",
       "showSidebarBadges",
       "businessHours",
@@ -390,6 +350,78 @@ staffRouter.patch("/", requireRole(Role.OWNER), async (req, res) => {
   });
 
   res.json(updated);
+});
+
+// Staff-facing counterpart to publicRouter's "/public" -- returns every
+// field including disabled ones, since the Settings editor needs to show
+// (and let OWNER re-enable) a field a studio previously turned off, not
+// just what the public form currently renders.
+staffRouter.get("/intake-form-fields", requireRole(Role.OWNER, Role.FRONT_DESK, Role.ARTIST), async (req, res) => {
+  const studioId = req.user!.studioId;
+  await ensureDefaultSystemFields(studioId);
+  const fields = await prisma.intakeFormField.findMany({
+    where: { studioId },
+    orderBy: { order: "asc" },
+  });
+  res.json(fields);
+});
+
+// Full-list replace: the drag-and-drop editor always sends the complete
+// ordered list back (system rows can never be removed from the payload,
+// only reordered/disabled -- enforced below), so delete-all-then-recreate
+// is safe and simpler than diffing. IDs are preserved because the client
+// always round-trips each row's existing id (and mints one client-side for
+// a brand-new custom question via crypto.randomUUID(), matching the create
+// pattern createMany already relies on for id-preserving migration) --
+// nothing here generates a fresh id itself, so a CUSTOM row's id -- and
+// therefore its historical Inquiry.customFieldAnswers linkage -- never
+// changes just because the list around it was reordered or edited.
+staffRouter.put("/intake-form-fields", requireRole(Role.OWNER), async (req, res) => {
+  const studioId = req.user!.studioId;
+  const body = req.body as IntakeFormFieldInput[];
+
+  const validationError = validateIntakeFormFieldsPayload(body);
+  if (validationError) {
+    return res.status(400).json({ error: validationError });
+  }
+
+  const before = await prisma.intakeFormField.findMany({ where: { studioId }, orderBy: { order: "asc" } });
+
+  const rows = body.map((row, i) => ({
+    id: row.id || undefined,
+    studioId,
+    fieldKind: row.fieldKind as IntakeFieldKind,
+    systemFieldKey: row.fieldKind === IntakeFieldKind.SYSTEM ? row.systemFieldKey! : null,
+    customQuestionType:
+      row.fieldKind === IntakeFieldKind.CUSTOM ? (row.customQuestionType as IntakeCustomQuestionType) : null,
+    label: row.label.trim(),
+    helpText: row.helpText?.trim() || null,
+    required: row.required,
+    enabled: row.enabled,
+    options: row.fieldKind === IntakeFieldKind.CUSTOM ? row.options ?? undefined : undefined,
+    order: i,
+  }));
+
+  await prisma.$transaction([
+    prisma.intakeFormField.deleteMany({ where: { studioId } }),
+    prisma.intakeFormField.createMany({ data: rows }),
+  ]);
+
+  const after = await prisma.intakeFormField.findMany({ where: { studioId }, orderBy: { order: "asc" } });
+
+  await logAudit({
+    studioId,
+    actorUserId: req.user!.userId,
+    entityType: "IntakeFormField",
+    entityId: studioId,
+    action: "update",
+    changes: {
+      fieldCount: { from: before.length, to: after.length },
+      labels: { from: before.map((f) => f.label), to: after.map((f) => f.label) },
+    },
+  });
+
+  res.json(after);
 });
 
 export { publicRouter, staffRouter };

@@ -17,83 +17,16 @@ import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { computeDepositTier, resolveDepositTiers } from "../lib/depositTiers";
 import { generateUniqueReferralCode } from "../lib/referrals";
+import { IntakeFieldKind } from "../../generated/prisma/enums";
+import { getEffectiveIntakeFormFields, validateCustomFieldAnswers } from "../lib/intakeFormFields";
 
 const router = Router();
 
 const ESTIMATE_TOKEN_TTL_DAYS = 7;
 const DEPOSIT_TOKEN_TTL_HOURS = 48;
 
-const REQUIRED_FIELDS = [
-  "studioSlug",
-  "firstName",
-  "lastName",
-  "email",
-  "channel",
-  "description",
-  "colorOrBlackGrey",
-  "placement",
-  "estimatedSize",
-] as const;
-
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
-}
-
-interface IntakeCustomQuestion {
-  id: string;
-  question: string;
-  type: "text" | "yes_no" | "select";
-  options?: string[];
-  required: boolean;
-  order: number;
-}
-
-interface CustomFieldAnswerSnapshot {
-  question: string;
-  type: IntakeCustomQuestion["type"];
-  answer: string;
-}
-
-// Package Q: re-validates a submitted intake's custom-question answers
-// against the studio's OWN current live question definitions -- never
-// trusts client-supplied question text/type, only the id and the answer
-// value. Builds the snapshot persisted on the Inquiry (question text +
-// type baked in alongside the answer) so an edit or removal of the
-// question later never changes what an already-submitted inquiry shows.
-function validateAndBuildCustomFieldAnswers(
-  questions: IntakeCustomQuestion[],
-  submitted: unknown,
-): { error: string } | { value: Record<string, CustomFieldAnswerSnapshot> | null } {
-  if (questions.length === 0) return { value: null };
-
-  const answers = (submitted && typeof submitted === "object" ? submitted : {}) as Record<string, unknown>;
-  const result: Record<string, CustomFieldAnswerSnapshot> = {};
-
-  for (const q of questions) {
-    const raw = answers[q.id];
-    const hasValue = typeof raw === "string" && raw.trim().length > 0;
-
-    if (!hasValue) {
-      if (q.required) {
-        return { error: `"${q.question}" is required` };
-      }
-      continue;
-    }
-
-    const answer = (raw as string).trim();
-
-    if (q.type === "select" && !(q.options ?? []).includes(answer)) {
-      return { error: `"${q.question}" must be one of the offered options` };
-    }
-
-    if (q.type === "yes_no" && answer !== "YES" && answer !== "NO") {
-      return { error: `"${q.question}" must be answered Yes or No` };
-    }
-
-    result[q.id] = { question: q.question, type: q.type, answer };
-  }
-
-  return { value: Object.keys(result).length > 0 ? result : null };
 }
 
 // Public: the intake form fetches a prefill draft by its capability token
@@ -135,38 +68,76 @@ router.post("/", optionalAuth, async (req, res) => {
     return res.status(403).json({ error: "Forbidden" });
   }
 
-  const requiredFields = isStaffRequest ? REQUIRED_FIELDS.filter((field) => field !== "studioSlug") : REQUIRED_FIELDS;
-  const missing = requiredFields.filter((field) => !body[field]);
-  if (missing.length > 0) {
-    return res.status(400).json({ error: `Missing required field(s): ${missing.join(", ")}` });
+  if (!isStaffRequest && (typeof body.studioSlug !== "string" || !body.studioSlug)) {
+    return res.status(400).json({ error: "Missing required field(s): studioSlug" });
   }
 
-  if (typeof body.hasBeenTattooedBefore !== "boolean") {
-    return res.status(400).json({ error: "hasBeenTattooedBefore must be a boolean" });
+  const studio = isStaffRequest
+    ? await prisma.studio.findUnique({ where: { id: req.user!.studioId }, include: { settings: true } })
+    : await prisma.studio.findUnique({ where: { slug: body.studioSlug }, include: { settings: true } });
+  if (!studio) {
+    return res.status(404).json({ error: "Studio not found" });
   }
 
-  if (!Object.values(Channel).includes(body.channel)) {
-    return res.status(400).json({ error: `channel must be one of: ${Object.values(Channel).join(", ")}` });
-  }
+  // Package Q (revised): every SYSTEM field on this studio's live,
+  // configured intake form drives what's required/shown here -- a field
+  // the studio has disabled is dropped entirely (never validated, never
+  // extracted from the body), the same list the public form itself
+  // rendered from. Two keys have no data-safe "unspecified" value at the
+  // DB layer (Channel has no such enum member; a NOT NULL Boolean can't
+  // represent "unanswered") -- see the channel/hasBeenTattooedBefore
+  // handling below, documented in REPORT.md as a deliberate judgment call.
+  const liveFields = await getEffectiveIntakeFormFields(studio.id);
+  const enabledSystemFields = new Map(
+    liveFields
+      .filter((f) => f.fieldKind === IntakeFieldKind.SYSTEM && f.enabled && f.systemFieldKey)
+      .map((f) => [f.systemFieldKey as string, f]),
+  );
+  const isShown = (key: string) => enabledSystemFields.has(key);
+  const isRequired = (key: string) => enabledSystemFields.get(key)?.required ?? false;
+
+  const missingLabels: string[] = [];
+  const checkRequired = (key: string, present: boolean) => {
+    if (isRequired(key) && !present) {
+      missingLabels.push(enabledSystemFields.get(key)?.label ?? key);
+    }
+  };
 
   if (body.referenceImages !== undefined && !isStringArray(body.referenceImages)) {
     return res.status(400).json({ error: "referenceImages must be an array of strings" });
   }
-
   if (body.placementImages !== undefined && !isStringArray(body.placementImages)) {
     return res.status(400).json({ error: "placementImages must be an array of strings" });
   }
-
-  // Package I: both photo types are now mandatory, on both the public
-  // intake form AND the staff-side "New Inquiry" form (StaffInquiryForm.tsx)
-  // -- unlike smsConsent below, this isn't a public-only consent concern, so
-  // there's no isStaffRequest carve-out here; the two forms stay identical.
-  if (!isStringArray(body.referenceImages) || body.referenceImages.length === 0) {
-    return res.status(400).json({ error: "At least one reference image is required" });
+  if (body.hasBeenTattooedBefore !== undefined && typeof body.hasBeenTattooedBefore !== "boolean") {
+    return res.status(400).json({ error: "hasBeenTattooedBefore must be a boolean" });
+  }
+  if (body.channel !== undefined && !Object.values(Channel).includes(body.channel)) {
+    return res.status(400).json({ error: `channel must be one of: ${Object.values(Channel).join(", ")}` });
   }
 
-  if (!isStringArray(body.placementImages) || body.placementImages.length === 0) {
-    return res.status(400).json({ error: "At least one placement photo is required" });
+  checkRequired("name", Boolean(body.firstName) && Boolean(body.lastName));
+  checkRequired("email", Boolean(body.email));
+  checkRequired("phone", Boolean(body.phone));
+  checkRequired("referralSource", typeof body.channel === "string" && body.channel.length > 0);
+  checkRequired("description", Boolean(body.description));
+  checkRequired("colorOrBlackGrey", Boolean(body.colorOrBlackGrey));
+  checkRequired("placement", Boolean(body.placement));
+  checkRequired("size", Boolean(body.estimatedSize));
+  checkRequired("preferredArtist", Boolean(body.preferredArtistId));
+  checkRequired("budget", Boolean(body.budget));
+  checkRequired("desiredTiming", Boolean(body.desiredTiming));
+  // hasBeenTattooedBefore is a NOT NULL boolean column -- "required" here
+  // means "must be explicitly answered", same as the old hardcoded check.
+  checkRequired("hasBeenTattooedBefore", body.hasBeenTattooedBefore !== undefined);
+  // Package I: both photo types default to required:true in
+  // SYSTEM_FIELD_DEFAULTS, matching the old unconditional behavior --
+  // unlike before, a studio can now deliberately relax this per-field.
+  checkRequired("referenceImages", isStringArray(body.referenceImages) && body.referenceImages.length > 0);
+  checkRequired("placementImages", isStringArray(body.placementImages) && body.placementImages.length > 0);
+
+  if (missingLabels.length > 0) {
+    return res.status(400).json({ error: `Missing required field(s): ${missingLabels.join(", ")}` });
   }
 
   // A2P 10DLC compliance: the PUBLIC intake form's consent checkbox is
@@ -174,40 +145,46 @@ router.post("/", optionalAuth, async (req, res) => {
   // just via a disabled button) -- staff logging a walk-in/phone inquiry
   // through this same route has no such checkbox in its UI and isn't the
   // client affirmatively opting in themselves, so this only applies to the
-  // public path.
+  // public path. Deliberately kept OUTSIDE the configurable field list --
+  // this is a legal requirement, not a business preference a studio can
+  // reorder or disable.
   if (!isStaffRequest && body.smsConsent !== true) {
     return res.status(400).json({ error: "SMS consent is required to submit this form" });
   }
 
-  const {
-    studioSlug,
-    firstName,
-    lastName,
-    email,
-    phone,
-    channel,
-    description,
-    colorOrBlackGrey,
-    placement,
-    estimatedSize,
-    hasBeenTattooedBefore,
-    budget,
-    desiredTiming,
-    preferredArtistId,
-    referenceImages,
-    placementImages,
-    draftToken,
-    smsConsent,
-    referralCode,
-    customFieldAnswers: submittedCustomFieldAnswers,
-  } = body;
-
-  const studio = isStaffRequest
-    ? await prisma.studio.findUnique({ where: { id: req.user!.studioId }, include: { settings: true } })
-    : await prisma.studio.findUnique({ where: { slug: studioSlug }, include: { settings: true } });
-  if (!studio) {
-    return res.status(404).json({ error: "Studio not found" });
-  }
+  const firstName = isShown("name") && typeof body.firstName === "string" ? body.firstName.trim() : "";
+  const lastName = isShown("name") && typeof body.lastName === "string" ? body.lastName.trim() : "";
+  const email = isShown("email") && typeof body.email === "string" && body.email.trim() ? body.email.trim() : null;
+  const phone = isShown("phone") && typeof body.phone === "string" && body.phone.trim() ? body.phone.trim() : null;
+  // No enum member represents "unspecified" for channel, so a hidden/blank
+  // referralSource field falls back to EMAIL rather than leaving the NOT
+  // NULL column unfillable -- documented in REPORT.md, not spec'd
+  // explicitly by the task.
+  const channel: Channel = typeof body.channel === "string" && body.channel.length > 0 ? body.channel : Channel.EMAIL;
+  const description = isShown("description") && typeof body.description === "string" ? body.description.trim() : "";
+  const colorOrBlackGrey =
+    isShown("colorOrBlackGrey") && typeof body.colorOrBlackGrey === "string" ? body.colorOrBlackGrey.trim() : "";
+  const placement = isShown("placement") && typeof body.placement === "string" ? body.placement.trim() : "";
+  const estimatedSize = isShown("size") && typeof body.estimatedSize === "string" ? body.estimatedSize.trim() : "";
+  const hasBeenTattooedBefore =
+    isShown("hasBeenTattooedBefore") && typeof body.hasBeenTattooedBefore === "boolean"
+      ? body.hasBeenTattooedBefore
+      : false;
+  const budget = isShown("budget") && typeof body.budget === "string" && body.budget.trim() ? body.budget.trim() : null;
+  const desiredTiming =
+    isShown("desiredTiming") && typeof body.desiredTiming === "string" && body.desiredTiming.trim()
+      ? body.desiredTiming.trim()
+      : null;
+  const preferredArtistId =
+    isShown("preferredArtist") && typeof body.preferredArtistId === "string" && body.preferredArtistId
+      ? body.preferredArtistId
+      : null;
+  const referenceImages = isShown("referenceImages") && isStringArray(body.referenceImages) ? body.referenceImages : [];
+  const placementImages = isShown("placementImages") && isStringArray(body.placementImages) ? body.placementImages : [];
+  const draftToken = body.draftToken;
+  const smsConsent = body.smsConsent;
+  const referralCode = body.referralCode;
+  const submittedCustomFieldAnswers = body.customFieldAnswers;
 
   // A draft token riding along is optional and best-effort -- an invalid/
   // stale one (already used, expired, wrong studio) never blocks a real
@@ -251,29 +228,32 @@ router.post("/", optionalAuth, async (req, res) => {
     }
   }
 
-  // Package Q: re-validated against THIS studio's own current live
-  // question definitions -- never the submitting client's own claims about
-  // what a question says/requires. Required-ness is only enforced on the
-  // PUBLIC path: StaffInquiryForm (a walk-in/phone call logged on the
-  // client's behalf) has no UI for these questions at all -- same
-  // public-only carve-out already applied to smsConsent above, for the
-  // same reason (staff can't be blocked by a question they were never
-  // shown and may not have thought to ask over the phone).
-  const liveIntakeQuestions = (studio.settings?.intakeCustomQuestions as unknown as IntakeCustomQuestion[] | null) ?? [];
-  const effectiveIntakeQuestions = isStaffRequest
-    ? liveIntakeQuestions.map((q) => ({ ...q, required: false }))
-    : liveIntakeQuestions;
-  const customFieldAnswersResult = validateAndBuildCustomFieldAnswers(
-    effectiveIntakeQuestions,
-    submittedCustomFieldAnswers,
-  );
+  // Package Q (revised): re-validated against THIS studio's own current
+  // live field definitions -- never the submitting client's own claims
+  // about what a question says/requires. Required-ness for CUSTOM fields
+  // is only enforced on the PUBLIC path: StaffInquiryForm (a walk-in/phone
+  // call logged on the client's behalf) has no UI for these questions at
+  // all -- same public-only carve-out already applied to smsConsent above,
+  // for the same reason (staff can't be blocked by a question they were
+  // never shown and may not have thought to ask over the phone).
+  const effectiveFields = isStaffRequest
+    ? liveFields.map((f) => (f.fieldKind === IntakeFieldKind.CUSTOM ? { ...f, required: false } : f))
+    : liveFields;
+  const customFieldAnswersResult = validateCustomFieldAnswers(effectiveFields, submittedCustomFieldAnswers);
   if ("error" in customFieldAnswersResult) {
     return res.status(400).json({ error: customFieldAnswersResult.error });
   }
 
-  const existingClient = await prisma.client.findFirst({
-    where: { studioId: studio.id, email },
-  });
+  // Matched by whichever contact method the studio actually collected --
+  // email first (the historical default), falling back to phone if email
+  // was disabled/omitted, and treating the submission as a brand-new
+  // client if neither is present (only reachable when a studio has
+  // disabled BOTH being required, since at least one must stay enabled).
+  const existingClient = email
+    ? await prisma.client.findFirst({ where: { studioId: studio.id, email } })
+    : phone
+      ? await prisma.client.findFirst({ where: { studioId: studio.id, phone: normalizePhone(phone) } })
+      : null;
 
   // Consent is only ever SET here, never overwritten -- a returning
   // client's original consent timestamp (from whichever submission first
@@ -297,7 +277,7 @@ router.post("/", optionalAuth, async (req, res) => {
     // retroactively attaching a referrer to them here would be meaningless
     // (their first deposit, if any, is long past) and isn't what this
     // channel option represents.
-    const referralCode = await generateUniqueReferralCode();
+    const newClientReferralCode = await generateUniqueReferralCode();
     client = await prisma.$transaction(async (tx) => {
       const created = await tx.client.create({
         data: {
@@ -306,7 +286,7 @@ router.post("/", optionalAuth, async (req, res) => {
           lastName,
           email,
           phone: phone ? normalizePhone(phone) : phone,
-          referralCode,
+          referralCode: newClientReferralCode,
           referredByClientId: referrer?.id ?? null,
           ...(givesConsentNow ? { smsConsentGivenAt: new Date(), smsConsentSource: "intake_form" } : {}),
         },
@@ -329,9 +309,9 @@ router.post("/", optionalAuth, async (req, res) => {
       hasBeenTattooedBefore,
       budget,
       desiredTiming,
-      preferredArtistId: preferredArtistId || null,
-      referenceImages: referenceImages ?? [],
-      placementImages: placementImages ?? [],
+      preferredArtistId,
+      referenceImages,
+      placementImages,
       customFieldAnswers: customFieldAnswersResult.value as unknown as Prisma.InputJsonValue | undefined,
     },
   });

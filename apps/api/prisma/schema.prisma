@@ -68,6 +68,26 @@ enum ImportRowDecision {
   SKIP
 }
 
+// Package Q (revised): true intake form builder -- replaces the bounded
+// custom-questions-only approach the original Package Q shipped
+// (StudioSettings.intakeCustomQuestions), which this session migrates
+// forward into IntakeFormField rows rather than discarding.
+enum IntakeFieldKind {
+  SYSTEM
+  CUSTOM
+}
+
+enum IntakeCustomQuestionType {
+  TEXT
+  PARAGRAPH
+  NUMBER
+  DATE
+  YES_NO
+  SELECT
+  MULTI_SELECT
+  PHOTO_UPLOAD
+}
+
 enum ConversationType {
   CLIENT
   STAFF
@@ -157,6 +177,7 @@ model Studio {
   dismissedDuplicatePairs DismissedDuplicatePair[]
   customPolicies     CustomPolicy[]
   importBatches      ImportBatch[]
+  intakeFormFields   IntakeFormField[]
 }
 
 // Self-serve provider connections -- a studio owner connects their OWN
@@ -436,6 +457,54 @@ model ImportRow {
   @@index([importBatchId])
 }
 
+// Package Q (revised): one unified, ordered list per studio, mixing two
+// kinds of rows -- SYSTEM rows represent an existing, unchanging Inquiry/
+// Client column (systemFieldKey identifies which one; the column itself
+// never changes shape, only how the FORM presents it does), CUSTOM rows
+// are studio-authored questions of their own. `order` alone controls
+// display position on the public form -- system and custom rows are
+// freely interleaved.
+model IntakeFormField {
+  id       String          @id @default(cuid())
+  fieldKind IntakeFieldKind
+
+  // Set only when fieldKind: SYSTEM. One of: name, email, phone,
+  // referralSource, description, colorOrBlackGrey, placement, size,
+  // hasBeenTattooedBefore, preferredArtist, budget, desiredTiming,
+  // referenceImages, placementImages -- see lib/intakeFormFields.ts's
+  // SYSTEM_FIELD_KEYS for the authoritative list.
+  systemFieldKey String?
+
+  // Set only when fieldKind: CUSTOM.
+  customQuestionType IntakeCustomQuestionType?
+
+  // SYSTEM: overrides the field's default display label (kept close to
+  // the default unless a studio explicitly customizes it -- see the data
+  // migration in this same package). CUSTOM: this IS the question text.
+  label    String
+  helpText String?
+
+  required Boolean @default(false)
+  // Whether this field shows on the public form at all -- name and at
+  // least one of phone/email can never be false here (enforced server-
+  // side on every write, not just in the Settings UI -- a studio needs
+  // SOME way to identify and reach a submitter).
+  enabled  Boolean @default(true)
+
+  // Array<string> -- SELECT/MULTI_SELECT custom questions only.
+  options Json?
+
+  order Int
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  @@index([studioId, order])
+}
+
 // Additive secondary-contact layer -- Client.phone stays the "primary"
 // scalar field every existing consumer (intake form, waivers, duplicate
 // detection, PhoneInput default) keeps reading unchanged. These tables
@@ -583,13 +652,17 @@ model Inquiry {
   desiredTiming         String?
   referenceImages       String[]
   placementImages       String[]
-  // Package Q: answers to the studio's supplementary intake questions at
-  // the moment THIS inquiry was submitted -- a self-contained snapshot
-  // (question text + type + answer, not just a bare value), keyed by
-  // question id, so editing or removing a question later never changes
-  // what an already-submitted inquiry displays. Never populated by any
-  // route besides the one that creates this row.
-  // Record<string, { question: string, type: "text" | "yes_no" | "select", answer: string }>
+  // Answers to the studio's CUSTOM IntakeFormField questions at the
+  // moment THIS inquiry was submitted -- a self-contained snapshot
+  // (question text + type + answer, not just a bare value), keyed by the
+  // IntakeFormField's id, so editing or removing a question later never
+  // changes what an already-submitted inquiry displays. Never populated
+  // by any route besides the one that creates this row. Shape/semantics
+  // unchanged by Package Q's revision -- only where the question
+  // definitions now live (IntakeFormField, not StudioSettings) changed;
+  // this is why the original Package Q's id-preservation during migration
+  // mattered so much (see the IntakeFormField model's own comment).
+  // Record<string, { question: string, type: string, answer: string | string[] }>
   customFieldAnswers    Json?
   status                InquiryStatus @default(NEW)
   priceEstimateLow      Float?
@@ -728,11 +801,14 @@ model StudioSettings {
   // Liability waiver template (Phase 4), editable by OWNER from Settings.
   // Array<{ question: string, type: "yes_no" | "yes_no_explain", explainPrompt?: string }>
   waiverHealthQuestions         Json?
-  // Package Q: supplementary intake-form questions on top of the fixed
-  // core fields (name/contact/description/placement/size/budget/referral
-  // source/reference images -- none of which are editable or removable
-  // here, by deliberate scope decision -- this is not a form builder).
-  // Same shape family/editor pattern as waiverHealthQuestions above.
+  // DEPRECATED (Package Q revised): superseded by the IntakeFormField
+  // table, which handles both system and custom fields in one unified,
+  // reorderable list. No longer read or written by any route as of this
+  // session -- every studio's existing entries here were migrated into
+  // CUSTOM IntakeFormField rows (same ids preserved, so historical
+  // Inquiry.customFieldAnswers still resolve). Left in place, unused,
+  // rather than dropped -- lower risk than a schema removal under time
+  // pressure right after the production incident this session followed.
   // Array<{ id: string, question: string, type: "text" | "yes_no" | "select",
   // options?: string[], required: boolean, order: number }>
   intakeCustomQuestions         Json?
