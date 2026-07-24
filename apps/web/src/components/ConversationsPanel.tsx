@@ -265,6 +265,15 @@ interface ShareableLinksResponse {
   waiverOptions: { appointmentId: string; label: string }[]
   waiverLinks: (ShareableLink & { appointmentId: string })[]
   giftCardLinks: (ShareableLink & { giftCardId: string })[]
+  // Studio-authored custom policies (aftercare, cancellation, etc. -- Package
+  // C1) plus the two fixed policy pages. allPoliciesUrl/privacyPolicyUrl/
+  // termsUrl are null when there's nothing published to link to (no public
+  // custom policies / that StudioSettings field unset), same "null means
+  // don't show this row" convention as every other link here.
+  allPoliciesUrl: string | null
+  policyLinks: { label: string; url: string }[]
+  privacyPolicyUrl: string | null
+  termsUrl: string | null
 }
 
 const CLIENT_CHANNELS = ['SMS', 'EMAIL', 'INSTAGRAM', 'FACEBOOK', 'PHONE', 'OTHER'] as const
@@ -2894,6 +2903,29 @@ function ThreadView({
               </button>
             ))}
             {createFormError && <p className="px-3 py-1 text-xs text-danger">{createFormError}</p>}
+
+            {[
+              { label: 'All policies', url: linksData?.allPoliciesUrl ?? null },
+              ...(linksData?.policyLinks ?? []),
+              { label: 'Privacy Policy', url: linksData?.privacyPolicyUrl ?? null },
+              { label: 'Terms & Conditions', url: linksData?.termsUrl ?? null },
+            ]
+              .filter((link) => link.url)
+              .map((link, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => {
+                    const url = link.url
+                    if (!url) return
+                    setBody((current) => (current ? `${current}\n${url}` : url))
+                    setShowLinkMenu(false)
+                  }}
+                  className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-fg-secondary hover:bg-surface"
+                >
+                  <span className="truncate">{link.label}</span>
+                </button>
+              ))}
             </div>
           </>
         )}

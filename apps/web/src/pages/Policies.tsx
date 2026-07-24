@@ -53,6 +53,16 @@ export default function Policies() {
     }
   }, [studioSlug])
 
+  // Deep-linked from the staff composer's "Policies" menu (one specific
+  // policy, not just the page) -- the browser's native hash-scroll fires
+  // on load before this page's own async fetch has rendered anything to
+  // scroll to, so it has to be redone manually once the content is ready.
+  useEffect(() => {
+    if (state !== 'ready' || !window.location.hash) return
+    const target = document.getElementById(window.location.hash.slice(1))
+    target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [state])
+
   return (
     <div className="min-h-screen bg-bg text-fg">
       <div className="mx-auto max-w-2xl px-6 py-10 sm:px-10">
@@ -70,7 +80,7 @@ export default function Policies() {
 
             <div className="mt-6 space-y-8">
               {data.policies.map((policy) => (
-                <section key={policy.id}>
+                <section key={policy.id} id={policy.id}>
                   <h2 className="text-lg font-semibold text-fg">{policy.title}</h2>
                   <div
                     className="tiptap-content mt-2 whitespace-pre-wrap text-sm text-fg-secondary"

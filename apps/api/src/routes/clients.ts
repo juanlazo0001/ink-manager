@@ -190,7 +190,9 @@ router.get("/:id/shareable-links", async (req, res) => {
   const client = await prisma.client.findUnique({
     where: { id },
     include: {
-      studio: { select: { slug: true } },
+      studio: {
+        select: { slug: true, settings: { select: { privacyPolicy: true, termsAndConditions: true } } },
+      },
       inquiries: {
         select: {
           id: true,
@@ -333,6 +335,37 @@ router.get("/:id/shareable-links", async (req, res) => {
     )
     .map((appointment) => ({ appointmentId: appointment.id, label: appointment.startTime.toISOString() }));
 
+  // Package C1 custom policies (studio-authored, e.g. aftercare/cancellation)
+  // plus the two fixed StudioSettings policy pages (privacy/terms) -- all
+  // three are already independently public/unauthenticated routes
+  // (Policies.tsx, PublicPolicyPage.tsx), just never surfaced in the
+  // composer before now. A studio with no public custom policies gets no
+  // "All policies" link (nothing to show there); same null-if-unset
+  // treatment as privacy/terms below.
+  const publicPolicies = await prisma.customPolicy.findMany({
+    where: { studioId: client.studioId, isPublic: true },
+    select: { id: true, title: true },
+    orderBy: { order: "asc" },
+  });
+
+  const policyLinks = await Promise.all(
+    publicPolicies.map(async (policy) => ({
+      label: policy.title,
+      url: await shortenUrl(`${PUBLIC_APP_URL}/policies/${client.studio.slug}#${policy.id}`),
+    })),
+  );
+
+  const allPoliciesUrl =
+    publicPolicies.length > 0 ? await shortenUrl(`${PUBLIC_APP_URL}/policies/${client.studio.slug}`) : null;
+
+  const privacyPolicyUrl = client.studio.settings?.privacyPolicy
+    ? await shortenUrl(`${PUBLIC_APP_URL}/privacy/${client.studio.slug}`)
+    : null;
+
+  const termsUrl = client.studio.settings?.termsAndConditions
+    ? await shortenUrl(`${PUBLIC_APP_URL}/terms/${client.studio.slug}`)
+    : null;
+
   res.json({
     intakeFormUrl: await shortenUrl(`${PUBLIC_APP_URL}/inquiry/${client.studio.slug}`),
     estimateLinks,
@@ -341,6 +374,10 @@ router.get("/:id/shareable-links", async (req, res) => {
     waiverOptions,
     waiverLinks,
     giftCardLinks,
+    allPoliciesUrl,
+    policyLinks,
+    privacyPolicyUrl,
+    termsUrl,
   });
 });
 
