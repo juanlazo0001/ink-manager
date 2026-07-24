@@ -23,6 +23,14 @@ import { useConversationPanel } from '../context/useConversationPanel'
 import { appointmentsQueryKey } from '../lib/queryKeys'
 import ImageUploadSection, { type ImageUploadState } from '../components/ImageUploadSection'
 import { uploadAppointmentPhoto } from '../lib/cloudinary'
+import Widget from '../components/Widget'
+import ReorderableWidgetList from '../components/ReorderableWidgetList'
+
+// Built-in fallback order for a user who's never customized this page's
+// layout (or one shipped after their last save) -- "checkout" is simply
+// absent from presentIds for an ARTIST (canManage false), same as any
+// other conditionally-hidden widget.
+const APPOINTMENT_WIDGET_ORDER = ['project-details', 'liability-waiver', 'checkout', 'photos', 'activity-history']
 
 interface WaiverSummary {
   id: string
@@ -786,9 +794,9 @@ export default function AppointmentDetail() {
                 )}
               </div>
 
+              <ReorderableWidgetList pageKey="appointment-detail" defaultOrder={APPOINTMENT_WIDGET_ORDER}>
               {/* Package I: parent project context surfaced inline, no navigation away needed */}
-              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <h2 className="text-base font-semibold text-fg">Project details</h2>
+              <Widget key="project-details" id="project-details" title="Project details">
                 <div className="mt-3">
                   <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Budget</p>
                   <p className="mt-1 text-sm text-fg">
@@ -862,11 +870,10 @@ export default function AppointmentDetail() {
                     </div>
                   </div>
                 )}
-              </div>
+              </Widget>
 
               {/* Waiver section */}
-              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <h2 className="text-base font-semibold text-fg">Liability Waiver</h2>
+              <Widget key="liability-waiver" id="liability-waiver" title="Liability Waiver">
 
                 {!appointment.liabilityWaiver && canManage && (
                   <div className="mt-4">
@@ -1077,12 +1084,11 @@ export default function AppointmentDetail() {
                 {canManage && appointment.liabilityWaiver && (
                   <AuditTrail entityType="LiabilityWaiver" entityId={appointment.liabilityWaiver.id} />
                 )}
-              </div>
+              </Widget>
 
               {/* Checkout section */}
               {canManage && (
-                <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                  <h2 className="text-base font-semibold text-fg">Checkout</h2>
+                <Widget key="checkout" id="checkout" title="Checkout">
 
                   {!appointment.checkedOutAt && appointment.giftCards.length === 0 && (
                     <p className="mt-4 text-sm text-fg-secondary">
@@ -1266,15 +1272,14 @@ export default function AppointmentDetail() {
                       </button>
                     </div>
                   )}
-                </div>
+                </Widget>
               )}
 
               {/* Package N: separate from the checkout form's own optional
                   picker above -- this is the "forgot at checkout" path,
                   always available regardless of checkout state, and also
                   just the normal way to add more photos later. */}
-              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <h2 className="text-base font-semibold text-fg">Photos</h2>
+              <Widget key="photos" id="photos" title="Photos">
 
                 {appointment.photos.length === 0 && (
                   <p className="mt-4 text-sm text-fg-secondary">No photos yet.</p>
@@ -1328,9 +1333,12 @@ export default function AppointmentDetail() {
                     </button>
                   </div>
                 )}
-              </div>
+              </Widget>
 
-              <AuditTrail entityType="Appointment" entityId={appointment.id} />
+              <Widget key="activity-history" id="activity-history" title="Activity History">
+                <AuditTrail bare entityType="Appointment" entityId={appointment.id} />
+              </Widget>
+              </ReorderableWidgetList>
 
               {showRescheduleModal && (
                 <Modal

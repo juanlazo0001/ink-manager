@@ -18,3 +18,4 @@ export const tasksQueryKey = (userId: string) => ['tasks', userId] as const
 export const navCountsQueryKey = (userId: string) => ['nav-counts', userId] as const
 export const reportsDashboardQueryKey = (studioId: string, startIso: string, endIso: string) =>
   ['reports-dashboard', studioId, startIso, endIso] as const
+export const widgetLayoutQueryKey = (userId: string, pageKey: string) => ['widget-layout', userId, pageKey] as const

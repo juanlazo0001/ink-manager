@@ -146,7 +146,19 @@ function formatMergeSummary(changes: MergeChanges): string {
   return sentences.join(' ')
 }
 
-export default function AuditTrail({ entityType, entityId }: { entityType: string; entityId: string }) {
+interface AuditTrailProps {
+  entityType: string
+  entityId: string
+  // True at every top-level "Activity History" usage (InquiryDetail,
+  // AppointmentDetail) now that those are wrapped in their own <Widget> --
+  // skips this component's own card/title so there's exactly one of each,
+  // not a widget-within-a-widget. False (the default) preserves the
+  // original self-contained card, used by the one remaining nested usage
+  // (the waiver-specific history inside the Liability Waiver widget).
+  bare?: boolean
+}
+
+export default function AuditTrail({ entityType, entityId, bare = false }: AuditTrailProps) {
   const [logs, setLogs] = useState<AuditLogEntry[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -166,10 +178,8 @@ export default function AuditTrail({ entityType, entityId }: { entityType: strin
     }
   }, [entityType, entityId])
 
-  return (
-    <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-      <h2 className="text-base font-semibold text-fg">Activity History</h2>
-
+  const content = (
+    <>
       {error && <p className="mt-4 text-sm text-danger">{error}</p>}
 
       {!error && logs === null && <p className="mt-4 text-sm text-fg-secondary">Loading…</p>}
@@ -215,6 +225,15 @@ export default function AuditTrail({ entityType, entityId }: { entityType: strin
           ))}
         </ul>
       )}
+    </>
+  )
+
+  if (bare) return content
+
+  return (
+    <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+      <h2 className="text-base font-semibold text-fg">Activity History</h2>
+      {content}
     </div>
   )
 }
