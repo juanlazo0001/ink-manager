@@ -2046,3 +2046,67 @@ Browser (Playwright, screenshots reviewed): confirmed all 8 widgets render with 
 ## Cleanup
 
 All ad-hoc Playwright scripts and screenshots deleted from the scratch `pw-test` directory; none committed. The per-account widget-layout row for `client-detail` used during verification was reset to its default (empty) state before finishing. No background shells were started this session (the dev API/web servers were already running from prior work and were left as-is).
+
+---
+
+# Feature — Multiple named intake forms, editable field types, form picker on send
+
+Single session on `main`. Confirmed no other migration was in progress before starting (`prisma migrate status` — clean).
+
+## Schema + migration (nullable → backfill → required, three separate steps)
+
+New `IntakeForm` model (`name`, `slug` unique-per-studio, `isDefault`, timestamps). `IntakeFormField` gains `intakeFormId`; `Inquiry` gains `intakeFormId` (nullable **permanently** — historical inquiries genuinely predate this, no backfill attempted for that column).
+
+Per the discipline established after the referral-migration production outage (`20260723201202_referral_code_required`'s own comment — that incident happened because a backfill was run as a throwaway dev-only script, never captured as committed SQL, so production's `NOT NULL` migration failed outright), this shipped as three separate migrations, verified at each step:
+
+1. **`20260724214509_add_intake_forms`** — purely additive: `CREATE TABLE "IntakeForm"`, both new `intakeFormId` columns added nullable. Confirmed via the generated SQL before applying — no `ALTER COLUMN ... SET NOT NULL` anywhere in this step.
+2. **`20260724214543_backfill_intake_forms`** — hand-authored (not schema-diff-generated), real committed SQL: one `IntakeForm` row per existing studio (`isDefault: true`, name "Standard Inquiry", slug `standard-inquiry`), then every existing `IntakeFormField` row re-pointed to its own studio's new form. Both statements idempotent (`WHERE NOT EXISTS` / `WHERE ... IS NULL` guards). Ends with a `DO $$ ... RAISE EXCEPTION` block that fails loudly (naming the exact remaining-null count) if the backfill somehow left rows unbackfilled, rather than silently letting step 3 fail with a generic constraint-violation error.
+3. **`20260724215014_intake_form_id_required`** — schema-diff-generated once step 2's backfill was verified complete: drops and re-adds `IntakeFormField_intakeFormId_fkey` with `ON DELETE RESTRICT` (was `SET NULL` in step 1, since the column was nullable then), then `ALTER COLUMN "intakeFormId" SET NOT NULL`.
+
+**Backfill verification numbers** (dev database, checked directly via Prisma before/after each step):
+
+| Check | Before step 1 | After step 1 | After step 2 (backfill) |
+|---|---|---|---|
+| `IntakeFormField` row count | 35 | 35 | **35** (zero data loss) |
+| `IntakeFormField` rows with `intakeFormId IS NULL` | n/a (column didn't exist) | 35 (all, column just added) | **0** |
+| `IntakeForm` row count | 0 | 0 | **2** (one per studio — matches `Studio` count) |
+| `IntakeForm` rows with `isDefault: true` | — | — | **2** (matches studio count — exactly one default each) |
+
+Also added a **self-healing fallback** (`ensureDefaultIntakeForm` in `lib/intakeForms.ts`, same "backfill on read" convention `ensureDefaultSystemFields` already used): a studio created via `POST /studios/bootstrap` or `prisma/seed.ts` — neither of which was updated to create an `IntakeForm` directly — would otherwise have zero forms and no way to resolve "the default," breaking its public intake form entirely. `resolveIntakeForm(studioId, null)` now creates one on first read if none exists, idempotently.
+
+## What changed
+
+- **`lib/intakeForms.ts`** (new): `generateUniqueIntakeFormSlug`, `setDefaultIntakeForm` (atomic swap — the previous default and the new one flip in one transaction, so a concurrent read never sees zero or two defaults), `resolveIntakeForm`/`ensureDefaultIntakeForm` (the one shared resolution point `GET /studio-settings/public`, `POST /inquiries`, and `POST /prefill-drafts` all use for "no formSlug given").
+- **`lib/slug.ts`** (new): `slugify()` extracted out of `routes/studios.ts` (which generated `Studio.slug` the same way) so both call sites share one implementation.
+- **`lib/intakeFormFields.ts`**: `getEffectiveIntakeFormFields`/`ensureDefaultSystemFields` re-scoped from `studioId` to `intakeFormId`. Deleted `migrateExistingCustomQuestions` — confirmed zero callers anywhere in the repo (a one-time historical backfill utility from the original Package Q rollout that was never wired to anything), and it would have needed an `intakeFormId` parameter to keep compiling regardless.
+- **`routes/intakeForms.ts`** (new): `GET/POST /intake-forms`, `PATCH/DELETE /intake-forms/:id` (delete blocked while `isDefault`; a non-default delete cascades its own field rows in a transaction, then the DB's own `ON DELETE SET NULL` nulls any inquiries that referenced it), `GET/PUT /intake-forms/:id/fields` (moved here from `studioSettings.ts`, now form-scoped instead of studio-scoped).
+- **`routes/inquiries.ts`**: public `POST /` now resolves `formSlug` (public path) or the studio's default (staff path — `StaffInquiryForm` has no form-picker UI) via `resolveIntakeForm`, validates against that form's own field list, and stores `intakeFormId` on the created `Inquiry`.
+- **`routes/prefillDrafts.ts`**: accepts an optional `formSlug`, validates it belongs to the studio, builds `/inquiry/{studio-slug}/{form-slug}?draft=...` when given (unchanged `/inquiry/{studio-slug}?draft=...` shape when omitted).
+- **`routes/studioSettings.ts`**: `GET /public` now also resolves `formSlug` (or default), returns `formName` alongside `intakeFormFields`.
+- **Frontend**: `IntakeFormFieldsEditor.tsx` takes a required `intakeFormId` prop instead of being studio-wide. New `IntakeFormsManager.tsx` (Settings → Policies & Templates) lists/creates/deletes/sets-default and wraps the field editor. `App.tsx` gains `/inquiry/:studioSlug/:formSlug`; `IntakeForm.tsx` reads it, passes it through to both the fields fetch and the submission body, and treats a 404'd formSlug the same as an unknown studio (the existing "invalid link" full-page state). New shared `useIntakeForms.ts` hook + `IntakeFormPicker.tsx` component, wired into both `ClientDetail.tsx`'s "Copy prefilled link" and `ConversationsPanel.tsx`'s composer "+ menu" — both skip the picker entirely when a studio has one form or fewer (the common case), matching the same advisory-only philosophy as `preferredSchedule`.
+
+## Section 3 — editable field types, investigated first
+
+Confirmed (not assumed) that changing a `CUSTOM` field's `customQuestionType` after creation was **already fully supported** by the existing Settings UI (`IntakeFormFieldsEditor.tsx`'s `<select>` for `customQuestionType` has no lock/restriction) — no code change needed there.
+
+The historical-answer-rendering risk was real but narrower than it first looked: `Inquiry.customFieldAnswers` already stores its own immutable `type` per answer, captured at submission — `formatCustomAnswer` in `InquiryDetailsSection.tsx` already read from *that*, never the field's live `customQuestionType`, so a retyped field (e.g. `YES_NO` → `SELECT`) was already guaranteed not to reinterpret an old answer under the new type. The actual gap was defensive shape-safety: if `answer.answer` were ever something other than the string/string[] the function's type signature assumed (a malformed/pre-Package-Q row, or any future data drift), it would hand a raw non-string value straight to JSX — a real crash risk (`Objects are not valid as a React child`) for a genuinely unexpected shape. Hardened `formatCustomAnswer` with the exact same discipline as `AuditTrail.tsx`'s own crash fix (`formatValue`): array → join if all-strings else `JSON.stringify`; string → the existing YES_NO/plain-text handling; anything else (null/undefined/object/other) → a safe fallback, never a raw object.
+
+**Confirmed via the verification script**: retyped a live custom field `YES_NO` → `SELECT`; the pre-existing inquiry's `customFieldAnswers` snapshot still reads `{"type":"YES_NO","answer":"YES"}` unchanged after the retype (own immutable snapshot, unaffected); a **new** submission through the same now-`SELECT` field correctly stores `{"type":"SELECT","answer":"Yes, several"}`; and a submission attempting the **old** `YES_NO`-shaped answer (`"YES"`) against the now-`SELECT` field is correctly **rejected** (`400`, "must be one of the offered options") by `validateCustomFieldAnswers`, which validates fresh submissions against the field's current live type, not historical answers.
+
+## Verification
+
+**Backend** (direct-API script, 36/36 assertions passed): form CRUD; exactly-one-default invariant held through create/set-default/delete; deleting the current default blocked with a clear message; deleting a non-default form succeeds and detaches (not deletes) its inquiries' data; two forms' field lists fully isolated from each other (adding a field to one never appears on the other); public resolution correct for no-formSlug (→ default), a named formSlug, and an unknown formSlug (404); submission through each form captures the correct `intakeFormId` and validates against that form's own field set; field-type retyping behaves exactly as described in Section 3 above; FRONT_DESK can read forms but not create/modify them (403 on write, 200 on read); cross-studio PATCH/DELETE both 404 (never leak existence).
+
+**Browser** (Playwright, screenshots reviewed directly, not summarized): Settings → Policies & Templates shows the new "Intake Forms" card (form list, default badge, Set-as-default/Delete actions, the field editor for whichever form is selected). A brand-new form's dedicated public URL (`/inquiry/dev-studio/{new-form-slug}`) renders its own custom question; the same studio's default-form URL (`/inquiry/dev-studio`) does **not** show that question — confirmed isolated. ClientDetail's "Copy prefilled link" correctly opens a "Which intake form?" picker (listing all 3 forms present in the dev studio at verification time, default badge on the right one) before generating the link, since the studio has more than one form.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) — clean. `npx tsc --noEmit` + `npm run build` (web) — clean.
+
+## Commit
+
+`616efc5` — Support multiple named intake forms, editable field types, form picker on send. Pushed immediately after a collision check (`git fetch` + `git log HEAD..origin/main`) came back empty.
+
+## Cleanup
+
+Both scratch dev servers (API :5501, web :6501) stopped by PID after confirming the ports freed. All temporary verification scripts (`verify_intake_forms.mjs`, `verify_intake_forms_ui.mjs`/`ui2`/`ui3`/`ui4`) and screenshots left scratchpad-only, none committed. Test data (several intake forms and inquiries created across repeated verification runs, including one form literally named "UI Check Form {timestamp}") left in the dev database, consistent with this session's standing convention.
