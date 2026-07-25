@@ -7,6 +7,7 @@ import { DEFAULT_DEPOSIT_TIERS, validateDepositTiers } from "../lib/depositTiers
 import { THEME_PRESET_KEYS, isValidThemePreset } from "../lib/themePresets";
 import { getEffectiveIntakeFormFields } from "../lib/intakeFormFields";
 import { resolveIntakeForm } from "../lib/intakeForms";
+import { hasPermission, type PermissionKey } from "../lib/permissions";
 
 // Public: /privacy/:studioSlug and /terms/:studioSlug (unauthenticated) need
 // to read these two fields by slug, same "public sub-router mounted first"
@@ -219,8 +220,56 @@ function isValidMessageTemplates(value: unknown): boolean {
   });
 }
 
-staffRouter.patch("/", requireRole(Role.OWNER), async (req, res) => {
+// This one route accepts fields from several different settings domains
+// (policies, defaults, theme, referral, deposit tiers, message templates),
+// each governed by its own configurable permission key -- unlike every
+// other route in this expansion, a single requirePermission(key) can't gate
+// the whole thing, so each field-group present in the body is checked
+// against its own key BEFORE any validation/write runs. A request touching
+// even one field the actor isn't allowed to change is rejected outright
+// (403, nothing applied) rather than silently dropping just that field.
+function presentSettingsPermissionGroups(body: Record<string, unknown>): Set<PermissionKey> {
+  const groups = new Set<PermissionKey>();
+
+  if (
+    TEXT_FIELDS.some((f) => body[f] !== undefined) ||
+    body.waiverHealthQuestions !== undefined ||
+    body.waiverClauses !== undefined
+  ) {
+    groups.add("settings.managePolicies");
+  }
+
+  if (
+    body.estimateFollowUpHours !== undefined ||
+    body.giftCardDefaultExpirationDays !== undefined ||
+    body.coldLeadDays !== undefined ||
+    body.timezone !== undefined ||
+    body.showSidebarBadges !== undefined ||
+    body.businessHours !== undefined ||
+    body.reminderTemplates !== undefined ||
+    body.reminderSendTimes !== undefined
+  ) {
+    groups.add("settings.manageDefaults");
+  }
+
+  if (body.referralRewardAmountCents !== undefined) groups.add("settings.manageReferral");
+  if (body.messageTemplates !== undefined) groups.add("conversations.manageTemplates");
+  if (body.depositTiers !== undefined) groups.add("depositTiers.manage");
+  if (body.themePreset !== undefined) groups.add("settings.manageTheme");
+
+  return groups;
+}
+
+staffRouter.patch("/", async (req, res) => {
   const body = req.body ?? {};
+  const { studioId, role } = req.user!;
+
+  for (const key of presentSettingsPermissionGroups(body)) {
+    if (!(await hasPermission(studioId, role, key))) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+  }
+
   const existing = await getOrCreateSettings(req.user!.studioId);
 
   const data: Record<string, unknown> = {};

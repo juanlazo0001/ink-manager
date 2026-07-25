@@ -16,9 +16,15 @@ import { performMerge, validateMergePair } from "../lib/clientMerge";
 const router = Router();
 
 router.use(requireAuth);
-router.use(requirePermission("clients.manage"));
 
-router.post("/", async (req, res) => {
+// clients.manage used to gate this entire router as one blanket permission
+// -- split into clients.view/edit/merge/archive/import (clients.import
+// lives in clientImport.ts, a separate router) as of this expansion, each
+// applied per-route below. Any studio's existing clients.manage override
+// was propagated onto all five successors before this change shipped (see
+// REPORT.md's "Granular permissions expansion" entry) so no studio's
+// customization silently reset to a different default.
+router.post("/", requirePermission("clients.edit"), async (req, res) => {
   const body = req.body ?? {};
 
   const missing = ["firstName", "lastName"].filter((field) => !body[field]);
@@ -46,7 +52,7 @@ const NOT_MERGED = { mergedIntoId: null } as const;
 // GET /:id -- see Client.archivedAt.
 const NOT_ARCHIVED = { archivedAt: null } as const;
 
-router.get("/", async (req, res) => {
+router.get("/", requirePermission("clients.view"), async (req, res) => {
   const clients = await prisma.client.findMany({
     where: { studioId: req.user!.studioId, ...NOT_MERGED, ...NOT_ARCHIVED },
     orderBy: { createdAt: "desc" },
@@ -59,7 +65,7 @@ router.get("/", async (req, res) => {
 // studio by name/email/phone, not just contact-matching auto-suggestions.
 // A static path, so it must be registered before GET /:id below --
 // otherwise Express would match "/merge-search" as :id.
-router.get("/merge-search", async (req, res) => {
+router.get("/merge-search", requirePermission("clients.view"), async (req, res) => {
   const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
   const excludeId = typeof req.query.excludeId === "string" ? req.query.excludeId : undefined;
 
@@ -91,7 +97,7 @@ router.get("/merge-search", async (req, res) => {
   res.json(results);
 });
 
-router.get("/:id", async (req, res) => {
+router.get("/:id", requirePermission("clients.view"), async (req, res) => {
   const id = req.params.id as string;
   const client = await prisma.client.findUnique({
     where: { id },
@@ -207,7 +213,12 @@ const PROJECT_STATUSES: InquiryStatus[] = [InquiryStatus.SCHEDULING, InquiryStat
 // InquiryNote/AppointmentNote's own hardcoded "internal only, never shown
 // to an artist" rule at the route level, even if a studio granted ARTIST
 // clients.manage.
-router.get("/:id/notes", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+// Stacked with requireRole(OWNER, FRONT_DESK) as a hard floor -- this was
+// already true before this expansion (the old clients.manage gate was
+// itself stacked with the same requireRole here), meaning even a studio
+// that granted ARTIST clients.manage=true could never see client notes
+// through this route. Preserved exactly, not loosened.
+router.get("/:id/notes", requireRole(Role.OWNER, Role.FRONT_DESK), requirePermission("clients.view"), async (req, res) => {
   const id = req.params.id as string;
 
   const client = await prisma.client.findUnique({ where: { id }, select: { studioId: true } });
@@ -286,7 +297,7 @@ router.get("/:id/notes", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, r
 // hint) for entities that exist but have no active link yet. Deliberately
 // does NOT generate/rotate any token -- that stays on the inquiry/
 // appointment pages, this is read-only.
-router.get("/:id/shareable-links", async (req, res) => {
+router.get("/:id/shareable-links", requirePermission("clients.view"), async (req, res) => {
   const id = req.params.id as string;
   const now = new Date();
 
@@ -529,7 +540,7 @@ function normalizeDuplicatePair(clientId1: string, clientId2: string): [string, 
 // already dismissed as "not a duplicate" -- manual merge via search stays
 // available for a dismissed pair regardless, this only suppresses the
 // automatic suggestion banner.
-router.get("/:id/potential-duplicates", async (req, res) => {
+router.get("/:id/potential-duplicates", requirePermission("clients.view"), async (req, res) => {
   const id = req.params.id as string;
 
   const client = await prisma.client.findUnique({ where: { id }, include: { phones: true, emails: true } });
@@ -570,7 +581,7 @@ router.get("/:id/potential-duplicates", async (req, res) => {
 // merge eligibility: the pair remains fully mergeable via the manual
 // search picker (§2), since staff might reconsider later. Idempotent --
 // dismissing an already-dismissed pair just re-confirms it (upsert).
-router.post("/:id/dismiss-duplicate", async (req, res) => {
+router.post("/:id/dismiss-duplicate", requirePermission("clients.edit"), async (req, res) => {
   const id = req.params.id as string;
   const { otherClientId } = req.body ?? {};
 
@@ -623,7 +634,7 @@ const EDITABLE_CLIENT_FIELDS = [
   "otherContact",
 ] as const;
 
-router.patch("/:id", async (req, res) => {
+router.patch("/:id", requirePermission("clients.edit"), async (req, res) => {
   const id = req.params.id as string;
   const body = req.body ?? {};
 
@@ -696,7 +707,7 @@ function isUniqueViolation(err: unknown): boolean {
 // separate, explicit action (see make-primary below), so a client always
 // ends up with the primary contact staff actually chose, not whichever one
 // happened to be added first.
-router.post("/:id/phones", async (req, res) => {
+router.post("/:id/phones", requirePermission("clients.edit"), async (req, res) => {
   const id = req.params.id as string;
   const { phone, label } = req.body ?? {};
 
@@ -736,7 +747,7 @@ router.post("/:id/phones", async (req, res) => {
   res.status(201).json(created);
 });
 
-router.delete("/:id/phones/:phoneId", async (req, res) => {
+router.delete("/:id/phones/:phoneId", requirePermission("clients.edit"), async (req, res) => {
   const id = req.params.id as string;
   const phoneId = req.params.phoneId as string;
 
@@ -774,7 +785,7 @@ router.delete("/:id/phones/:phoneId", async (req, res) => {
   res.status(204).end();
 });
 
-router.post("/:id/phones/:phoneId/make-primary", async (req, res) => {
+router.post("/:id/phones/:phoneId/make-primary", requirePermission("clients.edit"), async (req, res) => {
   const id = req.params.id as string;
   const phoneId = req.params.phoneId as string;
 
@@ -807,7 +818,7 @@ router.post("/:id/phones/:phoneId/make-primary", async (req, res) => {
   res.json(updatedClient);
 });
 
-router.post("/:id/emails", async (req, res) => {
+router.post("/:id/emails", requirePermission("clients.edit"), async (req, res) => {
   const id = req.params.id as string;
   const { email, label } = req.body ?? {};
 
@@ -847,7 +858,7 @@ router.post("/:id/emails", async (req, res) => {
   res.status(201).json(created);
 });
 
-router.delete("/:id/emails/:emailId", async (req, res) => {
+router.delete("/:id/emails/:emailId", requirePermission("clients.edit"), async (req, res) => {
   const id = req.params.id as string;
   const emailId = req.params.emailId as string;
 
@@ -885,7 +896,7 @@ router.delete("/:id/emails/:emailId", async (req, res) => {
   res.status(204).end();
 });
 
-router.post("/:id/emails/:emailId/make-primary", async (req, res) => {
+router.post("/:id/emails/:emailId/make-primary", requirePermission("clients.edit"), async (req, res) => {
   const id = req.params.id as string;
   const emailId = req.params.emailId as string;
 
@@ -924,7 +935,7 @@ router.post("/:id/emails/:emailId/make-primary", async (req, res) => {
 // fields changes -- edit those separately via PATCH /clients/:id if needed.
 // (Except its secondary contact aliases, which do gain the source's
 // phone/email as new entries -- see carryOverContactAliases.)
-router.post("/:id/merge", async (req, res) => {
+router.post("/:id/merge", requirePermission("clients.merge"), async (req, res) => {
   const id = req.params.id as string;
   const { sourceClientId } = req.body ?? {};
 
@@ -964,7 +975,7 @@ router.post("/:id/merge", async (req, res) => {
 
 // Archive: soft, reversible hide -- same exclude-from-list-views treatment
 // as a merge, but nothing is repointed/destroyed and it can be undone.
-router.post("/:id/archive", async (req, res) => {
+router.post("/:id/archive", requirePermission("clients.archive"), async (req, res) => {
   const id = req.params.id as string;
   const client = await prisma.client.findUnique({ where: { id } });
   if (!client || client.studioId !== req.user!.studioId) {
@@ -988,7 +999,7 @@ router.post("/:id/archive", async (req, res) => {
   res.json(updated);
 });
 
-router.post("/:id/unarchive", async (req, res) => {
+router.post("/:id/unarchive", requirePermission("clients.archive"), async (req, res) => {
   const id = req.params.id as string;
   const client = await prisma.client.findUnique({ where: { id } });
   if (!client || client.studioId !== req.user!.studioId) {

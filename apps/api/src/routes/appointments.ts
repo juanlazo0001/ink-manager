@@ -259,7 +259,7 @@ router.get("/:id", requirePermission("appointments.view"), async (req, res) => {
 
 // Archive: soft, reversible hide -- same treatment as Client.archivedAt /
 // Inquiry.archivedAt.
-router.post("/:id/archive", requirePermission("appointments.manage"), async (req, res) => {
+router.post("/:id/archive", requirePermission("appointments.reschedule"), async (req, res) => {
   const id = req.params.id as string;
   const appointment = await prisma.appointment.findUnique({ where: { id } });
   if (!appointment || appointment.studioId !== req.user!.studioId) {
@@ -283,7 +283,7 @@ router.post("/:id/archive", requirePermission("appointments.manage"), async (req
   res.json(updated);
 });
 
-router.post("/:id/unarchive", requirePermission("appointments.manage"), async (req, res) => {
+router.post("/:id/unarchive", requirePermission("appointments.reschedule"), async (req, res) => {
   const id = req.params.id as string;
   const appointment = await prisma.appointment.findUnique({ where: { id } });
   if (!appointment || appointment.studioId !== req.user!.studioId) {
@@ -400,7 +400,7 @@ router.delete("/:id", requireRole(Role.OWNER), async (req, res) => {
 // Day-of liability waiver: one per appointment, front desk creates it and
 // hands the client the link; front desk later verifies the signed result
 // against the client's physical ID (POST /waivers/:id/verify).
-router.post("/:id/waiver", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+router.post("/:id/waiver", requirePermission("waivers.generate"), async (req, res) => {
   const id = req.params.id as string;
   const studioId = req.user!.studioId;
   const { autoSend } = req.body ?? {};
@@ -451,7 +451,7 @@ router.post("/:id/waiver", requireRole(Role.OWNER, Role.FRONT_DESK), async (req,
 // appointment should have at least one attached gift card, but the guard
 // below still checks -- if it's somehow missing, that's a data problem to
 // resolve manually rather than something to paper over.
-router.post("/:id/checkout", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+router.post("/:id/checkout", requirePermission("appointments.checkout"), async (req, res) => {
   const id = req.params.id as string;
   const studioId = req.user!.studioId;
   const body = req.body ?? {};
@@ -656,7 +656,7 @@ router.post("/:id/checkout", requireRole(Role.OWNER, Role.FRONT_DESK), async (re
 // route once the appointment is already COMPLETED -- no status
 // requirement here, since "forgot at checkout" is exactly the case this
 // needs to keep working for.
-router.post("/:id/photos", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+router.post("/:id/photos", requirePermission("appointments.photos.manage"), async (req, res) => {
   const id = req.params.id as string;
   const { urls } = req.body ?? {};
 
@@ -690,7 +690,7 @@ router.post("/:id/photos", requireRole(Role.OWNER, Role.FRONT_DESK), async (req,
   res.status(201).json(photos);
 });
 
-router.delete("/:id/photos/:photoId", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+router.delete("/:id/photos/:photoId", requirePermission("appointments.photos.manage"), async (req, res) => {
   const id = req.params.id as string;
   const photoId = req.params.photoId as string;
 
@@ -722,7 +722,13 @@ router.delete("/:id/photos/:photoId", requireRole(Role.OWNER, Role.FRONT_DESK), 
 // drag-and-drop is the first real caller of the latter, via this same
 // route, never a bespoke calendar-only endpoint). At least one of
 // status/startTime+endTime must be present.
-router.patch("/:id", requirePermission("appointments.manage"), async (req, res) => {
+//
+// appointments.reschedule is this route's (and archive/unarchive's) shared
+// successor to the retired appointments.manage key -- all three used that
+// exact same key before this expansion, so folding them into one new key
+// keeps their access identical rather than inventing a key the task's own
+// list didn't ask for.
+router.patch("/:id", requirePermission("appointments.reschedule"), async (req, res) => {
   const id = req.params.id as string;
   const { status, startTime, endTime } = req.body ?? {};
 
@@ -799,7 +805,7 @@ router.patch("/:id", requirePermission("appointments.manage"), async (req, res) 
 // Manually-written commentary log scoped to this one session -- same
 // shape/rules as InquiryNote (routes/inquiries.ts), just against
 // AppointmentNote. Deliberately OWNER/FRONT_DESK only via requireRole, not
-// requirePermission("appointments.manage") -- matches InquiryNote's own
+// requirePermission("appointments.reschedule") -- matches InquiryNote's own
 // hardcoded "internal only, never shown to an artist" precedent rather
 // than a studio's customizable appointments.manage grants, since an
 // ARTIST can otherwise view (though not manage) this same appointment.

@@ -1,16 +1,19 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
-import { AppointmentStatus, InquiryStatus, GiftCardStatus, Role } from "../../generated/prisma/enums";
-import { requireAuth, requireRole } from "../middleware/auth";
+import { AppointmentStatus, InquiryStatus, GiftCardStatus } from "../../generated/prisma/enums";
+import { requireAuth } from "../middleware/auth";
+import { hasPermission, requirePermission } from "../lib/permissions";
 
 const router = Router();
 router.use(requireAuth);
-// Same "all three staff roles" precedent as nav-counts.ts -- Dashboard.tsx
-// (the one page this backs) has never been role-gated, everyone lands
-// there after login. Revisit if the real dollar figures here (deposit
-// conversion, gift card liability) turn out to need OWNER/FRONT_DESK-only
-// treatment -- flagged in REPORT.md for review, not decided here.
-router.use(requireRole(Role.OWNER, Role.FRONT_DESK, Role.ARTIST));
+// Was unconditionally OWNER/FRONT_DESK/ARTIST -- reports.viewDashboard
+// preserves that (default true for both configurable roles). The real
+// dollar figures this route also returns (deposit conversion, gift card
+// liability) are now their own separate reports.viewFinancial permission,
+// default true for FRONT_DESK but false for ARTIST -- a deliberate
+// tightening this expansion makes, not a same-as-today default (see
+// lib/permissions.ts's own comment on this key, and REPORT.md).
+router.use(requirePermission("reports.viewDashboard"));
 
 const DEFAULT_RANGE_DAYS = 30;
 
@@ -54,8 +57,9 @@ function pct(numerator: number, denominator: number): number | null {
 // conversion rate is the more meaningful number, and gift card liability
 // is a right-now snapshot by definition).
 router.get("/dashboard", async (req, res) => {
-  const { studioId } = req.user!;
+  const { studioId, role } = req.user!;
   const { start, end } = parseRange(req);
+  const canViewFinancial = await hasPermission(studioId, role, "reports.viewFinancial");
 
   const inquiryBaseWhere = { studioId, archivedAt: null, createdAt: { gte: start, lte: end } } as const;
 
@@ -183,16 +187,24 @@ router.get("/dashboard", async (req, res) => {
       sampleSizeResponse: respondedRows.length,
     },
     artistUtilization,
-    depositConversion: {
-      sent: depositForms.length,
-      paid: paidDepositForms.length,
-      conversionRate: pct(paidDepositForms.length, depositForms.length),
-      avgHoursToPayment,
-    },
-    giftCardLiability: {
-      activeCardCount: giftCardAgg._count._all,
-      totalCents: giftCardAgg._sum.amountCents ?? 0,
-    },
+    // Real dollar figures -- omitted entirely (not just zeroed) without
+    // reports.viewFinancial, so the frontend can tell "no data" apart from
+    // "not allowed to see this" and hide the section rather than show a
+    // misleading $0.
+    ...(canViewFinancial
+      ? {
+          depositConversion: {
+            sent: depositForms.length,
+            paid: paidDepositForms.length,
+            conversionRate: pct(paidDepositForms.length, depositForms.length),
+            avgHoursToPayment,
+          },
+          giftCardLiability: {
+            activeCardCount: giftCardAgg._count._all,
+            totalCents: giftCardAgg._sum.amountCents ?? 0,
+          },
+        }
+      : {}),
   });
 });
 

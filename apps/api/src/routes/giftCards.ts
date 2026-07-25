@@ -2,6 +2,7 @@ import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { GiftCardStatus, Role } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
+import { requirePermission } from "../lib/permissions";
 import { diffObjects, logAudit } from "../lib/audit";
 import { computeGiftCardExpiration, generateUniqueGiftCardCode, syncExpiredStatus } from "../lib/giftCards";
 import { getOrCreateClientConversation } from "../lib/conversations";
@@ -60,9 +61,8 @@ publicRouter.get("/view/:code", async (req, res) => {
 
 const router = Router();
 router.use(requireAuth);
-router.use(requireRole(Role.OWNER, Role.FRONT_DESK));
 
-router.post("/", async (req, res) => {
+router.post("/", requirePermission("giftCards.issue"), async (req, res) => {
   const body = req.body ?? {};
   const { clientId, amountCents, appointmentId, expiresAt } = body;
   const studioId = req.user!.studioId;
@@ -129,14 +129,16 @@ router.post("/", async (req, res) => {
   res.status(201).json(card);
 });
 
-// OWNER-only: a "Deposit Exemption" is a real GiftCard row (status EXEMPT,
-// amountCents 0) that satisfies the "appointment requires an attached
-// ACTIVE gift card" rule without representing real money -- it reuses the
-// entire existing gift-card system (attach/detach, audit trail, appointment
-// validation in validateGiftCardForAttachment) rather than a parallel
-// mechanism. Day-to-day attach/detach of an already-issued exempt card
-// stays OWNER/FRONT_DESK via the router-level gate above; only issuance
-// itself is OWNER-restricted, same precedent as /:id/void below.
+// OWNER-only, permanently -- one of this expansion's fixed safety-floor
+// items, never matrix-configurable (see lib/permissions.ts's own top
+// comment and REPORT.md). A "Deposit Exemption" is a real GiftCard row
+// (status EXEMPT, amountCents 0) that satisfies the "appointment requires
+// an attached ACTIVE gift card" rule without representing real money -- it
+// reuses the entire existing gift-card system (attach/detach, audit trail,
+// appointment validation in validateGiftCardForAttachment) rather than a
+// parallel mechanism. Day-to-day attach/detach of an already-issued exempt
+// card is governed by the normal appointments/gift-card permissions; only
+// issuance itself is OWNER-restricted, same precedent as /:id/void below.
 router.post("/exempt", requireRole(Role.OWNER), async (req, res) => {
   const body = req.body ?? {};
   const { clientId, exemptionReason, expiresAt } = body;
@@ -193,7 +195,7 @@ router.post("/exempt", requireRole(Role.OWNER), async (req, res) => {
   res.status(201).json(card);
 });
 
-router.get("/:id", async (req, res) => {
+router.get("/:id", requirePermission("giftCards.view"), async (req, res) => {
   const id = req.params.id as string;
 
   const card = await prisma.giftCard.findUnique({ where: { id }, include: GIFT_CARD_DETAIL_INCLUDE });
@@ -219,7 +221,7 @@ const TEXT_RECEIPT_ERROR_MESSAGES: Record<string, string> = {
   send_failed: "The text failed to send -- try again in a moment.",
 };
 
-router.post("/:id/text-receipt", async (req, res) => {
+router.post("/:id/text-receipt", requirePermission("giftCards.issue"), async (req, res) => {
   const id = req.params.id as string;
   const studioId = req.user!.studioId;
 
@@ -266,7 +268,7 @@ router.post("/:id/text-receipt", async (req, res) => {
   res.json({ sent: true });
 });
 
-router.patch("/:id/attachment", async (req, res) => {
+router.patch("/:id/attachment", requirePermission("giftCards.issue"), async (req, res) => {
   const id = req.params.id as string;
   const { appointmentId } = req.body ?? {};
 
@@ -318,7 +320,10 @@ router.patch("/:id/attachment", async (req, res) => {
   });
 });
 
-router.post("/:id/void", requireRole(Role.OWNER), async (req, res) => {
+// Not a safety-floor item -- OWNER-only was just the previous hardcoded
+// default, now a genuinely configurable key (defaults preserve that exact
+// behavior: FRONT_DESK/ARTIST both false until an OWNER opts in).
+router.post("/:id/void", requirePermission("giftCards.void"), async (req, res) => {
   const id = req.params.id as string;
 
   const card = await prisma.giftCard.findUnique({ where: { id } });
@@ -349,6 +354,11 @@ router.post("/:id/void", requireRole(Role.OWNER), async (req, res) => {
   res.json(updated);
 });
 
+// Left hardcoded OWNER-only, not part of this expansion's key set -- was
+// already OWNER-only (not FD-accessible even under the old router-level
+// gate), and no key in this task's list maps to "edit a card's expiration/
+// other fields" without either overreaching giftCards.issue's FD-default
+// scope or inventing a key the task didn't ask for.
 router.patch("/:id", requireRole(Role.OWNER), async (req, res) => {
   const id = req.params.id as string;
   const body = req.body ?? {};

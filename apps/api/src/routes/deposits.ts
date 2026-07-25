@@ -2,6 +2,7 @@ import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { InquiryStatus, Role } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
+import { requirePermission } from "../lib/permissions";
 import { diffObjects, logAudit } from "../lib/audit";
 import { dollarsToCents } from "../lib/money";
 import { computeGiftCardExpiration, generateUniqueGiftCardCode } from "../lib/giftCards";
@@ -171,7 +172,7 @@ const staffRouter = Router();
 // SCHEDULING rather than CONFIRMED -- an appointment can't be created
 // without an attached gift card (Phase 3), so scheduling has to come after
 // the card exists, not before.
-staffRouter.patch("/:id/mark-paid", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+staffRouter.patch("/:id/mark-paid", requireAuth, requirePermission("deposits.markPaidManual"), async (req, res) => {
   const id = req.params.id as string;
 
   const depositForm = await prisma.depositForm.findUnique({ where: { id }, include: { inquiry: true } });

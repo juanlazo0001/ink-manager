@@ -221,7 +221,7 @@ router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
 // Advisory weekly availability -- editable by OWNER/FRONT_DESK for any
 // artist, or by the artist themselves for their own profile only (checked
 // via the JWT's own userId, never a client-supplied id).
-router.patch("/:id/preferred-schedule", async (req, res) => {
+router.patch("/:id/preferred-schedule", requirePermission("artistSchedules.manage"), async (req, res) => {
   const id = req.params.id as string;
   const { preferredSchedule } = req.body ?? {};
 
@@ -230,10 +230,13 @@ router.patch("/:id/preferred-schedule", async (req, res) => {
     return res.status(404).json({ error: "Artist not found" });
   }
 
-  const isStaff = req.user!.role === Role.OWNER || req.user!.role === Role.FRONT_DESK;
+  // requirePermission above already confirmed the actor has
+  // artistSchedules.manage -- this is the "-own" scoping on top of it:
+  // ARTIST's grant is always self-only, staying in effect regardless of
+  // the toggle, same convention as every other "-own" key in this
+  // expansion. OWNER/FRONT_DESK have no such restriction.
   const isSelf = req.user!.role === Role.ARTIST && artist.userId === req.user!.userId;
-
-  if (!isStaff && !isSelf) {
+  if (req.user!.role === Role.ARTIST && !isSelf) {
     return res.status(403).json({ error: "Forbidden" });
   }
 

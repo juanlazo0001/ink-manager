@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
@@ -8,14 +8,14 @@ import { SkeletonCards } from '../components/Skeleton'
 import StatusPill from '../components/StatusPill'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatStatus, isValidPhoneDigits, readFileAsDataUrl, MAX_IMAGE_FILE_BYTES } from '../lib/format'
-import { PERMISSION_GROUPS, CONFIGURABLE_ROLES } from '../lib/permissions'
+import { PERMISSION_GROUPS, DISPLAYED_ROLES } from '../lib/permissions'
 import { artistsQueryKey } from '../lib/queryKeys'
 import { useAuth } from '../context/useAuth'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useViewAs } from '../context/useViewAs'
 import { useSocket } from '../context/useSocket'
 import PresenceDot from '../components/PresenceDot'
-import { PlusIcon, ViewIcon, InstagramIcon, FacebookIcon } from '../components/icons'
+import { PlusIcon, ViewIcon, InstagramIcon, FacebookIcon, ChevronDownIcon } from '../components/icons'
 
 type PermissionMatrix = Record<string, Record<string, boolean>>
 type TeamTab = 'staff' | 'artists' | 'permissions'
@@ -197,6 +197,9 @@ export default function Team() {
   const [permissionsError, setPermissionsError] = useState<string | null>(null)
   const [permissionsSuccess, setPermissionsSuccess] = useState(false)
   const [permissionsSubmitting, setPermissionsSubmitting] = useState(false)
+  // Collapsed by default -- 11 groups covering ~49 keys is a lot to show
+  // expanded all at once (Section 3's own "grouped, not a flat wall" goal).
+  const [expandedPermissionGroups, setExpandedPermissionGroups] = useState<Set<string>>(new Set())
 
   const [locations, setLocations] = useState<LocationOption[] | null>(null)
 
@@ -281,9 +284,12 @@ export default function Team() {
     setPermissionsError(null)
     setPermissionsSubmitting(true)
 
-    const updates = CONFIGURABLE_ROLES.flatMap((role) =>
+    // Only the two roles this tab actually shows/edits -- CUSTOMER stays
+    // untouched by this save (still configurable via the API directly if
+    // ever needed, just not through this grouped UI).
+    const updates = DISPLAYED_ROLES.flatMap((role) =>
       PERMISSION_GROUPS.flatMap((group) =>
-        group.keys.map(({ key }) => ({ role, permissionKey: key, allowed: permissionsMatrix[role][key] })),
+        group.keys.map(({ key }) => ({ role, permissionKey: key, allowed: permissionsMatrix[role]?.[key] ?? false })),
       ),
     )
 
@@ -800,7 +806,7 @@ export default function Team() {
               <div>
                 <h2 className="text-lg font-semibold text-fg">Permissions</h2>
                 <p className="mt-1 text-sm text-fg-secondary">
-                  Choose what each role can do in your studio's portal. Owner always has full access.
+                  Choose what each role can do in your studio's portal.
                 </p>
               </div>
 
@@ -816,6 +822,13 @@ export default function Team() {
               )}
             </div>
 
+            {/* OWNER is never a toggleable column -- it short-circuits every
+                permission check regardless of matrix state, so showing it as
+                an editable checkbox would be misleading. */}
+            <p className="mt-3 rounded-lg bg-surface-inset px-3 py-2 text-xs text-fg-secondary">
+              Owner always has full access, in every category below.
+            </p>
+
             {permissionsError && <p className="mt-4 text-sm text-danger">{permissionsError}</p>}
 
             {permissionsSuccess && <p className="mt-4 text-sm text-success">Permissions updated.</p>}
@@ -825,49 +838,72 @@ export default function Team() {
             )}
 
             {permissionsMatrix && (
-              <div className="mt-4 overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead>
-                    <tr className="bg-surface-inset text-xs text-fg-muted">
-                      <th className="pb-3 font-medium">Permission</th>
-                      <th className="pb-3 text-center font-medium">Owner</th>
-                      {CONFIGURABLE_ROLES.map((role) => (
-                        <th key={role} className="pb-3 text-center font-medium">
-                          {formatStatus(role)}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {PERMISSION_GROUPS.map((group) => (
-                      <Fragment key={group.label}>
-                        <tr>
-                          <td colSpan={5} className="pt-4 pb-1 text-xs font-semibold uppercase tracking-wider text-fg-muted">
-                            {group.label}
-                          </td>
-                        </tr>
-                        {group.keys.map(({ key, label }) => (
-                          <tr key={key}>
-                            <td className="py-2 text-fg-secondary">{label}</td>
-                            <td className="py-2 text-center">
-                              <input type="checkbox" checked disabled className="h-4 w-4 rounded border-border accent-accent" />
-                            </td>
-                            {CONFIGURABLE_ROLES.map((role) => (
-                              <td key={role} className="py-2 text-center">
-                                <input
-                                  type="checkbox"
-                                  checked={permissionsMatrix[role]?.[key] ?? false}
-                                  onChange={() => togglePermission(role, key)}
-                                  className="h-4 w-4 rounded border-border bg-surface-inset accent-accent"
-                                />
-                              </td>
+              <div className="mt-4 space-y-2">
+                {PERMISSION_GROUPS.map((group) => {
+                  const isExpanded = expandedPermissionGroups.has(group.label)
+                  const enabledCount = group.keys.filter((k) =>
+                    DISPLAYED_ROLES.some((role) => permissionsMatrix[role]?.[k.key]),
+                  ).length
+
+                  return (
+                    <div key={group.label} className="rounded-xl border border-border">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpandedPermissionGroups((current) => {
+                            const next = new Set(current)
+                            if (next.has(group.label)) next.delete(group.label)
+                            else next.add(group.label)
+                            return next
+                          })
+                        }
+                        className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left"
+                      >
+                        <span className="flex items-center gap-2">
+                          <ChevronDownIcon className={`h-4 w-4 shrink-0 text-fg-muted transition-transform ${isExpanded ? '' : '-rotate-90'}`} />
+                          <span className="text-sm font-semibold text-fg">{group.label}</span>
+                        </span>
+                        <span className="shrink-0 text-xs text-fg-muted">
+                          {enabledCount}/{group.keys.length} enabled
+                        </span>
+                      </button>
+
+                      {isExpanded && (
+                        <div className="border-t border-border">
+                          <div className="grid grid-cols-[1fr_auto_auto] gap-x-4 gap-y-1 px-4 pb-2 pt-3 text-xs font-medium text-fg-muted">
+                            <span />
+                            {DISPLAYED_ROLES.map((role) => (
+                              <span key={role} className="text-center">
+                                {formatStatus(role)}
+                              </span>
                             ))}
-                          </tr>
-                        ))}
-                      </Fragment>
-                    ))}
-                  </tbody>
-                </table>
+                          </div>
+                          <div className="divide-y divide-border">
+                            {group.keys.map(({ key, label, description }) => (
+                              <div key={key} className="grid grid-cols-[1fr_auto_auto] items-center gap-x-4 px-4 py-2.5">
+                                <div className="min-w-0">
+                                  <p className="text-sm font-medium text-fg">{label}</p>
+                                  <p className="mt-0.5 text-xs text-fg-secondary">{description}</p>
+                                </div>
+                                {DISPLAYED_ROLES.map((role) => (
+                                  <div key={role} className="flex justify-center">
+                                    <input
+                                      type="checkbox"
+                                      aria-label={`${label} — ${formatStatus(role)}`}
+                                      checked={permissionsMatrix[role]?.[key] ?? false}
+                                      onChange={() => togglePermission(role, key)}
+                                      className="h-4 w-4 rounded border-border bg-surface-inset accent-accent"
+                                    />
+                                  </div>
+                                ))}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             )}
           </div>

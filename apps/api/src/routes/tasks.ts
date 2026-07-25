@@ -5,6 +5,7 @@ import { requireAuth, requireRole } from "../middleware/auth";
 import { diffObjects, logAudit } from "../lib/audit";
 import { TASK_SOURCE_REGISTRY } from "../lib/tasks/registry";
 import { emitInvalidation } from "../lib/realtime/registry";
+import { hasPermission, requirePermission } from "../lib/permissions";
 
 const router = Router();
 router.use(requireAuth);
@@ -13,9 +14,11 @@ router.use(requireRole(Role.OWNER, Role.FRONT_DESK, Role.ARTIST));
 const VALID_TASK_TYPES = new Set(TASK_SOURCE_REGISTRY.map((s) => s.type));
 
 // System tasks are front-desk work (front desk walks in and sees everything
-// needing attention); ARTIST has My Inquiries for their own pipeline
-// already, so they get personal tasks only here -- no system task type,
-// including WAIVER_TO_VERIFY, is ever computed for that role.
+// needing attention) -- governed by tasks.viewQueue, defaulting true for
+// FRONT_DESK and false for ARTIST (who has My Inquiries for their own
+// pipeline instead; no system task type, including WAIVER_TO_VERIFY, is
+// ever computed without this permission, matching ARTIST's pre-existing
+// exclusion exactly).
 router.get("/", async (req, res) => {
   const { studioId, userId, role } = req.user!;
 
@@ -45,7 +48,12 @@ router.get("/", async (req, res) => {
           orderBy: [{ completedAt: "asc" }, { dueAt: "asc" }, { createdAt: "asc" }],
         });
 
-  if (role === Role.ARTIST) {
+  // ARTIST never got a system queue at all (they have My Inquiries for
+  // their own pipeline instead); tasks.viewQueue's default already
+  // reflects that (FALSE for ARTIST). FRONT_DESK's system-queue access is
+  // now the same toggle instead of an unconditional role check -- both
+  // paths collapse to the identical empty-system-array response.
+  if (!(await hasPermission(studioId, role, "tasks.viewQueue"))) {
     return res.json({ system: [], personal, assignedByMe });
   }
 
@@ -64,7 +72,7 @@ router.get("/", async (req, res) => {
   res.json({ system, personal, assignedByMe });
 });
 
-router.post("/dismiss", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+router.post("/dismiss", requirePermission("tasks.viewQueue"), async (req, res) => {
   const { studioId, userId } = req.user!;
   const { taskType, dismissalKey } = req.body ?? {};
 
@@ -97,7 +105,7 @@ router.post("/dismiss", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, re
   res.status(201).json(dismissal);
 });
 
-router.post("/personal", async (req, res) => {
+router.post("/personal", requirePermission("tasks.manageOwn"), async (req, res) => {
   const { studioId, userId, role } = req.user!;
   // Renamed on destructure -- req.body's userId is the intended ASSIGNEE,
   // never to be confused with req.user's own id.
@@ -119,13 +127,15 @@ router.post("/personal", async (req, res) => {
     }
   }
 
-  // Assigning to someone else is OWNER/FRONT_DESK only; everyone else can
-  // only create a task for themselves (assigneeUserId omitted or equal to
-  // their own id).
+  // Assigning to someone else needs tasks.assignToOthers (defaults true for
+  // FRONT_DESK, false for ARTIST, matching the previous hardcoded OWNER/
+  // FRONT_DESK-only rule); everyone with tasks.manageOwn (checked by the
+  // route-level gate above) can always create a task for themselves
+  // (assigneeUserId omitted or equal to their own id).
   let assigneeId = userId;
   if (typeof assigneeUserId === "string" && assigneeUserId !== userId) {
-    if (role !== Role.OWNER && role !== Role.FRONT_DESK) {
-      return res.status(403).json({ error: "Only OWNER/FRONT_DESK can assign a task to someone else" });
+    if (!(await hasPermission(studioId, role, "tasks.assignToOthers"))) {
+      return res.status(403).json({ error: "Forbidden" });
     }
     const assignee = await prisma.user.findUnique({ where: { id: assigneeUserId } });
     if (!assignee || assignee.studioId !== studioId || assignee.role === Role.CUSTOMER) {
@@ -159,7 +169,7 @@ router.post("/personal", async (req, res) => {
   res.status(201).json(task);
 });
 
-router.patch("/personal/:id", async (req, res) => {
+router.patch("/personal/:id", requirePermission("tasks.manageOwn"), async (req, res) => {
   const id = req.params.id as string;
   const { studioId, userId } = req.user!;
   const body = req.body ?? {};
@@ -234,7 +244,7 @@ router.patch("/personal/:id", async (req, res) => {
 // Assignee-only completion (see PATCH above, unchanged); delete is looser
 // -- the creator (who may have assigned this to someone else) or the
 // assignee can both remove it.
-router.delete("/personal/:id", async (req, res) => {
+router.delete("/personal/:id", requirePermission("tasks.manageOwn"), async (req, res) => {
   const id = req.params.id as string;
   const { studioId, userId } = req.user!;
 

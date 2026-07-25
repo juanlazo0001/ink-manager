@@ -16,19 +16,39 @@ import { diffObjects, logAudit } from "../lib/audit";
 import { emitInvalidation } from "../lib/realtime/registry";
 import {
   canViewConversation,
+  getConversationVisibilityFlags,
   getOrCreateStaffConversation,
   getUnreadCountForConversation,
   visibleConversationWhere,
+  type ConversationVisibilityFlags,
 } from "../lib/conversations";
 import { TAGGABLE_ENTITY_TYPES, resolveTagLabel, validateTaggableEntity } from "../lib/conversationTags";
 import { sanitizePrefillPayload } from "../lib/prefill";
 import { sendClientSms } from "../lib/clientSms";
 import { decryptSecret } from "../lib/secrets";
 import { getRfc822MessageId, getValidAccessToken, sendGmailMessage } from "../lib/gmail";
+import { hasPermission } from "../lib/permissions";
+
+declare global {
+  namespace Express {
+    interface Locals {
+      conversationFlags?: ConversationVisibilityFlags;
+    }
+  }
+}
 
 const router = Router();
 router.use(requireAuth);
 router.use(requireRole(Role.OWNER, Role.FRONT_DESK, Role.ARTIST));
+
+// Computed once per request, right after the role gate -- every route below
+// that calls visibleConversationWhere/canViewConversation reads
+// res.locals.conversationFlags instead of each re-deriving it (a DB
+// round-trip) independently.
+router.use(async (req, res, next) => {
+  res.locals.conversationFlags = await getConversationVisibilityFlags(req.user!.studioId, req.user!.role);
+  next();
+});
 
 const DRAFT_INQUIRY_MESSAGE_CAP = 50;
 
@@ -220,7 +240,7 @@ router.get("/", async (req, res) => {
     : {};
 
   const where: Prisma.ConversationWhereInput = {
-    ...visibleConversationWhere(studioId, userId, role),
+    ...visibleConversationWhere(studioId, userId, role, res.locals.conversationFlags!),
     ...typeWhere,
     ...(entityTypeFilter ? { tags: { some: { entityType: entityTypeFilter } } } : {}),
     ...(Object.keys(clientWhere).length > 0 ? { client: clientWhere } : {}),
@@ -403,7 +423,7 @@ router.get("/:id/messages", async (req, res) => {
     where: { id },
     include: { ...COUNTERPART_SELECT, tags: true },
   });
-  if (!conversation || !canViewConversation(conversation, studioId, userId, role)) {
+  if (!conversation || !canViewConversation(conversation, studioId, userId, role, res.locals.conversationFlags!)) {
     return res.status(404).json({ error: "Conversation not found" });
   }
 
@@ -465,7 +485,7 @@ router.post("/:id/tags", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, r
   const { entityType, entityId } = req.body ?? {};
 
   const conversation = await prisma.conversation.findUnique({ where: { id } });
-  if (!conversation || !canViewConversation(conversation, studioId, userId, role)) {
+  if (!conversation || !canViewConversation(conversation, studioId, userId, role, res.locals.conversationFlags!)) {
     return res.status(404).json({ error: "Conversation not found" });
   }
 
@@ -512,7 +532,7 @@ router.delete("/:id/tags/:tagId", requireRole(Role.OWNER, Role.FRONT_DESK), asyn
   const { studioId, userId, role } = req.user!;
 
   const conversation = await prisma.conversation.findUnique({ where: { id } });
-  if (!conversation || !canViewConversation(conversation, studioId, userId, role)) {
+  if (!conversation || !canViewConversation(conversation, studioId, userId, role, res.locals.conversationFlags!)) {
     return res.status(404).json({ error: "Conversation not found" });
   }
 
@@ -544,7 +564,7 @@ router.post("/:id/messages", async (req, res) => {
     where: { id },
     include: { participants: { select: { userId: true } } },
   });
-  if (!conversation || !canViewConversation(conversation, studioId, userId, role)) {
+  if (!conversation || !canViewConversation(conversation, studioId, userId, role, res.locals.conversationFlags!)) {
     return res.status(404).json({ error: "Conversation not found" });
   }
 
@@ -585,6 +605,13 @@ router.post("/:id/messages", async (req, res) => {
     return res.status(400).json({ error: "body or attachments is required" });
   }
 
+  // conversations.sendLive gates the REAL send specifically (SMS/email
+  // actually going out), not whether a message can be posted at all --
+  // lacking it behaves exactly like "channel not connected" below: falls
+  // through to the log-only path, same zero-regression shape that already
+  // existed for a disconnected integration.
+  const canSendLive = await hasPermission(studioId, role, "conversations.sendLive");
+
   // Real send: a CLIENT thread's outbound SMS attempts an actual Twilio
   // send when this studio has SMS connected, persisting the Message only
   // on provider acceptance -- see lib/clientSms.ts (the same function
@@ -592,6 +619,7 @@ router.post("/:id/messages", async (req, res) => {
   // direction/thread type) falls through to the log-only path below,
   // completely unchanged from before this phase -- zero regression.
   if (
+    canSendLive &&
     conversation.type === ConversationType.CLIENT &&
     channel === MessageChannel.SMS &&
     direction === MessageDirection.OUTBOUND
@@ -641,6 +669,7 @@ router.post("/:id/messages", async (req, res) => {
   // a fresh one -- the client-supplied subject (if the composer's subject
   // field was edited) always wins over either default.
   if (
+    canSendLive &&
     conversation.type === ConversationType.CLIENT &&
     channel === MessageChannel.EMAIL &&
     direction === MessageDirection.OUTBOUND
@@ -857,7 +886,7 @@ router.patch("/:id/messages/:messageId", async (req, res) => {
     where: { id },
     include: { participants: { select: { userId: true } } },
   });
-  if (!conversation || !canViewConversation(conversation, studioId, userId, role)) {
+  if (!conversation || !canViewConversation(conversation, studioId, userId, role, res.locals.conversationFlags!)) {
     return res.status(404).json({ error: "Conversation not found" });
   }
 
@@ -907,7 +936,7 @@ router.get("/:id/context", requireRole(Role.OWNER, Role.FRONT_DESK), async (req,
   const { studioId, userId, role } = req.user!;
 
   const conversation = await prisma.conversation.findUnique({ where: { id } });
-  if (!conversation || !canViewConversation(conversation, studioId, userId, role) || conversation.type !== ConversationType.CLIENT) {
+  if (!conversation || !canViewConversation(conversation, studioId, userId, role, res.locals.conversationFlags!) || conversation.type !== ConversationType.CLIENT) {
     return res.status(404).json({ error: "Conversation not found" });
   }
 
@@ -992,7 +1021,7 @@ router.post("/:id/attach-image", requireRole(Role.OWNER, Role.FRONT_DESK), async
   const { imageUrl, inquiryId } = req.body ?? {};
 
   const conversation = await prisma.conversation.findUnique({ where: { id } });
-  if (!conversation || !canViewConversation(conversation, studioId, userId, role) || conversation.type !== ConversationType.CLIENT) {
+  if (!conversation || !canViewConversation(conversation, studioId, userId, role, res.locals.conversationFlags!) || conversation.type !== ConversationType.CLIENT) {
     return res.status(404).json({ error: "Conversation not found" });
   }
 
@@ -1050,7 +1079,7 @@ router.post("/:id/draft-inquiry", requireRole(Role.OWNER, Role.FRONT_DESK), asyn
   const { studioId, userId, role } = req.user!;
 
   const conversation = await prisma.conversation.findUnique({ where: { id } });
-  if (!conversation || !canViewConversation(conversation, studioId, userId, role) || conversation.type !== ConversationType.CLIENT) {
+  if (!conversation || !canViewConversation(conversation, studioId, userId, role, res.locals.conversationFlags!) || conversation.type !== ConversationType.CLIENT) {
     return res.status(404).json({ error: "Conversation not found" });
   }
 
@@ -1107,7 +1136,7 @@ router.post("/:id/read", async (req, res) => {
     where: { id },
     include: { participants: { select: { userId: true } } },
   });
-  if (!conversation || !canViewConversation(conversation, studioId, userId, role)) {
+  if (!conversation || !canViewConversation(conversation, studioId, userId, role, res.locals.conversationFlags!)) {
     return res.status(404).json({ error: "Conversation not found" });
   }
 

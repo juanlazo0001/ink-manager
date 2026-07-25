@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
-import { requireAuth, requireRole } from "../middleware/auth";
-import { Role } from "../../generated/prisma/enums";
+import { requireAuth } from "../middleware/auth";
+import { requirePermission } from "../lib/permissions";
 
 const router = Router();
 
@@ -19,7 +19,7 @@ function isFromTo(value: unknown): value is FromTo {
   return typeof value === "object" && value !== null && "from" in value && "to" in value;
 }
 
-router.get("/", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+router.get("/", requireAuth, requirePermission("audit.view"), async (req, res) => {
   const entityType = typeof req.query.entityType === "string" ? req.query.entityType : undefined;
   const entityId = typeof req.query.entityId === "string" ? req.query.entityId : undefined;
 

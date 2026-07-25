@@ -2,21 +2,71 @@ import { prisma } from "./prisma";
 import { ConversationType, Role } from "../../generated/prisma/enums";
 import type { Prisma } from "../../generated/prisma/client";
 import { logAudit } from "./audit";
+import { hasPermission } from "./permissions";
 
-// Front desk is always the intermediary between clients and artists --
-// artists never see client threads, only their own staff thread. OWNER/
-// FRONT_DESK see everything in the studio (the shared-inbox decision).
-export function visibleConversationWhere(studioId: string, userId: string, role: Role): Prisma.ConversationWhereInput {
-  if (role === Role.ARTIST) {
-    return {
-      studioId,
-      OR: [
+// Computed ONCE per request (see routes/conversations.ts's own middleware)
+// rather than re-derived inside visibleConversationWhere/canViewConversation
+// on every call -- both are called many times per request (once per
+// single-thread route, plus the list route), and hasPermission is a DB
+// round-trip; passing the already-resolved flags through keeps those
+// functions synchronous and cheap, matching how they worked before this
+// expansion made thread-type visibility configurable.
+export interface ConversationVisibilityFlags {
+  canViewClientThreads: boolean;
+  canViewStaffThreads: boolean;
+}
+
+export async function getConversationVisibilityFlags(
+  studioId: string,
+  role: Role,
+): Promise<ConversationVisibilityFlags> {
+  const [canViewClientThreads, canViewStaffThreads] = await Promise.all([
+    hasPermission(studioId, role, "conversations.viewClientThreads"),
+    hasPermission(studioId, role, "conversations.viewStaffThreads"),
+  ]);
+  return { canViewClientThreads, canViewStaffThreads };
+}
+
+// Front desk was always the intermediary between clients and artists --
+// artists never saw client threads, only their own staff thread; OWNER/
+// FRONT_DESK saw everything in the studio (the shared-inbox decision).
+// That's now expressed as two independently-toggleable permissions
+// (conversations.viewClientThreads/viewStaffThreads) instead of a fixed
+// rule, but OWNER's own unconditional access and ARTIST's "-own" scoping
+// on STAFF/GROUP threads are unchanged -- flags just gates whether each
+// thread-type clause is included at all.
+export function visibleConversationWhere(
+  studioId: string,
+  userId: string,
+  role: Role,
+  flags: ConversationVisibilityFlags,
+): Prisma.ConversationWhereInput {
+  const clauses: Prisma.ConversationWhereInput[] = [];
+
+  if (flags.canViewClientThreads) {
+    clauses.push({ type: ConversationType.CLIENT });
+  }
+
+  if (flags.canViewStaffThreads) {
+    if (role === Role.ARTIST) {
+      // "-own" scoping stays in effect regardless of the toggle -- an
+      // artist's staff-thread visibility is always just their own 1:1
+      // thread plus any GROUP thread they've been added to, never another
+      // staff member's.
+      clauses.push(
         { type: ConversationType.STAFF, staffUserId: userId },
         { type: ConversationType.GROUP, participants: { some: { userId } } },
-      ],
-    };
+      );
+    } else {
+      clauses.push({ type: ConversationType.STAFF }, { type: ConversationType.GROUP });
+    }
   }
-  return { studioId };
+
+  // Neither toggle is on -- matches nothing, rather than falling back to
+  // an unfiltered { studioId } that would silently ignore both flags.
+  if (clauses.length === 0) return { studioId, id: "__no_visible_conversations__" };
+
+  return { studioId, OR: clauses };
 }
 
 export function canViewConversation(
@@ -29,8 +79,16 @@ export function canViewConversation(
   studioId: string,
   userId: string,
   role: Role,
+  flags: ConversationVisibilityFlags,
 ): boolean {
   if (conversation.studioId !== studioId) return false;
+
+  if (conversation.type === ConversationType.CLIENT) {
+    return flags.canViewClientThreads;
+  }
+
+  if (!flags.canViewStaffThreads) return false;
+
   if (role === Role.ARTIST) {
     if (conversation.type === ConversationType.STAFF) return conversation.staffUserId === userId;
     if (conversation.type === ConversationType.GROUP) {
@@ -38,6 +96,7 @@ export function canViewConversation(
     }
     return false;
   }
+
   return true;
 }
 
@@ -63,8 +122,12 @@ export async function getUnreadCountForConversation(conversationId: string, user
 // created-after-seen sections in navCounts.ts (see the section-strategy
 // pattern there).
 export async function getUnreadConversationCount(studioId: string, userId: string, role: Role): Promise<number> {
+  // hasPermission (inside getConversationVisibilityFlags) already
+  // short-circuits true for OWNER without a DB round-trip, so no separate
+  // OWNER case is needed here.
+  const flags = await getConversationVisibilityFlags(studioId, role);
   const conversations = await prisma.conversation.findMany({
-    where: visibleConversationWhere(studioId, userId, role),
+    where: visibleConversationWhere(studioId, userId, role, flags),
     select: { id: true },
   });
 

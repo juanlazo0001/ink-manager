@@ -5,6 +5,7 @@ import { AppointmentStatus, Channel, InquiryStatus, MessageChannel, MessageDirec
 import { Prisma } from "../../generated/prisma/client";
 import { optionalAuth, requireAuth, requireRole } from "../middleware/auth";
 import { Role } from "../../generated/prisma/enums";
+import { hasPermission, requirePermission } from "../lib/permissions";
 import { diffObjects, logAudit } from "../lib/audit";
 import { validateGiftCardForAttachment, validateGiftCardsForAttachment } from "../lib/giftCards";
 import { getOrCreateClientConversation, getOrCreateStaffConversation } from "../lib/conversations";
@@ -63,11 +64,12 @@ router.post("/", optionalAuth, async (req, res) => {
   const isStaffRequest = Boolean(req.user);
 
   // optionalAuth only distinguishes "was there a valid token" -- it doesn't
-  // restrict which role that token belongs to. Every other staff-mutation
-  // route in this file is OWNER/FRONT_DESK only (matching StaffInquiryForm's
-  // own frontend gate), so an authenticated ARTIST hitting this route
-  // directly must be rejected the same way, not silently allowed through.
-  if (isStaffRequest && req.user!.role !== Role.OWNER && req.user!.role !== Role.FRONT_DESK) {
+  // restrict which role that token belongs to. This route has no requireAuth
+  // middleware to hang requirePermission off of (it's dual-purpose: public
+  // intake form + authenticated staff walk-in log), so the permission check
+  // is inline via hasPermission() directly, same public-only-carve-out
+  // reasoning as the other in-route checks in this handler (smsConsent, etc.).
+  if (isStaffRequest && !(await hasPermission(req.user!.studioId, req.user!.role, "inquiries.create"))) {
     return res.status(403).json({ error: "Forbidden" });
   }
 
@@ -501,7 +503,14 @@ function queryStringArray(value: unknown): string[] {
 // lowering or real pagination gets added; a filter a client applies to
 // only the first page it already has would quietly under-report matches
 // that exist further back. Doing it in the query keeps that always true.
-router.get("/", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+// The general, unfiltered list -- stays OWNER/FRONT_DESK-only regardless
+// of the inquiries.view toggle. ARTIST's own version of "view" is fully
+// served by the separately-scoped GET /assigned-to-me below (assignedArtistId
+// === their own artist id); this route has no such scoping, so granting it
+// via the same key ARTIST defaults to true for would let an artist see
+// every inquiry in the studio, not just their own -- exactly the kind of
+// default-widening this expansion's own "-own" convention exists to avoid.
+router.get("/", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), requirePermission("inquiries.view"), async (req, res) => {
   const { studioId } = req.user!;
 
   const statusValues = queryStringArray(req.query.status).filter((s): s is InquiryStatus =>
@@ -574,7 +583,7 @@ router.get("/", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (re
 // opening up either staff-only route. Default (no scope param) behavior
 // is completely unchanged, so MyInquiries.tsx's existing approve/decline
 // inbox is unaffected.
-router.get("/assigned-to-me", requireAuth, requireRole(Role.ARTIST), async (req, res) => {
+router.get("/assigned-to-me", requireAuth, requireRole(Role.ARTIST), requirePermission("inquiries.view"), async (req, res) => {
   const artist = await prisma.artist.findUnique({ where: { userId: req.user!.userId } });
   if (!artist) {
     return res.json([]);
@@ -594,7 +603,10 @@ router.get("/assigned-to-me", requireAuth, requireRole(Role.ARTIST), async (req,
   res.json(inquiries);
 });
 
-router.get("/:id", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+// Same reasoning as GET / above -- stays OWNER/FRONT_DESK-only regardless
+// of the inquiries.view toggle; an artist's own inquiries are reached via
+// GET /assigned-to-me instead, which has its own assignedArtistId scoping.
+router.get("/:id", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), requirePermission("inquiries.view"), async (req, res) => {
   const id = req.params.id as string;
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id }, include: INQUIRY_INCLUDE });
@@ -664,7 +676,7 @@ const IMAGE_META_FIELDS = {
   placementImages: "placementImagesMeta",
 } as const;
 
-router.patch("/:id", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+router.patch("/:id", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
   const id = req.params.id as string;
   const body = req.body ?? {};
 
@@ -748,7 +760,7 @@ router.patch("/:id", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), asyn
 // Staff hands a NEW inquiry off to an artist. Re-assigning only makes sense
 // while it's still NEW — once an artist has responded (or is mid-review),
 // this endpoint won't touch it; DECLINE below is what puts it back to NEW.
-router.patch("/:id/assign", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+router.patch("/:id/assign", requireAuth, requirePermission("inquiries.assignArtist"), async (req, res) => {
   const id = req.params.id as string;
   const { artistId } = req.body ?? {};
 
@@ -798,7 +810,7 @@ const DECISIONS = ["APPROVE", "DECLINE"] as const;
 // artist's own estimate and hands it back to staff (AWAITING_CLIENT_RESPONSE).
 // DECLINE unassigns it and puts it back in the pool (NEW) with a note for
 // staff explaining why, so it can be reassigned.
-router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), async (req, res) => {
+router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), requirePermission("inquiries.enterEstimate"), async (req, res) => {
   const id = req.params.id as string;
   const { decision, priceEstimateLow, priceEstimateHigh, timeEstimateHoursMin, timeEstimateHoursMax, declineNote } =
     req.body ?? {};
@@ -900,7 +912,7 @@ router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), async (req, 
 // BUDGET_NEGOTIATION (resend after the client pushed back on price) — either
 // way it lands the client back in AWAITING_CLIENT_RESPONSE to review the
 // (possibly updated) numbers.
-router.post("/:id/send-estimate", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.sendEstimate"), async (req, res) => {
   const id = req.params.id as string;
   const { priceEstimateLow, priceEstimateHigh, timeEstimateHoursMin, timeEstimateHoursMax } = req.body ?? {};
 
@@ -1052,7 +1064,14 @@ const REVISION_TOKEN_TTL_DAYS = 7;
 // (distinct token/fields from the pre-conversion estimateToken flow -- see
 // estimateRevision* fields on the schema and routes/estimates.ts's
 // /revision/verify + /revision/respond).
-router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+// Stays OWNER/FRONT_DESK-only regardless of the inquiries.enterEstimate
+// toggle -- this key's ARTIST default (true) exists for their own,
+// scoped PATCH /:id/respond (initial estimate entry on their own assigned
+// inquiry, pre-conversion); revising an estimate on an ALREADY-CONVERTED
+// project is a materially different, bigger capability ARTIST has never
+// had, not requested by this expansion, and this route has no per-artist
+// scoping to safely extend it through.
+router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), requirePermission("inquiries.enterEstimate"), async (req, res) => {
   const id = req.params.id as string;
   const { priceEstimateLow, priceEstimateHigh, timeEstimateHoursMin, timeEstimateHoursMax, reason } = req.body ?? {};
 
@@ -1180,7 +1199,7 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
 // back to the Inquiry, and attaches the gift card in the same transaction.
 // Doesn't block on a tight same-day schedule for the artist — just flags
 // it via bufferWarning so staff can decide.
-router.post("/:id/schedule", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+router.post("/:id/schedule", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
   const id = req.params.id as string;
   const { startTime, endTime, giftCardIds } = req.body ?? {};
 
@@ -1286,7 +1305,7 @@ router.post("/:id/schedule", requireAuth, requireRole(Role.OWNER, Role.FRONT_DES
 // scheduling without losing it, for a client who wants to wait for a
 // specific slot. The optional note is stored the same way an artist's
 // decline note is -- a single "most recent status note" field.
-router.post("/:id/waitlist", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+router.post("/:id/waitlist", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
   const id = req.params.id as string;
   const { note } = req.body ?? {};
 
@@ -1329,7 +1348,7 @@ router.post("/:id/waitlist", requireAuth, requireRole(Role.OWNER, Role.FRONT_DES
 // reverse. Symmetric with it: the only thing this undoes is that exact
 // transition, back to SCHEDULING (never straight to CONFIRMED -- picking an
 // actual time slot stays its own deliberate step through /schedule).
-router.post("/:id/unwaitlist", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+router.post("/:id/unwaitlist", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
   const id = req.params.id as string;
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
@@ -1368,7 +1387,7 @@ router.post("/:id/unwaitlist", requireAuth, requireRole(Role.OWNER, Role.FRONT_D
 // confirmed project can still fall through). Deliberately conversation-
 // agnostic: a separate workstream adds a chat-side entry point that calls
 // this same route, so nothing here assumes it was reached from a thread.
-router.post("/:id/mark-lost", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+router.post("/:id/mark-lost", requireAuth, requirePermission("inquiries.markLost"), async (req, res) => {
   const id = req.params.id as string;
   const { reason } = req.body ?? {};
 
@@ -1411,7 +1430,7 @@ router.post("/:id/mark-lost", requireAuth, requireRole(Role.OWNER, Role.FRONT_DE
 // one reopen path. status is an explicit target rather than a fixed
 // "back to NEW": staff know best where an inquiry should resume (one that
 // was CONFIRMED before going cold shouldn't have to restart the pipeline).
-router.post("/:id/reopen", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+router.post("/:id/reopen", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
   const id = req.params.id as string;
   const { status } = req.body ?? {};
 
@@ -1463,7 +1482,7 @@ router.post("/:id/reopen", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK)
 // attach-gift-card (skipping the deposit-form flow entirely for its first
 // session) and only reaches this route for the first time on session 2 --
 // "latest row missing" is true there too, so it still creates session 1.
-router.post("/:id/deposit-form", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+router.post("/:id/deposit-form", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
   const id = req.params.id as string;
   const { proposedStartAt, proposedEndAt, autoSend } = req.body ?? {};
 
@@ -1578,7 +1597,7 @@ router.post("/:id/deposit-form", requireAuth, requireRole(Role.OWNER, Role.FRONT
 router.patch(
   "/:id/deposit-form/proposed-time",
   requireAuth,
-  requireRole(Role.OWNER, Role.FRONT_DESK),
+  requirePermission("inquiries.edit"),
   async (req, res) => {
     const id = req.params.id as string;
     const body = req.body ?? {};
@@ -1647,7 +1666,7 @@ router.patch(
 // discarded). An unsigned one gets deleted here rather than left behind, so
 // its public link can't still be signed for an inquiry that's already
 // moved on without it.
-router.post("/:id/attach-gift-card", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+router.post("/:id/attach-gift-card", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
   const id = req.params.id as string;
   const { giftCardId } = req.body ?? {};
 
@@ -1740,7 +1759,7 @@ function buildSharedInquiryProjection(inquiry: {
 // it, so the frontend's confirmation modal can show this ahead of send (and
 // let staff edit it there before sending -- see the optional body override
 // below).
-router.get("/:id/share-to-artist/preview", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+router.get("/:id/share-to-artist/preview", requireAuth, requirePermission("inquiries.shareWithArtist"), async (req, res) => {
   const id = req.params.id as string;
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
@@ -1760,7 +1779,7 @@ router.get("/:id/share-to-artist/preview", requireAuth, requireRole(Role.OWNER, 
 // the PII risk the original fixed-projection-only design was guarding
 // against -- that guard was about auto-including client-identifying
 // fields, not about staff's own wording.
-router.post("/:id/share-to-artist", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+router.post("/:id/share-to-artist", requireAuth, requirePermission("inquiries.shareWithArtist"), async (req, res) => {
   const id = req.params.id as string;
   const { studioId, userId } = req.user!;
   const { artistUserId, body: customBody } = req.body ?? {};
@@ -1821,7 +1840,7 @@ router.post("/:id/share-to-artist", requireAuth, requireRole(Role.OWNER, Role.FR
 });
 
 // Archive: soft, reversible hide -- same treatment as Client.archivedAt.
-router.post("/:id/archive", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+router.post("/:id/archive", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
   const id = req.params.id as string;
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
   if (!inquiry || inquiry.studioId !== req.user!.studioId) {
@@ -1845,7 +1864,7 @@ router.post("/:id/archive", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK
   res.json(updated);
 });
 
-router.post("/:id/unarchive", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+router.post("/:id/unarchive", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
   const id = req.params.id as string;
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
   if (!inquiry || inquiry.studioId !== req.user!.studioId) {
@@ -1980,7 +1999,7 @@ router.get("/:id/delete-preview", requireAuth, requireRole(Role.OWNER), async (r
 // Same OWNER/FRONT_DESK gate as GET /:id itself (Package L: "ARTIST has no
 // access, matches page-level gating") -- an ARTIST can't load the inquiry
 // detail page at all, so they never reach this route either.
-router.get("/:id/notes", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+router.get("/:id/notes", requireAuth, requirePermission("inquiries.notes.manage"), async (req, res) => {
   const id = req.params.id as string;
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id }, select: { studioId: true } });
@@ -1997,7 +2016,7 @@ router.get("/:id/notes", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), 
   res.json(notes);
 });
 
-router.post("/:id/notes", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+router.post("/:id/notes", requireAuth, requirePermission("inquiries.notes.manage"), async (req, res) => {
   const id = req.params.id as string;
   const { bodyHtml, attachments } = req.body ?? {};
 
@@ -2037,7 +2056,7 @@ router.post("/:id/notes", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK),
   res.status(201).json(note);
 });
 
-router.patch("/:id/notes/:noteId", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+router.patch("/:id/notes/:noteId", requireAuth, requirePermission("inquiries.notes.manage"), async (req, res) => {
   const id = req.params.id as string;
   const noteId = req.params.noteId as string;
   const { bodyHtml, attachments } = req.body ?? {};
@@ -2086,7 +2105,7 @@ router.patch("/:id/notes/:noteId", requireAuth, requireRole(Role.OWNER, Role.FRO
   res.json(updated);
 });
 
-router.delete("/:id/notes/:noteId", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+router.delete("/:id/notes/:noteId", requireAuth, requirePermission("inquiries.notes.manage"), async (req, res) => {
   const id = req.params.id as string;
   const noteId = req.params.noteId as string;
 

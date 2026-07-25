@@ -14,10 +14,12 @@ import { generateUniqueReferralCode } from "../lib/referrals";
 const router = Router();
 
 router.use(requireAuth);
-// Upload/review/decide are OWNER/FRONT_DESK, same gate as the rest of
-// client management -- see clients.ts. Execute (real, permanent writes)
-// gets an additional OWNER-only check on top of this, below.
-router.use(requirePermission("clients.manage"));
+// Upload/review/decide all share the dedicated clients.import permission
+// (successor to the retired clients.manage, which used to gate this whole
+// router too -- see clients.ts's own comment on the split). Execute (real,
+// permanent writes) gets an additional OWNER-only check on top of this,
+// below.
+router.use(requirePermission("clients.import"));
 
 // CSV lives entirely in memory -- these are client-list exports, not
 // multi-megabyte media, and every other upload path in this app already

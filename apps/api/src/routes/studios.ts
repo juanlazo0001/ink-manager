@@ -1,4 +1,5 @@
 import { Router } from "express";
+import crypto from "node:crypto";
 import bcrypt from "bcrypt";
 import { prisma } from "../lib/prisma";
 import { requireAuth, requireRole } from "../middleware/auth";
@@ -141,7 +142,7 @@ router.patch("/:studioId", requireAuth, requirePermission("studio.manage"), asyn
 
 // The only way to add staff (front desk, artists, additional owners) going
 // forward. An OWNER can only create users within their own studio.
-router.post("/:studioId/users", requireAuth, requireRole(Role.OWNER), async (req, res) => {
+router.post("/:studioId/users", requireAuth, requirePermission("team.manage"), async (req, res) => {
   const studioId = req.params.studioId as string;
 
   if (studioId !== req.user!.studioId) {
@@ -288,7 +289,7 @@ type UserWithArtist = Prisma.UserGetPayload<{ include: typeof USER_INCLUDE_ARTIS
 
 // Admin-only staff directory. Unlike studio/location info (readable by any
 // studio member), this lists every user's email/phone — OWNER only.
-router.get("/:studioId/users", requireAuth, requireRole(Role.OWNER), async (req, res) => {
+router.get("/:studioId/users", requireAuth, requirePermission("team.manage"), async (req, res) => {
   const studioId = req.params.studioId as string;
 
   if (studioId !== req.user!.studioId) {
@@ -319,7 +320,7 @@ const ADMIN_USER_TEXT_FIELDS = ["name", "phone"] as const;
 // OWNER can edit any user in their studio: role, active status, basic
 // profile fields, and can reset a password directly (no current password
 // needed — this is admin authority over the studio, not self-service).
-router.patch("/:studioId/users/:userId", requireAuth, requireRole(Role.OWNER), async (req, res) => {
+router.patch("/:studioId/users/:userId", requireAuth, requirePermission("team.manage"), async (req, res) => {
   const studioId = req.params.studioId as string;
   const userId = req.params.userId as string;
 
@@ -524,7 +525,7 @@ function blockedByArtistHistory(summary: { isArtist: boolean; artistAppointments
 // one hard block below) -- the strong in-app confirmation (exact-match
 // "DELETE" text input) is the safeguard, same convention as Client/
 // Inquiry/Appointment delete elsewhere in this app.
-router.get("/:studioId/users/:userId/delete-preview", requireAuth, requireRole(Role.OWNER), async (req, res) => {
+router.get("/:studioId/users/:userId/delete-preview", requireAuth, requirePermission("team.manage"), async (req, res) => {
   const studioId = req.params.studioId as string;
   const userId = req.params.userId as string;
 
@@ -565,7 +566,7 @@ router.get("/:studioId/users/:userId/delete-preview", requireAuth, requireRole(R
 // e.g. AppointmentPhoto vs. its parent Appointment. An artist with any
 // appointment or assigned/preferred-inquiry history is hard-blocked --
 // deactivation is the only option for them here (see blockedByArtistHistory).
-router.delete("/:studioId/users/:userId", requireAuth, requireRole(Role.OWNER), async (req, res) => {
+router.delete("/:studioId/users/:userId", requireAuth, requirePermission("team.manage"), async (req, res) => {
   const studioId = req.params.studioId as string;
   const userId = req.params.userId as string;
   const { confirm } = req.body ?? {};
@@ -716,15 +717,28 @@ router.patch("/:studioId/permissions", requireAuth, requireRole(Role.OWNER), asy
 
   const before = await buildPermissionMatrix(studioId);
 
-  await prisma.$transaction(
-    updates.map((update) =>
-      prisma.rolePermission.upsert({
-        where: { studioId_role_permissionKey: { studioId, role: update.role, permissionKey: update.permissionKey } },
-        create: { studioId, role: update.role, permissionKey: update.permissionKey, allowed: update.allowed },
-        update: { allowed: update.allowed },
-      }),
-    ),
-  );
+  // One bulk INSERT ... ON CONFLICT DO UPDATE instead of N individual
+  // upsert() round trips -- this expansion grew the matrix from 8 keys to
+  // ~49, and the Settings UI's "Save changes" sends every displayed
+  // key for both roles at once (up to ~98 rows). N sequential upserts
+  // against the remote Postgres instance blew Prisma's default 5s
+  // interactive-transaction timeout (P2028) well before N got anywhere
+  // near that size in production use -- this single statement is one round
+  // trip regardless of how large the matrix grows.
+  if (updates.length > 0) {
+    const rows = Prisma.join(
+      updates.map(
+        (update) =>
+          Prisma.sql`(${crypto.randomUUID()}, ${studioId}, ${update.role}::"Role", ${update.permissionKey}, ${update.allowed})`,
+      ),
+    );
+    await prisma.$executeRaw`
+      INSERT INTO "RolePermission" ("id", "studioId", "role", "permissionKey", "allowed")
+      VALUES ${rows}
+      ON CONFLICT ("studioId", "role", "permissionKey")
+      DO UPDATE SET "allowed" = EXCLUDED."allowed"
+    `;
+  }
 
   const after = await buildPermissionMatrix(studioId);
 

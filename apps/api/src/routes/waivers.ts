@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma";
 import type { Prisma } from "../../generated/prisma/client";
 import { LiabilityWaiverStatus, Role } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
+import { requirePermission } from "../lib/permissions";
 import { logAudit } from "../lib/audit";
 import { isAtLeast18, validateClauseInitials, validateHealthAnswers } from "../lib/waivers";
 import { normalizePhone } from "../lib/phone";
@@ -205,9 +206,54 @@ publicRouter.patch("/sign/:token", async (req, res) => {
 // role check below before any waiver record (or its PII) is touched.
 const staffRouter = Router();
 staffRouter.use(requireAuth);
+
+// Narrow, artist-safe status view -- registered BEFORE the OWNER/FRONT_DESK
+// -only gate below on purpose. Returns ONLY {id, status, signedAt,
+// verifiedAt}, never healthAnswers/idImageUrl/signatureData/photoRelease*
+// -- those stay behind the untouched floor-item gate on GET /:id further
+// down, which this route deliberately does not reuse or relax. ARTIST
+// access is scoped to waivers for their own appointments; OWNER/FRONT_DESK
+// (who already have the full detail view) can reach any waiver in the
+// studio through this endpoint too, same as the permission's FD/AR-own
+// default implies.
+staffRouter.get("/:id/status", requirePermission("waivers.viewStatus"), async (req, res) => {
+  const id = req.params.id as string;
+
+  const waiver = await prisma.liabilityWaiver.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      studioId: true,
+      status: true,
+      signedAt: true,
+      verifiedAt: true,
+      appointment: { select: { artistId: true } },
+    },
+  });
+
+  if (!waiver || waiver.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Waiver not found" });
+  }
+
+  if (req.user!.role === Role.ARTIST) {
+    const artist = await prisma.artist.findUnique({ where: { userId: req.user!.userId }, select: { id: true } });
+    if (!artist || waiver.appointment.artistId !== artist.id) {
+      return res.status(404).json({ error: "Waiver not found" });
+    }
+  }
+
+  res.json({ id: waiver.id, status: waiver.status, signedAt: waiver.signedAt, verifiedAt: waiver.verifiedAt });
+});
+
+// Floor item, permanent: ARTIST can never access waiver health answers or
+// ID images -- this router-level exclusion is NOT touched by this
+// expansion. Every route registered below this line stays OWNER/FRONT_DESK
+// -only regardless of any permission toggle; GET /:id/status above is the
+// one deliberate, narrow exception, registered before this line specifically
+// so it never inherits this restriction.
 staffRouter.use(requireRole(Role.OWNER, Role.FRONT_DESK));
 
-staffRouter.get("/:id", async (req, res) => {
+staffRouter.get("/:id", requirePermission("waivers.viewStatus"), async (req, res) => {
   const id = req.params.id as string;
 
   const waiver = await prisma.liabilityWaiver.findUnique({
@@ -233,7 +279,7 @@ staffRouter.get("/:id", async (req, res) => {
   res.json({ ...waiver, signingUrl });
 });
 
-staffRouter.post("/:id/verify", async (req, res) => {
+staffRouter.post("/:id/verify", requirePermission("waivers.verify"), async (req, res) => {
   const id = req.params.id as string;
 
   const waiver = await prisma.liabilityWaiver.findUnique({ where: { id } });
