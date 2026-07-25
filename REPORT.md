@@ -2448,3 +2448,64 @@ One real, unavoidable side effect: this session's two new `schema.prisma` fields
 ## Cleanup
 
 Both scratch dev servers (API :5501, web :6501, logging to `api6.log`/`vite6.log`) stopped by PID -- including one transient `EADDRINUSE` crash-and-restart caused by the concurrent session's own file-watch reloads on shared files, unrelated to this session's own code. Temporary verification scripts and screenshots left scratchpad-only, none committed. Test data created during verification (two real sessions, signed/verified waivers, checkouts, and a project-complete/reopen cycle on an existing dev-studio project) left in the dev database, consistent with this session's standing convention.
+
+---
+
+# Feature — Service lines (multi-service support), Powder Brows as the first real case
+
+Single session on `main`, three parts, three commits, each preceded by both typechecks and pushed immediately. Pre-flight: another session was mid-migration (an unrelated `AppointmentType`/consultation feature) when this session started -- waited (via a background poll on `git status`) until it committed (`cb331da`) before touching `schema.prisma`, per standing discipline. A second, different concurrent session (a "project completion fields" feature) appeared partway through Part 2/3 -- its own migration applied cleanly to the shared dev DB after this session's own three migrations, no overlapping tables, and its uncommitted files were simply never staged into any of this session's three commits.
+
+## Part 1 — Service model, intake linkage, practitioner tagging (`de4f548`)
+
+Added `Service` (`pricingModel: RANGE|FLAT`, `depositModel: TIER_BASED|FLAT`, `flatPriceCents`/`flatDepositCents`/`depositBreakdownNote`, `requiresCandidacyReview`, `intakeFormId`, `isActive`) and `ArtistService` (join table), plus `Inquiry.serviceId`, via the exact nullable -> hand-authored-backfill -> required sequence this schema has used since the referral-migration outage (`20260725152139_service_lines_add_service_model`, `20260725153000_backfill_inquiry_service`, `20260725153431_inquiry_service_id_required`).
+
+**Backfill verification (row counts, before/after):**
+- Inquiries: 52 total, 0 with a null `serviceId` before the column existed (expected -- it didn't exist yet) -> 52 total, **0 null** after the backfill migration ran, before the required-column migration made that structurally impossible.
+- Artists: 11 total -> 11 `ArtistService` rows created (one per artist, all pointing at that studio's own new "Tattoo" service) -- exactly 1:1, no duplicates, no gaps.
+- Exactly one "Tattoo" service created per studio (2 studios in dev -> 2 services), each linked to that studio's actual current default `IntakeForm` (confirmed by id, not assumed).
+
+**Powder Brows seeded** (on `dev-studio` -- see note below on Black Hive): `pricingModel: FLAT`, `depositModel: FLAT`, `flatDepositCents: 6000` ($60), `depositBreakdownNote: "$50 deposit + $10 processing fee"`, `requiresCandidacyReview: true`, its own dedicated `IntakeForm` ("Powder Brows Consultation", slug `powder-brows`) with: Name/Email/Phone enabled, every tattoo-oriented system field present-but-disabled (`referenceImages`/`placementImages`/`description`/etc. -- satisfies the "system fields can be disabled but not removed" invariant `validateFieldListConstraint` enforces elsewhere), a `SELECT` custom question ("Which PMU service are you interested in?", one option: "Powder Brows"), and two **required** `PHOTO_UPLOAD` custom questions (face, eyebrows). The 18+ policy was confirmed already generic -- real enforcement lives in `lib/waivers.ts`'s `isAtLeast18`, which runs on any `LiabilityWaiver` regardless of service; the intake form's "You must be 18 to receive a tattoo" banner is informational copy on the *default* form only, not where enforcement actually happens.
+
+Built `Settings -> Services` (OWNER-only list/create/edit/deactivate; hard delete blocked server-side whenever `Inquiry.serviceId` references it -- deactivate is the only option once real inquiries exist) and an Artist-profile "Services Offered" checkbox widget (`PATCH /artists/:id` now accepts `serviceIds`, syncing `ArtistService` in the same transaction). **Did not guess a real PMU practitioner** -- both seeded dev artists are tagged Tattoo-only; the checkboxes exist for the OWNER to use.
+
+**No studio literally named "Black Hive" exists in the dev database** (only "Dev Studio"/"Dev Studio 2") -- "Black Hive Ink and Arts" is the real production studio (see this file's own "Discrepancy found and escalated" entry from an earlier package), and dev/test never points at production's `DATABASE_URL` per `DEVELOPMENT.md`. Powder Brows was seeded onto Dev Studio as this feature's working demonstration; **creating the actual Powder Brows `Service` row for the real Black Hive Ink and Arts studio in production is a separate, deliberate release step** (e.g. an OWNER using the now-shipped Settings -> Services UI directly against production once these migrations are deployed there), outside this session's dev-only scope.
+
+## Part 2 — Flat pricing and flat deposit models (`d3243a9`)
+
+**Pricing**: the entire existing estimate send/track/respond pipeline is reused completely unchanged -- a FLAT service collects one price instead of a range by submitting the *same value* as both `priceEstimateLow` and `priceEstimateHigh` (both the artist's own `/respond` approval and staff's `/send-estimate`/`/revise-estimate` forms collapse to a single input when `inquiry.service.pricingModel === 'FLAT'`, wired to set both fields identically). Every downstream consumer -- validation, `computeDepositTier`'s average, the client-facing estimate/revision pages -- needed zero branching of its own; only *display* sites needed a shared `formatPriceEstimate(low, high)` helper (`$X` when equal, `$X–$Y` when not) to avoid rendering a redundant `$350-$350`.
+
+**Deposits**: `resolveDepositAmounts`/`resolveRequiredDepositCents` (mirrored on both API and web) branch on `depositModel` at every call site that used to call `computeDepositTier`/`computeRequiredDepositCents` directly -- deposit-form creation, the inquiry-schedule gift-card-sufficiency check, the standalone appointment-create gift-card-sufficiency check, and the web-side live preview in `InquiryDetail.tsx`/`AppointmentForm.tsx`. FLAT sets `feeAmount: 0` and `depositAmount = totalCharged = flatDepositCents` -- the flat number already represents everything charged (per `depositBreakdownNote`), not an additional processing fee stacked on top of it. Public deposit page now shows `depositBreakdownNote` under the Deposit/Fee/Total row when set.
+
+**Live-verified, not just read**: sent a real flat $350 estimate for a Powder Brows inquiry -> client-facing page showed "PRICE: $350" (not "PRICE RANGE"); generated its deposit form -> Deposit $60 / Fee $0 / Total $60, breakdown note shown. Separately created a fresh Tattoo inquiry, sent a genuine $400-$600 range estimate, generated its deposit form -> Deposit $100 / Fee $10 / Total $110 (tier 2 of the studio's default tiers, exactly as before this feature existed) -- confirms `TIER_BASED` is provably unaffected, not merely "should still work."
+
+## Part 3 — Candidacy review pipeline (`d0df41d`)
+
+Added `CANDIDACY_REVIEW` to `InquiryStatus` (pure additive `ALTER TYPE ... ADD VALUE`, no backfill needed -- no pre-existing row could have this value). `POST /inquiries` now sets it instead of `NEW` whenever `service.requiresCandidacyReview` is true; verified a fresh Tattoo inquiry still lands in `NEW` and a fresh Powder Brows inquiry lands in `CANDIDACY_REVIEW`, both via real submissions, not inspection alone.
+
+Three actions (OWNER/FRONT_DESK) on a new "Candidacy Review" widget: **Mark Good Candidate** (`POST /:id/mark-good-candidate`, new but trivial -- `CANDIDACY_REVIEW -> NEW`, same audit-log pattern as every other status-change route) proceeds it into the untouched normal pipeline; **Not a Candidate** opens the *exact same* mark-lost modal/route every other "Mark as lost" entry point on the page uses, just pre-filled with "Not a candidate" as the reason and relabeled -- no second terminal-state system, confirmed via the audit trail literally reading "Status: Candidacy Review -> New" for the sibling good-candidate action and `lostReason: "Not a candidate"` for this one; **Schedule Consultation** required zero backend changes -- the existing consultation feature's own Appointments widget was already unconditional on `inquiry.status`, confirmed live by creating a real `CONSULTATION` appointment against a `CANDIDACY_REVIEW` inquiry and re-fetching it: **status stayed `CANDIDACY_REVIEW`**, appointment linked under `sessions`.
+
+Kept `CANDIDACY_REVIEW` **out of** `PIPELINE_STEPS` (the array shared by the Tattoo/RANGE stepper, the Conversations context panel, and the Kanban board's other columns) -- prepending a step there would have shifted every later status's index, making a Tattoo inquiry that never touched candidacy review show a false "done" checkmark for it. Instead: its own distinct one-line pipeline state (`InquiryPipeline.tsx`, same pattern as the existing `CLOSED_LOST`/`COLD_LEAD` special case), its own dedicated, **non-interactive** Kanban column (dragging is disabled for it -- the three actions are explicit buttons, not a card drag; a drag *onto* it from another column still falls through to the board's existing generic reject message, unchanged), and added to `INQUIRIES_TAB_STATUSES` so it isn't silently filtered out of the tab's own status list. Verified on a live board: "CANDIDACY REVIEW (1)" stood alone as its own column; every other inquiry (Tattoo and already-processed Powder Brows alike) sat in the normal columns.
+
+**Practitioner filtering**: both places staff pick an artist for a specific inquiry -- `InquiryDetail.tsx`'s assignment picker and `AppointmentForm.tsx`'s artist picker (shared by "Schedule Consultation" and regular session booking) -- now filter to only artists tagged via `ArtistService` as offering that inquiry's service. Live-verified: tagged one dev artist with Powder Brows (leaving the other Tattoo-only), opened both pickers against a Powder Brows inquiry, and confirmed only the tagged artist appeared in either one.
+
+**Waitlist, verified not assumed**: read `POST /:id/waitlist`/`/:id/unwaitlist` and the WAITLISTED widget end to end -- purely `status`/`declineNote`/`assignedArtistId`, zero tattoo-specific fields or branches. Then proved it live: took a real Powder Brows inquiry all the way through candidacy review -> good candidate -> assigned -> flat estimate -> flat deposit signed and paid -> `SCHEDULING`, waitlisted it (`status -> WAITLISTED`, note stored, `assignedArtistId` preserved so per-artist grouping still works), then unwaitlisted it back to `SCHEDULING`. Zero code changes needed, exactly as expected.
+
+**Incidental fix**: found and fixed a genuine pre-existing race condition in `InquiryDetailsSection.tsx` (unrelated to service lines) while verifying that staff could actually see a Powder Brows inquiry's submitted candidacy photos -- its own visibility-reporting effect fired with a stale `false` on first render (before its field-list fetch resolved), which unmounted itself via the parent's conditional wrapper before ever getting the chance to report `true`. Fixed by only reporting once the fetch has actually completed; confirmed the "Inquiry Details" section (system fields + the PMU select + both photo-upload answers) now renders correctly, every time.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npm run build` (web) — clean after every one of the three parts, before every commit.
+
+## Commits
+
+- `de4f548` — Part 1: Service model, intake linkage, practitioner tagging
+- `d3243a9` — Part 2: flat pricing and flat deposit models
+- `d0df41d` — Part 3: candidacy review pipeline
+
+## Cleanup
+
+Both scratch dev servers (API :4000, web :5173) stopped by PID. All ad-hoc Playwright verification scripts and screenshots (`test-services-*.js`, `test-part2-*.js`, `test-part3-*.js`, `shots/svc-*.png`/`part2-*.png`/`part3-*.png`) removed from the scratchpad after each part's verification, none committed. Test data created during verification (several Powder Brows inquiries at various pipeline stages, a couple of fresh Tattoo inquiries, one real consultation appointment, one artist temporarily tagged with Powder Brows for the filtering test) left in the dev database, consistent with this session's standing convention.
+
+## Outstanding for the OWNER
+
+The real PMU practitioner at Black Hive Ink and Arts still needs to be tagged via that artist's profile page ("Services Offered" checkboxes) before any real Powder Brows inquiry can be assigned -- deliberately left undone by this session, per the task's own explicit instruction not to guess who that is.
