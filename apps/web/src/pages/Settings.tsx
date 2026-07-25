@@ -78,7 +78,7 @@ interface JobInfo {
 }
 
 // Phase 7B: Settings -> Integrations (self-serve provider connections).
-type IntegrationChannelValue = 'SMS' | 'EMAIL' | 'INSTAGRAM' | 'FACEBOOK' | 'GOOGLE_CALENDAR'
+type IntegrationChannelValue = 'SMS' | 'EMAIL' | 'INSTAGRAM' | 'FACEBOOK' | 'GOOGLE_CALENDAR' | 'STRIPE'
 type IntegrationStatusValue = 'NOT_CONNECTED' | 'CONNECTED' | 'ERROR'
 
 interface IntegrationInfo {
@@ -96,6 +96,16 @@ const CHANNEL_LABELS: Record<IntegrationChannelValue, string> = {
   INSTAGRAM: 'Instagram',
   FACEBOOK: 'Facebook',
   GOOGLE_CALENDAR: 'Google Calendar',
+  STRIPE: 'Stripe (payments)',
+}
+
+// Phase 7C: metadata shape for the STRIPE channel specifically -- stored
+// as-is by POST /integrations/stripe/connect + /stripe/refresh-status,
+// read here for the "Payments are live" vs "Setup incomplete" distinction.
+interface StripeIntegrationMetadata {
+  stripeAccountId: string
+  chargesEnabled: boolean
+  payoutsEnabled: boolean
 }
 
 const EMPTY_SMS_CONNECT_FORM = { accountSid: '', authToken: '', fromNumber: '' }
@@ -449,15 +459,19 @@ export default function Settings() {
   const [testEmailSending, setTestEmailSending] = useState(false)
   const [testEmailResult, setTestEmailResult] = useState<string | null>(null)
 
-  // Picks up after the Gmail OAuth redirect lands back here (see
-  // routes/integrations.ts's publicRouter callback) -- reads the query
-  // params it was redirected with, shows a one-time banner, refreshes the
-  // integration list, then strips the params so a page refresh doesn't
-  // re-show the same banner.
+  const [connectingStripe, setConnectingStripe] = useState(false)
+  const [stripeError, setStripeError] = useState<string | null>(null)
+
+  // Picks up after the Gmail OAuth redirect (or Stripe's Account Link
+  // return_url/refresh_url) lands back here -- reads the query params it
+  // was redirected with, shows a one-time banner / re-syncs Stripe's
+  // account status, refreshes the integration list, then strips the params
+  // so a page refresh doesn't repeat any of this.
   useEffect(() => {
     const tab = searchParams.get('tab')
     const email = searchParams.get('email')
-    if (tab !== 'integrations' && !email) return
+    const stripeReturn = searchParams.get('stripe')
+    if (tab !== 'integrations' && !email && !stripeReturn) return
 
     if (tab === 'integrations') setActiveTab('integrations')
     if (email === 'connected') {
@@ -467,14 +481,37 @@ export default function Settings() {
       setGmailOAuthNotice({ kind: 'error', message: searchParams.get('message') || 'Failed to connect Gmail.' })
     }
 
+    // Both return (onboarding completed) and refresh (studio left mid-way
+    // and came back, or clicked out) land here needing the same thing:
+    // re-read the account's live status from Stripe rather than trusting
+    // the redirect alone.
+    if (stripeReturn === 'return' || stripeReturn === 'refresh') {
+      apiFetch('/integrations/stripe/refresh-status', { method: 'POST' })
+        .catch((err) => setStripeError(err instanceof Error ? err.message : 'Failed to check Stripe account status'))
+        .finally(() => setIntegrationsRefreshIndex((i) => i + 1))
+    }
+
     setSearchParams((params) => {
       params.delete('tab')
       params.delete('email')
       params.delete('message')
+      params.delete('stripe')
       return params
     }, { replace: true })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  async function handleConnectStripe() {
+    setConnectingStripe(true)
+    setStripeError(null)
+    try {
+      const { url } = await apiFetch<{ url: string }>('/integrations/stripe/connect', { method: 'POST' })
+      window.location.href = url
+    } catch (err) {
+      setStripeError(err instanceof Error ? err.message : 'Failed to start connecting Stripe')
+      setConnectingStripe(false)
+    }
+  }
 
   const [copiedWebhook, setCopiedWebhook] = useState(false)
 
@@ -2616,6 +2653,79 @@ export default function Settings() {
                     )
                   }
 
+                  if (integration.channel === 'STRIPE') {
+                    const stripeMeta = integration.metadata as unknown as StripeIntegrationMetadata | null
+                    const isLive = integration.status === 'CONNECTED' && stripeMeta?.chargesEnabled
+                    const setupIncomplete = integration.status === 'CONNECTED' && !stripeMeta?.chargesEnabled
+
+                    return (
+                      <div key="STRIPE" className="rounded-xl border border-border p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold text-fg">{CHANNEL_LABELS.STRIPE}</p>
+                            {integration.status === 'CONNECTED' && integration.displayName && (
+                              <p className="mt-0.5 text-xs text-fg-secondary">{integration.displayName}</p>
+                            )}
+                          </div>
+
+                          <div className="flex shrink-0 items-center gap-2">
+                            {integration.status === 'CONNECTED' ? (
+                              <>
+                                <span
+                                  className={`rounded-full px-3 py-1 text-xs font-medium ${
+                                    isLive ? 'bg-success/15 text-success' : 'bg-warning/15 text-warning'
+                                  }`}
+                                >
+                                  {isLive ? 'Payments are live' : 'Setup incomplete'}
+                                </span>
+                                {setupIncomplete && (
+                                  <button
+                                    type="button"
+                                    onClick={handleConnectStripe}
+                                    disabled={connectingStripe}
+                                    className="rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                                  >
+                                    {connectingStripe ? 'Redirecting…' : 'Finish setup'}
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => setShowDisconnectConfirm('STRIPE')}
+                                  className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                                >
+                                  Disconnect
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={handleConnectStripe}
+                                disabled={connectingStripe}
+                                className="rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                              >
+                                {connectingStripe ? 'Redirecting…' : 'Connect with Stripe'}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {integration.status === 'CONNECTED' && (
+                          <div className="mt-4 space-y-1 border-t border-border pt-4 text-xs text-fg-muted">
+                            {integration.connectedAt && <p>Connected {formatDateTime(integration.connectedAt)}</p>}
+                            {setupIncomplete && (
+                              <p className="text-warning">
+                                Onboarding wasn't finished on Stripe's side -- real deposit/checkout payments won't
+                                work until it is. Click "Finish setup" to pick up where you left off.
+                              </p>
+                            )}
+                          </div>
+                        )}
+
+                        {stripeError && <p className="mt-3 text-xs text-danger">{stripeError}</p>}
+                      </div>
+                    )
+                  }
+
                   if (integration.channel !== 'SMS') {
                     return (
                       <div key={integration.channel} className="rounded-xl border border-border p-4">
@@ -2818,7 +2928,9 @@ export default function Settings() {
               <p className="text-sm text-fg-secondary">
                 {showDisconnectConfirm === 'EMAIL'
                   ? 'Outbound messages will fall back to log-only (no real send) until Email is reconnected. Inbound emails will no longer be polled or land in threads.'
-                  : 'Outbound messages will fall back to log-only (no real send) until SMS is reconnected. Inbound texts will no longer be validated or land in threads.'}
+                  : showDisconnectConfirm === 'STRIPE'
+                    ? "This only clears Ink Manager's own record of the connection -- your Stripe account itself is untouched and still exists. Deposits and checkout will fall back to manual-only payment collection until Stripe is reconnected."
+                    : 'Outbound messages will fall back to log-only (no real send) until SMS is reconnected. Inbound texts will no longer be validated or land in threads.'}
               </p>
               <div className="mt-5 flex gap-3">
                 <button

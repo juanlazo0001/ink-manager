@@ -4,7 +4,7 @@ import { Prisma } from "../../generated/prisma/client";
 import { IntegrationChannel, IntegrationStatus, Role } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
-import { decryptSecret, encryptSecret, isEncryptionConfigured, maskAccountSid, maskEmail } from "../lib/secrets";
+import { decryptSecret, encryptSecret, isEncryptionConfigured, maskAccountSid, maskEmail, maskStripeAccountId } from "../lib/secrets";
 import { sendSms, validateTwilioAccount, type TwilioCredentials } from "../lib/twilio";
 import { TWILIO_SMS_WEBHOOK_URL, TWILIO_STATUS_CALLBACK_URL, GMAIL_OAUTH_REDIRECT_URI, PUBLIC_APP_URL } from "../lib/publicUrl";
 import { normalizePhone } from "../lib/phone";
@@ -19,6 +19,8 @@ import {
   signGmailOAuthState,
   verifyGmailOAuthState,
 } from "../lib/gmail";
+import { createOnboardingLink, createStandardConnectedAccount, getConnectedAccountStatus } from "../lib/stripeConnect";
+import { isStripeConfigured } from "../lib/stripe";
 
 // Public: Google's redirect after the user grants (or denies) consent hits
 // this directly -- it can't carry this app's own Bearer JWT (a full-page
@@ -186,6 +188,132 @@ router.get("/email/connect-url", async (req, res) => {
   const state = signGmailOAuthState(req.user!.studioId, req.user!.userId);
   const url = buildGmailAuthUrl(GMAIL_OAUTH_REDIRECT_URI, state);
   res.json({ url });
+});
+
+// Phase 7C: Stripe Connect (Standard) onboarding. Unlike Gmail's OAuth
+// flow, there's no authorization code to exchange server-side on return --
+// the connected account id is already known (created below, before the
+// redirect), so there's no need for a public callback route at all. Stripe
+// redirects the browser straight back to this SPA's own /settings page
+// (return_url/refresh_url), which still holds this OWNER's JWT in
+// localStorage across that round trip -- it calls the authenticated
+// /stripe/refresh-status route below to sync the latest charges_enabled/
+// payouts_enabled, same "confirm status via the API, don't trust the
+// redirect alone" approach Stripe's own docs recommend.
+//
+// Reused for BOTH the very first connect attempt and "Finish setup" when
+// onboarding was left incomplete -- the existing connected account id (if
+// any) is reused, never re-created; only a fresh single-use Account Link
+// is generated each time.
+router.post("/stripe/connect", async (req, res) => {
+  if (!isStripeConfigured()) {
+    return res.status(503).json({ error: "Stripe isn't available right now -- ask an admin to check the server configuration" });
+  }
+
+  const studioId = req.user!.studioId;
+
+  const existing = await prisma.studioIntegration.findUnique({
+    where: { studioId_channel: { studioId, channel: IntegrationChannel.STRIPE } },
+  });
+  const existingMetadata = (existing?.metadata as { stripeAccountId?: string } | null) ?? null;
+
+  let accountId = existingMetadata?.stripeAccountId ?? null;
+  if (!accountId) {
+    accountId = await createStandardConnectedAccount();
+
+    await prisma.studioIntegration.upsert({
+      where: { studioId_channel: { studioId, channel: IntegrationChannel.STRIPE } },
+      create: {
+        studioId,
+        channel: IntegrationChannel.STRIPE,
+        status: IntegrationStatus.CONNECTED,
+        displayName: maskStripeAccountId(accountId),
+        metadata: { stripeAccountId: accountId, chargesEnabled: false, payoutsEnabled: false },
+        connectedAt: new Date(),
+        lastError: null,
+      },
+      update: {
+        status: IntegrationStatus.CONNECTED,
+        displayName: maskStripeAccountId(accountId),
+        metadata: { stripeAccountId: accountId, chargesEnabled: false, payoutsEnabled: false },
+        connectedAt: new Date(),
+        lastError: null,
+      },
+    });
+
+    // No secret material here to leak either way -- confirmed anyway, same
+    // convention as every other integration_connected entry: channel +
+    // masked display only. Logged once, at account creation, not on every
+    // "Finish setup" Account Link regeneration.
+    await logAudit({
+      studioId,
+      actorUserId: req.user!.userId,
+      entityType: "StudioIntegration",
+      entityId: `${studioId}:STRIPE`,
+      action: "integration_connected",
+      changes: { channel: "STRIPE", displayName: maskStripeAccountId(accountId) },
+    });
+  }
+
+  const returnUrl = `${PUBLIC_APP_URL}/settings?tab=integrations&stripe=return`;
+  const refreshUrl = `${PUBLIC_APP_URL}/settings?tab=integrations&stripe=refresh`;
+
+  let url: string;
+  try {
+    url = await createOnboardingLink(accountId, refreshUrl, returnUrl);
+  } catch (err) {
+    return res.status(502).json({ error: err instanceof Error ? err.message : "Failed to start Stripe onboarding" });
+  }
+
+  res.json({ url });
+});
+
+// Called by Settings.tsx whenever the studio's browser returns from
+// Stripe's hosted onboarding (return_url OR refresh_url both land here) --
+// re-reads the account's live status from Stripe rather than trusting the
+// redirect alone (a studio can bookmark/replay that URL, or Stripe's own
+// account state can change independently of any one redirect).
+router.post("/stripe/refresh-status", async (req, res) => {
+  if (!isStripeConfigured()) {
+    return res.status(503).json({ error: "Stripe isn't available right now -- ask an admin to check the server configuration" });
+  }
+
+  const studioId = req.user!.studioId;
+
+  const existing = await prisma.studioIntegration.findUnique({
+    where: { studioId_channel: { studioId, channel: IntegrationChannel.STRIPE } },
+  });
+  const accountId = (existing?.metadata as { stripeAccountId?: string } | null)?.stripeAccountId ?? null;
+
+  if (!existing || !accountId) {
+    return res.status(400).json({ error: "Stripe has not been connected for this studio yet" });
+  }
+
+  let accountStatus;
+  try {
+    accountStatus = await getConnectedAccountStatus(accountId);
+  } catch (err) {
+    return res.status(502).json({ error: err instanceof Error ? err.message : "Failed to check Stripe account status" });
+  }
+
+  const updated = await prisma.studioIntegration.update({
+    where: { studioId_channel: { studioId, channel: IntegrationChannel.STRIPE } },
+    data: {
+      displayName: accountStatus.businessName ?? maskStripeAccountId(accountId),
+      metadata: {
+        stripeAccountId: accountId,
+        chargesEnabled: accountStatus.chargesEnabled,
+        payoutsEnabled: accountStatus.payoutsEnabled,
+      },
+    },
+  });
+
+  res.json({
+    channel: IntegrationChannel.STRIPE,
+    status: updated.status,
+    displayName: updated.displayName,
+    metadata: updated.metadata,
+  });
 });
 
 // Every channel shows a card, even ones with nothing connected yet --

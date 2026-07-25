@@ -150,6 +150,14 @@ enum IntegrationChannel {
   INSTAGRAM
   FACEBOOK
   GOOGLE_CALENDAR
+  // Phase 7C: reuses this same StudioIntegration chassis, but unlike every
+  // channel above there is no per-studio secret to encrypt -- the
+  // platform's own Stripe secret key (STRIPE_SECRET_KEY) makes every API
+  // call, scoped to the connected account via the stripeAccount request
+  // option (the Stripe-Account header). encryptedSecret stays permanently
+  // null for this channel; metadata holds
+  // { stripeAccountId, chargesEnabled, payoutsEnabled } instead.
+  STRIPE
 }
 
 enum IntegrationStatus {
@@ -855,6 +863,15 @@ model Appointment {
   checkedOutById String?
   checkedOutBy   User?     @relation("AppointmentCheckedOutBy", fields: [checkedOutById], references: [id])
 
+  // Phase 7C: same real-charge-with-manual-fallback pattern as
+  // DepositForm's own stripeCheckoutSessionId/stripePaymentIntentId/
+  // paidVia -- covers the checkout-time "amount due" charge (ROLL, or
+  // REDEEM where the card is worth less than finalCostCents), not the
+  // deposit itself.
+  stripeCheckoutSessionId String? @unique
+  stripePaymentIntentId   String? @unique
+  paidVia                 String?
+
   // Phase 7B-2: per-appointment dedup for the client reminder cadence (one
   // week before, night before, morning of) -- each is set once its own
   // reminder actually sends, so the ticker never double-sends the same
@@ -1424,6 +1441,20 @@ model DepositForm {
   // counter in that case) rather than computed as latest+1.
   plannedSession PlannedSession?
 
+  // Phase 7C: set once a real Stripe Checkout Session/PaymentIntent has
+  // been created for this deposit (Stripe connected for the studio) --
+  // both null for a studio without Stripe connected, or for any deposit
+  // paid manually. See DepositForm.paidVia below for which path was
+  // actually used.
+  stripeCheckoutSessionId String? @unique
+  stripePaymentIntentId   String? @unique
+
+  // "STRIPE" once the webhook confirms a real Stripe payment; "MANUAL"
+  // once staff use the existing PATCH /:id/mark-paid action -- real shops
+  // take cash and comps too, so manual stays available even when Stripe is
+  // connected. Null until one of the two actually happens.
+  paidVia String?
+
   @@index([inquiryId, sessionNumber])
 }
 
@@ -1474,9 +1505,23 @@ model GiftCard {
   // out for. At most one Client ever points here (that FK is @unique).
   referralRewardFor Client? @relation("ReferralRewardGiftCard")
 
+  // Phase 7C: set when THIS card was issued as the leftover from redeeming
+  // a larger card at checkout (card value > final cost) -- traces "this
+  // smaller card came from redeeming that larger one," for support/audit
+  // clarity. Self-relation, one-directional (a card can be derived from at
+  // most one original; an original can, in principle, spawn several
+  // derived cards over its lifetime -- e.g. redeemed again after being
+  // spent down further -- so no @unique on the FK side, and the reverse
+  // list is plural). Null for every card issued the normal way (a paid
+  // deposit, a manual issuance, a referral reward).
+  derivedFromGiftCardId String?
+  derivedFromGiftCard   GiftCard?  @relation("GiftCardDerivation", fields: [derivedFromGiftCardId], references: [id])
+  derivedGiftCards      GiftCard[] @relation("GiftCardDerivation")
+
   @@index([studioId])
   @@index([clientId])
   @@index([appointmentId])
+  @@index([derivedFromGiftCardId])
 }
 
 model LiabilityWaiver {

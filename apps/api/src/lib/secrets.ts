@@ -82,3 +82,13 @@ export function maskEmail(email: string): string {
   const domain = email.slice(at);
   return `${local[0]}${"*".repeat(Math.max(local.length - 1, 3))}${domain}`;
 }
+
+// Phase 7C: Stripe connected account ids (acct_...) are not secret --
+// unlike a Twilio auth token, knowing an acct_ id alone grants no access to
+// anything -- but still shown masked (last 4 only) for the same "don't
+// display a long opaque identifier in full" display convention every other
+// integration card on this page follows.
+export function maskStripeAccountId(accountId: string): string {
+  if (accountId.length <= 4) return accountId;
+  return `····${accountId.slice(-4)}`;
+}

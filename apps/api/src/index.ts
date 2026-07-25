@@ -44,7 +44,19 @@ const port = process.env.PORT || 4000;
 
 app.use(cors());
 app.use(compression());
-app.use(express.json({ limit: "8mb" })); // logo/avatar uploads (base64, up to 5MB source) exceed Express's 100kb default
+// Stripe webhook signature verification (stripe.webhooks.constructEvent,
+// see routes/webhooks.ts) needs the EXACT raw request bytes Stripe sent --
+// a JSON.parse()'d-then-reserialized body is not guaranteed byte-identical
+// and would make every signature check fail. This one path gets the raw
+// Buffer instead of the global JSON parser below; every other route
+// (including every other webhook -- Twilio's own signature check works
+// off the parsed x-www-form-urlencoded body, not raw bytes) is unaffected.
+app.use((req, res, next) => {
+  if (req.originalUrl === "/webhooks/stripe") {
+    return express.raw({ type: "application/json" })(req, res, next);
+  }
+  return express.json({ limit: "8mb" })(req, res, next); // logo/avatar uploads (base64, up to 5MB source) exceed Express's 100kb default
+});
 // Twilio POSTs webhooks as application/x-www-form-urlencoded, not JSON --
 // needed so req.body is populated for /webhooks/twilio/* (both the params
 // themselves and X-Twilio-Signature validation, which is computed over
