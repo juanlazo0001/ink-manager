@@ -2316,3 +2316,41 @@ Any number of columns mapped to `note` get concatenated into one `InquiryNote` a
 ## Cleanup
 
 Both scratch dev servers (API :5501, web :6501, logging to `api3.log`/`vite3.log`) stopped by PID. Temporary verification scripts (`verify_mass_import.mjs`, `verify_import_data.mjs`, `verify_import_data2.mjs`, `verify_note_bucket.mjs`), the sample GHL-style fixture CSV, and screenshots left scratchpad-only, none committed. Test data created during verification (several imported clients, gift cards, and inquiries in `dev-studio`, plus one cancelled batch) left in the dev database, consistent with this session's standing convention.
+
+---
+
+# Feature — Mass import follow-up: assigned-artist matching, composite address mapping
+
+Single session on `main`. Extends the mass-import feature from the two prior entries above rather than rebuilding it -- same batch/row model, same `MAPPING` -> `PENDING_REVIEW` flow, same review-table pattern for a flaggable per-row condition. Additive migration: `ImportRow.matchedArtistId` (FK to `Artist`) + `artistFlaggedForReview` (Boolean, default false). No existing rows affected.
+
+## Assigned-artist matching
+
+`lib/importArtistMatching.ts`'s `matchArtistForImportRow` checks a mapped `inquiry.assignedArtist` column's text against the studio's own `Artist` display names (`User.name`, case/whitespace-insensitive) for an exact match first -- the only outcome applied without a flag. Short of that, it computes a plain Levenshtein edit distance against every studio artist and offers the closest one as a **fuzzy candidate**, but always flagged (`artistFlaggedForReview: true`), never auto-applied silently. No candidate at all is also flagged, with `matchedArtistId` left null.
+
+**Fuzzy-match threshold**: `distance <= max(1, floor(maxNameLength * 0.25))` -- roughly one typo tolerated per four characters, floored at 1 so even a short name survives a single-character slip. Deliberately loose, since a fuzzy hit is only ever a suggestion in the review UI, never applied without a human glance -- a generous threshold costs an extra row to review, not a wrong assignment.
+
+Unlike a flagged deposit outlier, an unresolved/unreviewed artist match **does not block execute** -- per the task's own instruction, the inquiry still imports successfully, unassigned, with the raw artist-name text preserved as a `<strong>Artist (from import, unmatched):</strong> ...` line appended to the row's Historical Note automatically, even if staff never separately mapped that column to the Historical Note bucket. Verified with a real seeded artist ("Luis Guzman," created for this verification since the seed script had none by that name) and three rows: `"Luis Guzman"` (exact, matched with **no flag, no click needed**), `"Luis Guzmna"` (one-character typo, correctly offered as a fuzzy candidate and flagged), and `"Random Person Nobody Knows"` (no match, flagged, left unassigned) -- confirmed via the browser review table (flag badges + artist picker, pre-populated with the fuzzy suggestion) and via direct execute calls: the exact-match row's `Inquiry.assignedArtistId` came back correctly set, and the no-match row's inquiry imported successfully with `assignedArtistId: null` and the exact raw text preserved in its note.
+
+## Composite address mapping
+
+Four new mutually-exclusive-with-`address` target fields (`address.street`/`address.city`/`address.state`/`address.postalCode`) let staff map a CSV's separate Street/City/State/Postal columns instead of a single Address column; `validateColumnMapping` now rejects a mapping that claims both approaches at once (verified: `400` with a clear message). `composeAddress` (in `lib/importColumnMapping.ts`) concatenates the mapped parts into one clean string -- verified `Street: "900 Lakeshore Dr", City: "Chicago", State: "IL", Postal: "60601"` produced exactly `"900 Lakeshore Dr, Chicago, IL 60601"`, stored as-is on `Client.address` with no standardization or verification applied.
+
+## The validation seam
+
+Per the task's explicit instruction, no Google Address Validation call was added this session (deferred until Google Cloud Console access exists). `composeAddress` is the isolated seam for it: a pure function taking `{ street, city, state, postalCode }` and returning the final string, called from exactly one place in the execute row-processing loop (`routes/clientImport.ts`, immediately before building `fields.address`). A future session can insert a validation call right there -- pass it either `parts` or the composed string, read back a verdict, optionally set a new flag on the row -- without touching the mapping step, the review UI, or anything else in the pipeline; the function's own doc comment states this explicitly so it isn't lost to a later refactor.
+
+## Verification
+
+**Browser** (Playwright, screenshots reviewed): full mapping -> review flow with a realistic fixture (separate Street/City/State/Postal columns plus an Artist column) -- auto-suggestion correctly proposed all four composite sub-roles and `inquiry.assignedArtist` with zero manual correction needed; review table showed "Needs review" badges only on the two non-exact rows, with the artist picker pre-selecting the fuzzy suggestion for the typo row and "Unassigned" for the no-match row, both freely correctable via the same dropdown. **API**: exact match, fuzzy match, and no-match paths all independently confirmed via direct execute calls (see above); mutual-exclusivity validation confirmed rejecting a mapping with both `address` and `address.street` at once.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) — clean. `npx tsc --noEmit` + `npm run build` (web) — clean.
+
+## Commit
+
+`ad77ff6` — Mass import follow-up: assigned-artist matching, composite address mapping. Pushed immediately after a collision check (`git fetch` + `git log HEAD..origin/main`) came back empty.
+
+## Cleanup
+
+Both scratch dev servers (API :5501, web :6501, logging to `api4.log`/`vite4.log`) stopped by PID. Temporary verification scripts (`verify_artist_address.mjs`, `verify_execute_artist_address.mjs`, `verify_unmatched_artist_note.mjs`, `verify_address_conflict.mjs`), the fixture CSVs, and screenshots left scratchpad-only, none committed. The one-off `_scratch_seed_luis_guzman.ts` script used to create a test artist (not part of the checked-in seed, since it's verification-only fixture data) ran once against dev and was deleted from the repo afterward, not committed. Test data created during verification (the Luis Guzman artist account, several imported clients/inquiries/gift cards) left in the dev database, consistent with this session's standing convention.
