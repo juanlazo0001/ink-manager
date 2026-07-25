@@ -334,6 +334,11 @@ model Artist {
   preferredInquiries Inquiry[]           @relation("PreferredArtist")
   assignedInquiries  Inquiry[]           @relation("AssignedArtist")
   reminderLogs       ArtistReminderLog[]
+  // Package R (artist-matching follow-up): rows from a mass import whose
+  // artist-name column matched (exactly or fuzzily) THIS artist -- purely
+  // informational, same "reverse pointer with no effect on the artist's
+  // own fields" convention as Client.matchedImportRows below.
+  matchedImportRows  ImportRow[]
 }
 
 model Client {
@@ -509,6 +514,24 @@ model ImportRow {
   // flagged row still has this null. Not used at all for a non-flagged
   // row's deposit, which needs no individual action.
   depositDecision ImportRowDepositDecision?
+
+  // Set once columnMapping is confirmed (mass-import follow-up), by
+  // matching whatever column was mapped to inquiry.assignedArtist against
+  // the studio's own Artist display names -- see
+  // lib/importArtistMatching.ts. Null means no artist column was mapped,
+  // this row's cell was empty, or nothing matched closely enough. Unlike
+  // a flagged deposit outlier, an unresolved/unreviewed artist match does
+  // NOT block execute -- the inquiry still imports successfully,
+  // unassigned, with the original raw text preserved in its historical
+  // note as a fallback.
+  matchedArtistId String?
+  matchedArtist   Artist? @relation(fields: [matchedArtistId], references: [id])
+
+  // True when the match above was either a fuzzy (not exact) match or no
+  // match at all -- surfaced in the same review UI as a flagged deposit
+  // outlier, so staff can confirm/correct/clear it, but purely advisory:
+  // never recomputed after a staff pick, and never checked by execute.
+  artistFlaggedForReview Boolean @default(false)
 
   // Null until staff reviews this specific row -- execute refuses to run
   // while any row in the batch is still null (see the route for the exact

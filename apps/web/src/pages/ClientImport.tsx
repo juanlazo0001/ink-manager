@@ -14,6 +14,16 @@ interface MatchedClient {
   phone: string | null
 }
 
+interface MatchedArtist {
+  id: string
+  user: { name: string | null }
+}
+
+interface StudioArtist {
+  id: string
+  name: string
+}
+
 type ImportRowDecision = 'ADD' | 'MERGE' | 'SKIP'
 type ImportRowDepositDecision = 'IMPORT' | 'SKIP' | 'EDIT'
 
@@ -25,6 +35,9 @@ interface ImportRow {
   parsedDepositCents: number | null
   depositFlaggedAsOutlier: boolean
   depositDecision: ImportRowDepositDecision | null
+  matchedArtistId: string | null
+  matchedArtist: MatchedArtist | null
+  artistFlaggedForReview: boolean
   decision: ImportRowDecision | null
   processedAt: string | null
   isMalformed: boolean
@@ -35,6 +48,7 @@ interface ImportBatch {
   status: 'MAPPING' | 'PENDING_REVIEW' | 'COMPLETED' | 'CANCELLED'
   createdAt: string
   columnMapping: Record<string, string> | null
+  studioArtists: StudioArtist[]
   rows: ImportRow[]
 }
 
@@ -237,6 +251,10 @@ export default function ClientImport() {
     setEditingDepositRowId(null)
   }
 
+  function handleArtistChange(rowId: string, matchedArtistId: string) {
+    patchRow(rowId, { matchedArtistId: matchedArtistId || null })
+  }
+
   async function handleCancel() {
     if (!batchId) return
     setCancelling(true)
@@ -347,8 +365,10 @@ export default function ClientImport() {
                     <p className="text-sm text-fg-secondary">
                       Best-guess mapping shown below -- correct or confirm each one. Columns left "Not imported" are
                       kept in the original file but never read by Ink Manager. Map any column of leftover context
-                      (last visit date, artist, etc.) to <strong>Historical Note</strong> to preserve it on the
-                      resulting inquiry instead of dropping it.
+                      (last visit date, etc.) to <strong>Historical Note</strong> to preserve it on the resulting
+                      inquiry instead of dropping it. If the address is split across separate columns, map each one
+                      to its own Address -- Street/City/State/Postal code option instead of the single-column
+                      Address field -- they'll combine into one address automatically.
                     </p>
                   </div>
 
@@ -430,7 +450,9 @@ export default function ClientImport() {
                     {reviewBatch.rows.filter((r) => r.isMalformed).length} flagged row
                     {reviewBatch.rows.filter((r) => r.isMalformed).length === 1 ? '' : 's'} ·{' '}
                     {reviewBatch.rows.filter((r) => r.depositFlaggedAsOutlier).length} unusual deposit
-                    {reviewBatch.rows.filter((r) => r.depositFlaggedAsOutlier).length === 1 ? '' : 's'}
+                    {reviewBatch.rows.filter((r) => r.depositFlaggedAsOutlier).length === 1 ? '' : 's'} ·{' '}
+                    {reviewBatch.rows.filter((r) => r.artistFlaggedForReview).length} artist match
+                    {reviewBatch.rows.filter((r) => r.artistFlaggedForReview).length === 1 ? '' : 'es'} to review
                   </p>
                 </div>
 
@@ -497,6 +519,7 @@ export default function ClientImport() {
                         </th>
                       ))}
                       <th className="px-4 py-3 font-medium">Deposit</th>
+                      <th className="px-4 py-3 font-medium">Artist</th>
                       <th className="px-4 py-3 font-medium">Match</th>
                       <th className="px-4 py-3 font-medium">Decision</th>
                     </tr>
@@ -563,6 +586,32 @@ export default function ClientImport() {
                                 <p className="mt-0.5 text-xs text-fg-muted">Resolved: {row.depositDecision}</p>
                               )}
                             </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          {row.artistFlaggedForReview && (
+                            <span className="mb-1 inline-block rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning">
+                              Needs review
+                            </span>
+                          )}
+                          {reviewable ? (
+                            <select
+                              value={row.matchedArtistId ?? ''}
+                              onChange={(e) => handleArtistChange(row.id, e.target.value)}
+                              disabled={savingRowId === row.id}
+                              className="mt-1 block rounded-lg border border-border bg-surface-inset px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-60"
+                            >
+                              <option value="">Unassigned</option>
+                              {reviewBatch.studioArtists.map((artist) => (
+                                <option key={artist.id} value={artist.id}>
+                                  {artist.name}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <span className="text-xs text-fg-secondary">
+                              {row.matchedArtist?.user.name ?? 'Unassigned'}
+                            </span>
                           )}
                         </td>
                         <td className="px-4 py-3">

@@ -12,11 +12,23 @@ export const IMPORT_TARGET_FIELDS = [
   "phone",
   "email",
   "address",
+  // Composite-address sub-roles (follow-up revision): an alternative to
+  // the single "address" column above -- staff maps up to these four
+  // instead when the export has separate columns, and composeAddress
+  // (below) concatenates them into the one Client.address field.
+  // Mutually exclusive with "address" itself -- see validateColumnMapping.
+  "address.street",
+  "address.city",
+  "address.state",
+  "address.postalCode",
   "inquiry.description",
   "inquiry.placement",
   "inquiry.size",
   "inquiry.budget",
   "inquiry.desiredTiming",
+  // Follow-up revision -- see lib/importArtistMatching.ts for how this
+  // gets resolved to a real Artist once mapped.
+  "inquiry.assignedArtist",
   "depositAmount",
   "note",
 ] as const;
@@ -28,15 +40,22 @@ export const IMPORT_TARGET_FIELD_LABELS: Record<ImportTargetField, string> = {
   lastName: "Last name",
   phone: "Phone",
   email: "Email",
-  address: "Address",
+  address: "Address (single column)",
+  "address.street": "Address -- Street",
+  "address.city": "Address -- City",
+  "address.state": "Address -- State",
+  "address.postalCode": "Address -- Postal code",
   "inquiry.description": "Tattoo description",
   "inquiry.placement": "Placement",
   "inquiry.size": "Size",
   "inquiry.budget": "Budget",
   "inquiry.desiredTiming": "Desired timing",
+  "inquiry.assignedArtist": "Assigned artist",
   depositAmount: "Deposit amount (gift-card source)",
   note: "Historical Note",
 };
+
+const COMPOSITE_ADDRESS_FIELDS: ImportTargetField[] = ["address.street", "address.city", "address.state", "address.postalCode"];
 
 // Fields where at most one CSV column may be mapped -- everything except
 // "note" (the whole point of that bucket is many-to-one).
@@ -53,11 +72,16 @@ const FIELD_KEYWORDS: Record<Exclude<ImportTargetField, "note">, string[]> = {
   email: ["e-mail", "email"],
   phone: ["phone", "mobile", "cell", "telephone"],
   address: ["mailing address", "street address", "address"],
+  "address.street": ["address line 1", "addr1", "address1", "street"],
+  "address.city": ["city", "town"],
+  "address.state": ["state", "province"],
+  "address.postalCode": ["postal code", "zip code", "zipcode", "postcode", "zip"],
   "inquiry.description": ["describe", "description", "tattoo idea", "design idea", "what tattoo"],
   "inquiry.placement": ["placement", "placed", "body part"],
   "inquiry.size": ["size"],
   "inquiry.budget": ["budget", "price range"],
   "inquiry.desiredTiming": ["when would you", "desired timing", "desired date", "timing"],
+  "inquiry.assignedArtist": ["assigned artist", "preferred artist", "artist"],
   depositAmount: ["deposit", "amount paid", "payment"],
 };
 
@@ -126,6 +150,12 @@ export function validateColumnMapping(mapping: unknown, knownHeaders: string[]):
     }
   }
 
+  const hasPlainAddress = claimedSingleUse.has("address");
+  const hasCompositeAddress = COMPOSITE_ADDRESS_FIELDS.some((f) => claimedSingleUse.has(f));
+  if (hasPlainAddress && hasCompositeAddress) {
+    return "Map address as either a single column OR separate Street/City/State/Postal columns, not both";
+  }
+
   return null;
 }
 
@@ -164,6 +194,32 @@ export function parseDepositAmountCents(raw: string | null): number | null {
   const numeric = Number(match[0].replace(/,/g, ""));
   if (!Number.isFinite(numeric)) return null;
   return Math.round(numeric * 100);
+}
+
+// Composite-address concatenation -- the ONE seam for a future Google
+// Address Validation call (explicitly deferred this session, until Google
+// Cloud Console access exists): a later session inserts that call right
+// here (validate `parts` or the returned string, get a verdict back,
+// optionally flag the row) without touching the row-processing loop that
+// calls this, or anything else in the import pipeline. Pure string
+// concatenation only, no external call, no standardization/verification --
+// the composed string is stored and used exactly as-is.
+export interface CompositeAddressParts {
+  street: string | null;
+  city: string | null;
+  state: string | null;
+  postalCode: string | null;
+}
+
+export function composeAddress(parts: CompositeAddressParts): string | null {
+  const street = parts.street?.trim() || null;
+  const city = parts.city?.trim() || null;
+  const state = parts.state?.trim() || null;
+  const postalCode = parts.postalCode?.trim() || null;
+
+  const cityStateZip = [city, [state, postalCode].filter(Boolean).join(" ") || null].filter(Boolean).join(", ");
+  const composed = [street, cityStateZip || null].filter(Boolean).join(", ");
+  return composed || null;
 }
 
 // "Well outside the range the studio's own deposit tiers imply as normal":

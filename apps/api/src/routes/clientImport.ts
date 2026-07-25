@@ -24,7 +24,9 @@ import {
   isMalformedRow,
   parseDepositAmountCents,
   isDepositOutlier,
+  composeAddress,
 } from "../lib/importColumnMapping";
+import { matchArtistForImportRow } from "../lib/importArtistMatching";
 
 const router = Router();
 
@@ -157,11 +159,11 @@ router.patch("/import/:batchId/mapping", async (req, res) => {
     data: { columnMapping: mapping, status: ImportBatchStatus.PENDING_REVIEW },
   });
 
-  // Sequential, not Promise.all -- findMatchingClientForImportRow re-reads
-  // every studio client per row, and a large import doing that
-  // concurrently for hundreds of rows at once would hammer the DB for no
-  // real benefit (nothing here is latency-sensitive; this only runs once
-  // per confirmed mapping).
+  // Sequential, not Promise.all -- findMatchingClientForImportRow and
+  // matchArtistForImportRow both re-read studio-wide lists per row, and a
+  // large import doing that concurrently for hundreds of rows at once
+  // would hammer the DB for no real benefit (nothing here is
+  // latency-sensitive; this only runs once per confirmed mapping).
   for (const row of batch.rows) {
     const raw = row.rawData as Record<string, unknown>;
     const phone = getMappedRawValue(raw, mapping, "phone");
@@ -172,9 +174,18 @@ router.patch("/import/:batchId/mapping", async (req, res) => {
     const parsedDepositCents = parseDepositAmountCents(depositRaw);
     const depositFlaggedAsOutlier = parsedDepositCents != null && isDepositOutlier(parsedDepositCents, tiers);
 
+    const artistRaw = getMappedRawValue(raw, mapping, "inquiry.assignedArtist");
+    const artistMatch = await matchArtistForImportRow(studioId, artistRaw);
+
     await prisma.importRow.update({
       where: { id: row.id },
-      data: { matchedClientId: match?.id ?? null, parsedDepositCents, depositFlaggedAsOutlier },
+      data: {
+        matchedClientId: match?.id ?? null,
+        parsedDepositCents,
+        depositFlaggedAsOutlier,
+        matchedArtistId: artistMatch.matchedArtistId,
+        artistFlaggedForReview: artistMatch.artistFlaggedForReview,
+      },
     });
   }
 
@@ -196,7 +207,10 @@ async function getBatchForReview(batchId: string, studioId: string) {
     where: { id: batchId },
     include: {
       rows: {
-        include: { matchedClient: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } } },
+        include: {
+          matchedClient: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
+          matchedArtist: { select: { id: true, user: { select: { name: true } } } },
+        },
         orderBy: { id: "asc" },
       },
     },
@@ -206,8 +220,19 @@ async function getBatchForReview(batchId: string, studioId: string) {
 
   const mapping = batch.columnMapping as Record<string, ImportTargetField> | null;
 
+  // The review table's artist-picker needs every studio artist regardless
+  // of whether this batch flagged any row -- fetched alongside the batch
+  // so the frontend needs only this one call to render the whole review
+  // screen, same as columnsData bundles targetFields for the mapping step.
+  const studioArtists = await prisma.artist.findMany({
+    where: { user: { studioId } },
+    select: { id: true, user: { select: { name: true } } },
+    orderBy: { user: { name: "asc" } },
+  });
+
   return {
     ...batch,
+    studioArtists: studioArtists.map((a) => ({ id: a.id, name: a.user.name ?? "(unnamed)" })),
     rows: batch.rows.map((row) => ({
       ...row,
       isMalformed: isMalformedRow(row.rawData as Record<string, unknown>, mapping),
@@ -226,7 +251,7 @@ const DEPOSIT_DECISIONS = Object.values(ImportRowDepositDecision);
 
 router.patch("/import/:batchId/rows/:rowId", async (req, res) => {
   const { batchId, rowId } = req.params as { batchId: string; rowId: string };
-  const { decision, depositDecision, correctedDepositCents } = req.body ?? {};
+  const { decision, depositDecision, correctedDepositCents, matchedArtistId } = req.body ?? {};
 
   const row = await prisma.importRow.findUnique({ where: { id: rowId }, include: { importBatch: true } });
   if (!row || row.importBatchId !== batchId || row.importBatch.studioId !== req.user!.studioId) {
@@ -287,11 +312,36 @@ router.patch("/import/:batchId/rows/:rowId", async (req, res) => {
     data.depositDecision = depositDecision;
   }
 
-  if (Object.keys(data).length === 0) {
-    return res.status(400).json({ error: "Provide decision and/or depositDecision to update" });
+  // Not restricted to artistFlaggedForReview rows -- unlike a deposit
+  // outlier's depositDecision, staff can correct ANY row's artist match,
+  // not just a flagged one. artistFlaggedForReview itself is left alone
+  // either way (see the schema's own comment): it records whether the
+  // ORIGINAL match was exact, not whether it's been reviewed since.
+  if (matchedArtistId !== undefined) {
+    if (matchedArtistId !== null) {
+      if (typeof matchedArtistId !== "string") {
+        return res.status(400).json({ error: "matchedArtistId must be a string or null" });
+      }
+      const artist = await prisma.artist.findUnique({
+        where: { id: matchedArtistId },
+        select: { user: { select: { studioId: true } } },
+      });
+      if (!artist || artist.user.studioId !== req.user!.studioId) {
+        return res.status(400).json({ error: "matchedArtistId must belong to an artist in your studio" });
+      }
+    }
+    data.matchedArtist = matchedArtistId === null ? { disconnect: true } : { connect: { id: matchedArtistId } };
   }
 
-  const updated = await prisma.importRow.update({ where: { id: rowId }, data });
+  if (Object.keys(data).length === 0) {
+    return res.status(400).json({ error: "Provide decision, depositDecision, and/or matchedArtistId to update" });
+  }
+
+  const updated = await prisma.importRow.update({
+    where: { id: rowId },
+    data,
+    include: { matchedArtist: { select: { id: true, user: { select: { name: true } } } } },
+  });
   res.json({ ...updated, isMalformed: isMalformedRow(updated.rawData as Record<string, unknown>, mapping) });
 });
 
@@ -379,6 +429,7 @@ async function createImportedClientWithInquiry(
     referralCode: string;
     fields: { firstName: string; lastName: string; email: string | null; phone: string | null; address: string | null };
     inquiryFields: { description: string; placement: string; estimatedSize: string; budget: string | null; desiredTiming: string | null };
+    assignedArtistId: string | null;
     noteBodyHtml: string | null;
   },
 ) {
@@ -412,6 +463,12 @@ async function createImportedClientWithInquiry(
       estimatedSize: params.inquiryFields.estimatedSize,
       budget: params.inquiryFields.budget,
       desiredTiming: params.inquiryFields.desiredTiming,
+      // Null means the row's artist column was unmapped, empty, or never
+      // resolved to a real Artist (no match, or staff never picked one
+      // during review) -- the inquiry still imports successfully,
+      // unassigned, same as any other inquiry created without a preferred
+      // artist.
+      assignedArtistId: params.assignedArtistId,
     },
   });
 
@@ -487,12 +544,21 @@ router.post("/import/:batchId/execute", requireRole(Role.OWNER), async (req, res
       }
 
       const raw = row.rawData as Record<string, unknown>;
+      const compositeAddress = composeAddress({
+        street: getMappedRawValue(raw, mapping, "address.street"),
+        city: getMappedRawValue(raw, mapping, "address.city"),
+        state: getMappedRawValue(raw, mapping, "address.state"),
+        postalCode: getMappedRawValue(raw, mapping, "address.postalCode"),
+      });
       const fields = {
         firstName: getMappedRawValue(raw, mapping, "firstName") ?? "",
         lastName: getMappedRawValue(raw, mapping, "lastName") ?? "",
         email: getMappedRawValue(raw, mapping, "email"),
         phone: getMappedRawValue(raw, mapping, "phone"),
-        address: getMappedRawValue(raw, mapping, "address"),
+        // Mutually exclusive by construction (validateColumnMapping
+        // rejects a mapping with both), so at most one of these is ever
+        // actually non-null in practice.
+        address: getMappedRawValue(raw, mapping, "address") ?? compositeAddress,
       };
 
       const inquiryFields = {
@@ -509,6 +575,17 @@ router.post("/import/:batchId/execute", requireRole(Role.OWNER), async (req, res
           return value ? `<strong>${escapeHtml(header)}:</strong> ${escapeHtml(value)}` : null;
         })
         .filter((line): line is string => line !== null);
+
+      // Nothing silently lost: an assigned-artist column that never
+      // resolved to a real Artist (no match found, or staff never picked
+      // one during review) still has its original raw text preserved here
+      // as a fallback line, even if staff didn't separately map that same
+      // column to Historical Note.
+      const rawArtistName = getMappedRawValue(raw, mapping, "inquiry.assignedArtist");
+      if (rawArtistName && !row.matchedArtistId) {
+        noteLines.push(`<strong>Artist (from import, unmatched):</strong> ${escapeHtml(rawArtistName)}`);
+      }
+
       const noteBodyHtml = noteLines.length > 0 ? `<p><em>Imported from legacy CRM</em></p><p>${noteLines.join("<br/>")}</p>` : null;
 
       const referralCode = await generateUniqueReferralCode();
@@ -519,6 +596,7 @@ router.post("/import/:batchId/execute", requireRole(Role.OWNER), async (req, res
           referralCode,
           fields,
           inquiryFields,
+          assignedArtistId: row.matchedArtistId,
           noteBodyHtml,
         }),
       );
