@@ -82,6 +82,7 @@ publicRouter.get("/verify/:token", async (req, res) => {
           studio: { include: { settings: { select: { themePreset: true } } } },
           assignedArtist: { include: { user: true } },
           appointment: true,
+          service: { select: { depositBreakdownNote: true } },
         },
       },
     },
@@ -111,6 +112,10 @@ publicRouter.get("/verify/:token", async (req, res) => {
     depositAmount: depositForm!.depositAmount,
     feeAmount: depositForm!.feeAmount,
     totalCharged: depositForm!.totalCharged,
+    // Shown alongside the total on the public deposit page when set (e.g.
+    // Powder Brows' "$50 deposit + $10 processing fee") -- purely
+    // informational, null for every service that doesn't set one.
+    depositBreakdownNote: inquiry.service.depositBreakdownNote,
     terms: TERMS,
   });
 });

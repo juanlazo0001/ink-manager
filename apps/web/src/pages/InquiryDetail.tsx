@@ -12,7 +12,7 @@ import Widget from '../components/Widget'
 import ReorderableWidgetList from '../components/ReorderableWidgetList'
 import AppointmentForm from '../components/AppointmentForm'
 import GiftCardStackPicker, { isCardAvailable, type GiftCardOption } from '../components/GiftCardStackPicker'
-import { computeRequiredDepositCents, resolveDepositTiers, type DepositTier } from '../lib/depositTiers'
+import { resolveRequiredDepositCents, resolveDepositTiers, type DepositTier } from '../lib/depositTiers'
 import CurrencyInput from '../components/CurrencyInput'
 import ImageUploadSection, { type ImageUploadState } from '../components/ImageUploadSection'
 import { ArtistAvatar, artistLabel, type ArtistLike } from '../components/ArtistAvatar'
@@ -24,7 +24,7 @@ import DateAndTimeRangeFields, {
   type DateAndTimeRangeValue,
 } from '../components/DateAndTimeRangeFields'
 import { apiFetch, ApiError } from '../lib/api'
-import { formatDateTime, formatDuration, formatPhoneInput, formatStatus, describeInquiryStatus } from '../lib/format'
+import { formatDateTime, formatDuration, formatPhoneInput, formatStatus, describeInquiryStatus, formatPriceEstimate } from '../lib/format'
 import { describeSendResult, type ClientSendResult } from '../lib/sendResult'
 import {
   AppointmentsIcon,
@@ -145,6 +145,19 @@ interface Inquiry {
     proposedEndAt: string | null
     giftCard: { id: string; code: string; amountCents: number; status: string } | null
   }[]
+  // Service lines: which service this inquiry is for -- drives whether the
+  // estimate form below collects one flat price or a low/high range, and
+  // whether the deposit shows a breakdown note.
+  service: {
+    id: string
+    name: string
+    pricingModel: 'RANGE' | 'FLAT'
+    depositModel: 'TIER_BASED' | 'FLAT'
+    flatPriceCents: number | null
+    flatDepositCents: number | null
+    depositBreakdownNote: string | null
+    requiresCandidacyReview: boolean
+  }
 }
 
 interface SuggestedTimeCandidate {
@@ -493,7 +506,8 @@ export default function InquiryDetail() {
     queryFn: () => apiFetch<{ depositTiers: DepositTier[] }>('/studio-settings'),
     select: (data) => resolveDepositTiers(data.depositTiers),
   })
-  const requiredDepositCents = computeRequiredDepositCents(
+  const requiredDepositCents = resolveRequiredDepositCents(
+    inquiry?.service,
     inquiry?.priceEstimateLow,
     inquiry?.priceEstimateHigh,
     depositTiers,
@@ -729,6 +743,16 @@ export default function InquiryDetail() {
       desiredTiming: inquiry.desiredTiming ?? '',
     })
   }
+
+  // Service lines: a FLAT-pricing service (e.g. Powder Brows) collects one
+  // flat price instead of a low/high range -- the entire existing estimate
+  // send/track/respond flow is reused completely unchanged underneath;
+  // only this input collapses to one field, which sets BOTH
+  // priceEstimateLow and priceEstimateHigh to the same value (see the two
+  // onChange handlers below), so every downstream consumer of those two
+  // fields (validation, the deposit-tier average, display formatting via
+  // formatPriceEstimate) keeps working with zero branching of its own.
+  const isFlatPricing = inquiry?.service.pricingModel === 'FLAT'
 
   // Mirrors the backend's own validation, so staff get instant feedback
   // instead of a round trip for something obviously incomplete.
@@ -1908,22 +1932,37 @@ export default function InquiryDetail() {
                   {!isTerminal && !isConverted && canMessage && editingEstimate && (
                     <>
                       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        <div>
-                          <label className="mb-1 block text-xs font-medium text-fg-secondary">Price low</label>
-                          <CurrencyInput
-                            value={estimateForm.priceEstimateLow}
-                            onChange={(digits) => setEstimateForm({ ...estimateForm, priceEstimateLow: digits })}
-                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                          />
-                        </div>
-                        <div>
-                          <label className="mb-1 block text-xs font-medium text-fg-secondary">Price high</label>
-                          <CurrencyInput
-                            value={estimateForm.priceEstimateHigh}
-                            onChange={(digits) => setEstimateForm({ ...estimateForm, priceEstimateHigh: digits })}
-                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                          />
-                        </div>
+                        {isFlatPricing ? (
+                          <div className="sm:col-span-2">
+                            <label className="mb-1 block text-xs font-medium text-fg-secondary">Price</label>
+                            <CurrencyInput
+                              value={estimateForm.priceEstimateLow}
+                              onChange={(digits) =>
+                                setEstimateForm({ ...estimateForm, priceEstimateLow: digits, priceEstimateHigh: digits })
+                              }
+                              className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                            />
+                          </div>
+                        ) : (
+                          <>
+                            <div>
+                              <label className="mb-1 block text-xs font-medium text-fg-secondary">Price low</label>
+                              <CurrencyInput
+                                value={estimateForm.priceEstimateLow}
+                                onChange={(digits) => setEstimateForm({ ...estimateForm, priceEstimateLow: digits })}
+                                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                              />
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-xs font-medium text-fg-secondary">Price high</label>
+                              <CurrencyInput
+                                value={estimateForm.priceEstimateHigh}
+                                onChange={(digits) => setEstimateForm({ ...estimateForm, priceEstimateHigh: digits })}
+                                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                              />
+                            </div>
+                          </>
+                        )}
                         <div>
                           <label className="mb-1 block text-xs font-medium text-fg-secondary">Time min (hours)</label>
                           <select
@@ -1992,14 +2031,23 @@ export default function InquiryDetail() {
                       inquiry.timeEstimateHoursMin != null ||
                       inquiry.timeEstimateHoursMax != null) && (
                     <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
-                      <DetailField
-                        label="Price estimate low"
-                        value={inquiry.priceEstimateLow != null ? `$${inquiry.priceEstimateLow}` : 'Not provided'}
-                      />
-                      <DetailField
-                        label="Price estimate high"
-                        value={inquiry.priceEstimateHigh != null ? `$${inquiry.priceEstimateHigh}` : 'Not provided'}
-                      />
+                      {isFlatPricing ? (
+                        <DetailField
+                          label="Price estimate"
+                          value={formatPriceEstimate(inquiry.priceEstimateLow, inquiry.priceEstimateHigh) ?? 'Not provided'}
+                        />
+                      ) : (
+                        <>
+                          <DetailField
+                            label="Price estimate low"
+                            value={inquiry.priceEstimateLow != null ? `$${inquiry.priceEstimateLow}` : 'Not provided'}
+                          />
+                          <DetailField
+                            label="Price estimate high"
+                            value={inquiry.priceEstimateHigh != null ? `$${inquiry.priceEstimateHigh}` : 'Not provided'}
+                          />
+                        </>
+                      )}
                       <DetailField
                         label="Time estimate"
                         value={
@@ -3048,22 +3096,37 @@ export default function InquiryDetail() {
                     </p>
 
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <div>
-                        <label className="mb-1 block text-xs font-medium text-fg-secondary">Price low</label>
-                        <CurrencyInput
-                          value={reviseEstimateForm.priceEstimateLow}
-                          onChange={(digits) => setReviseEstimateForm({ ...reviseEstimateForm, priceEstimateLow: digits })}
-                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs font-medium text-fg-secondary">Price high</label>
-                        <CurrencyInput
-                          value={reviseEstimateForm.priceEstimateHigh}
-                          onChange={(digits) => setReviseEstimateForm({ ...reviseEstimateForm, priceEstimateHigh: digits })}
-                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                        />
-                      </div>
+                      {isFlatPricing ? (
+                        <div className="sm:col-span-2">
+                          <label className="mb-1 block text-xs font-medium text-fg-secondary">Price</label>
+                          <CurrencyInput
+                            value={reviseEstimateForm.priceEstimateLow}
+                            onChange={(digits) =>
+                              setReviseEstimateForm({ ...reviseEstimateForm, priceEstimateLow: digits, priceEstimateHigh: digits })
+                            }
+                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                          />
+                        </div>
+                      ) : (
+                        <>
+                          <div>
+                            <label className="mb-1 block text-xs font-medium text-fg-secondary">Price low</label>
+                            <CurrencyInput
+                              value={reviseEstimateForm.priceEstimateLow}
+                              onChange={(digits) => setReviseEstimateForm({ ...reviseEstimateForm, priceEstimateLow: digits })}
+                              className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-xs font-medium text-fg-secondary">Price high</label>
+                            <CurrencyInput
+                              value={reviseEstimateForm.priceEstimateHigh}
+                              onChange={(digits) => setReviseEstimateForm({ ...reviseEstimateForm, priceEstimateHigh: digits })}
+                              className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                            />
+                          </div>
+                        </>
+                      )}
                       <div>
                         <label className="mb-1 block text-xs font-medium text-fg-secondary">Time min (hours)</label>
                         <select

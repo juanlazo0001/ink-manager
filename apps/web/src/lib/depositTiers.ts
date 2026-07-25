@@ -39,3 +39,18 @@ export function computeRequiredDepositCents(
     tiers[tiers.length - 1]
   return matched.depositAmountCents
 }
+
+// Service lines: mirrors apps/api/src/lib/depositTiers.ts's own
+// resolveRequiredDepositCents -- a FLAT-deposit service's (e.g. Powder
+// Brows) required amount is its flatDepositCents directly, not a tier
+// lookup off the estimate. TIER_BASED (Tattoo) is unaffected, same
+// computeRequiredDepositCents call as before.
+export function resolveRequiredDepositCents(
+  service: { depositModel: 'TIER_BASED' | 'FLAT'; flatDepositCents: number | null } | null | undefined,
+  priceEstimateLow: number | null | undefined,
+  priceEstimateHigh: number | null | undefined,
+  tiers: DepositTier[] = DEFAULT_DEPOSIT_TIERS,
+): number {
+  if (service?.depositModel === 'FLAT') return service.flatDepositCents ?? 0
+  return computeRequiredDepositCents(priceEstimateLow, priceEstimateHigh, tiers)
+}

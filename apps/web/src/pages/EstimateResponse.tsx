@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { apiFetch, ApiError } from '../lib/api'
 import { sanitizeHtml } from '../lib/sanitizeHtml'
+import { formatPriceEstimate } from '../lib/format'
 import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import { applyThemePreset } from '../lib/themePresets'
 import PublicPageFooter from '../components/PublicPageFooter'
@@ -154,11 +155,15 @@ export default function EstimateResponse() {
 
             <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Price range</p>
+                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
+                  {verifyData.priceEstimateLow != null &&
+                  verifyData.priceEstimateHigh != null &&
+                  verifyData.priceEstimateLow !== verifyData.priceEstimateHigh
+                    ? 'Price range'
+                    : 'Price'}
+                </p>
                 <p className="mt-1 text-lg font-semibold text-fg">
-                  {verifyData.priceEstimateLow != null && verifyData.priceEstimateHigh != null
-                    ? `$${verifyData.priceEstimateLow} – $${verifyData.priceEstimateHigh}`
-                    : 'To be discussed'}
+                  {formatPriceEstimate(verifyData.priceEstimateLow, verifyData.priceEstimateHigh) ?? 'To be discussed'}
                 </p>
               </div>
               <div>

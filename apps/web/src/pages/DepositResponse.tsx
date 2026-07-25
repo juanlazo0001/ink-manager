@@ -31,6 +31,7 @@ interface VerifyResponse {
   depositAmount: number
   feeAmount: number
   totalCharged: number
+  depositBreakdownNote: string | null
   terms: Term[]
 }
 
@@ -191,6 +192,10 @@ export default function DepositResponse() {
                 <p className="mt-1 text-lg font-semibold text-fg">${verifyData.totalCharged}</p>
               </div>
             </div>
+
+            {verifyData.depositBreakdownNote && (
+              <p className="mt-2 text-xs text-fg-muted">{verifyData.depositBreakdownNote}</p>
+            )}
 
             <form onSubmit={handleSubmit} className="mt-6 space-y-3">
               <p className="text-sm font-medium text-fg-secondary">Please read and agree to each term:</p>

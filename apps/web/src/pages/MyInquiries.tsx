@@ -36,6 +36,7 @@ interface Inquiry {
   priceEstimateLow: number | null
   priceEstimateHigh: number | null
   assignedArtist: { id: string; user: { email: string; name: string | null; avatarUrl: string | null } } | null
+  service: { id: string; name: string; pricingModel: 'RANGE' | 'FLAT' }
 }
 
 type ViewMode = 'list' | 'kanban'
@@ -401,35 +402,56 @@ export default function MyInquiries() {
             )}
 
             <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label htmlFor="priceLow" className="mb-1 block text-sm font-medium text-fg-secondary">
-                  Price low ($)
-                </label>
-                <input
-                  id="priceLow"
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={approveForm.priceEstimateLow}
-                  onChange={(event) => setApproveForm({ ...approveForm, priceEstimateLow: event.target.value })}
-                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                />
-              </div>
+              {approvingInquiry.service.pricingModel === 'FLAT' ? (
+                <div className="col-span-2">
+                  <label htmlFor="priceLow" className="mb-1 block text-sm font-medium text-fg-secondary">
+                    Price ($)
+                  </label>
+                  <input
+                    id="priceLow"
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={approveForm.priceEstimateLow}
+                    onChange={(event) =>
+                      setApproveForm({ ...approveForm, priceEstimateLow: event.target.value, priceEstimateHigh: event.target.value })
+                    }
+                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                  />
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <label htmlFor="priceLow" className="mb-1 block text-sm font-medium text-fg-secondary">
+                      Price low ($)
+                    </label>
+                    <input
+                      id="priceLow"
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={approveForm.priceEstimateLow}
+                      onChange={(event) => setApproveForm({ ...approveForm, priceEstimateLow: event.target.value })}
+                      className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                    />
+                  </div>
 
-              <div>
-                <label htmlFor="priceHigh" className="mb-1 block text-sm font-medium text-fg-secondary">
-                  Price high ($)
-                </label>
-                <input
-                  id="priceHigh"
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={approveForm.priceEstimateHigh}
-                  onChange={(event) => setApproveForm({ ...approveForm, priceEstimateHigh: event.target.value })}
-                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                />
-              </div>
+                  <div>
+                    <label htmlFor="priceHigh" className="mb-1 block text-sm font-medium text-fg-secondary">
+                      Price high ($)
+                    </label>
+                    <input
+                      id="priceHigh"
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={approveForm.priceEstimateHigh}
+                      onChange={(event) => setApproveForm({ ...approveForm, priceEstimateHigh: event.target.value })}
+                      className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                    />
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="mt-3 grid grid-cols-2 gap-3">

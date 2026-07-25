@@ -148,6 +148,11 @@ router.get("/:id", requirePermission("clients.view"), async (req, res) => {
             },
             orderBy: { sessionNumber: "asc" },
           },
+          // Service lines: AppointmentForm's required-deposit preview needs
+          // depositModel/flatDepositCents to compute a FLAT service's
+          // required deposit correctly instead of always falling back to a
+          // tier lookup.
+          service: { select: { depositModel: true, flatDepositCents: true } },
         },
         orderBy: { createdAt: "desc" },
       },

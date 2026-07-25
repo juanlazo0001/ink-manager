@@ -13,7 +13,7 @@ import DateAndTimeRangeFields, {
   type DateAndTimeRangeValue,
 } from '../components/DateAndTimeRangeFields'
 import { apiFetch, ApiError } from '../lib/api'
-import { describeAppointmentStatus, formatDateTime, formatPhoneInput, formatStatus } from '../lib/format'
+import { describeAppointmentStatus, formatDateTime, formatPhoneInput, formatStatus, formatPriceEstimate } from '../lib/format'
 import { describeSendResult, type ClientSendResult } from '../lib/sendResult'
 import { formatCents, dollarsToCents } from '../lib/money'
 import { ArrowLeftIcon, CheckIcon, ClientsIcon, CopyIcon, DocumentIcon, MessageIcon, MoreIcon } from '../components/icons'
@@ -833,11 +833,7 @@ export default function AppointmentDetail() {
                 <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <DetailField
                     label="Estimate"
-                    value={
-                      appointment.inquiry.priceEstimateLow != null && appointment.inquiry.priceEstimateHigh != null
-                        ? `$${appointment.inquiry.priceEstimateLow.toLocaleString('en-US')} – $${appointment.inquiry.priceEstimateHigh.toLocaleString('en-US')}`
-                        : 'Not provided'
-                    }
+                    value={formatPriceEstimate(appointment.inquiry.priceEstimateLow, appointment.inquiry.priceEstimateHigh) ?? 'Not provided'}
                   />
                   <DetailField label="Description" value={appointment.inquiry.description || 'Not provided'} />
                   <DetailField label="Color or Black & Grey" value={appointment.inquiry.colorOrBlackGrey || 'Not provided'} />

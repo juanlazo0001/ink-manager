@@ -2,6 +2,19 @@ export function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 }
 
+// Service lines: a FLAT-pricing service (e.g. Powder Brows) is entered with
+// the SAME value in both priceEstimateLow and priceEstimateHigh (see
+// InquiryDetail.tsx's estimate form) -- reusing the entire existing
+// estimate pipeline unchanged, rather than adding a parallel single-price
+// field. This is the one shared place every display site renders that as
+// one number instead of a redundant "$X-$X" range; a genuine RANGE (Tattoo)
+// estimate with low !== high still renders as a real range, unaffected.
+export function formatPriceEstimate(low: number | null, high: number | null): string | null {
+  if (low == null && high == null) return null
+  if (low != null && high != null && low !== high) return `$${low.toLocaleString()}–$${high.toLocaleString()}`
+  return `$${(low ?? high)!.toLocaleString()}`
+}
+
 export function formatStatus(status: string) {
   return status
     .toLowerCase()

@@ -495,6 +495,10 @@ const INQUIRY_LIST_SELECT = {
   client: { select: { firstName: true, lastName: true } },
   assignedArtist: { select: { id: true, user: { select: { id: true, name: true, email: true, avatarUrl: true } } } },
   appointment: { select: { startTime: true } },
+  // Service lines: MyInquiries.tsx's artist approve form and the Kanban
+  // board both need pricingModel to know whether to collect/display one
+  // flat price or a low/high range.
+  service: { select: { id: true, name: true, pricingModel: true, depositModel: true, flatDepositCents: true, depositBreakdownNote: true } },
 } as const;
 
 // Excluded from the default inbox the same way merged clients are excluded

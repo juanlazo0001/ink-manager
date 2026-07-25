@@ -1,7 +1,7 @@
 import { useDraggable } from '@dnd-kit/react'
 import { ArtistAvatar, artistLabel } from '../ArtistAvatar'
 import { getStatusTone } from '../StatusPill'
-import { formatRelativeTime } from '../../lib/format'
+import { formatRelativeTime, formatPriceEstimate } from '../../lib/format'
 import type { KanbanInquiry } from '../../lib/kanban'
 
 const TONE_BORDER_CLASSES: Record<string, string> = {
@@ -18,12 +18,6 @@ function truncate(text: string, max: number) {
   return text.length > max ? `${text.slice(0, max).trimEnd()}…` : text
 }
 
-function formatEstimateRange(low: number | null, high: number | null): string | null {
-  if (low == null && high == null) return null
-  if (low != null && high != null) return `$${low.toLocaleString()}–$${high.toLocaleString()}`
-  return `$${(low ?? high)!.toLocaleString()}`
-}
-
 interface InquiryKanbanCardProps {
   inquiry: KanbanInquiry
   columnKey: string
@@ -38,7 +32,7 @@ export default function InquiryKanbanCard({ inquiry, columnKey, draggable, onOpe
     disabled: !draggable,
   })
 
-  const estimateRange = formatEstimateRange(inquiry.priceEstimateLow, inquiry.priceEstimateHigh)
+  const estimateRange = formatPriceEstimate(inquiry.priceEstimateLow, inquiry.priceEstimateHigh)
   const tone = getStatusTone(inquiry.status)
 
   return (

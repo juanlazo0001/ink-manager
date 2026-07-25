@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '../lib/api'
 import StatusPill, { getStatusTone, type Tone } from './StatusPill'
 import InquiryPipeline from './InquiryPipeline'
-import { formatDateTime, formatRelativeTime, formatStatus } from '../lib/format'
+import { formatDateTime, formatRelativeTime, formatStatus, formatPriceEstimate } from '../lib/format'
 import { uploadImageToCloudinary } from '../lib/cloudinary'
 import { linkifyText } from '../lib/linkify'
 import { useEffectiveUser } from '../context/useEffectiveUser'
@@ -2464,9 +2464,8 @@ function ThreadView({
                             [
                               'Budget',
                               featuredInquiry.budget ??
-                                (featuredInquiry.priceEstimateLow != null && featuredInquiry.priceEstimateHigh != null
-                                  ? `$${featuredInquiry.priceEstimateLow}-$${featuredInquiry.priceEstimateHigh}`
-                                  : 'Not provided'),
+                                formatPriceEstimate(featuredInquiry.priceEstimateLow, featuredInquiry.priceEstimateHigh) ??
+                                'Not provided',
                             ],
                           ]
                         : []),

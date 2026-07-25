@@ -1,3 +1,5 @@
+import { ServiceDepositModel } from "../../generated/prisma/enums";
+
 export interface DepositTier {
   minAmountCents: number;
   maxAmountCents: number | null;
@@ -114,4 +116,42 @@ export function computeRequiredDepositCents(
   const average = (priceEstimateLow + priceEstimateHigh) / 2;
   const { depositAmount } = computeDepositTier(average, tiers);
   return Math.round(depositAmount * 100);
+}
+
+// Service lines: the one place every deposit-amount call site branches on
+// depositModel, so a FLAT service (flatDepositCents is the ENTIRE amount
+// charged -- e.g. Powder Brows' $60, already described via
+// Service.depositBreakdownNote -- not a tier-lookup deposit with the usual
+// processing fee stacked on top of it) is handled identically everywhere
+// gift-card sufficiency is checked. TIER_BASED (Tattoo, and every other
+// service predating this feature) is completely unaffected -- same
+// computeRequiredDepositCents call as before.
+export function resolveRequiredDepositCents(
+  service: { depositModel: ServiceDepositModel; flatDepositCents: number | null },
+  priceEstimateLow: number | null,
+  priceEstimateHigh: number | null,
+  tiers: DepositTier[] = DEFAULT_DEPOSIT_TIERS,
+): number {
+  if (service.depositModel === ServiceDepositModel.FLAT) {
+    return service.flatDepositCents ?? 0;
+  }
+  return computeRequiredDepositCents(priceEstimateLow, priceEstimateHigh, tiers);
+}
+
+// Same FLAT/TIER_BASED branch as resolveRequiredDepositCents above, but for
+// the deposit-form creation route, which needs the depositAmount/
+// totalCharged split (feeAmount = totalCharged - depositAmount) rather than
+// just a single sufficiency-check total. FLAT sets feeAmount to 0 -- the
+// flat amount already represents everything charged, per
+// depositBreakdownNote, not an additional fee layered on top of it.
+export function resolveDepositAmounts(
+  service: { depositModel: ServiceDepositModel; flatDepositCents: number | null },
+  average: number,
+  tiers: DepositTier[] = DEFAULT_DEPOSIT_TIERS,
+): { depositAmount: number; totalCharged: number } {
+  if (service.depositModel === ServiceDepositModel.FLAT) {
+    const amount = (service.flatDepositCents ?? 0) / 100;
+    return { depositAmount: amount, totalCharged: amount };
+  }
+  return computeDepositTier(average, tiers);
 }

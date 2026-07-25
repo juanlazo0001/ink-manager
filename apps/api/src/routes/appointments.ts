@@ -6,7 +6,7 @@ import { Role, AppointmentStatus, AppointmentType, GiftCardStatus } from "../../
 import { requirePermission } from "../lib/permissions";
 import { diffObjects, logAudit } from "../lib/audit";
 import { validateGiftCardsForAttachment, generateUniqueGiftCardCode, computeGiftCardExpiration } from "../lib/giftCards";
-import { computeRequiredDepositCents, resolveDepositTiers } from "../lib/depositTiers";
+import { resolveRequiredDepositCents, resolveDepositTiers } from "../lib/depositTiers";
 import { isSameCalendarDay } from "../lib/dateRange";
 import { findBufferConflict, formatBufferWarning } from "../lib/schedulingConflict";
 import { ensureLiabilityWaiver } from "../lib/waivers";
@@ -79,7 +79,7 @@ router.post("/", requirePermission("appointments.create"), async (req, res) => {
   const [artist, client, inquiry] = await Promise.all([
     prisma.artist.findUnique({ where: { id: artistId }, include: { user: true } }),
     prisma.client.findUnique({ where: { id: clientId } }),
-    prisma.inquiry.findUnique({ where: { id: inquiryId } }),
+    prisma.inquiry.findUnique({ where: { id: inquiryId }, include: { service: true } }),
   ]);
 
   if (!artist || artist.user.studioId !== studioId) {
@@ -95,7 +95,8 @@ router.post("/", requirePermission("appointments.create"), async (req, res) => {
   }
 
   if (!isConsultation) {
-    const requiredCents = computeRequiredDepositCents(
+    const requiredCents = resolveRequiredDepositCents(
+      inquiry.service,
       inquiry.priceEstimateLow,
       inquiry.priceEstimateHigh,
       resolveDepositTiers(studioSettings?.depositTiers),

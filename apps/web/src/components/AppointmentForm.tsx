@@ -8,7 +8,7 @@ import { artistLabel } from './ArtistAvatar'
 import ArtistSelect from './ArtistSelect'
 import MiniScheduleSnippet from './MiniScheduleSnippet'
 import GiftCardStackPicker, { isCardAvailable, type GiftCardOption } from './GiftCardStackPicker'
-import { computeRequiredDepositCents, resolveDepositTiers, type DepositTier } from '../lib/depositTiers'
+import { resolveRequiredDepositCents, resolveDepositTiers, type DepositTier } from '../lib/depositTiers'
 import DateAndTimeRangeFields, {
   combineDateAndTime,
   isCompleteTimeRange,
@@ -84,6 +84,7 @@ interface InquiryOption {
   assignedArtistId: string | null
   priceEstimateLow: number | null
   priceEstimateHigh: number | null
+  service: { depositModel: 'TIER_BASED' | 'FLAT'; flatDepositCents: number | null }
 }
 
 interface ClientWithProjects {
@@ -228,7 +229,8 @@ export default function AppointmentForm({
   const effectiveInquiryId = fixedInquiryId ?? inquiryId
   const selectedInquiry = availableInquiries.find((i) => i.id === effectiveInquiryId)
 
-  const requiredDepositCents = computeRequiredDepositCents(
+  const requiredDepositCents = resolveRequiredDepositCents(
+    selectedInquiry?.service,
     selectedInquiry?.priceEstimateLow,
     selectedInquiry?.priceEstimateHigh,
     depositTiers,
