@@ -32,11 +32,11 @@ router.post("/", requirePermission("clients.edit"), async (req, res) => {
     return res.status(400).json({ error: `Missing required field(s): ${missing.join(", ")}` });
   }
 
-  const { firstName, lastName, email, phone } = body;
+  const { firstName, lastName, email, phone, address } = body;
   const referralCode = await generateUniqueReferralCode();
 
   const client = await prisma.$transaction((tx) =>
-    createClientFromFields(tx, { studioId: req.user!.studioId, firstName, lastName, email, phone, referralCode }),
+    createClientFromFields(tx, { studioId: req.user!.studioId, firstName, lastName, email, phone, address, referralCode }),
   );
 
   res.status(201).json(client);
@@ -632,6 +632,7 @@ const EDITABLE_CLIENT_FIELDS = [
   "instagramHandle",
   "facebookProfileUrl",
   "otherContact",
+  "address",
 ] as const;
 
 router.patch("/:id", requirePermission("clients.edit"), async (req, res) => {

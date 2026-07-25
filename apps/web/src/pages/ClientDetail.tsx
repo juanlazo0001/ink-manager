@@ -109,6 +109,7 @@ interface Client {
   instagramHandle: string | null
   facebookProfileUrl: string | null
   otherContact: string | null
+  address: string | null
   mergedIntoId: string | null
   mergedInto: { id: string; firstName: string; lastName: string } | null
   referralCode: string
@@ -256,6 +257,7 @@ const EMPTY_EDIT_FORM = {
   instagramHandle: '',
   facebookProfileUrl: '',
   otherContact: '',
+  address: '',
 }
 
 const EMPTY_GIFT_CARD_FORM = { amountDollars: '', expiresAt: '' }
@@ -614,6 +616,7 @@ export default function ClientDetail() {
       instagramHandle: client.instagramHandle ?? '',
       facebookProfileUrl: client.facebookProfileUrl ?? '',
       otherContact: client.otherContact ?? '',
+      address: client.address ?? '',
     })
     setEditError(null)
     setEditing(true)
@@ -642,6 +645,7 @@ export default function ClientDetail() {
           instagramHandle: editForm.instagramHandle.trim() || null,
           facebookProfileUrl: editForm.facebookProfileUrl.trim() || null,
           otherContact: editForm.otherContact.trim() || null,
+          address: editForm.address.trim() || null,
         }),
       })
 
@@ -1164,6 +1168,16 @@ export default function ClientDetail() {
                           className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                         />
                       </div>
+                      <div className="sm:col-span-2">
+                        <label className="mb-1 block text-sm font-medium text-fg-secondary">Address</label>
+                        <input
+                          type="text"
+                          value={editForm.address}
+                          onChange={(e) => setEditForm({ ...editForm, address: e.target.value })}
+                          placeholder="Freeform -- street, city, state, zip"
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                        />
+                      </div>
                     </div>
 
                     {editError && <p className="mt-3 text-sm text-danger">{editError}</p>}
@@ -1230,6 +1244,9 @@ export default function ClientDetail() {
                         )}
                         {client.otherContact && (
                           <p className="mt-1 text-xs text-fg-muted">{client.otherContact}</p>
+                        )}
+                        {client.address && (
+                          <p className="mt-1 text-xs text-fg-muted">{client.address}</p>
                         )}
                         {/* Package O: this client's own shareable referral code -- deliberately
                             separate from the "prefilled intake link" feature (that's a link
@@ -1798,15 +1815,9 @@ export default function ClientDetail() {
                             >
                               <td className="py-3 font-mono text-xs text-fg">{card.code}</td>
                               <td className="py-3 text-fg-secondary">
-                                {card.status === 'EXEMPT' ? (
-                                  <>
-                                    Deposit Exemption
-                                    {card.exemptionReason && (
-                                      <span className="text-fg-muted"> — {card.exemptionReason}</span>
-                                    )}
-                                  </>
-                                ) : (
-                                  formatCents(card.amountCents)
+                                {card.status === 'EXEMPT' ? 'Deposit Exemption' : formatCents(card.amountCents)}
+                                {card.exemptionReason && (
+                                  <span className="text-fg-muted"> — {card.exemptionReason}</span>
                                 )}
                               </td>
                               <td className="py-3">

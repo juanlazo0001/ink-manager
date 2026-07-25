@@ -55,8 +55,12 @@ enum LiabilityWaiverStatus {
   VERIFIED
 }
 
-// Package R: mass client import.
+// Package R: mass client import. MAPPING added by the flexible-column-
+// mapping revision -- a batch now sits in this stage (raw rows stored,
+// nothing parsed/matched yet) between upload and a confirmed column
+// mapping, before it ever reaches PENDING_REVIEW.
 enum ImportBatchStatus {
+  MAPPING
   PENDING_REVIEW
   COMPLETED
   CANCELLED
@@ -66,6 +70,19 @@ enum ImportRowDecision {
   ADD
   MERGE
   SKIP
+}
+
+// Only meaningful for a row whose parsed deposit amount was flagged as an
+// outlier (see ImportRow.depositFlaggedAsOutlier) -- required before
+// execute for those rows, untouched for every other row. EDIT means the
+// staff-supplied corrected amount was written directly into
+// ImportRow.parsedDepositCents (no separate "corrected" column -- see the
+// PATCH .../rows/:rowId route), so execute always reads parsedDepositCents
+// as the final figure regardless of which of these three was chosen.
+enum ImportRowDepositDecision {
+  IMPORT
+  SKIP
+  EDIT
 }
 
 // Package Q (revised): true intake form builder -- replaces the bounded
@@ -338,6 +355,12 @@ model Client {
   // display only, no validation beyond basic length.
   otherContact       String?
 
+  // Freeform, single Text field deliberately -- not split into street/
+  // city/state/zip sub-fields for v1 (mass-import revision). Editable from
+  // the client's own detail page like every other contact field; also
+  // settable by a mapped "address" column during mass import.
+  address            String?
+
   studioId String
   studio   Studio @relation(fields: [studioId], references: [id])
 
@@ -414,13 +437,24 @@ model Client {
 
 // Package R: mass client import -- a staged review before anything is
 // actually written. Uploading a CSV creates one ImportRow per parsed
-// line, immediately duplicate-checked (matchedClientId) but not yet
-// acted on; nothing touches the real Client table until staff reviews
-// every row, sets a decision, and confirms (POST .../execute).
+// line with its rawData preserved verbatim (status MAPPING); nothing is
+// duplicate-checked or parsed yet because that requires a confirmed
+// column mapping first (flexible-column-mapping revision). Once staff
+// confirms columnMapping (PATCH .../mapping), the batch moves to
+// PENDING_REVIEW and every row is processed (duplicate-detect + deposit
+// parsing) in one pass. Nothing touches the real Client table until staff
+// reviews every row, sets a decision, and confirms (POST .../execute).
 model ImportBatch {
   id        String            @id @default(cuid())
-  status    ImportBatchStatus @default(PENDING_REVIEW)
+  status    ImportBatchStatus @default(MAPPING)
   createdAt DateTime          @default(now())
+
+  // Confirmed header -> target-field mapping for this batch, set once by
+  // PATCH .../mapping and never changed afterward (a new mapping means a
+  // new upload, not editing this one) -- see lib/importColumnMapping.ts
+  // for the fixed set of target-field keys this can contain.
+  // Record<originalCsvHeader, targetFieldKey>. Null while status: MAPPING.
+  columnMapping Json?
 
   studioId String
   studio   Studio @relation(fields: [studioId], references: [id])
@@ -437,17 +471,44 @@ model ImportRow {
   id String @id @default(cuid())
 
   // The parsed CSV row, verbatim -- whatever columns were present, keyed
-  // by their normalized header. This is what the review table renders;
-  // it's never partially applied to a Client until execute time, and even
-  // then only the recognized fields (firstName/lastName/email/phone/
-  // instagramHandle/facebookProfileUrl/otherContact) are read from it.
+  // by their ORIGINAL (trimmed, un-aliased) header text. This is what the
+  // review table renders; it's never partially applied to a Client until
+  // execute time, and even then only fields the batch's confirmed
+  // columnMapping actually assigns are read from it.
   rawData Json
 
-  // Set at upload time by the existing per-client duplicate-detection
-  // logic (see lib/duplicateDetection.ts), run against this row's parsed
-  // phone/email -- null means no match was found, not "not yet checked."
+  // Set once columnMapping is confirmed, by the existing per-client
+  // duplicate-detection logic (see lib/duplicateDetection.ts), run
+  // against this row's mapped phone/email -- null means no match was
+  // found (or mapping isn't confirmed yet), not "not yet checked."
   matchedClientId String?
   matchedClient   Client? @relation(fields: [matchedClientId], references: [id])
+
+  // Set once columnMapping is confirmed, by parsing whatever column was
+  // mapped to depositAmount (see lib/importColumnMapping.ts's
+  // parseDepositAmountCents -- handles "$", commas, and embedded text like
+  // "Deposit Paid Online - $200"). Null means either no depositAmount
+  // column was mapped, this row's cell was empty, or the value was
+  // genuinely unparseable -- in every case treated as "no deposit for this
+  // row," never guessed. Also the field a depositDecision: EDIT resolution
+  // overwrites with the staff-supplied corrected amount (see below).
+  parsedDepositCents Int?
+
+  // True when parsedDepositCents fell well outside what the studio's own
+  // configured deposit tiers (Package C1) imply as normal -- see
+  // lib/importColumnMapping.ts's isDepositOutlier for the exact threshold.
+  // Computed once at mapping-confirm time and never recomputed afterward
+  // (even if depositDecision: EDIT changes parsedDepositCents) -- this
+  // stays the historical fact "the originally parsed value looked
+  // unusual," which is why review needed a human decision in the first
+  // place.
+  depositFlaggedAsOutlier Boolean @default(false)
+
+  // Only ever required (and only ever settable) for a row with
+  // depositFlaggedAsOutlier: true -- execute refuses to run while any
+  // flagged row still has this null. Not used at all for a non-flagged
+  // row's deposit, which needs no individual action.
+  depositDecision ImportRowDepositDecision?
 
   // Null until staff reviews this specific row -- execute refuses to run
   // while any row in the batch is still null (see the route for the exact

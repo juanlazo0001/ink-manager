@@ -175,7 +175,7 @@ export default function GiftCardDetail() {
                     <h1 className="text-xl font-bold text-fg">
                       {card.status === 'EXEMPT' ? 'Deposit Exemption' : `$${(card.amountCents / 100).toFixed(2)} Gift Card`}
                     </h1>
-                    {card.status === 'EXEMPT' && card.exemptionReason && (
+                    {card.exemptionReason && (
                       <p className="mt-1 text-sm text-fg-secondary">{card.exemptionReason}</p>
                     )}
                     <p className="mt-1 text-sm text-fg-secondary">

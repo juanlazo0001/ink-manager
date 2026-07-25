@@ -89,6 +89,7 @@ export async function createClientFromFields(
     instagramHandle?: string | null;
     facebookProfileUrl?: string | null;
     otherContact?: string | null;
+    address?: string | null;
     referralCode: string;
   },
 ) {
@@ -102,6 +103,7 @@ export async function createClientFromFields(
       instagramHandle: params.instagramHandle || null,
       facebookProfileUrl: params.facebookProfileUrl || null,
       otherContact: params.otherContact || null,
+      address: params.address || null,
       referralCode: params.referralCode,
     },
   });
