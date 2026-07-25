@@ -93,6 +93,11 @@ interface Inquiry {
   closedReason: string | null
   lostReason: string | null
   lostAt: string | null
+  // Project pipeline timeline's final, non-derived stage -- explicitly set
+  // by "Mark Project Complete", cleared by "Reopen Project". Null means
+  // "not yet marked complete," never inferred from session/checkout state.
+  projectCompletedAt: string | null
+  projectCompletedBy: { id: string; name: string | null; email: string } | null
   estimateRevisionReason: string | null
   estimateRevisionSentAt: string | null
   estimateRevisionRespondedAt: string | null
@@ -109,6 +114,11 @@ interface Inquiry {
     endTime: string
     status: string
     artist: { id: string; user: { name: string | null; email: string; avatarUrl: string | null } }
+    // Project pipeline timeline: Session Complete / Waiver Verified derive
+    // from these two on whichever session is the earliest not-yet-checked-
+    // out one (sessions is already startTime-ascending from the backend).
+    checkedOutAt: string | null
+    liabilityWaiver: { status: string } | null
     // Package N: checkout/finished-tattoo photos for this one session.
     photos: {
       id: string
@@ -164,6 +174,46 @@ interface SharePreview {
 
 function giftCardOptionLabel(card: GiftCardOption): string {
   return card.status === 'EXEMPT' ? 'Deposit Exemption' : `$${(card.amountCents / 100).toFixed(2)}`
+}
+
+// Project pipeline timeline (post-conversion) -- lives here, not in
+// InquiryPipeline.tsx alongside PIPELINE_STEPS, since unlike that 5-step
+// list this one has exactly one consumer (this page's own Pipeline
+// widget); the Kanban Projects tab already has its own, appointment-
+// status-driven columns and never needs this shape. "Scheduled" is the
+// already-complete inherited handoff from the Inquiry side's own last
+// step -- see deriveProjectStageIndex below, never index 0's "current"
+// state once isConverted is true and at least one session exists.
+const PROJECT_STEPS = [
+  { label: 'Scheduled' },
+  { label: 'Waiver Verified' },
+  { label: 'Session Complete' },
+  { label: 'Project Complete' },
+] as const
+
+// The "current" session for Waiver Verified/Session Complete purposes --
+// the earliest not-yet-checked-out appointment. `sessions` is already
+// startTime-ascending from the backend (inquiries.ts's INQUIRY_INCLUDE),
+// so no extra sort is needed. As sessions complete and new ones get
+// booked, this naturally advances to track whichever one is next up,
+// without the timeline itself ever growing a step per session.
+function findCurrentSession(sessions: Inquiry['sessions']) {
+  return sessions.find((session) => !session.checkedOutAt)
+}
+
+// Three of the four stages are derived live; Project Complete is NOT --
+// it reflects projectCompletedAt directly. If every session is checked
+// out but projectCompletedAt is still null, this sits at "Session
+// Complete" (index 3 = Project Complete shown as the current, actionable
+// step) until staff take the explicit Mark Project Complete action --
+// never auto-inferred from session state alone.
+function deriveProjectStageIndex(inquiry: Inquiry): number {
+  if (inquiry.projectCompletedAt) return PROJECT_STEPS.length
+  if (inquiry.sessions.length === 0) return 0
+  const current = findCurrentSession(inquiry.sessions)
+  if (!current) return 3
+  if (current.liabilityWaiver?.status === 'VERIFIED') return 2
+  return 1
 }
 
 // Phase 7A: mirrors apps/api/src/routes/inquiries.ts's NON_TERMINAL_STATUSES
@@ -561,6 +611,15 @@ export default function InquiryDetail() {
   const [reopenStatus, setReopenStatus] = useState('')
   const [reopening, setReopening] = useState(false)
   const [reopenError, setReopenError] = useState<string | null>(null)
+
+  // Project pipeline timeline's explicit final stage -- no modal needed for
+  // either direction (unlike reopen above, which needs a target status
+  // picker): complete-project/reopen-project only ever touch
+  // projectCompletedAt/projectCompletedById, a single fire-and-confirm action.
+  const [completingProject, setCompletingProject] = useState(false)
+  const [completeProjectError, setCompleteProjectError] = useState<string | null>(null)
+  const [reopeningProject, setReopeningProject] = useState(false)
+  const [reopenProjectError, setReopenProjectError] = useState<string | null>(null)
 
   // The Kanban board (Inquiries.tsx / MyInquiries.tsx) navigates here with
   // ?openFlow=... for any drag that needs more input than "this happened" --
@@ -1031,6 +1090,38 @@ export default function InquiryDetail() {
     }
   }
 
+  async function handleCompleteProject() {
+    if (!id) return
+
+    setCompletingProject(true)
+    setCompleteProjectError(null)
+
+    try {
+      await apiFetch(`/inquiries/${id}/complete-project`, { method: 'POST' })
+      invalidateInquiry()
+    } catch (err) {
+      setCompleteProjectError(err instanceof Error ? err.message : 'Failed to mark this project complete')
+    } finally {
+      setCompletingProject(false)
+    }
+  }
+
+  async function handleReopenProject() {
+    if (!id) return
+
+    setReopeningProject(true)
+    setReopenProjectError(null)
+
+    try {
+      await apiFetch(`/inquiries/${id}/reopen-project`, { method: 'POST' })
+      invalidateInquiry()
+    } catch (err) {
+      setReopenProjectError(err instanceof Error ? err.message : 'Failed to reopen this project')
+    } finally {
+      setReopeningProject(false)
+    }
+  }
+
   async function handleArchive() {
     if (!id) return
     setArchiving(true)
@@ -1353,15 +1444,11 @@ export default function InquiryDetail() {
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-5xl px-6 py-6 sm:px-10 sm:py-8">
           <Link
-            to={
-              inquiry && ['SCHEDULING', 'WAITLISTED', 'CONFIRMED'].includes(inquiry.status)
-                ? '/inquiries?tab=projects'
-                : '/inquiries'
-            }
+            to={isConverted ? '/inquiries?tab=projects' : '/inquiries'}
             className="inline-flex items-center gap-2 text-sm text-fg-secondary hover:text-fg"
           >
             <ArrowLeftIcon className="h-4 w-4" />
-            Back to {inquiry && ['SCHEDULING', 'WAITLISTED', 'CONFIRMED'].includes(inquiry.status) ? 'Projects' : 'Inquiries'}
+            Back to {isConverted ? 'Projects' : 'Inquiries'}
           </Link>
 
           {error && (
@@ -1581,12 +1668,69 @@ export default function InquiryDetail() {
 
               <ReorderableWidgetList pageKey="inquiry-detail" defaultOrder={INQUIRY_WIDGET_ORDER}>
               <Widget key="pipeline" id="pipeline" title="Pipeline">
-                <InquiryPipeline
-                  status={inquiry.status}
-                  closedReason={inquiry.closedReason}
-                  orientation="horizontal"
-                  hideLabel
-                />
+                {isConverted ? (
+                  <>
+                    <InquiryPipeline
+                      status={inquiry.status}
+                      orientation="horizontal"
+                      hideLabel
+                      steps={PROJECT_STEPS}
+                      activeIndex={deriveProjectStageIndex(inquiry)}
+                    />
+                    {inquiry.sessions.length > 1 && (
+                      <p className="mt-2 text-center text-xs text-fg-muted md:text-left">
+                        Session {(() => {
+                          const current = findCurrentSession(inquiry.sessions)
+                          return current ? inquiry.sessions.indexOf(current) + 1 : inquiry.sessions.length
+                        })()} of {inquiry.sessions.length}
+                      </p>
+                    )}
+
+                    {inquiry.projectCompletedAt ? (
+                      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface-inset px-4 py-3">
+                        <div>
+                          <p className="text-sm font-medium text-fg-secondary">
+                            Project complete — {formatDateTime(inquiry.projectCompletedAt)}
+                            {inquiry.projectCompletedBy &&
+                              ` by ${inquiry.projectCompletedBy.name || inquiry.projectCompletedBy.email}`}
+                          </p>
+                          {reopenProjectError && <p className="mt-1 text-sm text-danger">{reopenProjectError}</p>}
+                        </div>
+                        {canMessage && (
+                          <button
+                            type="button"
+                            onClick={handleReopenProject}
+                            disabled={reopeningProject}
+                            className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                          >
+                            {reopeningProject ? 'Reopening…' : 'Reopen Project'}
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      canMessage && (
+                        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                          {completeProjectError && <p className="text-sm text-danger">{completeProjectError}</p>}
+                          <button
+                            type="button"
+                            onClick={handleCompleteProject}
+                            disabled={completingProject}
+                            className="ml-auto shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                          >
+                            {completingProject ? 'Marking complete…' : 'Mark Project Complete'}
+                          </button>
+                        </div>
+                      )
+                    )}
+                  </>
+                ) : (
+                  <InquiryPipeline
+                    status={inquiry.status}
+                    closedReason={inquiry.closedReason}
+                    orientation="horizontal"
+                    hideLabel
+                  />
+                )}
               </Widget>
 
               <Widget key="assignment-section" id="assignment-section" title="Assignment">

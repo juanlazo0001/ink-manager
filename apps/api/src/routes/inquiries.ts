@@ -16,7 +16,7 @@ import { syncPrimaryEmail, syncPrimaryPhone } from "../lib/clientContacts";
 import { findBufferConflict, formatBufferWarning } from "../lib/schedulingConflict";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { emitInvalidation } from "../lib/realtime/registry";
-import { computeDepositTier, computeRequiredDepositCents, resolveDepositTiers } from "../lib/depositTiers";
+import { resolveDepositAmounts, resolveRequiredDepositCents, resolveDepositTiers } from "../lib/depositTiers";
 import { generateUniqueReferralCode } from "../lib/referrals";
 import { IntakeFieldKind } from "../../generated/prisma/enums";
 import { NOTE_AUTHOR_SELECT, canModifyNote, isBlankHtml, isValidAttachments } from "../lib/notes";
@@ -451,6 +451,21 @@ const INQUIRY_INCLUDE = {
       giftCard: { select: { id: true, code: true, amountCents: true, status: true } },
     },
     orderBy: { sessionNumber: "asc" },
+  },
+  // Service lines: pricingModel/depositModel drive how the frontend renders
+  // and collects the price estimate/deposit for THIS inquiry (one flat
+  // number vs. a range, flat deposit + breakdown note vs. tier lookup).
+  service: {
+    select: {
+      id: true,
+      name: true,
+      pricingModel: true,
+      depositModel: true,
+      flatPriceCents: true,
+      flatDepositCents: true,
+      depositBreakdownNote: true,
+      requiresCandidacyReview: true,
+    },
   },
 } as const;
 
@@ -1238,7 +1253,7 @@ router.post("/:id/schedule", requireAuth, requirePermission("inquiries.edit"), a
     return res.status(400).json({ error: "startTime and endTime must be valid dates, with startTime before endTime" });
   }
 
-  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  const inquiry = await prisma.inquiry.findUnique({ where: { id }, include: { service: true } });
   if (!inquiry || inquiry.studioId !== req.user!.studioId) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
@@ -1255,7 +1270,8 @@ router.post("/:id/schedule", requireAuth, requirePermission("inquiries.edit"), a
     where: { studioId: req.user!.studioId },
     select: { depositTiers: true },
   });
-  const requiredCents = computeRequiredDepositCents(
+  const requiredCents = resolveRequiredDepositCents(
+    inquiry.service,
     inquiry.priceEstimateLow,
     inquiry.priceEstimateHigh,
     resolveDepositTiers(studioSettings?.depositTiers),
@@ -1584,7 +1600,7 @@ router.post("/:id/deposit-form", requireAuth, requirePermission("inquiries.edit"
 
   const inquiry = await prisma.inquiry.findUnique({
     where: { id },
-    include: { depositForms: { orderBy: { sessionNumber: "desc" }, take: 1 }, client: true },
+    include: { depositForms: { orderBy: { sessionNumber: "desc" }, take: 1 }, client: true, service: true },
   });
   if (!inquiry || inquiry.studioId !== req.user!.studioId) {
     return res.status(404).json({ error: "Inquiry not found" });
@@ -1628,7 +1644,7 @@ router.post("/:id/deposit-form", requireAuth, requirePermission("inquiries.edit"
   const tiers = resolveDepositTiers(settings?.depositTiers);
 
   const average = (inquiry.priceEstimateLow + inquiry.priceEstimateHigh) / 2;
-  const { depositAmount, totalCharged } = computeDepositTier(average, tiers);
+  const { depositAmount, totalCharged } = resolveDepositAmounts(inquiry.service, average, tiers);
   const feeAmount = totalCharged - depositAmount;
 
   const token = crypto.randomBytes(32).toString("hex");

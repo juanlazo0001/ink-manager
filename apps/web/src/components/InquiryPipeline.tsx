@@ -24,6 +24,10 @@ function currentStepIndex(status: string): number {
   return PIPELINE_STEPS.findIndex((step) => (step.statuses as readonly string[]).includes(status))
 }
 
+interface PipelineStepLike {
+  label: string
+}
+
 interface InquiryPipelineProps {
   status: string
   closedReason?: string | null
@@ -35,6 +39,16 @@ interface InquiryPipelineProps {
   // other two (labelless-wrapper) callers -- the Conversations context
   // panel and the Kanban board -- leave this false and keep their label.
   hideLabel?: boolean
+  // Overrides the default Inquiry-status-driven PIPELINE_STEPS with a
+  // caller-supplied stage list + explicit progress index -- used once an
+  // Inquiry converts to a Project, whose 4 stages derive from Appointment/
+  // waiver/checkout data rather than InquiryStatus. When set, `status`/
+  // `closedReason` are ignored entirely (a Project has no InquiryStatus-
+  // driven "closed" state of its own -- see isClosed below). This is the
+  // SAME component/visual treatment (connectors, spacing, orientation
+  // fallback) as the Inquiry-side timeline, just fed a different list.
+  steps?: readonly PipelineStepLike[]
+  activeIndex?: number
 }
 
 export default function InquiryPipeline({
@@ -43,9 +57,12 @@ export default function InquiryPipeline({
   orientation = 'vertical',
   className = '',
   hideLabel = false,
+  steps,
+  activeIndex: activeIndexProp,
 }: InquiryPipelineProps) {
-  const isClosed = CLOSED_STATUSES.includes(status)
-  const activeIndex = currentStepIndex(status)
+  const effectiveSteps: readonly PipelineStepLike[] = steps ?? PIPELINE_STEPS
+  const isClosed = !steps && CLOSED_STATUSES.includes(status)
+  const activeIndex = steps ? (activeIndexProp ?? -1) : currentStepIndex(status)
 
   if (isClosed) {
     return (
@@ -68,10 +85,10 @@ export default function InquiryPipeline({
   // is set, without affecting the label on the true vertical callers.
   const stepsList = (
     <ol className="mt-3">
-      {PIPELINE_STEPS.map((step, index) => {
+      {effectiveSteps.map((step, index) => {
           const done = index < activeIndex
           const current = index === activeIndex
-          const isLast = index === PIPELINE_STEPS.length - 1
+          const isLast = index === effectiveSteps.length - 1
           return (
             <li key={step.label} className="relative flex gap-3 pb-5 last:pb-0">
               {!isLast && (
@@ -128,12 +145,12 @@ export default function InquiryPipeline({
             which is what produced the visible gap on both sides. */}
         <div
           className={`hidden md:grid ${className}`}
-          style={{ gridTemplateColumns: `repeat(${PIPELINE_STEPS.length}, minmax(0, 1fr))` }}
+          style={{ gridTemplateColumns: `repeat(${effectiveSteps.length}, minmax(0, 1fr))` }}
         >
-          {PIPELINE_STEPS.map((step, index) => {
+          {effectiveSteps.map((step, index) => {
             const done = index < activeIndex
             const current = index === activeIndex
-            const isLast = index === PIPELINE_STEPS.length - 1
+            const isLast = index === effectiveSteps.length - 1
             return (
               <div key={step.label} className="relative flex flex-col items-center">
                 {!isLast && (
