@@ -21,6 +21,10 @@ interface VerifyResponse {
   priceEstimateHigh: number | null
   timeEstimateHoursMin: number | null
   timeEstimateHoursMax: number | null
+  // Multi-session planning: empty for every Project that never declared
+  // more than one session -- timeEstimateHoursMin/Max above drive display
+  // in that case, exactly as before this feature existed.
+  plannedSessions: { sessionNumber: number; estimatedHoursMin: number; estimatedHoursMax: number }[]
   reason: string | null
 }
 
@@ -152,13 +156,30 @@ export default function EstimateRevisionResponse() {
                   {formatPriceEstimate(verifyData.priceEstimateLow, verifyData.priceEstimateHigh) ?? 'To be discussed'}
                 </p>
               </div>
-              <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Estimated time</p>
-                <p className="mt-1 text-lg font-semibold text-fg">
-                  {formatHourRange(verifyData.timeEstimateHoursMin, verifyData.timeEstimateHoursMax)}
-                </p>
-              </div>
+              {verifyData.plannedSessions.length === 0 && (
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Estimated time</p>
+                  <p className="mt-1 text-lg font-semibold text-fg">
+                    {formatHourRange(verifyData.timeEstimateHoursMin, verifyData.timeEstimateHoursMax)}
+                  </p>
+                </div>
+              )}
             </div>
+
+            {verifyData.plannedSessions.length > 0 && (
+              <div className="mt-4 rounded-lg border border-border bg-surface-inset p-3">
+                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
+                  {verifyData.plannedSessions.length}-session plan
+                </p>
+                <ul className="mt-2 space-y-1">
+                  {verifyData.plannedSessions.map((session) => (
+                    <li key={session.sessionNumber} className="text-sm text-fg">
+                      Session {session.sessionNumber}: {formatHourRange(session.estimatedHoursMin, session.estimatedHoursMax)}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {verifyData.reason && (
               <div className="mt-5 rounded-lg border border-border bg-surface-inset p-3">

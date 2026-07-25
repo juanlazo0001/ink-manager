@@ -34,6 +34,13 @@ router.get("/verify/:token", async (req, res) => {
       client: true,
       studio: { include: { settings: { select: { themePreset: true } } } },
       assignedArtist: { include: { user: true } },
+      // Multi-session planning: empty for every estimate that never
+      // declared more than one session -- the client-facing page falls
+      // back to timeEstimateHoursMin/Max below in that case, unchanged.
+      plannedSessions: {
+        select: { sessionNumber: true, estimatedHoursMin: true, estimatedHoursMax: true },
+        orderBy: { sessionNumber: "asc" },
+      },
     },
   });
 
@@ -72,6 +79,7 @@ router.get("/verify/:token", async (req, res) => {
     priceEstimateHigh: inquiry!.priceEstimateHigh,
     timeEstimateHoursMin: inquiry!.timeEstimateHoursMin,
     timeEstimateHoursMax: inquiry!.timeEstimateHoursMax,
+    plannedSessions: inquiry!.plannedSessions,
     estimateTermsSnapshot: inquiry!.estimateTermsSnapshot,
     collaborativeDesignPolicy: COLLABORATIVE_DESIGN_POLICY,
   });
@@ -151,6 +159,13 @@ router.get("/revision/verify/:token", async (req, res) => {
       client: true,
       studio: { include: { settings: { select: { themePreset: true } } } },
       assignedArtist: { include: { user: true } },
+      // Multi-session planning: empty for every Project that never
+      // declared more than one session -- the client-facing page falls
+      // back to timeEstimateHoursMin/Max below in that case, unchanged.
+      plannedSessions: {
+        select: { sessionNumber: true, estimatedHoursMin: true, estimatedHoursMax: true },
+        orderBy: { sessionNumber: "asc" },
+      },
     },
   });
 
@@ -172,6 +187,7 @@ router.get("/revision/verify/:token", async (req, res) => {
     priceEstimateHigh: inquiry!.priceEstimateHigh,
     timeEstimateHoursMin: inquiry!.timeEstimateHoursMin,
     timeEstimateHoursMax: inquiry!.timeEstimateHoursMax,
+    plannedSessions: inquiry!.plannedSessions,
     reason: inquiry!.estimateRevisionReason,
   });
 });

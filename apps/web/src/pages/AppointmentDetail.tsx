@@ -89,6 +89,9 @@ interface Appointment {
     referenceImagesDetail: ImageDetail[]
     placementImagesDetail: ImageDetail[]
   }
+  // Multi-session planning: null for every appointment on a project with
+  // no session plan at all, or one booked outside the plan.
+  plannedSession: { sessionNumber: number; estimatedHoursMin: number; estimatedHoursMax: number; totalSessions: number } | null
   giftCards: GiftCardSummary[]
   liabilityWaiver: WaiverSummary | null
   photos: AppointmentPhoto[]
@@ -835,6 +838,12 @@ export default function AppointmentDetail() {
                     label="Estimate"
                     value={formatPriceEstimate(appointment.inquiry.priceEstimateLow, appointment.inquiry.priceEstimateHigh) ?? 'Not provided'}
                   />
+                  {appointment.plannedSession && (
+                    <DetailField
+                      label="Session"
+                      value={`Session ${appointment.plannedSession.sessionNumber} of ${appointment.plannedSession.totalSessions} — estimated ${appointment.plannedSession.estimatedHoursMin}-${appointment.plannedSession.estimatedHoursMax} hrs`}
+                    />
+                  )}
                   <DetailField label="Description" value={appointment.inquiry.description || 'Not provided'} />
                   <DetailField label="Color or Black & Grey" value={appointment.inquiry.colorOrBlackGrey || 'Not provided'} />
                   <DetailField label="Placement" value={appointment.inquiry.placement || 'Not provided'} />

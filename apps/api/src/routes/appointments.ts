@@ -279,8 +279,18 @@ const APPOINTMENT_DETAIL_INCLUDE = {
       placementImages: true,
       referenceImagesMeta: true,
       placementImagesMeta: true,
+      // Multi-session planning: only its length is needed here (the "of Y"
+      // in "Session X of Y") -- the specific session THIS appointment
+      // fulfills comes from the top-level plannedSession select below.
+      plannedSessions: { select: { id: true } },
     },
   },
+  // Multi-session planning: null for every appointment on a project with
+  // no session plan at all, or one booked outside the plan -- lets this
+  // page show which specific session's hour estimate applies here instead
+  // of a stale/generic top-level one (which is null anyway once a plan
+  // exists -- see PlannedSession's own schema comment).
+  plannedSession: { select: { sessionNumber: true, estimatedHoursMin: true, estimatedHoursMax: true } },
   giftCards: {
     select: { id: true, code: true, amountCents: true, status: true, expiresAt: true, exemptionReason: true },
   },
@@ -305,13 +315,25 @@ router.get("/:id", requirePermission("appointments.view"), async (req, res) => {
     return res.status(404).json({ error: "Appointment not found" });
   }
 
-  const { inquiryProject, ...rest } = appointment;
+  const { inquiryProject, plannedSession, ...rest } = appointment;
+  const { plannedSessions: projectPlannedSessions, ...inquiryProjectRest } = inquiryProject ?? {};
   const inquiry = inquiryProject && {
-    ...inquiryProject,
+    ...inquiryProjectRest,
     referenceImagesDetail: await resolveImageMeta(inquiryProject.referenceImages, inquiryProject.referenceImagesMeta),
     placementImagesDetail: await resolveImageMeta(inquiryProject.placementImages, inquiryProject.placementImagesMeta),
   };
-  res.json({ ...rest, inquiry });
+  res.json({
+    ...rest,
+    inquiry,
+    plannedSession: plannedSession
+      ? {
+          sessionNumber: plannedSession.sessionNumber,
+          estimatedHoursMin: plannedSession.estimatedHoursMin,
+          estimatedHoursMax: plannedSession.estimatedHoursMax,
+          totalSessions: projectPlannedSessions?.length ?? 0,
+        }
+      : null,
+  });
 });
 
 // Archive: soft, reversible hide -- same treatment as Client.archivedAt /

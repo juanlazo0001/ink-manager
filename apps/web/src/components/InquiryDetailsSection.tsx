@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { apiFetch } from '../lib/api'
 import { formatPhoneInput } from '../lib/format'
+import { ArtistAvatar, artistLabel, type ArtistLike } from './ArtistAvatar'
 
 interface LiveIntakeField {
   id: string
@@ -28,7 +29,7 @@ interface InquiryForDetails {
   // field list this section maps the answers onto (see the effect below).
   intakeFormId: string | null
   client: { firstName: string; lastName: string; email: string | null; phone: string | null }
-  preferredArtist: { user: { name: string | null; email: string } } | null
+  preferredArtist: ArtistLike | null
 }
 
 const CHANNEL_LABELS: Record<string, string> = {
@@ -63,8 +64,6 @@ function systemFieldValue(key: string, inquiry: InquiryForDetails): string {
       return inquiry.estimatedSize || 'Not provided'
     case 'hasBeenTattooedBefore':
       return inquiry.hasBeenTattooedBefore ? 'Yes' : 'No'
-    case 'preferredArtist':
-      return inquiry.preferredArtist?.user.name || inquiry.preferredArtist?.user.email || 'No preference'
     case 'budget':
       return inquiry.budget ?? 'Not provided'
     case 'desiredTiming':
@@ -109,22 +108,23 @@ function formatCustomAnswer(answer: { type: string; answer: unknown }): string {
   return String(raw)
 }
 
-// Package Q (revised) §5: one unified view of every field on this studio's
-// CURRENT intake form (system + custom, in its current order/labels) --
-// deliberately supplements, not replaces, the existing "Tattoo details" /
-// "Reference images" / "Placement photos" cards elsewhere on this page.
-// Those stay because they're editable case-management tools tied directly
-// to the real Inquiry columns (staff can revise them after intake, e.g. a
-// price renegotiation), a different job from this read-only "here's
-// exactly what the client saw and answered" snapshot. referenceImages/
-// placementImages are skipped here for the same reason -- their own cards
-// already render real thumbnails with an edit affordance; a text-only
-// "N image(s)" row here would just be a worse duplicate. Custom answers
-// still render straight from their own self-contained snapshot
-// (question/type/answer, captured at submission) even if the question was
-// since edited or deleted -- an orphaned answer (question deleted, no
-// longer in the live field list) has no current position to sort by, so
-// it's appended at the end under its original label.
+// The single "Inquiry Details" source of truth for every field on this
+// studio's CURRENT intake form (system + custom, in its current order/
+// labels). Originally shipped alongside a separate "Tattoo details" card
+// showing the same underlying fields in a fixed layout -- that card was
+// removed (InquiryDetail.tsx now renders its editing form directly inside
+// this same Widget instead) once both were confirmed to duplicate each
+// other with no gap: every field it showed, including the preferred-
+// artist avatar, renders here too. "Reference images"/"Placement photos"
+// stay their own separate cards regardless -- they have real upload/
+// management functionality a generic field-value renderer shouldn't try
+// to replace, so referenceImages/placementImages are skipped here (a
+// text-only "N image(s)" row would just be a worse duplicate of those).
+// Custom answers still render straight from their own self-contained
+// snapshot (question/type/answer, captured at submission) even if the
+// question was since edited or deleted -- an orphaned answer (question
+// deleted, no longer in the live field list) has no current position to
+// sort by, so it's appended at the end under its original label.
 interface InquiryDetailsSectionProps {
   inquiry: InquiryForDetails
   // True when wrapped in the page's own <Widget> -- skips this
@@ -169,24 +169,35 @@ export default function InquiryDetailsSection({ inquiry, bare = false, onVisibil
     }
   }, [inquiry.intakeFormId])
 
-  const rows: { key: string; label: string; value: string }[] = []
+  type Row =
+    | { key: string; label: string; kind: 'text'; value: string }
+    | { key: string; label: string; kind: 'artist'; artist: ArtistLike | null }
+
+  const rows: Row[] = []
 
   if (fields) {
     for (const field of fields) {
       if (field.fieldKind === 'SYSTEM' && field.systemFieldKey) {
         if (field.systemFieldKey === 'referenceImages' || field.systemFieldKey === 'placementImages') continue
-        rows.push({ key: field.id, label: field.label, value: systemFieldValue(field.systemFieldKey, inquiry) })
+        // Preferred artist gets the same avatar + name treatment the old
+        // "Tattoo details" card gave it -- a plain-text row here would be
+        // a strictly worse rendering of the same field.
+        if (field.systemFieldKey === 'preferredArtist') {
+          rows.push({ key: field.id, label: field.label, kind: 'artist', artist: inquiry.preferredArtist })
+          continue
+        }
+        rows.push({ key: field.id, label: field.label, kind: 'text', value: systemFieldValue(field.systemFieldKey, inquiry) })
       } else if (field.fieldKind === 'CUSTOM') {
         const answer = inquiry.customFieldAnswers?.[field.id]
         if (!answer) continue
-        rows.push({ key: field.id, label: field.label, value: formatCustomAnswer(answer) })
+        rows.push({ key: field.id, label: field.label, kind: 'text', value: formatCustomAnswer(answer) })
       }
     }
 
     const liveCustomIds = new Set(fields.filter((f) => f.fieldKind === 'CUSTOM').map((f) => f.id))
     for (const [id, answer] of Object.entries(inquiry.customFieldAnswers ?? {})) {
       if (liveCustomIds.has(id)) continue
-      rows.push({ key: id, label: answer.question, value: formatCustomAnswer(answer) })
+      rows.push({ key: id, label: answer.question, kind: 'text', value: formatCustomAnswer(answer) })
     }
   }
 
@@ -216,7 +227,18 @@ export default function InquiryDetailsSection({ inquiry, bare = false, onVisibil
         {rows.map((row) => (
           <div key={row.key}>
             <dt className="text-xs font-medium uppercase tracking-wider text-fg-muted">{row.label}</dt>
-            <dd className="mt-1 whitespace-pre-wrap text-sm text-fg">{row.value}</dd>
+            {row.kind === 'artist' ? (
+              row.artist ? (
+                <dd className="mt-1 flex items-center gap-2">
+                  <ArtistAvatar artist={row.artist} className="h-6 w-6" />
+                  <span className="text-sm text-fg">{artistLabel(row.artist)}</span>
+                </dd>
+              ) : (
+                <dd className="mt-1 text-sm text-fg">No preference</dd>
+              )
+            ) : (
+              <dd className="mt-1 whitespace-pre-wrap text-sm text-fg">{row.value}</dd>
+            )}
           </div>
         ))}
       </dl>

@@ -835,8 +835,19 @@ router.patch("/:id/assign", requireAuth, requirePermission("inquiries.assignArti
     return res.status(404).json({ error: "Inquiry not found" });
   }
 
-  if (inquiry.status !== InquiryStatus.NEW) {
-    return res.status(400).json({ error: "Only a NEW inquiry can be assigned" });
+  // The normal path (NEW -> ARTIST_ASSIGNED) is the only one that also
+  // moves status. But an inquiry can reach a later status with no artist
+  // ever assigned (send-estimate deliberately doesn't require one -- see
+  // its own comment), and the deposit-form gate now hard-requires one --
+  // without this fallback, such an inquiry would have no way to ever get
+  // one assigned, since the Assignment widget only shows a picker at NEW.
+  // Late assignment leaves status untouched (never rewinds a Project that's
+  // already moved on), and is only possible once, same as the normal path.
+  if (inquiry.status !== InquiryStatus.NEW && inquiry.assignedArtistId) {
+    return res.status(400).json({ error: "An artist is already assigned to this inquiry" });
+  }
+  if (!NON_TERMINAL_STATUSES.includes(inquiry.status)) {
+    return res.status(400).json({ error: "Can't assign an artist to a closed or cold-lead inquiry" });
   }
 
   const artist = await prisma.artist.findUnique({ where: { id: artistId }, include: { user: true } });
@@ -844,7 +855,10 @@ router.patch("/:id/assign", requireAuth, requirePermission("inquiries.assignArti
     return res.status(400).json({ error: "artistId must belong to your studio" });
   }
 
-  const updateData = { assignedArtistId: artistId, assignedAt: new Date(), status: InquiryStatus.ARTIST_ASSIGNED };
+  const isFirstAssignment = inquiry.status === InquiryStatus.NEW;
+  const updateData = isFirstAssignment
+    ? { assignedArtistId: artistId, assignedAt: new Date(), status: InquiryStatus.ARTIST_ASSIGNED }
+    : { assignedArtistId: artistId, assignedAt: new Date() };
 
   const updated = await prisma.inquiry.update({
     where: { id },
@@ -857,8 +871,12 @@ router.patch("/:id/assign", requireAuth, requirePermission("inquiries.assignArti
     actorUserId: req.user!.userId,
     entityType: "Inquiry",
     entityId: id,
-    action: "status_change",
-    changes: diffObjects(inquiry, updateData, ["status", "assignedArtistId", "assignedAt"]),
+    action: isFirstAssignment ? "status_change" : "artist_assigned",
+    changes: diffObjects(
+      inquiry,
+      updateData,
+      isFirstAssignment ? ["status", "assignedArtistId", "assignedAt"] : ["assignedArtistId", "assignedAt"],
+    ),
   });
 
   emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
@@ -1196,13 +1214,17 @@ const REVISION_TOKEN_TTL_DAYS = 7;
 // scoping to safely extend it through.
 router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), requirePermission("inquiries.enterEstimate"), async (req, res) => {
   const id = req.params.id as string;
-  const { priceEstimateLow, priceEstimateHigh, timeEstimateHoursMin, timeEstimateHoursMax, reason } = req.body ?? {};
+  const { priceEstimateLow, priceEstimateHigh, timeEstimateHoursMin, timeEstimateHoursMax, sessions, reason } =
+    req.body ?? {};
 
   if (typeof reason !== "string" || reason.trim().length === 0) {
     return res.status(400).json({ error: "A reason is required to revise a Project's estimate" });
   }
 
-  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  const inquiry = await prisma.inquiry.findUnique({
+    where: { id },
+    include: { plannedSessions: { include: { depositForm: { select: { paidAt: true } } } } },
+  });
   if (!inquiry || inquiry.studioId !== req.user!.studioId) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
@@ -1224,14 +1246,69 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
     }
   }
 
+  // Multi-session planning: an explicit `sessions` array -- any length,
+  // including 0 or 1 -- means staff is declaring/editing the project's
+  // session plan as part of this revision. Omitting the field entirely
+  // leaves any existing plan completely untouched (a price-only revision
+  // on a project whose plan isn't being touched this time, or one that
+  // never had a plan at all).
+  let plannedSessionInputs: { estimatedHoursMin: number; estimatedHoursMax: number }[] | null = null;
+  if (sessions !== undefined) {
+    if (!Array.isArray(sessions)) {
+      return res.status(400).json({ error: "sessions must be an array" });
+    }
+    for (const [index, session] of sessions.entries()) {
+      if (
+        typeof session !== "object" ||
+        session === null ||
+        typeof session.estimatedHoursMin !== "number" ||
+        typeof session.estimatedHoursMax !== "number"
+      ) {
+        return res.status(400).json({ error: `Session ${index + 1} needs a numeric hour range` });
+      }
+      if (session.estimatedHoursMin <= 0 || session.estimatedHoursMax <= 0) {
+        return res.status(400).json({ error: `Session ${index + 1}'s hour range must be positive` });
+      }
+      if (session.estimatedHoursMin > session.estimatedHoursMax) {
+        return res
+          .status(400)
+          .json({ error: `Session ${index + 1}'s minimum hours must be less than or equal to its maximum` });
+      }
+    }
+    plannedSessionInputs = sessions;
+  }
+
+  // A session already backed by a paid deposit or a booked appointment
+  // can't be silently altered or removed by a revision -- real money or a
+  // real booking already depends on its hour range. Everything else about
+  // the plan stays freely editable.
+  const lockedSessions = inquiry.plannedSessions.filter(
+    (ps) => ps.depositForm?.paidAt != null || ps.appointmentId != null,
+  );
+  const highestLockedSessionNumber = lockedSessions.reduce((max, s) => Math.max(max, s.sessionNumber), 0);
+
+  // The actual session count this revision ends up with, once any locked
+  // sessions beyond what staff submitted are preserved -- drives whether
+  // the top-level time-estimate fields get nulled out below, same rule
+  // POST /:id/send-estimate uses (a real plan replaces them).
+  const finalSessionCount = plannedSessionInputs
+    ? Math.max(plannedSessionInputs.length, highestLockedSessionNumber)
+    : inquiry.plannedSessions.length;
+  const hasPlan = finalSessionCount > 1;
+
   // Same "effective value" fallback as send-estimate -- staff can revise
   // just the price and leave the time estimate (or vice versa) without
-  // resubmitting every field.
+  // resubmitting every field. The top-level time-estimate pair is skipped
+  // entirely once this revision has (or keeps) a real session plan.
   const effective = {
     priceEstimateLow: priceEstimateLow ?? inquiry.priceEstimateLow,
     priceEstimateHigh: priceEstimateHigh ?? inquiry.priceEstimateHigh,
-    timeEstimateHoursMin: timeEstimateHoursMin ?? inquiry.timeEstimateHoursMin,
-    timeEstimateHoursMax: timeEstimateHoursMax ?? inquiry.timeEstimateHoursMax,
+    ...(hasPlan
+      ? {}
+      : {
+          timeEstimateHoursMin: timeEstimateHoursMin ?? inquiry.timeEstimateHoursMin,
+          timeEstimateHoursMax: timeEstimateHoursMax ?? inquiry.timeEstimateHoursMax,
+        }),
   };
 
   for (const [field, value] of Object.entries(effective)) {
@@ -1247,7 +1324,7 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
     return res.status(400).json({ error: "priceEstimateLow must be less than or equal to priceEstimateHigh" });
   }
 
-  if (effective.timeEstimateHoursMin! > effective.timeEstimateHoursMax!) {
+  if (!hasPlan && effective.timeEstimateHoursMin! > effective.timeEstimateHoursMax!) {
     return res
       .status(400)
       .json({ error: "timeEstimateHoursMin must be less than or equal to timeEstimateHoursMax" });
@@ -1260,8 +1337,8 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
   const reviseData = {
     priceEstimateLow: effective.priceEstimateLow,
     priceEstimateHigh: effective.priceEstimateHigh,
-    timeEstimateHoursMin: effective.timeEstimateHoursMin,
-    timeEstimateHoursMax: effective.timeEstimateHoursMax,
+    timeEstimateHoursMin: hasPlan ? null : effective.timeEstimateHoursMin,
+    timeEstimateHoursMax: hasPlan ? null : effective.timeEstimateHoursMax,
     estimateRevisionReason: trimmedReason,
     estimateRevisionToken,
     estimateRevisionTokenExpiresAt,
@@ -1272,6 +1349,58 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
     estimateRevisionRespondedAt: null,
     estimateRevisionApproved: null,
   };
+
+  // Reconcile PlannedSession rows to match plannedSessionInputs, if
+  // provided. A locked session's own hour range and existence are never
+  // touched regardless of what was submitted for its slot -- see the
+  // lockedSessions filter above.
+  if (plannedSessionInputs) {
+    const existingByNumber = new Map(inquiry.plannedSessions.map((ps) => [ps.sessionNumber, ps]));
+    const lockedNumbers = new Set(lockedSessions.map((s) => s.sessionNumber));
+
+    const toUpdate: { id: string; estimatedHoursMin: number; estimatedHoursMax: number }[] = [];
+    const toCreate: { sessionNumber: number; estimatedHoursMin: number; estimatedHoursMax: number }[] = [];
+
+    plannedSessionInputs.forEach((session, index) => {
+      const sessionNumber = index + 1;
+      if (lockedNumbers.has(sessionNumber)) return;
+      const existing = existingByNumber.get(sessionNumber);
+      if (existing) {
+        toUpdate.push({
+          id: existing.id,
+          estimatedHoursMin: session.estimatedHoursMin,
+          estimatedHoursMax: session.estimatedHoursMax,
+        });
+      } else {
+        toCreate.push({
+          sessionNumber,
+          estimatedHoursMin: session.estimatedHoursMin,
+          estimatedHoursMax: session.estimatedHoursMax,
+        });
+      }
+    });
+
+    // Any existing sessionNumber beyond the submitted length: delete it if
+    // unlocked (staff is shrinking the plan and nothing real depends on it
+    // yet), otherwise leave it in place -- a locked session can never be
+    // removed by a revision.
+    const toDeleteIds = inquiry.plannedSessions
+      .filter((ps) => ps.sessionNumber > plannedSessionInputs!.length && !lockedNumbers.has(ps.sessionNumber))
+      .map((ps) => ps.id);
+
+    await prisma.$transaction([
+      ...toUpdate.map((s) =>
+        prisma.plannedSession.update({
+          where: { id: s.id },
+          data: { estimatedHoursMin: s.estimatedHoursMin, estimatedHoursMax: s.estimatedHoursMax },
+        }),
+      ),
+      ...(toCreate.length > 0
+        ? [prisma.plannedSession.createMany({ data: toCreate.map((s) => ({ inquiryId: id, ...s })) })]
+        : []),
+      ...(toDeleteIds.length > 0 ? [prisma.plannedSession.deleteMany({ where: { id: { in: toDeleteIds } } })] : []),
+    ]);
+  }
 
   const updated = await prisma.inquiry.update({
     where: { id },
@@ -1745,6 +1874,14 @@ router.post("/:id/deposit-form", requireAuth, requirePermission("inquiries.edit"
     });
   }
 
+  // An artist must be assigned before ANY deposit form -- the first
+  // session's or a later one's -- can be requested. Covers both call
+  // shapes this one route handles (the original single-deposit flow and
+  // Package M's "send another deposit form" for a later planned session).
+  if (!inquiry.assignedArtistId) {
+    return res.status(400).json({ error: "Assign an artist before requesting a deposit" });
+  }
+
   if (inquiry.priceEstimateLow == null || inquiry.priceEstimateHigh == null) {
     return res.status(400).json({ error: "This inquiry is missing a price estimate" });
   }
@@ -1972,6 +2109,15 @@ router.post("/:id/attach-gift-card", requireAuth, requirePermission("inquiries.e
 
   if (inquiry.status !== InquiryStatus.DEPOSIT_PENDING) {
     return res.status(400).json({ error: "Only an inquiry in DEPOSIT_PENDING can skip to an existing gift card" });
+  }
+
+  // Same artist-assignment requirement as POST /:id/deposit-form -- this
+  // route reaches the identical DEPOSIT_PENDING -> SCHEDULING transition
+  // by a different door (an existing card instead of a freshly paid one),
+  // so it needs the same gate or staff could route around the requirement
+  // entirely whenever a client happens to have a spare card on file.
+  if (!inquiry.assignedArtistId) {
+    return res.status(400).json({ error: "Assign an artist before requesting a deposit" });
   }
 
   const existingDepositForm = inquiry.depositForms[0] as (typeof inquiry.depositForms)[number] | undefined;

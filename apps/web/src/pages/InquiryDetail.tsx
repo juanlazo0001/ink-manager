@@ -23,6 +23,11 @@ import DateAndTimeRangeFields, {
   isValidTimeRange,
   type DateAndTimeRangeValue,
 } from '../components/DateAndTimeRangeFields'
+import SessionHoursRows, {
+  SessionCountField,
+  HOUR_OPTIONS,
+  type LockedSession,
+} from '../components/SessionBreakdownEditor'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatDuration, formatPhoneInput, formatStatus, describeInquiryStatus, formatPriceEstimate } from '../lib/format'
 import { describeSendResult, type ClientSendResult } from '../lib/sendResult'
@@ -276,13 +281,6 @@ interface DeletePreview {
 
 const DELETE_CONFIRM_TEXT = 'DELETE'
 
-// Whole-hour options for the estimate form's time-min/max dropdowns (1-16
-// covers everything from a small piece to a full-day session).
-const HOUR_OPTIONS = Array.from({ length: 16 }, (_, i) => i + 1)
-// Multi-session planning: a generous cap, not a real limit anywhere else
-// in the system -- just how many rows the estimate form offers at once.
-const SESSION_COUNT_OPTIONS = Array.from({ length: 6 }, (_, i) => i + 1)
-
 // Mirrors clientSms.ts's SendClientSmsResult -- send-estimate auto-sends
 // through that same real path now, so the same skip reasons apply. The
 // estimate itself is always generated regardless of this outcome (see the
@@ -344,7 +342,6 @@ const INQUIRY_WIDGET_ORDER = [
   'scheduling-section',
   'appointments',
   'photos',
-  'tattoo-details',
   'reference-images',
   'placement-photos',
   'custom-fields',
@@ -593,6 +590,24 @@ export default function InquiryDetail() {
   const [reviseEstimateError, setReviseEstimateError] = useState<string | null>(null)
   const [revisionSendNotice, setRevisionSendNotice] = useState<string | null>(null)
 
+  // Multi-session planning: same shape/rules as sessionCount/sessionHours
+  // above, just keyed to the Revise Estimate modal's own state instead --
+  // prefilled from the inquiry's existing PlannedSession rows (if any) in
+  // openReviseEstimateModal below, since a revision on a project that
+  // already has a session plan should show that plan, not start from 1.
+  const [reviseSessionCount, setReviseSessionCount] = useState(1)
+  const [reviseSessionHours, setReviseSessionHours] = useState<{ min: string; max: string }[]>([{ min: '', max: '' }])
+
+  function handleReviseSessionCountChange(count: number) {
+    setReviseSessionCount(count)
+    setReviseSessionHours((current) => {
+      const next = [...current]
+      while (next.length < count) next.push({ min: '', max: '' })
+      next.length = count
+      return next
+    })
+  }
+
   const [editingDetails, setEditingDetails] = useState(false)
   const [detailsForm, setDetailsForm] = useState({
     description: '',
@@ -745,6 +760,17 @@ export default function InquiryDetail() {
   const [suggestedTimeCandidates, setSuggestedTimeCandidates] = useState<SuggestedTimeCandidate[]>([])
   const [suggestingTimeLoading, setSuggestingTimeLoading] = useState(false)
   const [suggestTimeError, setSuggestTimeError] = useState<string | null>(null)
+
+  // Multi-session planning: the Session Plan widget's own "Send Deposit
+  // Form" mini-form (per planned session) needs its OWN suggested-times
+  // fetch, sized off THAT session's estimatedHoursMin/Max -- not the
+  // un-planned flow's inquiry.timeEstimateHoursMin/Max above, which are
+  // null for any project using a session plan. Kept as separate state
+  // (rather than reusing suggestedTimeCandidates) since the two pickers,
+  // while never both actionable at once, are independent contexts.
+  const [plannedSessionSuggestedTimes, setPlannedSessionSuggestedTimes] = useState<SuggestedTimeCandidate[]>([])
+  const [plannedSessionSuggestLoading, setPlannedSessionSuggestLoading] = useState(false)
+  const [plannedSessionSuggestError, setPlannedSessionSuggestError] = useState<string | null>(null)
   const [savingProposedTime, setSavingProposedTime] = useState(false)
   const [tentativeTimeRange, setTentativeTimeRange] = useState<DateAndTimeRangeValue>({
     date: '',
@@ -864,6 +890,23 @@ export default function InquiryDetail() {
     return null
   })()
 
+  // Multi-session planning, revision side: a session already backed by a
+  // paid deposit or a booked appointment can't be silently altered or
+  // dropped by a revision -- real money or a real booking already depends
+  // on its hour range. Everything else about the plan (unpaid/unbooked
+  // sessions, or the whole plan on a project that never had one) stays
+  // freely editable, same as the original pre-conversion flow.
+  const reviseLockedSessions: LockedSession[] = (inquiry?.plannedSessions ?? [])
+    .filter((ps) => ps.depositForm?.paidAt != null || ps.appointment != null)
+    .map((ps) => ({
+      sessionNumber: ps.sessionNumber,
+      estimatedHoursMin: ps.estimatedHoursMin,
+      estimatedHoursMax: ps.estimatedHoursMax,
+      reason: ps.appointment != null ? 'appointment booked' : 'deposit paid',
+    }))
+
+  const isReviseMultiSession = reviseSessionCount > 1
+
   // Same shape as effectiveEstimate/estimateValidationError above, keyed to
   // the separate Revise Estimate modal's own form state instead.
   const effectiveRevisedEstimate = {
@@ -873,12 +916,16 @@ export default function InquiryDetail() {
     priceEstimateHigh: reviseEstimateForm.priceEstimateHigh
       ? Number(reviseEstimateForm.priceEstimateHigh)
       : inquiry?.priceEstimateHigh,
-    timeEstimateHoursMin: reviseEstimateForm.timeEstimateHoursMin
-      ? Number(reviseEstimateForm.timeEstimateHoursMin)
-      : inquiry?.timeEstimateHoursMin,
-    timeEstimateHoursMax: reviseEstimateForm.timeEstimateHoursMax
-      ? Number(reviseEstimateForm.timeEstimateHoursMax)
-      : inquiry?.timeEstimateHoursMax,
+    ...(isReviseMultiSession
+      ? {}
+      : {
+          timeEstimateHoursMin: reviseEstimateForm.timeEstimateHoursMin
+            ? Number(reviseEstimateForm.timeEstimateHoursMin)
+            : inquiry?.timeEstimateHoursMin,
+          timeEstimateHoursMax: reviseEstimateForm.timeEstimateHoursMax
+            ? Number(reviseEstimateForm.timeEstimateHoursMax)
+            : inquiry?.timeEstimateHoursMax,
+        }),
   }
 
   const reviseEstimateValidationError = (() => {
@@ -889,7 +936,18 @@ export default function InquiryDetail() {
     if (effectiveRevisedEstimate.priceEstimateLow! > effectiveRevisedEstimate.priceEstimateHigh!) {
       return 'Price low must be less than or equal to price high.'
     }
-    if (effectiveRevisedEstimate.timeEstimateHoursMin! > effectiveRevisedEstimate.timeEstimateHoursMax!) {
+    if (isReviseMultiSession) {
+      for (let i = 0; i < reviseSessionCount; i++) {
+        const sessionNumber = i + 1
+        if (reviseLockedSessions.some((s) => s.sessionNumber === sessionNumber)) continue
+        const row = reviseSessionHours[i]
+        if (!row || !row.min || !row.max) return `Session ${sessionNumber} needs an hour range.`
+        if (Number(row.min) <= 0 || Number(row.max) <= 0) return 'All session hour ranges must be positive.'
+        if (Number(row.min) > Number(row.max)) {
+          return `Session ${sessionNumber}'s minimum hours must be less than or equal to its maximum.`
+        }
+      }
+    } else if (effectiveRevisedEstimate.timeEstimateHoursMin! > effectiveRevisedEstimate.timeEstimateHoursMax!) {
       return 'Minimum hours must be less than or equal to maximum hours.'
     }
     return null
@@ -971,6 +1029,21 @@ export default function InquiryDetail() {
       timeEstimateHoursMin: inquiry.timeEstimateHoursMin?.toString() ?? '',
       timeEstimateHoursMax: inquiry.timeEstimateHoursMax?.toString() ?? '',
     })
+    // Prefill from the project's existing session plan, if it has one --
+    // a revision on a multi-session project should show that plan ready to
+    // edit, not silently reset it back down to 1.
+    if (inquiry.plannedSessions.length > 0) {
+      setReviseSessionCount(inquiry.plannedSessions.length)
+      setReviseSessionHours(
+        inquiry.plannedSessions.map((ps) => ({
+          min: ps.estimatedHoursMin.toString(),
+          max: ps.estimatedHoursMax.toString(),
+        })),
+      )
+    } else {
+      setReviseSessionCount(1)
+      setReviseSessionHours([{ min: '', max: '' }])
+    }
     setReviseReasonInput('')
     setReviseEstimateError(null)
     setShowReviseEstimateModal(true)
@@ -999,12 +1072,33 @@ export default function InquiryDetail() {
           priceEstimateHigh: reviseEstimateForm.priceEstimateHigh
             ? Number(reviseEstimateForm.priceEstimateHigh)
             : undefined,
-          timeEstimateHoursMin: reviseEstimateForm.timeEstimateHoursMin
-            ? Number(reviseEstimateForm.timeEstimateHoursMin)
-            : undefined,
-          timeEstimateHoursMax: reviseEstimateForm.timeEstimateHoursMax
-            ? Number(reviseEstimateForm.timeEstimateHoursMax)
-            : undefined,
+          timeEstimateHoursMin: isReviseMultiSession
+            ? undefined
+            : reviseEstimateForm.timeEstimateHoursMin
+              ? Number(reviseEstimateForm.timeEstimateHoursMin)
+              : undefined,
+          timeEstimateHoursMax: isReviseMultiSession
+            ? undefined
+            : reviseEstimateForm.timeEstimateHoursMax
+              ? Number(reviseEstimateForm.timeEstimateHoursMax)
+              : undefined,
+          sessions: isReviseMultiSession
+            ? reviseSessionHours
+                .slice(0, reviseSessionCount)
+                .map((row, index) => {
+                  const sessionNumber = index + 1
+                  const locked = reviseLockedSessions.find((s) => s.sessionNumber === sessionNumber)
+                  return locked
+                    ? { estimatedHoursMin: locked.estimatedHoursMin, estimatedHoursMax: locked.estimatedHoursMax }
+                    : { estimatedHoursMin: Number(row.min), estimatedHoursMax: Number(row.max) }
+                })
+            : // Only explicitly collapse the plan back to an empty array when
+              // one currently exists (locked sessions, if any, are preserved
+              // server-side regardless) -- an ordinary project that never
+              // had a plan shouldn't send a `sessions` field at all.
+              (inquiry?.plannedSessions.length ?? 0) > 0
+              ? []
+              : undefined,
           reason: reviseReasonInput.trim(),
         }),
       })
@@ -1437,6 +1531,45 @@ export default function InquiryDetail() {
     inquiry?.timeEstimateHoursMin,
     inquiry?.timeEstimateHoursMax,
   ])
+
+  // Multi-session planning: fires whenever staff opens the Session Plan
+  // widget's "Send Deposit Form" mini-form for a specific planned session
+  // -- sized off that session's OWN hour estimate, the fix for "Suggest a
+  // time" having gone quiet on multi-session projects (their top-level
+  // timeEstimateHoursMin/Max are null once a plan exists; see the
+  // useEffect above, which only ever reads those).
+  useEffect(() => {
+    if (!depositTargetPlannedSessionId) return
+    const targetSession = (inquiry?.plannedSessions ?? []).find((ps) => ps.id === depositTargetPlannedSessionId)
+    if (!inquiry?.assignedArtist || !targetSession) {
+      setPlannedSessionSuggestedTimes([])
+      return
+    }
+
+    let ignore = false
+    setPlannedSessionSuggestError(null)
+    setPlannedSessionSuggestLoading(true)
+    setPlannedSessionSuggestedTimes([])
+    const durationMinutes = Math.round(((targetSession.estimatedHoursMin + targetSession.estimatedHoursMax) / 2) * 60)
+
+    apiFetch<SuggestedTimeCandidate[]>(
+      `/scheduling/suggested-times?artistId=${inquiry.assignedArtist.id}&durationMinutes=${durationMinutes}`,
+    )
+      .then((candidates) => {
+        if (!ignore) setPlannedSessionSuggestedTimes(candidates)
+      })
+      .catch((err) => {
+        if (!ignore) setPlannedSessionSuggestError(err instanceof Error ? err.message : 'Failed to load suggestions')
+      })
+      .finally(() => {
+        if (!ignore) setPlannedSessionSuggestLoading(false)
+      })
+
+    return () => {
+      ignore = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [depositTargetPlannedSessionId, inquiry?.assignedArtist?.id])
 
   // Scheduling section: the same getSuggestedTimes source AppointmentForm.tsx
   // uses for a brand-new appointment -- this inquiry already has an assigned
@@ -1927,8 +2060,15 @@ export default function InquiryDetail() {
 
               <Widget key="assignment-section" id="assignment-section" title="Assignment">
 
-                {inquiry.status === 'NEW' ? (
+                {inquiry.status === 'NEW' || (!inquiry.assignedArtist && !isTerminal) ? (
                   <div className="mt-4 flex flex-wrap items-center gap-3">
+                    {/* A never-assigned inquiry can reach this state past NEW
+                        (send-estimate never requires one) -- a deposit can't
+                        be requested without an artist, so this stays
+                        available here too, not just at NEW. Doesn't touch
+                        status (see the backend's own isFirstAssignment
+                        branch), unlike the original NEW -> ARTIST_ASSIGNED
+                        path. */}
                     <ArtistSelect
                       id="assignArtistId"
                       className="w-64 max-w-full"
@@ -2131,20 +2271,7 @@ export default function InquiryDetail() {
                             </div>
                           </>
                         )}
-                        <div>
-                          <label className="mb-1 block text-xs font-medium text-fg-secondary">Number of sessions</label>
-                          <select
-                            value={sessionCount}
-                            onChange={(e) => handleSessionCountChange(Number(e.target.value))}
-                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                          >
-                            {SESSION_COUNT_OPTIONS.map((count) => (
-                              <option key={count} value={count}>
-                                {count}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
+                        <SessionCountField sessionCount={sessionCount} onSessionCountChange={handleSessionCountChange} />
                         {!isMultiSession && (
                           <>
                             <div>
@@ -2181,49 +2308,11 @@ export default function InquiryDetail() {
                         )}
                       </div>
 
-                      {isMultiSession && (
-                        <div className="mt-3 space-y-2">
-                          {sessionHours.map((row, index) => (
-                            <div key={index} className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                              <p className="col-span-2 self-center text-xs font-medium text-fg-secondary sm:col-span-1">
-                                Session {index + 1}
-                              </p>
-                              <select
-                                value={row.min}
-                                onChange={(e) => {
-                                  const next = [...sessionHours]
-                                  next[index] = { ...next[index], min: e.target.value }
-                                  setSessionHours(next)
-                                }}
-                                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                              >
-                                <option value="">Min hours…</option>
-                                {HOUR_OPTIONS.map((hours) => (
-                                  <option key={hours} value={hours}>
-                                    {hours} {hours === 1 ? 'hour' : 'hours'}
-                                  </option>
-                                ))}
-                              </select>
-                              <select
-                                value={row.max}
-                                onChange={(e) => {
-                                  const next = [...sessionHours]
-                                  next[index] = { ...next[index], max: e.target.value }
-                                  setSessionHours(next)
-                                }}
-                                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                              >
-                                <option value="">Max hours…</option>
-                                {HOUR_OPTIONS.map((hours) => (
-                                  <option key={hours} value={hours}>
-                                    {hours} {hours === 1 ? 'hour' : 'hours'}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                      <SessionHoursRows
+                        sessionCount={sessionCount}
+                        sessionHours={sessionHours}
+                        onSessionHoursChange={setSessionHours}
+                      />
 
                       {sendEstimateError && <p className="mt-3 text-sm text-danger">{sendEstimateError}</p>}
 
@@ -2549,22 +2638,31 @@ export default function InquiryDetail() {
 
                       {attachGiftCardError && <p className="mt-3 text-sm text-danger">{attachGiftCardError}</p>}
 
-                      <button
-                        type="button"
-                        onClick={handleAttachGiftCard}
-                        disabled={attachingGiftCard}
-                        aria-label="Attach Gift Card"
-                        title="Attach Gift Card"
-                        className="mt-3 flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface disabled:opacity-60 md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
-                      >
-                        <AttachmentIcon className="h-4 w-4" />
-                        <span className="hidden text-sm font-semibold md:inline">
-                          {attachingGiftCard ? 'Attaching…' : 'Attach Gift Card'}
-                        </span>
-                      </button>
+                      {!inquiry.assignedArtist ? (
+                        <p className="mt-3 text-sm text-fg-muted">Assign an artist before requesting a deposit.</p>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleAttachGiftCard}
+                          disabled={attachingGiftCard}
+                          aria-label="Attach Gift Card"
+                          title="Attach Gift Card"
+                          className="mt-3 flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface disabled:opacity-60 md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
+                        >
+                          <AttachmentIcon className="h-4 w-4" />
+                          <span className="hidden text-sm font-semibold md:inline">
+                            {attachingGiftCard ? 'Attaching…' : 'Attach Gift Card'}
+                          </span>
+                        </button>
+                      )}
                     </div>
                   ) : (
-                    (inquiry.status === 'DEPOSIT_PENDING' || isConverted) && (
+                    (inquiry.status === 'DEPOSIT_PENDING' || isConverted) &&
+                    (!inquiry.assignedArtist ? (
+                      <div className="mt-4 rounded-lg border border-border bg-surface-inset p-3">
+                        <p className="text-sm text-fg-secondary">Assign an artist before requesting a deposit.</p>
+                      </div>
+                    ) : (
                       <div className="mt-4">
                         <div className="rounded-lg border border-border p-3">
                           <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
@@ -2665,7 +2763,7 @@ export default function InquiryDetail() {
                           </div>
                         )}
                       </div>
-                    )
+                    ))
                   )}
                 </Widget>
               )}
@@ -2963,9 +3061,54 @@ export default function InquiryDetail() {
 
                           {depositStatus === 'not_generated' && canMessage && (
                             <div className="mt-2">
-                              {depositTargetPlannedSessionId === ps.id ? (
+                              {!inquiry.assignedArtist ? (
+                                <p className="text-xs text-fg-muted">Assign an artist before requesting a deposit.</p>
+                              ) : depositTargetPlannedSessionId === ps.id ? (
                                 <div className="rounded-lg border border-border p-3">
+                                  {plannedSessionSuggestLoading && (
+                                    <p className="text-sm text-fg-secondary">Loading suggested times…</p>
+                                  )}
+
+                                  {!plannedSessionSuggestLoading && plannedSessionSuggestedTimes.length > 0 && (
+                                    <div className="mb-3">
+                                      <p className="mb-1.5 text-xs font-medium text-fg-secondary">Suggested times</p>
+                                      <div className="flex flex-wrap gap-2">
+                                        {plannedSessionSuggestedTimes.map((candidate) => {
+                                          const parts = isoToTimeRangeParts(candidate.startTime, candidate.endTime)
+                                          const isSelected =
+                                            tentativeTimeRange.date === parts.date &&
+                                            tentativeTimeRange.startTime === parts.startTime &&
+                                            tentativeTimeRange.endTime === parts.endTime
+                                          return (
+                                            <button
+                                              key={candidate.startTime}
+                                              type="button"
+                                              onClick={() => setTentativeTimeRange(parts)}
+                                              className={[
+                                                'flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition',
+                                                isSelected
+                                                  ? 'border-accent bg-accent/15 text-accent'
+                                                  : 'border-border text-fg-secondary hover:bg-surface',
+                                              ].join(' ')}
+                                            >
+                                              {formatDateTime(candidate.startTime)} – {formatDateTime(candidate.endTime)}
+                                              {candidate.hasBufferConflict && (
+                                                <span className="rounded-full bg-warning/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-warning">
+                                                  Close
+                                                </span>
+                                              )}
+                                            </button>
+                                          )
+                                        })}
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  <p className="mb-1.5 text-xs font-medium text-fg-secondary">Or pick a specific time</p>
                                   <DateAndTimeRangeFields value={tentativeTimeRange} onChange={setTentativeTimeRange} />
+                                  {plannedSessionSuggestError && (
+                                    <p className="mt-2 text-xs text-danger">{plannedSessionSuggestError}</p>
+                                  )}
                                   {sendDepositError && <p className="mt-2 text-xs text-danger">{sendDepositError}</p>}
                                   <div className="mt-2 flex gap-2">
                                     <button
@@ -3061,126 +3204,6 @@ export default function InquiryDetail() {
                   </div>
                 </Widget>
               )}
-
-              <Widget
-                key="tattoo-details"
-                id="tattoo-details"
-                title="Tattoo details"
-                actions={
-                  !editingDetails ? (
-                    <button
-                      type="button"
-                      onClick={() => setEditingDetails(true)}
-                      aria-label="Edit Tattoo Details"
-                      title="Edit Tattoo Details"
-                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
-                    >
-                      <PencilIcon className="h-4 w-4" />
-                      <span className="hidden text-sm font-semibold md:inline">Edit</span>
-                    </button>
-                  ) : null
-                }
-              >
-
-                {editingDetails ? (
-                  <div className="mt-4 space-y-4">
-                    <div>
-                      <label className="mb-1 block text-xs font-medium text-fg-secondary">Description</label>
-                      <textarea
-                        rows={4}
-                        value={detailsForm.description}
-                        onChange={(e) => setDetailsForm({ ...detailsForm, description: e.target.value })}
-                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <div>
-                        <label className="mb-1 block text-xs font-medium text-fg-secondary">Color or Black & Grey</label>
-                        <input
-                          type="text"
-                          value={detailsForm.colorOrBlackGrey}
-                          onChange={(e) => setDetailsForm({ ...detailsForm, colorOrBlackGrey: e.target.value })}
-                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs font-medium text-fg-secondary">Placement</label>
-                        <input
-                          type="text"
-                          value={detailsForm.placement}
-                          onChange={(e) => setDetailsForm({ ...detailsForm, placement: e.target.value })}
-                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs font-medium text-fg-secondary">Estimated size</label>
-                        <input
-                          type="text"
-                          value={detailsForm.estimatedSize}
-                          onChange={(e) => setDetailsForm({ ...detailsForm, estimatedSize: e.target.value })}
-                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs font-medium text-fg-secondary">Budget</label>
-                        <input
-                          type="text"
-                          value={detailsForm.budget}
-                          onChange={(e) => setDetailsForm({ ...detailsForm, budget: e.target.value })}
-                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs font-medium text-fg-secondary">Desired timing</label>
-                        <input
-                          type="text"
-                          value={detailsForm.desiredTiming}
-                          onChange={(e) => setDetailsForm({ ...detailsForm, desiredTiming: e.target.value })}
-                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                        />
-                      </div>
-                    </div>
-
-                    {detailsError && <p className="text-sm text-danger">{detailsError}</p>}
-
-                    <div className="flex gap-3">
-                      <button
-                        type="button"
-                        onClick={handleSaveDetails}
-                        disabled={savingDetails || !!viewAsTarget}
-                        className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
-                      >
-                        {savingDetails ? 'Saving…' : 'Save'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setEditingDetails(false)}
-                        className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <div className="mt-4">
-                      <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Description</p>
-                      <p className="mt-1 whitespace-pre-wrap text-sm text-fg">{inquiry.description}</p>
-                    </div>
-
-                    <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                      <DetailField label="Color or Black & Grey" value={inquiry.colorOrBlackGrey} />
-                      <DetailField label="Placement" value={inquiry.placement} />
-                      <DetailField label="Estimated size" value={inquiry.estimatedSize} />
-                      <DetailField label="Tattooed before" value={inquiry.hasBeenTattooedBefore ? 'Yes' : 'No'} />
-                      <DetailField label="Budget" value={inquiry.budget ?? 'Not provided'} />
-                      <DetailField label="Desired timing" value={inquiry.desiredTiming ?? 'Not provided'} />
-                      <ArtistDetailField label="Preferred artist" artist={inquiry.preferredArtist} emptyLabel="No preference" />
-                    </div>
-                  </>
-                )}
-              </Widget>
 
               <Widget
                 key="reference-images"
@@ -3294,9 +3317,109 @@ export default function InquiryDetail() {
                 )}
               </Widget>
 
-              {showCustomFieldsWidget && (
-                <Widget key="custom-fields" id="custom-fields" title="Inquiry Details">
-                  <InquiryDetailsSection inquiry={inquiry} bare onVisibilityChange={setShowCustomFieldsWidget} />
+              {(showCustomFieldsWidget || editingDetails) && (
+                <Widget
+                  key="custom-fields"
+                  id="custom-fields"
+                  title="Inquiry Details"
+                  actions={
+                    !editingDetails ? (
+                      <button
+                        type="button"
+                        onClick={() => setEditingDetails(true)}
+                        aria-label="Edit Inquiry Details"
+                        title="Edit Inquiry Details"
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
+                      >
+                        <PencilIcon className="h-4 w-4" />
+                        <span className="hidden text-sm font-semibold md:inline">Edit</span>
+                      </button>
+                    ) : null
+                  }
+                >
+                  {editingDetails ? (
+                    <div className="mt-4 space-y-4">
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-fg-secondary">Description</label>
+                        <textarea
+                          rows={4}
+                          value={detailsForm.description}
+                          onChange={(e) => setDetailsForm({ ...detailsForm, description: e.target.value })}
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-fg-secondary">Color or Black & Grey</label>
+                          <input
+                            type="text"
+                            value={detailsForm.colorOrBlackGrey}
+                            onChange={(e) => setDetailsForm({ ...detailsForm, colorOrBlackGrey: e.target.value })}
+                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-fg-secondary">Placement</label>
+                          <input
+                            type="text"
+                            value={detailsForm.placement}
+                            onChange={(e) => setDetailsForm({ ...detailsForm, placement: e.target.value })}
+                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-fg-secondary">Estimated size</label>
+                          <input
+                            type="text"
+                            value={detailsForm.estimatedSize}
+                            onChange={(e) => setDetailsForm({ ...detailsForm, estimatedSize: e.target.value })}
+                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-fg-secondary">Budget</label>
+                          <input
+                            type="text"
+                            value={detailsForm.budget}
+                            onChange={(e) => setDetailsForm({ ...detailsForm, budget: e.target.value })}
+                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-fg-secondary">Desired timing</label>
+                          <input
+                            type="text"
+                            value={detailsForm.desiredTiming}
+                            onChange={(e) => setDetailsForm({ ...detailsForm, desiredTiming: e.target.value })}
+                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                          />
+                        </div>
+                      </div>
+
+                      {detailsError && <p className="text-sm text-danger">{detailsError}</p>}
+
+                      <div className="flex gap-3">
+                        <button
+                          type="button"
+                          onClick={handleSaveDetails}
+                          disabled={savingDetails || !!viewAsTarget}
+                          className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                        >
+                          {savingDetails ? 'Saving…' : 'Save'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingDetails(false)}
+                          className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <InquiryDetailsSection inquiry={inquiry} bare onVisibilityChange={setShowCustomFieldsWidget} />
+                  )}
                 </Widget>
               )}
 
@@ -3481,41 +3604,57 @@ export default function InquiryDetail() {
                           </div>
                         </>
                       )}
-                      <div>
-                        <label className="mb-1 block text-xs font-medium text-fg-secondary">Time min (hours)</label>
-                        <select
-                          value={reviseEstimateForm.timeEstimateHoursMin}
-                          onChange={(e) =>
-                            setReviseEstimateForm({ ...reviseEstimateForm, timeEstimateHoursMin: e.target.value })
-                          }
-                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                        >
-                          <option value="">Select…</option>
-                          {HOUR_OPTIONS.map((hours) => (
-                            <option key={hours} value={hours}>
-                              {hours} {hours === 1 ? 'hour' : 'hours'}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs font-medium text-fg-secondary">Time max (hours)</label>
-                        <select
-                          value={reviseEstimateForm.timeEstimateHoursMax}
-                          onChange={(e) =>
-                            setReviseEstimateForm({ ...reviseEstimateForm, timeEstimateHoursMax: e.target.value })
-                          }
-                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                        >
-                          <option value="">Select…</option>
-                          {HOUR_OPTIONS.map((hours) => (
-                            <option key={hours} value={hours}>
-                              {hours} {hours === 1 ? 'hour' : 'hours'}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                      <SessionCountField
+                        sessionCount={reviseSessionCount}
+                        onSessionCountChange={handleReviseSessionCountChange}
+                        lockedSessions={reviseLockedSessions}
+                      />
+                      {!isReviseMultiSession && (
+                        <>
+                          <div>
+                            <label className="mb-1 block text-xs font-medium text-fg-secondary">Time min (hours)</label>
+                            <select
+                              value={reviseEstimateForm.timeEstimateHoursMin}
+                              onChange={(e) =>
+                                setReviseEstimateForm({ ...reviseEstimateForm, timeEstimateHoursMin: e.target.value })
+                              }
+                              className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                            >
+                              <option value="">Select…</option>
+                              {HOUR_OPTIONS.map((hours) => (
+                                <option key={hours} value={hours}>
+                                  {hours} {hours === 1 ? 'hour' : 'hours'}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-xs font-medium text-fg-secondary">Time max (hours)</label>
+                            <select
+                              value={reviseEstimateForm.timeEstimateHoursMax}
+                              onChange={(e) =>
+                                setReviseEstimateForm({ ...reviseEstimateForm, timeEstimateHoursMax: e.target.value })
+                              }
+                              className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                            >
+                              <option value="">Select…</option>
+                              {HOUR_OPTIONS.map((hours) => (
+                                <option key={hours} value={hours}>
+                                  {hours} {hours === 1 ? 'hour' : 'hours'}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </>
+                      )}
                     </div>
+
+                    <SessionHoursRows
+                      sessionCount={reviseSessionCount}
+                      sessionHours={reviseSessionHours}
+                      onSessionHoursChange={setReviseSessionHours}
+                      lockedSessions={reviseLockedSessions}
+                    />
 
                     <div>
                       <label className="mb-1 block text-xs font-medium text-fg-secondary">
