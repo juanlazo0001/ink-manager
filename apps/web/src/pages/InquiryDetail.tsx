@@ -145,6 +145,19 @@ interface Inquiry {
     proposedEndAt: string | null
     giftCard: { id: string; code: string; amountCents: number; status: string } | null
   }[]
+  // Multi-session planning: purely additive -- empty for every project
+  // that never declared more than one session at estimate time. Ordered
+  // by the staff-declared sessionNumber, not creation/generation order.
+  plannedSessions: {
+    id: string
+    sessionNumber: number
+    estimatedHoursMin: number
+    estimatedHoursMax: number
+    depositFormId: string | null
+    appointmentId: string | null
+    depositForm: { id: string; signedAt: string | null; paidAt: string | null; paidManually: boolean } | null
+    appointment: { id: string; startTime: string; endTime: string; status: string; checkedOutAt: string | null } | null
+  }[]
   // Service lines: which service this inquiry is for -- drives whether the
   // estimate form below collects one flat price or a low/high range, and
   // whether the deposit shows a breakdown note.
@@ -266,6 +279,9 @@ const DELETE_CONFIRM_TEXT = 'DELETE'
 // Whole-hour options for the estimate form's time-min/max dropdowns (1-16
 // covers everything from a small piece to a full-day session).
 const HOUR_OPTIONS = Array.from({ length: 16 }, (_, i) => i + 1)
+// Multi-session planning: a generous cap, not a real limit anywhere else
+// in the system -- just how many rows the estimate form offers at once.
+const SESSION_COUNT_OPTIONS = Array.from({ length: 6 }, (_, i) => i + 1)
 
 // Mirrors clientSms.ts's SendClientSmsResult -- send-estimate auto-sends
 // through that same real path now, so the same skip reasons apply. The
@@ -324,6 +340,7 @@ const INQUIRY_WIDGET_ORDER = [
   'assignment-section',
   'estimate-section',
   'deposit',
+  'session-plan',
   'scheduling-section',
   'appointments',
   'photos',
@@ -536,6 +553,25 @@ export default function InquiryDetail() {
     timeEstimateHoursMin: '',
     timeEstimateHoursMax: '',
   })
+  // Multi-session planning: 1 (the default, meaning "no plan -- use the
+  // fields above") behaves with zero change from today. Only above 1 does
+  // sessionHours below replace the single top-level time-estimate fields.
+  const [sessionCount, setSessionCount] = useState(1)
+  const [sessionHours, setSessionHours] = useState<{ min: string; max: string }[]>([{ min: '', max: '' }])
+
+  // Resizes sessionHours to match, preserving already-entered rows --
+  // dropping the count back down never loses data for the rows still in
+  // range, just hides the ones beyond it.
+  function handleSessionCountChange(count: number) {
+    setSessionCount(count)
+    setSessionHours((current) => {
+      const next = [...current]
+      while (next.length < count) next.push({ min: '', max: '' })
+      next.length = count
+      return next
+    })
+  }
+
   const [sendingEstimate, setSendingEstimate] = useState(false)
   const [sendEstimateError, setSendEstimateError] = useState<string | null>(null)
   const [estimateSendNotice, setEstimateSendNotice] = useState<string | null>(null)
@@ -735,6 +771,17 @@ export default function InquiryDetail() {
   // "available regardless of pipeline status" requirement for real.
   const [appointmentModalType, setAppointmentModalType] = useState<'TATTOO_SESSION' | 'CONSULTATION' | null>(null)
 
+  // Multi-session planning: opens the exact same "New Appointment" modal
+  // above, pre-selected to a specific planned session -- the Session Plan
+  // widget's own "Book Appointment" action per row, below.
+  const [bookingPlannedSessionId, setBookingPlannedSessionId] = useState<string | null>(null)
+
+  // Multi-session planning: which planned session's "generate a deposit
+  // form" mini-form is currently expanded in the Session Plan widget --
+  // reuses the same shared tentativeTimeRange state as the un-planned
+  // deposit flow above, one row open at a time.
+  const [depositTargetPlannedSessionId, setDepositTargetPlannedSessionId] = useState<string | null>(null)
+
   // Seeds the editable estimate fields from the inquiry once per inquiry id
   // (not on every refetch), so an in-progress edit doesn't get clobbered by
   // an unrelated refresh. Adjusted during render rather than an effect, per
@@ -769,6 +816,13 @@ export default function InquiryDetail() {
   // formatPriceEstimate) keeps working with zero branching of its own.
   const isFlatPricing = inquiry?.service.pricingModel === 'FLAT'
 
+  // Multi-session planning: sessionCount 1 (the default) is today's
+  // behavior with zero change -- the single top-level time-estimate
+  // fields are what's required/sent. Only above 1 does the per-session
+  // sessionHours breakdown replace them entirely (see the backend's own
+  // identical branch in POST /:id/send-estimate).
+  const isMultiSession = sessionCount > 1
+
   // Mirrors the backend's own validation, so staff get instant feedback
   // instead of a round trip for something obviously incomplete.
   const effectiveEstimate = {
@@ -776,12 +830,16 @@ export default function InquiryDetail() {
     priceEstimateHigh: estimateForm.priceEstimateHigh
       ? Number(estimateForm.priceEstimateHigh)
       : inquiry?.priceEstimateHigh,
-    timeEstimateHoursMin: estimateForm.timeEstimateHoursMin
-      ? Number(estimateForm.timeEstimateHoursMin)
-      : inquiry?.timeEstimateHoursMin,
-    timeEstimateHoursMax: estimateForm.timeEstimateHoursMax
-      ? Number(estimateForm.timeEstimateHoursMax)
-      : inquiry?.timeEstimateHoursMax,
+    ...(isMultiSession
+      ? {}
+      : {
+          timeEstimateHoursMin: estimateForm.timeEstimateHoursMin
+            ? Number(estimateForm.timeEstimateHoursMin)
+            : inquiry?.timeEstimateHoursMin,
+          timeEstimateHoursMax: estimateForm.timeEstimateHoursMax
+            ? Number(estimateForm.timeEstimateHoursMax)
+            : inquiry?.timeEstimateHoursMax,
+        }),
   }
 
   const estimateValidationError = (() => {
@@ -791,7 +849,16 @@ export default function InquiryDetail() {
     if (effectiveEstimate.priceEstimateLow! > effectiveEstimate.priceEstimateHigh!) {
       return 'Price low must be less than or equal to price high.'
     }
-    if (effectiveEstimate.timeEstimateHoursMin! > effectiveEstimate.timeEstimateHoursMax!) {
+    if (isMultiSession) {
+      for (let i = 0; i < sessionCount; i++) {
+        const row = sessionHours[i]
+        if (!row || !row.min || !row.max) return `Session ${i + 1} needs an hour range.`
+        if (Number(row.min) <= 0 || Number(row.max) <= 0) return 'All session hour ranges must be positive.'
+        if (Number(row.min) > Number(row.max)) {
+          return `Session ${i + 1}'s minimum hours must be less than or equal to its maximum.`
+        }
+      }
+    } else if (effectiveEstimate.timeEstimateHoursMin! > effectiveEstimate.timeEstimateHoursMax!) {
       return 'Minimum hours must be less than or equal to maximum hours.'
     }
     return null
@@ -870,11 +937,18 @@ export default function InquiryDetail() {
         body: JSON.stringify({
           priceEstimateLow: estimateForm.priceEstimateLow ? Number(estimateForm.priceEstimateLow) : undefined,
           priceEstimateHigh: estimateForm.priceEstimateHigh ? Number(estimateForm.priceEstimateHigh) : undefined,
-          timeEstimateHoursMin: estimateForm.timeEstimateHoursMin
-            ? Number(estimateForm.timeEstimateHoursMin)
-            : undefined,
-          timeEstimateHoursMax: estimateForm.timeEstimateHoursMax
-            ? Number(estimateForm.timeEstimateHoursMax)
+          timeEstimateHoursMin: isMultiSession
+            ? undefined
+            : estimateForm.timeEstimateHoursMin
+              ? Number(estimateForm.timeEstimateHoursMin)
+              : undefined,
+          timeEstimateHoursMax: isMultiSession
+            ? undefined
+            : estimateForm.timeEstimateHoursMax
+              ? Number(estimateForm.timeEstimateHoursMax)
+              : undefined,
+          sessions: isMultiSession
+            ? sessionHours.map((row) => ({ estimatedHoursMin: Number(row.min), estimatedHoursMax: Number(row.max) }))
             : undefined,
         }),
       })
@@ -1279,20 +1353,32 @@ export default function InquiryDetail() {
   const latestDepositForm = depositForms.length > 0 ? depositForms[depositForms.length - 1] : null
   const isNewDepositSession = !latestDepositForm || latestDepositForm.signedAt != null
 
-  async function handleSendDepositForm() {
+  // plannedSessionId (multi-session planning): when provided, THAT
+  // specific planned session decides whether this is a fresh generation
+  // or a resend, mirroring the backend route's own identical branch --
+  // never the global "latest deposit form across the whole inquiry"
+  // check below, which stays exactly as it was for the un-planned case
+  // (plannedSessionId omitted, every existing call site unchanged).
+  async function handleSendDepositForm(plannedSessionId?: string) {
     if (!id) return
+
+    const targetPlannedSession = plannedSessionId
+      ? (inquiry?.plannedSessions ?? []).find((ps) => ps.id === plannedSessionId)
+      : null
+    const isNewSessionForTarget = plannedSessionId ? !targetPlannedSession?.depositFormId : isNewDepositSession
+
     // Required whenever this would create a fresh session -- resending the
     // current unsigned session (token rotation on an existing, unsigned
     // form) doesn't touch the tentative time at all, see the API route's
     // own comment.
-    if (isNewDepositSession && !tentativeTimeValid) return
+    if (isNewSessionForTarget && !tentativeTimeValid) return
 
     setSendingDeposit(true)
     setSendDepositError(null)
     setDepositSendNotice(null)
 
     try {
-      const proposedTime = isNewDepositSession
+      const proposedTime = isNewSessionForTarget
         ? {
             proposedStartAt: combineDateAndTime(tentativeTimeRange.date, tentativeTimeRange.startTime)!.toISOString(),
             proposedEndAt: combineDateAndTime(tentativeTimeRange.date, tentativeTimeRange.endTime)!.toISOString(),
@@ -1300,9 +1386,10 @@ export default function InquiryDetail() {
         : {}
       const result = await apiFetch<{ depositSendResult: ClientSendResult | null }>(`/inquiries/${id}/deposit-form`, {
         method: 'POST',
-        body: JSON.stringify(proposedTime),
+        body: JSON.stringify({ ...proposedTime, plannedSessionId }),
       })
       setDepositSendNotice(describeSendResult('Deposit form', result.depositSendResult))
+      setDepositTargetPlannedSessionId(null)
       invalidateInquiry()
     } catch (err) {
       setSendDepositError(err instanceof Error ? err.message : 'Failed to send deposit form')
@@ -2045,36 +2132,98 @@ export default function InquiryDetail() {
                           </>
                         )}
                         <div>
-                          <label className="mb-1 block text-xs font-medium text-fg-secondary">Time min (hours)</label>
+                          <label className="mb-1 block text-xs font-medium text-fg-secondary">Number of sessions</label>
                           <select
-                            value={estimateForm.timeEstimateHoursMin}
-                            onChange={(e) => setEstimateForm({ ...estimateForm, timeEstimateHoursMin: e.target.value })}
+                            value={sessionCount}
+                            onChange={(e) => handleSessionCountChange(Number(e.target.value))}
                             className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                           >
-                            <option value="">Select…</option>
-                            {HOUR_OPTIONS.map((hours) => (
-                              <option key={hours} value={hours}>
-                                {hours} {hours === 1 ? 'hour' : 'hours'}
+                            {SESSION_COUNT_OPTIONS.map((count) => (
+                              <option key={count} value={count}>
+                                {count}
                               </option>
                             ))}
                           </select>
                         </div>
-                        <div>
-                          <label className="mb-1 block text-xs font-medium text-fg-secondary">Time max (hours)</label>
-                          <select
-                            value={estimateForm.timeEstimateHoursMax}
-                            onChange={(e) => setEstimateForm({ ...estimateForm, timeEstimateHoursMax: e.target.value })}
-                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                          >
-                            <option value="">Select…</option>
-                            {HOUR_OPTIONS.map((hours) => (
-                              <option key={hours} value={hours}>
-                                {hours} {hours === 1 ? 'hour' : 'hours'}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
+                        {!isMultiSession && (
+                          <>
+                            <div>
+                              <label className="mb-1 block text-xs font-medium text-fg-secondary">Time min (hours)</label>
+                              <select
+                                value={estimateForm.timeEstimateHoursMin}
+                                onChange={(e) => setEstimateForm({ ...estimateForm, timeEstimateHoursMin: e.target.value })}
+                                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                              >
+                                <option value="">Select…</option>
+                                {HOUR_OPTIONS.map((hours) => (
+                                  <option key={hours} value={hours}>
+                                    {hours} {hours === 1 ? 'hour' : 'hours'}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-xs font-medium text-fg-secondary">Time max (hours)</label>
+                              <select
+                                value={estimateForm.timeEstimateHoursMax}
+                                onChange={(e) => setEstimateForm({ ...estimateForm, timeEstimateHoursMax: e.target.value })}
+                                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                              >
+                                <option value="">Select…</option>
+                                {HOUR_OPTIONS.map((hours) => (
+                                  <option key={hours} value={hours}>
+                                    {hours} {hours === 1 ? 'hour' : 'hours'}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </>
+                        )}
                       </div>
+
+                      {isMultiSession && (
+                        <div className="mt-3 space-y-2">
+                          {sessionHours.map((row, index) => (
+                            <div key={index} className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                              <p className="col-span-2 self-center text-xs font-medium text-fg-secondary sm:col-span-1">
+                                Session {index + 1}
+                              </p>
+                              <select
+                                value={row.min}
+                                onChange={(e) => {
+                                  const next = [...sessionHours]
+                                  next[index] = { ...next[index], min: e.target.value }
+                                  setSessionHours(next)
+                                }}
+                                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                              >
+                                <option value="">Min hours…</option>
+                                {HOUR_OPTIONS.map((hours) => (
+                                  <option key={hours} value={hours}>
+                                    {hours} {hours === 1 ? 'hour' : 'hours'}
+                                  </option>
+                                ))}
+                              </select>
+                              <select
+                                value={row.max}
+                                onChange={(e) => {
+                                  const next = [...sessionHours]
+                                  next[index] = { ...next[index], max: e.target.value }
+                                  setSessionHours(next)
+                                }}
+                                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                              >
+                                <option value="">Max hours…</option>
+                                {HOUR_OPTIONS.map((hours) => (
+                                  <option key={hours} value={hours}>
+                                    {hours} {hours === 1 ? 'hour' : 'hours'}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          ))}
+                        </div>
+                      )}
 
                       {sendEstimateError && <p className="mt-3 text-sm text-danger">{sendEstimateError}</p>}
 
@@ -2286,7 +2435,7 @@ export default function InquiryDetail() {
 
                       <button
                         type="button"
-                        onClick={handleSendDepositForm}
+                        onClick={() => handleSendDepositForm()}
                         disabled={sendingDeposit}
                         className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                       >
@@ -2477,7 +2626,7 @@ export default function InquiryDetail() {
 
                         <button
                           type="button"
-                          onClick={handleSendDepositForm}
+                          onClick={() => handleSendDepositForm()}
                           disabled={sendingDeposit || !tentativeTimeValid}
                           className="mt-4 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                         >
@@ -2754,6 +2903,119 @@ export default function InquiryDetail() {
                   </div>
                 )}
               </Widget>
+
+              {/* Multi-session planning: purely additive -- invisible for
+                  every project that never declared more than one session
+                  at estimate time. A real at-a-glance view of the whole
+                  plan: each session's hour estimate, deposit status, and
+                  appointment status together, with the right action
+                  inline per row (generate a deposit form, or book once
+                  paid) rather than one single global "next session"
+                  action the way the un-planned Deposit widget above still
+                  works for its own case. */}
+              {inquiry.plannedSessions.length > 0 && (
+                <Widget key="session-plan" id="session-plan" title="Session Plan">
+                  <div className="mt-4 divide-y divide-border">
+                    {inquiry.plannedSessions.map((ps) => {
+                      const depositStatus = !ps.depositForm ? 'not_generated' : ps.depositForm.paidAt ? 'paid' : 'pending'
+                      const appointmentStatus = !ps.appointment
+                        ? 'not_booked'
+                        : ps.appointment.checkedOutAt
+                          ? 'completed'
+                          : 'scheduled'
+                      const depositBadge =
+                        depositStatus === 'paid'
+                          ? { label: 'Deposit paid', className: 'border-success/30 bg-success/10 text-success' }
+                          : depositStatus === 'pending'
+                            ? { label: 'Deposit pending', className: 'border-warning/30 bg-warning/10 text-warning' }
+                            : { label: 'Deposit not yet generated', className: 'border-border bg-surface-inset text-fg-muted' }
+                      const appointmentBadge =
+                        appointmentStatus === 'completed'
+                          ? { label: 'Completed', className: 'border-success/30 bg-success/10 text-success' }
+                          : appointmentStatus === 'scheduled'
+                            ? { label: 'Scheduled', className: 'border-accent/30 bg-accent/10 text-accent' }
+                            : { label: 'Not yet booked', className: 'border-border bg-surface-inset text-fg-muted' }
+
+                      return (
+                        <div key={ps.id} className="py-3 first:pt-0 last:pb-0">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="text-sm font-medium text-fg">
+                              Session {ps.sessionNumber} — estimated {ps.estimatedHoursMin}-{ps.estimatedHoursMax} hrs
+                            </p>
+                            <div className="flex items-center gap-2">
+                              <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${depositBadge.className}`}>
+                                {depositBadge.label}
+                              </span>
+                              <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${appointmentBadge.className}`}>
+                                {appointmentBadge.label}
+                              </span>
+                            </div>
+                          </div>
+
+                          {ps.appointment && (
+                            <Link
+                              to={`/appointments/${ps.appointment.id}`}
+                              className="mt-1 inline-block text-xs text-accent hover:underline"
+                            >
+                              {formatDateTime(ps.appointment.startTime)}
+                            </Link>
+                          )}
+
+                          {depositStatus === 'not_generated' && canMessage && (
+                            <div className="mt-2">
+                              {depositTargetPlannedSessionId === ps.id ? (
+                                <div className="rounded-lg border border-border p-3">
+                                  <DateAndTimeRangeFields value={tentativeTimeRange} onChange={setTentativeTimeRange} />
+                                  {sendDepositError && <p className="mt-2 text-xs text-danger">{sendDepositError}</p>}
+                                  <div className="mt-2 flex gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSendDepositForm(ps.id)}
+                                      disabled={sendingDeposit || !tentativeTimeValid}
+                                      className="rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                                    >
+                                      {sendingDeposit ? 'Sending…' : 'Send Deposit Form'}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setDepositTargetPlannedSessionId(null)}
+                                      className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSendDepositError(null)
+                                    setTentativeTimeRange({ date: '', startTime: '', endTime: '' })
+                                    setDepositTargetPlannedSessionId(ps.id)
+                                  }}
+                                  className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                                >
+                                  Send Deposit Form
+                                </button>
+                              )}
+                            </div>
+                          )}
+
+                          {depositStatus === 'paid' && appointmentStatus === 'not_booked' && canMessage && (
+                            <button
+                              type="button"
+                              onClick={() => setBookingPlannedSessionId(ps.id)}
+                              className="mt-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                            >
+                              Book Appointment
+                            </button>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </Widget>
+              )}
 
               {/* Package N: grouped by session, not one flat gallery --
                   each session that actually has photos gets its own
@@ -3468,10 +3730,13 @@ export default function InquiryDetail() {
                 </Modal>
               )}
 
-              {appointmentModalType && (
+              {(appointmentModalType || bookingPlannedSessionId) && (
                 <Modal
                   title={appointmentModalType === 'CONSULTATION' ? 'Schedule Consultation' : 'New Appointment'}
-                  onClose={() => setAppointmentModalType(null)}
+                  onClose={() => {
+                    setAppointmentModalType(null)
+                    setBookingPlannedSessionId(null)
+                  }}
                 >
                   <p className="mb-4 text-xs text-fg-muted">
                     {appointmentModalType === 'CONSULTATION'
@@ -3481,12 +3746,17 @@ export default function InquiryDetail() {
                   <AppointmentForm
                     fixedClientId={inquiry.clientId}
                     fixedInquiryId={inquiry.id}
-                    initialAppointmentType={appointmentModalType}
+                    initialAppointmentType={appointmentModalType ?? 'TATTOO_SESSION'}
+                    initialPlannedSessionId={bookingPlannedSessionId ?? undefined}
                     onCreated={() => {
                       setAppointmentModalType(null)
+                      setBookingPlannedSessionId(null)
                       invalidateInquiry()
                     }}
-                    onCancel={() => setAppointmentModalType(null)}
+                    onCancel={() => {
+                      setAppointmentModalType(null)
+                      setBookingPlannedSessionId(null)
+                    }}
                   />
                 </Modal>
               )}

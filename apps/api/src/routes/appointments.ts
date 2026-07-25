@@ -42,7 +42,7 @@ router.post("/", requirePermission("appointments.create"), async (req, res) => {
     return res.status(400).json({ error: `Missing required field(s): ${missing.join(", ")}` });
   }
 
-  const { artistId, clientId, startTime, endTime, notes, inquiryId, giftCardIds } = body;
+  const { artistId, clientId, startTime, endTime, notes, inquiryId, giftCardIds, plannedSessionId } = body;
 
   // Absent body field defaults to TATTOO_SESSION -- every pre-existing
   // caller (and every old cached frontend bundle) never sends this field
@@ -94,6 +94,30 @@ router.post("/", requirePermission("appointments.create"), async (req, res) => {
     return res.status(400).json({ error: "inquiryId must belong to this client in your studio" });
   }
 
+  // Multi-session planning: optional -- an appointment can still be booked
+  // completely un-planned (ad hoc, or a project with no session plan at
+  // all) exactly as before. When named, that planned session's own
+  // estimatedHoursMin/Max is what the caller should have fed into the
+  // scheduling-assistant duration target, not the inquiry's top-level
+  // fields -- this route only validates and links it, the actual
+  // duration-target selection happens client-side (AppointmentForm.tsx).
+  let plannedSession: { id: string; inquiryId: string; appointmentId: string | null } | null = null;
+  if (plannedSessionId !== undefined) {
+    if (typeof plannedSessionId !== "string") {
+      return res.status(400).json({ error: "plannedSessionId must be a string" });
+    }
+    plannedSession = await prisma.plannedSession.findUnique({
+      where: { id: plannedSessionId },
+      select: { id: true, inquiryId: true, appointmentId: true },
+    });
+    if (!plannedSession || plannedSession.inquiryId !== inquiryId) {
+      return res.status(400).json({ error: "plannedSessionId must belong to this project's session plan" });
+    }
+    if (plannedSession.appointmentId) {
+      return res.status(400).json({ error: "This planned session already has an appointment booked" });
+    }
+  }
+
   if (!isConsultation) {
     const requiredCents = resolveRequiredDepositCents(
       inquiry.service,
@@ -133,6 +157,10 @@ router.post("/", requirePermission("appointments.create"), async (req, res) => {
       );
     }
 
+    if (plannedSession) {
+      await tx.plannedSession.update({ where: { id: plannedSession.id }, data: { appointmentId: created.id } });
+    }
+
     return created;
   });
 
@@ -142,7 +170,16 @@ router.post("/", requirePermission("appointments.create"), async (req, res) => {
     entityType: "Appointment",
     entityId: appointment.id,
     action: "create",
-    changes: { artistId, clientId, inquiryId, appointmentType, giftCardIds: isConsultation ? [] : giftCardIds, startTime: start, endTime: end },
+    changes: {
+      artistId,
+      clientId,
+      inquiryId,
+      appointmentType,
+      giftCardIds: isConsultation ? [] : giftCardIds,
+      startTime: start,
+      endTime: end,
+      ...(plannedSession ? { plannedSessionId: plannedSession.id } : {}),
+    },
   });
 
   const conflict = await findBufferConflict(artistId, start, end, appointment.id);

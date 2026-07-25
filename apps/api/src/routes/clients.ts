@@ -154,6 +154,24 @@ router.get("/:id", requirePermission("clients.view"), async (req, res) => {
           // tier lookup; id backs its practitioner-picker filtering (only
           // artists tagged as offering THIS inquiry's service).
           service: { select: { id: true, depositModel: true, flatDepositCents: true } },
+          // Multi-session planning: lets AppointmentForm offer a picker of
+          // which planned session a new appointment fulfills (only ones
+          // with a paid deposit and no appointment yet -- see
+          // AppointmentForm.tsx's own filtering) and feed that session's
+          // own hour estimate into the scheduling-assistant duration
+          // target instead of the project's top-level fields. Empty for
+          // every project with no declared plan, same as today.
+          plannedSessions: {
+            select: {
+              id: true,
+              sessionNumber: true,
+              estimatedHoursMin: true,
+              estimatedHoursMax: true,
+              appointmentId: true,
+              depositForm: { select: { paidAt: true } },
+            },
+            orderBy: { sessionNumber: "asc" },
+          },
         },
         orderBy: { createdAt: "desc" },
       },

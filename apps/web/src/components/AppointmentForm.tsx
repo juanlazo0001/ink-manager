@@ -76,6 +76,15 @@ function isEndedGuest(artist: ArtistOption): boolean {
   return artist.isGuest && !!artist.guestEndDate && new Date(artist.guestEndDate) < new Date()
 }
 
+interface PlannedSessionOption {
+  id: string
+  sessionNumber: number
+  estimatedHoursMin: number
+  estimatedHoursMax: number
+  appointmentId: string | null
+  depositForm: { paidAt: string | null } | null
+}
+
 interface InquiryOption {
   id: string
   description: string
@@ -86,6 +95,7 @@ interface InquiryOption {
   priceEstimateLow: number | null
   priceEstimateHigh: number | null
   service: { id: string; depositModel: 'TIER_BASED' | 'FLAT'; flatDepositCents: number | null }
+  plannedSessions: PlannedSessionOption[]
 }
 
 interface ClientWithProjects {
@@ -120,6 +130,10 @@ interface AppointmentFormProps {
   // "Schedule Consultation" action) -- still freely switchable afterward,
   // never locked.
   initialAppointmentType?: AppointmentType
+  // Multi-session planning: pre-selects the planned-session picker below
+  // (InquiryDetail's own "Book Appointment" action on a specific planned
+  // session's row) -- still freely changeable/clearable afterward.
+  initialPlannedSessionId?: string
   onCreated: () => void
   onCancel: () => void
 }
@@ -143,6 +157,7 @@ export default function AppointmentForm({
   initialStartTime,
   initialEndTime,
   initialAppointmentType,
+  initialPlannedSessionId,
   onCreated,
   onCancel,
 }: AppointmentFormProps) {
@@ -154,6 +169,7 @@ export default function AppointmentForm({
 
   const [clientId, setClientId] = useState(fixedClientId ?? '')
   const [inquiryId, setInquiryId] = useState(fixedInquiryId ?? '')
+  const [plannedSessionId, setPlannedSessionId] = useState(initialPlannedSessionId ?? '')
   const [giftCardIds, setGiftCardIds] = useState<string[]>([])
   const [artistId, setArtistId] = useState(initialArtistId ?? '')
   const [timeRange, setTimeRange] = useState<DateAndTimeRangeValue>({
@@ -228,6 +244,16 @@ export default function AppointmentForm({
   const effectiveInquiryId = fixedInquiryId ?? inquiryId
   const selectedInquiry = availableInquiries.find((i) => i.id === effectiveInquiryId)
 
+  // Multi-session planning: offered only for a session with a paid
+  // deposit and no appointment yet -- exactly the task's own "pick which
+  // planned session this fulfills" scope. Empty for every project with no
+  // declared plan, so this whole picker (and the duration override below)
+  // stays invisible for the ordinary single-session case.
+  const availablePlannedSessions = (selectedInquiry?.plannedSessions ?? []).filter(
+    (ps) => ps.depositForm?.paidAt != null && !ps.appointmentId,
+  )
+  const selectedPlannedSession = availablePlannedSessions.find((ps) => ps.id === plannedSessionId)
+
   // Service lines: once a project is known, the artist picker narrows to
   // only artists tagged (via ArtistService) as offering THAT project's
   // service -- same filtering InquiryDetail.tsx's own assignment picker
@@ -283,11 +309,20 @@ export default function AppointmentForm({
     )
   }, [artistOptions, assignedArtistId])
 
-  const hasTimeEstimate =
-    selectedInquiry?.timeEstimateHoursMin != null && selectedInquiry?.timeEstimateHoursMax != null
-  const tattooSuggestionDurationMinutes = hasTimeEstimate
-    ? Math.round(((selectedInquiry!.timeEstimateHoursMin! + selectedInquiry!.timeEstimateHoursMax!) / 2) * 60)
-    : undefined
+  // Multi-session planning: a selected planned session's OWN hour range
+  // always wins over the project's top-level fields (which are null for
+  // any project that declared a real plan anyway -- see the backend's
+  // send-estimate route) -- this is the "pull the right session's hour
+  // target" the task asks for, feeding the exact same scheduling-assistant
+  // call below with no changes to that service itself.
+  const hasTimeEstimate = selectedPlannedSession
+    ? true
+    : selectedInquiry?.timeEstimateHoursMin != null && selectedInquiry?.timeEstimateHoursMax != null
+  const tattooSuggestionDurationMinutes = selectedPlannedSession
+    ? Math.round(((selectedPlannedSession.estimatedHoursMin + selectedPlannedSession.estimatedHoursMax) / 2) * 60)
+    : hasTimeEstimate
+      ? Math.round(((selectedInquiry!.timeEstimateHoursMin! + selectedInquiry!.timeEstimateHoursMax!) / 2) * 60)
+      : undefined
 
   // A consultation uses its own duration preset instead of the project's
   // time estimate (most projects haven't been estimated yet at
@@ -378,6 +413,12 @@ export default function AppointmentForm({
     setClientId(nextClientId)
     setInquiryId('')
     setGiftCardIds([])
+    setPlannedSessionId('')
+  }
+
+  function handleInquiryChange(nextInquiryId: string) {
+    setInquiryId(nextInquiryId)
+    setPlannedSessionId('')
   }
 
   async function handleSubmit(event: React.FormEvent) {
@@ -417,6 +458,7 @@ export default function AppointmentForm({
           inquiryId: fixedInquiryId ?? inquiryId,
           appointmentType,
           giftCardIds: isConsultation ? [] : giftCardIds,
+          plannedSessionId: selectedPlannedSession ? plannedSessionId : undefined,
           artistId,
           startTime: start.toISOString(),
           endTime: end.toISOString(),
@@ -514,7 +556,7 @@ export default function AppointmentForm({
               id="apptInquiryId"
               required
               value={inquiryId}
-              onChange={(event) => setInquiryId(event.target.value)}
+              onChange={(event) => handleInquiryChange(event.target.value)}
               className={INPUT_CLASS}
             >
               <option value="" disabled>
@@ -549,6 +591,24 @@ export default function AppointmentForm({
               requiredCents={requiredDepositCents}
             />
           )}
+        </div>
+      )}
+
+      {!isConsultation && availablePlannedSessions.length > 0 && (
+        <div className="mb-3">
+          <label className="mb-1 block text-sm font-medium text-fg-secondary">Which planned session?</label>
+          <select
+            value={plannedSessionId}
+            onChange={(event) => setPlannedSessionId(event.target.value)}
+            className={INPUT_CLASS}
+          >
+            <option value="">Not tied to a specific planned session</option>
+            {availablePlannedSessions.map((ps) => (
+              <option key={ps.id} value={ps.id}>
+                Session {ps.sessionNumber} — estimated {ps.estimatedHoursMin}-{ps.estimatedHoursMax} hrs
+              </option>
+            ))}
+          </select>
         </div>
       )}
 

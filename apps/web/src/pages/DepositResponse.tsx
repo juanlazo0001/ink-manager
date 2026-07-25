@@ -32,6 +32,14 @@ interface VerifyResponse {
   feeAmount: number
   totalCharged: number
   depositBreakdownNote: string | null
+  // Multi-session planning: null for every un-planned deposit form
+  // (today's default).
+  plannedSession: {
+    sessionNumber: number
+    totalSessions: number
+    estimatedHoursMin: number
+    estimatedHoursMax: number
+  } | null
   terms: Term[]
 }
 
@@ -174,6 +182,20 @@ export default function DepositResponse() {
                   Your appointment will be tentatively scheduled for{' '}
                   {formatDateTime(verifyData.proposedStartAt)} – {formatDateTime(verifyData.proposedEndAt)}, pending
                   your deposit. We'll confirm exact scheduling once payment is received.
+                </p>
+              </div>
+            )}
+
+            {/* Multi-session planning: only present when this deposit form
+                was generated for a specific planned session. */}
+            {verifyData.plannedSession && (
+              <div className="mt-4 rounded-lg border border-border bg-surface-inset p-3">
+                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
+                  Session {verifyData.plannedSession.sessionNumber} of {verifyData.plannedSession.totalSessions}
+                </p>
+                <p className="mt-1 text-sm text-fg">
+                  Estimated {verifyData.plannedSession.estimatedHoursMin}-{verifyData.plannedSession.estimatedHoursMax}{' '}
+                  hours
                 </p>
               </div>
             )}

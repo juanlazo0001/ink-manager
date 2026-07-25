@@ -893,6 +893,12 @@ model Appointment {
   // left untouched). Same InquiryNote pattern/model shape, one row per
   // AppointmentNote model below.
   noteEntries     AppointmentNote[]
+  // Reverse side of PlannedSession.appointmentId -- set once this
+  // appointment was booked to fulfill a specific planned session (staff
+  // picked one in AppointmentForm) rather than an un-planned/ad-hoc
+  // booking. Null for every appointment on a project with no session
+  // plan at all, and for any ad-hoc extra session booked outside the plan.
+  plannedSession  PlannedSession?
 
   @@index([studioId, startTime])
   @@index([inquiryId])
@@ -1046,6 +1052,14 @@ model Inquiry {
 
   // Package M: one per tattoo session, no longer a single optional 1:1.
   depositForms DepositForm[]
+
+  // Multi-session planning: purely additive, optional layer on top of the
+  // above -- an inquiry with none of these behaves exactly as it always
+  // has (single top-level timeEstimateHoursMin/Max, one implicit
+  // "session"). Only populated when staff explicitly declares more than
+  // one session at estimate time (POST /:id/send-estimate's `sessions`
+  // array) -- see PlannedSession's own comment for why.
+  plannedSessions PlannedSession[]
 
   notes InquiryNote[]
 
@@ -1303,6 +1317,50 @@ model AuditLog {
   @@index([studioId, createdAt])
 }
 
+// Multi-session planning: an optional, explicit session-by-session plan
+// declared at estimate time (POST /inquiries/:id/send-estimate's
+// `sessions` array), sitting alongside -- never replacing -- the existing
+// single top-level Inquiry.timeEstimateHoursMin/Max. An inquiry with zero
+// rows here behaves exactly as it always has: one implicit session, the
+// top-level fields drive every downstream duration lookup. Rows only
+// exist when staff explicitly specified more than one session (a single
+// declared session still uses the top-level fields, no row created).
+//
+// depositFormId/appointmentId are both nullable AND unique -- each
+// planned session fulfills at most one DepositForm and one Appointment,
+// and conversely a given DepositForm/Appointment fulfills at most one
+// planned session. Deliberately no cross-referencing constraint beyond
+// that: a deposit form for session 3 can be generated (and paid) before
+// session 2's even exists, exactly like the un-planned flow already
+// allows generating "the next session's" form whenever staff chooses to.
+//
+// The overall project price estimate (Inquiry.priceEstimateLow/High)
+// stays the single source of truth for deposit-tier computation --
+// EVERY planned session's deposit form uses the same tier-derived
+// amount, computed once from that whole-project price, not a per-session
+// lookup off estimatedHoursMin/Max (those only ever feed a scheduling
+// duration target, never a dollar amount).
+model PlannedSession {
+  id                String   @id @default(cuid())
+  sessionNumber     Int
+  estimatedHoursMin Float
+  estimatedHoursMax Float
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  inquiryId String
+  inquiry   Inquiry @relation(fields: [inquiryId], references: [id])
+
+  depositFormId String?      @unique
+  depositForm   DepositForm? @relation(fields: [depositFormId], references: [id])
+
+  appointmentId String?      @unique
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id])
+
+  @@unique([inquiryId, sessionNumber])
+  @@index([inquiryId])
+}
+
 model DepositForm {
   id                          String    @id @default(cuid())
   token                       String    @unique
@@ -1357,6 +1415,14 @@ model DepositForm {
   // one exists. Nullable: older/unsigned deposit forms won't have one yet.
   giftCardId String?   @unique
   giftCard   GiftCard? @relation(fields: [giftCardId], references: [id])
+
+  // Reverse side of PlannedSession.depositFormId -- set (by Prisma, not
+  // read/written directly here) whenever this form was generated for a
+  // specific planned session rather than the old un-planned "next session"
+  // counter. When set, sessionNumber above is copied from that
+  // PlannedSession's own number (no longer purely a creation-order
+  // counter in that case) rather than computed as latest+1.
+  plannedSession PlannedSession?
 
   @@index([inquiryId, sessionNumber])
 }

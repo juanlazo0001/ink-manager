@@ -434,6 +434,24 @@ const INQUIRY_INCLUDE = {
     },
     orderBy: { startTime: "asc" },
   },
+  // Multi-session planning: purely additive -- empty for every project that
+  // never declared more than one session at estimate time. Ordered by the
+  // staff-declared sessionNumber, not creation order, since (unlike
+  // depositForms below) generation order is deliberately unconstrained --
+  // session 3's deposit form can be generated before session 2's.
+  plannedSessions: {
+    select: {
+      id: true,
+      sessionNumber: true,
+      estimatedHoursMin: true,
+      estimatedHoursMax: true,
+      depositFormId: true,
+      appointmentId: true,
+      depositForm: { select: { id: true, signedAt: true, paidAt: true, paidManually: true } },
+      appointment: { select: { id: true, startTime: true, endTime: true, status: true, checkedOutAt: true } },
+    },
+    orderBy: { sessionNumber: "asc" },
+  },
   // Package M: one project can now have several, one per tattoo session --
   // oldest first, so the UI can label them "Session 1", "Session 2", etc.
   // in the order they were actually generated.
@@ -958,7 +976,7 @@ router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), requirePermi
 // (possibly updated) numbers.
 router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.sendEstimate"), async (req, res) => {
   const id = req.params.id as string;
-  const { priceEstimateLow, priceEstimateHigh, timeEstimateHoursMin, timeEstimateHoursMax } = req.body ?? {};
+  const { priceEstimateLow, priceEstimateHigh, timeEstimateHoursMin, timeEstimateHoursMax, sessions } = req.body ?? {};
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
   if (!inquiry || inquiry.studioId !== req.user!.studioId) {
@@ -986,14 +1004,57 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
     }
   }
 
+  // Multi-session planning: purely additive. A `sessions` array of length
+  // 0 or 1 is treated exactly like not sending the field at all -- today's
+  // behavior, one implicit session, the top-level time-estimate fields
+  // below drive everything. Only length > 1 activates a real plan.
+  // Existing rows are never touched by a resend (idempotent -- once a plan
+  // exists, further send-estimate calls just resend/revise price/status,
+  // same as they always could).
+  let plannedSessionInputs: { estimatedHoursMin: number; estimatedHoursMax: number }[] | null = null;
+  if (sessions !== undefined) {
+    if (!Array.isArray(sessions)) {
+      return res.status(400).json({ error: "sessions must be an array" });
+    }
+    if (sessions.length > 1) {
+      for (const [index, session] of sessions.entries()) {
+        if (
+          typeof session !== "object" ||
+          session === null ||
+          typeof session.estimatedHoursMin !== "number" ||
+          typeof session.estimatedHoursMax !== "number"
+        ) {
+          return res.status(400).json({ error: `Session ${index + 1} needs a numeric hour range` });
+        }
+        if (session.estimatedHoursMin <= 0 || session.estimatedHoursMax <= 0) {
+          return res.status(400).json({ error: `Session ${index + 1}'s hour range must be positive` });
+        }
+        if (session.estimatedHoursMin > session.estimatedHoursMax) {
+          return res
+            .status(400)
+            .json({ error: `Session ${index + 1}'s minimum hours must be less than or equal to its maximum` });
+        }
+      }
+      plannedSessionInputs = sessions;
+    }
+  }
+
   // Validate the *effective* range (newly submitted value, falling back to
   // whatever's already on the inquiry) -- staff can resend without
-  // resubmitting numbers that were already approved by the artist.
+  // resubmitting numbers that were already approved by the artist. The
+  // top-level time-estimate pair is skipped entirely once a real session
+  // plan is being declared -- PlannedSession rows are the real per-session
+  // breakdown in that case, and a stale whole-project number left over
+  // here would just be misleading (see the null-out below).
   const effective = {
     priceEstimateLow: priceEstimateLow ?? inquiry.priceEstimateLow,
     priceEstimateHigh: priceEstimateHigh ?? inquiry.priceEstimateHigh,
-    timeEstimateHoursMin: timeEstimateHoursMin ?? inquiry.timeEstimateHoursMin,
-    timeEstimateHoursMax: timeEstimateHoursMax ?? inquiry.timeEstimateHoursMax,
+    ...(plannedSessionInputs
+      ? {}
+      : {
+          timeEstimateHoursMin: timeEstimateHoursMin ?? inquiry.timeEstimateHoursMin,
+          timeEstimateHoursMax: timeEstimateHoursMax ?? inquiry.timeEstimateHoursMax,
+        }),
   };
 
   for (const [field, value] of Object.entries(effective)) {
@@ -1009,7 +1070,7 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
     return res.status(400).json({ error: "priceEstimateLow must be less than or equal to priceEstimateHigh" });
   }
 
-  if (effective.timeEstimateHoursMin! > effective.timeEstimateHoursMax!) {
+  if (!plannedSessionInputs && effective.timeEstimateHoursMin! > effective.timeEstimateHoursMax!) {
     return res
       .status(400)
       .json({ error: "timeEstimateHoursMin must be less than or equal to timeEstimateHoursMax" });
@@ -1032,8 +1093,8 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
     status: InquiryStatus.AWAITING_CLIENT_RESPONSE,
     priceEstimateLow: effective.priceEstimateLow,
     priceEstimateHigh: effective.priceEstimateHigh,
-    timeEstimateHoursMin: effective.timeEstimateHoursMin,
-    timeEstimateHoursMax: effective.timeEstimateHoursMax,
+    timeEstimateHoursMin: plannedSessionInputs ? null : effective.timeEstimateHoursMin,
+    timeEstimateHoursMax: plannedSessionInputs ? null : effective.timeEstimateHoursMax,
     // A resend is a new estimate event -- prior open/response timing no
     // longer describes the estimate the client is about to see. It's still
     // recoverable from the audit log below if needed. estimateFollowUpSentAt
@@ -1042,6 +1103,24 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
     // silently blocked by a follow-up that already went out for the old one.
     ...(isResend ? { estimateOpenedAt: null, estimateRespondedAt: null, estimateFollowUpSentAt: null } : {}),
   };
+
+  // Created before the Inquiry update below so the response (which
+  // includes plannedSessions via INQUIRY_INCLUDE) reflects them
+  // immediately. Guarded on a fresh inquiry with no existing rows -- a
+  // resend never edits an already-declared plan (see the comment above).
+  if (plannedSessionInputs) {
+    const existingCount = await prisma.plannedSession.count({ where: { inquiryId: id } });
+    if (existingCount === 0) {
+      await prisma.plannedSession.createMany({
+        data: plannedSessionInputs.map((session, index) => ({
+          inquiryId: id,
+          sessionNumber: index + 1,
+          estimatedHoursMin: session.estimatedHoursMin,
+          estimatedHoursMax: session.estimatedHoursMax,
+        })),
+      });
+    }
+  }
 
   const updated = await prisma.inquiry.update({
     where: { id },
@@ -1645,11 +1724,16 @@ router.post("/:id/reopen-project", requireAuth, requirePermission("inquiries.edi
 // "latest row missing" is true there too, so it still creates session 1.
 router.post("/:id/deposit-form", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
   const id = req.params.id as string;
-  const { proposedStartAt, proposedEndAt, autoSend } = req.body ?? {};
+  const { proposedStartAt, proposedEndAt, autoSend, plannedSessionId } = req.body ?? {};
 
   const inquiry = await prisma.inquiry.findUnique({
     where: { id },
-    include: { depositForms: { orderBy: { sessionNumber: "desc" }, take: 1 }, client: true, service: true },
+    include: {
+      depositForms: { orderBy: { sessionNumber: "desc" }, take: 1 },
+      client: true,
+      service: true,
+      plannedSessions: true,
+    },
   });
   if (!inquiry || inquiry.studioId !== req.user!.studioId) {
     return res.status(404).json({ error: "Inquiry not found" });
@@ -1665,8 +1749,43 @@ router.post("/:id/deposit-form", requireAuth, requirePermission("inquiries.edit"
     return res.status(400).json({ error: "This inquiry is missing a price estimate" });
   }
 
-  const latest = inquiry.depositForms[0] as (typeof inquiry.depositForms)[number] | undefined;
-  const isNewSession = !latest || latest.signedAt != null;
+  // Multi-session planning: when a specific planned session is named, THAT
+  // session (not "the latest row across the whole inquiry") decides
+  // whether this is a fresh generation or a resend, and its own declared
+  // sessionNumber is used verbatim instead of an incrementing counter --
+  // this is what lets staff generate session 3's deposit form before
+  // session 2's even exists, with no forced sequencing.
+  let plannedSession: (typeof inquiry.plannedSessions)[number] | null = null;
+  if (plannedSessionId !== undefined) {
+    if (typeof plannedSessionId !== "string") {
+      return res.status(400).json({ error: "plannedSessionId must be a string" });
+    }
+    plannedSession = inquiry.plannedSessions.find((s) => s.id === plannedSessionId) ?? null;
+    if (!plannedSession) {
+      return res.status(400).json({ error: "plannedSessionId must belong to this project's session plan" });
+    }
+  }
+
+  let latest: { id: string; signedAt: Date | null; sessionNumber: number } | undefined;
+  let isNewSession: boolean;
+  let sessionNumber: number;
+
+  if (plannedSession) {
+    if (plannedSession.depositFormId) {
+      const linkedForm = await prisma.depositForm.findUnique({ where: { id: plannedSession.depositFormId } });
+      if (linkedForm?.signedAt) {
+        return res.status(400).json({ error: "This planned session's deposit form has already been signed" });
+      }
+      latest = linkedForm ?? undefined;
+    }
+    isNewSession = !latest;
+    sessionNumber = plannedSession.sessionNumber;
+  } else {
+    // Existing un-planned behavior, completely unchanged.
+    latest = inquiry.depositForms[0];
+    isNewSession = !latest || latest.signedAt != null;
+    sessionNumber = (latest?.sessionNumber ?? 0) + 1;
+  }
 
   // A tentative time is required whenever this creates a fresh session --
   // staff must commit to some proposed slot (suggested or hand-picked)
@@ -1703,7 +1822,7 @@ router.post("/:id/deposit-form", requireAuth, requirePermission("inquiries.edit"
     ? await prisma.depositForm.create({
         data: {
           inquiryId: id,
-          sessionNumber: (latest?.sessionNumber ?? 0) + 1,
+          sessionNumber,
           token,
           tokenExpiresAt,
           depositAmount,
@@ -1717,6 +1836,14 @@ router.post("/:id/deposit-form", requireAuth, requirePermission("inquiries.edit"
         where: { id: latest!.id },
         data: { token, tokenExpiresAt, depositAmount, feeAmount, totalCharged },
       });
+
+  // Only ever runs once per planned session -- isNewSession is only true
+  // for a planned session when it had no depositFormId yet (see above),
+  // and the unique constraint on PlannedSession.depositFormId means this
+  // can never silently double-link.
+  if (plannedSession && isNewSession) {
+    await prisma.plannedSession.update({ where: { id: plannedSession.id }, data: { depositFormId: depositForm.id } });
+  }
 
   const depositUrl = await shortenUrl(`${PUBLIC_APP_URL}/deposit/${token}`);
 

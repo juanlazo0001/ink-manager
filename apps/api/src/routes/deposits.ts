@@ -83,8 +83,18 @@ publicRouter.get("/verify/:token", async (req, res) => {
           assignedArtist: { include: { user: true } },
           appointment: true,
           service: { select: { depositBreakdownNote: true } },
+          // Multi-session planning: only its length is needed here (the
+          // "of Y" in "Session X of Y") -- the specific session THIS
+          // deposit form is for comes from depositForm.plannedSession
+          // below instead.
+          plannedSessions: { select: { id: true } },
         },
       },
+      // Null for every un-planned deposit form (today's default) -- only
+      // present when this token was generated for a specific
+      // PlannedSession, so the page can show "Session 2 of 3 -- estimated
+      // 6-8 hours" for context.
+      plannedSession: { select: { sessionNumber: true, estimatedHoursMin: true, estimatedHoursMax: true } },
     },
   });
 
@@ -116,6 +126,15 @@ publicRouter.get("/verify/:token", async (req, res) => {
     // Powder Brows' "$50 deposit + $10 processing fee") -- purely
     // informational, null for every service that doesn't set one.
     depositBreakdownNote: inquiry.service.depositBreakdownNote,
+    // Multi-session planning: null for every un-planned deposit form.
+    plannedSession: depositForm!.plannedSession
+      ? {
+          sessionNumber: depositForm!.plannedSession.sessionNumber,
+          totalSessions: inquiry.plannedSessions.length,
+          estimatedHoursMin: depositForm!.plannedSession.estimatedHoursMin,
+          estimatedHoursMax: depositForm!.plannedSession.estimatedHoursMax,
+        }
+      : null,
     terms: TERMS,
   });
 });
