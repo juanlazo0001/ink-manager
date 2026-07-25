@@ -2747,3 +2747,39 @@ That alone wasn't enough: `AppointmentForm.tsx`'s own `availablePlannedSessions`
 ## Cleanup
 
 Scratch dev servers run on yet another fresh port pair (API :5503, web :6503) after confirming :5501/:5502/:6501/:6502 were all still occupied by other concurrent activity in this same shared directory -- killed by PID afterward. Several transient `EADDRINUSE`/`ECONNREFUSED` scratch-server crashes during this fix, caused by the other session's own rapid iterative edits to `appointments.ts` in the same watched directory -- not a bug in this fix's own code; resolved each time by restarting. All ad-hoc verification scripts left in the scratchpad, none committed. Test data: one 3-session Project and one client (with a 2-session Project) permanently deleted as part of verifying the delete fix works; one existing single-session inquiry pushed through the estimate-gate scenario; one fresh 2-session Project created, converted, and booked through both sessions to verify the gift-card-stacking fix -- all left as-is (or, for the two deletions, correctly absent) in the dev database, consistent with this session's standing convention.
+
+---
+
+# Client page Projects widget; Scheduling/Appointments consolidation; button sizing
+
+Same session, follow-up UX requests. Commit: `453b963`.
+
+## 1. Client page: "Projects" widget with per-session status
+
+Added a "Projects" widget, separate from the existing "Inquiries" widget (which is unchanged -- still every inquiry regardless of status). Filters `client.inquiries` to the same 3-status "converted" group used everywhere else in this codebase (`SCHEDULING`/`WAITLISTED`/`CONFIRMED` -- kept as a small local literal, matching this codebase's established convention for that specific group rather than importing it across page files). For each project: description (linked to the Project page) and its status pill, then a per-session status list reusing the exact same deposit/appointment badge logic as the Project page's own Session Plan widget (`Deposit paid`/`pending`/`not yet generated`, `Not yet booked`/`Scheduled`/`Completed`). A project with no declared session plan still shows one implicit "Session 1" line, derived from its own `depositForms[0]` and whatever appointment (if any) has `inquiry.id` matching the project.
+
+Backend: extended `GET /clients/:id`'s existing `plannedSessions` select (already there for `AppointmentForm.tsx`'s own picker) with `appointment: { select: { checkedOutAt: true } }` -- needed to tell "Scheduled" apart from "Completed" the same way Session Plan does; wasn't previously selected since nothing on this page needed it before. Also corrected that select's own comment, stale since the artist-independent gift-card-stacking fix a few commits back (still said "only ones with a paid deposit").
+
+**Live-verified**: a client with one 2-session Project (Session 1 paid+completed, Session 2 booked but its own deposit never generated -- covered by a rolled-forward card instead) shows exactly that under "Projects": `Deposit paid`/`Completed` for Session 1, `Deposit not yet generated`/`Scheduled` for Session 2 -- correctly reflecting that a session doesn't need its own deposit to be booked, consistent with the earlier gift-card-stacking fix.
+
+## 2. Project page: Scheduling merged into Appointments
+
+Confirmed the premise: the standalone "Scheduling" widget (the original, pre-Package-M single-appointment flow -- suggested times, manual time entry, gift-card picker, a "Schedule Appointment" button, and Waitlist) sat directly above "Appointments" (the modern list + "New Appointment"/"Schedule Consultation", which supports consultations and planned sessions), both showing at once whenever a project reached `SCHEDULING` with no appointment yet -- two visibly different ways to book the same thing.
+
+Investigated before touching anything: `POST /:id/schedule` (Scheduling's own action) is the *only* path that moves `status` from `SCHEDULING` to `CONFIRMED`, and the Kanban board's Projects tab has a real `SCHEDULING -> CONFIRMED` drag that deep-links straight to it (`?openFlow=schedule`) -- removing it outright would have broken that drag and silently frozen every project's status at `SCHEDULING` forever. Merged the two into one widget instead (kept "Appointments" as the title) rather than a deeper backend unification of the two booking routes, which was out of scope for what was asked: the list stays as it was, followed directly by Scheduling's old content, unchanged in behavior. Updated the `?openFlow=schedule` deep link and `INQUIRY_WIDGET_ORDER` to match. Dropped one genuinely redundant piece while merging -- the old Start/End/status `DetailField` block for an already-booked `inquiry.appointment` -- since the exact same appointment already appears in the list right above it (full start/end is one click away on its own detail page).
+
+**Related gap found and fixed while verifying, not assumed away**: multi-session projects never move off `SCHEDULING` via their own per-session booking path (`POST /appointments` with a `plannedSessionId` never touches `inquiry.status`, unlike the legacy `/schedule` route) -- so the merged-in "Add an assigned artist and a time estimate to see suggested times" prompt would have shown *forever* on every multi-session project regardless of how many of its sessions were booked and completed, now more visible for sitting inside the same box as the real appointment list. Gated that whole block on `plannedSessions.length === 0`, the same reasoning already applied to the Deposit widget's own multi-session gate.
+
+**Live-verified**: a 2-session Project (2 of its appointments already completed/confirmed) now shows one clean "Appointments" widget with no leftover scheduling prompt. A single-session Project still shows the full ad-hoc flow (suggested times, manual entry, gift cards, Schedule Appointment, Add to Waitlist) inside the same merged box, unchanged from before.
+
+## 3. Session Plan button sizing
+
+The Session Plan widget's own inline actions (Send/Resend Deposit Form, Cancel, Book Appointment) used a smaller size (`px-3 py-1.5 text-xs`) than the header-action buttons elsewhere on the same page (Edit, Revise Estimate: `px-4 py-2 text-sm font-semibold`). Resized all four to match.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npx tsc --noEmit` + `npm run build` (web) — clean before commit, restricted to the three files this change touched (`clients.ts`, `ClientDetail.tsx`, `InquiryDetail.tsx`).
+
+## Cleanup
+
+Scratch dev servers on yet another fresh port pair (API :5504, web :6504) after confirming ports through :5503/:6503 were all still occupied by other concurrent activity in this same shared directory -- killed by PID afterward. All ad-hoc verification scripts left in the scratchpad, none committed. No new test data created -- verification reused existing Projects from this session's earlier fixes.
