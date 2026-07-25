@@ -2509,3 +2509,46 @@ Both scratch dev servers (API :4000, web :5173) stopped by PID. All ad-hoc Playw
 ## Outstanding for the OWNER
 
 The real PMU practitioner at Black Hive Ink and Arts still needs to be tagged via that artist's profile page ("Services Offered" checkboxes) before any real Powder Brows inquiry can be assigned -- deliberately left undone by this session, per the task's own explicit instruction not to guess who that is.
+
+---
+
+# Package M2: multi-session planning with per-session hour estimates
+
+Single session on `main`. Connects existing infrastructure (Package M's `DepositForm.sessionNumber`, the stackable gift-card system, the "N appointments require N gift cards" enforcement, and the scheduling-assistant suggested-times service) to a real, staff-declared session plan -- doesn't rebuild any of it. Commit: `412e74d`.
+
+**Pre-flight collision note**: another session's uncommitted Stripe-integration work (`apps/api/src/index.ts`, `package.json`, `.env.example`, `package-lock.json`, new `lib/stripe.ts`/`stripeConnect.ts`) was sitting in the shared working directory when this session went to commit. Confirmed it never touched `schema.prisma` or any file this feature needed, then staged and committed only this feature's own exact files by path -- the Stripe files were left uncommitted and untouched, exactly as this session's own standing collision protocol requires.
+
+## Schema
+
+`PlannedSession` (`sessionNumber`, `estimatedHoursMin`/`Max`, nullable+unique `depositFormId`/`appointmentId` FKs, `@@unique([inquiryId, sessionNumber])`) sits alongside -- never replaces -- `Inquiry.priceEstimateLow/High` and `timeEstimateHoursMin/Max`. Migration `20260725174335_planned_sessions`, applied cleanly (verified with `--create-only` first, confirmed purely additive: one new table, two nullable unique FK columns, one index).
+
+## What changed
+
+- **Estimate entry** (`POST /:id/send-estimate`): a `sessions` array in the request body (`{estimatedHoursMin, estimatedHoursMax}[]`), only when `length > 1`, creates one `PlannedSession` row per entry and nulls out the top-level `timeEstimateHoursMin/Max` instead of setting them. `sessions` omitted or length 1 leaves every existing field/behavior untouched -- no rows created.
+- **Deposit-form generation** (`POST /:id/deposit-form`, public verify route): an optional `plannedSessionId` names which session this form is for; *that session's own* `depositFormId`/`signedAt` (not "the latest form across the whole inquiry") decides new-vs-resend, and its own `sessionNumber` is used verbatim instead of an incrementing counter -- this is what lets staff generate session 3's form before session 2's exists. The public deposit page shows "Session X of Y — estimated A-B hours" when set, nothing when not.
+- **Appointment creation** (`POST /appointments`): an optional `plannedSessionId` links the new appointment to that session and feeds *its own* hour estimate into the scheduling-assistant duration target (`AppointmentForm.tsx`'s `tattooSuggestionDurationMinutes`), instead of the project's top-level estimate. Gift-card requirement/stacking logic (`GiftCardStackPicker`) is completely unchanged -- multiple cards, from any source, still just need to sum to the one tier-derived required amount.
+- **Display**: a new "Session Plan" widget on the Project page (`InquiryDetail.tsx`) shows every planned session's hour estimate, deposit status (not generated / pending / paid), and appointment status (not booked / scheduled / completed) with inline "Send Deposit Form" / "Book Appointment" actions. The pre-existing single-session Deposit widget's own send/resend controls were deliberately left in place, fully functional, as an un-planned/ad-hoc escape hatch alongside the new widget -- not suppressed, to avoid regressing its "resend an unsigned form" capability, which the new widget doesn't replicate.
+
+## Verification (real browser + real API calls against the scratch dev stack, not inspection alone)
+
+Generated a real 3-session estimate ($3000 flat / 6-8hr / 6-8hr / 3-4hr) through the actual estimate form UI on a fresh inquiry -- confirmed via screenshot that the top-level "TIME ESTIMATE" field correctly read "Not provided" and all three sessions appeared in the new Session Plan widget with their own hour ranges.
+
+Advanced the inquiry through the real client-facing estimate-response route (`PATCH /estimates/respond/:token`, decision `PROCEED`) to `DEPOSIT_PENDING`, exactly as a real client would trigger it.
+
+- Generated, signed, and paid **Session 1**'s deposit form -> gift card issued, inquiry moved `DEPOSIT_PENDING -> SCHEDULING`.
+- Generated, signed, and paid **Session 3**'s deposit form **before Session 2's even existed** -> succeeded with no forced sequencing; Session 2 remained with `depositFormId: null` throughout, confirmed via the Session Plan widget showing "Deposit not yet generated" for it while Sessions 1 and 3 both showed "Deposit paid."
+- Booked **Session 1**'s appointment via the widget's "Book Appointment" button -> confirmed (via the actual network request) the scheduling-assistant call used `durationMinutes=420` (Session 1's own 6-8hr / 7hr average), not any other session's estimate.
+- Checked out Session 1's appointment choosing **ROLL** for its attached gift card -> confirmed via API the card came back `status: ACTIVE`, `appointmentId: null` (rolled forward, unattached).
+- Generated, signed, and paid **Session 2**'s deposit form -> a second gift card issued (inquiry stayed `SCHEDULING`, correctly not re-triggering first-conversion logic).
+- Booked **Session 2**'s appointment, selecting **both** the rolled-forward card and Session 2's own newly-paid card in the `GiftCardStackPicker` -> confirmed "$400.00 selected of $200.00 required" (both cards accepted and stacked), the scheduling-assistant request again used `durationMinutes=420` (Session 2's own 6-8hr, not Session 3's 3-4hr), and the appointment was created successfully spanning exactly 7 hours.
+- Session Plan widget's deposit/appointment badges stayed accurate at every step above (confirmed via screenshots after each transition).
+
+**Single-session regression test** (the one that matters most): ran an ordinary inquiry through assign -> send-estimate (no `sessions` field at all, exactly as every inquiry has always been created) -> `PROCEED` -> deposit-form (no `plannedSessionId`) -> sign -> mark-paid, entirely via the same real routes. Confirmed at every step: `timeEstimateHoursMin/Max` set normally (non-null), `plannedSessions: []` throughout, deposit form's `sessionNumber` assigned via the original incrementing-counter logic, public verify response's `plannedSession` field `null`, and the inquiry landed in `SCHEDULING` exactly as before this feature existed.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npx tsc --noEmit` + `npm run build` (web) — clean immediately before commit.
+
+## Cleanup
+
+Both scratch dev servers (API :5501, web :6501) and every leftover process from this session's earlier crash-restart cycles on those same commands killed by PID/process-tree (a large number had accumulated from repeated `EADDRINUSE` restarts across this session's tasks; confirmed neither port had an active listener afterward). All ad-hoc verification scripts left in the scratchpad, none committed. Test data created during verification (one 3-session Project with two completed/scheduled sessions and a paid-ahead third, several gift cards, one fresh single-session regression inquiry) left in the dev database, consistent with this session's standing convention.
