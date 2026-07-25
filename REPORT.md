@@ -2150,3 +2150,37 @@ Browser (Playwright, screenshots reviewed): confirmed all 6 widgets render with 
 ## Cleanup
 
 All ad-hoc Playwright scripts and screenshots deleted from the scratch `pw-test` directory; none committed. The per-account widget-layout row for `artist-detail` used during verification was reset to its default (empty) state before finishing. No background shells were started this session (the dev API/web servers were already running from prior work and were left as-is).
+
+---
+
+# Feature — Signature pads for the liability waiver
+
+Single session on `main`. Schema change: 2 new `LiabilityWaiver` fields (purely additive migration). `apps/api/src/routes/appointments.ts`, `inquiries.ts`, `clients.ts`, and `permissions.ts` were concurrently being reworked by another session (a granular-permissions expansion, splitting `clients.manage` into `clients.view/edit/merge/archive/import`) for the entire duration of this turn -- confirmed via `git diff --stat` that none of my changes touched those files, and staged only the files this feature actually changed.
+
+## Design
+
+Waiver signing previously only asked the client to type their full legal name into a text input -- not an actual signature. Deposit forms already solved this exact problem: `DepositForm.signatureName`/`signatureData` (a base64 PNG from the `signature_pad` library, already an installed dependency), wired up in `DepositResponse.tsx`. Applied the identical pattern to `LiabilityWaiver`'s two signature spots -- the main liability signature and the optional photo/video release signature -- rather than inventing a new mechanism.
+
+New `LiabilityWaiver.signatureData`/`photoReleaseSignatureData` fields mirror `DepositForm`'s pair exactly. The typed name field stays alongside the drawn signature in both cases (matching the existing schema comment's own reasoning: the typed name is what's legible in an audit trail; the drawn mark is the actual signature). `PATCH /waivers/sign/:token` now requires `signatureData`, and requires `photoReleaseSignatureData` specifically when the photo release is accepted -- same shape as the existing required-name checks.
+
+## Shared component extraction
+
+`DepositResponse.tsx` was the only prior user of the canvas/`signature_pad` setup (canvas sizing for devicePixelRatio, pad init/teardown, clear, `toDataURL`/`isEmpty`). Rather than copy-pasting that block a second and third time for the waiver's two signature spots, extracted it into `components/SignaturePadField.tsx` -- a ref-based component (`isEmpty`/`toDataURL`/`clear`, exposed via `useImperativeHandle`) since a signature is only ever read at submit time, never reactively on every stroke. Refactored `DepositResponse.tsx` to use the shared component too, now that a second genuine call site exists, rather than leaving the original inline and drifting from the new shared version.
+
+`AppointmentDetail.tsx`'s staff-facing Liability Waiver widget now displays both drawn signatures as `<img>` elements, matching the exact style already used for deposit form signatures in `InquiryDetail.tsx` (`h-20 rounded-lg border border-border bg-white` -- the white background matters since the signature itself is drawn in black ink on a white canvas, and the app UI is dark-themed).
+
+## Verification
+
+Confirmed the full pipeline end-to-end via direct API calls (drawing the signature via Playwright's synthetic mouse/pointer events did not register on the canvas -- the same class of limitation already documented earlier this session for `@dnd-kit`'s drag simulation, where canvas/pointer-capture libraries don't reliably respond to programmatically dispatched events in headless testing): `PATCH /waivers/sign/:token` correctly rejected a request missing `signatureData` (400, "Please sign before submitting"), then correctly accepted and persisted a request with both `signatureData` and `photoReleaseSignatureData` set; confirmed via a follow-up `GET` that both fields round-tripped correctly. Screenshotted `WaiverSign.tsx` to confirm both signature pad canvases render correctly with their Clear buttons in the right position (main signature and, once the photo/video release checkbox is checked, the release signature). Screenshotted `AppointmentDetail.tsx`'s Liability Waiver widget after signing and confirmed both signature images render in the staff-facing view. The dev API server restarted repeatedly mid-verification due to the other concurrent session's active edits to `inquiries.ts`/`clients.ts` -- unrelated to this work, waited out each time.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npx tsc -b --noEmit` + `npm run build` (web) — clean.
+
+## Commit
+
+`6a0b17c` — Add signature pads for both signature spots on the liability waiver. Pushed immediately after a collision check (`git fetch` + `git log HEAD..origin/main`) came back empty.
+
+## Cleanup
+
+All ad-hoc Playwright scripts, screenshots, and the tiny test PNG fixture deleted from the scratch `pw-test` directory; none committed. No background shells were started this session (the dev API/web servers were already running from prior work and were left as-is, despite the other session's edits causing repeated restarts).
