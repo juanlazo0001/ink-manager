@@ -109,6 +109,10 @@ export async function getSuggestedTimes(
   const searchStart = now;
   const searchEnd = new Date(now.getTime() + searchDays * 86_400_000);
 
+  // Same "no appointmentType filter" property as findBufferConflict's own
+  // query -- an existing CONSULTATION occupies this artist's time exactly
+  // like a TATTOO_SESSION does, so it's never suggested over as if the
+  // slot were open. Verified explicitly, not assumed.
   const existingAppointments = await prisma.appointment.findMany({
     where: {
       artistId,

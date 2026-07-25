@@ -91,6 +91,16 @@ interface ClientWithProjects {
   giftCards: GiftCardOption[]
 }
 
+type AppointmentType = 'TATTOO_SESSION' | 'CONSULTATION'
+
+// Two common presets offered for a consultation's duration -- still fully
+// overridable via the manual date/time fields below, this just saves the
+// common case a round trip through typing an end time by hand.
+const CONSULTATION_DURATION_PRESETS = [
+  { minutes: 30, label: '30 min' },
+  { minutes: 60, label: '1 hour' },
+]
+
 interface AppointmentFormProps {
   // When provided (the project-detail "add a session" flow), the client
   // and project are already known -- their selects are hidden rather than
@@ -104,6 +114,10 @@ interface AppointmentFormProps {
   initialDate?: string
   initialStartTime?: string
   initialEndTime?: string
+  // Pre-selects the type toggle below (e.g. InquiryDetail's dedicated
+  // "Schedule Consultation" action) -- still freely switchable afterward,
+  // never locked.
+  initialAppointmentType?: AppointmentType
   onCreated: () => void
   onCancel: () => void
 }
@@ -126,10 +140,15 @@ export default function AppointmentForm({
   initialDate,
   initialStartTime,
   initialEndTime,
+  initialAppointmentType,
   onCreated,
   onCancel,
 }: AppointmentFormProps) {
   const { user } = useAuth()
+
+  const [appointmentType, setAppointmentType] = useState<AppointmentType>(initialAppointmentType ?? 'TATTOO_SESSION')
+  const isConsultation = appointmentType === 'CONSULTATION'
+  const [consultationDurationMinutes, setConsultationDurationMinutes] = useState(30)
 
   const [clientId, setClientId] = useState(fixedClientId ?? '')
   const [inquiryId, setInquiryId] = useState(fixedInquiryId ?? '')
@@ -145,6 +164,20 @@ export default function AppointmentForm({
   const [error, setError] = useState<string | null>(null)
   const [confirmedOutsideHours, setConfirmedOutsideHours] = useState(false)
   const [confirmedDifferentArtist, setConfirmedDifferentArtist] = useState(false)
+
+  // Applies the chosen preset to whatever start time is already picked;
+  // if none is picked yet, this just records the preference (used the
+  // moment a start time IS picked, via the effect below) rather than
+  // silently doing nothing.
+  function applyConsultationDuration(minutes: number) {
+    setConsultationDurationMinutes(minutes)
+    if (!timeRange.date || !timeRange.startTime) return
+    const start = combineDateAndTime(timeRange.date, timeRange.startTime)
+    if (!start) return
+    const end = new Date(start.getTime() + minutes * 60_000)
+    const pad = (n: number) => String(n).padStart(2, '0')
+    setTimeRange({ ...timeRange, endTime: `${pad(end.getHours())}:${pad(end.getMinutes())}` })
+  }
 
   function handleArtistChange(nextArtistId: string | null) {
     setArtistId(nextArtistId ?? '')
@@ -204,6 +237,9 @@ export default function AppointmentForm({
     .filter((c) => giftCardIds.includes(c.id))
     .reduce((sum, c) => sum + c.amountCents, 0)
   const hasSufficientGiftCards = selectedGiftCardTotalCents >= requiredDepositCents && giftCardIds.length > 0
+  // A consultation skips the gift-card requirement entirely -- this is the
+  // one gate that actually differs between the two appointment types.
+  const financialRequirementSatisfied = isConsultation || hasSufficientGiftCards
 
   // Package I: default the artist picker to the inquiry's already-assigned
   // artist when opened from a project context -- the calendar's own
@@ -238,30 +274,39 @@ export default function AppointmentForm({
 
   const hasTimeEstimate =
     selectedInquiry?.timeEstimateHoursMin != null && selectedInquiry?.timeEstimateHoursMax != null
-  const suggestionDurationMinutes = hasTimeEstimate
+  const tattooSuggestionDurationMinutes = hasTimeEstimate
     ? Math.round(((selectedInquiry!.timeEstimateHoursMin! + selectedInquiry!.timeEstimateHoursMax!) / 2) * 60)
     : undefined
 
-  // Per the task spec, suggestions only show once a gift card is actually
-  // available or already attached -- a project that can't be scheduled at
-  // all yet (no card) shouldn't be shown times to book, that would imply a
-  // commitment the client hasn't secured. Any card selected/available is
-  // enough to unlock this preview; full stack sufficiency is what actually
-  // gates submission below.
-  const hasGiftCardAvailable = giftCardIds.length > 0 || availableGiftCards.length > 0
+  // A consultation uses its own duration preset instead of the project's
+  // time estimate (most projects haven't been estimated yet at
+  // consultation stage) and needs no duration "estimate" gate at all --
+  // there's always a preset value. Still goes through the exact same
+  // getSuggestedTimes service and buffer-conflict logic as a real session.
+  const hasDuration = isConsultation ? true : hasTimeEstimate
+  const suggestionDurationMinutes = isConsultation ? consultationDurationMinutes : tattooSuggestionDurationMinutes
+
+  // Per the task spec, a TATTOO_SESSION only shows suggestions once a gift
+  // card is actually available or already attached -- a project that can't
+  // be scheduled at all yet (no card) shouldn't be shown times to book,
+  // that would imply a commitment the client hasn't secured. A
+  // CONSULTATION has no such requirement -- it never needs a card at all.
+  const hasGiftCardAvailable = isConsultation || giftCardIds.length > 0 || availableGiftCards.length > 0
 
   // The one shared service behind both Package D consumers -- see
   // apps/api/src/lib/schedulingAssistant.ts. Replaces the prior client-side
   // suggestAppointmentSlots.ts algorithm entirely (deleted in this same
   // commit) so there's exactly one implementation, not two that happen to
-  // agree.
+  // agree. Reused as-is for consultations too -- same availability-greying,
+  // same buffer-conflict awareness, just a different source for the
+  // duration it searches with.
   const { data: suggestedTimes } = useQuery({
     queryKey: ['suggested-times', artistId, suggestionDurationMinutes],
     queryFn: () =>
       apiFetch<SuggestedTimeCandidate[]>(
         `/scheduling/suggested-times?artistId=${artistId}&durationMinutes=${suggestionDurationMinutes}`,
       ),
-    enabled: !!artistId && hasTimeEstimate && hasGiftCardAvailable,
+    enabled: !!artistId && hasDuration && hasGiftCardAvailable,
   })
 
   // Reads this artist's own upcoming bookings for the mini schedule
@@ -282,7 +327,7 @@ export default function AppointmentForm({
       apiFetch<{ startTime: string; endTime: string }[]>(
         `/appointments?artistId=${artistId}&start=${encodeURIComponent(snippetRangeStart.toISOString())}&end=${encodeURIComponent(snippetRangeEnd.toISOString())}`,
       ),
-    enabled: !!artistId && hasTimeEstimate && hasGiftCardAvailable,
+    enabled: !!artistId && hasDuration && hasGiftCardAvailable,
   })
 
   function isoToTimeRangeParts(startIso: string, endIso: string): DateAndTimeRangeValue {
@@ -328,7 +373,7 @@ export default function AppointmentForm({
     event.preventDefault()
     setError(null)
 
-    if (!effectiveClientId || !(fixedInquiryId || inquiryId) || !hasSufficientGiftCards || !artistId) return
+    if (!effectiveClientId || !(fixedInquiryId || inquiryId) || !financialRequirementSatisfied || !artistId) return
 
     if (!isCompleteTimeRange(timeRange)) {
       setError('Select a date, start time, and end time.')
@@ -359,7 +404,8 @@ export default function AppointmentForm({
         body: JSON.stringify({
           clientId: effectiveClientId,
           inquiryId: fixedInquiryId ?? inquiryId,
-          giftCardIds,
+          appointmentType,
+          giftCardIds: isConsultation ? [] : giftCardIds,
           artistId,
           startTime: start.toISOString(),
           endTime: end.toISOString(),
@@ -381,6 +427,37 @@ export default function AppointmentForm({
           {error}
         </div>
       )}
+
+      <div className="mb-4">
+        <label className="mb-1 block text-sm font-medium text-fg-secondary">Type</label>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setAppointmentType('TATTOO_SESSION')}
+            className={[
+              'flex-1 rounded-full border px-3 py-2 text-sm font-medium transition',
+              !isConsultation ? 'border-accent bg-accent/15 text-accent' : 'border-border text-fg-secondary hover:bg-surface',
+            ].join(' ')}
+          >
+            Tattoo Session
+          </button>
+          <button
+            type="button"
+            onClick={() => setAppointmentType('CONSULTATION')}
+            className={[
+              'flex-1 rounded-full border px-3 py-2 text-sm font-medium transition',
+              isConsultation ? 'border-accent bg-accent/15 text-accent' : 'border-border text-fg-secondary hover:bg-surface',
+            ].join(' ')}
+          >
+            Consultation
+          </button>
+        </div>
+        {isConsultation && (
+          <p className="mt-1.5 text-xs text-fg-muted">
+            No deposit or gift card needed — this is an informal step, not a booked session.
+          </p>
+        )}
+      </div>
 
       {!fixedClientId && clientOptions && clientOptions.length === 0 && (
         <p className="mb-3 text-sm text-fg-secondary">No clients yet — add one from the Clients page first.</p>
@@ -442,7 +519,7 @@ export default function AppointmentForm({
         </div>
       )}
 
-      {effectiveClientId && (
+      {effectiveClientId && !isConsultation && (
         <div className="mb-3">
           <label className="mb-1 block text-sm font-medium text-fg-secondary">Gift card(s) (deposit)</label>
           {availableGiftCards.length === 0 ? (
@@ -488,23 +565,46 @@ export default function AppointmentForm({
         )}
       </div>
 
+      {isConsultation && (
+        <div className="mb-3">
+          <label className="mb-1 block text-sm font-medium text-fg-secondary">Duration</label>
+          <div className="flex gap-2">
+            {CONSULTATION_DURATION_PRESETS.map((preset) => (
+              <button
+                key={preset.minutes}
+                type="button"
+                onClick={() => applyConsultationDuration(preset.minutes)}
+                className={[
+                  'rounded-full border px-3 py-1.5 text-xs font-medium transition',
+                  consultationDurationMinutes === preset.minutes
+                    ? 'border-accent bg-accent/15 text-accent'
+                    : 'border-border text-fg-secondary hover:bg-surface',
+                ].join(' ')}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {artistId && !effectiveInquiryId && (
         <p className="mb-3 text-xs text-fg-muted">Select a project to see suggested times.</p>
       )}
 
-      {artistId && effectiveInquiryId && !hasTimeEstimate && (
+      {artistId && effectiveInquiryId && !hasDuration && (
         <p className="mb-3 text-xs text-fg-muted">
           This project has no estimated time yet — add one on the inquiry page to see suggested times.
         </p>
       )}
 
-      {artistId && hasTimeEstimate && !hasGiftCardAvailable && (
+      {artistId && hasDuration && !hasGiftCardAvailable && (
         <p className="mb-3 text-xs text-fg-muted">
           This client has no available gift card yet — suggested times appear once one is available or attached.
         </p>
       )}
 
-      {artistId && hasTimeEstimate && hasGiftCardAvailable && (
+      {artistId && hasDuration && hasGiftCardAvailable && (
         <div className="mb-4 rounded-xl border border-accent/30 bg-accent/5 p-3">
           <p className="mb-1.5 block text-sm font-semibold text-fg">Suggested times</p>
           {!suggestedTimes ? (
@@ -603,7 +703,7 @@ export default function AppointmentForm({
             submitting ||
             !effectiveClientId ||
             (!fixedInquiryId && availableInquiries.length === 0) ||
-            !hasSufficientGiftCards ||
+            !financialRequirementSatisfied ||
             (outsideHours && !confirmedOutsideHours) ||
             (isDifferentFromAssigned && !confirmedDifferentArtist)
           }

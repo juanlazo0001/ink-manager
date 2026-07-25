@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ComponentType } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Calendar as BigCalendar,
@@ -137,6 +137,7 @@ interface AppointmentApi {
   startTime: string
   endTime: string
   status: string
+  appointmentType: 'TATTOO_SESSION' | 'CONSULTATION'
   checkedOutAt: string | null
   liabilityWaiver: { status: string } | null
   client: { id: string; firstName: string; lastName: string } | null
@@ -290,10 +291,49 @@ export default function Calendar() {
     startTime: string
     endTime: string
     artistId?: string
+    // Set only via the prefill-query-param path below (AppointmentDetail's
+    // "Book follow-up" / "Book the tattoo session now" deep links) --
+    // click-to-create never sets these, since the client/project aren't
+    // known yet from an empty slot click.
+    clientId?: string
+    inquiryId?: string
   } | null>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
   const [dragError, setDragError] = useState<string | null>(null)
   const [bufferNotice, setBufferNotice] = useState<string | null>(null)
   const [includePastGuests, setIncludePastGuests] = useState(false)
+
+  // AppointmentDetail's checkout "Book follow-up" (and the consultation
+  // completion flow's "Book the tattoo session now" shortcut) both land
+  // here via ?prefillClientId=&prefillInquiryId=&prefillArtistId= --
+  // auto-opens the same create modal click-to-create uses, pre-filled,
+  // rather than a bare calendar with the params silently ignored. Strips
+  // the params from the URL right after reading them so a refresh or
+  // back-navigation doesn't reopen the modal a second time.
+  useEffect(() => {
+    if (!canManageCalendar) return
+    const clientId = searchParams.get('prefillClientId')
+    const inquiryId = searchParams.get('prefillInquiryId')
+    if (!clientId || !inquiryId) return
+
+    const artistId = searchParams.get('prefillArtistId') ?? undefined
+    const now = new Date()
+    setCreateSlot({
+      date: dayjs(now).format('YYYY-MM-DD'),
+      startTime: dayjs(now).add(1, 'hour').startOf('hour').format('HH:mm'),
+      endTime: dayjs(now).add(2, 'hour').startOf('hour').format('HH:mm'),
+      artistId,
+      clientId,
+      inquiryId,
+    })
+    setSearchParams((params) => {
+      params.delete('prefillClientId')
+      params.delete('prefillInquiryId')
+      params.delete('prefillArtistId')
+      return params
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canManageCalendar, searchParams])
 
   // Resource columns don't fit at phone widths -- fall back to a single
   // day view regardless of the desktop view state (which is preserved so
@@ -363,7 +403,7 @@ export default function Calendar() {
     () =>
       (appointments ?? []).map((appt) => ({
         id: appt.id,
-        title: appt.client ? `${appt.client.firstName} ${appt.client.lastName}` : 'Unknown client',
+        title: `${appt.appointmentType === 'CONSULTATION' ? 'Consult: ' : ''}${appt.client ? `${appt.client.firstName} ${appt.client.lastName}` : 'Unknown client'}`,
         start: new Date(appt.startTime),
         end: new Date(appt.endTime),
         resourceId: appt.artist.id,
@@ -499,8 +539,18 @@ export default function Calendar() {
     onNavigate: (next: Date) => setDate(next),
     onView: (next: View) => setView(next),
     onSelectEvent: (event: CalEvent) => setPreviewAppointment(event.appointment),
+    // Color still encodes artist (unchanged); a consultation additionally
+    // gets a dashed accent border so it reads as visually distinct from a
+    // real tattoo session at a glance -- no separate legend needed, same
+    // as this grid already relies on artist-chip colors being self-
+    // explanatory rather than a legend.
     eventPropGetter: (event: CalEvent) => ({
-      style: { backgroundColor: colorForArtistId(event.appointment.artist.id), borderColor: 'transparent' },
+      style: {
+        backgroundColor: colorForArtistId(event.appointment.artist.id),
+        borderColor: event.appointment.appointmentType === 'CONSULTATION' ? 'var(--color-accent)' : 'transparent',
+        borderWidth: event.appointment.appointmentType === 'CONSULTATION' ? '2px' : undefined,
+        borderStyle: event.appointment.appointmentType === 'CONSULTATION' ? 'dashed' : undefined,
+      },
     }),
     slotPropGetter,
     dayPropGetter,
@@ -643,6 +693,8 @@ export default function Calendar() {
       {createSlot && (
         <Modal title="New Appointment" onClose={() => setCreateSlot(null)}>
           <AppointmentForm
+            fixedClientId={createSlot.clientId}
+            fixedInquiryId={createSlot.inquiryId}
             initialArtistId={createSlot.artistId}
             initialDate={createSlot.date}
             initialStartTime={createSlot.startTime}
@@ -656,6 +708,11 @@ export default function Calendar() {
       {previewAppointment && (
         <Modal title="Appointment" onClose={() => setPreviewAppointment(null)}>
           <div className="space-y-3 text-sm">
+            {previewAppointment.appointmentType === 'CONSULTATION' && (
+              <span className="inline-block rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 text-xs font-medium text-accent">
+                Consultation
+              </span>
+            )}
             <div>
               <p className="text-xs font-medium uppercase tracking-wide text-fg-muted">Client</p>
               <p className="text-fg">

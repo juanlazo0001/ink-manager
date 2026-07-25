@@ -32,13 +32,21 @@ async function fetch(studioId: string, _userId: string): Promise<SystemTask[]> {
       // schema's own comment on that field) so it never reaches here anyway.
       status: { notIn: [AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW] },
     },
-    select: { id: true, endTime: true, client: { select: { firstName: true, lastName: true } } },
+    select: { id: true, endTime: true, appointmentType: true, client: { select: { firstName: true, lastName: true } } },
     orderBy: { endTime: "asc" },
   });
 
+  // One unified task type covering both a tattoo session's full checkout
+  // and a consultation's lightweight completion -- same deepLink shape for
+  // both (AppointmentDetail.tsx itself branches which action it renders
+  // based on appointmentType), just different wording so the task list
+  // doesn't ask staff to "check out" a free consultation.
   return appointments.map((appointment) => ({
     type: "APPOINTMENT_NEEDS_CHECKOUT",
-    title: `Check out ${appointment.client.firstName} ${appointment.client.lastName} — appointment ended ${formatTimeInTz(appointment.endTime, timezone)}`,
+    title:
+      appointment.appointmentType === "CONSULTATION"
+        ? `Wrap up consultation with ${appointment.client.firstName} ${appointment.client.lastName} — ended ${formatTimeInTz(appointment.endTime, timezone)}`
+        : `Check out ${appointment.client.firstName} ${appointment.client.lastName} — appointment ended ${formatTimeInTz(appointment.endTime, timezone)}`,
     entityType: "Appointment",
     entityId: appointment.id,
     // Folds in today's studio-local calendar day (not just the appointment

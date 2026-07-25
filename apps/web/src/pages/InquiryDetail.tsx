@@ -637,8 +637,15 @@ export default function InquiryDetail() {
   // flow via /inquiries/:id/schedule) -- this is the generic
   // POST /appointments route (via the shared AppointmentForm component,
   // Phase UI-4), pre-scoped to this project's client + inquiry, for
-  // booking an additional session under a project already underway.
-  const [showAppointmentModal, setShowAppointmentModal] = useState(false)
+  // booking an additional session under a project already underway. Null
+  // means closed; a value both opens the modal and pre-selects
+  // AppointmentForm's own type toggle -- "Schedule Consultation" is a
+  // second, dedicated entry point onto the exact same modal/form, not a
+  // second implementation. Deliberately lives in this same always-rendered
+  // Appointments widget (never gated by inquiry.status) rather than the
+  // status-gated Scheduling widget above, matching the task's own
+  // "available regardless of pipeline status" requirement for real.
+  const [appointmentModalType, setAppointmentModalType] = useState<'TATTOO_SESSION' | 'CONSULTATION' | null>(null)
 
   // Seeds the editable estimate fields from the inquiry once per inquiry id
   // (not on every refetch), so an in-progress edit doesn't get clobbered by
@@ -2423,16 +2430,28 @@ export default function InquiryDetail() {
                 title="Appointments"
                 actions={
                   canMessage ? (
-                    <button
-                      type="button"
-                      onClick={() => setShowAppointmentModal(true)}
-                      aria-label="New Appointment"
-                      title="New Appointment"
-                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
-                    >
-                      <AppointmentsIcon className="h-4 w-4" />
-                      <span className="hidden text-sm font-semibold md:inline">New Appointment</span>
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setAppointmentModalType('CONSULTATION')}
+                        aria-label="Schedule Consultation"
+                        title="Schedule Consultation"
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
+                      >
+                        <ClockIcon className="h-4 w-4" />
+                        <span className="hidden text-sm font-semibold md:inline">Schedule Consultation</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAppointmentModalType('TATTOO_SESSION')}
+                        aria-label="New Appointment"
+                        title="New Appointment"
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
+                      >
+                        <AppointmentsIcon className="h-4 w-4" />
+                        <span className="hidden text-sm font-semibold md:inline">New Appointment</span>
+                      </button>
+                    </div>
                   ) : null
                 }
               >
@@ -3150,20 +3169,25 @@ export default function InquiryDetail() {
                 </Modal>
               )}
 
-              {showAppointmentModal && (
-                <Modal title="New Appointment" onClose={() => setShowAppointmentModal(false)}>
+              {appointmentModalType && (
+                <Modal
+                  title={appointmentModalType === 'CONSULTATION' ? 'Schedule Consultation' : 'New Appointment'}
+                  onClose={() => setAppointmentModalType(null)}
+                >
                   <p className="mb-4 text-xs text-fg-muted">
-                    Booking another appointment for {inquiry.client.firstName} {inquiry.client.lastName} under this
-                    project.
+                    {appointmentModalType === 'CONSULTATION'
+                      ? `Scheduling a consultation for ${inquiry.client.firstName} ${inquiry.client.lastName} under this project -- no deposit needed, and this can happen at any point regardless of where the project is in its pipeline.`
+                      : `Booking another appointment for ${inquiry.client.firstName} ${inquiry.client.lastName} under this project.`}
                   </p>
                   <AppointmentForm
                     fixedClientId={inquiry.clientId}
                     fixedInquiryId={inquiry.id}
+                    initialAppointmentType={appointmentModalType}
                     onCreated={() => {
-                      setShowAppointmentModal(false)
+                      setAppointmentModalType(null)
                       invalidateInquiry()
                     }}
-                    onCancel={() => setShowAppointmentModal(false)}
+                    onCancel={() => setAppointmentModalType(null)}
                   />
                 </Modal>
               )}

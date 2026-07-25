@@ -27,6 +27,20 @@ enum AppointmentStatus {
   NO_SHOW
 }
 
+// A consultation is the same Appointment record as a real tattoo session,
+// distinguished only by this field -- it reuses the calendar, artist
+// availability, buffer-conflict logic, and drag-reschedule with zero
+// duplication. Only two things actually differ, both handled at the route
+// layer, not the schema: a consultation skips the gift-card requirement
+// entirely (see POST /appointments), and its completion flow is a simple
+// "mark complete" (POST /appointments/:id/complete-consultation) instead
+// of full financial checkout (POST /appointments/:id/checkout) -- both
+// still just set the same checkedOutAt/closeoutNotes/status fields below.
+enum AppointmentType {
+  TATTOO_SESSION
+  CONSULTATION
+}
+
 enum Channel {
   EMAIL
   INSTAGRAM
@@ -693,6 +707,13 @@ model Appointment {
   startTime   DateTime
   endTime     DateTime
   status      AppointmentStatus @default(REQUESTED)
+  // Defaulted NOT NULL, not backfilled -- every existing row is a real
+  // tattoo session (consultations didn't exist before this column), so the
+  // default IS the correct historical value for all of them, materializing
+  // safely in a single-step migration (unlike Client.referralCode's own
+  // earlier no-default incident, which genuinely needed a per-row backfill
+  // script before the NOT NULL constraint could land).
+  appointmentType AppointmentType @default(TATTOO_SESSION)
   depositPaid Boolean           @default(false)
   notes       String?
   createdAt   DateTime          @default(now())

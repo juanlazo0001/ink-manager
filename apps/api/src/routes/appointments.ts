@@ -2,7 +2,7 @@ import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { Prisma } from "../../generated/prisma/client";
 import { requireAuth, requireRole } from "../middleware/auth";
-import { Role, AppointmentStatus, GiftCardStatus } from "../../generated/prisma/enums";
+import { Role, AppointmentStatus, AppointmentType, GiftCardStatus } from "../../generated/prisma/enums";
 import { requirePermission } from "../lib/permissions";
 import { diffObjects, logAudit } from "../lib/audit";
 import { validateGiftCardsForAttachment, generateUniqueGiftCardCode, computeGiftCardExpiration } from "../lib/giftCards";
@@ -25,12 +25,15 @@ router.use(requireAuth);
 // GET /:id, only the default list (which backs the Calendar) excludes it.
 const NOT_ARCHIVED = { archivedAt: null } as const;
 
-// Every appointment needs both an inquiry (the project it belongs to) and
-// one or more attached ACTIVE (or EXEMPT) gift cards together meeting or
-// exceeding the required deposit for that inquiry's price estimate -- N
-// appointments require their own N card stacks. A client with no available
-// card (or not enough of one) can't get an appointment booked here; the
-// error says so explicitly rather than a generic 400.
+// Every appointment needs an inquiry (the project it belongs to). A
+// TATTOO_SESSION additionally needs one or more attached ACTIVE (or
+// EXEMPT) gift cards together meeting or exceeding the required deposit
+// for that inquiry's price estimate -- N appointments require their own N
+// card stacks. A CONSULTATION skips the gift-card requirement entirely
+// (see below) -- it's an informal, no-commitment step, not a booked
+// session. A client with no available card (or not enough of one) can't
+// get a TATTOO_SESSION booked here; the error says so explicitly rather
+// than a generic 400.
 router.post("/", requirePermission("appointments.create"), async (req, res) => {
   const body = req.body ?? {};
 
@@ -41,7 +44,18 @@ router.post("/", requirePermission("appointments.create"), async (req, res) => {
 
   const { artistId, clientId, startTime, endTime, notes, inquiryId, giftCardIds } = body;
 
-  if (!Array.isArray(giftCardIds) || giftCardIds.length === 0 || !giftCardIds.every((v) => typeof v === "string")) {
+  // Absent body field defaults to TATTOO_SESSION -- every pre-existing
+  // caller (and every old cached frontend bundle) never sends this field
+  // at all, so the same defensive default the schema itself uses keeps
+  // them working unchanged.
+  const appointmentType: AppointmentType =
+    body.appointmentType === AppointmentType.CONSULTATION ? AppointmentType.CONSULTATION : AppointmentType.TATTOO_SESSION;
+  const isConsultation = appointmentType === AppointmentType.CONSULTATION;
+
+  if (
+    !isConsultation &&
+    (!Array.isArray(giftCardIds) || giftCardIds.length === 0 || !giftCardIds.every((v) => typeof v === "string"))
+  ) {
     return res.status(400).json({ error: "giftCardIds must be a non-empty array of strings" });
   }
 
@@ -80,17 +94,19 @@ router.post("/", requirePermission("appointments.create"), async (req, res) => {
     return res.status(400).json({ error: "inquiryId must belong to this client in your studio" });
   }
 
-  const requiredCents = computeRequiredDepositCents(
-    inquiry.priceEstimateLow,
-    inquiry.priceEstimateHigh,
-    resolveDepositTiers(studioSettings?.depositTiers),
-  );
+  if (!isConsultation) {
+    const requiredCents = computeRequiredDepositCents(
+      inquiry.priceEstimateLow,
+      inquiry.priceEstimateHigh,
+      resolveDepositTiers(studioSettings?.depositTiers),
+    );
 
-  const giftCardResult = await validateGiftCardsForAttachment(giftCardIds, studioId, clientId, requiredCents);
-  if ("error" in giftCardResult) {
-    return res.status(400).json({
-      error: `${giftCardResult.error} — collect a deposit or issue a gift card for this client first.`,
-    });
+    const giftCardResult = await validateGiftCardsForAttachment(giftCardIds, studioId, clientId, requiredCents);
+    if ("error" in giftCardResult) {
+      return res.status(400).json({
+        error: `${giftCardResult.error} — collect a deposit or issue a gift card for this client first.`,
+      });
+    }
   }
 
   const appointment = await prisma.$transaction(async (tx) => {
@@ -104,14 +120,17 @@ router.post("/", requirePermission("appointments.create"), async (req, res) => {
         notes,
         studioId,
         status: AppointmentStatus.CONFIRMED,
+        appointmentType,
       },
     });
 
-    await Promise.all(
-      giftCardIds.map((giftCardId: string) =>
-        tx.giftCard.update({ where: { id: giftCardId }, data: { appointmentId: created.id } }),
-      ),
-    );
+    if (!isConsultation) {
+      await Promise.all(
+        giftCardIds.map((giftCardId: string) =>
+          tx.giftCard.update({ where: { id: giftCardId }, data: { appointmentId: created.id } }),
+        ),
+      );
+    }
 
     return created;
   });
@@ -122,7 +141,7 @@ router.post("/", requirePermission("appointments.create"), async (req, res) => {
     entityType: "Appointment",
     entityId: appointment.id,
     action: "create",
-    changes: { artistId, clientId, inquiryId, giftCardIds, startTime: start, endTime: end },
+    changes: { artistId, clientId, inquiryId, appointmentType, giftCardIds: isConsultation ? [] : giftCardIds, startTime: start, endTime: end },
   });
 
   const conflict = await findBufferConflict(artistId, start, end, appointment.id);
@@ -480,6 +499,12 @@ router.post("/:id/checkout", requirePermission("appointments.checkout"), async (
     return res.status(404).json({ error: "Appointment not found" });
   }
 
+  if (appointment.appointmentType === AppointmentType.CONSULTATION) {
+    return res.status(400).json({
+      error: "Consultations don't go through financial checkout -- use POST /:id/complete-consultation instead.",
+    });
+  }
+
   if (appointment.checkedOutAt) {
     return res.status(400).json({ error: "This appointment has already been checked out" });
   }
@@ -644,6 +669,61 @@ router.post("/:id/checkout", requirePermission("appointments.checkout"), async (
   }
 
   res.json({ ...updated, amountDueCents, overageCents, newGiftCard });
+});
+
+// Lightweight counterpart to /:id/checkout for a CONSULTATION -- same
+// completion fields (checkedOutAt/checkedOutById/closeoutNotes/status),
+// same permission, but none of the financial machinery: no finalCostCents,
+// no gift-card redeem/roll decisions, no overage card issuance. A
+// consultation never has an attached gift card to begin with (see POST /
+// above), so there's nothing to reconcile here.
+router.post("/:id/complete-consultation", requirePermission("appointments.checkout"), async (req, res) => {
+  const id = req.params.id as string;
+  const studioId = req.user!.studioId;
+  const { notes } = req.body ?? {};
+
+  if (notes !== undefined && notes !== null && typeof notes !== "string") {
+    return res.status(400).json({ error: "notes must be a string" });
+  }
+
+  const appointment = await prisma.appointment.findUnique({ where: { id } });
+
+  if (!appointment || appointment.studioId !== studioId) {
+    return res.status(404).json({ error: "Appointment not found" });
+  }
+
+  if (appointment.appointmentType !== AppointmentType.CONSULTATION) {
+    return res.status(400).json({
+      error: "This isn't a consultation -- use POST /:id/checkout for a tattoo session instead.",
+    });
+  }
+
+  if (appointment.checkedOutAt) {
+    return res.status(400).json({ error: "This consultation has already been marked complete" });
+  }
+
+  const updated = await prisma.appointment.update({
+    where: { id },
+    data: {
+      closeoutNotes: typeof notes === "string" && notes.trim() ? notes.trim() : null,
+      checkedOutAt: new Date(),
+      checkedOutById: req.user!.userId,
+      status: AppointmentStatus.COMPLETED,
+    },
+  });
+
+  await logAudit({
+    studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Appointment",
+    entityId: id,
+    action: "complete-consultation",
+    changes: { closeoutNotes: updated.closeoutNotes },
+  });
+
+  emitInvalidation({ type: "appointment.changed", studioId });
+
+  res.json(updated);
 });
 
 // Package N: finished-tattoo (or other checkout-time) photos for this

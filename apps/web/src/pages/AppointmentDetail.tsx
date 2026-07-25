@@ -66,6 +66,7 @@ interface Appointment {
   startTime: string
   endTime: string
   status: string
+  appointmentType: 'TATTOO_SESSION' | 'CONSULTATION'
   notes: string | null
   archivedAt: string | null
   finalCostCents: number | null
@@ -172,6 +173,11 @@ export default function AppointmentDetail() {
   const [verifyError, setVerifyError] = useState<string | null>(null)
 
   const [checkoutForm, setCheckoutForm] = useState(EMPTY_CHECKOUT_FORM)
+  // Consultation's lightweight completion counterpart to the checkout form
+  // above -- no finalCostDollars, no card decisions, just optional notes.
+  const [consultationNotes, setConsultationNotes] = useState('')
+  const [completingConsultation, setCompletingConsultation] = useState(false)
+  const [consultationCompleteError, setConsultationCompleteError] = useState<string | null>(null)
   // Stackable gift cards: a separate REDEEM-or-ROLL choice per attached
   // card, not one choice for the whole stack -- keyed by giftCardId,
   // defaulting every non-EXEMPT card to REDEEM (same default the old
@@ -408,6 +414,27 @@ export default function AppointmentDetail() {
     }
   }
 
+  async function handleCompleteConsultation(event: FormEvent) {
+    event.preventDefault()
+    if (!id) return
+
+    setCompletingConsultation(true)
+    setConsultationCompleteError(null)
+
+    try {
+      await apiFetch(`/appointments/${id}/complete-consultation`, {
+        method: 'POST',
+        body: JSON.stringify({ notes: consultationNotes || undefined }),
+      })
+      if (user) queryClient.invalidateQueries({ queryKey: appointmentsQueryKey(user.studioId) })
+      setRefreshIndex((i) => i + 1)
+    } catch (err) {
+      setConsultationCompleteError(err instanceof Error ? err.message : 'Failed to mark this consultation complete')
+    } finally {
+      setCompletingConsultation(false)
+    }
+  }
+
   async function handleAddPhotos() {
     if (!id || addPhotosState.urls.length === 0) return
 
@@ -620,8 +647,13 @@ export default function AppointmentDetail() {
               <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
-                    <h1 className="text-xl font-bold text-fg">
+                    <h1 className="flex items-center gap-2 text-xl font-bold text-fg">
                       {appointment.client.firstName} {appointment.client.lastName}
+                      {appointment.appointmentType === 'CONSULTATION' && (
+                        <span className="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 text-xs font-medium text-accent">
+                          Consultation
+                        </span>
+                      )}
                     </h1>
                     <p className="mt-1 text-sm text-fg-secondary">
                       {formatDateTime(appointment.startTime)} – {formatDateTime(appointment.endTime)}
@@ -1067,8 +1099,70 @@ export default function AppointmentDetail() {
                 )}
               </Widget>
 
-              {/* Checkout section */}
-              {canManage && (
+              {/* Checkout section -- a CONSULTATION renders the lightweight
+                  "Mark Complete" flow instead (no gift-card requirement to
+                  begin with, so none of the financial checkout machinery
+                  below ever applies to it). */}
+              {canManage && appointment.appointmentType === 'CONSULTATION' && (
+                <Widget key="checkout" id="checkout" title="Consultation">
+                  {!appointment.checkedOutAt && (
+                    <form onSubmit={handleCompleteConsultation} className="mt-4 space-y-4">
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-fg-secondary">
+                          Notes (what was discussed/decided)
+                        </label>
+                        <textarea
+                          rows={4}
+                          value={consultationNotes}
+                          onChange={(e) => setConsultationNotes(e.target.value)}
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                        />
+                      </div>
+                      {consultationCompleteError && <p className="text-sm text-danger">{consultationCompleteError}</p>}
+                      <button
+                        type="submit"
+                        disabled={completingConsultation}
+                        className="w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                      >
+                        {completingConsultation ? 'Marking complete…' : 'Mark Consultation Complete'}
+                      </button>
+                    </form>
+                  )}
+
+                  {appointment.checkedOutAt && (
+                    <div className="mt-4 space-y-3 text-sm">
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Completed</p>
+                        <p className="mt-1 text-fg">
+                          {formatDateTime(appointment.checkedOutAt)} by{' '}
+                          {appointment.checkedOutBy?.name ?? appointment.checkedOutBy?.email ?? '—'}
+                        </p>
+                      </div>
+
+                      {appointment.closeoutNotes && (
+                        <div>
+                          <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Notes</p>
+                          <p className="mt-1 whitespace-pre-wrap text-fg-secondary">{appointment.closeoutNotes}</p>
+                        </div>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          navigate(
+                            `/calendar?prefillClientId=${appointment.client.id}&prefillInquiryId=${appointment.inquiry.id}&prefillArtistId=${appointment.artist.id}`,
+                          )
+                        }
+                        className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover"
+                      >
+                        Book the tattoo session now
+                      </button>
+                    </div>
+                  )}
+                </Widget>
+              )}
+
+              {canManage && appointment.appointmentType === 'TATTOO_SESSION' && (
                 <Widget key="checkout" id="checkout" title="Checkout">
 
                   {!appointment.checkedOutAt && appointment.giftCards.length === 0 && (
@@ -1244,7 +1338,7 @@ export default function AppointmentDetail() {
                         type="button"
                         onClick={() =>
                           navigate(
-                            `/calendar?prefillClientId=${appointment.client.id}&prefillInquiryId=${appointment.inquiry.id}`,
+                            `/calendar?prefillClientId=${appointment.client.id}&prefillInquiryId=${appointment.inquiry.id}&prefillArtistId=${appointment.artist.id}`,
                           )
                         }
                         className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"

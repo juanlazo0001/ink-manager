@@ -32,6 +32,10 @@ export async function findBufferConflict(
   const windowStart = new Date(start.getTime() - SCHEDULING_BUFFER_MS);
   const windowEnd = new Date(end.getTime() + SCHEDULING_BUFFER_MS);
 
+  // Deliberately no appointmentType (or status) filter -- a CONSULTATION
+  // blocks time on this artist's calendar exactly like a TATTOO_SESSION
+  // does, so it must count as a real conflict here too. Verified: a
+  // tattoo session can't be booked over an existing consultation's slot.
   const nearbyAppointments = await prisma.appointment.findMany({
     where: {
       artistId,
