@@ -1,16 +1,12 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
-import { InquiryStatus, Role } from "../../generated/prisma/enums";
-import { requireAuth, requireRole } from "../middleware/auth";
+import { requireAuth } from "../middleware/auth";
 import { requirePermission } from "../lib/permissions";
-import { diffObjects, logAudit } from "../lib/audit";
-import { dollarsToCents } from "../lib/money";
-import { computeGiftCardExpiration, generateUniqueGiftCardCode } from "../lib/giftCards";
 import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
-import { getOrCreateClientConversation } from "../lib/conversations";
-import { sendClientSms } from "../lib/clientSms";
-import { shortenUrl } from "../lib/shortLinks";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
+import { issueGiftCardForPaidDeposit } from "../lib/deposits";
+import { getChargeableConnectedAccountId } from "../lib/stripeConnect";
+import { createDirectChargeCheckoutSession } from "../lib/stripe";
 
 // Exact SOP wording, in the order the client must agree to each one.
 const TERMS = [
@@ -51,12 +47,31 @@ const TERMS = [
 
 const TERM_KEYS = TERMS.map((t) => t.key);
 
-function isExpiredOrInvalid(depositForm: { signedAt: Date | null; tokenExpiresAt: Date } | null) {
+// Phase 7C: "already signed" is no longer unconditionally terminal -- a
+// studio with Stripe connected still needs this same token to work AFTER
+// signing, so the client can pay (or retry paying, if they abandoned
+// Stripe's checkout page and came back). Only a deposit that's actually
+// been PAID is never treated as invalid/expired here at all -- GET /verify
+// below always returns the full success shape for a paid deposit
+// (including paidVia), and the frontend shows a distinct "you've already
+// paid" state driven by that data rather than by an error branch. "Signed,
+// not yet paid, Stripe connected" is likewise a valid, resumable state
+// (see POST /:token/checkout-session below) -- only a genuinely invalid
+// token, an unpaid-and-expired one, or (for studios without Stripe) an
+// already-signed one are real errors.
+function isExpiredOrInvalid(
+  depositForm: { signedAt: Date | null; tokenExpiresAt: Date; paidVia: string | null } | null,
+  stripeConnected: boolean,
+) {
   if (!depositForm) {
     return { code: "invalid", error: "This link is invalid." } as const;
   }
 
-  if (depositForm.signedAt) {
+  if (depositForm.paidVia) {
+    return null;
+  }
+
+  if (depositForm.signedAt && !stripeConnected) {
     return { code: "already_signed", error: "This deposit form has already been signed." } as const;
   }
 
@@ -98,7 +113,10 @@ publicRouter.get("/verify/:token", async (req, res) => {
     },
   });
 
-  const invalidity = isExpiredOrInvalid(depositForm);
+  const stripeAccountId = depositForm ? await getChargeableConnectedAccountId(depositForm.inquiry.studioId) : null;
+  const stripeConnected = stripeAccountId !== null;
+
+  const invalidity = isExpiredOrInvalid(depositForm, stripeConnected);
   if (invalidity) {
     const status = invalidity.code === "invalid" ? 404 : 410;
     return res.status(status).json(invalidity);
@@ -135,6 +153,15 @@ publicRouter.get("/verify/:token", async (req, res) => {
           estimatedHoursMax: depositForm!.plannedSession.estimatedHoursMax,
         }
       : null,
+    // Phase 7C: drives the frontend's state branching -- paidVia set means
+    // "you've already paid" (a real success state, not an error, regardless
+    // of expiration); otherwise, signed + Stripe connected means "show a
+    // Pay Now button" instead of the sign form, and signed + Stripe NOT
+    // connected means today's original "thanks, we'll collect it
+    // separately" flow, unchanged.
+    signedAt: depositForm!.signedAt,
+    paidVia: depositForm!.paidVia,
+    stripeConnected,
     terms: TERMS,
   });
 });
@@ -144,9 +171,32 @@ publicRouter.patch("/sign/:token", async (req, res) => {
   const body = req.body ?? {};
   const { signatureName, signatureData } = body;
 
-  const depositForm = await prisma.depositForm.findUnique({ where: { token } });
+  const depositForm = await prisma.depositForm.findUnique({
+    where: { token },
+    include: { inquiry: { select: { studioId: true } } },
+  });
 
-  const invalidity = isExpiredOrInvalid(depositForm);
+  if (!depositForm) {
+    return res.status(404).json({ code: "invalid", error: "This link is invalid." });
+  }
+
+  // Checked explicitly here, ahead of isExpiredOrInvalid -- that shared
+  // function deliberately treats an already-paid deposit as "not invalid"
+  // (GET /verify needs to keep returning the full success shape so the
+  // frontend can show a real "you've already paid" state), but signing
+  // itself is a write action that must always be blocked once paid,
+  // regardless of context.
+  if (depositForm.paidVia) {
+    return res.status(400).json({ error: "This deposit has already been paid." });
+  }
+
+  // stripeConnected: false here is deliberate, not a placeholder -- signing
+  // itself must only ever happen once, regardless of Stripe status (unlike
+  // GET /verify and POST /checkout-session below, where an already-signed,
+  // Stripe-connected, unpaid form is a valid resumable state). Passing
+  // false makes "already signed" correctly block a re-sign attempt no
+  // matter whether Stripe is connected for this studio.
+  const invalidity = isExpiredOrInvalid(depositForm, false);
   if (invalidity) {
     const status = invalidity.code === "invalid" ? 404 : 410;
     return res.status(status).json(invalidity);
@@ -182,7 +232,69 @@ publicRouter.patch("/sign/:token", async (req, res) => {
     },
   });
 
-  res.json({ success: true });
+  // Phase 7C: lets the frontend immediately follow up with
+  // POST /:token/checkout-session and redirect to Stripe when connected --
+  // a studio without Stripe connected gets today's original "thanks, we'll
+  // collect it separately" screen, unchanged.
+  const stripeAccountId = await getChargeableConnectedAccountId(depositForm!.inquiry.studioId);
+  res.json({ success: true, stripeConnected: stripeAccountId !== null });
+});
+
+// Phase 7C: creates a real Stripe Checkout Session for this deposit --
+// called right after signing (when Stripe is connected), and again if the
+// client abandoned Stripe's own checkout page and returns to retry paying
+// (GET /verify reports signedAt + stripeConnected so the frontend knows to
+// show a "Pay Now" button rather than the sign form in that case). A fresh
+// session is generated every time this is called, never reused -- Checkout
+// Sessions expire on their own schedule, and generating a new one is
+// simpler and more robust than trying to detect/resurrect a stale one.
+publicRouter.post("/:token/checkout-session", async (req, res) => {
+  const token = req.params.token as string;
+
+  const depositForm = await prisma.depositForm.findUnique({
+    where: { token },
+    include: { inquiry: { select: { studioId: true } } },
+  });
+
+  if (!depositForm) {
+    return res.status(404).json({ error: "This link is invalid." });
+  }
+
+  if (depositForm.paidVia) {
+    return res.status(400).json({ error: "This deposit has already been paid." });
+  }
+
+  if (!depositForm.signedAt) {
+    return res.status(400).json({ error: "Please sign the deposit agreement first." });
+  }
+
+  const stripeAccountId = await getChargeableConnectedAccountId(depositForm.inquiry.studioId);
+  if (!stripeAccountId) {
+    return res.status(400).json({ error: "Online payment isn't available for this studio right now." });
+  }
+
+  const totalCents = Math.round(depositForm.totalCharged * 100);
+
+  let session;
+  try {
+    session = await createDirectChargeCheckoutSession({
+      connectedAccountId: stripeAccountId,
+      amountCents: totalCents,
+      productName: "Deposit",
+      successUrl: `${PUBLIC_APP_URL}/deposit/${token}?paid=1`,
+      cancelUrl: `${PUBLIC_APP_URL}/deposit/${token}?canceled=1`,
+      metadata: { depositFormId: depositForm.id },
+    });
+  } catch (err) {
+    return res.status(502).json({ error: err instanceof Error ? err.message : "Failed to start Stripe checkout" });
+  }
+
+  await prisma.depositForm.update({
+    where: { id: depositForm.id },
+    data: { stripeCheckoutSessionId: session.id },
+  });
+
+  res.json({ url: session.url });
 });
 
 // Staff-facing: marking a deposit paid is a separate, authenticated step
@@ -219,170 +331,13 @@ staffRouter.patch("/:id/mark-paid", requireAuth, requirePermission("deposits.mar
     return res.status(400).json({ error: "A gift card has already been issued for this deposit" });
   }
 
-  const paidAt = new Date();
-  const studioId = req.user!.studioId;
-  const clientId = depositForm.inquiry.clientId;
-
-  const [studioSettings, code] = await Promise.all([
-    prisma.studioSettings.findUnique({ where: { studioId } }),
-    generateUniqueGiftCardCode(),
-  ]);
-
-  // Package M: this deposit form might belong to session 2+ of a project
-  // that already converted (and has been scheduling/confirming/completing
-  // sessions ever since) -- only the very first deposit form ever paid for
-  // an inquiry actually converts it. A later session's payment issues its
-  // own gift card the exact same way, but must never force the inquiry
-  // backward to SCHEDULING if it's already moved on further than that.
-  const isFirstConversion = depositForm.inquiry.status === InquiryStatus.DEPOSIT_PENDING;
-
-  // Package O: a referral reward is a one-time event tied to THIS client's
-  // first-ever paid deposit (across every inquiry they have, not just this
-  // one) -- reads the client's own referral fields and the reward gift
-  // card code up front, but the actual eligibility re-check happens fresh
-  // inside the transaction below, right before writing, to keep the
-  // check-then-act window as tight as possible.
-  const referredClient = await prisma.client.findUnique({
-    where: { id: clientId },
-    select: { id: true, firstName: true, referredByClientId: true, referralRewardIssuedAt: true },
-  });
-  const referrerCandidate =
-    referredClient?.referredByClientId && !referredClient.referralRewardIssuedAt
-      ? await prisma.client.findUnique({
-          where: { id: referredClient.referredByClientId },
-          select: { id: true, firstName: true, studioId: true },
-        })
-      : null;
-  const referralRewardCode = referrerCandidate ? await generateUniqueGiftCardCode() : null;
-
-  const { giftCard, updatedDepositForm, referralReward } = await prisma.$transaction(async (tx) => {
-    const giftCard = await tx.giftCard.create({
-      data: {
-        studioId,
-        clientId: depositForm.inquiry.clientId,
-        code,
-        amountCents: dollarsToCents(depositForm.depositAmount),
-        expiresAt: computeGiftCardExpiration(studioSettings?.giftCardDefaultExpirationDays ?? null),
-        issuedById: req.user!.userId,
-      },
-    });
-
-    const updatedDepositForm = await tx.depositForm.update({
-      where: { id },
-      data: { paidManually: true, paidAt, giftCardId: giftCard.id },
-    });
-
-    if (isFirstConversion) {
-      await tx.inquiry.update({ where: { id: depositForm.inquiryId }, data: { status: InquiryStatus.SCHEDULING } });
-    }
-
-    let referralReward: { giftCardId: string; code: string; amountCents: number; referrerClientId: string } | null =
-      null;
-
-    if (referrerCandidate && referrerCandidate.studioId === studioId) {
-      // Re-read the guard fresh, inside the transaction, immediately before
-      // deciding to issue -- narrows the race window from the outer check
-      // above to essentially nothing. Both conditions (never rewarded yet,
-      // and this really is their first paid deposit) must still hold.
-      const freshClient = await tx.client.findUnique({
-        where: { id: clientId },
-        select: { referralRewardIssuedAt: true },
-      });
-      const priorPaidCount = await tx.depositForm.count({
-        where: { inquiry: { clientId }, paidManually: true, NOT: { id } },
-      });
-
-      if (freshClient && !freshClient.referralRewardIssuedAt && priorPaidCount === 0) {
-        const rewardGiftCard = await tx.giftCard.create({
-          data: {
-            studioId,
-            clientId: referrerCandidate.id,
-            code: referralRewardCode!,
-            amountCents: studioSettings?.referralRewardAmountCents ?? 2500,
-            expiresAt: computeGiftCardExpiration(studioSettings?.giftCardDefaultExpirationDays ?? null),
-            issuedById: req.user!.userId,
-          },
-        });
-
-        await tx.client.update({
-          where: { id: clientId },
-          data: { referralRewardIssuedAt: new Date(), referralRewardGiftCardId: rewardGiftCard.id },
-        });
-
-        referralReward = {
-          giftCardId: rewardGiftCard.id,
-          code: rewardGiftCard.code,
-          amountCents: rewardGiftCard.amountCents,
-          referrerClientId: referrerCandidate.id,
-        };
-      }
-    }
-
-    return { giftCard, updatedDepositForm, referralReward };
-  });
-
-  await logAudit({
-    studioId,
-    actorUserId: req.user!.userId,
-    entityType: "DepositForm",
-    entityId: id,
-    action: "gift_card_issued_from_deposit",
-    changes: { depositFormId: id, giftCardId: giftCard.id, amountCents: giftCard.amountCents },
-  });
-
-  if (isFirstConversion) {
-    await logAudit({
-      studioId,
-      actorUserId: req.user!.userId,
-      entityType: "Inquiry",
-      entityId: depositForm.inquiryId,
-      action: "status_change",
-      changes: diffObjects(depositForm.inquiry, { status: InquiryStatus.SCHEDULING }, ["status"]),
-    });
+  const result = await issueGiftCardForPaidDeposit(id, "MANUAL", req.user!.userId);
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error });
   }
 
-  if (referralReward) {
-    await logAudit({
-      studioId,
-      actorUserId: req.user!.userId,
-      entityType: "GiftCard",
-      entityId: referralReward.giftCardId,
-      action: "referral_reward_issued",
-      changes: {
-        referrerClientId: referralReward.referrerClientId,
-        referredClientId: clientId,
-        amountCents: referralReward.amountCents,
-      },
-    });
-    await logAudit({
-      studioId,
-      actorUserId: req.user!.userId,
-      entityType: "Client",
-      entityId: clientId,
-      action: "referral_reward_triggered",
-      changes: { referrerClientId: referralReward.referrerClientId, giftCardId: referralReward.giftCardId },
-    });
-
-    // Package J's exact pattern: a real SMS, logged into the referrer's own
-    // conversation thread, best-effort (a failed/skipped send never blocks
-    // or rolls back the reward itself -- the gift card and audit trail
-    // above are already real regardless of whether this text goes out).
-    const studio = await prisma.studio.findUnique({ where: { id: studioId }, select: { name: true } });
-    const amount = (referralReward.amountCents / 100).toFixed(2);
-    const publicUrl = await shortenUrl(`${PUBLIC_APP_URL}/gift-card/${referralReward.code}`);
-    const body = `Great news, ${referrerCandidate!.firstName}! ${referredClient!.firstName} just paid their deposit, so you've earned a $${amount} referral reward from ${studio?.name ?? "our studio"}: ${publicUrl} (code ${referralReward.code})`;
-
-    const conversation = await getOrCreateClientConversation(studioId, referralReward.referrerClientId, req.user!.userId);
-    await sendClientSms({
-      studioId,
-      clientId: referralReward.referrerClientId,
-      conversationId: conversation.conversation.id,
-      body,
-      actorUserId: req.user!.userId,
-    });
-  }
-
-  res.json({ ...updatedDepositForm, giftCardId: giftCard.id, referralReward });
+  const updated = await prisma.depositForm.findUnique({ where: { id } });
+  res.json({ ...updated, giftCardId: result.giftCardId });
 });
 
 export { publicRouter, staffRouter };

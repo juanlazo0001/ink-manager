@@ -144,6 +144,7 @@ router.get("/:id", requirePermission("clients.view"), async (req, res) => {
               signedAt: true,
               paidManually: true,
               paidAt: true,
+              paidVia: true,
               giftCard: { select: { id: true, code: true, amountCents: true, status: true } },
             },
             orderBy: { sessionNumber: "asc" },
@@ -1163,6 +1164,11 @@ router.delete("/:id", requireRole(Role.OWNER), async (req, res) => {
     // AppointmentPhoto above -- any inquiry with a staff note on it would
     // otherwise block the inquiry delete below.
     await tx.inquiryNote.deleteMany({ where: { inquiry: { clientId: id } } });
+    // Multi-session planning: PlannedSession.inquiryId is ON DELETE
+    // RESTRICT too (its depositFormId/appointmentId links are already SET
+    // NULL by the deletes above) -- any client with a multi-session
+    // project would otherwise block the inquiry delete below.
+    await tx.plannedSession.deleteMany({ where: { inquiry: { clientId: id } } });
     await tx.inquiry.deleteMany({ where: { clientId: id } });
     await tx.client.delete({ where: { id } });
   });

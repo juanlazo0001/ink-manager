@@ -281,6 +281,9 @@ interface DeletePreview {
   depositForms: number
   giftCardsToDetach: { id: string; code: string; amountCents: number; status: string }[]
   conversationTags: number
+  // Multi-session planning: 0 for any project that never declared more
+  // than one session.
+  plannedSessions: number
 }
 
 const DELETE_CONFIRM_TEXT = 'DELETE'
@@ -2123,7 +2126,7 @@ export default function InquiryDetail() {
                   id="estimate-section"
                   title="Estimate"
                   actions={
-                    !isTerminal && !isConverted && canMessage && !editingEstimate ? (
+                    !isTerminal && !isConverted && canMessage && inquiry.assignedArtist && !editingEstimate ? (
                       <button
                         type="button"
                         onClick={() => setEditingEstimate(true)}
@@ -3895,6 +3898,11 @@ export default function InquiryDetail() {
                           <li>{deletePreview.appointments} appointment{deletePreview.appointments === 1 ? '' : 's'}</li>
                           <li>{deletePreview.waivers} signed waiver{deletePreview.waivers === 1 ? '' : 's'}</li>
                           <li>{deletePreview.depositForms} deposit form{deletePreview.depositForms === 1 ? '' : 's'}</li>
+                          {deletePreview.plannedSessions > 0 && (
+                            <li>
+                              {deletePreview.plannedSessions} planned session{deletePreview.plannedSessions === 1 ? '' : 's'}
+                            </li>
+                          )}
                         </ul>
                         {deletePreview.giftCardsToDetach.length > 0 && (
                           <p className="mt-2 font-semibold text-danger">

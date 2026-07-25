@@ -1,3 +1,5 @@
+import { prisma } from "./prisma";
+import { IntegrationChannel, IntegrationStatus } from "../../generated/prisma/enums";
 import { getStripe } from "./stripe";
 
 // Everything specific to ONBOARDING a studio's Stripe account lives here,
@@ -56,6 +58,25 @@ export async function createOnboardingLink(
 // Called after the studio returns from Stripe's hosted onboarding (and by
 // the account.updated webhook, to keep local status fresh without relying
 // solely on the return redirect actually happening).
+// The one place routes/deposits.ts and routes/appointments.ts (Part 3)
+// both ask "can this studio take a real Stripe payment right now?" --
+// requires the connected account to actually have charges enabled, not
+// merely a StudioIntegration row existing (a studio mid-onboarding, with
+// "Setup incomplete" still showing in Settings, must fall back to
+// manual-only payment collection exactly like a studio with no Stripe
+// connection at all).
+export async function getChargeableConnectedAccountId(studioId: string): Promise<string | null> {
+  const integration = await prisma.studioIntegration.findUnique({
+    where: { studioId_channel: { studioId, channel: IntegrationChannel.STRIPE } },
+  });
+  if (!integration || integration.status !== IntegrationStatus.CONNECTED) return null;
+
+  const metadata = integration.metadata as { stripeAccountId?: string; chargesEnabled?: boolean } | null;
+  if (!metadata?.stripeAccountId || !metadata.chargesEnabled) return null;
+
+  return metadata.stripeAccountId;
+}
+
 export async function getConnectedAccountStatus(accountId: string): Promise<ConnectedAccountStatus> {
   const stripe = getStripe();
   const account = await stripe.accounts.retrieve(accountId);

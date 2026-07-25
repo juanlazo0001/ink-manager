@@ -17,6 +17,9 @@ import { logAudit } from "../lib/audit";
 import { generateUniqueReferralCode } from "../lib/referrals";
 import { sendClientSms } from "../lib/clientSms";
 import { renderTemplate, type ReminderTemplates } from "../lib/reminderTemplates";
+import { getStripe } from "../lib/stripe";
+import { issueGiftCardForPaidDeposit } from "../lib/deposits";
+import { getConnectedAccountStatus } from "../lib/stripeConnect";
 
 const router = Router();
 
@@ -315,6 +318,128 @@ router.post("/twilio/status", async (req, res) => {
   });
 
   return twiml(res);
+});
+
+// Public: one endpoint receives events for every connected studio's Stripe
+// account (a "Connect webhook," not a platform-account webhook) -- see
+// index.ts's own body-parsing special-case for this exact path, which
+// gives this route the raw request bytes constructEvent needs instead of
+// the globally JSON-parsed body every other route gets.
+//
+// Which studio an event belongs to is resolved via the connected account
+// id Stripe puts on the event's own top-level `account` field for any
+// Connect webhook -- never trust a studio id embedded in the payload
+// itself, since nothing here is authenticated the way a Bearer-JWT route
+// is.
+router.post("/stripe", async (req, res) => {
+  const signature = req.header("stripe-signature");
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+  if (!signature || !webhookSecret) {
+    return res.status(400).send("Missing signature or webhook secret");
+  }
+
+  let event;
+  try {
+    event = getStripe().webhooks.constructEvent(req.body as Buffer, signature, webhookSecret);
+  } catch (err) {
+    return res.status(400).send(`Webhook signature verification failed: ${err instanceof Error ? err.message : "unknown error"}`);
+  }
+
+  const connectedAccountId = event.account;
+  if (!connectedAccountId) {
+    // A platform-account-level event (not scoped to any studio) -- nothing
+    // in this app currently needs those; acknowledge and ignore rather
+    // than erroring, since Stripe would otherwise keep retrying forever.
+    return res.status(200).json({ received: true });
+  }
+
+  const integration = await prisma.studioIntegration.findFirst({
+    where: {
+      channel: IntegrationChannel.STRIPE,
+      metadata: { path: ["stripeAccountId"], equals: connectedAccountId },
+    },
+  });
+
+  if (!integration) {
+    // An event for a connected account this app has no record of (e.g. one
+    // that was later disconnected) -- acknowledge, nothing to do.
+    return res.status(200).json({ received: true });
+  }
+
+  const studioId = integration.studioId;
+
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object;
+
+    if (session.payment_status === "paid") {
+      // Deposit form path (Part 2). Part 3 extends this same handler for
+      // the checkout "amount due" Appointment path, keyed the same way
+      // (stripeCheckoutSessionId), just on a different model.
+      const depositForm = await prisma.depositForm.findFirst({
+        where: { stripeCheckoutSessionId: session.id },
+      });
+
+      if (depositForm) {
+        // Idempotency: a webhook retry for the SAME event lands on a
+        // deposit form that already has this exact payment intent
+        // recorded -- acknowledge without re-processing. The underlying
+        // issueGiftCardForPaidDeposit is itself idempotent regardless
+        // (checks giftCardId fresh, inside its own transaction), so this
+        // is a cheap short-circuit on top of that, not the only guard.
+        const paymentIntentId = typeof session.payment_intent === "string" ? session.payment_intent : null;
+        if (depositForm.stripePaymentIntentId !== paymentIntentId) {
+          await prisma.depositForm.update({
+            where: { id: depositForm.id },
+            data: { stripePaymentIntentId: paymentIntentId },
+          });
+        }
+
+        const result = await issueGiftCardForPaidDeposit(depositForm.id, "STRIPE", null);
+        if (!result.ok) {
+          console.error("[webhooks/stripe] Failed to issue gift card for paid deposit", {
+            depositFormId: depositForm.id,
+            error: result.error,
+          });
+        } else {
+          await logAudit({
+            studioId,
+            actorUserId: null,
+            entityType: "DepositForm",
+            entityId: depositForm.id,
+            action: "stripe_payment_confirmed",
+            changes: { stripeCheckoutSessionId: session.id, paymentIntentId, alreadyProcessed: result.alreadyProcessed },
+          });
+        }
+      }
+    }
+  }
+
+  // Keeps Settings -> Integrations' "Payments are live"/"Setup incomplete"
+  // status fresh automatically over time (e.g. Stripe later disabling
+  // charges for a compliance reason), not just at the moment the studio
+  // happens to return from onboarding -- same recommendation Stripe's own
+  // docs give for staying in sync ("Option 2: Listen to webhooks").
+  if (event.type === "account.updated") {
+    try {
+      const status = await getConnectedAccountStatus(connectedAccountId);
+      await prisma.studioIntegration.update({
+        where: { studioId_channel: { studioId, channel: IntegrationChannel.STRIPE } },
+        data: {
+          displayName: status.businessName ?? integration.displayName,
+          metadata: {
+            stripeAccountId: connectedAccountId,
+            chargesEnabled: status.chargesEnabled,
+            payoutsEnabled: status.payoutsEnabled,
+          },
+        },
+      });
+    } catch (err) {
+      console.error("[webhooks/stripe] Failed to sync account.updated status", err);
+    }
+  }
+
+  res.status(200).json({ received: true });
 });
 
 export default router;

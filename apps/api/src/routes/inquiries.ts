@@ -447,7 +447,7 @@ const INQUIRY_INCLUDE = {
       estimatedHoursMax: true,
       depositFormId: true,
       appointmentId: true,
-      depositForm: { select: { id: true, signedAt: true, paidAt: true, paidManually: true } },
+      depositForm: { select: { id: true, signedAt: true, paidAt: true, paidManually: true, paidVia: true } },
       appointment: { select: { id: true, startTime: true, endTime: true, status: true, checkedOutAt: true } },
     },
     orderBy: { sessionNumber: "asc" },
@@ -469,6 +469,7 @@ const INQUIRY_INCLUDE = {
       signatureData: true,
       paidManually: true,
       paidAt: true,
+      paidVia: true,
       proposedStartAt: true,
       proposedEndAt: true,
       giftCard: { select: { id: true, code: true, amountCents: true, status: true } },
@@ -1009,6 +1010,16 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
   // other cross-status inquiry action in this file already uses.
   if (!NON_TERMINAL_STATUSES.includes(inquiry.status)) {
     return res.status(400).json({ error: "An estimate can't be sent on a closed or cold-lead inquiry" });
+  }
+
+  // An artist must be assigned before staff can even enter numbers -- the
+  // estimate (price/time, or a whole session plan) is specific to that
+  // artist's own work, and this closes the same "never assigned" gap the
+  // deposit-form gate exists for (an inquiry that reached this route
+  // unassigned used to be able to sail all the way to a paid deposit
+  // before that gate ever caught it).
+  if (!inquiry.assignedArtistId) {
+    return res.status(400).json({ error: "Assign an artist before entering an estimate" });
   }
 
   for (const [field, value] of Object.entries({
@@ -2328,7 +2339,7 @@ async function gatherInquiryDeletionSummary(inquiryId: string) {
   const appointments = await prisma.appointment.findMany({ where: { inquiryId }, select: { id: true } });
   const appointmentIds = appointments.map((a) => a.id);
 
-  const [waivers, depositFormCount, attachedGiftCards, conversationTagCount] = await Promise.all([
+  const [waivers, depositFormCount, attachedGiftCards, conversationTagCount, plannedSessionCount] = await Promise.all([
     prisma.liabilityWaiver.count({ where: { appointmentId: { in: appointmentIds } } }),
     // Package M: could be several now (one per session), not just 0 or 1.
     prisma.depositForm.count({ where: { inquiryId } }),
@@ -2344,6 +2355,9 @@ async function gatherInquiryDeletionSummary(inquiryId: string) {
         ],
       },
     }),
+    // Multi-session planning: 0 for any project that never declared more
+    // than one session.
+    prisma.plannedSession.count({ where: { inquiryId } }),
   ]);
 
   return {
@@ -2352,6 +2366,7 @@ async function gatherInquiryDeletionSummary(inquiryId: string) {
     depositForms: depositFormCount,
     giftCardsToDetach: attachedGiftCards.map((card) => ({ id: card.id, code: card.code, amountCents: card.amountCents, status: card.status })),
     conversationTags: conversationTagCount,
+    plannedSessions: plannedSessionCount,
   };
 }
 
@@ -2398,6 +2413,14 @@ router.delete("/:id", requireAuth, requireRole(Role.OWNER), async (req, res) => 
     // the appointment delete below.
     await tx.inquiry.update({ where: { id }, data: { appointmentId: null } });
     await tx.appointment.deleteMany({ where: { inquiryId: id } });
+
+    // Multi-session planning: PlannedSession.inquiryId is ON DELETE
+    // RESTRICT (its depositFormId/appointmentId links are already SET
+    // NULL by the deletes above, so those never block anything) -- without
+    // this, deleting the Inquiry itself below would fail with a foreign
+    // key violation for any project that ever declared more than one
+    // session.
+    await tx.plannedSession.deleteMany({ where: { inquiryId: id } });
     await tx.inquiry.delete({ where: { id } });
   });
 

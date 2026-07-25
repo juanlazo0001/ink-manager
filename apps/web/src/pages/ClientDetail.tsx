@@ -47,6 +47,7 @@ interface DepositFormSummary {
   signedAt: string | null
   paidManually: boolean
   paidAt: string | null
+  paidVia: 'STRIPE' | 'MANUAL' | null
   giftCard: { id: string; code: string; amountCents: number; status: string } | null
 }
 
@@ -1961,7 +1962,9 @@ export default function ClientDetail() {
                               {form.signedAt ? formatDateTime(form.signedAt) : 'Pending'}
                             </td>
                             <td className="py-3 text-fg-secondary">
-                              {form.paidManually ? (form.paidAt ? formatDateTime(form.paidAt) : 'Yes') : 'Not yet'}
+                              {form.paidManually
+                                ? `${form.paidAt ? formatDateTime(form.paidAt) : 'Yes'}${form.paidVia === 'STRIPE' ? ' (Stripe)' : ''}`
+                                : 'Not yet'}
                             </td>
                             <td className="hidden py-3 text-fg-secondary lg:table-cell">
                               {form.giftCard ? `${form.giftCard.code.slice(0, 8)}…` : '—'}
