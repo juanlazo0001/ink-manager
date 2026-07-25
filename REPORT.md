@@ -2184,3 +2184,59 @@ Confirmed the full pipeline end-to-end via direct API calls (drawing the signatu
 ## Cleanup
 
 All ad-hoc Playwright scripts, screenshots, and the tiny test PNG fixture deleted from the scratch `pw-test` directory; none committed. No background shells were started this session (the dev API/web servers were already running from prior work and were left as-is, despite the other session's edits causing repeated restarts).
+
+---
+
+# Feature — Granular permissions expansion (8 → 49 configurable keys)
+
+Single session on `main`. No schema migration (`RolePermission.permissionKey` was already free-form text) — confirmed a concurrent session had an in-progress, uncommitted schema change (waiver signature pads) at the start of this one; since this task needed no schema change of its own, proceeded without touching `schema.prisma` or their migration, and that work landed as its own commit (`6a0b17c`) partway through this session without incident.
+
+## Final count: 49 configurable keys (not the prompt's estimated 46)
+
+Counted precisely rather than forced to match the estimate: 43 genuinely new keys + `locations.manage` (already existed, just re-grouped) + 5 pre-existing untouched keys (`studio.manage`, `artists.manage`, `artists.view`, `appointments.create`, `appointments.view`) = 49. The three-key gap from "46" is just the prompt's estimate not accounting for those five carried-over keys — reported honestly rather than dropping/merging real keys to hit a round number.
+
+## The five safety-floor items — confirmed unreachable via the matrix
+
+All five investigated first and left exactly as they were (hardcoded `requireRole`, never touched):
+
+1. **Waiver health answers / ID images** — `waivers.ts`'s `staffRouter.use(requireRole(OWNER, FRONT_DESK))` router-level gate, untouched. A new narrow `GET /waivers/:id/status` (status/signedAt/verifiedAt only, registered *before* that gate) is what `waivers.viewStatus` actually governs for ARTIST — the full-detail route stays behind the same hardcoded wall it always was.
+2. **Exempt gift card issuance** — `POST /gift-cards/exempt` stays `requireRole(Role.OWNER)`. Verified: granting FRONT_DESK `giftCards.issue=true` (a real, matrix-configurable key) still gets a `403` on this specific route.
+3. **Permanently deleting a client or inquiry** — both `DELETE` routes and their `delete-preview` companions untouched.
+4. **Editing the permission matrix itself** — `GET`/`PATCH /:studioId/permissions` stay `requireRole(Role.OWNER)`; verified FRONT_DESK gets `403` on both regardless of any other grant.
+5. **Studio integrations** — `integrations.ts`'s `router.use(requireRole(Role.OWNER))` (everything past the connection-status read) untouched; verified FRONT_DESK gets `403` on `GET /integrations`.
+
+None of the 49 keys are named anything resembling these five capabilities — confirmed by grepping the final key list for floor-adjacent guesses (`waivers.healthAnswers`, `giftCards.exempt`, `clients.delete`, `permissions.manage`, etc.) and finding zero matches.
+
+## The two-key split — override propagation
+
+`clients.manage` (gated the entire `clients.ts` router as one blanket permission) → `clients.view`/`edit`/`merge`/`archive`/`import`. `appointments.manage` (gated `PATCH /:id` + archive/unarchive, all three sharing that one key) → `appointments.reschedule` (the one successor all three now share — `appointments.checkout`/`photos.manage` were never actually gated by `appointments.manage`, they were separately hardcoded `requireRole(OWNER, FRONT_DESK)`, so they get no propagated override).
+
+Ran a one-time idempotent script (`_propagate_permission_overrides.ts`, archived to the scratchpad, not committed — needs to run once against production before this deploys there, same as it ran once against dev here) that copies every existing `(studio, role)` override on the two old keys onto every successor key. **Tested by deliberately setting a custom override first** (per the task's own suggestion): set `clients.manage=false` and `appointments.manage=false` for `FRONT_DESK` in `dev-studio`, ran the script, and confirmed all 5 `clients.*` successors and `appointments.reschedule` came out `false` for that same role — verified via a direct DB read, not just the script's own success log. Old key rows were left in the table afterward (never deleted), then the actual key list stopped referencing them (removed from `PERMISSION_KEYS`, so `hasPermission`/the matrix UI never look at them again).
+
+## Corrected defaults (reality didn't match the prompt's table)
+
+- **`reports.viewDashboard`**: prompt assumed `AR✗`. The actual route (`GET /reports/dashboard`) was `requireRole(OWNER, FRONT_DESK, ARTIST)` — ARTIST already had it. Kept `AR✓` to match current reality, per this task's own overriding rule ("seed defaults so behavior is identical to today").
+- **`reports.viewFinancial`**: a genuinely deliberate tightening, not a same-as-today default — today's single combined dashboard response includes `depositConversion`/`giftCardLiability` (real dollar figures) for all three roles with zero separation. Split those two sections out behind this new key, defaulting `FD✓/AR✗` exactly as the prompt specified. This is a real, immediate behavior change on deploy (ARTIST loses default visibility into gift-card-liability/deposit-conversion totals) — flagged here explicitly since it's the one place this session changed live behavior rather than preserving it.
+- **`appointments.reschedule`**: not a wrong default, but a scope note — the old `appointments.manage` covered `PATCH /:id` *and* archive/unarchive together; rather than inventing a 4th key the prompt's list didn't ask for, all three stayed on the one new key so their access never diverges from each other.
+
+## A real bug the larger matrix exposed (found during verification, fixed)
+
+`PATCH /:studioId/permissions` did one `prisma.rolePermission.upsert()` per `(role, key)` update inside a single Prisma interactive `$transaction([...])`. At 8 keys × up to 3 roles this was at most ~24 round trips and never a problem; at 49 keys × the 2 roles the Settings UI now actually sends per save, that's up to 98 sequential round trips against the remote Railway Postgres instance — which blew Prisma's default 5-second transaction timeout (`P2028`) and 500'd every real save from the browser. Caught by browser verification (not the direct-API script, which sends far fewer updates per call), confirmed via the API's own error log, and fixed with a single bulk `INSERT ... ON CONFLICT ("studioId","role","permissionKey") DO UPDATE` (`studios.ts`) — one round trip regardless of matrix size. Re-verified: save now returns `200`, and the toggle survives a full page reload.
+
+## Verification
+
+**Backend** (direct-API script, 33/34 passed — the one "failure" was a test-script assumption, not a bug: expected `404` for ARTIST hitting the full waiver-detail route, got `403`, which is actually the *stronger* correct behavior since the router-level floor gate rejects the role before the handler ever checks whether the waiver exists): matrix contains all 49 keys and zero retired ones; floor items confirmed unreachable (see above); toggling `inquiries.view`/`clients.view`/`appointments.checkout`/`giftCards.void`/`team.manage` visibly flips FRONT_DESK access on the exact route each governs, with OWNER unaffected throughout; `clients.merge` gates independently of `clients.view`/`edit`; the new `/waivers/:id/status` endpoint is reachable by ARTIST while the full-detail route stays blocked; `conversations.viewClientThreads` toggling actually removes CLIENT-type threads from the FRONT_DESK conversation list (not just a role check); `tasks.viewQueue` off empties the system-task array for FRONT_DESK exactly like ARTIST's existing default; `artistSchedules.manage=true` still can't touch a *different* artist's schedule (own-scoping survives the toggle); `settings.manageTheme` gates a theme-only PATCH independently of `settings.manageDefaults`, and a mixed request touching both an allowed and a disallowed field-group is rejected outright, not partially applied; `reports.viewFinancial` toggling adds/removes the two financial sections from the dashboard response, OWNER always sees them; cross-studio access to the permissions endpoint itself is `403`.
+
+**Browser** (Playwright, screenshots reviewed directly): Settings → Team → Permissions shows all 11 groups collapsed by default with an enabled-count per group, no raw key names anywhere (every row has a plain-language label + one-line description); "Owner always has full access" renders as a static note above the groups, not a column — confirmed literally zero "Owner" column header in the table; expanding a group shows exactly two columns, Front Desk and Artist; toggling a checkbox, clicking Save, and reloading the page confirmed the change survived (this is what caught the transaction-timeout bug above — the direct-API script's smaller per-call payloads never hit it).
+
+## Typechecks
+
+`npx tsc --noEmit` (api) — clean. `npx tsc --noEmit` + `npm run build` (web) — clean.
+
+## Commit
+
+`0fb769a` — Expand permission matrix from 8 to 49 configurable keys. Pushed immediately after a collision check (`git fetch` + `git log HEAD..origin/main`) came back empty. Verified the concurrent session's own uncommitted schema/waivers.ts work (present at this session's start) was never touched or reverted — `git diff` on `waivers.ts` showed only additive permission-gate changes layered on top of their already-landed signature-pad code.
+
+## Cleanup
+
+Both scratch dev servers (API :5501, web :6501) stopped by PID — including one `tsx watch` auto-reload that crashed with `EADDRINUSE` mid-session and had to be force-killed and restarted manually to pick up the transaction-timeout fix. All temporary verification scripts (`verify_permissions.mjs`, `verify_permissions_ui.mjs`, `verify_permissions_ui2.mjs`) and screenshots left scratchpad-only, none committed. The one-time override-propagation script was moved to the scratchpad (not committed) after running it against dev — still needed as a manual one-off step before this deploys to production (propagate overrides, in that order, before the code that stops reading the old keys ships). Test overrides set during verification (several `FRONT_DESK`/`ARTIST` toggles in `dev-studio`, including a deliberate `clients.manage`/`appointments.manage=false` override used to test propagation) were left in the dev database except where a script explicitly reverted them (`inquiries.markLost`, confirmed via a reload check) — consistent with this session's standing convention, and fully reversible by any OWNER revisiting the Permissions tab.
