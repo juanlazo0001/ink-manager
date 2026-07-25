@@ -15,6 +15,9 @@ import { getOrCreateClientConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
 import { resolveImageMeta } from "../lib/imageMeta";
 import { NOTE_AUTHOR_SELECT, canModifyNote, isBlankHtml, isValidAttachments } from "../lib/notes";
+import { getChargeableConnectedAccountId } from "../lib/stripeConnect";
+import { createDirectChargeCheckoutSession } from "../lib/stripe";
+import { PUBLIC_APP_URL } from "../lib/publicUrl";
 
 const router = Router();
 
@@ -642,6 +645,14 @@ router.post("/:id/checkout", requirePermission("appointments.checkout"), async (
     // one per redeemed card -- reusing the exact same issuance shape every
     // other gift card in this codebase is created with (code, studio-
     // default expiration, issuedById), just fed the combined sum.
+    //
+    // derivedFromGiftCardId is a single nullable FK, so it can only ever
+    // point at ONE origin card -- set it when exactly one card was
+    // redeemed (the common case this field exists for), left null when
+    // multiple redeemed cards combine into the overage, since there's no
+    // single "the" origin in that case. The audit entry below always
+    // records every contributing card id regardless, so the multi-card
+    // case is still fully traceable, just not via this FK.
     let newGiftCard = null;
     if (overageCents > 0 && overageCode) {
       newGiftCard = await tx.giftCard.create({
@@ -652,6 +663,7 @@ router.post("/:id/checkout", requirePermission("appointments.checkout"), async (
           amountCents: overageCents,
           expiresAt: computeGiftCardExpiration(studioSettings?.giftCardDefaultExpirationDays ?? null),
           issuedById: req.user!.userId,
+          derivedFromGiftCardId: redeemedCards.length === 1 ? redeemedCards[0].id : null,
         },
       });
     }
@@ -682,7 +694,9 @@ router.post("/:id/checkout", requirePermission("appointments.checkout"), async (
       exemptGiftCardIds: exemptCards.map((c) => c.id),
       redeemedTotalCents,
       amountDueCents,
-      ...(overageCents > 0 ? { overageCents, newGiftCardId: newGiftCard?.id } : {}),
+      ...(overageCents > 0
+        ? { overageCents, newGiftCardId: newGiftCard?.id, derivedFromGiftCardId: newGiftCard?.derivedFromGiftCardId ?? null }
+        : {}),
     },
   });
 
@@ -728,7 +742,114 @@ router.post("/:id/checkout", requirePermission("appointments.checkout"), async (
     });
   }
 
-  res.json({ ...updated, amountDueCents, overageCents, newGiftCard });
+  // The new overage card's own audit trail entry -- separate from the
+  // per-redeemed-card "redeemed" entries above, this is the new card's
+  // FIRST entry, recording where it came from and for how much (both
+  // amounts: what was redeemed and what carried over as the new card).
+  if (newGiftCard) {
+    await logAudit({
+      studioId,
+      actorUserId: req.user!.userId,
+      entityType: "GiftCard",
+      entityId: newGiftCard.id,
+      action: "issued_from_overage",
+      changes: {
+        derivedFromGiftCardId: newGiftCard.derivedFromGiftCardId,
+        redeemedTotalCents,
+        finalCostCents,
+        overageCents,
+        appointmentId: id,
+      },
+    });
+  }
+
+  // Real charge for the remaining balance (Part 3), same direct-charge +
+  // application-fee pattern as the deposit checkout session (Part 2).
+  // Checkout itself is already complete at this point regardless of
+  // whether this succeeds -- collecting the amount due is a separate,
+  // decoupled concern from "the session happened and is in the books,"
+  // same reasoning as why the manual mark-as-charged fallback below can
+  // apply after the fact. A studio without Stripe connected, or an
+  // appointment with nothing left to pay, gets no checkout session and no
+  // change in behavior from before this feature existed.
+  let checkoutUrl: string | null = null;
+  let stripeCheckoutSessionId: string | null = null;
+  if (amountDueCents > 0) {
+    const stripeAccountId = await getChargeableConnectedAccountId(studioId);
+    if (stripeAccountId) {
+      try {
+        const session = await createDirectChargeCheckoutSession({
+          connectedAccountId: stripeAccountId,
+          amountCents: amountDueCents,
+          productName: "Tattoo session balance",
+          successUrl: `${PUBLIC_APP_URL}/appointments/pay-complete?status=success`,
+          cancelUrl: `${PUBLIC_APP_URL}/appointments/pay-complete?status=canceled`,
+          metadata: { appointmentId: id },
+        });
+        await prisma.appointment.update({
+          where: { id },
+          data: { stripeCheckoutSessionId: session.id },
+        });
+        checkoutUrl = session.url;
+        stripeCheckoutSessionId = session.id;
+      } catch (err) {
+        console.error("[appointments/checkout] Failed to create Stripe Checkout Session", {
+          appointmentId: id,
+          error: err instanceof Error ? err.message : err,
+        });
+      }
+    }
+  }
+
+  res.json({ ...updated, stripeCheckoutSessionId, amountDueCents, overageCents, newGiftCard, checkoutUrl });
+});
+
+// Manual fallback for collecting the amount due at checkout -- cash/comp,
+// or Stripe simply isn't connected for this studio. Same paidVia labeling
+// convention as deposits (routes/deposits.ts's mark-paid): this sets
+// "MANUAL", the webhook-driven Stripe path sets "STRIPE", already-paid
+// (either way) is a 400 rather than a silent no-op re-charge.
+router.patch("/:id/mark-charged", requirePermission("appointments.checkout"), async (req, res) => {
+  const id = req.params.id as string;
+  const studioId = req.user!.studioId;
+
+  const appointment = await prisma.appointment.findUnique({ where: { id }, include: { giftCards: true } });
+  if (!appointment || appointment.studioId !== studioId) {
+    return res.status(404).json({ error: "Appointment not found" });
+  }
+  if (!appointment.checkedOutAt || appointment.finalCostCents == null) {
+    return res.status(400).json({ error: "This appointment hasn't been checked out yet" });
+  }
+  if (appointment.paidVia) {
+    return res.status(400).json({ error: "This appointment's balance has already been marked paid" });
+  }
+
+  // Same as the checkout route's own read: REDEEMED cards stay attached
+  // (appointmentId untouched) post-checkout, ROLL/EXEMPT cards were
+  // detached -- so appointment.giftCards is exactly the redeemed set.
+  const redeemedTotalCents = appointment.giftCards.reduce((sum, c) => sum + c.amountCents, 0);
+  const amountDueCents = Math.max(0, appointment.finalCostCents - redeemedTotalCents);
+  if (amountDueCents <= 0) {
+    return res.status(400).json({ error: "There's no remaining balance on this appointment to mark as charged" });
+  }
+
+  const updated = await prisma.appointment.update({
+    where: { id },
+    data: { paidVia: "MANUAL" },
+  });
+
+  await logAudit({
+    studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Appointment",
+    entityId: id,
+    action: "marked_charged_manually",
+    changes: { paidVia: { from: null, to: "MANUAL" }, amountDueCents },
+  });
+
+  emitInvalidation({ type: "appointment.changed", studioId });
+
+  res.json(updated);
 });
 
 // Lightweight counterpart to /:id/checkout for a CONSULTATION -- same

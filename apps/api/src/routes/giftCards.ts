@@ -26,6 +26,11 @@ const GIFT_CARD_DETAIL_INCLUDE = {
   },
   issuedBy: { select: { id: true, name: true, email: true } },
   client: { select: { id: true, firstName: true, lastName: true } },
+  // Checkout overage (Part 3): when this card was issued from redeeming a
+  // larger one down to its exact remaining difference, this surfaces
+  // where it came from -- support/audit clarity, not needed for the
+  // normal gift-card-issuance paths where it's always null.
+  derivedFromGiftCard: { select: { id: true, code: true, amountCents: true } },
 } as const;
 
 // Public: the card's own code is the bearer token here, and deliberately

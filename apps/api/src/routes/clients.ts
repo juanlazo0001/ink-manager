@@ -365,7 +365,10 @@ router.get("/:id/shareable-links", requirePermission("clients.view"), async (req
         },
         orderBy: { createdAt: "desc" },
       },
-      giftCards: { select: { id: true, code: true, amountCents: true, status: true }, orderBy: { createdAt: "desc" } },
+      giftCards: {
+        select: { id: true, code: true, amountCents: true, status: true, derivedFromGiftCardId: true },
+        orderBy: { createdAt: "desc" },
+      },
       appointments: {
         select: {
           id: true,

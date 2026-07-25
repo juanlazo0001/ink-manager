@@ -373,8 +373,8 @@ router.post("/stripe", async (req, res) => {
     const session = event.data.object;
 
     if (session.payment_status === "paid") {
-      // Deposit form path (Part 2). Part 3 extends this same handler for
-      // the checkout "amount due" Appointment path, keyed the same way
+      // Deposit form path (Part 2). See the Appointment lookup below for
+      // the checkout "amount due" path (Part 3), keyed the same way
       // (stripeCheckoutSessionId), just on a different model.
       const depositForm = await prisma.depositForm.findFirst({
         where: { stripeCheckoutSessionId: session.id },
@@ -411,6 +411,31 @@ router.post("/stripe", async (req, res) => {
             changes: { stripeCheckoutSessionId: session.id, paymentIntentId, alreadyProcessed: result.alreadyProcessed },
           });
         }
+      }
+
+      // Checkout "amount due" path (Part 3) -- same session-id lookup,
+      // just on Appointment instead of DepositForm. No gift card to issue
+      // here (that only happens on deposits); this just records the
+      // payment. Idempotent the same way: a retry that finds paidVia
+      // already set is a no-op, never a re-processing.
+      const appointment = await prisma.appointment.findFirst({
+        where: { stripeCheckoutSessionId: session.id },
+      });
+
+      if (appointment && !appointment.paidVia) {
+        const paymentIntentId = typeof session.payment_intent === "string" ? session.payment_intent : null;
+        await prisma.appointment.update({
+          where: { id: appointment.id },
+          data: { paidVia: "STRIPE", stripePaymentIntentId: paymentIntentId },
+        });
+        await logAudit({
+          studioId,
+          actorUserId: null,
+          entityType: "Appointment",
+          entityId: appointment.id,
+          action: "stripe_payment_confirmed",
+          changes: { stripeCheckoutSessionId: session.id, paymentIntentId },
+        });
       }
     }
   }

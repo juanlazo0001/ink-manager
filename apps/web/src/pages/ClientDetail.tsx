@@ -76,6 +76,7 @@ interface GiftCard {
   appointmentId: string | null
   createdAt: string
   exemptionReason: string | null
+  derivedFromGiftCardId: string | null
 }
 
 interface WaiverSummary {
@@ -1814,7 +1815,14 @@ export default function ClientDetail() {
                               onClick={() => navigate(`/gift-cards/${card.id}`)}
                               className="cursor-pointer hover:bg-surface/40"
                             >
-                              <td className="py-3 font-mono text-xs text-fg">{card.code}</td>
+                              <td className="py-3 font-mono text-xs text-fg">
+                                {card.code}
+                                {card.derivedFromGiftCardId && (
+                                  <span className="mt-0.5 block font-sans text-[11px] font-normal normal-case text-fg-muted">
+                                    Issued from redeeming another card
+                                  </span>
+                                )}
+                              </td>
                               <td className="py-3 text-fg-secondary">
                                 {card.status === 'EXEMPT' ? 'Deposit Exemption' : formatCents(card.amountCents)}
                                 {card.exemptionReason && (

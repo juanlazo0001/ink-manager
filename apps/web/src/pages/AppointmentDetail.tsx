@@ -73,6 +73,7 @@ interface Appointment {
   closeoutNotes: string | null
   checkedOutAt: string | null
   checkedOutBy: { id: string; name: string | null; email: string } | null
+  paidVia: 'STRIPE' | 'MANUAL' | null
   client: { id: string; firstName: string; lastName: string }
   artist: { id: string; user: { email: string; name: string | null; avatarUrl: string | null } }
   inquiry: {
@@ -189,10 +190,13 @@ export default function AppointmentDetail() {
   const [checkingOut, setCheckingOut] = useState(false)
   const [checkoutError, setCheckoutError] = useState<string | null>(null)
   const [checkoutResult, setCheckoutResult] = useState<{
+    checkoutUrl: string | null
     amountDueCents: number
     overageCents: number
     newGiftCard: { id: string; code: string; amountCents: number } | null
   } | null>(null)
+  const [markingCharged, setMarkingCharged] = useState(false)
+  const [markChargedError, setMarkChargedError] = useState<string | null>(null)
   // Package N: staged during checkout (optional -- staff can skip and add
   // later), plus a second, always-available upload for "forgot at
   // checkout" or just adding more later. Two independent pickers so
@@ -378,7 +382,12 @@ export default function AppointmentDetail() {
     setCheckoutError(null)
 
     try {
-      const result = await apiFetch<{ amountDueCents: number; overageCents: number; newGiftCard: { id: string; code: string; amountCents: number } | null }>(
+      const result = await apiFetch<{
+        checkoutUrl: string | null
+        amountDueCents: number
+        overageCents: number
+        newGiftCard: { id: string; code: string; amountCents: number } | null
+      }>(
         `/appointments/${id}/checkout`,
         {
           method: 'POST',
@@ -414,6 +423,21 @@ export default function AppointmentDetail() {
       setCheckoutError(err instanceof Error ? err.message : 'Failed to check out this appointment')
     } finally {
       setCheckingOut(false)
+    }
+  }
+
+  async function handleMarkCharged() {
+    if (!id) return
+    setMarkingCharged(true)
+    setMarkChargedError(null)
+    try {
+      await apiFetch(`/appointments/${id}/mark-charged`, { method: 'PATCH' })
+      if (user) queryClient.invalidateQueries({ queryKey: appointmentsQueryKey(user.studioId) })
+      setRefreshIndex((i) => i + 1)
+    } catch (err) {
+      setMarkChargedError(err instanceof Error ? err.message : 'Failed to mark this balance as charged')
+    } finally {
+      setMarkingCharged(false)
     }
   }
 
@@ -1313,6 +1337,47 @@ export default function AppointmentDetail() {
                           </p>
                         </div>
                       </div>
+
+                      {checkoutAmountDue !== null && checkoutAmountDue > 0 && (
+                        <div className="rounded-lg border border-border p-3">
+                          {appointment.paidVia ? (
+                            <p className="text-success">
+                              {formatCents(checkoutAmountDue)} paid via {appointment.paidVia === 'STRIPE' ? 'Stripe' : 'manual/cash'}.
+                            </p>
+                          ) : checkoutResult?.checkoutUrl ? (
+                            <div className="space-y-2">
+                              <p className="text-fg-secondary">
+                                Have the client pay {formatCents(checkoutAmountDue)} on a device now, or collect it
+                                another way and mark it charged below.
+                              </p>
+                              <a
+                                href={checkoutResult.checkoutUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-block rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover"
+                              >
+                                Open Stripe payment link
+                              </a>
+                            </div>
+                          ) : (
+                            <p className="text-fg-secondary">{formatCents(checkoutAmountDue)} still owed.</p>
+                          )}
+
+                          {!appointment.paidVia && (
+                            <div className="mt-2">
+                              <button
+                                type="button"
+                                onClick={handleMarkCharged}
+                                disabled={markingCharged}
+                                className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                              >
+                                {markingCharged ? 'Marking…' : 'Mark as charged (cash/other)'}
+                              </button>
+                              {markChargedError && <p className="mt-1 text-sm text-danger">{markChargedError}</p>}
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                       {checkoutOverage > 0 &&
                         (checkoutResult?.newGiftCard ? (

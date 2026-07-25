@@ -28,6 +28,7 @@ interface GiftCard {
   issuedBy: { id: string; name: string | null; email: string } | null
   exemptionReason: string | null
   publicUrl: string
+  derivedFromGiftCard: { id: string; code: string; amountCents: number } | null
 }
 
 export default function GiftCardDetail() {
@@ -220,6 +221,17 @@ export default function GiftCardDetail() {
                           {card.issuedBy ? (card.issuedBy.name ?? card.issuedBy.email) : 'Deleted user'}
                         </p>
                       </div>
+                      {card.derivedFromGiftCard && (
+                        <div>
+                          <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Origin</p>
+                          <p className="mt-1 text-sm text-fg">
+                            Issued from redeeming{' '}
+                            <Link to={`/gift-cards/${card.derivedFromGiftCard.id}`} className="hover:underline">
+                              gift card {card.derivedFromGiftCard.code.slice(0, 8)}…
+                            </Link>
+                          </p>
+                        </div>
+                      )}
                     </div>
                   </div>
 
