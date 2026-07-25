@@ -828,7 +828,7 @@ export default function InquiryDetail() {
       timeEstimateHoursMin: inquiry.timeEstimateHoursMin?.toString() ?? '',
       timeEstimateHoursMax: inquiry.timeEstimateHoursMax?.toString() ?? '',
     })
-    setEditingEstimate(!inquiry.estimateSentAt)
+    setEditingEstimate(!inquiry.estimateSentAt && !!inquiry.assignedArtist)
     setDetailsForm({
       description: inquiry.description,
       colorOrBlackGrey: inquiry.colorOrBlackGrey,
@@ -2244,6 +2244,10 @@ export default function InquiryDetail() {
                     </div>
                   )}
 
+                  {!isTerminal && !isConverted && canMessage && !inquiry.assignedArtist && (
+                    <p className="mt-4 text-sm text-fg-muted">Assign an artist before entering an estimate.</p>
+                  )}
+
                   {!isTerminal && !isConverted && canMessage && editingEstimate && (
                     <>
                       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -2463,7 +2467,14 @@ export default function InquiryDetail() {
                 </Widget>
               )}
 
-              {(inquiry.status === 'DEPOSIT_PENDING' || isConverted || depositForms.length > 0) && (
+              {/* Multi-session planning: once a plan exists, this widget's
+                  own interactive section never renders (Session Plan is
+                  the one place to generate a deposit for a specific
+                  session -- see that gate further below) -- so showing
+                  this box before any deposit form has actually been
+                  generated would just be an empty, confusing shell. */}
+              {(depositForms.length > 0 ||
+                (inquiry.plannedSessions.length === 0 && (inquiry.status === 'DEPOSIT_PENDING' || isConverted))) && (
                 <Widget
                   key="deposit"
                   id="deposit"
@@ -3218,15 +3229,26 @@ export default function InquiryDetail() {
                             </div>
                           )}
 
-                          {depositStatus === 'paid' && appointmentStatus === 'not_booked' && canMessage && (
-                            <button
-                              type="button"
-                              onClick={() => setBookingPlannedSessionId(ps.id)}
-                              className="mt-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
-                            >
-                              Book Appointment
-                            </button>
-                          )}
+                          {/* This session's own deposit doesn't have to be
+                              the thing covering it -- gift cards (a rolled-
+                              forward one from another session, say) and
+                              deposit exemptions stack across the whole
+                              client, not per session (Phase 3). The booking
+                              modal's own GiftCardStackPicker still enforces
+                              that enough is actually selected before
+                              Create Appointment is enabled -- this is just
+                              about whether the button is worth showing. */}
+                          {(depositStatus === 'paid' || hasAvailableGiftCard) &&
+                            appointmentStatus === 'not_booked' &&
+                            canMessage && (
+                              <button
+                                type="button"
+                                onClick={() => setBookingPlannedSessionId(ps.id)}
+                                className="mt-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                              >
+                                Book Appointment
+                              </button>
+                            )}
                         </div>
                       )
                     })}

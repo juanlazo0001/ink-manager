@@ -244,14 +244,17 @@ export default function AppointmentForm({
   const effectiveInquiryId = fixedInquiryId ?? inquiryId
   const selectedInquiry = availableInquiries.find((i) => i.id === effectiveInquiryId)
 
-  // Multi-session planning: offered only for a session with a paid
-  // deposit and no appointment yet -- exactly the task's own "pick which
-  // planned session this fulfills" scope. Empty for every project with no
-  // declared plan, so this whole picker (and the duration override below)
-  // stays invisible for the ordinary single-session case.
-  const availablePlannedSessions = (selectedInquiry?.plannedSessions ?? []).filter(
-    (ps) => ps.depositForm?.paidAt != null && !ps.appointmentId,
-  )
+  // Multi-session planning: offered for any session with no appointment
+  // yet, regardless of whether THAT session's own deposit form is what's
+  // covering it -- gift cards and deposit exemptions stack across the
+  // whole client (Phase 3), not per session, so a rolled-forward card
+  // from an earlier session (or an exemption) can perfectly well satisfy
+  // this one. The GiftCardStackPicker below still independently enforces
+  // that enough is actually selected before Create Appointment is
+  // enabled. Empty for every project with no declared plan, so this whole
+  // picker (and the duration override below) stays invisible for the
+  // ordinary single-session case.
+  const availablePlannedSessions = (selectedInquiry?.plannedSessions ?? []).filter((ps) => !ps.appointmentId)
   const selectedPlannedSession = availablePlannedSessions.find((ps) => ps.id === plannedSessionId)
 
   // Service lines: once a project is known, the artist picker narrows to
