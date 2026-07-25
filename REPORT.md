@@ -2399,3 +2399,52 @@ Read both `lib/schedulingConflict.ts`'s `findBufferConflict` and `lib/scheduling
 ## Cleanup
 
 Both scratch dev servers (API :5501, web :6501, logging to `api5.log`/`vite5.log`) stopped by PID. Temporary verification scripts (`verify_consultation_api.mjs`, `verify_consultation_task.mjs`, `verify_consultation_ui.mjs`, `verify_consultation_complete.mjs`, plus a couple of one-off debug scripts) and screenshots left scratchpad-only, none committed. Test data created during verification (a consultation appointment and its completion, a backdated consultation for the task check, a rejected cross-studio attempt) left in the dev database, consistent with this session's standing convention.
+
+---
+
+# Feature — Project pipeline timeline (Scheduled -> Waiver Verified -> Session Complete -> Project Complete)
+
+Single session on `main`. Extends the existing 5-step Inquiry pipeline widget (`InquiryPipeline.tsx`) to a second, project-specific 4-step stage set rather than building a second component -- confirmed no other session was mid-migration before starting, though one turned out to start mid-session (see the concurrency section below, which affected this session's git workflow more than its actual implementation).
+
+## Stage derivation
+
+Investigated the existing component first: `PIPELINE_STEPS`/`currentStepIndex(status)` were hardwired module-level constants, not props, despite the "same widget, different stage list" framing implying otherwise -- generalized it with optional `steps`/`activeIndex` props (falling back to the original status-driven behavior for its two other unrelated callers, `ConversationsPanel.tsx` and the Kanban board's `PIPELINE_STEPS` import, both left completely untouched).
+
+Three of the four Project stages derive live from `inquiry.sessions` (already `startTime` ascending from the backend, extended with `checkedOutAt`/`liabilityWaiver.status` -- no new fetch):
+- **Scheduled**: complete once `sessions.length > 0` -- not merely `SCHEDULING` status, which a converted-but-not-yet-booked project can sit in with zero real appointments (verified: a project at that exact state showed Scheduled as the current, not-yet-checkmarked step).
+- **Waiver Verified** / **Session Complete**: both key off the "current" session -- `sessions.find(s => !s.checkedOutAt)`, the earliest not-yet-checked-out appointment. Verified is required (not merely `SIGNED`) for Waiver Verified to advance.
+- **Project Complete**: the fourth stage is NOT derived -- it reflects `Inquiry.projectCompletedAt` directly, set/cleared by two new routes (`POST /inquiries/:id/complete-project` / `/reopen-project`) mirroring the existing mark-lost/reopen pair's exact pattern (audited via `diffObjects`, `emitInvalidation`, same `inquiries.edit` permission). When every session is checked out but this hasn't been set, the timeline sits at "Session Complete" (index 3, Project Complete shown as the current/actionable step) rather than auto-advancing -- confirmed via the derivation function's own index math (`activeIndex = PROJECT_STEPS.length` only once `projectCompletedAt` is actually set, checkmarking all four).
+
+## Multi-session "current appointment" tracking, tested with a real multi-session project
+
+Booked two real sessions (via `POST /appointments`, gift cards attached) on a converted-but-unscheduled project, then walked it through every transition with real API calls -- not just read the derivation logic and trust it:
+1. 0 sessions -> stage index 0 (Scheduled current, unchecked).
+2. 2 sessions booked, neither waiver'd -> stage index 1 (Scheduled done, Waiver Verified current).
+3. Session 1's waiver signed + verified (via the real public sign endpoint + staff verify endpoint, with correctly-shaped `healthAnswers`/`clauseInitials` matching the waiver's own snapshots) -> stage index 2 (Session Complete current).
+4. **Session 1 checked out** (`POST /:id/checkout`) -> stage index dropped back to **1** -- confirming the "current session" pointer correctly moved to session 2, which had no waiver yet, rather than staying stuck at "Session Complete" from session 1. This is the exact scenario the task called out as needing real verification, not an assumption.
+5. Session 2 signed + verified -> index 2. Session 2 checked out -> index 3 (both sessions done, Project Complete now the actionable step, `projectCompletedAt` still null).
+6. `Mark Project Complete` -> index 4 (all four steps checkmarked). `Reopen Project` -> back to index 3, `projectCompletedAt` cleared.
+
+Also confirmed the `"Session 2 of 2"` supplementary badge appears only once `sessions.length > 1`, and tracks the correct current/last session number throughout.
+
+## Inquiry-side timeline confirmed unaffected
+
+Loaded a genuinely non-converted inquiry (status `NEW`) after all of the above and confirmed the original 5-step pipeline (`Inquiry received -> Artist assigned -> Estimate sent -> Deposit requested -> Scheduled`) rendered exactly as before -- same component, same route (`isConverted` branches which `steps`/`activeIndex` it's fed, nothing else about the widget or its two other callers changed). Also replaced two pre-existing, not-yet-centralized inline `['SCHEDULING','WAITLISTED','CONFIRMED'].includes(...)` literal-array checks (the breadcrumb's "Back to Projects/Inquiries" label) with the page's own already-existing `isConverted` variable, which had the identical semantics but wasn't reused there before this session.
+
+## Concurrency: a second session was mid-migration for most of this one
+
+A second session was actively building an unrelated multi-service-support feature (`Service`/`ArtistService` models, `Inquiry.serviceId`) in this same shared working directory for nearly this entire session, discovered via `git status` showing uncommitted `schema.prisma` changes before this session's own migration step. Per user direction, held off on `prisma migrate dev` and did all schema-independent work first (the `InquiryPipeline.tsx` generalization, the `INQUIRY_INCLUDE` select extension, the frontend derivation logic) while polling `prisma migrate status` between rounds of other work, only adding this session's own two `Inquiry` columns once their three-step nullable-\>backfilled-\>required migration sequence for `serviceId` had actually applied (`prisma migrate status` reporting "up to date"). Generated this session's migration with `--create-only` first and inspected the SQL before applying it, confirming it contained only `projectCompletedAt`/`projectCompletedById` and nothing of theirs.
+
+One real, unavoidable side effect: this session's two new `schema.prisma` fields were added to the same file the other session was still editing, and their own commit (`de4f548`, "Part 1: Service model, intake linkage, practitioner tagging") ended up carrying this session's schema diff too, since both were sitting uncommitted in the same working copy at once. The migration itself is unaffected (fully isolated, own file, contains exactly two columns) -- this is purely a git-history attribution wrinkle, flagged here so a future reader isn't confused why `projectCompletedAt` shows up in an unrelated-sounding commit message. This session's own commit (below) contains everything else: the two new routes, the frontend generalization, and the derivation logic.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) — clean. `npx tsc --noEmit` + `npm run build` (web) — clean, after the concurrent session's own transient mid-edit build break (an unrelated file, `ArtistDetail.tsx`, briefly had unused-variable errors from their own in-progress refactor) resolved itself independently.
+
+## Commit
+
+`5230d6f` — Add Project pipeline timeline (Scheduled -> Waiver Verified -> Session Complete -> Project Complete). Pushed together with the concurrent session's own already-local `de4f548`, after explicit user confirmation given the second session's commit was still "Part 1" of a larger, not-yet-finished feature.
+
+## Cleanup
+
+Both scratch dev servers (API :5501, web :6501, logging to `api6.log`/`vite6.log`) stopped by PID -- including one transient `EADDRINUSE` crash-and-restart caused by the concurrent session's own file-watch reloads on shared files, unrelated to this session's own code. Temporary verification scripts and screenshots left scratchpad-only, none committed. Test data created during verification (two real sessions, signed/verified waivers, checkouts, and a project-complete/reopen cycle on an existing dev-studio project) left in the dev database, consistent with this session's standing convention.
