@@ -829,7 +829,9 @@ function ConversationListView({
 
   const { profile } = useUserProfile()
   const { target: viewAsTarget } = useViewAs()
-  const canAddClients = (profile?.permissions.includes('clients.manage') ?? false) && !viewAsTarget
+  // clients.manage was retired -- this hits the same POST /clients route
+  // Clients.tsx's own "Add Client" button does, gated clients.edit there too.
+  const canAddClients = (profile?.permissions.includes('clients.edit') ?? false) && !viewAsTarget
   const queryClient = useQueryClient()
   const { onlineUserIds } = useSocket()
 

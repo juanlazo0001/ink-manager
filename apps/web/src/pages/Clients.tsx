@@ -28,7 +28,11 @@ export default function Clients() {
   const location = useLocation()
   const { user } = useAuth()
   const { profile } = useUserProfile()
-  const canManage = profile?.permissions.includes('clients.manage') ?? false
+  // clients.manage was retired (split into clients.view/edit/merge/archive/
+  // import) -- Add Client hits POST /clients (gated clients.edit on the
+  // backend), Import Clients is its own dedicated clients.import permission.
+  const canAddClient = profile?.permissions.includes('clients.edit') ?? false
+  const canImportClients = profile?.permissions.includes('clients.import') ?? false
   const [search, setSearch] = useState('')
   useMarkSectionSeen('clients')
 
@@ -123,22 +127,26 @@ export default function Clients() {
               <p className="mt-1 text-sm text-fg-secondary">Everyone who's booked with your studio.</p>
             </div>
 
-            {canManage && (
+            {(canImportClients || canAddClient) && (
               <div className="flex items-center gap-2">
-                <Link
-                  to="/clients/import"
-                  className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
-                >
-                  Import Clients
-                </Link>
-                <button
-                  type="button"
-                  onClick={() => setShowAddModal(true)}
-                  className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover"
-                >
-                  <PlusIcon className="h-4 w-4" />
-                  Add Client
-                </button>
+                {canImportClients && (
+                  <Link
+                    to="/clients/import"
+                    className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
+                  >
+                    Import Clients
+                  </Link>
+                )}
+                {canAddClient && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAddModal(true)}
+                    className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover"
+                  >
+                    <PlusIcon className="h-4 w-4" />
+                    Add Client
+                  </button>
+                )}
               </div>
             )}
           </div>

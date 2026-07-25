@@ -280,7 +280,16 @@ export default function ClientDetail() {
   const navigate = useNavigate()
   const user = useEffectiveUser()
   const { profile } = useUserProfile()
-  const canManage = profile?.permissions.includes('clients.manage') ?? false
+  // clients.manage was retired (split into clients.view/edit/merge/archive/
+  // import) -- each former use of the one bundled flag below now checks
+  // whichever successor key actually gates that specific action on the
+  // backend, rather than one flag standing in for all of them.
+  const canEditClient = profile?.permissions.includes('clients.edit') ?? false
+  const canMergeClient = profile?.permissions.includes('clients.merge') ?? false
+  const canArchiveClient = profile?.permissions.includes('clients.archive') ?? false
+  const canCreateInquiry = profile?.permissions.includes('inquiries.create') ?? false
+  const canEditInquiry = profile?.permissions.includes('inquiries.edit') ?? false
+  const canGenerateWaiver = profile?.permissions.includes('waivers.generate') ?? false
   const isOwner = user?.role === 'OWNER'
   const canIssueGiftCards = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
   const canMessage = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
@@ -1070,7 +1079,7 @@ export default function ClientDetail() {
               {client.archivedAt && (
                 <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-warning/30 bg-warning/10 p-4 text-sm text-warning">
                   <span>Archived {formatDateTime(client.archivedAt)}. Hidden from the client list, but fully intact.</span>
-                  {canManage && (
+                  {canArchiveClient && (
                     <button
                       type="button"
                       onClick={handleUnarchive}
@@ -1320,7 +1329,7 @@ export default function ClientDetail() {
                           )}
                         </div>
                       )}
-                      {canManage && !client.mergedIntoId && (
+                      {canEditClient && !client.mergedIntoId && (
                         <button
                           type="button"
                           onClick={startEditing}
@@ -1332,7 +1341,7 @@ export default function ClientDetail() {
                           <span className="hidden text-sm font-semibold md:inline">Edit</span>
                         </button>
                       )}
-                      {(canManage || isOwner) && (
+                      {(canArchiveClient || isOwner) && (
                         <div className="relative">
                           <button
                             type="button"
@@ -1346,7 +1355,7 @@ export default function ClientDetail() {
                             <>
                               <div className="fixed inset-0 z-10" onClick={() => setShowMoreMenu(false)} aria-hidden="true" />
                               <div className="absolute right-0 top-10 z-20 w-56 origin-top-right animate-scale-fade-in rounded-xl border border-border bg-surface-raised p-1 shadow-xl">
-                                {canManage && (
+                                {canArchiveClient && (
                                   <button
                                     type="button"
                                     onClick={client.archivedAt ? handleUnarchive : handleArchive}
@@ -1399,7 +1408,7 @@ export default function ClientDetail() {
                   <div>
                     <div className="flex items-center justify-between">
                       <h3 className="text-xs font-medium uppercase tracking-wider text-fg-muted">Phones</h3>
-                      {canManage && !client.mergedIntoId && !showAddPhone && (
+                      {canEditClient && !client.mergedIntoId && !showAddPhone && (
                         <button
                           type="button"
                           onClick={() => {
@@ -1431,7 +1440,7 @@ export default function ClientDetail() {
                               </span>
                             )}
                           </span>
-                          {canManage && !client.mergedIntoId && (
+                          {canEditClient && !client.mergedIntoId && (
                             <span className="flex shrink-0 gap-3">
                               {!p.isPrimary && (
                                 <button
@@ -1495,7 +1504,7 @@ export default function ClientDetail() {
                   <div>
                     <div className="flex items-center justify-between">
                       <h3 className="text-xs font-medium uppercase tracking-wider text-fg-muted">Emails</h3>
-                      {canManage && !client.mergedIntoId && !showAddEmail && (
+                      {canEditClient && !client.mergedIntoId && !showAddEmail && (
                         <button
                           type="button"
                           onClick={() => {
@@ -1527,7 +1536,7 @@ export default function ClientDetail() {
                               </span>
                             )}
                           </span>
-                          {canManage && !client.mergedIntoId && (
+                          {canEditClient && !client.mergedIntoId && (
                             <span className="flex shrink-0 gap-3">
                               {!e.isPrimary && (
                                 <button
@@ -1593,7 +1602,7 @@ export default function ClientDetail() {
 
                 {contactActionError && <p className="mt-3 text-sm text-danger">{contactActionError}</p>}
 
-                {canManage && !client.mergedIntoId && (
+                {canMergeClient && !client.mergedIntoId && (
                   <div className="mt-6 flex justify-end">
                     <button
                       type="button"
@@ -1606,7 +1615,7 @@ export default function ClientDetail() {
                   </div>
                 )}
 
-                {canManage && !client.mergedIntoId && duplicates && duplicates.length > 0 && (
+                {canMergeClient && !client.mergedIntoId && duplicates && duplicates.length > 0 && (
                   <div className="mt-6 rounded-2xl border border-warning/30 bg-warning/10 p-4">
                     <p className="text-sm font-medium text-warning">
                       {duplicates.length} potential duplicate{duplicates.length > 1 ? 's' : ''} found
@@ -1652,7 +1661,7 @@ export default function ClientDetail() {
                 id="inquiries"
                 title="Inquiries"
                 actions={
-                  canManage && !client.mergedIntoId ? (
+                  canCreateInquiry && !client.mergedIntoId ? (
                     <div className="flex shrink-0 items-center gap-2">
                       <button
                         type="button"
@@ -1827,7 +1836,7 @@ export default function ClientDetail() {
                 id="deposit-forms"
                 title="Deposit Forms"
                 actions={
-                  canManage && !client.mergedIntoId ? (
+                  canEditInquiry && !client.mergedIntoId ? (
                     <div className="relative">
                       <button
                         type="button"
@@ -2013,7 +2022,7 @@ export default function ClientDetail() {
                 id="waivers"
                 title="Waivers"
                 actions={
-                  canManage && !client.mergedIntoId ? (
+                  canGenerateWaiver && !client.mergedIntoId ? (
                     <div className="relative">
                       <button
                         type="button"
