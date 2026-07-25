@@ -2276,3 +2276,43 @@ Confirmed via `grep -n "canManage"` returning zero matches across all three file
 ## Cleanup
 
 Both scratch dev servers (API :5501, web :6501, logging to `api2.log`/`vite2.log` to avoid colliding with the prior task's logs) stopped by PID. Temporary verification scripts (`verify_clients_fix.mjs`, `verify_client_detail_fix.mjs`) and screenshots left scratchpad-only, none committed.
+
+---
+
+# Feature — Mass client import revision: flexible column mapping, gift cards from deposits, historical notes
+
+Single session on `main`. Revises Package R's mass-import feature (`58dfa7c`) around a real CRM export sample rather than the fixed expected schema it originally shipped with. Additive migration: `Client.address`, `ImportBatch.columnMapping` + a new `MAPPING` status, and `ImportRow.parsedDepositCents`/`depositFlaggedAsOutlier`/`depositDecision` (a new `ImportRowDepositDecision` enum). No existing rows needed backfilling -- the new enum value and columns are all additive/nullable-or-defaulted.
+
+## The fuzzy column-mapping logic
+
+`lib/importColumnMapping.ts`'s `suggestColumnMapping` is a small, deterministic keyword matcher, not embeddings or fuzzy string distance: each of the 11 non-"note" target fields (`firstName`/`lastName`/`phone`/`email`/`address`/`inquiry.description`/`inquiry.placement`/`inquiry.size`/`inquiry.budget`/`inquiry.desiredTiming`/`depositAmount`) has a short hand-picked keyword list (e.g. `depositAmount`: `["deposit", "amount paid", "payment"]`); for each CSV header, in column order, the longest keyword substring match wins, and a field already claimed by an earlier header can't be auto-suggested again (later duplicate columns stay unmapped, staff can still assign them by hand). "Historical Note" is never auto-suggested -- it's an explicit opt-in bucket, not a catch-all default for anything unrecognized. Verified against a realistic GoHighLevel-style export (`First Name`, `Last Name`, `Email`, `Phone`, `Address`, `Describe the type of tattoo you want`, `Where do you want it placed?`, `What size are you considering?`, `What's your budget?`, `When would you like to get tattooed?`, `Payment`, plus `Artist`/`Scheduled Appointment Date`/`Last Note` which have no target field): every real column suggested correctly, the three unrecognized ones correctly suggested nothing (left for staff to map to Historical Note or leave out).
+
+Confirming a mapping (`PATCH .../mapping`) is a one-way transition (`MAPPING` -> `PENDING_REVIEW`) -- only then does duplicate-detection and deposit parsing run per row, since which column IS the phone number wasn't known at upload time. `rawData` on every `ImportRow` is keyed by the CSV's own original headers (no more upload-time aliasing to a fixed field name), so the same batch's rows stay meaningful regardless of what mapping ends up chosen.
+
+## The outlier-detection threshold
+
+`isDepositOutlier` (same lib file) flags a parsed deposit as an outlier when it's non-positive (a value was present in the cell but parsed to `<= 0`) or more than double the studio's top deposit tier's `depositAmountCents` (the catch-all tier, `maxAmountCents: null` -- Package C1's `resolveDepositTiers` already guarantees exactly one exists, falling back to the seeded default `$200` top tier for a studio that's never customized its tiers, so the default threshold is `$400`). Verified with the same GHL-style fixture: `Deposit Paid Online - $200` parsed to `$200` (not flagged), a `$9,500` cell flagged (way past `$400`), and a literal `0` cell flagged (non-positive) -- while a genuinely unparseable cell (`"see front desk for details"`) parsed to `parsedDepositCents: null` with no flag and no crash, never guessed. `depositDecision: EDIT` writes the staff-supplied corrected amount straight into `parsedDepositCents` itself (no separate "corrected" column) -- `depositFlaggedAsOutlier` stays untouched afterward, since it records the historical fact that the original parse looked unusual, not today's resolved value.
+
+## Traceability: gift card back to its source CSV row
+
+Every deposit-sourced `GiftCard` reuses the same free-text field `POST /gift-cards/exempt` already puts a human-readable reason on (`exemptionReason`, despite the name -- there's no DB-level constraint tying it to `EXEMPT` status, and the task's own instruction was to "reuse the same kind of reason field already used for exempt cards"), set to `Imported from legacy CRM (Import Batch <id>)`, plus an `AuditLog` row (`entityType: "GiftCard"`, `action: "create-from-import"`, `changes: { importBatchId, importRowId, amountCents }`) -- the same traceability pattern the original Package R already used for imported `Client` rows (no reverse FK from `Client`/`GiftCard` back to `ImportRow` either; the batch's own rows, `rawData` preserved verbatim, are the source of truth). Verified end-to-end: looked up a real imported gift card, read its `AuditLog` entry's `importRowId`, fetched that exact row from `GET /clients/import/:batchId`, and confirmed its `rawData` was the untouched original CSV line (`Priya`/`Nandakumar`/`priya.nandakumar@example.com`/`555-0301`/`12 Birchwood Ln, Springfield`/`Deposit Paid Online - $200`/etc.) -- the full chain closes. `GiftCardDetail.tsx`/`ClientDetail.tsx`'s gift-card list now show this reason for any status, not just `EXEMPT` (previously gated to `card.status === 'EXEMPT' && card.exemptionReason`), since it's no longer an exemption-only field.
+
+## Historical Note bucket
+
+Any number of columns mapped to `note` get concatenated into one `InquiryNote` at execute time, each line labeled with its original header (`<strong>Header:</strong> value`, blank cells skipped, HTML-escaped since raw CSV cell text is untrusted): verified a 3-column mapping (`Artist`, `Scheduled Appointment Date`, `Last Note`) produced exactly `Imported from legacy CRM` followed by all three labeled lines, authored by the executing OWNER, visible through the existing consolidated `GET /clients/:id/notes` endpoint (no new note-reading UI needed).
+
+## Other verification
+
+**Backend** (direct API calls): a re-upload of the same fixture CSV correctly matched all 4 previously-created clients via duplicate-detection (proving cross-batch dedup) and every MERGE row's newly-created throwaway client's `Inquiry` was correctly re-parented onto the survivor by the existing `performMerge`/`repointClientRelations` (the survivor ended up with 2 identical inquiries, one per run); a `$0`-deposit row resolved `IMPORT` correctly issued no gift card (0 is never `> 0`); `FRONT_DESK` got a `403` on `POST .../execute` (OWNER-only, unconditionally, regardless of `clients.import`). **Browser** (Playwright, screenshots reviewed): full flow -- upload, correct auto-suggested mapping, confirm, review table showing "Unusual amount" badges with inline Import/Edit/Skip resolution controls and a red "Missing mapped first/last name" flag on the row with no first name, "Review & Confirm Import" disabled until every row (and every outlier) is resolved, the pre-execute confirmation modal showing accurate add/merge/skip counts and an accurate gift-card dollar total (`$275.00`, correctly excluding both the skipped malformed row's flagged $9,500 and the $0 row), and a final success banner reporting the true add/merge/skip/gift-card-issued counts.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) — clean. `npx tsc --noEmit` + `npm run build` (web) — clean.
+
+## Commit
+
+`687034f` — Mass client import: flexible column mapping, gift cards from deposits, historical notes. Pushed immediately after a collision check (`git fetch` + `git log HEAD..origin/main`) came back empty.
+
+## Cleanup
+
+Both scratch dev servers (API :5501, web :6501, logging to `api3.log`/`vite3.log`) stopped by PID. Temporary verification scripts (`verify_mass_import.mjs`, `verify_import_data.mjs`, `verify_import_data2.mjs`, `verify_note_bucket.mjs`), the sample GHL-style fixture CSV, and screenshots left scratchpad-only, none committed. Test data created during verification (several imported clients, gift cards, and inquiries in `dev-studio`, plus one cancelled batch) left in the dev database, consistent with this session's standing convention.
