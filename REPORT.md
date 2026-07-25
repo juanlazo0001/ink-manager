@@ -2354,3 +2354,48 @@ Per the task's explicit instruction, no Google Address Validation call was added
 ## Cleanup
 
 Both scratch dev servers (API :5501, web :6501, logging to `api4.log`/`vite4.log`) stopped by PID. Temporary verification scripts (`verify_artist_address.mjs`, `verify_execute_artist_address.mjs`, `verify_unmatched_artist_note.mjs`, `verify_address_conflict.mjs`), the fixture CSVs, and screenshots left scratchpad-only, none committed. The one-off `_scratch_seed_luis_guzman.ts` script used to create a test artist (not part of the checked-in seed, since it's verification-only fixture data) ran once against dev and was deleted from the repo afterward, not committed. Test data created during verification (the Luis Guzman artist account, several imported clients/inquiries/gift cards) left in the dev database, consistent with this session's standing convention.
+
+---
+
+# Feature — Consultation appointments (no deposit, artist- or client-initiated)
+
+Single session on `main`. Extends the existing `Appointment` model/Calendar/scheduling-assistant/checkout-reminder-task infrastructure to a second appointment type rather than building anything parallel -- confirmed no other session was mid-migration before starting.
+
+## Migration safety, verified against dev data
+
+`Appointment.appointmentType AppointmentType @default(TATTOO_SESSION)` (new enum, `TATTOO_SESSION | CONSULTATION`) -- a genuinely different, safer case than the `Client.referralCode` incident referenced in the task: that column had no default and needed a real per-row backfill script before the `NOT NULL` constraint could land; this one is defaulted, so Postgres materializes every existing row correctly in the single `ALTER TABLE ... ADD COLUMN ... NOT NULL DEFAULT 'TATTOO_SESSION'` statement, no backfill step at all. Didn't just trust that reasoning -- ran `prisma migrate dev`, then queried the dev database directly afterward: all 15 pre-existing `Appointment` rows came back `appointmentType: TATTOO_SESSION`, 0 `CONSULTATION` (correct, since consultations didn't exist before this column).
+
+## Gift-card requirement -- scoped, not weakened
+
+The exact existing check (`POST /appointments`, delegating to `validateGiftCardsForAttachment` in `lib/giftCards.ts`) is now wrapped in `if (!isConsultation)` -- a `CONSULTATION` skips `giftCardIds` validation and the required-deposit computation entirely, while a `TATTOO_SESSION` (or a request that omits `appointmentType`, for backward compatibility with any stale cached frontend bundle) goes through the identical unchanged path. Verified both directions directly, not just by code inspection: a `TATTOO_SESSION` with `giftCardIds: []` still gets a `400` ("giftCardIds must be a non-empty array of strings"); a `CONSULTATION` with no gift cards at all succeeds (`201`). The checkout route (`POST /:id/checkout`) now explicitly rejects a `CONSULTATION` up front with a clear redirect message instead of falling through to its generic "no gift cards attached" `400`; the new lightweight `POST /:id/complete-consultation` symmetrically rejects a `TATTOO_SESSION` — verified both.
+
+## Buffer-conflict / suggested-times, verified explicitly
+
+Read both `lib/schedulingConflict.ts`'s `findBufferConflict` and `lib/schedulingAssistant.ts`'s `getSuggestedTimes` before touching anything: neither query ever filtered by status or type — purely `artistId` + time-window overlap — so a new `appointmentType` value automatically participates in both with zero code changes required. Didn't stop at reading the code: booked a real `CONSULTATION` for an artist, then queried `GET /scheduling/suggested-times` for that same artist and confirmed none of the returned candidates overlapped the consultation's slot without a buffer-conflict flag. Added a one-line comment at each query confirming this was verified, not assumed, for future readers.
+
+## What's new
+
+- `AppointmentForm.tsx` (the one shared creation component, unchanged elsewhere) gains a Tattoo Session / Consultation toggle. Consultation mode: hides the gift-card section entirely, swaps the inquiry-time-estimate-derived suggestion duration for a 30-min/1-hour preset (still fully reuses `getSuggestedTimes` + availability-greying + the buffer-conflict "Close" flag), and bypasses the gift-card-availability gate that otherwise hides the suggested-times panel.
+- `InquiryDetail.tsx` gets a dedicated "Schedule Consultation" button living in the same always-rendered Appointments widget the existing "New Appointment" button already uses (never gated by `inquiry.status`) — opens the identical modal/form pre-selected to `CONSULTATION`, satisfying "available regardless of pipeline status" for real rather than adding a second status-gated flow.
+- Calendar events get a dashed accent border (`eventPropGetter`) and a `"Consult: "` title prefix for a `CONSULTATION` — no separate legend needed, matching how artist-color coding already relies on being self-explanatory.
+- `POST /appointments/:id/complete-consultation` — same `appointments.checkout` permission, sets `checkedOutAt`/`checkedOutById`/`closeoutNotes`/`status: COMPLETED` (the exact same fields checkout already uses as "this concluded," per the task's own instruction), no `finalCostCents`, no gift-card redeem/roll. `AppointmentDetail.tsx`'s Checkout widget branches entirely on `appointmentType`: a consultation gets this lightweight form instead of the financial one, and a "Consultation" badge in the page header.
+- **Found and fixed a genuinely broken existing feature while building the "Book the tattoo session now" shortcut**: the checkout flow's existing "Book follow-up" button already navigated to `/calendar?prefillClientId=...&prefillInquiryId=...`, but `Calendar.tsx` never read those query params at all — the deep link silently did nothing. Since the task asked to reuse this exact pattern, and reusing a broken pattern would just ship a second broken button, added the actual `useSearchParams` read (auto-opens the create-appointment modal, pre-filled, then strips the params so a refresh doesn't reopen it) — both "Book follow-up" and the new "Book the tattoo session now" now genuinely work, extended with a `prefillArtistId` param neither had before.
+- `lib/tasks/appointmentNeedsCheckout.ts` now selects `appointmentType` and branches its title ("Check out ..." vs "Wrap up consultation with ...") — one unified task type, same `deepLink: /appointments/:id` for both, since `AppointmentDetail.tsx` itself is what decides which action to render.
+
+## Verification
+
+**Browser** (Playwright, screenshots reviewed): scheduled a consultation from an inquiry sitting at pipeline step 1 ("Inquiry received," never touched) via the dedicated button — confirmed no gift-card section anywhere, duration presets, and a working suggested-times panel keyed to the 30-min preset; confirmed the resulting Calendar event renders with a dashed border and "Consult: Sophia ..." label, clearly distinct from solid-bordered real sessions at a glance; completed the consultation with notes ("Consultation" widget, no financial fields), confirmed notes persisted and displayed; clicked "Book the tattoo session now" and confirmed it lands on Calendar with the create modal auto-opened, defaulted to Tattoo Session, artist pre-filled, and — critically — the gift-card section correctly present and required ("This client has no available gift card — collect a deposit...").
+
+**API**: `ARTIST` creating a `CONSULTATION` → `403` (identical gate to a tattoo session, not a separate/weaker check); cross-studio isolation holds (a bogus `artistId` → `400`, never a leak); backdated a `CONSULTATION`'s `endTime` into the past and confirmed the derived task appeared with the branched "Wrap up consultation with ..." wording and the correct deep link.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) — clean. `npx tsc --noEmit` + `npm run build` (web) — clean.
+
+## Commit
+
+`cb331da` — Add consultation appointments (no deposit, artist- or client-initiated). Pushed immediately after a collision check (`git fetch` + `git log HEAD..origin/main`) came back empty.
+
+## Cleanup
+
+Both scratch dev servers (API :5501, web :6501, logging to `api5.log`/`vite5.log`) stopped by PID. Temporary verification scripts (`verify_consultation_api.mjs`, `verify_consultation_task.mjs`, `verify_consultation_ui.mjs`, `verify_consultation_complete.mjs`, plus a couple of one-off debug scripts) and screenshots left scratchpad-only, none committed. Test data created during verification (a consultation appointment and its completion, a backdated consultation for the task check, a rejected cross-studio attempt) left in the dev database, consistent with this session's standing convention.
