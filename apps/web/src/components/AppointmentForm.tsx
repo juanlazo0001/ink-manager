@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '../lib/api'
 import { useAuth } from '../context/useAuth'
 import { clientsQueryKey, artistsQueryKey } from '../lib/queryKeys'
@@ -162,6 +162,7 @@ export default function AppointmentForm({
   onCancel,
 }: AppointmentFormProps) {
   const { user } = useAuth()
+  const queryClient = useQueryClient()
 
   const [appointmentType, setAppointmentType] = useState<AppointmentType>(initialAppointmentType ?? 'TATTOO_SESSION')
   const isConsultation = appointmentType === 'CONSULTATION'
@@ -468,6 +469,13 @@ export default function AppointmentForm({
           notes: notes || undefined,
         }),
       })
+      // A just-attached gift card must not still look available if this
+      // same modal (or another one, on a different page -- Calendar.tsx/
+      // Inquiries.tsx both open this form too) gets reopened for the same
+      // client within this query's 30s default staleTime: without this,
+      // staff could pick a card that's already spoken for and only find
+      // out once the (correctly rejecting) submission itself failed.
+      queryClient.invalidateQueries({ queryKey: ['client-projects-for-appointment', effectiveClientId] })
       onCreated()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create appointment')

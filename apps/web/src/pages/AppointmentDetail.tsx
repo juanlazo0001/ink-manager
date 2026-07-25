@@ -418,6 +418,15 @@ export default function AppointmentDetail() {
       }
 
       if (user) queryClient.invalidateQueries({ queryKey: appointmentsQueryKey(user.studioId) })
+      // A ROLLed card comes back available (appointmentId cleared) -- without
+      // this, AppointmentForm's own gift-card picker (and InquiryDetail's
+      // separate un-planned-flow picker) could keep showing it as
+      // unavailable for up to 30s (the default staleTime) if staff goes
+      // straight to book another appointment for this same client.
+      if (appointment) {
+        queryClient.invalidateQueries({ queryKey: ['client-projects-for-appointment', appointment.client.id] })
+        queryClient.invalidateQueries({ queryKey: ['client-gift-cards', appointment.client.id] })
+      }
       setRefreshIndex((i) => i + 1)
     } catch (err) {
       setCheckoutError(err instanceof Error ? err.message : 'Failed to check out this appointment')

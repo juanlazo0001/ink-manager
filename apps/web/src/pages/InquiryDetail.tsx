@@ -469,9 +469,18 @@ export default function InquiryDetail() {
 
   // Any mutation below that changes this inquiry's status/fields needs to
   // invalidate both this detail query and the Inquiries list it feeds.
+  // Also invalidates this client's own gift-card list -- attaching a card
+  // to a freshly-booked appointment (or issuing a new one from a paid
+  // deposit) changes which of the client's cards are still available, and
+  // without this, the un-planned Scheduling flow's own gift-card picker
+  // (fetched separately, keyed on clientId, not this inquiry) kept
+  // showing an already-attached card as selectable until the next full
+  // page reload -- staff could pick it and only find out it was already
+  // spoken for once the booking attempt itself got rejected.
   function invalidateInquiry() {
     queryClient.invalidateQueries({ queryKey: inquiryQueryKey(id!) })
     queryClient.invalidateQueries({ queryKey: inquiriesQueryKey(user!.studioId) })
+    queryClient.invalidateQueries({ queryKey: ['client-gift-cards', inquiry?.clientId] })
   }
 
   const { data: artistOptions } = useQuery({
