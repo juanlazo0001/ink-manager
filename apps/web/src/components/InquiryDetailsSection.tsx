@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { apiFetch } from '../lib/api'
-import { formatPhoneInput } from '../lib/format'
 import { ArtistAvatar, artistLabel, type ArtistLike } from './ArtistAvatar'
 
 interface LiveIntakeField {
@@ -28,7 +27,6 @@ interface InquiryForDetails {
   // staff-logged walk-in with no form context. Drives which form's live
   // field list this section maps the answers onto (see the effect below).
   intakeFormId: string | null
-  client: { firstName: string; lastName: string; email: string | null; phone: string | null }
   preferredArtist: ArtistLike | null
 }
 
@@ -46,12 +44,6 @@ const CHANNEL_LABELS: Record<string, string> = {
 // for display.
 function systemFieldValue(key: string, inquiry: InquiryForDetails): string {
   switch (key) {
-    case 'name':
-      return `${inquiry.client.firstName} ${inquiry.client.lastName}`.trim() || 'Not provided'
-    case 'email':
-      return inquiry.client.email || 'Not provided'
-    case 'phone':
-      return inquiry.client.phone ? formatPhoneInput(inquiry.client.phone) : 'Not provided'
     case 'referralSource':
       return CHANNEL_LABELS[inquiry.channel] ?? inquiry.channel
     case 'description':
@@ -179,6 +171,12 @@ export default function InquiryDetailsSection({ inquiry, bare = false, onVisibil
     for (const field of fields) {
       if (field.fieldKind === 'SYSTEM' && field.systemFieldKey) {
         if (field.systemFieldKey === 'referenceImages' || field.systemFieldKey === 'placementImages') continue
+        // Name/email/phone are already shown in the page's own header card
+        // (right above every widget, including this one) -- repeating them
+        // here would just be a redundant duplicate, the same class of
+        // problem the "Tattoo details"/"Inquiry Details" consolidation
+        // itself fixed.
+        if (field.systemFieldKey === 'name' || field.systemFieldKey === 'email' || field.systemFieldKey === 'phone') continue
         // Preferred artist gets the same avatar + name treatment the old
         // "Tattoo details" card gave it -- a plain-text row here would be
         // a strictly worse rendering of the same field.

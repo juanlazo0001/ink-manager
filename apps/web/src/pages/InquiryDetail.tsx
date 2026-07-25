@@ -146,6 +146,10 @@ interface Inquiry {
     signatureData: string | null
     paidManually: boolean
     paidAt: string | null
+    // Phase 7C: "STRIPE" | "MANUAL" once paid, null before that -- more
+    // precise than paidManually alone (which stays the "is this paid"
+    // flag every other consumer reads, true for both payment paths).
+    paidVia: 'STRIPE' | 'MANUAL' | null
     proposedStartAt: string | null
     proposedEndAt: string | null
     giftCard: { id: string; code: string; amountCents: number; status: string } | null
@@ -2367,14 +2371,32 @@ export default function InquiryDetail() {
                           />
                         </>
                       )}
-                      <DetailField
-                        label="Time estimate"
-                        value={
-                          inquiry.timeEstimateHoursMin != null && inquiry.timeEstimateHoursMax != null
-                            ? `${inquiry.timeEstimateHoursMin}–${inquiry.timeEstimateHoursMax} hours`
-                            : 'Not provided'
-                        }
-                      />
+                      {inquiry.plannedSessions.length === 0 && (
+                        <DetailField
+                          label="Time estimate"
+                          value={
+                            inquiry.timeEstimateHoursMin != null && inquiry.timeEstimateHoursMax != null
+                              ? `${inquiry.timeEstimateHoursMin}–${inquiry.timeEstimateHoursMax} hours`
+                              : 'Not provided'
+                          }
+                        />
+                      )}
+                    </div>
+                  )}
+
+                  {/* Multi-session planning: the top-level time-estimate
+                      fields are always null once a plan exists (see
+                      PlannedSession's own schema comment) -- showing "Not
+                      provided" here would be misleading when a real,
+                      staff-declared breakdown exists. */}
+                  {!editingEstimate && inquiry.plannedSessions.length > 0 && (
+                    <div className="mt-4">
+                      <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Time estimate</p>
+                      <p className="mt-1 text-sm text-fg">
+                        {inquiry.plannedSessions
+                          .map((ps) => `Session ${ps.sessionNumber}: ${ps.estimatedHoursMin}-${ps.estimatedHoursMax} hrs`)
+                          .join(', ')}
+                      </p>
                     </div>
                   )}
 
@@ -2493,7 +2515,8 @@ export default function InquiryDetail() {
 
                           {form.paidManually ? (
                             <p className="mt-3 text-sm text-success">
-                              Marked paid {form.paidAt ? formatDateTime(form.paidAt) : ''}
+                              {form.paidVia === 'STRIPE' ? 'Paid via Stripe' : 'Marked paid'}{' '}
+                              {form.paidAt ? formatDateTime(form.paidAt) : ''}
                               {form.giftCard && ` — issued gift card ${form.giftCard.code.slice(0, 8)}…`}
                             </p>
                           ) : (
@@ -2513,12 +2536,20 @@ export default function InquiryDetail() {
                     </ul>
                   )}
 
-                  {/* What happens next: either the current session is still
-                      awaiting signature (resend its own link/tentative time),
-                      or a fresh session is eligible to be started -- pre-
-                      conversion that's the original send, post-conversion
-                      (Package M) that's "Send Another Deposit Form". */}
-                  {!isNewDepositSession && latestDepositForm ? (
+                  {/* Multi-session planning: once a project has a session
+                      plan, the Session Plan widget below is the ONE place
+                      to generate/resend/attach a deposit for a specific
+                      session (with its own correctly-sized suggested
+                      times) -- showing this whole "generate the next
+                      session's deposit" flow here too would be a genuinely
+                      confusing duplicate (and, worse, its own un-planned
+                      "latest session" counter doesn't know about specific
+                      planned sessions, so using it here could create an
+                      orphaned, plan-unlinked deposit form). Single-session
+                      projects (no plan at all) are completely unaffected --
+                      this is the only place they can ever generate one. */}
+                  {inquiry.plannedSessions.length === 0 &&
+                    (!isNewDepositSession && latestDepositForm ? (
                     <div className="mt-4">
                       {sendDepositError && <p className="mb-3 text-sm text-danger">{sendDepositError}</p>}
 
@@ -2763,7 +2794,7 @@ export default function InquiryDetail() {
                           </div>
                         )}
                       </div>
-                    ))
+                    )))
                   )}
                 </Widget>
               )}
@@ -3140,6 +3171,46 @@ export default function InquiryDetail() {
                                 >
                                   Send Deposit Form
                                 </button>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Resend just rotates this session's own linked
+                              form's token -- no tentative time needed
+                              (isNewSessionForTarget is false once
+                              depositFormId is already set), so this is a
+                              single action, not the full mini-form above. */}
+                          {depositStatus === 'pending' && canMessage && (
+                            <div className="mt-2">
+                              <button
+                                type="button"
+                                onClick={() => handleSendDepositForm(ps.id)}
+                                disabled={sendingDeposit}
+                                className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                              >
+                                {sendingDeposit ? 'Resending…' : 'Resend Deposit Form'}
+                              </button>
+                              {sendDepositError && <p className="mt-2 text-xs text-danger">{sendDepositError}</p>}
+                              {depositSendNotice && <p className="mt-2 text-xs text-fg-secondary">{depositSendNotice}</p>}
+                              {depositUrl && (
+                                <div className="mt-2 flex items-center gap-2">
+                                  <input
+                                    type="text"
+                                    readOnly
+                                    value={depositUrl}
+                                    onFocus={(event) => event.target.select()}
+                                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-1.5 text-xs text-fg focus:outline-none"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCopyLink(depositUrl)}
+                                    aria-label={copied ? 'Copied' : 'Copy link'}
+                                    title={copied ? 'Copied!' : 'Copy link'}
+                                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-fg-secondary transition hover:bg-surface-raised hover:text-fg"
+                                  >
+                                    {copied ? <CheckIcon className="h-4 w-4 text-success" /> : <CopyIcon className="h-4 w-4" />}
+                                  </button>
+                                </div>
                               )}
                             </div>
                           )}
