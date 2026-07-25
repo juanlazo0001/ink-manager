@@ -6,6 +6,7 @@ import Modal from '../components/Modal'
 import RichTextEditor from '../components/RichTextEditor'
 import PhoneInput from '../components/PhoneInput'
 import IntakeFormsManager from '../components/IntakeFormsManager'
+import ServicesManager from '../components/ServicesManager'
 import { CheckIcon, ChevronDownIcon, ClockIcon, CloseIcon, CopyIcon, PencilIcon, SpinnerIcon } from '../components/icons'
 import { apiFetch } from '../lib/api'
 import {
@@ -407,13 +408,20 @@ export default function Settings() {
   // that can't see anything in it, same gating each card already had before
   // tabs existed, just applied one level up so the tab button itself never
   // appears for a role that would find nothing behind it.
+  // Service lines: OWNER only, matching this feature's own explicit
+  // "Services management area (OWNER only)" requirement -- same hardcoded
+  // requireRole(Role.OWNER) pattern GET/POST /services and canViewSystem
+  // above already use, not a configurable permission-matrix entry.
+  const canViewServices = user?.role === 'OWNER'
+
   const SETTINGS_TABS = [
     { key: 'general' as const, label: 'General', visible: true },
     { key: 'policies' as const, label: 'Policies & Templates', visible: canViewPolicies },
+    { key: 'services' as const, label: 'Services', visible: canViewServices },
     { key: 'integrations' as const, label: 'Integrations', visible: canViewIntegrations },
     { key: 'system' as const, label: 'System', visible: canViewSystem },
   ]
-  const [activeTab, setActiveTab] = useState<'general' | 'policies' | 'integrations' | 'system'>('general')
+  const [activeTab, setActiveTab] = useState<'general' | 'policies' | 'services' | 'integrations' | 'system'>('general')
   const [searchParams, setSearchParams] = useSearchParams()
 
   const [integrations, setIntegrations] = useState<IntegrationInfo[] | null>(null)
@@ -1826,6 +1834,8 @@ export default function Settings() {
           {activeTab === 'policies' && canViewPolicies && policies && (
             <IntakeFormsManager canEdit={canEditPolicies} />
           )}
+
+          {activeTab === 'services' && canViewServices && <ServicesManager canEdit={canViewServices} />}
 
           {activeTab === 'policies' && canViewPolicies && policies && (
             <div className="mt-6 rounded-2xl border border-border bg-surface p-6">

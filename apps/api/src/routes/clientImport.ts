@@ -431,6 +431,7 @@ async function createImportedClientWithInquiry(
     inquiryFields: { description: string; placement: string; estimatedSize: string; budget: string | null; desiredTiming: string | null };
     assignedArtistId: string | null;
     noteBodyHtml: string | null;
+    serviceId: string;
   },
 ) {
   const client = await createClientFromFields(tx, {
@@ -447,6 +448,7 @@ async function createImportedClientWithInquiry(
     data: {
       studioId: params.studioId,
       clientId: client.id,
+      serviceId: params.serviceId,
       // No mapped column tells us the original inquiry channel -- EMAIL
       // is this app's own existing fallback for "unspecified" (see
       // routes/inquiries.ts's identical default), not a guess specific to
@@ -526,6 +528,14 @@ router.post("/import/:batchId/execute", requireRole(Role.OWNER), async (req, res
   const settings = await prisma.studioSettings.findUnique({ where: { studioId }, select: { giftCardDefaultExpirationDays: true } });
   const giftCardExpiresAt = computeGiftCardExpiration(settings?.giftCardDefaultExpirationDays ?? null);
 
+  // A legacy CRM export has no concept of service lines -- every imported
+  // row is tagged as the studio's own "Tattoo" service, same as every other
+  // pre-existing Inquiry (see 20260725153000_backfill_inquiry_service).
+  const tattooService = await prisma.service.findFirst({ where: { studioId, slug: "tattoo" }, select: { id: true } });
+  if (!tattooService) {
+    return res.status(500).json({ error: "This studio has no Tattoo service configured -- contact support" });
+  }
+
   // Per-row, not one giant transaction -- a single bad row (a stale
   // matched-client reference, a rare constraint clash) fails that row
   // alone rather than rolling back an entire large import. Each row's OWN
@@ -598,6 +608,7 @@ router.post("/import/:batchId/execute", requireRole(Role.OWNER), async (req, res
           inquiryFields,
           assignedArtistId: row.matchedArtistId,
           noteBodyHtml,
+          serviceId: tattooService.id,
         }),
       );
 

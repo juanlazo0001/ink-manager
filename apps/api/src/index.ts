@@ -24,6 +24,7 @@ import widgetLayoutsRouter from "./routes/widgetLayouts";
 import conversationsRouter from "./routes/conversations";
 import prefillDraftsRouter from "./routes/prefillDrafts";
 import intakeFormsRouter from "./routes/intakeForms";
+import servicesRouter from "./routes/services";
 import viewAsRouter from "./routes/viewAs";
 import jobsRouter from "./routes/jobs";
 import { publicRouter as integrationsPublicRouter, staffRouter as integrationsStaffRouter } from "./routes/integrations";
@@ -99,6 +100,7 @@ app.use("/widget-layouts", widgetLayoutsRouter);
 app.use("/conversations", conversationsRouter);
 app.use("/prefill-drafts", prefillDraftsRouter);
 app.use("/intake-forms", intakeFormsRouter);
+app.use("/services", servicesRouter);
 app.use("/view-as", viewAsRouter);
 app.use("/jobs", jobsRouter);
 // Public router first: /integrations/email/callback (Google's OAuth

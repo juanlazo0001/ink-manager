@@ -64,6 +64,10 @@ router.post("/", requirePermission("artists.manage"), async (req, res) => {
 
 const ARTIST_INCLUDE = {
   user: { select: { id: true, email: true, role: true, name: true, phone: true, avatarUrl: true, studioId: true } },
+  // Service lines: which services this artist is tagged as offering (see
+  // ArtistService) -- the detail page's checkboxes read this to know
+  // what's currently checked.
+  artistServices: { select: { serviceId: true } },
 } as const;
 
 // List view only renders id/bio/specialties/portfolioImages plus a handful
@@ -139,12 +143,36 @@ router.get("/:id", requirePermission("artists.view"), async (req, res) => {
 
 router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
   const id = req.params.id as string;
-  const { bio, specialties, portfolioImages, instagramHandle, facebookProfileUrl, isGuest, guestStartDate, guestEndDate } =
-    req.body ?? {};
+  const {
+    bio,
+    specialties,
+    portfolioImages,
+    instagramHandle,
+    facebookProfileUrl,
+    isGuest,
+    guestStartDate,
+    guestEndDate,
+    serviceIds,
+  } = req.body ?? {};
 
-  const artist = await prisma.artist.findUnique({ where: { id }, include: { user: true } });
+  const artist = await prisma.artist.findUnique({
+    where: { id },
+    include: { user: true, artistServices: { select: { serviceId: true } } },
+  });
   if (!artist || artist.user.studioId !== req.user!.studioId) {
     return res.status(404).json({ error: "Artist not found" });
+  }
+
+  if (serviceIds !== undefined) {
+    if (!isStringArray(serviceIds)) {
+      return res.status(400).json({ error: "serviceIds must be an array of strings" });
+    }
+    const validCount = await prisma.service.count({
+      where: { id: { in: serviceIds }, studioId: req.user!.studioId },
+    });
+    if (validCount !== new Set(serviceIds).size) {
+      return res.status(400).json({ error: "serviceIds must all reference existing services in your studio" });
+    }
   }
 
   if (bio !== undefined && bio !== null && typeof bio !== "string") {
@@ -195,7 +223,18 @@ router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
     ...(guestEndDate !== undefined ? { guestEndDate: guestEndDate ? new Date(guestEndDate) : null } : {}),
   };
 
-  const updated = await prisma.artist.update({ where: { id }, data, include: ARTIST_INCLUDE });
+  const nextServiceIds: string[] | undefined = serviceIds !== undefined ? [...new Set(serviceIds as string[])] : undefined;
+  const previousServiceIds = artist.artistServices.map((s) => s.serviceId);
+
+  const [updated] = await prisma.$transaction([
+    prisma.artist.update({ where: { id }, data, include: ARTIST_INCLUDE }),
+    ...(nextServiceIds !== undefined
+      ? [
+          prisma.artistService.deleteMany({ where: { artistId: id } }),
+          prisma.artistService.createMany({ data: nextServiceIds.map((serviceId) => ({ artistId: id, serviceId })) }),
+        ]
+      : []),
+  ]);
 
   await logAudit({
     studioId: req.user!.studioId,
@@ -203,16 +242,19 @@ router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
     entityType: "Artist",
     entityId: id,
     action: "update",
-    changes: diffObjects(artist, data, [
-      "bio",
-      "specialties",
-      "portfolioImages",
-      "instagramHandle",
-      "facebookProfileUrl",
-      "isGuest",
-      "guestStartDate",
-      "guestEndDate",
-    ]),
+    changes: {
+      ...diffObjects(artist, data, [
+        "bio",
+        "specialties",
+        "portfolioImages",
+        "instagramHandle",
+        "facebookProfileUrl",
+        "isGuest",
+        "guestStartDate",
+        "guestEndDate",
+      ]),
+      ...(nextServiceIds !== undefined ? { serviceIds: { from: previousServiceIds, to: nextServiceIds } } : {}),
+    },
   });
 
   res.json(updated);

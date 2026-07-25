@@ -29,7 +29,14 @@ interface Artist {
   isGuest: boolean
   guestStartDate: string | null
   guestEndDate: string | null
+  artistServices: { serviceId: string }[]
   user: { id: string; email: string; name: string | null; phone: string | null; avatarUrl: string | null }
+}
+
+interface ServiceOption {
+  id: string
+  name: string
+  isActive: boolean
 }
 
 interface UploadItem {
@@ -42,7 +49,7 @@ interface UploadItem {
 // Built-in fallback order for a user who's never customized this page's
 // layout -- same reorder/collapse system already used on the Inquiry,
 // Appointment, and Client detail pages.
-const ARTIST_WIDGET_ORDER = ['guest-artist', 'bio', 'social-links', 'specialties', 'preferred-schedule', 'portfolio']
+const ARTIST_WIDGET_ORDER = ['guest-artist', 'bio', 'social-links', 'specialties', 'services', 'preferred-schedule', 'portfolio']
 
 export default function ArtistDetail() {
   const { id } = useParams<{ id: string }>()
@@ -56,6 +63,8 @@ export default function ArtistDetail() {
 
   const [bio, setBio] = useState('')
   const [specialties, setSpecialties] = useState<string[]>([])
+  const [serviceOptions, setServiceOptions] = useState<ServiceOption[]>([])
+  const [serviceIds, setServiceIds] = useState<string[]>([])
   const [portfolioImages, setPortfolioImages] = useState<string[]>([])
   const [instagramHandle, setInstagramHandle] = useState('')
   const [facebookProfileUrl, setFacebookProfileUrl] = useState('')
@@ -105,6 +114,20 @@ export default function ArtistDetail() {
     }
   }, [id, refreshIndex])
 
+  useEffect(() => {
+    let ignore = false
+    apiFetch<ServiceOption[]>('/services')
+      .then((data) => {
+        if (!ignore) setServiceOptions(data)
+      })
+      .catch(() => {
+        /* Checkbox list / read-only badges just stay empty if this fails -- not critical page content. */
+      })
+    return () => {
+      ignore = true
+    }
+  }, [])
+
   // Seeds the editable fields once per artist id (not on every refetch), so
   // an in-progress edit doesn't get clobbered. Adjusted during render per
   // React's guidance for resetting state when a prop changes.
@@ -113,6 +136,7 @@ export default function ArtistDetail() {
     setSeededForId(artist.id)
     setBio(artist.bio ?? '')
     setSpecialties(artist.specialties)
+    setServiceIds(artist.artistServices.map((s) => s.serviceId))
     setPortfolioImages(artist.portfolioImages)
     setInstagramHandle(artist.instagramHandle ?? '')
     setFacebookProfileUrl(artist.facebookProfileUrl ?? '')
@@ -198,6 +222,10 @@ export default function ArtistDetail() {
     setPortfolioImages((prev) => prev.filter((u) => u !== url))
   }
 
+  function toggleService(serviceId: string) {
+    setServiceIds((prev) => (prev.includes(serviceId) ? prev.filter((id) => id !== serviceId) : [...prev, serviceId]))
+  }
+
   async function handleSave() {
     if (!id) return
 
@@ -211,6 +239,7 @@ export default function ArtistDetail() {
         body: JSON.stringify({
           bio: bio || null,
           specialties,
+          serviceIds,
           portfolioImages,
           instagramHandle: instagramHandle || null,
           facebookProfileUrl: facebookProfileUrl || null,
@@ -428,6 +457,52 @@ export default function ArtistDetail() {
                     </div>
                   ) : (
                     <p className="text-sm text-fg-secondary">No specialties listed.</p>
+                  )}
+                </div>
+              </Widget>
+
+              <Widget key="services" id="services" title="Services Offered">
+                <p className="mt-1 text-xs text-fg-muted">
+                  Which of the studio's services this artist practices -- only artists tagged here appear as
+                  practitioner options for an inquiry in that service.
+                </p>
+                <div className="mt-3">
+                  {canManage ? (
+                    serviceOptions.length > 0 ? (
+                      <div className="flex flex-wrap gap-x-4 gap-y-2">
+                        {serviceOptions
+                          .filter((s) => s.isActive || serviceIds.includes(s.id))
+                          .map((s) => (
+                            <label key={s.id} className="flex items-center gap-2 text-sm text-fg-secondary">
+                              <input
+                                type="checkbox"
+                                checked={serviceIds.includes(s.id)}
+                                onChange={() => toggleService(s.id)}
+                                className="h-4 w-4 rounded border-border bg-surface-inset accent-accent"
+                              />
+                              {s.name}
+                              {!s.isActive && <span className="text-xs text-fg-muted">(inactive)</span>}
+                            </label>
+                          ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-fg-secondary">No services configured yet.</p>
+                    )
+                  ) : serviceIds.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {serviceOptions
+                        .filter((s) => serviceIds.includes(s.id))
+                        .map((s) => (
+                          <span
+                            key={s.id}
+                            className="inline-flex items-center rounded-full border border-border px-2.5 py-1 text-xs font-medium text-fg-secondary"
+                          >
+                            {s.name}
+                          </span>
+                        ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-fg-secondary">No services tagged yet.</p>
                   )}
                 </div>
               </Widget>

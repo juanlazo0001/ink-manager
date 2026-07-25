@@ -22,6 +22,7 @@ import { IntakeFieldKind } from "../../generated/prisma/enums";
 import { NOTE_AUTHOR_SELECT, canModifyNote, isBlankHtml, isValidAttachments } from "../lib/notes";
 import { getEffectiveIntakeFormFields, validateCustomFieldAnswers } from "../lib/intakeFormFields";
 import { resolveIntakeForm } from "../lib/intakeForms";
+import { resolveServiceForIntakeForm } from "../lib/services";
 import { buildImageMeta, mergeImageMeta, resolveImageMeta } from "../lib/imageMeta";
 
 const router = Router();
@@ -317,11 +318,23 @@ router.post("/", optionalAuth, async (req, res) => {
   // themselves, no authenticated staff user to attribute them to.
   const imageUploaderId = isStaffRequest ? req.user!.userId : null;
 
+  // Service lines: which service this inquiry is for, derived from the
+  // intake form it came through (every Service points at exactly one form)
+  // -- see resolveServiceForIntakeForm's own comment for the "Tattoo"
+  // fallback. Required as of the serviceId migration; there is always at
+  // least a studio's own Tattoo service to fall back to, so this should
+  // never actually be null in practice.
+  const service = await resolveServiceForIntakeForm(studio.id, form.id);
+  if (!service) {
+    return res.status(500).json({ error: "This studio has no service configured -- contact support" });
+  }
+
   const inquiry = await prisma.inquiry.create({
     data: {
       studioId: studio.id,
       clientId: client.id,
       intakeFormId: form.id,
+      serviceId: service.id,
       channel,
       description,
       colorOrBlackGrey,
@@ -376,6 +389,7 @@ const PROJECT_STATUSES: InquiryStatus[] = [InquiryStatus.SCHEDULING, InquiryStat
 
 const INQUIRY_INCLUDE = {
   client: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
+  projectCompletedBy: { select: { id: true, name: true, email: true } },
   preferredArtist: { select: { id: true, user: { select: { name: true, email: true, avatarUrl: true } } } },
   // email/avatarUrl added for the Kanban board's card (Package E) --
   // renders through the shared ArtistAvatar component, which needs both to
@@ -393,6 +407,12 @@ const INQUIRY_INCLUDE = {
       endTime: true,
       status: true,
       artist: { select: { id: true, user: { select: { name: true, email: true, avatarUrl: true } } } },
+      // Project pipeline timeline: checkedOutAt (Session Complete) and the
+      // waiver's own status (Waiver Verified) for whichever session is the
+      // earliest not-yet-checked-out one -- derived client-side from this
+      // same already-ordered (startTime asc) array, no separate fetch.
+      checkedOutAt: true,
+      liabilityWaiver: { select: { status: true } },
       // Package N: checkout/finished-tattoo photos, grouped by the session
       // that produced them -- this is what lets the Project page show
       // "Session 1 -- [date]" with its own photos rather than one flat
@@ -1458,6 +1478,82 @@ router.post("/:id/reopen", requireAuth, requirePermission("inquiries.edit"), asy
     entityId: id,
     action: "status_change",
     changes: diffObjects(inquiry, reopenData, ["status", "lostAt", "lostReason"]),
+  });
+
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+
+  res.json(updated);
+});
+
+// Project pipeline timeline's final stage -- deliberately NOT derived from
+// session/checkout state (unlike Scheduled/Waiver Verified/Session
+// Complete, computed client-side in InquiryDetail.tsx). A separate route
+// from /reopen above: that one reverses a terminal InquiryStatus
+// (CLOSED_LOST/COLD_LEAD), this one only ever touches
+// projectCompletedAt/projectCompletedById -- a converted project's status
+// stays SCHEDULING/WAITLISTED/CONFIRMED throughout, whether or not it's
+// been marked complete.
+router.post("/:id/complete-project", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
+  const id = req.params.id as string;
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  if (!PROJECT_STATUSES.includes(inquiry.status)) {
+    return res.status(400).json({ error: "Only a converted project (deposit paid) can be marked complete" });
+  }
+
+  if (inquiry.projectCompletedAt) {
+    return res.status(400).json({ error: "This project has already been marked complete" });
+  }
+
+  const completeData = { projectCompletedAt: new Date(), projectCompletedById: req.user!.userId };
+
+  const updated = await prisma.inquiry.update({ where: { id }, data: completeData, include: INQUIRY_INCLUDE });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Inquiry",
+    entityId: id,
+    action: "project_completed",
+    changes: diffObjects(inquiry, completeData, ["projectCompletedAt", "projectCompletedById"]),
+  });
+
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+
+  res.json(updated);
+});
+
+// Same safety-net pattern as /reopen above (an explicit reversal for a
+// click made by mistake, or a client returning for further work after
+// being marked complete) -- clears exactly the two fields
+// complete-project set, nothing else.
+router.post("/:id/reopen-project", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
+  const id = req.params.id as string;
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  if (!inquiry.projectCompletedAt) {
+    return res.status(400).json({ error: "This project has not been marked complete" });
+  }
+
+  const reopenData = { projectCompletedAt: null, projectCompletedById: null };
+
+  const updated = await prisma.inquiry.update({ where: { id }, data: reopenData, include: INQUIRY_INCLUDE });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Inquiry",
+    entityId: id,
+    action: "project_reopened",
+    changes: diffObjects(inquiry, reopenData, ["projectCompletedAt", "projectCompletedById"]),
   });
 
   emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });

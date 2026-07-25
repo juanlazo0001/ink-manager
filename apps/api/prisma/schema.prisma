@@ -211,6 +211,7 @@ model Studio {
   importBatches           ImportBatch[]
   intakeFormFields        IntakeFormField[]
   intakeForms             IntakeForm[]
+  services                Service[]
 }
 
 // Self-serve provider connections -- a studio owner connects their OWN
@@ -289,6 +290,7 @@ model User {
   issuedGiftCards           GiftCard[]
   verifiedWaivers           LiabilityWaiver[]         @relation("WaiverVerifiedBy")
   checkedOutAppointments    Appointment[]             @relation("AppointmentCheckedOutBy")
+  completedProjects         Inquiry[]                 @relation("ProjectCompletedBy")
   taskDismissals            TaskDismissal[]
   personalTasks             PersonalTask[]
   createdPersonalTasks      PersonalTask[]            @relation("PersonalTaskCreatedBy")
@@ -353,6 +355,7 @@ model Artist {
   // informational, same "reverse pointer with no effect on the artist's
   // own fields" convention as Client.matchedImportRows below.
   matchedImportRows  ImportRow[]
+  artistServices     ArtistService[]
 }
 
 model Client {
@@ -378,7 +381,7 @@ model Client {
   // city/state/zip sub-fields for v1 (mass-import revision). Editable from
   // the client's own detail page like every other contact field; also
   // settable by a mapped "address" column during mass import.
-  address            String?
+  address String?
 
   studioId String
   studio   Studio @relation(fields: [studioId], references: [id])
@@ -584,9 +587,116 @@ model IntakeForm {
 
   fields    IntakeFormField[]
   inquiries Inquiry[]
+  services  Service[]
 
   @@unique([studioId, slug])
   @@index([studioId])
+}
+
+// Service lines (multi-service support): what a studio actually offers,
+// e.g. "Tattoo" (the pre-existing behavior, seeded once per studio by
+// this feature's own backfill migration -- see
+// 20260725_backfill_inquiry_service/migration.sql) and "Powder Brows"
+// (the first real PMU case). Each service branches two independent things
+// -- how its price is quoted (pricingModel) and how its deposit is
+// computed (depositModel) -- and points at its own IntakeForm, so a
+// service with materially different intake needs (e.g. PMU candidacy
+// photos) gets a dedicated form without forking the whole intake pipeline.
+enum ServicePricingModel {
+  // Existing tattoo behavior: a low/high estimate range, entered by staff
+  // per inquiry (Inquiry.priceEstimateLow/High) -- unaffected by this
+  // model's existence.
+  RANGE
+  // A single flat price known up front (flatPriceCents) -- e.g. Powder
+  // Brows. The existing estimate send/track/respond flow is reused
+  // unchanged; only the input shape (one number instead of a range)
+  // differs.
+  FLAT
+}
+
+enum ServiceDepositModel {
+  // Existing behavior: the required deposit is looked up from the
+  // studio's configured deposit tiers (StudioSettings.depositTiers /
+  // computeDepositTier) based on the estimate amount -- unaffected by
+  // this model's existence.
+  TIER_BASED
+  // A single flat deposit amount (flatDepositCents), independent of the
+  // estimate -- e.g. Powder Brows' $60 total ($50 deposit + $10
+  // processing fee, per depositBreakdownNote).
+  FLAT
+}
+
+model Service {
+  id   String @id @default(cuid())
+  name String
+  slug String
+
+  pricingModel ServicePricingModel
+  depositModel ServiceDepositModel
+
+  // Set only when pricingModel: FLAT / depositModel: FLAT respectively --
+  // null for RANGE/TIER_BASED services (Tattoo). Both use the same "flat"
+  // convention as every other money field in this schema: whole cents.
+  flatPriceCents       Int?
+  flatDepositCents     Int?
+  // Shown to the client alongside the deposit total on the public deposit
+  // page when set (e.g. "$50 deposit + $10 processing fee") -- purely
+  // informational, never parsed or used in any calculation.
+  depositBreakdownNote String?
+
+  // When true, a new inquiry for this service lands in the
+  // CANDIDACY_REVIEW status instead of proceeding straight to the normal
+  // pricing/estimate stage -- see InquiryStatus and the candidacy-review
+  // routes. False (Tattoo) never touches that status.
+  requiresCandidacyReview Boolean @default(false)
+
+  // Soft-disable, not a hard delete -- a service with real inquiries
+  // attached can never be hard-deleted (enforced in routes/services.ts),
+  // only deactivated. An inactive service stops appearing as a selectable
+  // option for new inquiries/artist tagging but every existing row that
+  // already references it (Inquiry.serviceId, ArtistService) is untouched.
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  // Required -- unlike Inquiry.intakeFormId (permanently nullable, see that
+  // field's own comment), every Service always has exactly one intake form
+  // it was created with. Deleting an IntakeForm that a Service still
+  // points at is blocked (ON DELETE RESTRICT, the default for a required
+  // relation) rather than silently orphaning the service.
+  intakeFormId String
+  intakeForm   IntakeForm @relation(fields: [intakeFormId], references: [id])
+
+  artistServices ArtistService[]
+  inquiries      Inquiry[]
+
+  @@unique([studioId, slug])
+  @@index([studioId])
+}
+
+// Which artists offer which services -- e.g. only the one real PMU
+// practitioner is tagged as offering Powder Brows, so practitioner pickers
+// (wherever staff assign an artist to an inquiry) can filter to just the
+// artists actually qualified for that inquiry's specific service. Backfilled
+// once, for the "Tattoo" service only, by this feature's own migration --
+// every existing Artist is tagged as offering Tattoo, since that's all any
+// artist could have offered before this feature existed.
+model ArtistService {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  artistId String
+  artist   Artist @relation(fields: [artistId], references: [id])
+
+  serviceId String
+  service   Service @relation(fields: [serviceId], references: [id])
+
+  @@unique([artistId, serviceId])
+  @@index([serviceId])
 }
 
 // Package Q (revised): one unified, ordered list per FORM (originally per
@@ -703,20 +813,20 @@ model DismissedDuplicatePair {
 }
 
 model Appointment {
-  id          String            @id @default(cuid())
-  startTime   DateTime
-  endTime     DateTime
-  status      AppointmentStatus @default(REQUESTED)
+  id              String            @id @default(cuid())
+  startTime       DateTime
+  endTime         DateTime
+  status          AppointmentStatus @default(REQUESTED)
   // Defaulted NOT NULL, not backfilled -- every existing row is a real
   // tattoo session (consultations didn't exist before this column), so the
   // default IS the correct historical value for all of them, materializing
   // safely in a single-step migration (unlike Client.referralCode's own
   // earlier no-default incident, which genuinely needed a per-row backfill
   // script before the NOT NULL constraint could land).
-  appointmentType AppointmentType @default(TATTOO_SESSION)
-  depositPaid Boolean           @default(false)
-  notes       String?
-  createdAt   DateTime          @default(now())
+  appointmentType AppointmentType   @default(TATTOO_SESSION)
+  depositPaid     Boolean           @default(false)
+  notes           String?
+  createdAt       DateTime          @default(now())
 
   // Soft, reversible hide -- same exclude-from-list-views pattern as
   // Client.archivedAt / Inquiry.archivedAt. The record stays intact and
@@ -939,6 +1049,29 @@ model Inquiry {
   // touching the inquiry's own real submitted data.
   intakeFormId String?
   intakeForm   IntakeForm? @relation(fields: [intakeFormId], references: [id])
+
+  // Service lines (multi-service support): which of the studio's services
+  // this inquiry is for (e.g. "Tattoo" or "Powder Brows") -- drives
+  // pricing model (RANGE vs FLAT), deposit model (TIER_BASED vs FLAT), and
+  // whether this inquiry passes through CANDIDACY_REVIEW before the normal
+  // pricing stage. Required as of 20260725153500_inquiry_service_id_required
+  // -- every pre-existing row was backfilled to its studio's new "Tattoo"
+  // service by 20260725153000_backfill_inquiry_service first (nullable ->
+  // backfilled -> required, this schema's standing migration discipline),
+  // unlike Inquiry.intakeFormId above which stays nullable permanently.
+  serviceId String
+  service   Service @relation(fields: [serviceId], references: [id])
+
+  // Project pipeline timeline's final, explicitly-set stage -- NOT derived
+  // from session/checkout state (see InquiryDetail.tsx's
+  // deriveProjectStageIndex). Null means "not yet marked complete." Set by
+  // POST /inquiries/:id/complete-project, cleared by the reopen
+  // counterpart -- same "explicit action + explicit reversal, both
+  // audited" pattern as lostAt/lostReason's own mark-lost/reopen pair, not
+  // auto-inferred even when every session is already checked out.
+  projectCompletedAt   DateTime?
+  projectCompletedById String?
+  projectCompletedBy   User?     @relation("ProjectCompletedBy", fields: [projectCompletedById], references: [id])
 
   @@index([studioId])
   @@index([studioId, status])

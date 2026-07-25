@@ -12,6 +12,7 @@ import bcrypt from "bcrypt";
 import crypto from "node:crypto";
 import { prisma } from "../src/lib/prisma";
 import { generateUniqueReferralCode } from "../src/lib/referrals";
+import { resolveIntakeForm } from "../src/lib/intakeForms";
 import {
   Role,
   Channel,
@@ -21,6 +22,10 @@ import {
   ConversationType,
   MessageChannel,
   MessageDirection,
+  ServicePricingModel,
+  ServiceDepositModel,
+  IntakeFieldKind,
+  IntakeCustomQuestionType,
 } from "../generated/prisma/enums";
 
 const DEV_PASSWORD = "password123"; // obviously fake, dev-only
@@ -221,6 +226,124 @@ async function main() {
     },
   });
 
+  // Service lines: every studio needs at least its "Tattoo" service to
+  // create any inquiry at all (Inquiry.serviceId is required) -- the
+  // migration backfill only covers studios that existed AT MIGRATION TIME,
+  // so a fresh database seeded from scratch (this studio didn't exist yet
+  // when 20260725153000_backfill_inquiry_service ran) needs the same thing
+  // done here instead. resolveIntakeForm self-heals a default IntakeForm
+  // into existence if this studio doesn't have one yet, same as every
+  // other path that calls it (POST /inquiries, GET /studio-settings/public).
+  const defaultForm = await resolveIntakeForm(studio.id, null);
+  const tattooService = await prisma.service.upsert({
+    where: { studioId_slug: { studioId: studio.id, slug: "tattoo" } },
+    update: {},
+    create: {
+      studioId: studio.id,
+      name: "Tattoo",
+      slug: "tattoo",
+      pricingModel: ServicePricingModel.RANGE,
+      depositModel: ServiceDepositModel.TIER_BASED,
+      requiresCandidacyReview: false,
+      intakeFormId: defaultForm!.id,
+    },
+  });
+
+  // Powder Brows (PMU): this feature's first real non-tattoo service, its
+  // own dedicated IntakeForm (contact info + a PMU-service select + two
+  // REQUIRED candidacy-screening photo uploads), FLAT pricing, and a FLAT
+  // $60 deposit ($50 deposit + $10 processing fee). No real studio in this
+  // dev database is actually named "Black Hive" (that's the real production
+  // studio -- see REPORT.md's "Black Hive Ink and Arts" entry); this dev
+  // seed demonstrates the feature on Dev Studio instead, since dev/test
+  // never points at the production database (see DEVELOPMENT.md). The
+  // OWNER still needs to manually tag the real PMU practitioner via the
+  // Artist profile's service checkboxes -- never guessed here.
+  const existingPowderBrowsForm = await prisma.intakeForm.findUnique({
+    where: { studioId_slug: { studioId: studio.id, slug: "powder-brows" } },
+  });
+  const powderBrowsForm =
+    existingPowderBrowsForm ??
+    (await prisma.intakeForm.create({
+      data: { studioId: studio.id, name: "Powder Brows Consultation", slug: "powder-brows", isDefault: false },
+    }));
+
+  if ((await prisma.intakeFormField.count({ where: { intakeFormId: powderBrowsForm.id } })) === 0) {
+    await prisma.intakeFormField.createMany({
+      data: [
+        { studioId: studio.id, intakeFormId: powderBrowsForm.id, fieldKind: IntakeFieldKind.SYSTEM, systemFieldKey: "name", label: "Name", required: true, enabled: true, order: 0 },
+        { studioId: studio.id, intakeFormId: powderBrowsForm.id, fieldKind: IntakeFieldKind.SYSTEM, systemFieldKey: "email", label: "Email", required: true, enabled: true, order: 1 },
+        { studioId: studio.id, intakeFormId: powderBrowsForm.id, fieldKind: IntakeFieldKind.SYSTEM, systemFieldKey: "phone", label: "Phone", required: false, enabled: true, order: 2 },
+        // Every other tattoo-oriented SYSTEM field must still exist as a row
+        // (validateIntakeFormFieldsPayload requires all SYSTEM_FIELD_KEYS to
+        // be present, just optionally disabled) -- disabled here since none
+        // apply to a PMU candidacy screening.
+        { studioId: studio.id, intakeFormId: powderBrowsForm.id, fieldKind: IntakeFieldKind.SYSTEM, systemFieldKey: "referralSource", label: "How did you hear about us?", required: false, enabled: false, order: 3 },
+        { studioId: studio.id, intakeFormId: powderBrowsForm.id, fieldKind: IntakeFieldKind.SYSTEM, systemFieldKey: "description", label: "Describe the tattoo you want", required: false, enabled: false, order: 4 },
+        { studioId: studio.id, intakeFormId: powderBrowsForm.id, fieldKind: IntakeFieldKind.SYSTEM, systemFieldKey: "colorOrBlackGrey", label: "Color or Black & Grey?", required: false, enabled: false, order: 5 },
+        { studioId: studio.id, intakeFormId: powderBrowsForm.id, fieldKind: IntakeFieldKind.SYSTEM, systemFieldKey: "placement", label: "Placement", required: false, enabled: false, order: 6 },
+        { studioId: studio.id, intakeFormId: powderBrowsForm.id, fieldKind: IntakeFieldKind.SYSTEM, systemFieldKey: "size", label: "Estimated size", required: false, enabled: false, order: 7 },
+        { studioId: studio.id, intakeFormId: powderBrowsForm.id, fieldKind: IntakeFieldKind.SYSTEM, systemFieldKey: "hasBeenTattooedBefore", label: "Have you been tattooed before?", required: false, enabled: false, order: 8 },
+        { studioId: studio.id, intakeFormId: powderBrowsForm.id, fieldKind: IntakeFieldKind.SYSTEM, systemFieldKey: "preferredArtist", label: "Preferred artist", required: false, enabled: false, order: 9 },
+        { studioId: studio.id, intakeFormId: powderBrowsForm.id, fieldKind: IntakeFieldKind.SYSTEM, systemFieldKey: "budget", label: "Budget", required: false, enabled: false, order: 10 },
+        { studioId: studio.id, intakeFormId: powderBrowsForm.id, fieldKind: IntakeFieldKind.SYSTEM, systemFieldKey: "desiredTiming", label: "Desired timing", required: false, enabled: false, order: 11 },
+        { studioId: studio.id, intakeFormId: powderBrowsForm.id, fieldKind: IntakeFieldKind.SYSTEM, systemFieldKey: "referenceImages", label: "Reference images", required: false, enabled: false, order: 12 },
+        { studioId: studio.id, intakeFormId: powderBrowsForm.id, fieldKind: IntakeFieldKind.SYSTEM, systemFieldKey: "placementImages", label: "Placement photos", required: false, enabled: false, order: 13 },
+        // PMU-specific CUSTOM questions -- a select (even with just one
+        // option, per this feature's own spec) and two REQUIRED
+        // candidacy-screening photo uploads.
+        {
+          studioId: studio.id,
+          intakeFormId: powderBrowsForm.id,
+          fieldKind: IntakeFieldKind.CUSTOM,
+          customQuestionType: IntakeCustomQuestionType.SELECT,
+          label: "Which PMU service are you interested in?",
+          required: true,
+          enabled: true,
+          options: ["Powder Brows"],
+          order: 14,
+        },
+        {
+          studioId: studio.id,
+          intakeFormId: powderBrowsForm.id,
+          fieldKind: IntakeFieldKind.CUSTOM,
+          customQuestionType: IntakeCustomQuestionType.PHOTO_UPLOAD,
+          label: "Photo of your face (for candidacy review)",
+          required: true,
+          enabled: true,
+          order: 15,
+        },
+        {
+          studioId: studio.id,
+          intakeFormId: powderBrowsForm.id,
+          fieldKind: IntakeFieldKind.CUSTOM,
+          customQuestionType: IntakeCustomQuestionType.PHOTO_UPLOAD,
+          label: "Photo of your eyebrows, no makeup (for candidacy review)",
+          required: true,
+          enabled: true,
+          order: 16,
+        },
+      ],
+    });
+  }
+
+  await prisma.service.upsert({
+    where: { studioId_slug: { studioId: studio.id, slug: "powder-brows" } },
+    update: {},
+    create: {
+      studioId: studio.id,
+      name: "Powder Brows",
+      slug: "powder-brows",
+      pricingModel: ServicePricingModel.FLAT,
+      depositModel: ServiceDepositModel.FLAT,
+      flatPriceCents: null,
+      flatDepositCents: 6000,
+      depositBreakdownNote: "$50 deposit + $10 processing fee",
+      requiresCandidacyReview: true,
+      intakeFormId: powderBrowsForm.id,
+    },
+  });
+
   const owner = await prisma.user.upsert({
     where: { email: "owner@dev-studio.test" },
     update: {},
@@ -284,7 +407,7 @@ async function main() {
     },
   });
 
-  await prisma.artist.upsert({
+  const artist2 = await prisma.artist.upsert({
     where: { userId: artistUser2.id },
     update: {},
     create: {
@@ -294,6 +417,19 @@ async function main() {
       portfolioImages: [],
     },
   });
+
+  // Every artist offers Tattoo, same as the migration backfill's own
+  // reasoning -- that's all any artist could offer before this feature
+  // existed. Deliberately NOT tagging either seeded artist as offering
+  // Powder Brows: which real practitioner does PMU is an OWNER decision,
+  // never guessed by this seed script (see this feature's own task spec).
+  for (const artist of [artist1, artist2]) {
+    await prisma.artistService.upsert({
+      where: { artistId_serviceId: { artistId: artist.id, serviceId: tattooService.id } },
+      update: {},
+      create: { artistId: artist.id, serviceId: tattooService.id },
+    });
+  }
 
   async function upsertClient(email: string, firstName: string, lastName: string, phone: string) {
     const existing = await prisma.client.findFirst({ where: { studioId: studio.id, email } });
@@ -314,6 +450,7 @@ async function main() {
       data: {
         studioId: studio.id,
         clientId,
+        serviceId: tattooService.id,
         description,
         channel: Channel.EMAIL,
         colorOrBlackGrey: "Color",
@@ -338,7 +475,7 @@ async function main() {
     priceEstimateHigh: 600,
   });
 
-  const existingDeposit2 = await prisma.depositForm.findUnique({ where: { inquiryId: inquiry2.id } });
+  const existingDeposit2 = await prisma.depositForm.findFirst({ where: { inquiryId: inquiry2.id } });
   if (!existingDeposit2) {
     const code2 = await generateUniqueGiftCardCode();
     const giftCard2 = await prisma.giftCard.create({
