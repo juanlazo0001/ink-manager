@@ -51,6 +51,10 @@ type ViewMode = 'list' | 'kanban'
 // slot -- a Projects status, not a lead status, even though the plan's
 // prose didn't explicitly place it.
 export const INQUIRIES_TAB_STATUSES = [
+  // Service lines: a candidacy-review service (e.g. Powder Brows) lands
+  // here first, before NEW -- included in this tab's own status list (not
+  // the Projects tab's) since it's still a lead, not a converted project.
+  'CANDIDACY_REVIEW',
   'NEW',
   'ARTIST_ASSIGNED',
   'AWAITING_CLIENT_RESPONSE',
@@ -67,7 +71,21 @@ export const PROJECTS_TAB_STATUSES = ['SCHEDULING', 'WAITLISTED', 'CONFIRMED'] a
 // inventing a second grouping scheme. Terminal states collapse into one
 // column, consistent with how INQUIRIES_TAB_STATUSES already folds them
 // into this tab (Projects never shows them -- see PROJECTS_TAB_STATUSES).
+// Service lines: a dedicated column for CANDIDACY_REVIEW, kept OUT of
+// PIPELINE_STEPS itself (that array is shared with the vertical/horizontal
+// stepper on InquiryDetail.tsx -- prepending a step there would shift every
+// other status's step index, making a Tattoo inquiry that's never touched
+// candidacy review show a false "done" checkmark for it). Excluded from
+// interactiveColumnKeys below -- the three candidacy actions are explicit
+// buttons on InquiryDetail.tsx, not a card drag.
+const CANDIDACY_REVIEW_COLUMN: KanbanColumn = {
+  key: 'CANDIDACY_REVIEW',
+  label: 'Candidacy Review',
+  statuses: ['CANDIDACY_REVIEW'],
+}
+
 export const INQUIRY_TAB_COLUMNS: KanbanColumn[] = [
+  CANDIDACY_REVIEW_COLUMN,
   ...PIPELINE_STEPS.slice(0, 4).map((step) => ({ key: step.label, label: step.label, statuses: step.statuses })),
   { key: 'INACTIVE', label: 'Inactive', statuses: ['CLOSED_LOST', 'COLD_LEAD'] },
 ]
@@ -651,9 +669,9 @@ export default function Inquiries() {
                 key={activeTab}
                 inquiries={filteredInquiries}
                 columns={activeTab === 'projects' ? PROJECT_TAB_COLUMNS : INQUIRY_TAB_COLUMNS}
-                interactiveColumnKeys={(activeTab === 'projects' ? PROJECT_TAB_COLUMNS : INQUIRY_TAB_COLUMNS).map(
-                  (column) => column.key,
-                )}
+                interactiveColumnKeys={(activeTab === 'projects' ? PROJECT_TAB_COLUMNS : INQUIRY_TAB_COLUMNS)
+                  .map((column) => column.key)
+                  .filter((key) => key !== 'CANDIDACY_REVIEW')}
                 resolveTransition={(params) =>
                   activeTab === 'projects'
                     ? resolveProjectsTabTransition({ ...params, inquiry: params.inquiry as Inquiry })

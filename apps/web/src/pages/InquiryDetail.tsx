@@ -171,6 +171,7 @@ interface ArtistOption {
   user: { id: string; email: string; name: string | null; avatarUrl: string | null }
   isGuest: boolean
   guestEndDate: string | null
+  artistServices: { serviceId: string }[]
 }
 
 // New assignments never default-offer a guest artist whose window has
@@ -319,6 +320,7 @@ function ArtistDetailField({ label, artist, emptyLabel }: { label: string; artis
 // id, so that feature keeps working unchanged.
 const INQUIRY_WIDGET_ORDER = [
   'pipeline',
+  'candidacy-review',
   'assignment-section',
   'estimate-section',
   'deposit',
@@ -455,10 +457,16 @@ export default function InquiryDetail() {
     queryFn: () => apiFetch<ArtistOption[]>('/artists'),
   })
   // Assignment (a new/first assignment, only offered while status === 'NEW')
-  // excludes ended guests by default. "Share with Artist" below is a send-
-  // to/notify action, not an assignment, so it intentionally still lists
-  // everyone -- staff may reasonably want to loop in a former guest.
-  const assignableArtistOptions = artistOptions?.filter((a) => !isEndedGuest(a))
+  // excludes ended guests by default, and -- service lines -- is filtered
+  // to only artists tagged (via ArtistService) as offering THIS inquiry's
+  // specific service, so staff can't assign, say, a tattoo-only artist to a
+  // Powder Brows inquiry. "Share with Artist" below is a send-to/notify
+  // action, not an assignment, so it intentionally still lists everyone --
+  // staff may reasonably want to loop in a former guest or a differently-
+  // tagged artist just to ask a question.
+  const assignableArtistOptions = artistOptions?.filter(
+    (a) => !isEndedGuest(a) && (!inquiry?.service || a.artistServices.some((s) => s.serviceId === inquiry.service.id)),
+  )
   // ArtistSelect matches on `id`; the share modal's value is the artist's
   // USER id (see the artistUserId POST payload below), not the Artist
   // record id every other picker on this page keys by -- re-keyed here
@@ -620,6 +628,13 @@ export default function InquiryDetail() {
   const [lostReasonInput, setLostReasonInput] = useState('')
   const [markingLost, setMarkingLost] = useState(false)
   const [markLostError, setMarkLostError] = useState<string | null>(null)
+  // Candidacy-review-specific labeling for the SAME mark-lost modal above --
+  // set only by the "Not a Candidate" button (see handleOpenNotACandidate),
+  // never by the generic "Mark as lost" entry points elsewhere on this page.
+  const [markingLostAsCandidacy, setMarkingLostAsCandidacy] = useState(false)
+
+  const [markingGoodCandidate, setMarkingGoodCandidate] = useState(false)
+  const [goodCandidateError, setGoodCandidateError] = useState<string | null>(null)
 
   const [showReopenModal, setShowReopenModal] = useState(false)
   const [reopenStatus, setReopenStatus] = useState('')
@@ -1085,11 +1100,39 @@ export default function InquiryDetail() {
 
       setShowMarkLostModal(false)
       setLostReasonInput('')
+      setMarkingLostAsCandidacy(false)
       invalidateInquiry()
     } catch (err) {
       setMarkLostError(err instanceof Error ? err.message : 'Failed to mark inquiry lost')
     } finally {
       setMarkingLost(false)
+    }
+  }
+
+  // "Not a Candidate" -- opens the SAME mark-lost modal/route as every other
+  // "Mark as lost" entry point on this page (see handleMarkLost above), just
+  // pre-filled with this reason and a candidacy-specific title, per this
+  // feature's own "no second terminal-state system" requirement.
+  function handleOpenNotACandidate() {
+    setLostReasonInput('Not a candidate')
+    setMarkLostError(null)
+    setMarkingLostAsCandidacy(true)
+    setShowMarkLostModal(true)
+  }
+
+  async function handleMarkGoodCandidate() {
+    if (!id) return
+
+    setMarkingGoodCandidate(true)
+    setGoodCandidateError(null)
+
+    try {
+      await apiFetch(`/inquiries/${id}/mark-good-candidate`, { method: 'POST' })
+      invalidateInquiry()
+    } catch (err) {
+      setGoodCandidateError(err instanceof Error ? err.message : 'Failed to mark as a good candidate')
+    } finally {
+      setMarkingGoodCandidate(false)
     }
   }
 
@@ -1756,6 +1799,44 @@ export default function InquiryDetail() {
                   />
                 )}
               </Widget>
+
+              {inquiry.status === 'CANDIDACY_REVIEW' && (
+                <Widget key="candidacy-review" id="candidacy-review" title="Candidacy Review">
+                  <p className="mt-1 text-sm text-fg-secondary">
+                    {inquiry.service.name} requires a candidacy review before pricing. Review the submitted photos
+                    below, then choose one of the three options.
+                  </p>
+
+                  {canMessage && (
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        onClick={handleMarkGoodCandidate}
+                        disabled={markingGoodCandidate}
+                        className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                      >
+                        {markingGoodCandidate ? 'Saving…' : 'Mark Good Candidate'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAppointmentModalType('CONSULTATION')}
+                        className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
+                      >
+                        Schedule Consultation
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleOpenNotACandidate}
+                        className="rounded-full border border-danger/40 px-4 py-2 text-sm font-medium text-danger transition hover:bg-danger/10"
+                      >
+                        Not a Candidate
+                      </button>
+                    </div>
+                  )}
+
+                  {goodCandidateError && <p className="mt-3 text-sm text-danger">{goodCandidateError}</p>}
+                </Widget>
+              )}
 
               <Widget key="assignment-section" id="assignment-section" title="Assignment">
 
@@ -3047,10 +3128,18 @@ export default function InquiryDetail() {
               )}
 
               {showMarkLostModal && (
-                <Modal title="Mark as lost" onClose={() => setShowMarkLostModal(false)}>
+                <Modal
+                  title={markingLostAsCandidacy ? 'Not a Candidate' : 'Mark as lost'}
+                  onClose={() => {
+                    setShowMarkLostModal(false)
+                    setMarkingLostAsCandidacy(false)
+                  }}
+                >
                   <div className="space-y-4">
                     <p className="text-sm text-fg-secondary">
-                      This marks the inquiry as lost. You can reopen it later if the client comes back.
+                      {markingLostAsCandidacy
+                        ? 'This marks the inquiry as lost -- same as any other "Mark as lost" -- with candidacy as the reason. You can reopen it later if the client comes back.'
+                        : 'This marks the inquiry as lost. You can reopen it later if the client comes back.'}
                     </p>
 
                     <div>
@@ -3072,11 +3161,14 @@ export default function InquiryDetail() {
                         disabled={markingLost}
                         className="flex-1 rounded-full border border-danger/40 px-4 py-2 text-sm font-medium text-danger transition hover:bg-danger/10 disabled:opacity-60"
                       >
-                        {markingLost ? 'Marking lost…' : 'Mark as lost'}
+                        {markingLost ? 'Marking lost…' : markingLostAsCandidacy ? 'Not a Candidate' : 'Mark as lost'}
                       </button>
                       <button
                         type="button"
-                        onClick={() => setShowMarkLostModal(false)}
+                        onClick={() => {
+                          setShowMarkLostModal(false)
+                          setMarkingLostAsCandidacy(false)
+                        }}
                         disabled={markingLost}
                         className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
                       >

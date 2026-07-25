@@ -22,6 +22,10 @@ export type Tone = 'success' | 'info' | 'warning' | 'danger' | 'neutral' | 'prog
 // CONFIRMED) correctly still share one.
 const STATUS_TONE: Record<string, Tone> = {
   // Inquiry pipeline
+  // Service lines: candidacy review happens before an inquiry ever reaches
+  // NEW -- warning (not info like NEW) since it's an action-needed stage,
+  // consistent with DEPOSIT_PENDING/AWAITING_CLIENT_RESPONSE's own tone.
+  CANDIDACY_REVIEW: 'warning',
   NEW: 'info',
   ARTIST_ASSIGNED: 'progress',
   AWAITING_CLIENT_RESPONSE: 'warning',

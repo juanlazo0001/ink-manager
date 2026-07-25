@@ -192,10 +192,18 @@ export default function InquiryDetailsSection({ inquiry, bare = false, onVisibil
 
   const isVisible = rows.length > 0
 
+  // Only reports once `fields` has actually loaded -- otherwise the very
+  // first render (fields still null, rows still empty) reports isVisible:
+  // false before the fetch above ever resolves, which flips the parent's
+  // conditional wrapper off and unmounts this component before it gets a
+  // chance to compute the real answer (a genuine "photos never show up"
+  // bug, caught while verifying Powder Brows candidacy-review photos
+  // actually render here).
   useEffect(() => {
+    if (fields === null) return
     onVisibilityChange?.(isVisible)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isVisible])
+  }, [fields, isVisible])
 
   if (!fields || !isVisible) return null
 

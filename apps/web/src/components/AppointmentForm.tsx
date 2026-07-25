@@ -36,6 +36,7 @@ interface ArtistOption {
   guestStartDate: string | null
   guestEndDate: string | null
   preferredSchedule: ScheduleBlock[] | null
+  artistServices: { serviceId: string }[]
 }
 
 function timeToMinutes(time: string): number {
@@ -84,7 +85,7 @@ interface InquiryOption {
   assignedArtistId: string | null
   priceEstimateLow: number | null
   priceEstimateHigh: number | null
-  service: { depositModel: 'TIER_BASED' | 'FLAT'; flatDepositCents: number | null }
+  service: { id: string; depositModel: 'TIER_BASED' | 'FLAT'; flatDepositCents: number | null }
 }
 
 interface ClientWithProjects {
@@ -201,8 +202,6 @@ export default function AppointmentForm({
     queryKey: artistsQueryKey(user!.studioId),
     queryFn: () => apiFetch<ArtistOption[]>('/artists'),
   })
-  const artistOptions = allArtistOptions?.filter((a) => !isEndedGuest(a))
-  const selectedArtist = artistOptions?.find((a) => a.id === artistId)
 
   const effectiveClientId = fixedClientId ?? clientId
 
@@ -228,6 +227,16 @@ export default function AppointmentForm({
   // time estimate are picked (see the JSX gating below).
   const effectiveInquiryId = fixedInquiryId ?? inquiryId
   const selectedInquiry = availableInquiries.find((i) => i.id === effectiveInquiryId)
+
+  // Service lines: once a project is known, the artist picker narrows to
+  // only artists tagged (via ArtistService) as offering THAT project's
+  // service -- same filtering InquiryDetail.tsx's own assignment picker
+  // applies. No project picked yet (e.g. Calendar's blank "New Appointment"
+  // before a client/project is chosen) shows every artist, same as before.
+  const artistOptions = allArtistOptions?.filter(
+    (a) => !isEndedGuest(a) && (!selectedInquiry || a.artistServices.some((s) => s.serviceId === selectedInquiry.service.id)),
+  )
+  const selectedArtist = artistOptions?.find((a) => a.id === artistId)
 
   const requiredDepositCents = resolveRequiredDepositCents(
     selectedInquiry?.service,

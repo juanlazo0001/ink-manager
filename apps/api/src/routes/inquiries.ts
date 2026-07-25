@@ -335,6 +335,11 @@ router.post("/", optionalAuth, async (req, res) => {
       clientId: client.id,
       intakeFormId: form.id,
       serviceId: service.id,
+      // Service lines: a service with requiresCandidacyReview: true (e.g.
+      // Powder Brows) lands in CANDIDACY_REVIEW instead of the default NEW
+      // -- before the normal pricing/estimate stage. False (Tattoo) never
+      // sets this, same default NEW as before this feature existed.
+      status: service.requiresCandidacyReview ? InquiryStatus.CANDIDACY_REVIEW : InquiryStatus.NEW,
       channel,
       description,
       colorOrBlackGrey,
@@ -1498,6 +1503,46 @@ router.post("/:id/reopen", requireAuth, requirePermission("inquiries.edit"), asy
     entityId: id,
     action: "status_change",
     changes: diffObjects(inquiry, reopenData, ["status", "lostAt", "lostReason"]),
+  });
+
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+
+  res.json(updated);
+});
+
+// Service lines: the first of CANDIDACY_REVIEW's three actions -- proceeds
+// a candidate straight into the normal pipeline (NEW), where staff assign
+// an artist and get a price estimate exactly as any other inquiry would.
+// The other two actions are deliberately NOT separate routes: "Mark Not a
+// Candidate" reuses POST /:id/mark-lost exactly (same route, same audit
+// trail, just a UI-supplied reason), and "Schedule Consultation" reuses the
+// existing consultation appointment feature (POST /appointments with
+// appointmentType: CONSULTATION) without touching this inquiry's status at
+// all -- it stays in CANDIDACY_REVIEW until staff return to make the final
+// call.
+router.post("/:id/mark-good-candidate", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
+  const id = req.params.id as string;
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  if (inquiry.status !== InquiryStatus.CANDIDACY_REVIEW) {
+    return res.status(400).json({ error: "Only an inquiry in CANDIDACY_REVIEW can be marked a good candidate" });
+  }
+
+  const goodCandidateData = { status: InquiryStatus.NEW };
+
+  const updated = await prisma.inquiry.update({ where: { id }, data: goodCandidateData, include: INQUIRY_INCLUDE });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Inquiry",
+    entityId: id,
+    action: "status_change",
+    changes: diffObjects(inquiry, goodCandidateData, ["status"]),
   });
 
   emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });

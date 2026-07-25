@@ -86,6 +86,10 @@ const ARTIST_LIST_SELECT = {
   // hours + calendar shading) needs this in the list view too, not just
   // the detail page.
   preferredSchedule: true,
+  // Service lines: InquiryDetail.tsx's practitioner picker filters to only
+  // artists tagged as offering the inquiry's own service -- needs this in
+  // the list view too, not just the detail page.
+  artistServices: { select: { serviceId: true } },
   user: { select: { id: true, email: true, name: true, avatarUrl: true } },
 } as const;
 

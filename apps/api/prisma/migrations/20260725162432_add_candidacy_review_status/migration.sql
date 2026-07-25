@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "InquiryStatus" ADD VALUE 'CANDIDACY_REVIEW';

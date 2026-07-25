@@ -62,7 +62,26 @@ export default function InquiryPipeline({
 }: InquiryPipelineProps) {
   const effectiveSteps: readonly PipelineStepLike[] = steps ?? PIPELINE_STEPS
   const isClosed = !steps && CLOSED_STATUSES.includes(status)
+  // Service lines: CANDIDACY_REVIEW is deliberately NOT one of PIPELINE_STEPS
+  // (that array is shared with every Tattoo/RANGE inquiry's stepper too --
+  // adding a step here would shift every later status's index, making a
+  // Tattoo inquiry that never touched candidacy review show a false "done"
+  // checkmark for it). Rendered as its own distinct state instead, same
+  // pattern as isClosed above.
+  const isCandidacyReview = !steps && status === 'CANDIDACY_REVIEW'
   const activeIndex = steps ? (activeIndexProp ?? -1) : currentStepIndex(status)
+
+  if (isCandidacyReview) {
+    return (
+      <div className={className}>
+        {!hideLabel && <p className="text-xs font-semibold uppercase tracking-wider text-fg-muted">Pipeline</p>}
+        <div className={`flex items-center gap-2 ${hideLabel ? '' : 'mt-2'}`}>
+          <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-warning" />
+          <span className="text-sm font-semibold text-fg">Awaiting candidacy review</span>
+        </div>
+      </div>
+    )
+  }
 
   if (isClosed) {
     return (

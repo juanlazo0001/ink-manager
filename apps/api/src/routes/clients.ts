@@ -151,8 +151,9 @@ router.get("/:id", requirePermission("clients.view"), async (req, res) => {
           // Service lines: AppointmentForm's required-deposit preview needs
           // depositModel/flatDepositCents to compute a FLAT service's
           // required deposit correctly instead of always falling back to a
-          // tier lookup.
-          service: { select: { depositModel: true, flatDepositCents: true } },
+          // tier lookup; id backs its practitioner-picker filtering (only
+          // artists tagged as offering THIS inquiry's service).
+          service: { select: { id: true, depositModel: true, flatDepositCents: true } },
         },
         orderBy: { createdAt: "desc" },
       },

@@ -165,6 +165,16 @@ enum JobStatus {
 }
 
 enum InquiryStatus {
+  // Service lines: only an inquiry for a service with
+  // requiresCandidacyReview: true lands here on submission, instead of NEW
+  // -- before the normal pricing/estimate stage. A service with that flag
+  // false (Tattoo, and every other service predating this feature) never
+  // sets this status. "Mark Good Candidate" moves it to NEW (resuming the
+  // normal pipeline); "Mark Not a Candidate" reuses POST /:id/mark-lost
+  // exactly (CLOSED_LOST, same as any other lost inquiry); scheduling a
+  // consultation from here reuses the existing consultation appointment
+  // feature without changing this status at all.
+  CANDIDACY_REVIEW
   NEW
   ARTIST_ASSIGNED
   AWAITING_CLIENT_RESPONSE
