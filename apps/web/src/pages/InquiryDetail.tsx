@@ -336,9 +336,11 @@ function ArtistDetailField({ label, artist, emptyLabel }: { label: string; artis
 
 // Built-in fallback order for a user who's never customized this page's
 // layout (or one shipped after their last save). "assignment-section"/
-// "estimate-section"/"scheduling-section" match the ?openFlow= deep-link
-// scroll targets further down -- Widget also sets these as the real HTML
-// id, so that feature keeps working unchanged.
+// "estimate-section"/"appointments" match the ?openFlow= deep-link scroll
+// targets further down -- Widget also sets these as the real HTML id, so
+// that feature keeps working unchanged. The old standalone "scheduling-
+// section" was merged into "appointments" (one box, not two competing
+// ways to book) -- its own openFlow=schedule target now scrolls there too.
 const INQUIRY_WIDGET_ORDER = [
   'pipeline',
   'candidacy-review',
@@ -346,7 +348,6 @@ const INQUIRY_WIDGET_ORDER = [
   'estimate-section',
   'deposit',
   'session-plan',
-  'scheduling-section',
   'appointments',
   'photos',
   'reference-images',
@@ -726,7 +727,7 @@ export default function InquiryDetail() {
       setShowReopenModal(true)
     } else if (openFlow === 'assign' || openFlow === 'send-estimate' || openFlow === 'schedule') {
       const sectionId =
-        openFlow === 'assign' ? 'assignment-section' : openFlow === 'send-estimate' ? 'estimate-section' : 'scheduling-section'
+        openFlow === 'assign' ? 'assignment-section' : openFlow === 'send-estimate' ? 'estimate-section' : 'appointments'
       document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }
 
@@ -2813,182 +2814,6 @@ export default function InquiryDetail() {
                 </Widget>
               )}
 
-              {(inquiry.status === 'SCHEDULING' || inquiry.status === 'WAITLISTED' || inquiry.appointment) && (
-                <Widget key="scheduling-section" id="scheduling-section" title="Scheduling">
-
-                  {bufferWarning && (
-                    <div className="mt-4 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
-                      {bufferWarning}
-                    </div>
-                  )}
-
-                  {inquiry.appointment && (
-                    <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
-                      <DetailField label="Start" value={formatDateTime(inquiry.appointment.startTime)} />
-                      <DetailField label="End" value={formatDateTime(inquiry.appointment.endTime)} />
-                      <DetailField label="Appointment status" value={formatStatus(inquiry.appointment.status)} />
-                    </div>
-                  )}
-
-                  {inquiry.status === 'SCHEDULING' && !inquiry.appointment && (
-                    <>
-                      {(!inquiry.assignedArtist ||
-                        inquiry.timeEstimateHoursMin == null ||
-                        inquiry.timeEstimateHoursMax == null) && (
-                        <p className="mt-4 text-xs text-fg-muted">
-                          Add an assigned artist and a time estimate to see suggested times.
-                        </p>
-                      )}
-
-                      {scheduleSuggestLoading && (
-                        <p className="mt-4 text-sm text-fg-secondary">Checking availability…</p>
-                      )}
-
-                      {!scheduleSuggestLoading && scheduleSuggestedTimes.length > 0 && (
-                        <div className="mt-4 rounded-xl border border-accent/30 bg-accent/5 p-3">
-                          <p className="mb-1.5 text-sm font-semibold text-fg">Suggested times</p>
-                          <div className="flex flex-wrap gap-2">
-                            {scheduleSuggestedTimes.map((candidate) => {
-                              const parts = isoToTimeRangeParts(candidate.startTime, candidate.endTime)
-                              const isSelected =
-                                scheduleTimeRange.date === parts.date &&
-                                scheduleTimeRange.startTime === parts.startTime &&
-                                scheduleTimeRange.endTime === parts.endTime
-                              return (
-                                <button
-                                  key={candidate.startTime}
-                                  type="button"
-                                  onClick={() => setScheduleTimeRange(parts)}
-                                  className={[
-                                    'flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition',
-                                    isSelected
-                                      ? 'border-accent bg-accent/15 text-accent'
-                                      : 'border-border text-fg-secondary hover:bg-surface',
-                                  ].join(' ')}
-                                >
-                                  {formatDateTime(candidate.startTime)} – {formatDateTime(candidate.endTime)}
-                                  {candidate.hasBufferConflict && (
-                                    <span className="rounded-full bg-warning/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-warning">
-                                      Close
-                                    </span>
-                                  )}
-                                </button>
-                              )
-                            })}
-                          </div>
-                        </div>
-                      )}
-
-                      {!scheduleSuggestLoading &&
-                        scheduleSuggestedTimes.length === 0 &&
-                        inquiry.assignedArtist &&
-                        inquiry.timeEstimateHoursMin != null &&
-                        inquiry.timeEstimateHoursMax != null && (
-                          <p className="mt-4 text-xs text-fg-muted">
-                            No open slots found in the next few weeks — pick a time manually below.
-                          </p>
-                        )}
-
-                      <div className="mt-4">
-                        <p className="mb-1.5 text-xs font-medium text-fg-secondary">Or pick a specific time</p>
-                        <DateAndTimeRangeFields value={scheduleTimeRange} onChange={setScheduleTimeRange} />
-                      </div>
-
-                      <div className="mt-3">
-                        <label className="mb-1 block text-xs font-medium text-fg-secondary">
-                          Gift card(s) (deposit) to attach
-                        </label>
-                        {clientGiftCards && clientGiftCards.length === 0 ? (
-                          <p className="text-sm text-fg-secondary">
-                            No available gift card for this client yet — the deposit should have issued one.
-                          </p>
-                        ) : (
-                          <GiftCardStackPicker
-                            cards={clientGiftCards ?? []}
-                            selectedIds={scheduleGiftCardIds}
-                            onChange={setScheduleGiftCardIds}
-                            requiredCents={requiredDepositCents}
-                          />
-                        )}
-                      </div>
-
-                      {scheduleError && <p className="mt-3 text-sm text-danger">{scheduleError}</p>}
-
-                      <div className="mt-3 flex flex-wrap gap-3">
-                        <button
-                          type="button"
-                          onClick={handleSchedule}
-                          disabled={scheduling || !isCompleteTimeRange(scheduleTimeRange) || !hasSufficientScheduleGiftCards}
-                          aria-label="Schedule Appointment"
-                          title="Schedule Appointment"
-                          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface disabled:opacity-60 md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
-                        >
-                          <ClockIcon className="h-4 w-4" />
-                          <span className="hidden text-sm font-semibold md:inline">
-                            {scheduling ? 'Scheduling…' : 'Schedule Appointment'}
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setShowWaitlistForm((v) => !v)}
-                          aria-label="Add to Waitlist"
-                          title="Add to Waitlist"
-                          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
-                        >
-                          <TagIcon className="h-4 w-4" />
-                          <span className="hidden text-sm font-semibold md:inline">Add to Waitlist</span>
-                        </button>
-                      </div>
-
-                      {showWaitlistForm && (
-                        <div className="mt-4 rounded-lg border border-border p-3">
-                          <label className="mb-1 block text-xs font-medium text-fg-secondary">
-                            Waitlist note (optional)
-                          </label>
-                          <textarea
-                            rows={2}
-                            value={waitlistNote}
-                            onChange={(e) => setWaitlistNote(e.target.value)}
-                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                          />
-                          {waitlistError && <p className="mt-2 text-sm text-danger">{waitlistError}</p>}
-                          <button
-                            type="button"
-                            onClick={handleWaitlist}
-                            disabled={waitlisting}
-                            className="mt-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
-                          >
-                            {waitlisting ? 'Saving…' : 'Confirm Waitlist'}
-                          </button>
-                        </div>
-                      )}
-                    </>
-                  )}
-
-                  {inquiry.status === 'WAITLISTED' && (
-                    <div className="mt-4">
-                      <p className="text-sm text-fg-secondary">
-                        Currently waitlisted -- not actively being scheduled.
-                      </p>
-                      {inquiry.declineNote && (
-                        <p className="mt-2 rounded-lg border border-border bg-surface-inset p-3 text-sm text-fg-secondary">
-                          {inquiry.declineNote}
-                        </p>
-                      )}
-                      {unwaitlistError && <p className="mt-2 text-sm text-danger">{unwaitlistError}</p>}
-                      <button
-                        type="button"
-                        onClick={handleUnwaitlist}
-                        disabled={unwaitlisting}
-                        className="mt-3 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
-                      >
-                        {unwaitlisting ? 'Removing…' : 'Remove from Waitlist'}
-                      </button>
-                    </div>
-                  )}
-                </Widget>
-              )}
-
               <Widget
                 key="appointments"
                 id="appointments"
@@ -3043,6 +2868,198 @@ export default function InquiryDetail() {
                         <StatusPill status={session.status} />
                       </Link>
                     ))}
+                  </div>
+                )}
+
+                {/* Merged in from the old standalone "Scheduling" section --
+                    having a second box just for "book a time to confirm
+                    this project" alongside the appointment list it was
+                    about to join was confusing (two competing ways to
+                    book). This is still the one path that also moves
+                    SCHEDULING -> CONFIRMED (the Kanban board's own
+                    SCHEDULING -> CONFIRMED drag deep-links straight to this
+                    same section, via ?openFlow=schedule -> #appointments)
+                    and the only place Waitlist lives -- kept, just no
+                    longer its own separate widget. The old redundant
+                    Start/End/status block for an already-booked
+                    inquiry.appointment was dropped entirely -- the exact
+                    same appointment already shows in the list above (and
+                    its own detail page, one click away, has the full
+                    start/end).
+
+                    Also newly gated on plannedSessions.length === 0 --
+                    this flow only ever books/tracks ONE ad-hoc appointment
+                    via inquiry.appointment, which multi-session bookings
+                    (made via Session Plan's own per-session flow) never
+                    touch, so `status` never leaves SCHEDULING for a
+                    multi-session project no matter how many of its
+                    sessions get booked and completed. Without this gate,
+                    "Add an assigned artist and a time estimate..." would
+                    show forever on every multi-session project (their
+                    top-level time estimate is always null once a plan
+                    exists) -- Session Plan is the one place multi-session
+                    booking happens, same reasoning as the Deposit widget's
+                    own plannedSessions gate above. */}
+                {bufferWarning && (
+                  <div className="mt-4 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
+                    {bufferWarning}
+                  </div>
+                )}
+
+                {inquiry.status === 'SCHEDULING' && !inquiry.appointment && inquiry.plannedSessions.length === 0 && (
+                  <>
+                    {(!inquiry.assignedArtist ||
+                      inquiry.timeEstimateHoursMin == null ||
+                      inquiry.timeEstimateHoursMax == null) && (
+                      <p className="mt-4 text-xs text-fg-muted">
+                        Add an assigned artist and a time estimate to see suggested times.
+                      </p>
+                    )}
+
+                    {scheduleSuggestLoading && (
+                      <p className="mt-4 text-sm text-fg-secondary">Checking availability…</p>
+                    )}
+
+                    {!scheduleSuggestLoading && scheduleSuggestedTimes.length > 0 && (
+                      <div className="mt-4 rounded-xl border border-accent/30 bg-accent/5 p-3">
+                        <p className="mb-1.5 text-sm font-semibold text-fg">Suggested times</p>
+                        <div className="flex flex-wrap gap-2">
+                          {scheduleSuggestedTimes.map((candidate) => {
+                            const parts = isoToTimeRangeParts(candidate.startTime, candidate.endTime)
+                            const isSelected =
+                              scheduleTimeRange.date === parts.date &&
+                              scheduleTimeRange.startTime === parts.startTime &&
+                              scheduleTimeRange.endTime === parts.endTime
+                            return (
+                              <button
+                                key={candidate.startTime}
+                                type="button"
+                                onClick={() => setScheduleTimeRange(parts)}
+                                className={[
+                                  'flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition',
+                                  isSelected
+                                    ? 'border-accent bg-accent/15 text-accent'
+                                    : 'border-border text-fg-secondary hover:bg-surface',
+                                ].join(' ')}
+                              >
+                                {formatDateTime(candidate.startTime)} – {formatDateTime(candidate.endTime)}
+                                {candidate.hasBufferConflict && (
+                                  <span className="rounded-full bg-warning/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-warning">
+                                    Close
+                                  </span>
+                                )}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {!scheduleSuggestLoading &&
+                      scheduleSuggestedTimes.length === 0 &&
+                      inquiry.assignedArtist &&
+                      inquiry.timeEstimateHoursMin != null &&
+                      inquiry.timeEstimateHoursMax != null && (
+                        <p className="mt-4 text-xs text-fg-muted">
+                          No open slots found in the next few weeks — pick a time manually below.
+                        </p>
+                      )}
+
+                    <div className="mt-4">
+                      <p className="mb-1.5 text-xs font-medium text-fg-secondary">Or pick a specific time</p>
+                      <DateAndTimeRangeFields value={scheduleTimeRange} onChange={setScheduleTimeRange} />
+                    </div>
+
+                    <div className="mt-3">
+                      <label className="mb-1 block text-xs font-medium text-fg-secondary">
+                        Gift card(s) (deposit) to attach
+                      </label>
+                      {clientGiftCards && clientGiftCards.length === 0 ? (
+                        <p className="text-sm text-fg-secondary">
+                          No available gift card for this client yet — the deposit should have issued one.
+                        </p>
+                      ) : (
+                        <GiftCardStackPicker
+                          cards={clientGiftCards ?? []}
+                          selectedIds={scheduleGiftCardIds}
+                          onChange={setScheduleGiftCardIds}
+                          requiredCents={requiredDepositCents}
+                        />
+                      )}
+                    </div>
+
+                    {scheduleError && <p className="mt-3 text-sm text-danger">{scheduleError}</p>}
+
+                    <div className="mt-3 flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        onClick={handleSchedule}
+                        disabled={scheduling || !isCompleteTimeRange(scheduleTimeRange) || !hasSufficientScheduleGiftCards}
+                        aria-label="Schedule Appointment"
+                        title="Schedule Appointment"
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface disabled:opacity-60 md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
+                      >
+                        <ClockIcon className="h-4 w-4" />
+                        <span className="hidden text-sm font-semibold md:inline">
+                          {scheduling ? 'Scheduling…' : 'Schedule Appointment'}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowWaitlistForm((v) => !v)}
+                        aria-label="Add to Waitlist"
+                        title="Add to Waitlist"
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
+                      >
+                        <TagIcon className="h-4 w-4" />
+                        <span className="hidden text-sm font-semibold md:inline">Add to Waitlist</span>
+                      </button>
+                    </div>
+
+                    {showWaitlistForm && (
+                      <div className="mt-4 rounded-lg border border-border p-3">
+                        <label className="mb-1 block text-xs font-medium text-fg-secondary">
+                          Waitlist note (optional)
+                        </label>
+                        <textarea
+                          rows={2}
+                          value={waitlistNote}
+                          onChange={(e) => setWaitlistNote(e.target.value)}
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                        />
+                        {waitlistError && <p className="mt-2 text-sm text-danger">{waitlistError}</p>}
+                        <button
+                          type="button"
+                          onClick={handleWaitlist}
+                          disabled={waitlisting}
+                          className="mt-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                        >
+                          {waitlisting ? 'Saving…' : 'Confirm Waitlist'}
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {inquiry.status === 'WAITLISTED' && (
+                  <div className="mt-4">
+                    <p className="text-sm text-fg-secondary">
+                      Currently waitlisted -- not actively being scheduled.
+                    </p>
+                    {inquiry.declineNote && (
+                      <p className="mt-2 rounded-lg border border-border bg-surface-inset p-3 text-sm text-fg-secondary">
+                        {inquiry.declineNote}
+                      </p>
+                    )}
+                    {unwaitlistError && <p className="mt-2 text-sm text-danger">{unwaitlistError}</p>}
+                    <button
+                      type="button"
+                      onClick={handleUnwaitlist}
+                      disabled={unwaitlisting}
+                      className="mt-3 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                    >
+                      {unwaitlisting ? 'Removing…' : 'Remove from Waitlist'}
+                    </button>
                   </div>
                 )}
               </Widget>
@@ -3160,14 +3177,14 @@ export default function InquiryDetail() {
                                       type="button"
                                       onClick={() => handleSendDepositForm(ps.id)}
                                       disabled={sendingDeposit || !tentativeTimeValid}
-                                      className="rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                                      className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                                     >
                                       {sendingDeposit ? 'Sending…' : 'Send Deposit Form'}
                                     </button>
                                     <button
                                       type="button"
                                       onClick={() => setDepositTargetPlannedSessionId(null)}
-                                      className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                                      className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
                                     >
                                       Cancel
                                     </button>
@@ -3181,7 +3198,7 @@ export default function InquiryDetail() {
                                     setTentativeTimeRange({ date: '', startTime: '', endTime: '' })
                                     setDepositTargetPlannedSessionId(ps.id)
                                   }}
-                                  className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                                  className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
                                 >
                                   Send Deposit Form
                                 </button>
@@ -3200,7 +3217,7 @@ export default function InquiryDetail() {
                                 type="button"
                                 onClick={() => handleSendDepositForm(ps.id)}
                                 disabled={sendingDeposit}
-                                className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                                className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
                               >
                                 {sendingDeposit ? 'Resending…' : 'Resend Deposit Form'}
                               </button>
@@ -3244,7 +3261,7 @@ export default function InquiryDetail() {
                               <button
                                 type="button"
                                 onClick={() => setBookingPlannedSessionId(ps.id)}
-                                className="mt-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                                className="mt-2 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
                               >
                                 Book Appointment
                               </button>

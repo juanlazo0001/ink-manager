@@ -156,12 +156,15 @@ router.get("/:id", requirePermission("clients.view"), async (req, res) => {
           // artists tagged as offering THIS inquiry's service).
           service: { select: { id: true, depositModel: true, flatDepositCents: true } },
           // Multi-session planning: lets AppointmentForm offer a picker of
-          // which planned session a new appointment fulfills (only ones
-          // with a paid deposit and no appointment yet -- see
-          // AppointmentForm.tsx's own filtering) and feed that session's
-          // own hour estimate into the scheduling-assistant duration
-          // target instead of the project's top-level fields. Empty for
-          // every project with no declared plan, same as today.
+          // which planned session a new appointment fulfills (any one with
+          // no appointment yet -- see AppointmentForm.tsx's own filtering;
+          // gift cards/exemptions stack across the whole client, so a
+          // session doesn't need its OWN deposit paid to be bookable) and
+          // feed that session's own hour estimate into the scheduling-
+          // assistant duration target instead of the project's top-level
+          // fields. Also backs the Projects widget's own per-session status
+          // list below. Empty for every project with no declared plan,
+          // same as today.
           plannedSessions: {
             select: {
               id: true,
@@ -170,6 +173,7 @@ router.get("/:id", requirePermission("clients.view"), async (req, res) => {
               estimatedHoursMax: true,
               appointmentId: true,
               depositForm: { select: { paidAt: true } },
+              appointment: { select: { checkedOutAt: true } },
             },
             orderBy: { sessionNumber: "asc" },
           },

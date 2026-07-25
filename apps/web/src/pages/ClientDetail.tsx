@@ -65,6 +65,17 @@ interface InquirySummary {
   preferredArtistId: string | null
   // Package M: one per tattoo session now, oldest first.
   depositForms: DepositFormSummary[]
+  // Multi-session planning: empty for every project that never declared
+  // more than one session at estimate time.
+  plannedSessions: {
+    id: string
+    sessionNumber: number
+    estimatedHoursMin: number
+    estimatedHoursMax: number
+    appointmentId: string | null
+    depositForm: { paidAt: string | null } | null
+    appointment: { checkedOutAt: string | null } | null
+  }[]
 }
 
 interface GiftCard {
@@ -139,6 +150,12 @@ interface Appointment {
   // Matches GET /appointments's response shape (Phase UI-5) -- a display
   // name, not a nested user/email chain.
   artist: { id: string; name: string; avatarUrl: string | null } | null
+  // Which project this appointment belongs to -- null only for the
+  // vanishingly rare appointment with no inquiryProject link at all. Used
+  // by the Projects widget to find a single-session project's own
+  // appointment (multi-session ones already have this via
+  // plannedSessions[].appointmentId instead).
+  inquiry: { id: string; label: string } | null
 }
 
 interface DuplicateCandidate {
@@ -265,12 +282,47 @@ const EMPTY_EDIT_FORM = {
 const EMPTY_GIFT_CARD_FORM = { amountDollars: '', expiresAt: '' }
 const EMPTY_EXEMPT_FORM = { reason: '', expiresAt: '' }
 
+// Same "converted to a Project" status group as the backend's own
+// PROJECT_STATUSES (inquiries.ts), Inquiries.tsx's own PROJECTS_TAB_STATUSES,
+// and InquiryDetail.tsx's own local isConverted -- kept as a small local
+// literal rather than importing from a sibling page, matching this
+// codebase's existing convention for this stable, rarely-changing group.
+const PROJECT_STATUSES = ['SCHEDULING', 'WAITLISTED', 'CONFIRMED']
+
+// Same badge logic/styling as InquiryDetail.tsx's own Session Plan widget
+// -- kept as a local, standalone pair of functions (rather than a shared
+// import) since this page's own per-project session list is read-only
+// (no inline actions), a simpler job than that widget's.
+function sessionDepositBadge(depositForm: { paidAt: string | null } | null) {
+  if (!depositForm) {
+    return { label: 'Deposit not yet generated', className: 'border-border bg-surface-inset text-fg-muted' }
+  }
+  if (depositForm.paidAt) {
+    return { label: 'Deposit paid', className: 'border-success/30 bg-success/10 text-success' }
+  }
+  return { label: 'Deposit pending', className: 'border-warning/30 bg-warning/10 text-warning' }
+}
+
+function sessionAppointmentBadge(
+  appointmentId: string | null,
+  appointment: { checkedOutAt: string | null } | null,
+) {
+  if (!appointmentId || !appointment) {
+    return { label: 'Not yet booked', className: 'border-border bg-surface-inset text-fg-muted' }
+  }
+  if (appointment.checkedOutAt) {
+    return { label: 'Completed', className: 'border-success/30 bg-success/10 text-success' }
+  }
+  return { label: 'Scheduled', className: 'border-accent/30 bg-accent/10 text-accent' }
+}
+
 // Built-in fallback order for a user who's never customized this page's
 // layout -- same reorder/collapse system already used on the Inquiry and
 // Appointment detail pages (see ReorderableWidgetList's own comments).
 const CLIENT_WIDGET_ORDER = [
   'contact-info',
   'inquiries',
+  'projects',
   'gift-cards',
   'deposit-forms',
   'appointments',
@@ -429,6 +481,8 @@ export default function ClientDetail() {
   const [consolidatedNotes, setConsolidatedNotes] = useState<ConsolidatedNotes | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [refreshIndex, setRefreshIndex] = useState(0)
+
+  const projects = client?.inquiries.filter((inquiry) => PROJECT_STATUSES.includes(inquiry.status)) ?? []
 
   const [showIssueGiftCard, setShowIssueGiftCard] = useState(false)
   const [giftCardForm, setGiftCardForm] = useState(EMPTY_GIFT_CARD_FORM)
@@ -1745,6 +1799,78 @@ export default function ClientDetail() {
                         ))}
                       </tbody>
                     </table>
+                  </div>
+                )}
+              </Widget>
+
+              <Widget key="projects" id="projects" title="Projects">
+                {projects.length === 0 && <p className="mt-4 text-sm text-fg-secondary">No projects yet.</p>}
+
+                {projects.length > 0 && (
+                  <div className="mt-4 divide-y divide-border">
+                    {projects.map((project) => {
+                      const projectAppointment = appointments?.find((a) => a.inquiry?.id === project.id) ?? null
+
+                      return (
+                        <div key={project.id} className="py-3 first:pt-0 last:pb-0">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <Link to={`/inquiries/${project.id}`} className="text-sm font-medium text-fg hover:underline">
+                              {project.description.length > 60
+                                ? `${project.description.slice(0, 60).trimEnd()}…`
+                                : project.description}
+                            </Link>
+                            <StatusPill status={project.status} />
+                          </div>
+
+                          {project.plannedSessions.length > 0 ? (
+                            <div className="mt-2 space-y-1.5">
+                              {project.plannedSessions.map((ps) => {
+                                const depositBadge = sessionDepositBadge(ps.depositForm)
+                                const appointmentBadge = sessionAppointmentBadge(ps.appointmentId, ps.appointment)
+                                return (
+                                  <div key={ps.id} className="flex flex-wrap items-center justify-between gap-2">
+                                    <p className="text-xs text-fg-secondary">
+                                      Session {ps.sessionNumber} — estimated {ps.estimatedHoursMin}-{ps.estimatedHoursMax} hrs
+                                    </p>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${depositBadge.className}`}>
+                                        {depositBadge.label}
+                                      </span>
+                                      <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${appointmentBadge.className}`}>
+                                        {appointmentBadge.label}
+                                      </span>
+                                    </div>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          ) : (
+                            <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                              <p className="text-xs text-fg-secondary">Session 1</p>
+                              <div className="flex items-center gap-1.5">
+                                {(() => {
+                                  const depositBadge = sessionDepositBadge(project.depositForms[0] ?? null)
+                                  const appointmentBadge = sessionAppointmentBadge(
+                                    projectAppointment?.id ?? null,
+                                    projectAppointment,
+                                  )
+                                  return (
+                                    <>
+                                      <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${depositBadge.className}`}>
+                                        {depositBadge.label}
+                                      </span>
+                                      <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${appointmentBadge.className}`}>
+                                        {appointmentBadge.label}
+                                      </span>
+                                    </>
+                                  )
+                                })()}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
               </Widget>
