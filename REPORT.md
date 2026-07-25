@@ -2240,3 +2240,39 @@ Ran a one-time idempotent script (`_propagate_permission_overrides.ts`, archived
 ## Cleanup
 
 Both scratch dev servers (API :5501, web :6501) stopped by PID — including one `tsx watch` auto-reload that crashed with `EADDRINUSE` mid-session and had to be force-killed and restarted manually to pick up the transaction-timeout fix. All temporary verification scripts (`verify_permissions.mjs`, `verify_permissions_ui.mjs`, `verify_permissions_ui2.mjs`) and screenshots left scratchpad-only, none committed. The one-time override-propagation script was moved to the scratchpad (not committed) after running it against dev — still needed as a manual one-off step before this deploys to production (propagate overrides, in that order, before the code that stops reading the old keys ships). Test overrides set during verification (several `FRONT_DESK`/`ARTIST` toggles in `dev-studio`, including a deliberate `clients.manage`/`appointments.manage=false` override used to test propagation) were left in the dev database except where a script explicitly reverted them (`inquiries.markLost`, confirmed via a reload check) — consistent with this session's standing convention, and fully reversible by any OWNER revisiting the Permissions tab.
+
+---
+
+# Fix — Add Client / Import Clients disappearing after the permissions expansion
+
+Reported immediately after the granular-permissions work above landed: "permissions look really good but i dont see the ability to add a new client or bulk import anymore."
+
+## Root cause
+
+Retiring `clients.manage` from `PERMISSION_KEYS` (done in the task above) removed it from every role's effective permission list, including OWNER's — `getEffectivePermissions()` derives OWNER's list from `[...PERMISSION_KEYS]`, so OWNER lost `clients.manage` just as completely as any other role the moment the key stopped existing. The backend route-gate migration to the five successor keys (`clients.view/edit/merge/archive/import`) was correct and complete, but three frontend files still checked `profile.permissions.includes('clients.manage')` for UI visibility and were never updated to match, silently hiding the gated UI for everyone rather than erroring.
+
+Found via a single targeted grep (`clients\.manage|appointments\.manage` across `apps/web/src`), which located all three affected files in one pass. `appointments.manage` had zero frontend references — checked proactively even though the user only reported the clients-side symptom — so no equivalent bug existed there.
+
+## What changed
+
+- **`Clients.tsx`**: the one `canManage` flag (gated both "Add Client" and "Import Clients" together) split into `canAddClient` (→ `clients.edit`, matching the `POST /clients` route's actual gate) and `canImportClients` (→ `clients.import`), each button now shown independently.
+- **`ConversationsPanel.tsx`**: the composer's "add client" affordance now checks `clients.edit` instead of the retired key — it hits the same `POST /clients` route `Clients.tsx`'s own Add Client button does.
+- **`ClientDetail.tsx`**: the largest fix, 14 separate call sites all bundled under one `canManage` flag. Read every call site's surrounding JSX individually rather than assuming one blanket replacement, since several of the bundled actions weren't actually client-management actions — split into six flags matching each action's true backend gate: `canEditClient` (`clients.edit` — Edit button, phone/email add/remove), `canMergeClient` (`clients.merge` — merge button, potential-duplicates banner), `canArchiveClient` (`clients.archive` — archive/unarchive, the unarchive banner, the "More actions" menu visibility), `canCreateInquiry` (`inquiries.create` — Send/New Inquiry), `canEditInquiry` (`inquiries.edit` — Send Deposit Form), `canGenerateWaiver` (`waivers.generate` — Send Waiver).
+
+## Verification
+
+Playwright, both roles, screenshots reviewed: OWNER sees Add Client and Import Clients on the Clients list, and on a client's detail page sees Edit, More actions, + Add phone, + Add email, and Merge with another client all present and correctly gated (confirmed via direct element counts, not just a screenshot glance) alongside the potential-duplicates banner, Send Inquiry/New Inquiry, Send Deposit Form, and Send Waiver actions. FRONT_DESK sees Add Client but not Import Clients on the list page, matching the matrix's `clients.edit=true`/`clients.import=false` defaults from the task above. One test-script false alarm along the way: the first ClientDetail run showed all-zero element counts because a 2-second wait wasn't enough for the page to leave its "Loading client…" state against this environment's remote dev DB — increasing to 4 seconds (with response logging added to confirm the API calls actually completed) resolved it; not a product bug.
+
+Confirmed via `grep -n "canManage"` returning zero matches across all three files afterward, and via the broader `clients\.manage|appointments\.manage` grep returning zero matches anywhere in `apps/web/src` outside this fix's own explanatory code comments.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) — clean (no API files touched). `npx tsc --noEmit` + `npm run build` (web) — clean.
+
+## Commit
+
+`4cfdfb9` — Fix Add Client / Import Clients disappearing after permissions expansion. Pushed immediately after a collision check (`git fetch` + `git log HEAD..origin/main`) came back empty.
+
+## Cleanup
+
+Both scratch dev servers (API :5501, web :6501, logging to `api2.log`/`vite2.log` to avoid colliding with the prior task's logs) stopped by PID. Temporary verification scripts (`verify_clients_fix.mjs`, `verify_client_detail_fix.mjs`) and screenshots left scratchpad-only, none committed.
