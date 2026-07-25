@@ -2639,3 +2639,71 @@ Same session, immediately after the sweep above. Commit: `cf02a9f`. User reporte
 **Live-verified** on the same 3-session Project used in the sweep: Estimate widget now shows the per-session breakdown instead of "Not provided"; Inquiry Details no longer repeats Name/Email/Phone; the old Deposit widget shows only its read-only history (no "Tentative appointment time"/suggested-times UI) while Session Plan is the only place with active generate/resend controls; generated a fresh unsigned deposit for Session 2 and confirmed the new "Resend Deposit Form" button there rotates its token correctly (same `depositFormId`, no duplicate row). Re-checked a single-session inquiry (no plan) and confirmed zero change: normal "Resend Deposit Form"/tentative-time UI, normal single-value time estimate, no Session Plan widget.
 
 **Typechecks**: `npx tsc --noEmit` (api) and `npx tsc --noEmit` + `npm run build` (web) — clean before commit, restricted to the two files actually changed (`InquiryDetail.tsx`, `InquiryDetailsSection.tsx`); the concurrent Stripe-integration session's edits to `deposits.ts`/`clients.ts`/`ClientDetail.tsx`/`DepositResponse.tsx` (observed mid-session, adding a `paidVia` field to the same `INQUIRY_INCLUDE` object this feature also touches) were confirmed unrelated and left uncommitted.
+
+---
+
+# Phase 7C — Stripe Connect (Standard), real deposit & checkout payments
+
+Three parts, one session, committed and pushed separately as instructed. Ran only after confirming the SMS-consent/privacy-terms session's commits (`f703192`, `bd73203`, `77e4625`) were present on `main` (`git merge-base --is-ancestor` against both `main` and `origin/main`).
+
+**Docs verified**: Stripe Connect Standard onboarding via **Connect Onboarding using Account Links** (`docs.stripe.com`, checked directly via web search/fetch, not assumed from training data) — `stripe.accounts.create({ type: "standard" })` + `stripe.accountLinks.create({ ..., type: "account_onboarding" })`, no OAuth Client ID, no pre-registered redirect URIs. Direct charges on the connected account via the Node SDK's `{ stripeAccount: connectedAccountId }` request option plus `payment_intent_data.application_fee_amount` on the Checkout Session. Checkout Session `line_items` use the current `price_data: { currency, product_data: { name }, unit_amount }` shape. Connect webhook events are resolved to a studio via the event's own top-level `account` field, never a studio id carried in the payload.
+
+## Part 1 — Stripe Connect (Standard) onboarding — `8c0f588`
+
+Added `STRIPE` to `IntegrationChannel`, reusing the existing `StudioIntegration` chassis from Phase 7B — no per-studio secret to encrypt this time, since the platform's own `STRIPE_SECRET_KEY` makes every call, scoped to the connected account via the `stripeAccount` option. `metadata` holds `{ stripeAccountId, chargesEnabled, payoutsEnabled }`.
+
+The onboarding-specific logic (create account, generate a single-use Account Link, "Finish setup" resume) lives entirely in a new `lib/stripeConnect.ts`, deliberately isolated from the payment/webhook logic Parts 2–3 added later. Settings → Integrations gained a Stripe card (OWNER only): Connect / Finish setup / Disconnect, `chargesEnabled`/`payoutsEnabled` surfaced plainly ("Payments are live" vs "Setup incomplete"), masked account id, disconnect clears only Ink Manager's own record (the real Stripe account is untouched).
+
+**Live-verified** against a real Stripe test-mode account: full connect flow (the actual hosted-onboarding form has a live hCaptcha challenge that correctly blocked headless automation — recognized as a legitimate anti-fraud control, not something to defeat, so the user completed that one step manually in their own browser); `chargesEnabled`/`payoutsEnabled` confirmed `true` via both the Stripe API directly and the app's own UI; disconnect confirmed to clear local state while leaving the real Stripe account untouched; FRONT_DESK → 403 on all three routes; cross-studio isolation confirmed via a second seeded studio with its own independent, unaffected `NOT_CONNECTED` row (these routes take no `:id` param, so isolation is structural — scoped entirely by the caller's own JWT `studioId` — rather than a `404`-on-wrong-id check).
+
+## Part 2 — Real deposit payments via Stripe — `46cb0bc`
+
+The public deposit form generates a real Stripe Checkout Session (direct charge, `application_fee_amount` from `PLATFORM_FEE_PERCENT`) once the studio's Stripe is connected. Manual mark-paid stays available as a fallback (cash/comps aren't going away) — `DepositForm.paidVia: "STRIPE" | "MANUAL"` records which path was used, added **alongside** the existing `paidManually` boolean rather than replacing its semantics (roughly a dozen existing call sites, including the cold-follow-up-task query, already treat `paidManually` as the generic "is this paid" signal).
+
+`POST /webhooks/stripe` (public, raw body — `index.ts`'s global `express.json()` is special-cased to `express.raw()` for this one path) verifies the signature against `STRIPE_WEBHOOK_SECRET`, resolves the studio via the event's connected-account id, and on `checkout.session.completed` issues the gift card through a newly-extracted shared `lib/deposits.ts` function (`issueGiftCardForPaidDeposit`) — the same code path the manual route now also calls, rather than two copies of the amount-conversion/issuance logic. Idempotent via a fresh `giftCardId` re-check taken *inside* the transaction, so a webhook retry is a no-op, not a duplicate.
+
+**No Stripe CLI binary was available in this sandboxed environment** (`stripe listen` unusable), so live webhook verification used a substitute that's functionally identical to what the CLI does under the hood: pay a real Stripe Checkout Session with a Playwright-driven browser and Stripe's standard test card, then fetch the genuine resulting event via the Stripe API and re-deliver it to the local webhook endpoint with a signature computed the same way `stripe listen` computes it (HMAC-SHA256 over `{timestamp}.{payload}` using the real webhook secret already in `.env`) — real event data, real signature, real verification code path, just hand-forwarded instead of CLI-forwarded.
+
+**Live-verified** end to end: Checkout Session created → paid with `4242 4242 4242 4242` → webhook delivered → `DepositForm.paidVia: "STRIPE"`, `stripePaymentIntentId` set, a $100 gift card issued (the deposit amount, not the $110 total including the platform fee) → inquiry advanced `DEPOSIT_PENDING → SCHEDULING`. Webhook replay (same event, re-delivered) produced no duplicate gift card. Manual mark-paid confirmed as a working fallback on a second deposit (`paidVia: "MANUAL"`). A studio with no `StudioIntegration` row for `STRIPE` at all got today's manual-only flow completely unchanged, and the new `checkout-session` route correctly 400s for it (`"Online payment isn't available for this studio right now."`).
+
+## Part 3 — Real checkout payments + gift card overage as new card — `3763e4d`
+
+**Note**: the checkout overage → new-gift-card logic itself was already implemented in the codebase going into this part (the task description was stale relative to actual state, exactly as the task itself warned might happen). The real remaining work was wiring `GiftCard.derivedFromGiftCardId` onto what already existed, plus adding the real Stripe charge for the "amount due" side, neither of which existed yet.
+
+Checkout's "amount due" gets a real Stripe Checkout Session (same direct-charge + `application_fee_amount` pattern as Part 2, same `createDirectChargeCheckoutSession` helper, no new payment code) when the studio's connected. Checkout itself still completes synchronously exactly as before — cards redeemed/rolled, appointment `COMPLETED` — collecting the remaining balance is a decoupled concern, which is also why the new manual fallback (`PATCH /appointments/:id/mark-charged`) can apply after the fact for cash/comp or a not-connected studio. The client pays on Stripe's hosted page on whatever device staff hands them; the redirect destination (`/appointments/pay-complete`) is a new, deliberately data-free public page — no appointment id, no auth, nothing to leak — since the actual confirmation happens server-side via the webhook, not the redirect. The Part 2 webhook handler is extended to also resolve `Appointment` by `stripeCheckoutSessionId`, same idempotency discipline (a `paidVia` already set on retry is a no-op).
+
+`derivedFromGiftCardId` is set on the new overage card when **exactly one** card was redeemed — it's a single nullable FK, so a combined multi-card overage has no single "the" origin to point at, and is left `null` in that case (a deliberate simplification, noted here rather than silently done). The audit trail is unaffected by that limitation either way: the existing Appointment-level `checkout` entry already recorded every contributing card id and both amounts (redeemed total, overage) before this part, and a new GiftCard-level `issued_from_overage` entry was added on the new card's own audit trail specifically. Origin is now visible on `GiftCardDetail` ("Issued from redeeming gift card …") and as a small note in the client's gift card list.
+
+**Live-verified**, using the same self-signed-webhook-delivery approach as Part 2:
+- **Card-exceeds-cost**: a $100 gift card redeemed against a $60 final cost → original card `REDEEMED`, new $40 card issued with `derivedFromGiftCardId` correctly pointing at the original, both the Appointment-level and the new card's own `issued_from_overage` audit entries present with both amounts.
+- **Amount-due (card-under-cost)**: a $100 card redeemed against a $250 final cost → real $150 Stripe Checkout Session created, paid with the test card, webhook confirmed, `Appointment.paidVia: "STRIPE"` + `stripePaymentIntentId` set. Webhook replay produced no duplicate audit entry (exactly 1 `stripe_payment_confirmed` entry after two deliveries).
+- **No-Stripe studio**: same amount-due scenario on a studio with no Stripe connection → `checkoutUrl: null` (no regression), manual `mark-charged` set `paidVia: "MANUAL"`, a second call correctly rejected ("already been marked paid").
+- Both routes reuse `appointments.checkout`'s existing permission gate (OWNER/FRONT_DESK only) — no new gating logic to separately verify.
+
+## Railway production variables (platform-level only — never per-studio)
+
+```
+STRIPE_SECRET_KEY=sk_live_...       # Developers -> API keys, platform account
+STRIPE_PUBLISHABLE_KEY=pk_live_...  # same page
+STRIPE_WEBHOOK_SECRET=whsec_...     # from a real dashboard-registered endpoint
+                                     # (Developers -> Webhooks -> Add endpoint,
+                                     # pointed at https://<api-host>/webhooks/stripe),
+                                     # NOT the `stripe listen` CLI secret used locally
+PLATFORM_FEE_PERCENT=0              # or whatever the platform's real cut is; 0 = no fee
+```
+
+## `paidVia` convention
+
+`"STRIPE" | "MANUAL" | null`, on both `DepositForm` and `Appointment`. `null` until paid; set once, never overwritten; a webhook retry or a second manual attempt against an already-set value is a no-op/400, never a re-charge or double-issuance. Layered on top of `DepositForm`'s pre-existing `paidManually` boolean (left with its original, broader "is this paid at all" meaning, unchanged, since existing code elsewhere already depends on it) rather than replacing it.
+
+## Gift card overage → new card: confirmed working end to end
+
+Single-card overage correctly produces a new, smaller, `ACTIVE`, unattached card on the same client with `derivedFromGiftCardId` set and a full audit trail (both card ids, both amounts). Multi-card combined overage still issues the new card correctly (pre-existing behavior, unaffected) but leaves `derivedFromGiftCardId` `null`, noted above as the accepted, single-FK limitation — a reasonable future extension would be a join table if per-origin tracing across multiple redeemed cards is ever needed, not required for the common case this shipped for.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npm run build` (web) — both clean before every one of the three commits.
+
+## Cleanup
+
+All ad-hoc Playwright scripts and screenshots in the scratchpad directory removed after use; one-off `scratch-check.ts` files under `apps/api/` (used for direct Stripe API checks and self-signed webhook delivery, never committed) deleted after each use. Test data created during verification (several inquiries/deposit forms/appointments/gift cards across both `dev-studio` and `dev-studio-2`, plus one extra `ARTIST` user + `Artist` profile seeded for `dev-studio-2` since it had none) left in the dev database, consistent with this session's standing convention. Background dev servers (API :4000, web :5173) killed at the end of the session.
