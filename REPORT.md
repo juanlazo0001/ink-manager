@@ -2707,3 +2707,43 @@ Single-card overage correctly produces a new, smaller, `ACTIVE`, unattached card
 ## Cleanup
 
 All ad-hoc Playwright scripts and screenshots in the scratchpad directory removed after use; one-off `scratch-check.ts` files under `apps/api/` (used for direct Stripe API checks and self-signed webhook delivery, never committed) deleted after each use. Test data created during verification (several inquiries/deposit forms/appointments/gift cards across both `dev-studio` and `dev-studio-2`, plus one extra `ARTIST` user + `Artist` profile seeded for `dev-studio-2` since it had none) left in the dev database, consistent with this session's standing convention. Background dev servers (API :4000, web :5173) killed at the end of the session.
+
+---
+
+# Fix: inquiry/client delete 500, plus three multi-session UX bugs
+
+Same session, follow-up bug reports. Concurrent Stripe-integration work (Part 2/3 above) was actively being committed in this same shared working directory throughout -- see the attribution note at the end of this entry.
+
+## 1. "Internal server error" deleting an inquiry
+
+Root cause, confirmed via the actual migration SQL: `PlannedSession.inquiryId` is `ON DELETE RESTRICT`. Neither `DELETE /inquiries/:id` nor `DELETE /clients/:id` (whose transaction also bulk-deletes that client's inquiries) ever deleted a project's `PlannedSession` rows before deleting the `Inquiry` itself -- a gap from when `PlannedSession` was first added, since the delete transactions were never revisited. Every project with a declared session plan (`sessions.length > 1` at estimate time) was therefore **permanently undeletable**, both directly and via deleting its client, throwing an unhandled Postgres FK-violation as a 500.
+
+Fixed by adding `tx.plannedSession.deleteMany(...)` to both transactions, right before the `Inquiry` delete each one performs (`PlannedSession.depositFormId`/`appointmentId` are both `ON DELETE SET NULL`, so the existing `depositForm`/`appointment` deletes earlier in each transaction never needed to change). Added a `plannedSessions` count to `gatherInquiryDeletionSummary` (and the delete-confirmation modal's preview list) for parity with the other counts already shown there.
+
+**Live-verified**: deleted a real 3-session Project (2 deposit forms, 3 planned sessions) directly -- `delete-preview` correctly reported `plannedSessions: 3`, the `DELETE` call returned `200`, and a follow-up `GET` on the same id returned `404`. Separately deleted a client whose only inquiry had a 2-session plan -- `200`, confirmed gone.
+
+**Attribution note**: this fix (in `apps/api/src/routes/inquiries.ts` and `clients.ts`) ended up committed under `46cb0bc` ("Part 2: real deposit payments via Stripe") rather than a commit of my own -- the other session, actively working in this same shared directory, staged and committed those two files while my edits to them were still uncommitted locally. The code itself is correct and verified as above; only the commit attribution is affected. Not reverted or rewritten, per this session's standing policy on shared-directory collisions -- documented here instead.
+
+## 2. Estimate still fillable with no artist assigned
+
+The Edit button was already correctly hidden without an artist, but a separate "seed form state on inquiry load" effect (`setEditingEstimate(!inquiry.estimateSentAt)`, adjusted-during-render per React's own reset-on-prop-change guidance) forced the form open anyway for any inquiry that had never had an estimate sent -- completely bypassing the button. Fixed the seed itself: `setEditingEstimate(!inquiry.estimateSentAt && !!inquiry.assignedArtist)`. Also added the same server-side gate `POST /:id/send-estimate` was missing (`assignedArtistId` required, mirroring the existing deposit-form gate) so a direct API call can't bypass it either. Live-verified: a fresh, unassigned inquiry now shows only "Assign an artist before entering an estimate." -- no price/time/session fields, no Edit button, no Generate & Send button.
+
+## 3. Deposit widget showing an empty box
+
+Its own interactive "generate a deposit" section is (correctly, per the prior sweep) gated off entirely once a project has a session plan -- Session Plan is the one place to generate one there. That left the widget rendering with nothing inside for any multi-session project that reached `DEPOSIT_PENDING` before its first deposit form existed. Changed the widget's outer visibility to require actual content: `depositForms.length > 0` (real history) `|| (plannedSessions.length === 0 && (status === DEPOSIT_PENDING || isConverted))` (the single-session case, where the interactive section is guaranteed to render). Live-verified: the box now stays hidden until Session Plan generates the first form, at which point it reappears showing that form's real history.
+
+## 4. Can't book an appointment without a paid deposit -- even with an available gift card or exemption on file
+
+Confirmed the premise and found it ran two layers deep. Session Plan's own "Book Appointment" button required `depositStatus === 'paid'` for *that specific* session -- ignoring that gift cards and deposit exemptions stack across the whole client (Phase 3), not per session, so a card rolled forward from an earlier session (or an exemption) can perfectly well cover a later one. Relaxed to `depositStatus === 'paid' || hasAvailableGiftCard`.
+
+That alone wasn't enough: `AppointmentForm.tsx`'s own `availablePlannedSessions` filter had the identical "this session's own paid deposit" requirement, gating which planned sessions the modal would even recognize as selectable -- so clicking "Book Appointment" opened the modal, but it silently failed to pick up the session's own hour estimate (falling back to the null top-level fields and showing "This project has no estimated time yet"), caught by actually clicking through rather than just checking the button's visibility. Relaxed the same way (`!ps.appointmentId` only) -- the real money-sufficiency check already happens independently in `GiftCardStackPicker`, comparing selected-card total against the required amount before `Create Appointment` is enabled, so neither gate was ever load-bearing for correctness, only for discoverability.
+
+**Live-verified end to end**: booked and checked out (ROLL) Session 1's appointment on a real 2-session Project, producing an unattached, available $200 card with Session 2's own deposit never generated. Confirmed "Book Appointment" now appears for Session 2; opened it and confirmed the modal correctly pre-selects Session 2, sizes "Suggested times" at 5-hour blocks (Session 2's own 4-6hr estimate), and offers the rolled-forward card in the stack picker. Selected it and completed the booking -- `201`, `PlannedSession.appointmentId` set correctly.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npx tsc --noEmit` + `npm run build` (web) — clean before commit (`c792ec4`), restricted to the two files this fix actually touched going into that commit (`AppointmentForm.tsx`, `InquiryDetail.tsx`) — see the attribution note in §1 for the delete-fix's own two files.
+
+## Cleanup
+
+Scratch dev servers run on yet another fresh port pair (API :5503, web :6503) after confirming :5501/:5502/:6501/:6502 were all still occupied by other concurrent activity in this same shared directory -- killed by PID afterward. Several transient `EADDRINUSE`/`ECONNREFUSED` scratch-server crashes during this fix, caused by the other session's own rapid iterative edits to `appointments.ts` in the same watched directory -- not a bug in this fix's own code; resolved each time by restarting. All ad-hoc verification scripts left in the scratchpad, none committed. Test data: one 3-session Project and one client (with a 2-session Project) permanently deleted as part of verifying the delete fix works; one existing single-session inquiry pushed through the estimate-gate scenario; one fresh 2-session Project created, converted, and booked through both sessions to verify the gift-card-stacking fix -- all left as-is (or, for the two deletions, correctly absent) in the dev database, consistent with this session's standing convention.
