@@ -201,6 +201,34 @@ function useIsMobile(): boolean {
   return isMobile
 }
 
+// The current-time-indicator line's Y position (Day/Week view) is computed
+// by react-big-calendar internally off plain local getters (getHours()/
+// getMinutes()), which always read the BROWSER's timezone -- there's no
+// timezone parameter to hand it. To make the line land at the studio's own
+// wall-clock time instead, this reads the real instant's wall-clock parts
+// AS OBSERVED in the studio's timezone (same Intl.DateTimeFormat technique
+// format.ts's civilDateParts already uses for "today" comparisons) and
+// rebuilds a new Date from those parts using the browser's own local
+// constructor -- so its local getters return the studio's time instead of
+// the browser's, exactly what RBC's own positioning math needs.
+function studioNow(timeZone: string): Date {
+  const now = new Date()
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(now)
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? 0)
+  // Some engines render midnight as "24" under hour12: false.
+  const hour = get('hour') % 24
+  return new Date(get('year'), get('month') - 1, get('day'), hour, get('minute'), get('second'))
+}
+
 function rangeForView(date: Date, view: View): { start: Date; end: Date } {
   if (view === Views.MONTH) {
     return { start: dayjs(date).startOf('month').startOf('week').toDate(), end: dayjs(date).endOf('month').endOf('week').toDate() }
@@ -373,6 +401,17 @@ export default function Calendar() {
     locations?.find((l) => l.id === selectedLocationId) ?? locations?.[0] ?? null
   const businessHours = activeLocation?.hours ?? undefined
 
+  // The live current-time indicator (Day/Week view) needs the studio's own
+  // configured timezone, not the browser's -- same GET /studio-settings
+  // Settings.tsx already reads for this exact reason (see its own
+  // formatRelativeDateTime usage). Falls back to the same default the
+  // backend's own same-day validation uses when a studio hasn't set one.
+  const { data: studioSettings } = useQuery({
+    queryKey: ['studio-settings-for-calendar', user!.studioId],
+    queryFn: () => apiFetch<{ timezone: string }>('/studio-settings'),
+  })
+  const studioTimezone = studioSettings?.timezone ?? 'America/New_York'
+
   // Ended guests are excluded from every column/filter/switcher below by
   // default -- "Include past guests" brings them back without ever hiding
   // their actual past appointments (Month view already shows everyone
@@ -535,6 +574,22 @@ export default function Calendar() {
   // stretch without being confused for either the grey closed state or an
   // actual booked event's solid artist color.
   const OPEN_STYLE = { style: { backgroundColor: 'color-mix(in srgb, var(--color-success) 14%, transparent)' } }
+  // Weekend orientation tint -- a plain wayfinding convention (this is
+  // Saturday/Sunday), NOT an availability signal, so it only ever applies
+  // where nothing else has already spoken for that day/slot: never over
+  // the studio-closed grey (redundant -- that grey already means "not a
+  // working day," which is exactly what a studio that closes weekends is
+  // already saying), and never in Month view's single-artist-filtered mode
+  // (that view's own grey/open/booked states are the primary signal there;
+  // layering a second one would just be noise). --color-surface-raised,
+  // not a color-mix -- distinct at a glance from both the closed grey and
+  // the artist-filtered open-green, and reuses an existing flat token
+  // rather than introducing a fourth translucent recipe.
+  const WEEKEND_STYLE = { style: { backgroundColor: 'var(--color-surface-raised)' } }
+
+  function isWeekendDay(dayOfWeek: number): boolean {
+    return dayOfWeek === 0 || dayOfWeek === 6
+  }
 
   function slotPropGetter(date: Date, resourceId?: number | string) {
     if (isStudioClosed(date, businessHours)) return GREY_STYLE
@@ -545,6 +600,8 @@ export default function Calendar() {
         return GREY_STYLE
       }
     }
+
+    if (isWeekendDay(date.getDay())) return WEEKEND_STYLE
 
     return {}
   }
@@ -570,7 +627,10 @@ export default function Calendar() {
       }
       const hasBookingThisDay = displayEvents.some((e) => isSameLocalDay(e.start, date))
       if (!hasBookingThisDay) return OPEN_STYLE
+      return {}
     }
+
+    if (isWeekendDay(date.getDay())) return WEEKEND_STYLE
 
     return {}
   }
@@ -591,6 +651,11 @@ export default function Calendar() {
     view: effectiveView,
     views: availableViews,
     date,
+    // Studio-timezone-aware "now" for the Day/Week current-time-indicator
+    // line -- RBC's own default (`() => new Date()`) already self-updates
+    // this every 60s on its own internal timer, so no separate interval is
+    // needed here, just a studio-local instant instead of the browser's.
+    getNow: () => studioNow(studioTimezone),
     onNavigate: (next: Date) => setDate(next),
     onView: (next: View) => setView(next),
     onSelectEvent: (event: CalEvent) => setPreviewAppointment(event.appointment),

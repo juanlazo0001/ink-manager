@@ -3118,3 +3118,69 @@ A full month scan of the screenshot reads immediately as "working days with gaps
 ## Cleanup
 
 Reused the already-running API :4000 / web :6506 dev servers, no new ones started. All verification scripts stayed in the scratchpad, none committed. Test data: two real consultation appointments created for `Louie G` on two Mondays/Wednesdays this month (dev-seed client) — left in place, consistent with this session's standing convention, and useful groundwork for anyone re-verifying this feature later.
+
+---
+
+# Calendar polish — Part 1: visual audit and fixes
+
+Same session, new three-part task on the same `Calendar.tsx`/`index.css`. Confirmed the Month-view artist-filter work above was already committed and pulled before starting.
+
+## 1. Full `rbc-*` CSS audit
+
+Extracted every class name from both stylesheets this app actually loads (`react-big-calendar.css` and the drag-and-drop addon's `styles.css`, not guessed from memory), cross-referenced each one's default color/background/border declaration against what `index.css` already overrides, then confirmed the real gaps live via `getComputedStyle` on the running page rather than trusting the source diff alone.
+
+| Class | Default (light-mode) | Status before this pass | Action |
+|---|---|---|---|
+| `.rbc-calendar` | — | Already themed (`color: var(--color-fg)`) | none |
+| `.rbc-off-range-bg` | `#e5e5e5` | Already themed, `.rbc-calendar` scoping already fixed a load-order tie in an earlier pass | none |
+| `.rbc-today` | `#eaf6ff` | Already themed, same earlier load-order fix | none |
+| `.rbc-header`, `.rbc-time-header-content`, `.rbc-time-gutter`, `.rbc-label`, `.rbc-agenda-date-cell`, `.rbc-agenda-time-cell` | various | Already themed | none |
+| `.rbc-time-view-resources .rbc-time-gutter`/`-header-gutter` | `background: white` | Already themed | none |
+| Border batch (`.rbc-header + .rbc-header`, `.rbc-day-bg + .rbc-day-bg`, `.rbc-month-row + .rbc-month-row`, `.rbc-month-view`, `.rbc-time-view`, `.rbc-time-content`, `.rbc-timeslot-group`, `.rbc-day-slot .rbc-time-slot`, agenda table borders) | `#ddd` | Already themed | none |
+| `.rbc-off-range` | `#999` | Already themed | none |
+| `.rbc-show-more` | `color: #3174ad` | Base color already themed; **`:hover`/`:focus` color (`rgb(37.7,89.3,133.3)`) was never covered** | **Fixed** — added themed hover/focus color + a transition |
+| **`.rbc-current-time-indicator`** | `background-color: #74ad31` | **Confirmed broken**: an override already existed in this file (`--color-danger`) but was silently losing the exact same bare-selector load-order tie as `.rbc-off-range-bg`/`.rbc-today` before them — computed style showed RBC's literal default green, not the override | **Fixed** — scoped under `.rbc-calendar` for a guaranteed win, and swapped the color to `--color-accent` per this task's request (was reserved for actual error states, not "where are we right now") |
+| **`.rbc-time-header.rbc-overflowing`** | `border-right: #ddd` | **Confirmed broken** — not covered by the existing border-color batch, computed style showed the literal `rgb(221,221,221)` | **Fixed** — themed to `var(--color-border)` |
+| **`.rbc-day-slot .rbc-event-content`** | `word-wrap: break-word` | **Confirmed broken** (a behavior bug, not a color leak) — Day/Week view's own event-content rule wraps text across lines instead of Month view's ellipsis truncation, reproduced live as a short appointment's title wrapping to two cramped lines | **Fixed** — overridden to `overflow: hidden; text-overflow: ellipsis; white-space: nowrap`, matching Month view's own `.rbc-row-segment .rbc-event-content` behavior |
+| `.rbc-event` | `padding: 2px 5px`, `border-radius: 5px`, `background: #3174ad`, `color: #fff` | Background/color already overridden per-artist via inline `eventPropGetter` (inline always wins); padding/radius untouched | **Fixed** — padding to `4px 8px`, radius to `0.5rem` (this app's existing rectangular-card radius, not the pill `rounded-full` used for label chips) |
+| `.rbc-event:focus` outline | `outline: 5px auto #3b99fc` | Un-themed but only visible via keyboard focus, and still a functional focus ring (not invisible) | Left as-is — out of scope for this pass, not a dark-mode leak |
+| `.rbc-event.rbc-selected` | `background-color: rgb(37.7,89.3,133.3)` | Never reachable — nothing in this app puts RBC into its own persistent "selected" state | Not applicable |
+| `.rbc-slot-selection` (drag-to-select box) | `background-color: rgba(0,0,0,.5)` | Functionally fine in dark mode, but a generic flat black, not tied to this app's palette | **Upgraded** — `color-mix(in srgb, var(--color-accent) 35%, transparent)`, same recipe as the Month-view "open" tint |
+| **`.rbc-addons-dnd .rbc-event` transition** | `opacity 150ms` | **Confirmed broken** while verifying the new hover transition below — this addon rule has equal specificity to a bare `.rbc-event` and loads after it, so it silently replaced the entire `transition` shorthand (computed `transitionProperty` came back as `opacity`, not `filter`/`background-color` — the hover color change was correct but snapping instantly) | **Fixed** — first tried scoping as `.rbc-calendar .rbc-addons-dnd .rbc-event` (higher specificity), which **still didn't match**: confirmed via the live DOM that `.rbc-addons-dnd` and `.rbc-calendar` land on the *same* root element, not nested, so a descendant combinator between them never matches anything. Corrected to the compound selector `.rbc-calendar.rbc-addons-dnd .rbc-event` |
+| **`.rbc-day-slot .rbc-events-container`** | `pointer-events` unset (`auto`) | **Confirmed broken, and not just a color/transition issue** — this container is absolutely positioned to cover a day column's *entire height* regardless of how many events are actually in it, and with `pointer-events: auto` it wins every hit-test over the empty `.rbc-time-slot`s underneath — real mouse hovers over empty space in Week/Day view were being silently absorbed by this invisible layer, confirmed by a real (non-forced) Playwright hover timing out entirely on a slot with zero events nearby, then succeeding immediately after the fix | **Fixed** — `pointer-events: none` on the container, re-enabled only on `.rbc-event` itself, so an event's own hover/click/drag is unchanged while empty space now correctly reaches the slot beneath it |
+| `.rbc-toolbar`, `.rbc-btn`, `.rbc-btn-group`, `.rbc-toolbar-label` and all toolbar button states | various | Never rendered — `Calendar.tsx` replaces the toolbar entirely with its own component | Not applicable |
+| `.rbc-agenda-*` (table, date/time cells, view) | various | Never rendered — `Views.AGENDA` is never in this app's `availableViews` | Not applicable |
+| `.rbc-allday-cell`, `.rbc-allday-events`, `.rbc-background-event` | various | Never rendered — no `allDayAccessor`/`backgroundEvents` prop is ever passed | Not applicable |
+| `.rbc-overlay`, `.rbc-overlay-header` (Month view's "+N more" popup) | `background: #fff`, `border: #e5e5e5` | Looked like a real gap on paper (an un-themed white popup), but live-tested by actually clicking "+N more": this app's Month view has no `popup`/custom `onShowMore` configured, so RBC's *default* behavior fires instead — a drill-down navigation straight to Day view for that date, never rendering an overlay at all | Not applicable (confirmed live, not assumed from the source alone) |
+| `.rbc-selected-cell` | `background-color: rgba(0,0,0,.1)` | Rare/cosmetic, translucent black works acceptably regardless of theme | Left as-is |
+
+## 2. Hover states
+
+RBC ships **zero** hover feedback of its own on events or empty slots (confirmed by grep — the only `:hover` rules in its stylesheet belong to the toolbar, which this app never renders). Added:
+- `.rbc-event:hover`/`:focus` → `filter: brightness(1.12)`, transitioning `filter`/`background-color` over `var(--duration-base)` (this app's existing 200ms transition-duration token) — reuses the same `brightness-110`-on-hover recipe already established elsewhere (`HorizontalBarList.tsx`) rather than inventing a new one.
+- Empty `.rbc-day-bg` (Month) / `.rbc-time-slot` (Week/Day) → `var(--color-surface-raised)`, this app's own established "one step up from the ambient surface" token, with the same transition. An inline `dayPropGetter`/`slotPropGetter` style (closed-grey, artist-unavailable-grey, the Month-view open/booked tint) always wins over this, so a closed slot correctly doesn't shift on hover.
+- Along the way, found and fixed the `.rbc-events-container` pointer-events gap (table above) that was silently preventing this new hover from ever firing on a real mouse hover in Week/Day view in the first place.
+
+## 3. Event card refinement
+
+Padding `2px 5px` → `4px 8px`; radius `5px` → `0.5rem` (matches this app's own rectangular-card radius used elsewhere in this exact file, e.g. the drag-error/buffer-notice boxes — not the `rounded-full` pill radius used for label-style chips). Text truncation fixed for Day/Week view (table above, item 3) to match Month view's existing ellipsis behavior instead of wrapping.
+
+## 4. Live current-time indicator
+
+Discovered RBC already ships this feature entirely — `getNow: () => new Date()` is its own default prop, and it already self-updates on a 60-second `setTimeout` loop internally (confirmed by reading `DayColumn.js`), so no separate interval/re-render logic was needed. What was actually missing: it used the *browser's* raw `new Date()`, and the color was wrong (see the audit table). Added `studioNow(timeZone)` — reads the studio's own `GET /studio-settings` timezone (same endpoint `Settings.tsx` already reads for its own timezone-aware relative-time formatting) and reconstructs a local `Date` from that timezone's wall-clock parts via `Intl.DateTimeFormat` (the identical technique `format.ts`'s `civilDateParts` already uses for "today" comparisons) — so RBC's internal local-getter-based positioning math lands the line at the studio's actual current time, not the browser's, with no polling of my own since RBC's existing timer already re-evaluates `getNow()` every minute.
+
+## 5. Weekend shading
+
+Investigated first: this dev studio's own location has `hours: null` (never configured) — `isStudioClosedAllDay` already returns `false` for every day in that case, so there's currently no existing weekend-closed grey to conflict with *for this specific studio*, but the decision has to hold for any studio's actual configuration, not just this one's current empty state. Implemented per-day, not per-studio: a Saturday/Sunday only gets the new subtle `--color-surface-raised` weekend tint when that *specific* day isn't already grey from studio-closed hours — a studio that closes Sunday but opens Saturday would correctly show grey-Sunday + tinted-Saturday, never double-shading the same day for the same reason. Deliberately excluded from Month view's single-artist-filtered mode (the prior session's own feature) — that view's grey/open/booked states are the primary signal there, and layering a second, unrelated shading system on top would just be noise, not a second useful signal.
+
+## Live-verified, not just read
+
+- Month view (unfiltered): three genuinely distinct computed background values confirmed across a full month grid — `rgb(30,30,34)` (weekend tint), `rgb(18,18,20)` (off-range padding days, an existing, unrelated CSS class), `rgba(0,0,0,0)` (ordinary weekdays).
+- Current-time indicator: computed background confirmed as `rgb(201,240,49)` (`#c9f031`, this studio's actual accent color), not RBC's default green nor the old danger-red.
+- Event hover: computed `filter` confirmed `brightness(1.12)` after hover, `transitionProperty` confirmed `filter, background-color` (not `opacity`) after the addon-conflict fix.
+- Empty-slot hover: a genuinely empty Week-view slot's computed background confirmed transitioning `rgba(0,0,0,0)` → `rgb(30,30,34)` on a *real* (non-forced) Playwright hover, which only started succeeding after the `.rbc-events-container` pointer-events fix — before it, the same real hover call timed out entirely, confirming the bug was genuinely blocking real interaction, not just failing an automated check.
+- Regression check after the pointer-events fix: clicking an existing event still opens its preview modal, clicking empty space still opens "New Appointment" pre-filled, and dragging an event to a new time still succeeds with no error — all three re-verified live, not assumed safe from the CSS change alone.
+
+## Typechecks
+
+`npx tsc --noEmit` (api, unaffected, checked per the standing rule) and `npx tsc --noEmit` + `npm run build` (web) — clean.

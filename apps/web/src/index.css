@@ -408,11 +408,121 @@
 }
 .rbc-event {
   border: none;
+  padding: 4px 8px;
+  border-radius: 0.5rem;
+  transition:
+    filter var(--duration-base) ease-out,
+    background-color var(--duration-base) ease-out;
+}
+/* CSS audit: the drag-and-drop addon's own stylesheet ships
+   `.rbc-addons-dnd .rbc-event { transition: opacity 150ms }` -- two
+   classes, same specificity as a bare `.rbc-event`, loaded after index.css
+   (Calendar.tsx imports both RBC stylesheets, which is itself loaded after
+   this file), so it silently won the tie and replaced the transition
+   shorthand above entirely (confirmed via computed style: transition-
+   property came back as just "opacity", not filter/background-color --
+   the hover brightness above was correctly computed but snapping
+   instantly, not easing). `.rbc-addons-dnd` and `.rbc-calendar` land on the
+   SAME root element (confirmed via the live DOM, not assumed) -- a
+   `.rbc-calendar .rbc-addons-dnd` descendant selector, despite reading
+   like it should win on specificity, never matches at all when both
+   classes are on one node, so that was tried and silently no-opped first.
+   The actual fix is a compound selector (no space) for that single
+   element, then a real descendant combinator down to .rbc-event. */
+.rbc-calendar.rbc-addons-dnd .rbc-event {
+  transition:
+    filter var(--duration-base) ease-out,
+    background-color var(--duration-base) ease-out;
+}
+.rbc-event:hover,
+.rbc-event:focus {
+  filter: brightness(1.12);
 }
 .rbc-show-more {
   color: var(--color-accent);
   background: transparent;
+  transition: color var(--duration-base) ease-out;
 }
-.rbc-current-time-indicator {
-  background-color: var(--color-danger);
+.rbc-show-more:hover,
+.rbc-show-more:focus {
+  color: var(--color-accent-hover);
+}
+/* CSS audit (Calendar polish pass): same bare-selector-loses-a-load-order-
+   tie bug as .rbc-off-range-bg/.rbc-today above -- confirmed via computed-
+   style inspection that this rule was being silently overridden by RBC's
+   own #74ad31 default despite existing here, for the identical reason.
+   Scoped under .rbc-calendar for the same deterministic fix. Also swapped
+   to the accent color (was --color-danger, reserved elsewhere for actual
+   error states -- a "where are we right now" line reads better as an
+   accent, not implicitly alarming). */
+.rbc-calendar .rbc-current-time-indicator {
+  background-color: var(--color-accent);
+}
+/* CSS audit: RBC's own stylesheet leaves this specific border un-themed
+   (only the day/month/time-content borders above were ever covered) --
+   the right-hand edge of the time header in Week/Day view, visible
+   whenever that header's content overflows (scrollbar-width compensation).
+   Confirmed via computed style: rendered as the literal light-mode #ddd
+   before this fix. */
+.rbc-calendar .rbc-time-header.rbc-overflowing {
+  border-right-color: var(--color-border);
+}
+/* CSS audit: Day/Week view's own event-content rule (.rbc-day-slot scope)
+   ships `word-wrap: break-word` instead of Month view's ellipsis
+   truncation (.rbc-row-segment .rbc-event-content already truncates
+   cleanly) -- confirmed live, a short appointment slot wrapped its title
+   across two cramped lines instead of truncating. Matches Month view's
+   own behavior instead of introducing a third pattern. */
+.rbc-calendar .rbc-day-slot .rbc-event-content {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-wrap: normal;
+}
+/* Hover states (Calendar polish pass): RBC ships zero hover feedback of its
+   own on either empty slots or event cards (confirmed by grep -- the only
+   :hover rules in its stylesheet are the toolbar's, which this app never
+   renders, having replaced the toolbar entirely). --color-surface-raised
+   is this app's own established "one step up from the ambient surface"
+   token (the calendar's own container is already bg-surface), same value
+   already used elsewhere for a hovered/raised affordance. An inline
+   dayPropGetter/slotPropGetter style (studio-closed grey, artist-
+   unavailable grey, the Month-view open/booked tint) always wins over this
+   -- a closed slot simply doesn't shift on hover, which is correct: it was
+   never clickable-feeling in the first place. */
+.rbc-calendar .rbc-day-bg,
+.rbc-calendar .rbc-time-slot {
+  transition: background-color var(--duration-base) ease-out;
+}
+.rbc-calendar .rbc-month-row .rbc-day-bg:hover,
+.rbc-calendar .rbc-day-slot .rbc-time-slot:hover {
+  background-color: var(--color-surface-raised);
+}
+/* CSS audit: found while verifying the hover rule above never actually
+   fired on a real (non-forced) mouse hover, not just in the automated
+   check -- .rbc-day-slot .rbc-events-container is absolutely positioned to
+   cover a day column's ENTIRE height (top to bottom), with pointer-events
+   left at its default `auto`, regardless of whether that day has zero
+   events or several. It sits visually on top of every .rbc-time-slot in
+   that column, so it -- not the slot underneath -- is what the browser's
+   hit-testing considers "hovered," silently absorbing the hover (raising
+   a real question about whether genuine empty-space clicks were also ever
+   reaching the slot, not just this new hover effect). Disabled on the
+   container itself and re-enabled only on the actual event elements inside
+   it, so an event's own hover/click/drag continues working unchanged while
+   empty space in the same column now correctly hits the slot beneath it. */
+.rbc-calendar .rbc-day-slot .rbc-events-container {
+  pointer-events: none;
+}
+.rbc-calendar .rbc-day-slot .rbc-events-container .rbc-event {
+  pointer-events: auto;
+}
+/* Click-and-drag slot selection (empty-time drag-to-create) -- RBC's own
+   default is a flat rgba(0,0,0,.5) box, functionally fine in dark mode but
+   not tied to this app's own palette. Same color-mix-over-transparent
+   pattern already used for the Month-view "open" tint and RDP's date-range
+   wash, so the in-progress drag reads as "about to create something here"
+   rather than a generic dimmed rectangle. */
+.rbc-calendar .rbc-slot-selection {
+  background-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
 }
