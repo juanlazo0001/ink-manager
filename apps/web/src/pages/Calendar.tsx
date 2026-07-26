@@ -25,6 +25,8 @@ import AppointmentForm from '../components/AppointmentForm'
 import StatusPill from '../components/StatusPill'
 import { ArtistAvatar, FlatArtistAvatar } from '../components/ArtistAvatar'
 import ArtistSelect from '../components/ArtistSelect'
+import DatePickerField from '../components/DatePickerField'
+import { toDateString, parseDateString } from '../components/DateAndTimeRangeFields'
 import { apiFetch, ApiError } from '../lib/api'
 import { describeAppointmentStatus, formatDateTime } from '../lib/format'
 import { useAuth } from '../context/useAuth'
@@ -258,7 +260,7 @@ function viewsAsArray(views: ViewsProps<CalEvent, ArtistResource>): View[] {
   return (Object.keys(views) as View[]).filter((key) => Boolean(views[key]))
 }
 
-function CalendarToolbar({ label, view, views, onNavigate, onView }: ToolbarProps<CalEvent, ArtistResource>) {
+function CalendarToolbar({ date, label, view, views, onNavigate, onView }: ToolbarProps<CalEvent, ArtistResource>) {
   const viewList = viewsAsArray(views)
 
   return (
@@ -288,7 +290,27 @@ function CalendarToolbar({ label, view, views, onNavigate, onView }: ToolbarProp
         <span className="ml-2 text-sm font-semibold text-fg">{label}</span>
       </div>
 
-      {viewList.length > 1 && (
+      <div className="flex items-center gap-3">
+        {/* Jump-to-date -- the same DatePickerField every other single-date
+            field in this app already uses (ArtistDetail.tsx's guest window,
+            DateAndTimeRangeFields' own date field), not a second date-picker
+            pattern. Its value never has to persist as "the selected date"
+            the way a form field's would -- picking a date immediately
+            navigates there (any view) and the popover closes itself, so it
+            always resets back to reflecting whatever's currently showing. */}
+        <div className="w-40">
+          <DatePickerField
+            id="calendar-jump-to-date"
+            value={toDateString(date)}
+            onChange={(next) => {
+              const parsed = parseDateString(next)
+              if (parsed) onNavigate('DATE', parsed)
+            }}
+            placeholder="Jump to date"
+          />
+        </div>
+
+        {viewList.length > 1 && (
         <div className="flex gap-1 rounded-full border border-border p-1">
           {viewList.map((v) => (
             <button
@@ -303,7 +325,8 @@ function CalendarToolbar({ label, view, views, onNavigate, onView }: ToolbarProp
             </button>
           ))}
         </div>
-      )}
+        )}
+      </div>
     </div>
   )
 }
@@ -380,6 +403,39 @@ export default function Calendar() {
   const availableViews = useMemo<View[]>(() => (isMobile ? [Views.DAY] : [Views.MONTH, Views.WEEK, Views.DAY]), [isMobile])
 
   const { start: rangeStart, end: rangeEnd } = useMemo(() => rangeForView(date, effectiveView), [date, effectiveView])
+
+  // Keyboard shortcuts -- arrow keys move by the current view's own
+  // increment (matches RBC's own Day/Week/Month .navigate() static methods
+  // exactly: a day, a week, a month respectively, confirmed by reading
+  // them rather than guessed), "T" jumps to today, same effect as clicking
+  // the Today button. Bails out entirely whenever focus is inside a text
+  // input, textarea, select, or any other contenteditable -- unlike this
+  // app's other global keydown listeners (Escape, Cmd/Ctrl+K), a bare
+  // arrow key or letter is exactly the kind of thing normal typing already
+  // uses, so this one needs its own explicit guard rather than being safe
+  // by construction.
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null
+      const tag = target?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) {
+        return
+      }
+
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+        const unit = effectiveView === Views.MONTH ? 'month' : effectiveView === Views.WEEK ? 'week' : 'day'
+        const direction = event.key === 'ArrowLeft' ? -1 : 1
+        event.preventDefault()
+        setDate((current) => dayjs(current).add(direction, unit).toDate())
+      } else if (event.key === 't' || event.key === 'T') {
+        event.preventDefault()
+        setDate(new Date())
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [effectiveView])
 
   const { data: artistOptions } = useQuery({
     queryKey: ['artists-for-calendar', user!.studioId],

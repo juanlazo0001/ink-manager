@@ -3220,3 +3220,45 @@ Confirmed the bug first: the `appointments` query's `queryKey` includes the visi
 ## Typechecks
 
 `npx tsc --noEmit` (api) and `npx tsc --noEmit` + `npm run build` (web) — clean.
+
+---
+
+# Calendar polish — Part 3: navigation
+
+Same session, final part of this task, continuing straight from Part 2's commit.
+
+## 10. Jump-to-date
+
+Reused `DatePickerField` (this app's one established single-date picker — the same component `ArtistDetail.tsx`'s guest window and `DateAndTimeRangeFields`' own date field already use), added into the custom `CalendarToolbar` between the label and the Month/Week/Day switcher. Its `value` reflects whatever date the calendar is currently showing (`toDateString(date)`); picking any date calls the toolbar's own `onNavigate('DATE', parsed)` — the same navigation action RBC's Back/Next/Today buttons already use, just with an explicit target date — and the picker's own popover closes itself on selection, matching how it behaves everywhere else it's already used.
+
+## 11. Keyboard shortcuts
+
+Confirmed the exact per-view increment by reading RBC's own `Month.navigate`/`Week.navigate`/`Day.navigate` static methods rather than guessing: month, week, and day respectively. Added a single `window` keydown listener: `ArrowLeft`/`ArrowRight` move by that increment (`dayjs(date).add(±1, unit)`), `t`/`T` jumps to today (same effect as the Today button). Guarded with an explicit check this app's *other* global keydown listeners (Escape in `Modal.tsx`/`SearchPalette.tsx`, Cmd/Ctrl+K in `TopBar.tsx`) didn't need, since none of them are bare, unmodified keys a normal typing context would also use — bails out immediately whenever `event.target` is an `INPUT`, `TEXTAREA`, `SELECT`, or any other `isContentEditable` element.
+
+## Live-verified, not just read
+
+- Jump-to-date: from Day view, opened the picker, paged its own mini-calendar forward three months, picked the 10th — the calendar's label read exactly `"Saturday Oct 10"` afterward (this dev environment's "today" is in July), confirming both that the jump landed on the *exact* chosen date and that it worked while a non-Month view was active, not just Month view where the picker happens to live in the toolbar.
+- Arrow keys: in Month view, `ArrowRight` moved the label from `"July 2026"` to `"August 2026"`; `ArrowLeft` moved it back. `t` returned it to `"July 2026"` (this environment's actual current month) from wherever navigation had left it.
+- Input-scoping guard: injected a real `<input>` element, focused it, and dispatched a genuine `ArrowRight` `KeyboardEvent` at that element specifically (not just at `window`) — the calendar's label was confirmed unchanged before/after, proving the guard actually intercepts the event at the input rather than merely coexisting with it by chance.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npx tsc --noEmit` + `npm run build` (web) — clean.
+
+---
+
+# Final report: three-part calendar polish summary
+
+| Part | Commit | What it covered |
+|---|---|---|
+| 1 — Visual polish | `7e8822d` | Full `rbc-*` CSS audit (table above); themed hover states; event padding/radius/truncation; studio-timezone-aware current-time indicator; conditional weekend tint |
+| 2 — Interaction robustness | `2068eb2` | Confirmed drag-to-set-duration already worked (nothing added); added genuinely-missing resize handles; keyed-remount view/nav transition; `keepPreviousData` + `isFetching` dim instead of a blank "Loading…" flash |
+| 3 — Navigation | *(this commit)* | Jump-to-date via the existing `DatePickerField`; arrow-key/`T` shortcuts scoped away from text input |
+
+**Part 2 investigation outcome, stated plainly**: of the two interactions Part 2 asked about, one (click-and-drag to create with a specific duration) was already fully working — `handleSelectSlot` already read the real dragged end time and `selectable` was already set, live-verified with an exact 10:00 AM–12:30 PM prefill matching a real drag. The other (resize handles on an existing appointment) was genuinely absent — `resizable={false}` was explicit and there was no `onEventResize` at all — and was added, routed through the same `PATCH /appointments/:id` drag-reschedule already uses.
+
+**Weekend-shading decision, stated plainly**: this dev studio's own location has no business hours configured (`hours: null`), so there's no live conflict to observe for *this* studio today — but the fix has to hold for any studio's real configuration, not just this one's current empty state. Implemented per-day rather than per-studio: a Saturday/Sunday only gets the new tint when studio-closed hours haven't already grey-shaded that specific day, so a studio that closes one weekend day but not the other never double-shades, and a studio that closes both never shows the new tint at all (the existing grey already said everything it needed to). Also deliberately excluded from Month view's single-artist-filtered mode from the prior session's own feature, so the two shading systems never compete for the same day.
+
+## Cleanup (all three parts)
+
+Reused the already-running API :4000 / web :6506 dev servers throughout — no new dev servers started at any point across all three parts. All verification scripts (CSS audits, resize/drag network checks, keyboard-shortcut and jump-to-date tests) stayed in the scratchpad, confirmed via `git status` never staged. No background shells left running. Test data: two real consultation appointments for `Louie G` (from the immediately-prior Month-view session), one appointment's duration genuinely extended by a live resize-handle drag during Part 2 verification — all left in place, consistent with this session's standing convention.
