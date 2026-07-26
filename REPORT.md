@@ -3077,3 +3077,44 @@ Reproduced on this dev environment's own database first (a 4-session plan on `cm
 ## Cleanup
 
 Reused the already-running API :4000 / web :6506 dev servers. One scratch read-only script checking whether the production inquiry ID existed in this dev database (it didn't — confirms separate databases) deleted immediately after use, never staged. No background shells left running. Test data: the same dev-seed inquiry now has its plan fully collapsed to a single 6-8 hour, $1,000 estimate — left as-is.
+
+---
+
+# Calendar — artist-filtered Month view for at-a-glance booking density
+
+Same session. New feature, no schema changes — a filter + visual-state enhancement on the existing Month view only.
+
+## 1. Investigation
+
+- **Was Month view's artist filter reusable, or does one not exist yet?** It already existed and was already rendered above the calendar regardless of view (`Calendar.tsx`'s "Artists" chip row, `selectedArtistIds`/`activeArtistIds`/`toggleArtistFilter`) — Week/Day already used it to build resource columns. Month view's own `displayEvents` computation just had a hardcoded early return (`if (effectiveView === Views.MONTH) return events`) that ignored the filter entirely, regardless of which chips were active. No second filter control was needed or built — this is a pure reuse.
+- Multi-select already worked mechanically (the chips toggle membership in an array, same interaction Week/Day's resource columns already rely on) — nothing new needed there either.
+
+## 2. Artist filter now applies to Month view
+
+Removed Month view's hardcoded bypass. It now filters by `activeArtistIds` exactly like Week/Day — with one carve-out preserved: when `selectedArtistIds` is still `null` (nothing toggled yet, the default), Month view keeps its original "show everyone regardless" behavior, including an ended guest's past appointments that `activeArtistIds` wouldn't otherwise include (see the existing comment on that guarantee) — only once staff explicitly clicks a chip does Month view start narrowing down.
+
+## 3. Three-state day coloring, filtered to one artist
+
+Added `isArtistUnavailableAllDay` (a Month-view analog of the existing `isStudioClosedAllDay` — "no schedule entry at all for that weekday" reads as not-working; a day the artist works only part of still counts as working, same "no time-of-day granularity in Month view" reasoning the existing studio-hours check already used). A day now reads as one of three states — **only** when the artist filter is narrowed to exactly one artist (`filteredSingleArtist`); with zero or 2+ selected, "working" would have to mean "any of them," which stops answering "was THIS artist continuously booked," so it intentionally falls back to the pre-existing studio-closed-only grey with no ambiguous multi-artist coloring:
+
+- **Not working**: existing grey (`--color-surface-inset`, reused, not a new color) — studio closed OR this artist has no schedule entry for that weekday OR outside their guest window.
+- **Working, nothing booked**: a new, distinctly different light green tint (`color-mix(in srgb, var(--color-success) 14%, transparent)` — same color-mix-over-transparent pattern `index.css` already uses for other translucent accents, not a new visual technique).
+- **Working, booked**: unchanged — the existing per-artist event color shows through (background stays fully transparent so the event box itself is what reads as "booked").
+
+## Live-verified, not just read
+
+Seeded two real test appointments (consultations, cheapest path to a bookable slot) for a dev artist (`Louie G`, preferred schedule Mon/Wed/Fri only) on two of their working Mondays/Wednesdays this month, leaving every other Mon/Wed/Fri in the month deliberately empty. Filtered Month view down to just this artist (deselecting every other chip — the existing mechanism, not a new one-click "isolate" control) and confirmed, via actual computed `background-color` values pulled from the rendered DOM (not just eyeballing a screenshot):
+
+- Non-working days (Tue/Thu/Sat/Sun): `rgb(18, 18, 20)` — the existing grey.
+- Working, empty Mon/Wed/Fri days: a distinct green tint, confirmed as a separate color value from both the grey and the default background.
+- The two booked Mon/Wed days: fully transparent background (`rgba(0, 0, 0, 0)`) with the artist's own colored event box on top, unchanged from today.
+
+A full month scan of the screenshot reads immediately as "working days with gaps here, here, here" without opening any individual day. Also confirmed: selecting exactly two artists filters events to just the two of them with zero green-tint coloring (falls back to grey-only, as designed) — no ambiguous "whose availability is this" state. Reloading the page (fresh mount, `selectedArtistIds` back to `null`) restored Month view to its exact original combined-everyone appearance, screenshot-identical to before any chip was touched.
+
+## Typechecks
+
+`npx tsc --noEmit` (api, unaffected but checked per the standing rule) and `npx tsc --noEmit` + `npm run build` (web) — clean.
+
+## Cleanup
+
+Reused the already-running API :4000 / web :6506 dev servers, no new ones started. All verification scripts stayed in the scratchpad, none committed. Test data: two real consultation appointments created for `Louie G` on two Mondays/Wednesdays this month (dev-seed client) — left in place, consistent with this session's standing convention, and useful groundwork for anyone re-verifying this feature later.

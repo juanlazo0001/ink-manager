@@ -111,6 +111,16 @@ function isArtistUnavailable(date: Date, schedule: ScheduleBlock[] | null): bool
   return minutes < timeToMinutes(day.startTime) || minutes >= timeToMinutes(day.endTime)
 }
 
+// Month-view analog of isArtistUnavailable, same "closed ALL day" rule
+// isStudioClosedAllDay already uses -- Month view has no time-of-day
+// granularity, so a day the artist works only part of still counts as a
+// working day here; only a day with no schedule entry at all for that
+// weekday reads as not-working.
+function isArtistUnavailableAllDay(dayOfWeek: number, schedule: ScheduleBlock[] | null): boolean {
+  if (!schedule || schedule.length === 0) return false
+  return !schedule.some((d) => d.dayOfWeek === dayOfWeek)
+}
+
 function dateKey(d: Date): string {
   const y = d.getFullYear()
   const m = String(d.getMonth() + 1).padStart(2, '0')
@@ -419,12 +429,32 @@ export default function Calendar() {
     [selectedArtistIds, visibleArtistOptions],
   )
 
+  // Month view's per-day "not working / working, open / working, booked"
+  // read only makes unambiguous sense narrowed to ONE artist -- with two+
+  // selected, "working" would have to mean "any of them," which stops
+  // reading as an answer to "was THIS artist continuously booked." Filters
+  // down to just their appointments either way (see displayEvents above);
+  // this only gates the extra day-state coloring below.
+  const filteredSingleArtist =
+    selectedArtistIds && selectedArtistIds.length === 1
+      ? visibleArtistOptions?.find((a) => a.id === selectedArtistIds[0])
+      : undefined
+
   const displayEvents = useMemo(() => {
     if (isArtist) return events
     if (isMobile) return mobileArtistId ? events.filter((e) => e.resourceId === mobileArtistId) : events
-    if (effectiveView === Views.MONTH) return events
+    // Month view: unfiltered (selectedArtistIds still null, staff hasn't
+    // touched a chip yet) keeps its original "show everyone regardless"
+    // behavior -- including an ended guest's past appointments, which
+    // aren't in activeArtistIds at all once "Include past guests" is off
+    // (see the comment on that state above). Only once staff explicitly
+    // picks a chip does Month view start narrowing down, same as Week/Day
+    // already did.
+    if (effectiveView === Views.MONTH) {
+      return selectedArtistIds === null ? events : events.filter((e) => activeArtistIds.includes(e.resourceId))
+    }
     return events.filter((e) => activeArtistIds.includes(e.resourceId))
-  }, [events, isArtist, isMobile, mobileArtistId, effectiveView, activeArtistIds])
+  }, [events, isArtist, isMobile, mobileArtistId, effectiveView, activeArtistIds, selectedArtistIds])
 
   const resources = useMemo(() => {
     if (!showResourceColumns || !visibleArtistOptions) return undefined
@@ -499,6 +529,12 @@ export default function Calendar() {
   // already uses (index.css's .rbc-off-range-bg) -- reused here rather
   // than introducing a second grey, for all three shading sources.
   const GREY_STYLE = { style: { backgroundColor: 'var(--color-surface-inset)' } }
+  // "Working, but nothing booked yet" -- a light success tint, same
+  // color-mix-over-transparent pattern index.css already uses for other
+  // translucent accents, so a run of these reads as an obviously open
+  // stretch without being confused for either the grey closed state or an
+  // actual booked event's solid artist color.
+  const OPEN_STYLE = { style: { backgroundColor: 'color-mix(in srgb, var(--color-success) 14%, transparent)' } }
 
   function slotPropGetter(date: Date, resourceId?: number | string) {
     if (isStudioClosed(date, businessHours)) return GREY_STYLE
@@ -513,11 +549,30 @@ export default function Calendar() {
     return {}
   }
 
-  // Month view only -- no resource columns there, so this is studio-closed
-  // only (a partially-open day has no meaningful "grey half the cell" in a
-  // view with no time-of-day granularity; only a fully closed day greys).
+  // Month view only -- no resource columns there, so studio-closed is
+  // date-of-week only (a partially-open day has no meaningful "grey half
+  // the cell" in a view with no time-of-day granularity; only a fully
+  // closed day greys). Narrowed to exactly one filtered artist (see
+  // filteredSingleArtist above), this also layers in that artist's own
+  // not-working days and then splits every remaining working day into
+  // "open" vs "booked" using displayEvents -- already filtered to just
+  // their appointments by the fix above, so a plain same-day match is
+  // enough, no separate per-artist lookup needed.
   function dayPropGetter(date: Date) {
-    return isStudioClosedAllDay(date.getDay(), businessHours) ? GREY_STYLE : {}
+    if (isStudioClosedAllDay(date.getDay(), businessHours)) return GREY_STYLE
+
+    if (filteredSingleArtist) {
+      if (
+        isArtistUnavailableAllDay(date.getDay(), filteredSingleArtist.preferredSchedule) ||
+        isOutsideGuestWindow(date, filteredSingleArtist)
+      ) {
+        return GREY_STYLE
+      }
+      const hasBookingThisDay = displayEvents.some((e) => isSameLocalDay(e.start, date))
+      if (!hasBookingThisDay) return OPEN_STYLE
+    }
+
+    return {}
   }
 
   const commonCalendarProps = {
