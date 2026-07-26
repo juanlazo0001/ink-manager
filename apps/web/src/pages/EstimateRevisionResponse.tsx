@@ -24,7 +24,13 @@ interface VerifyResponse {
   // Multi-session planning: empty for every Project that never declared
   // more than one session -- timeEstimateHoursMin/Max above drive display
   // in that case, exactly as before this feature existed.
-  plannedSessions: { sessionNumber: number; estimatedHoursMin: number; estimatedHoursMax: number }[]
+  plannedSessions: {
+    sessionNumber: number
+    estimatedHoursMin: number
+    estimatedHoursMax: number
+    estimatedPriceLow: number | null
+    estimatedPriceHigh: number | null
+  }[]
   reason: string | null
 }
 
@@ -175,6 +181,9 @@ export default function EstimateRevisionResponse() {
                   {verifyData.plannedSessions.map((session) => (
                     <li key={session.sessionNumber} className="text-sm text-fg">
                       Session {session.sessionNumber}: {formatHourRange(session.estimatedHoursMin, session.estimatedHoursMax)}
+                      {session.estimatedPriceLow != null && session.estimatedPriceHigh != null && (
+                        <> — {formatPriceEstimate(session.estimatedPriceLow, session.estimatedPriceHigh)}</>
+                      )}
                     </li>
                   ))}
                 </ul>

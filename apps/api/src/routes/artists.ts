@@ -82,6 +82,12 @@ const ARTIST_LIST_SELECT = {
   isGuest: true,
   guestStartDate: true,
   guestEndDate: true,
+  // Reference rate(s) -- needed in the list view (not just the detail
+  // page) since the estimate form's per-session price auto-suggestion
+  // reads whichever artist is assigned from wherever that artist list was
+  // already fetched from.
+  hourlyRateCents: true,
+  flatRateCents: true,
   // Calendar's per-column artist-unavailable grey-shading (Phase: studio
   // hours + calendar shading) needs this in the list view too, not just
   // the detail page.
@@ -157,6 +163,8 @@ router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
     guestStartDate,
     guestEndDate,
     serviceIds,
+    hourlyRateCents,
+    flatRateCents,
   } = req.body ?? {};
 
   const artist = await prisma.artist.findUnique({
@@ -214,6 +222,22 @@ router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
     return res.status(400).json({ error: "guestEndDate must be a valid date or null" });
   }
 
+  if (
+    hourlyRateCents !== undefined &&
+    hourlyRateCents !== null &&
+    (typeof hourlyRateCents !== "number" || hourlyRateCents < 0)
+  ) {
+    return res.status(400).json({ error: "hourlyRateCents must be a non-negative number or null" });
+  }
+
+  if (
+    flatRateCents !== undefined &&
+    flatRateCents !== null &&
+    (typeof flatRateCents !== "number" || flatRateCents < 0)
+  ) {
+    return res.status(400).json({ error: "flatRateCents must be a non-negative number or null" });
+  }
+
   const data = {
     ...(bio !== undefined ? { bio: bio?.trim() || null } : {}),
     ...(specialties !== undefined ? { specialties } : {}),
@@ -225,6 +249,8 @@ router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
     ...(isGuest !== undefined ? { isGuest } : {}),
     ...(guestStartDate !== undefined ? { guestStartDate: guestStartDate ? new Date(guestStartDate) : null } : {}),
     ...(guestEndDate !== undefined ? { guestEndDate: guestEndDate ? new Date(guestEndDate) : null } : {}),
+    ...(hourlyRateCents !== undefined ? { hourlyRateCents } : {}),
+    ...(flatRateCents !== undefined ? { flatRateCents } : {}),
   };
 
   const nextServiceIds: string[] | undefined = serviceIds !== undefined ? [...new Set(serviceIds as string[])] : undefined;
@@ -256,6 +282,8 @@ router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
         "isGuest",
         "guestStartDate",
         "guestEndDate",
+        "hourlyRateCents",
+        "flatRateCents",
       ]),
       ...(nextServiceIds !== undefined ? { serviceIds: { from: previousServiceIds, to: nextServiceIds } } : {}),
     },

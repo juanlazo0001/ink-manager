@@ -27,6 +27,7 @@ import SessionHoursRows, {
   SessionCountField,
   HOUR_OPTIONS,
   type LockedSession,
+  type SessionHoursRow,
 } from '../components/SessionBreakdownEditor'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatDuration, formatPhoneInput, formatStatus, describeInquiryStatus, formatPriceEstimate } from '../lib/format'
@@ -111,7 +112,14 @@ interface Inquiry {
   clientId: string
   client: { firstName: string; lastName: string; email: string | null; phone: string | null }
   preferredArtist: { id: string; user: { name: string | null; email: string; avatarUrl: string | null } } | null
-  assignedArtist: { id: string; user: { name: string | null; email: string; avatarUrl: string | null } } | null
+  assignedArtist:
+    | {
+        id: string
+        hourlyRateCents: number | null
+        flatRateCents: number | null
+        user: { name: string | null; email: string; avatarUrl: string | null }
+      }
+    | null
   appointment: { id: string; startTime: string; endTime: string; status: string } | null
   sessions: {
     id: string
@@ -162,6 +170,8 @@ interface Inquiry {
     sessionNumber: number
     estimatedHoursMin: number
     estimatedHoursMax: number
+    estimatedPriceLow: number | null
+    estimatedPriceHigh: number | null
     depositFormId: string | null
     appointmentId: string | null
     depositForm: { id: string; signedAt: string | null; paidAt: string | null; paidManually: boolean } | null
@@ -569,9 +579,18 @@ export default function InquiryDetail() {
   })
   // Multi-session planning: 1 (the default, meaning "no plan -- use the
   // fields above") behaves with zero change from today. Only above 1 does
-  // sessionHours below replace the single top-level time-estimate fields.
+  // sessionHours below replace the single top-level time-estimate fields
+  // (and, per-session prices below, the single top-level price fields).
   const [sessionCount, setSessionCount] = useState(1)
-  const [sessionHours, setSessionHours] = useState<{ min: string; max: string }[]>([{ min: '', max: '' }])
+  const [sessionHours, setSessionHours] = useState<SessionHoursRow[]>([
+    { min: '', max: '', priceLow: '', priceHigh: '' },
+  ])
+  // Per-estimate flat/range choice -- independent of the Service's own
+  // pricingModel (seeded from it as a default, below, but freely
+  // overridable per estimate). Governs both the top-level price field(s)
+  // when there's no session plan, and every session row's price field(s)
+  // once there is one.
+  const [estimateIsFlat, setEstimateIsFlat] = useState(false)
 
   // Resizes sessionHours to match, preserving already-entered rows --
   // dropping the count back down never loses data for the rows still in
@@ -580,7 +599,7 @@ export default function InquiryDetail() {
     setSessionCount(count)
     setSessionHours((current) => {
       const next = [...current]
-      while (next.length < count) next.push({ min: '', max: '' })
+      while (next.length < count) next.push({ min: '', max: '', priceLow: '', priceHigh: '' })
       next.length = count
       return next
     })
@@ -613,13 +632,18 @@ export default function InquiryDetail() {
   // openReviseEstimateModal below, since a revision on a project that
   // already has a session plan should show that plan, not start from 1.
   const [reviseSessionCount, setReviseSessionCount] = useState(1)
-  const [reviseSessionHours, setReviseSessionHours] = useState<{ min: string; max: string }[]>([{ min: '', max: '' }])
+  const [reviseSessionHours, setReviseSessionHours] = useState<SessionHoursRow[]>([
+    { min: '', max: '', priceLow: '', priceHigh: '' },
+  ])
+  // Same per-estimate flat/range choice as estimateIsFlat above, keyed to
+  // this modal's own state -- seeded in openReviseEstimateModal below.
+  const [reviseIsFlat, setReviseIsFlat] = useState(false)
 
   function handleReviseSessionCountChange(count: number) {
     setReviseSessionCount(count)
     setReviseSessionHours((current) => {
       const next = [...current]
-      while (next.length < count) next.push({ min: '', max: '' })
+      while (next.length < count) next.push({ min: '', max: '', priceLow: '', priceHigh: '' })
       next.length = count
       return next
     })
@@ -839,6 +863,15 @@ export default function InquiryDetail() {
       timeEstimateHoursMax: inquiry.timeEstimateHoursMax?.toString() ?? '',
     })
     setEditingEstimate(!inquiry.estimateSentAt && !!inquiry.assignedArtist)
+    // A never-yet-sent estimate defaults to the Service's own pricing
+    // model; re-editing one already sent instead reflects what was
+    // actually sent (inferred from low === high -- see the module comment
+    // on isFlatPricing below for why no separate persisted flag is needed).
+    setEstimateIsFlat(
+      inquiry.estimateSentAt
+        ? inquiry.priceEstimateLow != null && inquiry.priceEstimateLow === inquiry.priceEstimateHigh
+        : inquiry.service.pricingModel === 'FLAT',
+    )
     setDetailsForm({
       description: inquiry.description,
       colorOrBlackGrey: inquiry.colorOrBlackGrey,
@@ -849,30 +882,46 @@ export default function InquiryDetail() {
     })
   }
 
-  // Service lines: a FLAT-pricing service (e.g. Powder Brows) collects one
-  // flat price instead of a low/high range -- the entire existing estimate
-  // send/track/respond flow is reused completely unchanged underneath;
-  // only this input collapses to one field, which sets BOTH
-  // priceEstimateLow and priceEstimateHigh to the same value (see the two
-  // onChange handlers below), so every downstream consumer of those two
-  // fields (validation, the deposit-tier average, display formatting via
-  // formatPriceEstimate) keeps working with zero branching of its own.
-  const isFlatPricing = inquiry?.service.pricingModel === 'FLAT'
+  // Service lines: a FLAT-pricing service (e.g. Powder Brows) defaults a
+  // never-yet-sent estimate to a single flat price instead of a low/high
+  // range -- but this is now just estimateIsFlat/reviseIsFlat's seeded
+  // starting value (see the seed effect above), not a hard rule: staff can
+  // freely toggle either estimate to flat or range regardless of the
+  // Service's own pricingModel. Reading a value already sent/saved instead
+  // infers flatness from priceEstimateLow === priceEstimateHigh -- no
+  // separate persisted flag exists for it, since a flat estimate IS just
+  // one where both ends of the range happen to be the same number.
+  const sentEstimateIsFlat = inquiry?.priceEstimateLow != null && inquiry.priceEstimateLow === inquiry.priceEstimateHigh
 
   // Multi-session planning: sessionCount 1 (the default) is today's
-  // behavior with zero change -- the single top-level time-estimate
-  // fields are what's required/sent. Only above 1 does the per-session
-  // sessionHours breakdown replace them entirely (see the backend's own
-  // identical branch in POST /:id/send-estimate).
+  // behavior with zero change -- the single top-level time-estimate and
+  // price fields are what's required/sent. Only above 1 does the
+  // per-session sessionHours breakdown replace BOTH entirely (see the
+  // backend's own identical branch in POST /:id/send-estimate) -- the
+  // whole-project price becomes the sum of every session's own price.
   const isMultiSession = sessionCount > 1
+
+  const sessionPriceSum = sessionHours.slice(0, sessionCount).reduce(
+    (sum, row) => ({
+      low: sum.low + (row?.priceLow ? Number(row.priceLow) : 0),
+      high: sum.high + (row?.priceHigh ? Number(row.priceHigh) : 0),
+    }),
+    { low: 0, high: 0 },
+  )
 
   // Mirrors the backend's own validation, so staff get instant feedback
   // instead of a round trip for something obviously incomplete.
   const effectiveEstimate = {
-    priceEstimateLow: estimateForm.priceEstimateLow ? Number(estimateForm.priceEstimateLow) : inquiry?.priceEstimateLow,
-    priceEstimateHigh: estimateForm.priceEstimateHigh
-      ? Number(estimateForm.priceEstimateHigh)
-      : inquiry?.priceEstimateHigh,
+    priceEstimateLow: isMultiSession
+      ? sessionPriceSum.low
+      : estimateForm.priceEstimateLow
+        ? Number(estimateForm.priceEstimateLow)
+        : inquiry?.priceEstimateLow,
+    priceEstimateHigh: isMultiSession
+      ? sessionPriceSum.high
+      : estimateForm.priceEstimateHigh
+        ? Number(estimateForm.priceEstimateHigh)
+        : inquiry?.priceEstimateHigh,
     ...(isMultiSession
       ? {}
       : {
@@ -886,12 +935,6 @@ export default function InquiryDetail() {
   }
 
   const estimateValidationError = (() => {
-    const values = Object.values(effectiveEstimate)
-    if (values.some((v) => v == null)) return 'Price and time ranges are required before sending an estimate.'
-    if (values.some((v) => v! <= 0)) return 'All range values must be positive.'
-    if (effectiveEstimate.priceEstimateLow! > effectiveEstimate.priceEstimateHigh!) {
-      return 'Price low must be less than or equal to price high.'
-    }
     if (isMultiSession) {
       for (let i = 0; i < sessionCount; i++) {
         const row = sessionHours[i]
@@ -900,8 +943,21 @@ export default function InquiryDetail() {
         if (Number(row.min) > Number(row.max)) {
           return `Session ${i + 1}'s minimum hours must be less than or equal to its maximum.`
         }
+        if (!row.priceLow || !row.priceHigh) return `Session ${i + 1} needs a price range.`
+        if (Number(row.priceLow) <= 0 || Number(row.priceHigh) <= 0) return 'All session price ranges must be positive.'
+        if (Number(row.priceLow) > Number(row.priceHigh)) {
+          return `Session ${i + 1}'s minimum price must be less than or equal to its maximum.`
+        }
       }
-    } else if (effectiveEstimate.timeEstimateHoursMin! > effectiveEstimate.timeEstimateHoursMax!) {
+      return null
+    }
+    const values = Object.values(effectiveEstimate)
+    if (values.some((v) => v == null)) return 'Price and time ranges are required before sending an estimate.'
+    if (values.some((v) => v! <= 0)) return 'All range values must be positive.'
+    if (effectiveEstimate.priceEstimateLow! > effectiveEstimate.priceEstimateHigh!) {
+      return 'Price low must be less than or equal to price high.'
+    }
+    if (effectiveEstimate.timeEstimateHoursMin! > effectiveEstimate.timeEstimateHoursMax!) {
       return 'Minimum hours must be less than or equal to maximum hours.'
     }
     return null
@@ -919,20 +975,48 @@ export default function InquiryDetail() {
       sessionNumber: ps.sessionNumber,
       estimatedHoursMin: ps.estimatedHoursMin,
       estimatedHoursMax: ps.estimatedHoursMax,
+      estimatedPriceLow: ps.estimatedPriceLow,
+      estimatedPriceHigh: ps.estimatedPriceHigh,
       reason: ps.appointment != null ? 'appointment booked' : 'deposit paid',
     }))
 
   const isReviseMultiSession = reviseSessionCount > 1
 
+  // Every final session's own price, summed -- same rule as
+  // sessionPriceSum above, but a locked session's price comes from
+  // whatever's already stored for it (untouchable, same as its hours)
+  // rather than from reviseSessionHours.
+  const reviseSessionPriceSum = (() => {
+    let low = 0
+    let high = 0
+    for (let i = 0; i < reviseSessionCount; i++) {
+      const sessionNumber = i + 1
+      const locked = reviseLockedSessions.find((s) => s.sessionNumber === sessionNumber)
+      if (locked) {
+        low += locked.estimatedPriceLow ?? 0
+        high += locked.estimatedPriceHigh ?? 0
+        continue
+      }
+      const row = reviseSessionHours[i]
+      low += row?.priceLow ? Number(row.priceLow) : 0
+      high += row?.priceHigh ? Number(row.priceHigh) : 0
+    }
+    return { low, high }
+  })()
+
   // Same shape as effectiveEstimate/estimateValidationError above, keyed to
   // the separate Revise Estimate modal's own form state instead.
   const effectiveRevisedEstimate = {
-    priceEstimateLow: reviseEstimateForm.priceEstimateLow
-      ? Number(reviseEstimateForm.priceEstimateLow)
-      : inquiry?.priceEstimateLow,
-    priceEstimateHigh: reviseEstimateForm.priceEstimateHigh
-      ? Number(reviseEstimateForm.priceEstimateHigh)
-      : inquiry?.priceEstimateHigh,
+    priceEstimateLow: isReviseMultiSession
+      ? reviseSessionPriceSum.low
+      : reviseEstimateForm.priceEstimateLow
+        ? Number(reviseEstimateForm.priceEstimateLow)
+        : inquiry?.priceEstimateLow,
+    priceEstimateHigh: isReviseMultiSession
+      ? reviseSessionPriceSum.high
+      : reviseEstimateForm.priceEstimateHigh
+        ? Number(reviseEstimateForm.priceEstimateHigh)
+        : inquiry?.priceEstimateHigh,
     ...(isReviseMultiSession
       ? {}
       : {
@@ -947,12 +1031,6 @@ export default function InquiryDetail() {
 
   const reviseEstimateValidationError = (() => {
     if (reviseReasonInput.trim().length === 0) return 'A reason is required to revise the estimate.'
-    const values = Object.values(effectiveRevisedEstimate)
-    if (values.some((v) => v == null)) return 'Price and time ranges are required.'
-    if (values.some((v) => v! <= 0)) return 'All range values must be positive.'
-    if (effectiveRevisedEstimate.priceEstimateLow! > effectiveRevisedEstimate.priceEstimateHigh!) {
-      return 'Price low must be less than or equal to price high.'
-    }
     if (isReviseMultiSession) {
       for (let i = 0; i < reviseSessionCount; i++) {
         const sessionNumber = i + 1
@@ -963,12 +1041,63 @@ export default function InquiryDetail() {
         if (Number(row.min) > Number(row.max)) {
           return `Session ${sessionNumber}'s minimum hours must be less than or equal to its maximum.`
         }
+        if (!row.priceLow || !row.priceHigh) return `Session ${sessionNumber} needs a price range.`
+        if (Number(row.priceLow) <= 0 || Number(row.priceHigh) <= 0) return 'All session price ranges must be positive.'
+        if (Number(row.priceLow) > Number(row.priceHigh)) {
+          return `Session ${sessionNumber}'s minimum price must be less than or equal to its maximum.`
+        }
       }
-    } else if (effectiveRevisedEstimate.timeEstimateHoursMin! > effectiveRevisedEstimate.timeEstimateHoursMax!) {
+      return null
+    }
+    const values = Object.values(effectiveRevisedEstimate)
+    if (values.some((v) => v == null)) return 'Price and time ranges are required.'
+    if (values.some((v) => v! <= 0)) return 'All range values must be positive.'
+    if (effectiveRevisedEstimate.priceEstimateLow! > effectiveRevisedEstimate.priceEstimateHigh!) {
+      return 'Price low must be less than or equal to price high.'
+    }
+    if (effectiveRevisedEstimate.timeEstimateHoursMin! > effectiveRevisedEstimate.timeEstimateHoursMax!) {
       return 'Minimum hours must be less than or equal to maximum hours.'
     }
     return null
   })()
+
+  // Re-seeds every field the estimate form edits from the CURRENT inquiry
+  // data, rather than relying on the once-per-inquiry-id seed effect above
+  // -- that one-time seed goes stale the moment this same estimate is
+  // resent once already (or a session plan is declared) without the page
+  // itself ever remounting, so reopening Edit later showed pre-edit values
+  // and any session-plan breakdown that existed was silently dropped back
+  // to "no plan" instead of being preserved for further editing.
+  function openEditEstimate() {
+    if (!inquiry) return
+    setEstimateForm({
+      priceEstimateLow: inquiry.priceEstimateLow?.toString() ?? '',
+      priceEstimateHigh: inquiry.priceEstimateHigh?.toString() ?? '',
+      timeEstimateHoursMin: inquiry.timeEstimateHoursMin?.toString() ?? '',
+      timeEstimateHoursMax: inquiry.timeEstimateHoursMax?.toString() ?? '',
+    })
+    setEstimateIsFlat(
+      inquiry.estimateSentAt
+        ? inquiry.priceEstimateLow != null && inquiry.priceEstimateLow === inquiry.priceEstimateHigh
+        : inquiry.service.pricingModel === 'FLAT',
+    )
+    if (inquiry.plannedSessions.length > 0) {
+      setSessionCount(inquiry.plannedSessions.length)
+      setSessionHours(
+        inquiry.plannedSessions.map((ps) => ({
+          min: ps.estimatedHoursMin.toString(),
+          max: ps.estimatedHoursMax.toString(),
+          priceLow: ps.estimatedPriceLow != null ? ps.estimatedPriceLow.toString() : '',
+          priceHigh: ps.estimatedPriceHigh != null ? ps.estimatedPriceHigh.toString() : '',
+        })),
+      )
+    } else {
+      setSessionCount(1)
+      setSessionHours([{ min: '', max: '', priceLow: '', priceHigh: '' }])
+    }
+    setSendEstimateError(null)
+    setEditingEstimate(true)
+  }
 
   async function handleAssign() {
     if (!id || !selectedArtistId) return
@@ -1010,8 +1139,16 @@ export default function InquiryDetail() {
       }>(`/inquiries/${id}/send-estimate`, {
         method: 'POST',
         body: JSON.stringify({
-          priceEstimateLow: estimateForm.priceEstimateLow ? Number(estimateForm.priceEstimateLow) : undefined,
-          priceEstimateHigh: estimateForm.priceEstimateHigh ? Number(estimateForm.priceEstimateHigh) : undefined,
+          priceEstimateLow: isMultiSession
+            ? undefined
+            : estimateForm.priceEstimateLow
+              ? Number(estimateForm.priceEstimateLow)
+              : undefined,
+          priceEstimateHigh: isMultiSession
+            ? undefined
+            : estimateForm.priceEstimateHigh
+              ? Number(estimateForm.priceEstimateHigh)
+              : undefined,
           timeEstimateHoursMin: isMultiSession
             ? undefined
             : estimateForm.timeEstimateHoursMin
@@ -1023,7 +1160,12 @@ export default function InquiryDetail() {
               ? Number(estimateForm.timeEstimateHoursMax)
               : undefined,
           sessions: isMultiSession
-            ? sessionHours.map((row) => ({ estimatedHoursMin: Number(row.min), estimatedHoursMax: Number(row.max) }))
+            ? sessionHours.map((row) => ({
+                estimatedHoursMin: Number(row.min),
+                estimatedHoursMax: Number(row.max),
+                estimatedPriceLow: Number(row.priceLow),
+                estimatedPriceHigh: Number(row.priceHigh),
+              }))
             : undefined,
         }),
       })
@@ -1046,6 +1188,9 @@ export default function InquiryDetail() {
       timeEstimateHoursMin: inquiry.timeEstimateHoursMin?.toString() ?? '',
       timeEstimateHoursMax: inquiry.timeEstimateHoursMax?.toString() ?? '',
     })
+    // Reflects what's actually currently saved -- same inference
+    // estimateIsFlat's own seed effect uses for an already-sent estimate.
+    setReviseIsFlat(inquiry.priceEstimateLow != null && inquiry.priceEstimateLow === inquiry.priceEstimateHigh)
     // Prefill from the project's existing session plan, if it has one --
     // a revision on a multi-session project should show that plan ready to
     // edit, not silently reset it back down to 1.
@@ -1055,11 +1200,13 @@ export default function InquiryDetail() {
         inquiry.plannedSessions.map((ps) => ({
           min: ps.estimatedHoursMin.toString(),
           max: ps.estimatedHoursMax.toString(),
+          priceLow: ps.estimatedPriceLow != null ? ps.estimatedPriceLow.toString() : '',
+          priceHigh: ps.estimatedPriceHigh != null ? ps.estimatedPriceHigh.toString() : '',
         })),
       )
     } else {
       setReviseSessionCount(1)
-      setReviseSessionHours([{ min: '', max: '' }])
+      setReviseSessionHours([{ min: '', max: '', priceLow: '', priceHigh: '' }])
     }
     setReviseReasonInput('')
     setReviseEstimateError(null)
@@ -1085,10 +1232,16 @@ export default function InquiryDetail() {
       }>(`/inquiries/${id}/revise-estimate`, {
         method: 'POST',
         body: JSON.stringify({
-          priceEstimateLow: reviseEstimateForm.priceEstimateLow ? Number(reviseEstimateForm.priceEstimateLow) : undefined,
-          priceEstimateHigh: reviseEstimateForm.priceEstimateHigh
-            ? Number(reviseEstimateForm.priceEstimateHigh)
-            : undefined,
+          priceEstimateLow: isReviseMultiSession
+            ? undefined
+            : reviseEstimateForm.priceEstimateLow
+              ? Number(reviseEstimateForm.priceEstimateLow)
+              : undefined,
+          priceEstimateHigh: isReviseMultiSession
+            ? undefined
+            : reviseEstimateForm.priceEstimateHigh
+              ? Number(reviseEstimateForm.priceEstimateHigh)
+              : undefined,
           timeEstimateHoursMin: isReviseMultiSession
             ? undefined
             : reviseEstimateForm.timeEstimateHoursMin
@@ -1106,8 +1259,18 @@ export default function InquiryDetail() {
                   const sessionNumber = index + 1
                   const locked = reviseLockedSessions.find((s) => s.sessionNumber === sessionNumber)
                   return locked
-                    ? { estimatedHoursMin: locked.estimatedHoursMin, estimatedHoursMax: locked.estimatedHoursMax }
-                    : { estimatedHoursMin: Number(row.min), estimatedHoursMax: Number(row.max) }
+                    ? {
+                        estimatedHoursMin: locked.estimatedHoursMin,
+                        estimatedHoursMax: locked.estimatedHoursMax,
+                        estimatedPriceLow: locked.estimatedPriceLow ?? 0,
+                        estimatedPriceHigh: locked.estimatedPriceHigh ?? 0,
+                      }
+                    : {
+                        estimatedHoursMin: Number(row.min),
+                        estimatedHoursMax: Number(row.max),
+                        estimatedPriceLow: Number(row.priceLow),
+                        estimatedPriceHigh: Number(row.priceHigh),
+                      }
                 })
             : // Only explicitly collapse the plan back to an empty array when
               // one currently exists (locked sessions, if any, are preserved
@@ -2139,7 +2302,7 @@ export default function InquiryDetail() {
                     !isTerminal && !isConverted && canMessage && inquiry.assignedArtist && !editingEstimate ? (
                       <button
                         type="button"
-                        onClick={() => setEditingEstimate(true)}
+                        onClick={openEditEstimate}
                         aria-label="Edit Estimate"
                         title="Edit Estimate"
                         className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
@@ -2260,8 +2423,27 @@ export default function InquiryDetail() {
 
                   {!isTerminal && !isConverted && canMessage && editingEstimate && (
                     <>
-                      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        {isFlatPricing ? (
+                      <label className="mt-4 flex items-center gap-2 text-xs font-medium text-fg-secondary">
+                        <input
+                          type="checkbox"
+                          checked={estimateIsFlat}
+                          onChange={(e) => setEstimateIsFlat(e.target.checked)}
+                          className="h-4 w-4 rounded border-border bg-surface-inset accent-accent"
+                        />
+                        Flat rate (single price instead of a range)
+                      </label>
+
+                      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        {isMultiSession ? (
+                          <div className="sm:col-span-2">
+                            <p className="mb-1 block text-xs font-medium text-fg-secondary">
+                              Price estimate (sum of every session below)
+                            </p>
+                            <p className="text-sm text-fg">
+                              {formatPriceEstimate(sessionPriceSum.low, sessionPriceSum.high) ?? 'Not provided'}
+                            </p>
+                          </div>
+                        ) : estimateIsFlat ? (
                           <div className="sm:col-span-2">
                             <label className="mb-1 block text-xs font-medium text-fg-secondary">Price</label>
                             <CurrencyInput
@@ -2333,6 +2515,8 @@ export default function InquiryDetail() {
                         sessionCount={sessionCount}
                         sessionHours={sessionHours}
                         onSessionHoursChange={setSessionHours}
+                        assignedArtist={inquiry.assignedArtist}
+                        isFlat={estimateIsFlat}
                       />
 
                       {sendEstimateError && <p className="mt-3 text-sm text-danger">{sendEstimateError}</p>}
@@ -2371,7 +2555,7 @@ export default function InquiryDetail() {
                       inquiry.timeEstimateHoursMin != null ||
                       inquiry.timeEstimateHoursMax != null) && (
                     <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
-                      {isFlatPricing ? (
+                      {sentEstimateIsFlat ? (
                         <DetailField
                           label="Price estimate"
                           value={formatPriceEstimate(inquiry.priceEstimateLow, inquiry.priceEstimateHigh) ?? 'Not provided'}
@@ -2411,7 +2595,15 @@ export default function InquiryDetail() {
                       <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Time estimate</p>
                       <p className="mt-1 text-sm text-fg">
                         {inquiry.plannedSessions
-                          .map((ps) => `Session ${ps.sessionNumber}: ${ps.estimatedHoursMin}-${ps.estimatedHoursMax} hrs`)
+                          .map((ps) => {
+                            const hours = `Session ${ps.sessionNumber}: ${ps.estimatedHoursMin}-${ps.estimatedHoursMax} hrs`
+                            if (ps.estimatedPriceLow == null || ps.estimatedPriceHigh == null) return hours
+                            const price =
+                              ps.estimatedPriceLow === ps.estimatedPriceHigh
+                                ? `$${ps.estimatedPriceLow}`
+                                : `$${ps.estimatedPriceLow}-$${ps.estimatedPriceHigh}`
+                            return `${hours} (${price})`
+                          })
                           .join(', ')}
                       </p>
                     </div>
@@ -3110,6 +3302,16 @@ export default function InquiryDetail() {
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <p className="text-sm font-medium text-fg">
                               Session {ps.sessionNumber} — estimated {ps.estimatedHoursMin}-{ps.estimatedHoursMax} hrs
+                              {ps.estimatedPriceLow != null && ps.estimatedPriceHigh != null && (
+                                <>
+                                  {' '}
+                                  (
+                                  {ps.estimatedPriceLow === ps.estimatedPriceHigh
+                                    ? `$${ps.estimatedPriceLow}`
+                                    : `$${ps.estimatedPriceLow}-$${ps.estimatedPriceHigh}`}
+                                  )
+                                </>
+                              )}
                             </p>
                             <div className="flex items-center gap-2">
                               <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${depositBadge.className}`}>
@@ -3694,8 +3896,27 @@ export default function InquiryDetail() {
                       and requires their approval.
                     </p>
 
+                    <label className="flex items-center gap-2 text-xs font-medium text-fg-secondary">
+                      <input
+                        type="checkbox"
+                        checked={reviseIsFlat}
+                        onChange={(e) => setReviseIsFlat(e.target.checked)}
+                        className="h-4 w-4 rounded border-border bg-surface-inset accent-accent"
+                      />
+                      Flat rate (single price instead of a range)
+                    </label>
+
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      {isFlatPricing ? (
+                      {isReviseMultiSession ? (
+                        <div className="sm:col-span-2">
+                          <p className="mb-1 block text-xs font-medium text-fg-secondary">
+                            Price estimate (sum of every session below)
+                          </p>
+                          <p className="text-sm text-fg">
+                            {formatPriceEstimate(reviseSessionPriceSum.low, reviseSessionPriceSum.high) ?? 'Not provided'}
+                          </p>
+                        </div>
+                      ) : reviseIsFlat ? (
                         <div className="sm:col-span-2">
                           <label className="mb-1 block text-xs font-medium text-fg-secondary">Price</label>
                           <CurrencyInput
@@ -3776,6 +3997,8 @@ export default function InquiryDetail() {
                       sessionHours={reviseSessionHours}
                       onSessionHoursChange={setReviseSessionHours}
                       lockedSessions={reviseLockedSessions}
+                      assignedArtist={inquiry?.assignedArtist}
+                      isFlat={reviseIsFlat}
                     />
 
                     <div>

@@ -72,6 +72,8 @@ interface InquirySummary {
     sessionNumber: number
     estimatedHoursMin: number
     estimatedHoursMax: number
+    estimatedPriceLow: number | null
+    estimatedPriceHigh: number | null
     appointmentId: string | null
     depositForm: { paidAt: string | null } | null
     appointment: { checkedOutAt: string | null } | null
@@ -1831,6 +1833,16 @@ export default function ClientDetail() {
                                   <div key={ps.id} className="flex flex-wrap items-center justify-between gap-2">
                                     <p className="text-xs text-fg-secondary">
                                       Session {ps.sessionNumber} — estimated {ps.estimatedHoursMin}-{ps.estimatedHoursMax} hrs
+                                      {ps.estimatedPriceLow != null && ps.estimatedPriceHigh != null && (
+                                        <>
+                                          {' '}
+                                          (
+                                          {ps.estimatedPriceLow === ps.estimatedPriceHigh
+                                            ? `$${ps.estimatedPriceLow}`
+                                            : `$${ps.estimatedPriceLow}-$${ps.estimatedPriceHigh}`}
+                                          )
+                                        </>
+                                      )}
                                     </p>
                                     <div className="flex items-center gap-1.5">
                                       <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${depositBadge.className}`}>

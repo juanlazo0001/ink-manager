@@ -38,7 +38,7 @@ router.get("/verify/:token", async (req, res) => {
       // declared more than one session -- the client-facing page falls
       // back to timeEstimateHoursMin/Max below in that case, unchanged.
       plannedSessions: {
-        select: { sessionNumber: true, estimatedHoursMin: true, estimatedHoursMax: true },
+        select: { sessionNumber: true, estimatedHoursMin: true, estimatedHoursMax: true, estimatedPriceLow: true, estimatedPriceHigh: true },
         orderBy: { sessionNumber: "asc" },
       },
     },
@@ -163,7 +163,7 @@ router.get("/revision/verify/:token", async (req, res) => {
       // declared more than one session -- the client-facing page falls
       // back to timeEstimateHoursMin/Max below in that case, unchanged.
       plannedSessions: {
-        select: { sessionNumber: true, estimatedHoursMin: true, estimatedHoursMax: true },
+        select: { sessionNumber: true, estimatedHoursMin: true, estimatedHoursMax: true, estimatedPriceLow: true, estimatedPriceHigh: true },
         orderBy: { sessionNumber: "asc" },
       },
     },

@@ -398,8 +398,16 @@ const INQUIRY_INCLUDE = {
   preferredArtist: { select: { id: true, user: { select: { name: true, email: true, avatarUrl: true } } } },
   // email/avatarUrl added for the Kanban board's card (Package E) --
   // renders through the shared ArtistAvatar component, which needs both to
-  // avoid falling back to a raw email string.
-  assignedArtist: { select: { id: true, user: { select: { id: true, name: true, email: true, avatarUrl: true } } } },
+  // avoid falling back to a raw email string. hourlyRateCents/flatRateCents
+  // feed the estimate form's per-session price auto-suggestion.
+  assignedArtist: {
+    select: {
+      id: true,
+      hourlyRateCents: true,
+      flatRateCents: true,
+      user: { select: { id: true, name: true, email: true, avatarUrl: true } },
+    },
+  },
   appointment: { select: { id: true, startTime: true, endTime: true, status: true } },
   // UI-1 §3: every appointment/session under this project (1:many via
   // Appointment.inquiryId), for the project detail page's nested
@@ -445,6 +453,8 @@ const INQUIRY_INCLUDE = {
       sessionNumber: true,
       estimatedHoursMin: true,
       estimatedHoursMax: true,
+      estimatedPriceLow: true,
+      estimatedPriceHigh: true,
       depositFormId: true,
       appointmentId: true,
       depositForm: { select: { id: true, signedAt: true, paidAt: true, paidManually: true, paidVia: true } },
@@ -1040,7 +1050,14 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
   // Existing rows are never touched by a resend (idempotent -- once a plan
   // exists, further send-estimate calls just resend/revise price/status,
   // same as they always could).
-  let plannedSessionInputs: { estimatedHoursMin: number; estimatedHoursMax: number }[] | null = null;
+  //
+  // Per-session price: each session also carries its own price range now
+  // (same "sessions replace the top-level field" relationship its hour
+  // range already has) -- the whole-project price below becomes the SUM
+  // of every session's own price, not a separately-typed number.
+  let plannedSessionInputs:
+    | { estimatedHoursMin: number; estimatedHoursMax: number; estimatedPriceLow: number; estimatedPriceHigh: number }[]
+    | null = null;
   if (sessions !== undefined) {
     if (!Array.isArray(sessions)) {
       return res.status(400).json({ error: "sessions must be an array" });
@@ -1051,9 +1068,11 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
           typeof session !== "object" ||
           session === null ||
           typeof session.estimatedHoursMin !== "number" ||
-          typeof session.estimatedHoursMax !== "number"
+          typeof session.estimatedHoursMax !== "number" ||
+          typeof session.estimatedPriceLow !== "number" ||
+          typeof session.estimatedPriceHigh !== "number"
         ) {
-          return res.status(400).json({ error: `Session ${index + 1} needs a numeric hour range` });
+          return res.status(400).json({ error: `Session ${index + 1} needs a numeric hour range and price range` });
         }
         if (session.estimatedHoursMin <= 0 || session.estimatedHoursMax <= 0) {
           return res.status(400).json({ error: `Session ${index + 1}'s hour range must be positive` });
@@ -1063,10 +1082,27 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
             .status(400)
             .json({ error: `Session ${index + 1}'s minimum hours must be less than or equal to its maximum` });
         }
+        if (session.estimatedPriceLow <= 0 || session.estimatedPriceHigh <= 0) {
+          return res.status(400).json({ error: `Session ${index + 1}'s price range must be positive` });
+        }
+        if (session.estimatedPriceLow > session.estimatedPriceHigh) {
+          return res
+            .status(400)
+            .json({ error: `Session ${index + 1}'s minimum price must be less than or equal to its maximum` });
+        }
       }
       plannedSessionInputs = sessions;
     }
   }
+
+  // Every session's own price, summed -- this IS the whole-project price
+  // once a plan exists, not a fallback/default for it.
+  const sessionPriceTotals = plannedSessionInputs
+    ? {
+        priceEstimateLow: plannedSessionInputs.reduce((sum, s) => sum + s.estimatedPriceLow, 0),
+        priceEstimateHigh: plannedSessionInputs.reduce((sum, s) => sum + s.estimatedPriceHigh, 0),
+      }
+    : null;
 
   // Validate the *effective* range (newly submitted value, falling back to
   // whatever's already on the inquiry) -- staff can resend without
@@ -1076,8 +1112,10 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
   // breakdown in that case, and a stale whole-project number left over
   // here would just be misleading (see the null-out below).
   const effective = {
-    priceEstimateLow: priceEstimateLow ?? inquiry.priceEstimateLow,
-    priceEstimateHigh: priceEstimateHigh ?? inquiry.priceEstimateHigh,
+    priceEstimateLow: sessionPriceTotals ? sessionPriceTotals.priceEstimateLow : (priceEstimateLow ?? inquiry.priceEstimateLow),
+    priceEstimateHigh: sessionPriceTotals
+      ? sessionPriceTotals.priceEstimateHigh
+      : (priceEstimateHigh ?? inquiry.priceEstimateHigh),
     ...(plannedSessionInputs
       ? {}
       : {
@@ -1146,6 +1184,8 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
           sessionNumber: index + 1,
           estimatedHoursMin: session.estimatedHoursMin,
           estimatedHoursMax: session.estimatedHoursMax,
+          estimatedPriceLow: session.estimatedPriceLow,
+          estimatedPriceHigh: session.estimatedPriceHigh,
         })),
       });
     }
@@ -1263,7 +1303,9 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
   // leaves any existing plan completely untouched (a price-only revision
   // on a project whose plan isn't being touched this time, or one that
   // never had a plan at all).
-  let plannedSessionInputs: { estimatedHoursMin: number; estimatedHoursMax: number }[] | null = null;
+  let plannedSessionInputs:
+    | { estimatedHoursMin: number; estimatedHoursMax: number; estimatedPriceLow: number; estimatedPriceHigh: number }[]
+    | null = null;
   if (sessions !== undefined) {
     if (!Array.isArray(sessions)) {
       return res.status(400).json({ error: "sessions must be an array" });
@@ -1273,9 +1315,11 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
         typeof session !== "object" ||
         session === null ||
         typeof session.estimatedHoursMin !== "number" ||
-        typeof session.estimatedHoursMax !== "number"
+        typeof session.estimatedHoursMax !== "number" ||
+        typeof session.estimatedPriceLow !== "number" ||
+        typeof session.estimatedPriceHigh !== "number"
       ) {
-        return res.status(400).json({ error: `Session ${index + 1} needs a numeric hour range` });
+        return res.status(400).json({ error: `Session ${index + 1} needs a numeric hour range and price range` });
       }
       if (session.estimatedHoursMin <= 0 || session.estimatedHoursMax <= 0) {
         return res.status(400).json({ error: `Session ${index + 1}'s hour range must be positive` });
@@ -1284,6 +1328,14 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
         return res
           .status(400)
           .json({ error: `Session ${index + 1}'s minimum hours must be less than or equal to its maximum` });
+      }
+      if (session.estimatedPriceLow <= 0 || session.estimatedPriceHigh <= 0) {
+        return res.status(400).json({ error: `Session ${index + 1}'s price range must be positive` });
+      }
+      if (session.estimatedPriceLow > session.estimatedPriceHigh) {
+        return res
+          .status(400)
+          .json({ error: `Session ${index + 1}'s minimum price must be less than or equal to its maximum` });
       }
     }
     plannedSessionInputs = sessions;
@@ -1297,6 +1349,7 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
     (ps) => ps.depositForm?.paidAt != null || ps.appointmentId != null,
   );
   const highestLockedSessionNumber = lockedSessions.reduce((max, s) => Math.max(max, s.sessionNumber), 0);
+  const existingByNumber = new Map(inquiry.plannedSessions.map((ps) => [ps.sessionNumber, ps]));
 
   // The actual session count this revision ends up with, once any locked
   // sessions beyond what staff submitted are preserved -- drives whether
@@ -1307,13 +1360,47 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
     : inquiry.plannedSessions.length;
   const hasPlan = finalSessionCount > 1;
 
+  // Every final session's own price, summed -- same "sessions replace the
+  // top-level field" relationship as send-estimate, but here a session's
+  // price can come from three places depending on what this call actually
+  // touched: a locked session keeps its already-stored price (untouchable,
+  // same as its hours); an unlocked session newly submitted this call uses
+  // that submission; anything else (plan not touched this call) keeps
+  // whatever price is already stored for that slot.
+  const sessionPriceTotals = hasPlan
+    ? (() => {
+        let low = 0;
+        let high = 0;
+        for (let num = 1; num <= finalSessionCount; num++) {
+          const locked = lockedSessions.find((s) => s.sessionNumber === num);
+          if (locked) {
+            low += locked.estimatedPriceLow ?? 0;
+            high += locked.estimatedPriceHigh ?? 0;
+            continue;
+          }
+          const submitted = plannedSessionInputs?.[num - 1];
+          if (submitted) {
+            low += submitted.estimatedPriceLow;
+            high += submitted.estimatedPriceHigh;
+            continue;
+          }
+          const existing = existingByNumber.get(num);
+          low += existing?.estimatedPriceLow ?? 0;
+          high += existing?.estimatedPriceHigh ?? 0;
+        }
+        return { priceEstimateLow: low, priceEstimateHigh: high };
+      })()
+    : null;
+
   // Same "effective value" fallback as send-estimate -- staff can revise
   // just the price and leave the time estimate (or vice versa) without
   // resubmitting every field. The top-level time-estimate pair is skipped
   // entirely once this revision has (or keeps) a real session plan.
   const effective = {
-    priceEstimateLow: priceEstimateLow ?? inquiry.priceEstimateLow,
-    priceEstimateHigh: priceEstimateHigh ?? inquiry.priceEstimateHigh,
+    priceEstimateLow: sessionPriceTotals ? sessionPriceTotals.priceEstimateLow : (priceEstimateLow ?? inquiry.priceEstimateLow),
+    priceEstimateHigh: sessionPriceTotals
+      ? sessionPriceTotals.priceEstimateHigh
+      : (priceEstimateHigh ?? inquiry.priceEstimateHigh),
     ...(hasPlan
       ? {}
       : {
@@ -1366,11 +1453,22 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
   // touched regardless of what was submitted for its slot -- see the
   // lockedSessions filter above.
   if (plannedSessionInputs) {
-    const existingByNumber = new Map(inquiry.plannedSessions.map((ps) => [ps.sessionNumber, ps]));
     const lockedNumbers = new Set(lockedSessions.map((s) => s.sessionNumber));
 
-    const toUpdate: { id: string; estimatedHoursMin: number; estimatedHoursMax: number }[] = [];
-    const toCreate: { sessionNumber: number; estimatedHoursMin: number; estimatedHoursMax: number }[] = [];
+    const toUpdate: {
+      id: string;
+      estimatedHoursMin: number;
+      estimatedHoursMax: number;
+      estimatedPriceLow: number;
+      estimatedPriceHigh: number;
+    }[] = [];
+    const toCreate: {
+      sessionNumber: number;
+      estimatedHoursMin: number;
+      estimatedHoursMax: number;
+      estimatedPriceLow: number;
+      estimatedPriceHigh: number;
+    }[] = [];
 
     plannedSessionInputs.forEach((session, index) => {
       const sessionNumber = index + 1;
@@ -1381,12 +1479,16 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
           id: existing.id,
           estimatedHoursMin: session.estimatedHoursMin,
           estimatedHoursMax: session.estimatedHoursMax,
+          estimatedPriceLow: session.estimatedPriceLow,
+          estimatedPriceHigh: session.estimatedPriceHigh,
         });
       } else {
         toCreate.push({
           sessionNumber,
           estimatedHoursMin: session.estimatedHoursMin,
           estimatedHoursMax: session.estimatedHoursMax,
+          estimatedPriceLow: session.estimatedPriceLow,
+          estimatedPriceHigh: session.estimatedPriceHigh,
         });
       }
     });
@@ -1403,7 +1505,12 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
       ...toUpdate.map((s) =>
         prisma.plannedSession.update({
           where: { id: s.id },
-          data: { estimatedHoursMin: s.estimatedHoursMin, estimatedHoursMax: s.estimatedHoursMax },
+          data: {
+            estimatedHoursMin: s.estimatedHoursMin,
+            estimatedHoursMax: s.estimatedHoursMax,
+            estimatedPriceLow: s.estimatedPriceLow,
+            estimatedPriceHigh: s.estimatedPriceHigh,
+          },
         }),
       ),
       ...(toCreate.length > 0

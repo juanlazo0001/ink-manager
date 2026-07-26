@@ -361,6 +361,15 @@ model Artist {
   guestStartDate DateTime?
   guestEndDate   DateTime?
 
+  // Reference rate(s) for this artist -- both nullable/independent (an
+  // artist can have neither, either, or both set) and purely informational
+  // by default: the estimate form's per-session price auto-suggestion
+  // (hourlyRateCents x that session's own hour estimate, or flatRateCents
+  // verbatim if set) only ever pre-fills a starting number staff can
+  // override, never locks or validates against it.
+  hourlyRateCents Int?
+  flatRateCents   Int?
+
   userId String @unique
   user   User   @relation(fields: [userId], references: [id])
 
@@ -1351,19 +1360,26 @@ model AuditLog {
 // session 2's even exists, exactly like the un-planned flow already
 // allows generating "the next session's" form whenever staff chooses to.
 //
-// The overall project price estimate (Inquiry.priceEstimateLow/High)
-// stays the single source of truth for deposit-tier computation --
-// EVERY planned session's deposit form uses the same tier-derived
-// amount, computed once from that whole-project price, not a per-session
-// lookup off estimatedHoursMin/Max (those only ever feed a scheduling
-// duration target, never a dollar amount).
+// Inquiry.priceEstimateLow/High stays the single source of truth for
+// deposit-tier computation -- EVERY planned session's deposit form uses
+// the same tier-derived amount, computed once from that whole-project
+// price. Once a session plan carries its own per-session price
+// (estimatedPriceLow/High below), that whole-project price is no longer
+// typed in directly -- it's the sum of every session's own price, the
+// same "sessions replace the top-level field" relationship
+// estimatedHoursMin/Max already has with the top-level time estimate.
+// Both nullable: a plan declared before this feature shipped (or a
+// revision that only touched hours) simply has no per-session price yet,
+// same "purely additive" posture as the rest of this model.
 model PlannedSession {
-  id                String   @id @default(cuid())
-  sessionNumber     Int
-  estimatedHoursMin Float
-  estimatedHoursMax Float
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id                 String   @id @default(cuid())
+  sessionNumber      Int
+  estimatedHoursMin  Float
+  estimatedHoursMax  Float
+  estimatedPriceLow  Float?
+  estimatedPriceHigh Float?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   inquiryId String
   inquiry   Inquiry @relation(fields: [inquiryId], references: [id])

@@ -171,6 +171,8 @@ router.get("/:id", requirePermission("clients.view"), async (req, res) => {
               sessionNumber: true,
               estimatedHoursMin: true,
               estimatedHoursMax: true,
+              estimatedPriceLow: true,
+              estimatedPriceHigh: true,
               appointmentId: true,
               depositForm: { select: { paidAt: true } },
               appointment: { select: { checkedOutAt: true } },

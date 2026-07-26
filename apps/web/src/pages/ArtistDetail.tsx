@@ -29,6 +29,8 @@ interface Artist {
   isGuest: boolean
   guestStartDate: string | null
   guestEndDate: string | null
+  hourlyRateCents: number | null
+  flatRateCents: number | null
   artistServices: { serviceId: string }[]
   user: { id: string; email: string; name: string | null; phone: string | null; avatarUrl: string | null }
 }
@@ -49,7 +51,7 @@ interface UploadItem {
 // Built-in fallback order for a user who's never customized this page's
 // layout -- same reorder/collapse system already used on the Inquiry,
 // Appointment, and Client detail pages.
-const ARTIST_WIDGET_ORDER = ['guest-artist', 'bio', 'social-links', 'specialties', 'services', 'preferred-schedule', 'portfolio']
+const ARTIST_WIDGET_ORDER = ['guest-artist', 'bio', 'rates', 'social-links', 'specialties', 'services', 'preferred-schedule', 'portfolio']
 
 export default function ArtistDetail() {
   const { id } = useParams<{ id: string }>()
@@ -71,6 +73,8 @@ export default function ArtistDetail() {
   const [isGuest, setIsGuest] = useState(false)
   const [guestStartDate, setGuestStartDate] = useState('')
   const [guestEndDate, setGuestEndDate] = useState('')
+  const [hourlyRate, setHourlyRate] = useState('')
+  const [flatRate, setFlatRate] = useState('')
   const [uploadingItems, setUploadingItems] = useState<UploadItem[]>([])
 
   const [saving, setSaving] = useState(false)
@@ -150,6 +154,8 @@ export default function ArtistDetail() {
     // hypothetical -- e.g. New_York showed "Jun 30" for a saved "Jul 1").
     setGuestStartDate(artist.guestStartDate ? artist.guestStartDate.slice(0, 10) : '')
     setGuestEndDate(artist.guestEndDate ? artist.guestEndDate.slice(0, 10) : '')
+    setHourlyRate(artist.hourlyRateCents != null ? (artist.hourlyRateCents / 100).toString() : '')
+    setFlatRate(artist.flatRateCents != null ? (artist.flatRateCents / 100).toString() : '')
     setScheduleDays(scheduleBlocksToDays(artist.preferredSchedule))
   }
 
@@ -246,6 +252,8 @@ export default function ArtistDetail() {
           isGuest,
           guestStartDate: guestStartDate || null,
           guestEndDate: guestEndDate || null,
+          hourlyRateCents: hourlyRate ? Math.round(Number(hourlyRate) * 100) : null,
+          flatRateCents: flatRate ? Math.round(Number(flatRate) * 100) : null,
         }),
       })
 
@@ -375,6 +383,61 @@ export default function ArtistDetail() {
                   />
                 ) : (
                   <p className="mt-3 whitespace-pre-wrap text-sm text-fg-secondary">{artist.bio || 'No bio yet.'}</p>
+                )}
+              </Widget>
+
+              <Widget key="rates" id="rates" title="Rates">
+                <p className="mt-1 text-xs text-fg-muted">
+                  Reference rate(s) for this artist. Purely informational -- when assigned to an estimate, these
+                  suggest a starting price per session (hourly rate × that session's hour estimate, or the flat rate
+                  as-is) that staff can freely override.
+                </p>
+                {canManage ? (
+                  <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-fg-secondary">Hourly rate</label>
+                      <div className="relative">
+                        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-fg-muted">
+                          $
+                        </span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={hourlyRate}
+                          onChange={(e) => setHourlyRate(e.target.value)}
+                          placeholder="0.00"
+                          className="w-full rounded-lg border border-border bg-surface-inset py-2 pl-7 pr-3 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                        />
+                        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-fg-muted">
+                          /hr
+                        </span>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-fg-secondary">Flat rate</label>
+                      <div className="relative">
+                        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-fg-muted">
+                          $
+                        </span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={flatRate}
+                          onChange={(e) => setFlatRate(e.target.value)}
+                          placeholder="0.00"
+                          className="w-full rounded-lg border border-border bg-surface-inset py-2 pl-7 pr-3 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-3 flex flex-wrap gap-4 text-sm text-fg-secondary">
+                    {artist.hourlyRateCents != null && <p>${(artist.hourlyRateCents / 100).toFixed(2)}/hr</p>}
+                    {artist.flatRateCents != null && <p>${(artist.flatRateCents / 100).toFixed(2)} flat</p>}
+                    {artist.hourlyRateCents == null && artist.flatRateCents == null && <p>No rates set.</p>}
+                  </div>
                 )}
               </Widget>
 
