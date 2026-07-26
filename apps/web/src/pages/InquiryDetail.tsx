@@ -1181,7 +1181,17 @@ export default function InquiryDetail() {
                 estimatedPriceLow: Number(row.priceLow),
                 estimatedPriceHigh: Number(row.priceHigh),
               }))
-            : undefined,
+            : // Bug fix: collapsing sessionCount back down to 1 needs to
+              // actually say so -- omitting `sessions` entirely (as before)
+              // left an already-declared plan's rows sitting untouched in
+              // the database forever, even though the top-level price/hours
+              // above had already moved on to the newly-submitted single
+              // values. Only sent when a plan currently exists; an ordinary
+              // single-session inquiry that never had one shouldn't send an
+              // empty array for no reason.
+              (inquiry?.plannedSessions.length ?? 0) > 0
+              ? []
+              : undefined,
         }),
       })
 

@@ -1118,13 +1118,18 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
     }
   }
 
-  // Multi-session planning: purely additive. A `sessions` array of length
-  // 0 or 1 is treated exactly like not sending the field at all -- today's
-  // behavior, one implicit session, the top-level time-estimate fields
-  // below drive everything. Only length > 1 activates a real plan.
-  // Existing rows are never touched by a resend (idempotent -- once a plan
-  // exists, further send-estimate calls just resend/revise price/status,
-  // same as they always could).
+  // Multi-session planning: an explicit `sessions` array -- any length,
+  // including 0 or 1 -- means staff is declaring/editing the project's
+  // session plan as part of this send/resend (same "any length counts"
+  // rule POST /:id/revise-estimate already used). Omitting the field
+  // entirely leaves any existing plan untouched. This used to require
+  // length > 1 to do anything at all, which meant collapsing an
+  // already-declared plan back down to a single session (or none) had no
+  // way to actually happen -- the frontend stopped sending `sessions`
+  // once sessionCount dropped to 1, but even an explicit `sessions: []`
+  // would have been silently ignored by this same length > 1 gate,
+  // leaving the old PlannedSession rows behind forever while the
+  // top-level fields moved on -- exactly the "sessions not updating" bug.
   //
   // Per-session price: each session also carries its own price range now
   // (same "sessions replace the top-level field" relationship its hour
@@ -1137,45 +1142,54 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
     if (!Array.isArray(sessions)) {
       return res.status(400).json({ error: "sessions must be an array" });
     }
-    if (sessions.length > 1) {
-      for (const [index, session] of sessions.entries()) {
-        if (
-          typeof session !== "object" ||
-          session === null ||
-          typeof session.estimatedHoursMin !== "number" ||
-          typeof session.estimatedHoursMax !== "number" ||
-          typeof session.estimatedPriceLow !== "number" ||
-          typeof session.estimatedPriceHigh !== "number"
-        ) {
-          return res.status(400).json({ error: `Session ${index + 1} needs a numeric hour range and price range` });
-        }
-        if (session.estimatedHoursMin <= 0 || session.estimatedHoursMax <= 0) {
-          return res.status(400).json({ error: `Session ${index + 1}'s hour range must be positive` });
-        }
-        if (session.estimatedHoursMin > session.estimatedHoursMax) {
-          return res
-            .status(400)
-            .json({ error: `Session ${index + 1}'s minimum hours must be less than or equal to its maximum` });
-        }
-        if (session.estimatedPriceLow <= 0 || session.estimatedPriceHigh <= 0) {
-          return res.status(400).json({ error: `Session ${index + 1}'s price range must be positive` });
-        }
-        if (session.estimatedPriceLow > session.estimatedPriceHigh) {
-          return res
-            .status(400)
-            .json({ error: `Session ${index + 1}'s minimum price must be less than or equal to its maximum` });
-        }
+    for (const [index, session] of sessions.entries()) {
+      if (
+        typeof session !== "object" ||
+        session === null ||
+        typeof session.estimatedHoursMin !== "number" ||
+        typeof session.estimatedHoursMax !== "number" ||
+        typeof session.estimatedPriceLow !== "number" ||
+        typeof session.estimatedPriceHigh !== "number"
+      ) {
+        return res.status(400).json({ error: `Session ${index + 1} needs a numeric hour range and price range` });
       }
-      plannedSessionInputs = sessions;
+      if (session.estimatedHoursMin <= 0 || session.estimatedHoursMax <= 0) {
+        return res.status(400).json({ error: `Session ${index + 1}'s hour range must be positive` });
+      }
+      if (session.estimatedHoursMin > session.estimatedHoursMax) {
+        return res
+          .status(400)
+          .json({ error: `Session ${index + 1}'s minimum hours must be less than or equal to its maximum` });
+      }
+      if (session.estimatedPriceLow <= 0 || session.estimatedPriceHigh <= 0) {
+        return res.status(400).json({ error: `Session ${index + 1}'s price range must be positive` });
+      }
+      if (session.estimatedPriceLow > session.estimatedPriceHigh) {
+        return res
+          .status(400)
+          .json({ error: `Session ${index + 1}'s minimum price must be less than or equal to its maximum` });
+      }
     }
+    plannedSessionInputs = sessions;
   }
+
+  // The actual session count this send/resend ends up with -- a real plan
+  // is only in effect above 1 (same rule as before), but now correctly
+  // reflects an explicit collapse-to-empty submission too, rather than
+  // only ever growing. No locked-session concept here (unlike
+  // revise-estimate) -- POST /:id/deposit-form requires DEPOSIT_PENDING or
+  // later, and this route already refuses to run once
+  // ESTIMATE_REVISION_ONLY_STATUSES is reached, so no session can be
+  // locked yet at this point.
+  const finalSessionCount = plannedSessionInputs ? plannedSessionInputs.length : inquiry.plannedSessions.length;
+  const hasPlan = finalSessionCount > 1;
 
   // Every session's own price, summed -- this IS the whole-project price
   // once a plan exists, not a fallback/default for it.
-  const sessionPriceTotals = plannedSessionInputs
+  const sessionPriceTotals = hasPlan
     ? {
-        priceEstimateLow: plannedSessionInputs.reduce((sum, s) => sum + s.estimatedPriceLow, 0),
-        priceEstimateHigh: plannedSessionInputs.reduce((sum, s) => sum + s.estimatedPriceHigh, 0),
+        priceEstimateLow: plannedSessionInputs!.reduce((sum, s) => sum + s.estimatedPriceLow, 0),
+        priceEstimateHigh: plannedSessionInputs!.reduce((sum, s) => sum + s.estimatedPriceHigh, 0),
       }
     : null;
 
@@ -1191,7 +1205,7 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
     priceEstimateHigh: sessionPriceTotals
       ? sessionPriceTotals.priceEstimateHigh
       : (priceEstimateHigh ?? inquiry.priceEstimateHigh),
-    ...(plannedSessionInputs
+    ...(hasPlan
       ? {}
       : {
           timeEstimateHoursMin: timeEstimateHoursMin ?? inquiry.timeEstimateHoursMin,
@@ -1212,7 +1226,7 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
     return res.status(400).json({ error: "priceEstimateLow must be less than or equal to priceEstimateHigh" });
   }
 
-  if (!plannedSessionInputs && effective.timeEstimateHoursMin! > effective.timeEstimateHoursMax!) {
+  if (!hasPlan && effective.timeEstimateHoursMin! > effective.timeEstimateHoursMax!) {
     return res
       .status(400)
       .json({ error: "timeEstimateHoursMin must be less than or equal to timeEstimateHoursMax" });
@@ -1235,8 +1249,8 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
     status: InquiryStatus.AWAITING_CLIENT_RESPONSE,
     priceEstimateLow: effective.priceEstimateLow,
     priceEstimateHigh: effective.priceEstimateHigh,
-    timeEstimateHoursMin: plannedSessionInputs ? null : effective.timeEstimateHoursMin,
-    timeEstimateHoursMax: plannedSessionInputs ? null : effective.timeEstimateHoursMax,
+    timeEstimateHoursMin: hasPlan ? null : effective.timeEstimateHoursMin,
+    timeEstimateHoursMax: hasPlan ? null : effective.timeEstimateHoursMax,
     // A resend is a new estimate event -- prior open/response timing no
     // longer describes the estimate the client is about to see. It's still
     // recoverable from the audit log below if needed. estimateFollowUpSentAt

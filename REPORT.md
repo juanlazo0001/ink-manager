@@ -3032,3 +3032,48 @@ Re-ran the identical reproduction after the fix: Session 2 now correctly shows `
 ## Cleanup
 
 Reused the already-running API :4000 / web :6506 dev servers. One scratch verification script (`scratch-check-mismatch.ts`, written directly in `apps/api/src/` for real `tsx`+`dotenv` DB access) deleted immediately after use, confirmed via `git status` never staged. No background shells left running. Test data: the same dev-seed inquiry (`cmro4uxti00003ci2q69zbnf1`) now has a genuinely different, intentionally-test-value 2-session plan (hours 4-6/8-10, price $600-$900/$900-$1,100) from this reproduction — left as-is, consistent with this session's standing convention.
+
+---
+
+# Fix: send-estimate couldn't collapse an already-declared session plan back down
+
+Same session, immediate follow-up. The user reported the previous fix worked on Projects (`revise-estimate`) but not on Inquiries (`send-estimate`) specifically when changing session count. Extensive local reproduction (edit an existing session, add a session, remove a session, increase 2→4) all passed — the actual gap only showed up when *collapsing a multi-session plan back down to 1*, and only surfaced because the user was testing on production (`inkmanager.app`), a separate database from this dev environment I have no direct access to.
+
+## Getting real evidence without touching production
+
+Explicitly did **not** run Playwright against `inkmanager.app` — that's a live site with real customers, and scripted actions there (especially anything that fires a real client-facing SMS) aren't something to do without explicit authorization. Instead asked the user to paste the actual network response from their own manual test. They did, straight from `sendEstimate`'s own JSON body on the real inquiry (`cms21etc300083fn0dccqijte`) after setting it to "1 session" and resending:
+
+```json
+"plannedSessions": [
+  { "sessionNumber": 1, "estimatedHoursMin": 6, "estimatedHoursMax": 7, "estimatedPriceLow": 1000, "estimatedPriceHigh": 1000, ... },
+  { "sessionNumber": 2, "estimatedHoursMin": 6, "estimatedHoursMax": 7, "estimatedPriceLow": 1000, "estimatedPriceHigh": 1000, ... }
+]
+```
+
+Both sessions still there, completely untouched — real, first-party evidence the collapse-to-one path was broken, not something invented from a hunch.
+
+## Root cause
+
+Two matching gaps, one on each side of the request:
+
+- **Frontend** (`handleSendEstimate`): `sessions: isMultiSession ? [...] : undefined`. Once `sessionCount` drops to 1, `isMultiSession` is `false` and `sessions` is never sent at all — no signal reaches the backend that an *existing* plan should collapse. `revise-estimate`'s own send function already had the fix for this exact case (`sessions: isReviseMultiSession ? [...] : (inquiry?.plannedSessions.length ?? 0) > 0 ? [] : undefined`) — `send-estimate`'s never got the equivalent.
+- **Backend** (`POST /:id/send-estimate`): even *had* the frontend sent `sessions: []`, the validation gate `if (sessions.length > 1) { ...; plannedSessionInputs = sessions }` meant an empty (or single-element) array was silently treated identically to not sending the field at all — `plannedSessionInputs` stayed `null`, so the reconciliation block from the very first fix in this session never ran, and the old `PlannedSession` rows were never deleted. `revise-estimate` never had this gate (`if (sessions !== undefined)` alone was always enough to activate reconciliation, at any length) — `send-estimate` was the odd one out.
+
+Net effect: reducing session count to 1 updated the top-level `priceEstimateLow/High`/`timeEstimateHoursMin/Max` directly (since that's the non-multi-session code path), but left the old `PlannedSession` rows completely intact — and since the read-only display always prefers a non-empty `plannedSessions` array over the top-level fields, the page kept showing the stale multi-session breakdown forever.
+
+## Fix
+
+- **Frontend**: `send-estimate`'s own request body now mirrors `revise-estimate`'s exact pattern — sends `[]` when collapsing an existing plan, `undefined` only when there was never a plan to begin with.
+- **Backend**: removed the `sessions.length > 1` gate entirely; `plannedSessionInputs` is now set whenever `sessions !== undefined`, at any length (0 included) — matching `revise-estimate`. Introduced `hasPlan = finalSessionCount > 1` (mirroring `revise-estimate`'s own naming) to decide whether the top-level price/hours are computed from the session sum or from the direct submission — this is the piece that lets a length-0 or length-1 submission still trigger the reconciliation (and delete the old rows) while correctly *not* forcing price to `$0`.
+
+## Live-verified, not just read
+
+Reproduced on this dev environment's own database first (a 4-session plan on `cmro4uxti00003ci2q69zbnf1`, collapsed to 1 via the real "Edit Estimate" form, filling in a fresh price/hour range): before the fix, this reproduced the identical symptom the user described. After the fix: `POST /send-estimate` response shows `"plannedSessions": []` (all 4 rows genuinely deleted), `priceEstimateLow/High: 1000/1000` and `timeEstimateHoursMin/Max: 6/8` (the freshly-submitted single values), and the page correctly displays "6–8 hours" instead of the old multi-session breakdown.
+
+## Typechecks
+
+`npx tsc --noEmit` and `npm run build`, both api and web — clean.
+
+## Cleanup
+
+Reused the already-running API :4000 / web :6506 dev servers. One scratch read-only script checking whether the production inquiry ID existed in this dev database (it didn't — confirms separate databases) deleted immediately after use, never staged. No background shells left running. Test data: the same dev-seed inquiry now has its plan fully collapsed to a single 6-8 hour, $1,000 estimate — left as-is.
