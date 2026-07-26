@@ -3184,3 +3184,39 @@ Investigated first: this dev studio's own location has `hours: null` (never conf
 ## Typechecks
 
 `npx tsc --noEmit` (api, unaffected, checked per the standing rule) and `npx tsc --noEmit` + `npm run build` (web) — clean.
+
+---
+
+# Calendar polish — Part 2: interaction robustness
+
+Same session, same task, continuing straight from Part 1's commit.
+
+## 6. Click-and-drag to create with a specific duration — already present
+
+Investigated before writing anything: `handleSelectSlot` already reads `slotInfo.start`/`slotInfo.end` directly (falling back to a flat 1-hour default only when `end` isn't genuinely past `start`, i.e. a plain click with no drag) and `selectable` was already passed to `DnDCalendar`. Live-tested a real mouse-down-drag-up across roughly a 2.5-hour span in Day view: the "New Appointment" modal opened with Start Time `10:00 AM` / End Time `12:30 PM` — an exact match for the drag, pre-filled through the existing shared `AppointmentForm`, with the existing same-day/buffer-conflict rules untouched since nothing about the validation path changed. **Nothing added here** — this was a real "already exists" finding, not assumed from the code alone.
+
+## 7. Resize handles — genuinely missing, added
+
+Investigated first, and this one really was absent: `resizable={false}` was set explicitly on `DnDCalendar`, and there was no `onEventResize` handler at all. Added:
+- `resizable={false}` → `resizable`.
+- `onEventResize={handleEventResize}`, routed through the exact same `PATCH /appointments/:id` the drag-reschedule handler already uses — factored a shared `applyAppointmentTimeChange(event, newStart, newEnd)` out of `handleEventDrop` so both paths hit the identical same-day check, buffer-warning handling, and error copy, rather than a parallel bespoke implementation. Resizing never changes `resourceId` (RBC's resize anchors stay anchored to the event's existing column), so unlike drag it has no cross-column-reassignment case to guard against.
+
+**Live-verified, not just "no error shown"**: hovering an event now shows real resize anchor elements (24 found across a week's worth of events); grabbing one event's own bottom anchor precisely (scoped as a descendant of that specific event — a page-wide anchor locator grabbed a different, off-screen event's anchor the first time this was tried) and dragging it down produced an actual network request: `PATCH /appointments/:id` with `startTime` unchanged and `endTime` extended by 1.5 hours, response `200`.
+
+## 8. Smooth view/navigation transitions
+
+RBC swaps its entire internal render tree between Month/Week/Day (and on every Back/Next/Today), so a plain CSS `transition` on a persistent element doesn't apply across that kind of change. Wrapped the calendar in a container keyed on `` `${effectiveView}-${date}` `` so switching view or navigating forces a real remount, then applied `animate-fade-slide-up` — the exact same entrance animation this app already uses for "new content just appeared" elsewhere (`ConversationsPanel.tsx`'s newly-arrived messages), not a bespoke calendar-only motion.
+
+## 9. Loading state on date-range changes
+
+Confirmed the bug first: the `appointments` query's `queryKey` includes the visible range, so every Back/Next/Today click or view switch was a brand-new key with no prior data — `data` reset to `undefined` immediately and the whole calendar was replaced by a plain `"Loading…"` line, a real blank flash on every single navigation, not a hypothetical. Fixed with `placeholderData: keepPreviousData` (this app's TanStack Query v5) so the last range's events stay visible immediately, combined with `isFetching` (true during that background refetch, unlike `isLoading` which is now only ever true on this page's genuine first load) driving a subtle `opacity-60` dim on the calendar via `transition-opacity duration-base` — not a spinner, not a blank page.
+
+## Live-verified, not just read
+
+- Loading indicator: calendar wrapper's computed `opacity` measured at `0.6` roughly 30ms after clicking "Next" (mid-fetch), back to `1` once the new range's data arrived — confirmed the dim-then-restore cycle actually happens, not just that the JSX conditionally renders a class.
+- `animate-fade-slide-up` confirmed present on the view/date-keyed wrapper.
+- Re-confirmed (again, after this part's changes) that clicking an event still opens its preview, clicking empty space still opens "New Appointment," and dragging still reschedules with no error.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npx tsc --noEmit` + `npm run build` (web) — clean.

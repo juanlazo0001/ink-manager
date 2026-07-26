@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ComponentType } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import {
   Calendar as BigCalendar,
   dayjsLocalizer,
@@ -433,6 +433,7 @@ export default function Calendar() {
   const {
     data: appointments,
     isLoading,
+    isFetching,
     error,
   } = useQuery({
     queryKey: rangeKey,
@@ -440,6 +441,14 @@ export default function Calendar() {
       apiFetch<AppointmentApi[]>(
         `/appointments?start=${encodeURIComponent(rangeStart.toISOString())}&end=${encodeURIComponent(rangeEnd.toISOString())}`,
       ),
+    // Every Back/Next/Today click or view switch is a brand new range, so a
+    // brand new queryKey -- without this, `data` reset to undefined on
+    // every single one of those, replacing the whole calendar with the
+    // plain "Loading…" text below and blanking out whatever was already on
+    // screen. This keeps last range's events visible (isLoading only ever
+    // true on this page's very first load, with nothing to show yet) while
+    // isFetching drives a small, non-blocking indicator instead.
+    placeholderData: keepPreviousData,
   })
 
   const errorMessage = error
@@ -530,6 +539,29 @@ export default function Calendar() {
     })
   }
 
+  // Shared by both drag-reschedule and edge-resize below -- both end up
+  // wanting the same same-day check and the same PATCH /appointments/:id
+  // call (never a bespoke resize-only endpoint), differing only in what
+  // they validate about resourceId beforehand and what error copy makes
+  // sense for what the user just did.
+  async function applyAppointmentTimeChange(event: CalEvent, newStart: Date, newEnd: Date) {
+    if (!isSameLocalDay(newStart, newEnd)) {
+      setDragError("Appointments can't span more than one day — try a shorter session or a different time.")
+      return
+    }
+
+    try {
+      const updated = await apiFetch<AppointmentApi>(`/appointments/${event.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ startTime: newStart.toISOString(), endTime: newEnd.toISOString() }),
+      })
+      invalidateAppointments()
+      if (updated.bufferWarning) setBufferNotice(updated.bufferWarning)
+    } catch (err) {
+      setDragError(err instanceof Error ? err.message : 'Failed to reschedule appointment')
+    }
+  }
+
   async function handleEventDrop(args: EventInteractionArgs<CalEvent>) {
     setDragError(null)
     setBufferNotice(null)
@@ -547,21 +579,26 @@ export default function Calendar() {
       return
     }
 
-    if (!isSameLocalDay(newStart, newEnd)) {
-      setDragError("Appointments can't span more than one day — try a shorter session or a different time.")
-      return
-    }
+    await applyAppointmentTimeChange(event, newStart, newEnd)
+  }
 
-    try {
-      const updated = await apiFetch<AppointmentApi>(`/appointments/${event.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ startTime: newStart.toISOString(), endTime: newEnd.toISOString() }),
-      })
-      invalidateAppointments()
-      if (updated.bufferWarning) setBufferNotice(updated.bufferWarning)
-    } catch (err) {
-      setDragError(err instanceof Error ? err.message : 'Failed to reschedule appointment')
-    }
+  // Investigated first: resizing an existing appointment's edge to change
+  // its duration (distinct from dragging the whole block to reschedule)
+  // was NOT already present -- resizable={false} was set explicitly below,
+  // and there was no onEventResize handler at all. Added rather than
+  // assumed missing. Resizing only ever changes start/end, never the
+  // resourceId (RBC's own resize handles are anchored to the same column
+  // the event is already in), so unlike handleEventDrop above there's no
+  // cross-column reassignment case to guard against here.
+  async function handleEventResize(args: EventInteractionArgs<CalEvent>) {
+    setDragError(null)
+    setBufferNotice(null)
+
+    const { event, start, end } = args
+    const newStart = start instanceof Date ? start : new Date(start)
+    const newEnd = end instanceof Date ? end : new Date(end)
+
+    await applyAppointmentTimeChange(event, newStart, newEnd)
   }
 
   // Same muted token react-big-calendar's own "off-range day" background
@@ -786,26 +823,43 @@ export default function Calendar() {
             </div>
           )}
 
-          <div className="mt-4 rounded-2xl border border-border bg-surface p-4 sm:p-5">
-            {isLoading ? (
-              <p className="text-sm text-fg-secondary">Loading…</p>
-            ) : canManageCalendar ? (
-              <DnDCalendar
-                {...commonCalendarProps}
-                selectable
-                resizable={false}
-                onSelectSlot={handleSelectSlot}
-                onEventDrop={handleEventDrop}
-              />
-            ) : (
-              // ARTIST (effective, via useEffectiveUser -- View As included):
-              // the plain, non-drag-and-drop Calendar component, with no
-              // onSelectSlot handler at all. This isn't the DnD-wrapped
-              // component with props merely omitted -- it's a different
-              // component that never attaches drag listeners in the first
-              // place, so there's nothing to disable.
-              <BigCalendar {...commonCalendarProps} />
-            )}
+          {/* Keyed on view+date so switching Month/Week/Day or navigating
+              forward/back remounts this wrapper and replays the same
+              entrance animation already established elsewhere in this app
+              (ConversationsPanel's own popovers/new-message rows) --
+              replacing RBC's own instant, jarring re-render with the same
+              fade-slide-up every other "new content just appeared" moment
+              in this app already uses, not a bespoke calendar-only motion. */}
+          <div key={`${effectiveView}-${dayjs(date).format('YYYY-MM-DD')}`} className="animate-fade-slide-up">
+            <div className="mt-4 rounded-2xl border border-border bg-surface p-4 sm:p-5">
+              {isLoading ? (
+                <p className="text-sm text-fg-secondary">Loading…</p>
+              ) : (
+                <div
+                  className={`transition-opacity duration-base ${isFetching ? 'opacity-60' : 'opacity-100'}`}
+                >
+                  {canManageCalendar ? (
+                    <DnDCalendar
+                      {...commonCalendarProps}
+                      selectable
+                      resizable
+                      onSelectSlot={handleSelectSlot}
+                      onEventDrop={handleEventDrop}
+                      onEventResize={handleEventResize}
+                    />
+                  ) : (
+                    // ARTIST (effective, via useEffectiveUser -- View As
+                    // included): the plain, non-drag-and-drop Calendar
+                    // component, with no onSelectSlot handler at all. This
+                    // isn't the DnD-wrapped component with props merely
+                    // omitted -- it's a different component that never
+                    // attaches drag listeners in the first place, so
+                    // there's nothing to disable.
+                    <BigCalendar {...commonCalendarProps} />
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
