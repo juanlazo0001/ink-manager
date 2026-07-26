@@ -2819,3 +2819,58 @@ Issued a fresh $200 test card, booked an appointment for that client using it en
 ## Cleanup
 
 Scratch dev servers on a fresh port pair (API :5505, web :6505) after confirming :5501 through :5504/:6501 through :6504 were all still occupied by other concurrent activity in this same shared directory -- killed by PID afterward. All ad-hoc verification scripts left in the scratchpad, none committed. Test data: one $50 and one $200 gift card issued directly to an existing test client to reach the sufficiency threshold for live verification, plus two new ad-hoc appointments booked against that client's project -- left in the dev database, consistent with this session's standing convention.
+
+---
+
+# Feature: artist rates, per-estimate flat pricing, per-session prices, and an Edit Estimate re-sync fix
+
+Same session, follow-up feature request bundled with a bug report. Commit: `6865c7a`.
+
+## Requests, and the design questions asked up front
+
+Four items came in together: "editing estimates doesn't work," add flat-rate pricing to an estimate, add hourly/flat rate fields to an artist, and add a per-session price the same way per-session hours already exist (summed for the project's total). Rather than guess at scope, three design questions went back to the user before writing code:
+
+- **Flat-rate scope** — a per-estimate toggle, independent of the Service's own `pricingModel`, available on any service (not just FLAT-priced ones).
+- **Artist rate usage** — auto-calculate a *suggested* starting price (hourly rate x that session's hour estimate, or the flat rate verbatim), never forced or validated against — a pre-fill staff can freely override.
+- **Per-session price vs. the project total** — sessions become the only price entry once a plan exists; the project-wide Price low/high becomes a read-only computed sum, mirroring exactly how per-session hours already replace the top-level time estimate.
+
+## Schema
+
+Purely additive, both nullable (`prisma migrate dev`, migration `20260726123546_artist_rates_and_session_prices`):
+
+- `Artist.hourlyRateCents Int?`, `Artist.flatRateCents Int?` — reference rates, independent of each other.
+- `PlannedSession.estimatedPriceLow Float?`, `estimatedPriceHigh Float?` — no historically-accurate backfill exists for pre-existing rows, so nullable rather than a required-with-backfill migration, matching this model's own existing "purely additive" posture.
+
+No new field for "is this estimate flat" — flatness is fully expressible as `priceEstimateLow === priceEstimateHigh` (already true of the existing FLAT-service behavior under the hood), so the toggle is pure frontend UI state.
+
+## Backend
+
+- `PATCH /artists/:id` accepts/validates/persists both rate fields (non-negative number or null); `ARTIST_LIST_SELECT` and `ARTIST_INCLUDE` (via Prisma's `include`) expose them with no extra code.
+- `POST /inquiries/:id/send-estimate` and `POST /inquiries/:id/revise-estimate`: each session in a declared multi-session plan now also requires a numeric, positive, low-lte-high price range. The submitted top-level `priceEstimateLow/High` is ignored entirely once a plan is being declared — the effective value is the sum of every session's own price instead (mirroring the existing hours-are-nulled-once-a-plan-exists rule). In `revise-estimate`, a **locked** session (paid deposit or booked appointment) keeps whatever price is already stored for it rather than trusting a resubmitted value — same untouchable rule its hour range already had. Every reachable `plannedSession` select across `inquiries.ts`, `clients.ts`, and `estimates.ts` (both the internal `INQUIRY_INCLUDE` and the public estimate/revision verify endpoints) now includes the two price columns.
+- `INQUIRY_INCLUDE`'s `assignedArtist` select gained `hourlyRateCents`/`flatRateCents` — the frontend's auto-suggestion reads them straight off whichever artist is already assigned to the inquiry.
+
+## Frontend
+
+- **`ArtistDetail.tsx`**: new "Rates" widget (Hourly rate / Flat rate, dollar inputs converted to/from cents on save), wired to the now-extended `PATCH /artists/:id`.
+- **`SessionBreakdownEditor.tsx`**: `SessionHoursRow` gained `priceLow`/`priceHigh`; `LockedSession` gained `estimatedPriceLow/High`. New exported `suggestSessionPrice()` (hourly rate x hours, or flat rate verbatim) and an `isFlat` prop that collapses each session's two price inputs to one (syncing both underlying fields to the same value). `SessionHoursRows` auto-suggests a price the moment both hour fields are filled *and* the price fields are still empty — never overwriting something already typed.
+- **`InquiryDetail.tsx`**: both the original "Generate & Send Estimate" form and the "Revise Estimate" modal gained an independent flat/range checkbox (`estimateIsFlat`/`reviseIsFlat`, seeded from the Service's `pricingModel` for a never-sent estimate, or inferred from `low === high` for one already sent/saved), per-session price state, artist-rate auto-suggestion wiring, and a read-only "sum of every session below" price display in place of the editable top-level fields once a plan exists. The Session Plan widget, the top-level "Time estimate" multi-session summary, and `ClientDetail.tsx`'s Projects widget all now show each session's price alongside its hours. `EstimateResponse.tsx`/`EstimateRevisionResponse.tsx` (the client-facing pages) show it too.
+
+## The "editing doesn't work" bug — real root cause found
+
+Prior investigation this session (see the gift-card and stale-availability fixes above) could not reproduce a hard failure: the backend genuinely persisted every edit, confirmed via direct API checks. Asked the user directly what "doesn't work" meant; the answer — *"it allows me to edit it but I can't see any update to it... nothing has changed"* — pointed at the same class of bug already fixed twice this session: local form state that only syncs from live data once and never again.
+
+Found it: the "Edit Estimate" button did nothing but `setEditingEstimate(true)` — it never re-seeded `estimateForm`/`sessionCount`/`sessionHours` from the inquiry's current data. Those were only ever seeded once, in a `seededEstimateForId`-gated effect keyed on `inquiry.id`, which fires exactly once per inquiry no matter how many times the estimate is subsequently sent, resent, or revised on that same page load. Reopening Edit a second time (e.g. after a resend) showed the *original*, pre-edit values — and on any inquiry with an existing multi-session plan, reopening Edit reset the session count back down to 1, silently discarding the real breakdown instead of showing it ready to edit further.
+
+Fix: a new `openEditEstimate()` re-seeds every one of those fields from the live `inquiry` object (including reconstructing `sessionCount`/`sessionHours` — with price — from `inquiry.plannedSessions` when a plan already exists), and the Edit button now calls it instead of flipping the flag directly.
+
+## Live-verified, not just read
+
+Set a real artist's hourly rate to $150/hr via the UI (`Rates` widget, screenshot confirmed both fields and the `$`/`/hr` decoration render correctly), then on an `ARTIST_ASSIGNED` inquiry with that artist: set session count to 2, filled Session 1's hours (4-6) — its price auto-suggested `$600.00`/`$900.00` immediately (150 x 4, 150 x 6), confirmed by screenshot before typing anything into the price fields myself. Filled Session 2 (2-3 hrs, auto-suggested $300/$450), toggled the flat-rate checkbox (confirmed it collapses each session to one price input without silently changing already-entered values), toggled it back off, and submitted — `POST .../send-estimate` returned 201. The read-only view afterward showed `PRICE ESTIMATE LOW $900` / `PRICE ESTIMATE HIGH $1350` (the correct sum), the "Time estimate" line showed both sessions' hours *and* prices, and the Session Plan widget showed the same per-session breakdown. Reopened "Edit Estimate" immediately after — confirmed live that the form reopened with the *actual* saved 2-session plan (not reset to 1 session), each session's price field correctly prefilled from the just-saved values — directly verifying the re-seed fix above.
+
+## Typechecks
+
+`npx tsc --noEmit` and `npm run build`, both api and web — clean before commit.
+
+## Cleanup
+
+Reused the already-running dev servers from earlier in this session (API :4000/tsx watch, web :6506) rather than starting new ones, since both were already live, already pointed at each other, and picking up file changes via watch/HMR automatically. Test data: set a real dev artist's hourly rate to $150/hr and sent a real 2-session estimate against an existing test inquiry directly through the UI — left in the dev database, consistent with this session's standing convention. All ad-hoc verification scripts left in the scratchpad, none committed.
