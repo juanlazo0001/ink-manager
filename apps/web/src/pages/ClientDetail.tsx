@@ -138,6 +138,9 @@ interface Client {
   liabilityWaivers: WaiverSummary[]
   phones: ClientPhoneAlias[]
   emails: ClientEmailAlias[]
+  // Whoever this client last had an appointment with, if any -- preloads
+  // "New Inquiry"'s Preferred artist dropdown below.
+  lastArtistId: string | null
 }
 
 interface Appointment {
@@ -2438,7 +2441,7 @@ export default function ClientDetail() {
             phone: client.phone ?? '',
           }}
           existingClientId={client.id}
-          initialPreferredArtistId={client.inquiries[0]?.preferredArtistId ?? ''}
+          initialPreferredArtistId={client.lastArtistId ?? client.inquiries[0]?.preferredArtistId ?? ''}
         />
       )}
 

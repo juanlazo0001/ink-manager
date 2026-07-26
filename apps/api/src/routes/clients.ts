@@ -17,6 +17,30 @@ const router = Router();
 
 router.use(requireAuth);
 
+// Preferred-artist preload (New Inquiry's client picker, both the search
+// results and an already-known client's own page): "the last artist this
+// client had an appointment with" -- one query for however many client
+// ids are being resolved at once, ordered so the FIRST appointment row
+// seen per clientId is necessarily their most recent (any status --
+// including a not-yet-happened upcoming one is still a reasonable signal
+// of who this client is currently working with). Absent entirely for a
+// client with no appointment history yet.
+async function getLastArtistIds(clientIds: string[]): Promise<Map<string, string>> {
+  if (clientIds.length === 0) return new Map();
+  const appointments = await prisma.appointment.findMany({
+    where: { clientId: { in: clientIds } },
+    orderBy: { startTime: "desc" },
+    select: { clientId: true, artistId: true },
+  });
+  const result = new Map<string, string>();
+  for (const appointment of appointments) {
+    if (!result.has(appointment.clientId)) {
+      result.set(appointment.clientId, appointment.artistId);
+    }
+  }
+  return result;
+}
+
 // clients.manage used to gate this entire router as one blanket permission
 // -- split into clients.view/edit/merge/archive/import (clients.import
 // lives in clientImport.ts, a separate router) as of this expansion, each
@@ -94,7 +118,13 @@ router.get("/merge-search", requirePermission("clients.view"), async (req, res) 
     take: 20,
   });
 
-  res.json(results);
+  // Additive on top of the manual-merge picker's own use of this same
+  // endpoint (that UI just ignores the extra field) -- backs
+  // StaffInquiryForm's client-lookup search, which preloads the preferred-
+  // artist dropdown with whoever a picked candidate last had an
+  // appointment with.
+  const lastArtistIds = await getLastArtistIds(results.map((r) => r.id));
+  res.json(results.map((r) => ({ ...r, lastArtistId: lastArtistIds.get(r.id) ?? null })));
 });
 
 router.get("/:id", requirePermission("clients.view"), async (req, res) => {
@@ -216,10 +246,12 @@ router.get("/:id", requirePermission("clients.view"), async (req, res) => {
     return res.status(404).json({ error: "Client not found" });
   }
 
+  const lastArtistId = (await getLastArtistIds([client.id])).get(client.id) ?? null;
+
   // A direct fetch of a merged client still succeeds (rather than 404) --
   // a stale bookmark, an old audit-log link, or a duplicate-detection result
   // should be able to show what it was merged into rather than dead-end.
-  res.json(client);
+  res.json({ ...client, lastArtistId });
 });
 
 // Mirrored from apps/web's own PROJECTS_TAB_STATUSES (Inquiries.tsx) and

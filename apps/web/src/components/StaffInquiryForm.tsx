@@ -12,6 +12,10 @@ interface ClientSearchResult {
   lastName: string
   email: string | null
   phone: string | null
+  // Whoever this client last had an appointment with, if any -- preloads
+  // the Preferred artist dropdown below on selection, a much stronger
+  // default than "no preference" for a returning client.
+  lastArtistId: string | null
 }
 
 const INPUT_CLASS =
@@ -153,12 +157,19 @@ export default function StaffInquiryForm({
     }
   }, [searchQuery, lockedClient, matchedClient])
 
+  function artistName(artistId: string | null) {
+    if (!artistId) return null
+    const artist = artists.find((a) => a.id === artistId)
+    return artist ? (artist.user.name ?? artist.user.email) : null
+  }
+
   function selectMatchedClient(candidate: ClientSearchResult) {
     setMatchedClient(candidate)
     setFirstName(candidate.firstName)
     setLastName(candidate.lastName)
     setEmail(candidate.email ?? '')
     setPhone(candidate.phone ?? '')
+    setPreferredArtistId(candidate.lastArtistId ?? '')
     setSearchQuery('')
     setSearchResults([])
   }
@@ -169,6 +180,7 @@ export default function StaffInquiryForm({
     setLastName('')
     setEmail('')
     setPhone('')
+    setPreferredArtistId('')
   }
 
   const imagesUploading = referenceImages.uploading || placementImages.uploading
@@ -278,9 +290,14 @@ export default function StaffInquiryForm({
                       className="flex w-full items-center justify-between gap-2 rounded-lg border border-border px-3 py-2 text-left text-sm text-fg transition hover:bg-surface"
                     >
                       <span>
-                        {candidate.firstName} {candidate.lastName}
-                        {candidate.email ? ` — ${candidate.email}` : ''}
-                        {candidate.phone ? ` — ${formatPhoneInput(candidate.phone)}` : ''}
+                        <span className="block">
+                          {candidate.firstName} {candidate.lastName}
+                          {candidate.email ? ` — ${candidate.email}` : ''}
+                          {candidate.phone ? ` — ${formatPhoneInput(candidate.phone)}` : ''}
+                        </span>
+                        {artistName(candidate.lastArtistId) && (
+                          <span className="block text-xs text-fg-muted">Last worked with {artistName(candidate.lastArtistId)}</span>
+                        )}
                       </span>
                     </button>
                   </li>
