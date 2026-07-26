@@ -2783,3 +2783,39 @@ The Session Plan widget's own inline actions (Send/Resend Deposit Form, Cancel, 
 ## Cleanup
 
 Scratch dev servers on yet another fresh port pair (API :5504, web :6504) after confirming ports through :5503/:6503 were all still occupied by other concurrent activity in this same shared directory -- killed by PID afterward. All ad-hoc verification scripts left in the scratchpad, none committed. No new test data created -- verification reused existing Projects from this session's earlier fixes.
+
+---
+
+# Fix: stale gift-card availability after booking or checkout
+
+Same session, follow-up bug report. Commit: `6ee460e`.
+
+## Investigation
+
+The backend was never the problem -- `validateGiftCardForAttachment`/`validateGiftCardsForAttachment` (shared by both appointment-creation routes) already reject any card whose `appointmentId` is already set, confirmed live: attempting to reuse a card already attached to a booked appointment for a second one returned `400 "This gift card is already attached to another appointment"` every time, via a direct API call, no frontend involved.
+
+The actual bug was frontend caching. This app's `QueryClient` sets a global default `staleTime: 30_000` -- any query is served from cache, un-refetched, for 30 seconds after it last resolved, unless something explicitly invalidates it sooner. Three places read a client's gift cards into a picker, and none of them invalidated after the action that would make their own data stale:
+
+- `AppointmentForm.tsx`'s own `client-projects-for-appointment` query (used by every caller of this component -- `InquiryDetail.tsx`, `Calendar.tsx`, `Inquiries.tsx`) never invalidated itself after a successful booking.
+- `InquiryDetail.tsx`'s shared `invalidateInquiry()` (called after every mutation on the page) never touched the un-planned Scheduling flow's own separate `client-gift-cards` query.
+- `AppointmentDetail.tsx`'s checkout handler -- which can free a card back up via a `ROLL` decision -- never invalidated either query, so a just-ROLLed card could conversely look *unavailable* for the same 30s window.
+
+Net effect: book an appointment with a card, then try to book a second one for the same client within 30 seconds (very plausible -- e.g. booking two sessions back to back), and the picker would still show the just-spent card as selectable. Staff could check it, only to have the submission itself rejected once the 30s window mattered -- confusing, and exactly what was reported.
+
+## Fix
+
+- `AppointmentForm.tsx`: invalidates its own `['client-projects-for-appointment', effectiveClientId]` query immediately after a successful `POST /appointments`, before calling `onCreated()`. Self-contained, so this one fix also covers its other two entry points (`Calendar.tsx`, `Inquiries.tsx`), not just `InquiryDetail.tsx`.
+- `AppointmentDetail.tsx`: its checkout handler now also invalidates `client-projects-for-appointment` and `client-gift-cards` (both keyed on `appointment.client.id`) alongside the query it already invalidated.
+- `InquiryDetail.tsx`: `invalidateInquiry()` now also invalidates `['client-gift-cards', inquiry?.clientId]`, closing the un-planned Scheduling flow's own gap.
+
+## Live-verified, not just read
+
+Issued a fresh $200 test card, booked an appointment for that client using it entirely through the real UI (custom `react-day-picker` calendar + time inputs, not a shortcut), and -- **without reloading the page** -- reopened the "New Appointment" modal for the same client immediately after. Confirmed via network monitoring that a fresh `GET /clients/:id` fired the instant the booking succeeded (proof the invalidation actually fired, not just that the code compiles), and the reopened modal correctly read "This client has no available gift card" -- the just-attached card was gone from the list, not still sitting there waiting to be mistakenly reselected.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npx tsc --noEmit` + `npm run build` (web) — clean before commit, restricted to the three files this fix touched (`AppointmentForm.tsx`, `AppointmentDetail.tsx`, `InquiryDetail.tsx`).
+
+## Cleanup
+
+Scratch dev servers on a fresh port pair (API :5505, web :6505) after confirming :5501 through :5504/:6501 through :6504 were all still occupied by other concurrent activity in this same shared directory -- killed by PID afterward. All ad-hoc verification scripts left in the scratchpad, none committed. Test data: one $50 and one $200 gift card issued directly to an existing test client to reach the sufficiency threshold for live verification, plus two new ad-hoc appointments booked against that client's project -- left in the dev database, consistent with this session's standing convention.
