@@ -392,6 +392,22 @@ const NON_TERMINAL_STATUSES: InquiryStatus[] = (Object.values(InquiryStatus) as 
 // not a draft; PATCH /:id below rejects further edits to it.
 const PROJECT_STATUSES: InquiryStatus[] = [InquiryStatus.SCHEDULING, InquiryStatus.WAITLISTED, InquiryStatus.CONFIRMED];
 
+// Bug fix: DEPOSIT_PENDING is deliberately NOT part of PROJECT_STATUSES above
+// (it stays on the Inquiries tab, not Projects -- see Inquiries.tsx's own
+// INQUIRIES_TAB_STATUSES/PROJECTS_TAB_STATUSES split) but a deposit FORM
+// already exists once an inquiry reaches it, same as every PROJECT_STATUSES
+// stage. POST /:id/send-estimate unconditionally resets status back to
+// AWAITING_CLIENT_RESPONSE -- correct for a first send or a BUDGET_NEGOTIATION
+// back-and-forth (nothing downstream exists yet to break), but calling it on
+// a DEPOSIT_PENDING inquiry silently regressed the pipeline backward past
+// "Deposit requested" while leaving that already-generated deposit form
+// (possibly already paid) sitting there untouched and now orphaned -- exactly
+// the "editing the estimate doesn't work" report this fixes. This is the
+// narrower "a deposit form already exists, only a reasoned revision is safe"
+// line -- used ONLY to gate which of the two estimate-editing routes below is
+// reachable, never to reclassify DEPOSIT_PENDING as a Project anywhere else.
+const ESTIMATE_REVISION_ONLY_STATUSES: InquiryStatus[] = [InquiryStatus.DEPOSIT_PENDING, ...PROJECT_STATUSES];
+
 const INQUIRY_INCLUDE = {
   client: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
   projectCompletedBy: { select: { id: true, name: true, email: true } },
@@ -1022,6 +1038,19 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
     return res.status(400).json({ error: "An estimate can't be sent on a closed or cold-lead inquiry" });
   }
 
+  // Bug fix: once a deposit form already exists (DEPOSIT_PENDING and
+  // beyond -- see ESTIMATE_REVISION_ONLY_STATUSES's own comment), this
+  // route's unconditional status reset to AWAITING_CLIENT_RESPONSE would
+  // silently regress the pipeline backward past "Deposit requested" while
+  // leaving that deposit form (possibly already paid) untouched and
+  // orphaned underneath. Revise Estimate is the safe route from here on --
+  // it never touches status or the existing deposit form.
+  if (ESTIMATE_REVISION_ONLY_STATUSES.includes(inquiry.status)) {
+    return res.status(400).json({
+      error: "A deposit has already been requested for this inquiry -- use Revise Estimate instead of Generate & Send Estimate.",
+    });
+  }
+
   // An artist must be assigned before staff can even enter numbers -- the
   // estimate (price/time, or a whole session plan) is specific to that
   // artist's own work, and this closes the same "never assigned" gap the
@@ -1280,9 +1309,9 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
     return res.status(404).json({ error: "Inquiry not found" });
   }
 
-  if (!PROJECT_STATUSES.includes(inquiry.status)) {
+  if (!ESTIMATE_REVISION_ONLY_STATUSES.includes(inquiry.status)) {
     return res.status(400).json({
-      error: "This route is only for revising the estimate on an already-converted Project -- use Generate & Send Estimate before conversion.",
+      error: "This route is only for revising an estimate that already has a deposit request or further -- use Generate & Send Estimate before that.",
     });
   }
 

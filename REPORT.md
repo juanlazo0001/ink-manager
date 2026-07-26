@@ -2874,3 +2874,51 @@ Set a real artist's hourly rate to $150/hr via the UI (`Rates` widget, screensho
 ## Cleanup
 
 Reused the already-running dev servers from earlier in this session (API :4000/tsx watch, web :6506) rather than starting new ones, since both were already live, already pointed at each other, and picking up file changes via watch/HMR automatically. Test data: set a real dev artist's hourly rate to $150/hr and sent a real 2-session estimate against an existing test inquiry directly through the UI — left in the dev database, consistent with this session's standing convention. All ad-hoc verification scripts left in the scratchpad, none committed.
+
+---
+
+# Fix: editing an estimate silently regressed a Project's pipeline once a deposit was already requested
+
+Same session, follow-up bug report on the feature above ("editing the estimate doesn't work... works when it's already a Project, doesn't work when it's still an Inquiry"). Root cause confirmed with live Playwright evidence, not guessed. Commit: TBD (this entry documents the fix before commit).
+
+## Investigation — evidence, not assumption
+
+First pass (no fix applied): reproduced the exact user-described flow (open a pre-conversion Inquiry's estimate, edit, "Generate & Resend Estimate") on both a completely reused dev server pair AND a freshly cold-started one (new API on :5507, new web on :6507, both spun up from scratch to rule out stale-HMR-bundle theories). Both reproduced correctly: fields prefilled from live data, the resend saved (`201`, correct new price shown afterward). Asked the user to hard-refresh and retest — they confirmed the bug persisted even after a hard refresh, ruling out a stale-bundle theory.
+
+Per instruction, re-investigated with real Playwright evidence across roles rather than guessing further:
+
+**Permission-mismatch hypothesis — tested and ruled out.** `POST /:id/send-estimate` is gated by `inquiries.sendEstimate`; `POST /:id/revise-estimate` by `inquiries.enterEstimate` (a genuinely different key). Fetched this studio's actual permission matrix (`GET /studios/:id/permissions`): FRONT_DESK has both keys `true` (no discrepancy), OWNER bypasses every permission check unconditionally. Playwright reproduction logging in as both OWNER and FRONT_DESK, capturing every console error and the exact `send-estimate` network request/response, showed **`201` for both roles** on a genuine pre-conversion inquiry — the price genuinely saved every time. This ruled out the permission theory the investigation was specifically asked to test.
+
+**What actually reproduced it**: tried the identical action against `cms0koz0k000j1si2i2nsq2co`, a real dev-seed inquiry sitting in `DEPOSIT_PENDING` (Pipeline widget showing "Deposit requested" as its current, checked-off stage, with a live, unpaid deposit form already generated below it). The Estimate widget's action button there read **"Edit"**, not "Revise Estimate" — meaning it was still running through the ORIGINAL pre-conversion send/resend flow, not the safe post-conversion revision flow, despite this being a project already deep enough into its lifecycle to have a real deposit form outstanding.
+
+Clicked it, edited the price, submitted — `POST /send-estimate` returned `201` and the new price genuinely saved (`$411`/`$611` shown afterward). But the **Pipeline widget visibly regressed**: "Deposit requested" (previously checked off, stage 4) reverted to showing "Estimate sent" (stage 3) as current, and the status badge changed from "Deposit Pending" back to "Sent, not opened yet" — while the Deposit widget further down the same page kept showing the exact same already-generated, still-unpaid deposit form completely untouched, now orphaned underneath a pipeline that looked like it had never reached that stage. Confirmed via `git log -L` that this button-selection logic (`isConverted = SCHEDULING || WAITLISTED || CONFIRMED`, deliberately excluding `DEPOSIT_PENDING`) predates this session entirely (commit `8ee5678`, "Package H") — not something introduced by the feature work above.
+
+**Root cause, precisely**: `POST /:id/send-estimate` unconditionally sets `status: AWAITING_CLIENT_RESPONSE` on every call (by design — a genuine first send, or a `BUDGET_NEGOTIATION` back-and-forth, has nothing downstream to lose). But `DEPOSIT_PENDING` is excluded from `PROJECT_STATUSES` (it deliberately stays on the Inquiries tab, not Projects — confirmed against `INQUIRIES_TAB_STATUSES`/`PROJECTS_TAB_STATUSES` in `Inquiries.tsx`, unrelated to this fix and untouched), so the frontend's `isConverted` check routes a `DEPOSIT_PENDING` project to the ORIGINAL send/resend UI instead of "Revise Estimate" — the one route that never touches `status` or the existing deposit form. Calling send-estimate here forcibly regresses the pipeline past a stage that already has a real, possibly-already-*paid* deposit form sitting downstream of it. This is a genuine, confirmed server-side + frontend gap, not a permission issue and not a caching issue — this category is "other server-side gap allowing an unsafe action to fire," exactly the third category the investigation asked to check for.
+
+This also explains why the user perceived it as "doesn't work when it's still an Inquiry" — from a plain-English standpoint, a project with a deposit already requested clearly isn't just "an inquiry" anymore, even though the code's own narrower `isConverted` (a proxy for "SCHEDULING and later") disagreed and routed it through the wrong flow.
+
+## Fix
+
+Added a new, narrowly-scoped `ESTIMATE_REVISION_ONLY_STATUSES = [DEPOSIT_PENDING, ...PROJECT_STATUSES]` in `inquiries.ts` — used *only* to gate which of the two estimate-editing routes is reachable, deliberately not touching the broader `PROJECT_STATUSES` constant (which still correctly excludes `DEPOSIT_PENDING` everywhere else — Kanban tab grouping, appointment eligibility, etc. — all untouched):
+
+- `POST /:id/send-estimate` now rejects (`400`) once `ESTIMATE_REVISION_ONLY_STATUSES.includes(inquiry.status)`, with a message pointing at Revise Estimate instead.
+- `POST /:id/revise-estimate`'s existing gate (previously `!PROJECT_STATUSES.includes(status)`) now checks `!ESTIMATE_REVISION_ONLY_STATUSES.includes(status)` instead — accepting `DEPOSIT_PENDING` in addition to the three it already accepted.
+- `InquiryDetail.tsx`: added `canReviseEstimate = isConverted || status === 'DEPOSIT_PENDING'`, used in place of `isConverted` for the Estimate widget's own action-button selection, its "Locked" messaging (reworded from "converted to a Project (deposit paid)" to "a deposit has already been requested," accurate for both the true-`isConverted` and the new `DEPOSIT_PENDING` case), and the edit-form visibility gates. Every *other* `isConverted` usage on the page (the Pipeline widget's step choice, the "Back to Projects/Inquiries" link, the already-DEPOSIT_PENDING-aware Deposit-widget gates) was deliberately left untouched — this fix only touches the Estimate widget's own edit-vs-revise choice.
+
+## Live-verified, not just read
+
+Re-ran the identical reproduction against a fresh, untouched `DEPOSIT_PENDING` dev inquiry (`cmrzvnyps001q5si2glp2cac6`) after the fix:
+- The Estimate widget now shows **"Revise Estimate"**, not "Edit" (confirmed both via `isVisible()` assertions and a screenshot).
+- Opening it correctly prefilled `$300`/`$400` (its real saved values).
+- Submitting a revision (`$350`/`$450`, with a reason) hit `POST /revise-estimate`, returned `201`.
+- Afterward: price shows `$350`/`$450`, the status badge **still reads "Deposit Pending,"** the Pipeline widget **still shows "Deposit requested" as its current, checked-off stage** (no regression), and the original deposit form is still present, untouched, further down the page.
+- Directly called the old `send-estimate` route against this same still-`DEPOSIT_PENDING` inquiry via `fetch()` inside the authenticated page context: **`400`**, `"A deposit has already been requested for this inquiry -- use Revise Estimate instead of Generate & Send Estimate."` — confirming the vulnerable path is now closed server-side too, not just hidden in the UI.
+- Regression-checked a genuine, unrelated `SCHEDULING` project (`cms0vlzqi0003jci2bgphz3z9`) still correctly shows "Revise Estimate" (screenshot-confirmed, including its own flat-pricing display, `$300` single field) — this fix didn't change behavior for the already-correct case.
+
+## Typechecks
+
+`npx tsc --noEmit` and `npm run build`, both api and web — clean before commit.
+
+## Cleanup
+
+Spun up one fully cold, disposable dev server pair (API :5507, web :6507) purely to rule out stale-HMR-bundle theories, then killed both by PID once that was ruled out. All other verification reused the already-running API :4000 / web :6506 pair. Test data: several dev-seed inquiries/projects had their price/status genuinely changed by these reproduction runs (`cmrs5w1fx0006r4i2o9kacqn1`, `cms0koz0k000j1si2i2nsq2co` — now shows `AWAITING_CLIENT_RESPONSE` instead of its original `DEPOSIT_PENDING`, a side effect of reproducing the pre-fix bug itself, left as-is since it's dev data — and `cmrzvnyps001q5si2glp2cac6`) — all left in the dev database, consistent with this session's standing convention. All ad-hoc verification scripts left in the scratchpad, none committed.

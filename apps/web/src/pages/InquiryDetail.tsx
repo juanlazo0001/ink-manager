@@ -460,6 +460,21 @@ export default function InquiryDetail() {
   // from a sibling page, since it's a stable, rarely-changing 3-value group.
   const isConverted =
     inquiry?.status === 'SCHEDULING' || inquiry?.status === 'WAITLISTED' || inquiry?.status === 'CONFIRMED'
+  // Bug fix: a deposit FORM already exists once DEPOSIT_PENDING is reached,
+  // same as every isConverted stage -- but DEPOSIT_PENDING deliberately
+  // stays OUT of isConverted (it's still the Inquiries tab, not Projects,
+  // per Inquiries.tsx's own INQUIRIES_TAB_STATUSES/PROJECTS_TAB_STATUSES
+  // split -- not touched by this fix). Only the Estimate widget's own
+  // edit-vs-revise choice below needs the wider line: "Generate & Resend
+  // Estimate" unconditionally resets status back to AWAITING_CLIENT_RESPONSE
+  // (correct for a first send, or a BUDGET_NEGOTIATION back-and-forth where
+  // nothing downstream exists yet) -- calling it once a deposit form is
+  // already out silently regressed the pipeline backward past "Deposit
+  // requested" while leaving that form (possibly already paid) orphaned
+  // underneath. "Revise Estimate" never touches status or the deposit form,
+  // so it's the only safe route from DEPOSIT_PENDING on. Mirrors the
+  // backend's own ESTIMATE_REVISION_ONLY_STATUSES (inquiries.ts).
+  const canReviseEstimate = isConverted || inquiry?.status === 'DEPOSIT_PENDING'
   const { data: inquiryAuditLogs } = useQuery({
     queryKey: ['inquiry-audit', id],
     queryFn: () => apiFetch<AuditLogEntry[]>(`/audit?entityType=Inquiry&entityId=${id}`),
@@ -2299,7 +2314,7 @@ export default function InquiryDetail() {
                   id="estimate-section"
                   title="Estimate"
                   actions={
-                    !isTerminal && !isConverted && canMessage && inquiry.assignedArtist && !editingEstimate ? (
+                    !isTerminal && !canReviseEstimate && canMessage && inquiry.assignedArtist && !editingEstimate ? (
                       <button
                         type="button"
                         onClick={openEditEstimate}
@@ -2310,7 +2325,7 @@ export default function InquiryDetail() {
                         <PencilIcon className="h-4 w-4" />
                         <span className="hidden text-sm font-semibold md:inline">Edit</span>
                       </button>
-                    ) : isConverted && canMessage ? (
+                    ) : canReviseEstimate && canMessage ? (
                       <button
                         type="button"
                         onClick={openReviseEstimateModal}
@@ -2324,10 +2339,10 @@ export default function InquiryDetail() {
                     ) : null
                   }
                 >
-                  {isConverted && (
+                  {canReviseEstimate && (
                     <>
                       <p className="mt-1 text-xs text-fg-muted">
-                        Locked -- this inquiry has converted to a Project (deposit paid). Use "Revise Estimate" above
+                        Locked -- a deposit has already been requested for this inquiry. Use "Revise Estimate" above
                         to change it; that requires a reason and re-sends the new estimate to the client for
                         approval.
                       </p>
@@ -2417,11 +2432,11 @@ export default function InquiryDetail() {
                     </div>
                   )}
 
-                  {!isTerminal && !isConverted && canMessage && !inquiry.assignedArtist && (
+                  {!isTerminal && !canReviseEstimate && canMessage && !inquiry.assignedArtist && (
                     <p className="mt-4 text-sm text-fg-muted">Assign an artist before entering an estimate.</p>
                   )}
 
-                  {!isTerminal && !isConverted && canMessage && editingEstimate && (
+                  {!isTerminal && !canReviseEstimate && canMessage && editingEstimate && (
                     <>
                       <label className="mt-4 flex items-center gap-2 text-xs font-medium text-fg-secondary">
                         <input
