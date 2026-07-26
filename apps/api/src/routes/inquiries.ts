@@ -261,16 +261,41 @@ router.post("/", optionalAuth, async (req, res) => {
     return res.status(400).json({ error: customFieldAnswersResult.error });
   }
 
+  // Staff can explicitly pick an existing client via StaffInquiryForm's own
+  // search box (GET /clients/merge-search), rather than relying on this
+  // form's typed email/phone happening to exactly match what's already on
+  // file -- a typo, a different email the client used this time, or a
+  // studio with email disabled can all defeat the fallback match below,
+  // which is exactly the "walk-in gets logged as a brand-new client
+  // instead of their existing one" gap this closes. Staff-only (the public
+  // intake form has no client list to search, and shouldn't be able to
+  // attach a submission to an arbitrary id it has no legitimate way to
+  // know) -- ignored entirely on the public path rather than erroring, the
+  // same treatment every other staff-only field on this dual-purpose route
+  // gets.
+  let pinnedClient: { id: string; studioId: string; smsConsentGivenAt: Date | null } | null = null;
+  if (isStaffRequest && typeof body.existingClientId === "string" && body.existingClientId) {
+    pinnedClient = await prisma.client.findUnique({
+      where: { id: body.existingClientId },
+      select: { id: true, studioId: true, smsConsentGivenAt: true },
+    });
+    if (!pinnedClient || pinnedClient.studioId !== studio.id) {
+      return res.status(400).json({ error: "existingClientId must belong to your studio" });
+    }
+  }
+
   // Matched by whichever contact method the studio actually collected --
   // email first (the historical default), falling back to phone if email
   // was disabled/omitted, and treating the submission as a brand-new
   // client if neither is present (only reachable when a studio has
   // disabled BOTH being required, since at least one must stay enabled).
-  const existingClient = email
-    ? await prisma.client.findFirst({ where: { studioId: studio.id, email } })
-    : phone
-      ? await prisma.client.findFirst({ where: { studioId: studio.id, phone: normalizePhone(phone) } })
-      : null;
+  const existingClient = pinnedClient
+    ? pinnedClient
+    : email
+      ? await prisma.client.findFirst({ where: { studioId: studio.id, email } })
+      : phone
+        ? await prisma.client.findFirst({ where: { studioId: studio.id, phone: normalizePhone(phone) } })
+        : null;
 
   // Consent is only ever SET here, never overwritten -- a returning
   // client's original consent timestamp (from whichever submission first
@@ -773,7 +798,10 @@ router.patch("/:id", requireAuth, requirePermission("inquiries.edit"), async (re
     return res.status(400).json({ error: "status cannot be changed through this route" });
   }
 
-  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  const inquiry = await prisma.inquiry.findUnique({
+    where: { id },
+    include: { _count: { select: { plannedSessions: true } } },
+  });
   if (!inquiry || inquiry.studioId !== req.user!.studioId) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
@@ -788,6 +816,21 @@ router.patch("/:id", requireAuth, requirePermission("inquiries.edit"), async (re
   if (editsEstimate && PROJECT_STATUSES.includes(inquiry.status)) {
     return res.status(400).json({
       error: "The estimate can't be edited after this inquiry has converted to a Project (deposit already paid).",
+    });
+  }
+
+  // Bug fix: once a real session plan exists, PlannedSession rows are the
+  // only source of truth for these four fields -- send-estimate/
+  // revise-estimate already null out (hours) or recompute-as-a-sum (price)
+  // the top-level columns whenever a plan is declared, specifically so they
+  // never drift out of sync with the sessions. This route had no such
+  // awareness at all (it predates per-session planning) and could silently
+  // overwrite either one directly, straight out of sync with the sessions,
+  // regardless of status. Sessions -- via send-estimate/revise-estimate --
+  // are the only sanctioned way to change these four fields from here on.
+  if (editsEstimate && inquiry._count.plannedSessions > 0) {
+    return res.status(400).json({
+      error: "This inquiry has a session plan -- edit each session's own hours/price via Generate & Send Estimate or Revise Estimate instead.",
     });
   }
 
@@ -1326,6 +1369,18 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
     }
   }
 
+  // A session already backed by a paid deposit or a booked appointment
+  // can't be silently altered or removed by a revision -- real money or a
+  // real booking already depends on its hour range. Everything else about
+  // the plan stays freely editable. Computed before the sessions[] validation
+  // below so that loop can skip locked slots entirely -- see its own comment.
+  const lockedSessions = inquiry.plannedSessions.filter(
+    (ps) => ps.depositForm?.paidAt != null || ps.appointmentId != null,
+  );
+  const lockedSessionNumbers = new Set(lockedSessions.map((s) => s.sessionNumber));
+  const highestLockedSessionNumber = lockedSessions.reduce((max, s) => Math.max(max, s.sessionNumber), 0);
+  const existingByNumber = new Map(inquiry.plannedSessions.map((ps) => [ps.sessionNumber, ps]));
+
   // Multi-session planning: an explicit `sessions` array -- any length,
   // including 0 or 1 -- means staff is declaring/editing the project's
   // session plan as part of this revision. Omitting the field entirely
@@ -1340,6 +1395,17 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
       return res.status(400).json({ error: "sessions must be an array" });
     }
     for (const [index, session] of sessions.entries()) {
+      // Bug fix: a locked slot's hours/price are never actually written from
+      // this submission (see the reconciliation block below, which already
+      // ignores whatever was submitted for a locked sessionNumber and keeps
+      // the stored row untouched) -- validating it anyway meant a legacy
+      // multi-session Project whose sessions predate per-session pricing
+      // (estimatedPriceLow/High still null, since there's no historical
+      // backfill value for them) could NEVER be revised again: every locked
+      // slot's pass-through submission defaults its price to 0 client-side,
+      // which this loop then unconditionally rejected as "must be positive"
+      // -- even though staff has no way to fix a number they can't edit.
+      if (lockedSessionNumbers.has(index + 1)) continue;
       if (
         typeof session !== "object" ||
         session === null ||
@@ -1369,16 +1435,6 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
     }
     plannedSessionInputs = sessions;
   }
-
-  // A session already backed by a paid deposit or a booked appointment
-  // can't be silently altered or removed by a revision -- real money or a
-  // real booking already depends on its hour range. Everything else about
-  // the plan stays freely editable.
-  const lockedSessions = inquiry.plannedSessions.filter(
-    (ps) => ps.depositForm?.paidAt != null || ps.appointmentId != null,
-  );
-  const highestLockedSessionNumber = lockedSessions.reduce((max, s) => Math.max(max, s.sessionNumber), 0);
-  const existingByNumber = new Map(inquiry.plannedSessions.map((ps) => [ps.sessionNumber, ps]));
 
   // The actual session count this revision ends up with, once any locked
   // sessions beyond what staff submitted are preserved -- drives whether
@@ -1482,8 +1538,6 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
   // touched regardless of what was submitted for its slot -- see the
   // lockedSessions filter above.
   if (plannedSessionInputs) {
-    const lockedNumbers = new Set(lockedSessions.map((s) => s.sessionNumber));
-
     const toUpdate: {
       id: string;
       estimatedHoursMin: number;
@@ -1501,7 +1555,7 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
 
     plannedSessionInputs.forEach((session, index) => {
       const sessionNumber = index + 1;
-      if (lockedNumbers.has(sessionNumber)) return;
+      if (lockedSessionNumbers.has(sessionNumber)) return;
       const existing = existingByNumber.get(sessionNumber);
       if (existing) {
         toUpdate.push({
@@ -1527,7 +1581,7 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
     // yet), otherwise leave it in place -- a locked session can never be
     // removed by a revision.
     const toDeleteIds = inquiry.plannedSessions
-      .filter((ps) => ps.sessionNumber > plannedSessionInputs!.length && !lockedNumbers.has(ps.sessionNumber))
+      .filter((ps) => ps.sessionNumber > plannedSessionInputs!.length && !lockedSessionNumbers.has(ps.sessionNumber))
       .map((ps) => ps.id);
 
     await prisma.$transaction([

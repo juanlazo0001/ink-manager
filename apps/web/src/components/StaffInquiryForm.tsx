@@ -1,10 +1,18 @@
 import { useEffect, useState } from 'react'
 import { apiFetch, ApiError } from '../lib/api'
-import { isValidPhoneDigits } from '../lib/format'
+import { isValidPhoneDigits, formatPhoneInput } from '../lib/format'
 import Modal from './Modal'
 import PhoneInput from './PhoneInput'
 import ImageUploadSection, { type ImageUploadState } from './ImageUploadSection'
 import ArtistSelect from './ArtistSelect'
+
+interface ClientSearchResult {
+  id: string
+  firstName: string
+  lastName: string
+  email: string | null
+  phone: string | null
+}
 
 const INPUT_CLASS =
   'mt-1 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent disabled:cursor-not-allowed disabled:opacity-60'
@@ -30,6 +38,14 @@ interface StaffInquiryFormProps {
   // client, or spawn a duplicate). A field with no value on file (e.g. no
   // phone on record) stays editable rather than blocking submission.
   lockedClient?: { firstName: string; lastName: string; email: string; phone: string }
+  // Paired with lockedClient -- ClientDetail passes this client's own id so
+  // the created inquiry attaches to THEM explicitly (POST /inquiries'
+  // existingClientId), rather than relying on the fallback email/phone
+  // match below to happen to land on the right row (which it normally
+  // will, since lockedClient's email is that exact client's own, but an
+  // explicit id is a stronger guarantee -- e.g. covers a client with no
+  // email on file at all).
+  existingClientId?: string
   // Most recent inquiry's stated preference, if any (ClientDetail passes
   // client.inquiries[0]?.preferredArtistId -- inquiries is already ordered
   // createdAt desc). Pre-fills the dropdown but stays fully editable,
@@ -47,6 +63,7 @@ export default function StaffInquiryForm({
   onClose,
   onCreated,
   lockedClient,
+  existingClientId,
   initialPreferredArtistId,
 }: StaffInquiryFormProps) {
   const [firstName, setFirstName] = useState(lockedClient?.firstName ?? '')
@@ -54,6 +71,20 @@ export default function StaffInquiryForm({
   const [email, setEmail] = useState(lockedClient?.email ?? '')
   const [phone, setPhone] = useState(lockedClient?.phone ?? '')
   const [channel, setChannel] = useState('PHONE')
+
+  // Client lookup (only offered when there's no lockedClient already --
+  // i.e. the global "+ New Inquiry" flow, not ClientDetail's own "New
+  // Inquiry" button, which already knows exactly who this is for). Finding
+  // and picking an existing client here locks the identity fields the same
+  // way lockedClient does, and the created inquiry attaches to them
+  // explicitly via existingClientId -- this is the fix for the case that
+  // matters most: a returning client typed in with a slightly different
+  // email/phone than what's on file would otherwise silently become a
+  // second, duplicate client record.
+  const [matchedClient, setMatchedClient] = useState<ClientSearchResult | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<ClientSearchResult[]>([])
+  const [searching, setSearching] = useState(false)
   const [referralCode, setReferralCode] = useState('')
   const [description, setDescription] = useState('')
   const [colorOrBlackGrey, setColorOrBlackGrey] = useState('')
@@ -86,6 +117,59 @@ export default function StaffInquiryForm({
       ignore = true
     }
   }, [])
+
+  // Same debounced-search pattern as ClientDetail's own manual-merge
+  // picker (GET /clients/merge-search) -- reused as-is rather than a
+  // second endpoint, since "find a client by name/email/phone" is exactly
+  // the same lookup either way. Only runs while a match hasn't already
+  // been picked and there's no lockedClient (the search box itself is
+  // hidden in that case, see the JSX below).
+  useEffect(() => {
+    if (lockedClient || matchedClient) return
+    if (searchQuery.trim().length < 2) {
+      setSearchResults([])
+      setSearching(false)
+      return
+    }
+
+    let ignore = false
+    setSearching(true)
+    const timeout = setTimeout(async () => {
+      try {
+        const results = await apiFetch<ClientSearchResult[]>(
+          `/clients/merge-search?q=${encodeURIComponent(searchQuery.trim())}`,
+        )
+        if (!ignore) setSearchResults(results)
+      } catch {
+        if (!ignore) setSearchResults([])
+      } finally {
+        if (!ignore) setSearching(false)
+      }
+    }, 300)
+
+    return () => {
+      ignore = true
+      clearTimeout(timeout)
+    }
+  }, [searchQuery, lockedClient, matchedClient])
+
+  function selectMatchedClient(candidate: ClientSearchResult) {
+    setMatchedClient(candidate)
+    setFirstName(candidate.firstName)
+    setLastName(candidate.lastName)
+    setEmail(candidate.email ?? '')
+    setPhone(candidate.phone ?? '')
+    setSearchQuery('')
+    setSearchResults([])
+  }
+
+  function clearMatchedClient() {
+    setMatchedClient(null)
+    setFirstName('')
+    setLastName('')
+    setEmail('')
+    setPhone('')
+  }
 
   const imagesUploading = referenceImages.uploading || placementImages.uploading
 
@@ -151,6 +235,7 @@ export default function StaffInquiryForm({
           preferredArtistId: preferredArtistId || undefined,
           referenceImages: referenceImages.urls,
           placementImages: placementImages.urls,
+          existingClientId: existingClientId ?? matchedClient?.id ?? undefined,
         }),
       })
 
@@ -168,6 +253,54 @@ export default function StaffInquiryForm({
       onClose={onClose}
     >
       <form onSubmit={handleSubmit} className="max-h-[70vh] space-y-5 overflow-y-auto pr-1">
+        {!lockedClient && !matchedClient && (
+          <div>
+            <label className={LABEL_CLASS}>Existing client?</label>
+            <input
+              type="text"
+              autoFocus
+              placeholder="Search by name, email, or phone…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className={INPUT_CLASS}
+            />
+            {searching && <p className="mt-2 text-sm text-fg-secondary">Searching…</p>}
+            {!searching && searchQuery.trim().length >= 2 && searchResults.length === 0 && (
+              <p className="mt-2 text-sm text-fg-secondary">No matching clients -- fill out the form below to add a new one.</p>
+            )}
+            {searchResults.length > 0 && (
+              <ul className="mt-2 max-h-40 space-y-2 overflow-y-auto">
+                {searchResults.map((candidate) => (
+                  <li key={candidate.id}>
+                    <button
+                      type="button"
+                      onClick={() => selectMatchedClient(candidate)}
+                      className="flex w-full items-center justify-between gap-2 rounded-lg border border-border px-3 py-2 text-left text-sm text-fg transition hover:bg-surface"
+                    >
+                      <span>
+                        {candidate.firstName} {candidate.lastName}
+                        {candidate.email ? ` — ${candidate.email}` : ''}
+                        {candidate.phone ? ` — ${formatPhoneInput(candidate.phone)}` : ''}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
+        {matchedClient && (
+          <div className="flex items-center justify-between gap-2 rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-sm text-fg">
+            <span>
+              Attaching to existing client: <span className="font-medium">{matchedClient.firstName} {matchedClient.lastName}</span>
+            </span>
+            <button type="button" onClick={clearMatchedClient} className="text-xs font-medium text-accent hover:underline">
+              Not them? Clear
+            </button>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <label className={LABEL_CLASS}>First name *</label>
@@ -176,7 +309,7 @@ export default function StaffInquiryForm({
               value={firstName}
               onChange={(e) => setFirstName(e.target.value)}
               required
-              disabled={!!lockedClient?.firstName}
+              disabled={!!lockedClient?.firstName || !!matchedClient}
               className={INPUT_CLASS}
             />
           </div>
@@ -187,7 +320,7 @@ export default function StaffInquiryForm({
               value={lastName}
               onChange={(e) => setLastName(e.target.value)}
               required
-              disabled={!!lockedClient?.lastName}
+              disabled={!!lockedClient?.lastName || !!matchedClient}
               className={INPUT_CLASS}
             />
           </div>
@@ -201,13 +334,18 @@ export default function StaffInquiryForm({
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              disabled={!!lockedClient?.email}
+              disabled={!!lockedClient?.email || !!matchedClient?.email}
               className={INPUT_CLASS}
             />
           </div>
           <div>
             <label className={LABEL_CLASS}>Phone</label>
-            <PhoneInput value={phone} onChange={setPhone} disabled={!!lockedClient?.phone} className={INPUT_CLASS} />
+            <PhoneInput
+              value={phone}
+              onChange={setPhone}
+              disabled={!!lockedClient?.phone || !!matchedClient?.phone}
+              className={INPUT_CLASS}
+            />
           </div>
         </div>
 

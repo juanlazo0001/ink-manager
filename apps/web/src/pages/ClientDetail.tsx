@@ -2437,6 +2437,7 @@ export default function ClientDetail() {
             email: client.email ?? '',
             phone: client.phone ?? '',
           }}
+          existingClientId={client.id}
           initialPreferredArtistId={client.inquiries[0]?.preferredArtistId ?? ''}
         />
       )}
