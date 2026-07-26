@@ -143,8 +143,17 @@ export async function getSuggestedTimes(
     const dayOfWeek = cursor.getUTCDay();
 
     if (artist.isGuest) {
-      if (artist.guestStartDate && dateKey < civilDateKey(artist.guestStartDate, timeZone)) continue;
-      if (artist.guestEndDate && dateKey > civilDateKey(artist.guestEndDate, timeZone)) continue;
+      // guestStartDate/guestEndDate are stored as UTC-midnight instants
+      // representing a plain calendar date (a date-only picker field, see
+      // ArtistDetail.tsx/ArtistCreate.tsx) -- never timezone-shifted
+      // themselves, unlike an appointment's real startTime/endTime. Reading
+      // them back through the STUDIO's timezone (as this used to do) shifts
+      // them a full civil day earlier for any studio west of UTC, which
+      // could silently exclude the guest's actual last day (or, for a
+      // short window, push the whole thing into the past) -- "UTC" here
+      // extracts the exact calendar date that was stored, no shift.
+      if (artist.guestStartDate && dateKey < civilDateKey(artist.guestStartDate, "UTC")) continue;
+      if (artist.guestEndDate && dateKey > civilDateKey(artist.guestEndDate, "UTC")) continue;
     }
 
     let windowStart: string;
