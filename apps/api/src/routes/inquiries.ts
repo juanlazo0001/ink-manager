@@ -1066,7 +1066,10 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
   const id = req.params.id as string;
   const { priceEstimateLow, priceEstimateHigh, timeEstimateHoursMin, timeEstimateHoursMax, sessions } = req.body ?? {};
 
-  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  const inquiry = await prisma.inquiry.findUnique({
+    where: { id },
+    include: { plannedSessions: { include: { depositForm: { select: { paidAt: true } } } } },
+  });
   if (!inquiry || inquiry.studioId !== req.user!.studioId) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
@@ -1243,24 +1246,86 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
     ...(isResend ? { estimateOpenedAt: null, estimateRespondedAt: null, estimateFollowUpSentAt: null } : {}),
   };
 
-  // Created before the Inquiry update below so the response (which
-  // includes plannedSessions via INQUIRY_INCLUDE) reflects them
-  // immediately. Guarded on a fresh inquiry with no existing rows -- a
-  // resend never edits an already-declared plan (see the comment above).
+  // Bug fix: reconciles PlannedSession rows to match plannedSessionInputs on
+  // EVERY call, not just the first one -- the old "only create if none exist
+  // yet" guard meant a resend on an inquiry that already had a plan silently
+  // dropped every hour/price/count change to the actual rows, while
+  // effective.priceEstimateLow/High above (computed from the submission,
+  // not the stored rows) still got saved onto the Inquiry -- exactly the
+  // "price updates, sessions don't" bug this fixes, and a fresh way to
+  // reproduce the same top-level-vs-session-sum mismatch fixed earlier this
+  // session. Mirrors POST /:id/revise-estimate's own reconciliation
+  // (create/update to match, delete anything beyond the new length) --
+  // locked-session protection is included for consistency even though a
+  // locked session can't actually exist this early (POST /:id/deposit-form
+  // requires DEPOSIT_PENDING or later, and this route already refuses to
+  // run once ESTIMATE_REVISION_ONLY_STATUSES is reached).
   if (plannedSessionInputs) {
-    const existingCount = await prisma.plannedSession.count({ where: { inquiryId: id } });
-    if (existingCount === 0) {
-      await prisma.plannedSession.createMany({
-        data: plannedSessionInputs.map((session, index) => ({
-          inquiryId: id,
-          sessionNumber: index + 1,
+    const lockedSessions = inquiry.plannedSessions.filter(
+      (ps) => ps.depositForm?.paidAt != null || ps.appointmentId != null,
+    );
+    const lockedSessionNumbers = new Set(lockedSessions.map((s) => s.sessionNumber));
+    const existingByNumber = new Map(inquiry.plannedSessions.map((ps) => [ps.sessionNumber, ps]));
+
+    const toUpdate: {
+      id: string;
+      estimatedHoursMin: number;
+      estimatedHoursMax: number;
+      estimatedPriceLow: number;
+      estimatedPriceHigh: number;
+    }[] = [];
+    const toCreate: {
+      sessionNumber: number;
+      estimatedHoursMin: number;
+      estimatedHoursMax: number;
+      estimatedPriceLow: number;
+      estimatedPriceHigh: number;
+    }[] = [];
+
+    plannedSessionInputs.forEach((session, index) => {
+      const sessionNumber = index + 1;
+      if (lockedSessionNumbers.has(sessionNumber)) return;
+      const existing = existingByNumber.get(sessionNumber);
+      if (existing) {
+        toUpdate.push({
+          id: existing.id,
           estimatedHoursMin: session.estimatedHoursMin,
           estimatedHoursMax: session.estimatedHoursMax,
           estimatedPriceLow: session.estimatedPriceLow,
           estimatedPriceHigh: session.estimatedPriceHigh,
-        })),
-      });
-    }
+        });
+      } else {
+        toCreate.push({
+          sessionNumber,
+          estimatedHoursMin: session.estimatedHoursMin,
+          estimatedHoursMax: session.estimatedHoursMax,
+          estimatedPriceLow: session.estimatedPriceLow,
+          estimatedPriceHigh: session.estimatedPriceHigh,
+        });
+      }
+    });
+
+    const toDeleteIds = inquiry.plannedSessions
+      .filter((ps) => ps.sessionNumber > plannedSessionInputs!.length && !lockedSessionNumbers.has(ps.sessionNumber))
+      .map((ps) => ps.id);
+
+    await prisma.$transaction([
+      ...toUpdate.map((s) =>
+        prisma.plannedSession.update({
+          where: { id: s.id },
+          data: {
+            estimatedHoursMin: s.estimatedHoursMin,
+            estimatedHoursMax: s.estimatedHoursMax,
+            estimatedPriceLow: s.estimatedPriceLow,
+            estimatedPriceHigh: s.estimatedPriceHigh,
+          },
+        }),
+      ),
+      ...(toCreate.length > 0
+        ? [prisma.plannedSession.createMany({ data: toCreate.map((s) => ({ inquiryId: id, ...s })) })]
+        : []),
+      ...(toDeleteIds.length > 0 ? [prisma.plannedSession.deleteMany({ where: { id: { in: toDeleteIds } } })] : []),
+    ]);
   }
 
   const updated = await prisma.inquiry.update({

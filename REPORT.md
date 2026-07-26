@@ -2985,3 +2985,50 @@ While this investigation was in progress, a concurrent Claude Code session worki
 ## Cleanup
 
 All investigation/repair scripts were written directly inside `apps/api/src/` (needed real `tsx`+`dotenv` execution against the shared dev database) and deleted immediately after use — confirmed via `git status` that none were ever staged or committed. No new dev servers started this session; reused the already-running API :4000 / web :6506 pair throughout. No background shells left running.
+
+---
+
+# Fix: send-estimate silently dropped hour/price/count changes to an already-declared session plan
+
+Same session, immediate follow-up. The user reported, after the investigation above: "price estimate is updating but number of sessions and hours per session is not updating." Reproduced with Playwright, found a fourth real bug in the same code area, fixed it.
+
+## Reproduction
+
+Took a real pre-conversion inquiry (`cmro4uxti00003ci2q69zbnf1`, `AWAITING_CLIENT_RESPONSE`) that already had a 2-session plan (Session 1: 4-6 hrs/$600-$900, Session 2: 2-3 hrs/$300-$450 — both correct, from earlier verification). Opened "Edit Estimate," changed Session 2's hours to 8-10 and its price to $900-$1100, submitted "Generate & Resend Estimate":
+
+- Request body correctly carried the new numbers.
+- Response: `201`.
+- **The read-only view afterward still showed Session 2 as 2-3 hrs / $300-$450 — completely unchanged** — while `PRICE ESTIMATE LOW`/`HIGH` jumped from `$900`/`$1,350` to `$1,500`/`$2,000`, the sum of the *submitted* (not stored) session prices.
+
+Exactly the reported symptom, and — as a direct side effect — a fresh instance of the same top-level-price-vs-session-sum mismatch repaired in the investigation above, now reproducible on demand rather than only as historical leftover data.
+
+## Root cause
+
+`POST /:id/send-estimate`'s own comment gave it away once traced: `"a resend never edits an already-declared plan."` The write path was:
+
+```ts
+if (plannedSessionInputs) {
+  const existingCount = await prisma.plannedSession.count({ where: { inquiryId: id } });
+  if (existingCount === 0) {
+    await prisma.plannedSession.createMany({ ... });
+  }
+}
+```
+
+This was written back when a resend's *only* possible session-plan action was declaring a brand-new plan for the first time — before per-session pricing existed, changing an existing plan's hours (let alone its price) via this route wasn't a case being handled either way. Once staff can edit an *existing* plan's hours/price/count through the same "Edit Estimate" form (this session's own earlier feature work), this guard means every such edit is silently discarded at the database layer — while `effective.priceEstimateLow/High` (computed from the submission, not from what actually got saved) is written onto the Inquiry regardless, producing the exact "price updates, sessions don't" split.
+
+## Fix
+
+Replaced the guarded `createMany`-only block with the same create/update/delete reconciliation `POST /:id/revise-estimate` already had: match each submitted session against its existing row by `sessionNumber` (update if present, create if not), delete any existing row beyond the newly-submitted length. Included the identical locked-session skip for consistency, even though a locked session can't actually exist this early — `POST /:id/deposit-form` requires `DEPOSIT_PENDING` or later, and `send-estimate` already refuses to run at all once `ESTIMATE_REVISION_ONLY_STATUSES` is reached (the very first fix in the investigation above) — so this is defensive/future-proofing, not covering a reachable case today. Also added `plannedSessions` (with `depositForm.paidAt`) to this route's own inquiry fetch, which it previously didn't select at all.
+
+## Live-verified, not just read
+
+Re-ran the identical reproduction after the fix: Session 2 now correctly shows `8-10 hrs ($900-$1100)` in both the top summary line and the Session Plan widget, and the top-level price (`$1,500`/`$2,000`) now genuinely matches the sum of the real, updated session data rather than a stale submission-only computation. Re-ran the full database-wide mismatch check from the investigation above across every inquiry with a declared session plan (4 now, including this one) — all four consistent, zero mismatches.
+
+## Typechecks
+
+`npx tsc --noEmit` and `npm run build` (api) — clean.
+
+## Cleanup
+
+Reused the already-running API :4000 / web :6506 dev servers. One scratch verification script (`scratch-check-mismatch.ts`, written directly in `apps/api/src/` for real `tsx`+`dotenv` DB access) deleted immediately after use, confirmed via `git status` never staged. No background shells left running. Test data: the same dev-seed inquiry (`cmro4uxti00003ci2q69zbnf1`) now has a genuinely different, intentionally-test-value 2-session plan (hours 4-6/8-10, price $600-$900/$900-$1,100) from this reproduction — left as-is, consistent with this session's standing convention.
