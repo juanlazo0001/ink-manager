@@ -3253,7 +3253,7 @@ Confirmed the exact per-view increment by reading RBC's own `Month.navigate`/`We
 |---|---|---|
 | 1 — Visual polish | `7e8822d` | Full `rbc-*` CSS audit (table above); themed hover states; event padding/radius/truncation; studio-timezone-aware current-time indicator; conditional weekend tint |
 | 2 — Interaction robustness | `2068eb2` | Confirmed drag-to-set-duration already worked (nothing added); added genuinely-missing resize handles; keyed-remount view/nav transition; `keepPreviousData` + `isFetching` dim instead of a blank "Loading…" flash |
-| 3 — Navigation | *(this commit)* | Jump-to-date via the existing `DatePickerField`; arrow-key/`T` shortcuts scoped away from text input |
+| 3 — Navigation | `bb65c2e` | Jump-to-date via the existing `DatePickerField`; arrow-key/`T` shortcuts scoped away from text input |
 
 **Part 2 investigation outcome, stated plainly**: of the two interactions Part 2 asked about, one (click-and-drag to create with a specific duration) was already fully working — `handleSelectSlot` already read the real dragged end time and `selectable` was already set, live-verified with an exact 10:00 AM–12:30 PM prefill matching a real drag. The other (resize handles on an existing appointment) was genuinely absent — `resizable={false}` was explicit and there was no `onEventResize` at all — and was added, routed through the same `PATCH /appointments/:id` drag-reschedule already uses.
 
