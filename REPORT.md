@@ -3482,3 +3482,37 @@ Swapped the "ink" (Fraunces) + "manager" (Outfit) text wordmark for the actual `
 ## Cleanup
 
 **Deliberately left running, not killed**: the API dev server (`:4000`) and the web dev server (`:6506`, restarted with the corrected `.env`) -- these aren't throwaway verification-only processes from this session, they're this project's actual persistent dev environment, and the whole point of the `VITE_API_URL` fix was to leave it in a working state rather than tear the fix back down. Flagging this explicitly since it's a different call than the prior session's (which killed everything it started) -- if a clean slate is wanted, both are safe to stop manually. All diagnostic/verification scripts stayed in the session scratchpad, none staged.
+
+---
+
+# Login page — hand-tuned values from a live DevTools session
+
+Single tiny session on `main`. The owner pasted the exact CSS rules they landed on after tuning the login page live in browser DevTools -- this session transcribes those values back into the actual source, faithfully, rather than re-deriving or approximating them.
+
+## What changed, translated exactly
+
+Card (`.login-panel-surface`): background `#100f0ee0` (was `rgba(23,19,16,0.62)` -- notably more opaque now, ~88% vs ~62%, a less see-through glass than the prior pass), border `#c99a5b1a` (unchanged in effect, ~10% gold), radius unchanged at 10px, blur unchanged at 16px (neither mentioned in the pasted rule, so left alone).
+
+Inputs (`.login-input`): background `#0f0e0d` (was `var(--login-panel-2)`, `#1d1813` -- now darker/more recessed), border `#252322` (was the gold-tinted `var(--login-line)` -- now a plain neutral dark border, no gold tint at rest), radius `5px` (was 10px -- tighter than the card, distinct from both the card's 10px and the button's 0px). Focus state (still gold border + ring) untouched, so the accent color still appears the moment a field is actually in use.
+
+Labels (`.login-label`): color `#bba585` (was `var(--login-gold)`, `#c99a5b` -- a more muted, desaturated khaki-gold). Weight/tracking untouched from the prior pass.
+
+Button (`.login-button`): background `#d5a05c` (was `var(--login-gold)` -- slightly brighter/warmer), radius `0px` (was 6px -- now fully square, the most extreme end of the "opposite correction from the card" direction the prior pass started), added `margin-top: 1em` (new -- extra breathing room above the button, stacking on top of the password field's own existing `mb-6` rather than replacing it, since that's what a DevTools-added declaration on the button's own rule does). Letter-spacing/transition untouched.
+
+Logo image sizing (`h-12 mb-8` → `h-18 mb-4` on the `<img>` in `Login.tsx`): the pasted rules targeted Tailwind's own generated `.h-12`/`.mb-8` utility classes directly (`height: calc(var(--spacing) * 18)`, `margin-bottom: calc(var(--spacing) * 4)`) -- since those are shared utilities used everywhere else in the app for unrelated elements, redefining them globally would have resized/repositioned things across the whole app, not just this logo. Translated the *intent* instead: changed the logo `<img>`'s own className to `h-18`/`mb-4`, which (Tailwind v4 generates spacing utilities for any integer multiplier of `--spacing` on demand) computes to the exact same 72px height / 16px margin the pasted rule specified, scoped to just this one element.
+
+## Verification
+
+Confirmed every value via `getComputedStyle` on the real rendered page, not just re-reading the CSS source: card `background: rgba(16,15,14,0.88)`, `border-color: rgba(201,154,91,0.1)`, `border-radius: 10px`; logo `height: 72px`, `margin-bottom: 16px`; input `background: rgb(15,14,13)`, `border-color: rgb(37,35,34)`, `border-radius: 5px`; label `color: rgb(187,165,133)`; button `background: rgb(213,160,92)`, `border-radius: 0px`, `margin-top: 12px` -- every one matches the pasted values exactly (allowing for the browser's own rgba rounding of the 8-digit hex alpha channels). Screenshotted at 1600px desktop. Re-ran the same real end-to-end login check as the prior two sessions (real dev credentials, real `POST` to the now-correctly-configured API, `200`, redirect to `/dashboard`) -- confirmed unaffected, since nothing here touched `handleSubmit`/`useAuth`.
+
+## Typechecks
+
+`npm run build` (web) and `npx tsc --noEmit` (api) -- clean.
+
+## Commit
+
+Pending -- see next entry once pushed.
+
+## Cleanup
+
+Same dev servers from the prior session (api `:4000`, web `:6506`) reused for verification, left running for the same reason stated there. No new background processes started this session. No scratch scripts staged.

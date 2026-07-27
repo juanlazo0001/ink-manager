@@ -777,28 +777,33 @@
 
 /* Visual refinement pass (no source CSS available -- values below are a
    best-effort match against a reference screenshot, not exact numbers
-   from a design file): frosted-glass card, not a solid panel -- the photo
-   should stay visibly, softly present behind it. Translucent background
-   (login-panel at ~62% opacity, rgba not var(), since var()-based colors
-   can't have their alpha channel adjusted independently) plus blur so the
-   photo underneath reads as blurred, not sharp. Border tint lowered from
-   the original --login-line's 0.18 alpha to 0.10 -- reads softer/more
-   atmospheric, less like a crisp outline. Radius brought down to 10px
-   (was 1rem/16px, the standard --r-card token) -- this page's own,
+   from a design file, later hand-tuned further live in DevTools and
+   transcribed back here exactly): frosted-glass card, not a solid panel
+   -- the photo should stay visibly, softly present behind it. Translucent
+   background (8-digit hex so the alpha channel is tunable independent of
+   the base color, not var()-based) plus blur so the photo underneath
+   reads as blurred, not sharp. Border tint kept low/gold, reading as
+   soft/atmospheric rather than a crisp outline. Radius brought down to
+   10px (was 1rem/16px, the standard --r-card token) -- this page's own,
    architectural take, not required to match the app-wide card radius
    given its distinct full-screen atmospheric treatment. */
 .login-panel-surface {
-  background: rgba(23, 19, 16, 0.62);
-  border: 1px solid rgba(201, 154, 91, 0.1);
+  background: #100f0ee0;
+  border: 1px solid #c99a5b1a;
   border-radius: 10px;
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
 }
 
+/* Neutral dark border (not gold-tinted, unlike the card/label) and a
+   tighter 5px radius -- inputs read as plainer, more recessed fields
+   against the card's own softer 10px corners. Focus state below still
+   switches to gold, so the accent color still shows up the moment a
+   field is actually being used. */
 .login-input {
-  background: var(--login-panel-2);
-  border: 1px solid var(--login-line);
-  border-radius: 10px;
+  background: #0f0e0d;
+  border: 1px solid #252322;
+  border-radius: 5px;
   color: var(--login-cream);
 }
 .login-input::placeholder {
@@ -813,21 +818,24 @@
 /* Lighter weight, no added tracking -- plainer sans presentation than the
    Jura-tracked treatment used on the button/nav labels elsewhere. */
 .login-label {
-  color: var(--login-gold);
+  color: #bba585;
   font-weight: 400;
   letter-spacing: 0;
 }
 
 /* Button radius corrected in the OPPOSITE direction from the card above --
-   noticeably more rectangular (6px), not the card's softer 10px, and a
-   world away from the app-wide pill-shaped button convention. Tracking
-   dialed back from an initial 0.2em (too wide against the reference) to
-   0.08em. */
+   fully square (0px), not the card's softer 10px, and a world away from
+   the app-wide pill-shaped button convention. Tracking dialed back from
+   an initial 0.2em (too wide against the reference) to 0.08em. margin-top
+   adds breathing room above the button on top of the password field's own
+   mb-6, since the reference read as needing more separation than that
+   alone gave it. */
 .login-button {
-  background: var(--login-gold);
+  background: #d5a05c;
   color: var(--login-gold-fg);
-  border-radius: 6px;
+  border-radius: 0px;
   letter-spacing: 0.08em;
+  margin-top: 1em;
   transition: background-color var(--duration-base) ease-out;
 }
 .login-button:hover:not(:disabled) {

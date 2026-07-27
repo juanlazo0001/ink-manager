@@ -51,7 +51,7 @@ export default function Login() {
       </span>
 
       <form onSubmit={handleSubmit} className="login-panel-surface relative z-10 w-full max-w-sm p-8 shadow-2xl">
-        <img src="/branding/logo-white-512.png" alt="Ink Manager" className="mx-auto mb-8 h-12 w-auto" />
+        <img src="/branding/logo-white-512.png" alt="Ink Manager" className="mx-auto mb-4 h-18 w-auto" />
 
         {error && (
           <div className="mb-4 rounded-md border border-red-900/40 bg-red-950/40 px-3 py-2 text-sm text-red-300">
