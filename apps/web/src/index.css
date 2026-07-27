@@ -788,7 +788,7 @@
    architectural take, not required to match the app-wide card radius
    given its distinct full-screen atmospheric treatment. */
 .login-panel-surface {
-  background: #100f0ee0;
+  background: #100f0ed6;
   border: 1px solid #c99a5b1a;
   border-radius: 10px;
   backdrop-filter: blur(16px);
@@ -813,14 +813,6 @@
   outline: none;
   border-color: var(--login-gold);
   box-shadow: 0 0 0 1px var(--login-gold);
-}
-
-/* Lighter weight, no added tracking -- plainer sans presentation than the
-   Jura-tracked treatment used on the button/nav labels elsewhere. */
-.login-label {
-  color: #bba585;
-  font-weight: 400;
-  letter-spacing: 0;
 }
 
 /* Button radius corrected in the OPPOSITE direction from the card above --

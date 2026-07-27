@@ -52,7 +52,7 @@ export default function Login() {
       </div>
 
       <form onSubmit={handleSubmit} className="login-panel-surface relative z-10 w-full max-w-sm p-8 shadow-2xl">
-        <img src="/branding/logo-white-512.png" alt="Ink Manager" className="mx-auto mb-4 h-18 w-auto" />
+        <img src="/branding/logo-white-512.png" alt="Ink Manager" className="mx-auto mb-4 h-24 w-auto" />
 
         {error && (
           <div className="mb-4 rounded-md border border-red-900/40 bg-red-950/40 px-3 py-2 text-sm text-red-300">
@@ -60,33 +60,27 @@ export default function Login() {
           </div>
         )}
 
-        <div className="mb-4">
-          <label htmlFor="email" className="login-label mb-1.5 block text-sm">
-            Email
-          </label>
-          <input
-            id="email"
-            type="email"
-            required
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            className="login-input w-full px-3 py-2 text-sm"
-          />
-        </div>
+        <input
+          id="email"
+          type="email"
+          required
+          placeholder="Email"
+          aria-label="Email"
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+          className="login-input mb-4 w-full px-3 py-3 text-sm"
+        />
 
-        <div className="mb-6">
-          <label htmlFor="password" className="login-label mb-1.5 block text-sm">
-            Password
-          </label>
-          <input
-            id="password"
-            type="password"
-            required
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            className="login-input w-full px-3 py-2 text-sm"
-          />
-        </div>
+        <input
+          id="password"
+          type="password"
+          required
+          placeholder="Password"
+          aria-label="Password"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          className="login-input mb-6 w-full px-3 py-3 text-sm"
+        />
 
         <button
           type="submit"
