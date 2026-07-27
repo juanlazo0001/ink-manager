@@ -52,7 +52,7 @@ export default function Login() {
       </div>
 
       <form onSubmit={handleSubmit} className="login-panel-surface relative z-10 w-full max-w-sm p-8 shadow-2xl">
-        <img src="/branding/logo-white-512.png" alt="Ink Manager" className="mx-auto mb-4 h-24 w-auto" />
+        <img src="/branding/logo-white-512.png" alt="Ink Manager" className="mx-auto mb-2 h-24 w-auto" />
 
         {error && (
           <div className="mb-4 rounded-md border border-red-900/40 bg-red-950/40 px-3 py-2 text-sm text-red-300">
@@ -68,7 +68,7 @@ export default function Login() {
           aria-label="Email"
           value={email}
           onChange={(event) => setEmail(event.target.value)}
-          className="login-input mb-4 w-full px-3 py-3 text-sm"
+          className="login-input mb-6 w-full px-3 py-3 text-sm"
         />
 
         <input
