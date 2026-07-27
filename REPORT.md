@@ -3511,7 +3511,7 @@ Confirmed every value via `getComputedStyle` on the real rendered page, not just
 
 ## Commit
 
-Pending -- see next entry once pushed.
+`d362b48` on `main`.
 
 ## Cleanup
 
