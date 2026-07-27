@@ -3384,3 +3384,53 @@ Reused the already-running API :4000 / web :6506 dev servers. All verification s
 ## After this lands
 
 `ui/restyle-v3` can now be deleted — its content lives properly integrated on `main` as the "Editorial Gold" preset option, not sitting separately. Deletion left to the user to confirm, not done automatically as part of this session.
+
+**Update**: `ui/restyle-v3` deleted (local + `origin`) in a later session, once the user confirmed the integration was in place.
+
+---
+
+# Login page — editorial redesign (fixed platform identity)
+
+Single small session on `main`. No schema changes. Rebuilds the login screen using the existing Fraunces/Jura/Outfit fonts, arc-ornament technique, and panel/border/radius tokens from the editorial restyle — reused, not redesigned.
+
+## Design decision this session locked in
+
+The login page is a **fixed platform identity**, not themed by the per-studio preset system (`lib/themePresets.ts`). There is no authenticated studio context yet at `/login` for a preset to even apply from, and since this is a client-side-routed SPA, a stale `[data-theme]` attribute can still be sitting on `<html>` from whatever preset was last applied in the same tab (e.g. a user who logged out without a full page reload) — referencing the swappable `--color-*`/`--font-*` tokens here would make this page's look depend on browsing history. Every value is a literal constant (new `.login-*` classes in `index.css`, scoped under a `.login-shell` wrapper with its own `--login-*` custom properties), matching the editorial palette's numbers but never wired to the swappable tokens.
+
+## Build
+
+- Full-bleed `login-background.jpg` (`object-fit: cover`) behind a `bg-black/70` overlay.
+- `.login-arc-decor`: the same concentric-ring technique as the app shell's `.arc-decor`, recentered (`top/left: 50%`, `translate(-50%,-50%)`) for a full-screen layout instead of anchored behind a header, with a smaller variant below 640px.
+- Centered card (`.login-panel-surface`): literal `--login-panel`/`--login-line` values matching editorial's `--panel`/`--line`, `rounded-[1rem]` matching `--r-card`, `shadow-2xl` for separation from the busy background.
+- Wordmark: "ink" in `.login-serif` (Fraunces) directly followed by "manager" in `.login-sans-light` (Outfit, weight 300) — one seamless mark, cream color, centered above the form.
+- Labels: `.login-label` (gold, normal case, no tracking — the heavy Jura treatment is reserved for the button only, per the spec).
+- Inputs: `.login-input` (panel-2 tone background, gold-tinted border, gold focus ring).
+- Button: `.login-button` (solid gold fill, `--login-gold-fg` dark text, `.login-jura` uppercase heavy-tracked "SIGN IN", full width, same radius scale as the inputs).
+- Login logic itself (`handleSubmit`, `useAuth().login`, redirect to `/dashboard`, error display) is untouched from the prior version — this was a visual rebuild only.
+
+## A real bug found and fixed mid-session: a stray `*/` inside a CSS comment
+
+While verifying, the card rendered with no visible panel/border and white (not gold) labels — `getComputedStyle` on `.login-shell` showed every `--login-*` custom property as an **empty string**, even though the rule's text was confirmed present, byte-for-byte correct, in the served stylesheet. Isolated by testing the identical rule body at a different position in the file (worked) versus its original position (failed), then decoding Vite's actual served CSS output and diffing it against the source: the introductory comment's own prose — "the `--color-*`**/**`--font-*` custom properties" — contained a literal `*/` substring (the slash used as shorthand for "or," directly after the `*` closing `--color-*`), which closed the CSS comment three sentences early. Everything from that point until the next real `*/` further down was silently swallowed as an invalid, ignored declarations, taking every `.login-*` rule below it out with it. Fixed by rewriting the comment to spell out "the color and font custom properties" instead of the `--color-*/--font-*` shorthand. Re-verified via `getComputedStyle` that every `--login-*` property now resolves correctly, and confirmed no other stray `*/` sequences exist anywhere else in `index.css` (`grep` swept the whole file).
+
+## Background image optimization
+
+The provided `apps/web/src/assets/login-background.png` was a 1672×941 photo saved as PNG — 1.76 MB, poor for a lossy photographic background. Compressed with `sharp` (installed with `--no-save`, used once, then uninstalled — never added as a project dependency) to an 82%-quality mozjpeg-encoded JPEG at the same dimensions: **146 KB, a 92% reduction**, visually indistinguishable at this resolution and especially so under the 70% black overlay. Confirmed via the actual served `Content-Length` header in a real browser network response (not just the file size on disk) — 146,046 bytes. Old PNG deleted; `Login.tsx` imports the new `.jpg`.
+
+## Verification
+
+- **Desktop (1600px) and two phone widths (390px, 360px)**: background photo loads and fills the viewport, dark overlay keeps text legible over the busiest parts of the photo, the card stays centered and fully readable at every width tested, no overflow.
+- **Real end-to-end login**: filled real dev credentials, submitted, confirmed the actual `POST /login` returned `200` and the app redirected to `/dashboard` and rendered the authenticated shell correctly.
+- **Environment note, not a code bug**: this session's already-running dev servers had drifted out of sync with the current `apps/web/.env` (`VITE_API_URL` pointed at a LAN IP — `10.0.0.31` — that no longer matches this machine's current address, `192.168.22.174`), so the long-running web dev server on its usual port was silently POSTing logins to an unreachable host. Rather than editing the shared `.env` or touching that pre-existing dev server (left running, untouched, exactly as found), spun up a temporary, isolated pair for verification only: a fresh API dev server on `:4000` and a fresh web dev server on `:5555` with `VITE_API_URL=http://localhost:4000` passed as an inline shell env var (never written to `.env`). Both stopped after verification; `apps/web/.env` confirmed byte-for-byte unchanged throughout.
+- Zero console errors during the full flow.
+
+## Typechecks
+
+`npm run build` (web — includes `tsc -b`) and `npx tsc --noEmit` (api) — clean.
+
+## Commit
+
+Pending — see next entry once pushed.
+
+## Cleanup
+
+Both temporary dev servers (`:4000` api, `:5555` web) killed after verification. The pre-existing, long-running dev server on the web app's usual port was never touched. `sharp` uninstalled after the one-off image compression (never landed in `package.json`). All diagnostic scripts stayed in the session scratchpad, none staged.

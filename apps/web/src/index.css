@@ -743,3 +743,108 @@
 .rbc-calendar .rbc-slot-selection {
   background-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
 }
+
+/* ============================================================
+   Login page: a fixed platform identity
+   ============================================================
+   Deliberately NOT wired to the color and font custom properties
+   above -- those are per-studio theme-preset values (see
+   lib/themePresets.ts), swapped via the [data-theme] attribute
+   on <html>. There is no authenticated studio context yet at
+   /login, and since this is an SPA, a stale [data-theme] value can
+   still be sitting on <html> from whatever preset was last applied
+   in this tab (e.g. a user who logged out without a full page
+   reload) -- referencing the swappable tokens here would make this
+   page look depend on browsing history. Every value below is a
+   literal constant matching the editorial restyle palette (see the
+   [data-theme="editorial-gold"] block above), not a var() reference,
+   so this page always renders identically. */
+.login-shell {
+  --login-panel: #171310;
+  --login-panel-2: #1d1813;
+  --login-line: rgba(201, 154, 91, 0.18);
+  --login-line-strong: rgba(201, 154, 91, 0.38);
+  --login-cream: #f2ece0;
+  --login-smoke: #9b927f;
+  --login-gold: #c99a5b;
+  --login-gold-hi: #e4be85;
+  --login-gold-fg: #171208;
+}
+
+.login-serif {
+  font-family: 'Fraunces', ui-serif, serif;
+}
+.login-sans-light {
+  font-family: 'Outfit', ui-sans-serif, system-ui, sans-serif;
+}
+.login-jura {
+  font-family: 'Jura', ui-sans-serif, system-ui, sans-serif;
+}
+
+.login-panel-surface {
+  background: var(--login-panel);
+  border: 1px solid var(--login-line);
+}
+
+.login-input {
+  background: var(--login-panel-2);
+  border: 1px solid var(--login-line);
+  color: var(--login-cream);
+}
+.login-input::placeholder {
+  color: var(--login-smoke);
+}
+.login-input:focus {
+  outline: none;
+  border-color: var(--login-gold);
+  box-shadow: 0 0 0 1px var(--login-gold);
+}
+
+.login-label {
+  color: var(--login-gold);
+}
+
+.login-button {
+  background: var(--login-gold);
+  color: var(--login-gold-fg);
+  transition: background-color var(--duration-base) ease-out;
+}
+.login-button:hover:not(:disabled) {
+  background: var(--login-gold-hi);
+}
+
+/* Same concentric-ring technique as .arc-decor (header-anchored, in the
+   authenticated shell) -- centered in the viewport instead of anchored
+   behind a header, since this page's layout is a single full-screen
+   centered card rather than a page with a fixed top header. */
+.login-arc-decor {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 1400px;
+  height: 1400px;
+  pointer-events: none;
+  z-index: 0;
+}
+.login-arc-decor i {
+  position: absolute;
+  inset: 0;
+  border: 1px solid rgba(201, 154, 91, 0.1);
+  border-radius: 50%;
+  display: block;
+}
+.login-arc-decor i:nth-child(2) {
+  inset: 110px;
+  border-color: rgba(201, 154, 91, 0.07);
+}
+.login-arc-decor i:nth-child(3) {
+  inset: 230px;
+  border-color: rgba(201, 154, 91, 0.05);
+}
+@media (max-width: 640px) {
+  .login-arc-decor {
+    width: 900px;
+    height: 900px;
+  }
+}

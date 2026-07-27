@@ -1,7 +1,17 @@
 import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
+import loginBackground from '../assets/login-background.jpg'
 
+// The Ink Manager platform's own login screen -- deliberately a FIXED
+// identity, not themed by the per-studio preset system the rest of the
+// app uses (lib/themePresets.ts). There's no authenticated studio context
+// yet at this point, so per-studio theming doesn't apply here; every
+// color/font/radius below is a literal constant from the .login-* classes
+// in index.css, not the swappable --color-*/--font-* tokens, so this page
+// looks the same regardless of which preset any studio later picks after
+// logging in (and regardless of a stale [data-theme] left on <html> from
+// a previous session in the same tab).
 export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -26,25 +36,41 @@ export default function Login() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-bg px-4">
+    <div className="login-shell relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-12">
+      <img
+        src={loginBackground}
+        alt=""
+        aria-hidden="true"
+        className="absolute inset-0 h-full w-full object-cover"
+      />
+      <div className="absolute inset-0 bg-black/70" aria-hidden="true" />
+      <span className="login-arc-decor" aria-hidden="true">
+        <i />
+        <i />
+        <i />
+      </span>
+
       <form
         onSubmit={handleSubmit}
-        className="w-full max-w-sm rounded-2xl border border-border bg-surface p-8"
+        className="login-panel-surface relative z-10 w-full max-w-sm rounded-[1rem] p-8 shadow-2xl"
       >
-        <img
-          src="/branding/logo-white-512.png"
-          alt="Ink Manager"
-          className="mx-auto mb-8 h-14 w-auto"
-        />
+        <p className="mb-8 text-center text-[34px] leading-none">
+          <span className="login-serif" style={{ color: 'var(--login-cream)' }}>
+            ink
+          </span>
+          <span className="login-sans-light" style={{ color: 'var(--login-cream)', fontWeight: 300 }}>
+            manager
+          </span>
+        </p>
 
         {error && (
-          <div className="mb-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+          <div className="mb-4 rounded-[0.625rem] border border-red-900/40 bg-red-950/40 px-3 py-2 text-sm text-red-300">
             {error}
           </div>
         )}
 
         <div className="mb-4">
-          <label htmlFor="email" className="mb-1 block text-sm font-medium text-fg-secondary">
+          <label htmlFor="email" className="login-label mb-1.5 block text-sm font-medium">
             Email
           </label>
           <input
@@ -53,12 +79,12 @@ export default function Login() {
             required
             value={email}
             onChange={(event) => setEmail(event.target.value)}
-            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+            className="login-input w-full rounded-[0.625rem] px-3 py-2 text-sm"
           />
         </div>
 
         <div className="mb-6">
-          <label htmlFor="password" className="mb-1 block text-sm font-medium text-fg-secondary">
+          <label htmlFor="password" className="login-label mb-1.5 block text-sm font-medium">
             Password
           </label>
           <input
@@ -67,14 +93,14 @@ export default function Login() {
             required
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+            className="login-input w-full rounded-[0.625rem] px-3 py-2 text-sm"
           />
         </div>
 
         <button
           type="submit"
           disabled={submitting}
-          className="w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
+          className="login-button login-jura w-full rounded-[0.625rem] px-4 py-3 text-xs font-bold tracking-[0.2em] uppercase disabled:opacity-60"
         >
           {submitting ? 'Signing in…' : 'Sign in'}
         </button>
