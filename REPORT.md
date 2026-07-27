@@ -3375,7 +3375,7 @@ Beyond the named shared components above, the `ui/restyle-v3` branch also direct
 
 ## Commit
 
-Pending — see below.
+`1a8eb4f` on `main`.
 
 ## Cleanup
 
