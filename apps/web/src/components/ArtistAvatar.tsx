@@ -1,3 +1,5 @@
+import { useThemePreset } from '../lib/useThemePreset'
+
 export interface ArtistLike {
   user: { email: string; name: string | null; avatarUrl: string | null }
 }
@@ -23,11 +25,20 @@ export function FlatArtistAvatar({
   avatarUrl: string | null
   className: string
 }) {
+  const { shape } = useThemePreset()
+  const isEditorial = shape === 'editorial'
+
   if (avatarUrl) {
     return <img src={avatarUrl} alt={name} className={`${className} shrink-0 rounded-full object-cover`} />
   }
   return (
-    <span className={`${className} flex shrink-0 items-center justify-center rounded-full bg-surface text-xs font-semibold text-fg`}>
+    <span
+      className={
+        isEditorial
+          ? `${className} flex shrink-0 items-center justify-center rounded-full bg-surface-raised font-display text-xs italic text-accent-hover ring-1 ring-inset ring-border-strong`
+          : `${className} flex shrink-0 items-center justify-center rounded-full bg-surface text-xs font-semibold text-fg`
+      }
+    >
       {name.slice(0, 1).toUpperCase()}
     </span>
   )

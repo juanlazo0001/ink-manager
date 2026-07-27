@@ -1509,7 +1509,7 @@ export default function Settings() {
 
               {themeError && <p className="mt-3 text-sm text-danger">{themeError}</p>}
 
-              <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
                 {THEME_PRESETS.map((preset) => {
                   const isSelected = policies.themePreset === preset.key
                   const isSaving = themeSavingKey === preset.key

@@ -1,4 +1,5 @@
 import { formatStatus } from '../lib/format'
+import { useThemePreset } from '../lib/useThemePreset'
 
 export type Tone = 'success' | 'info' | 'warning' | 'danger' | 'neutral' | 'progress' | 'highlight'
 
@@ -80,8 +81,12 @@ const STATUS_TONE: Record<string, Tone> = {
 }
 
 // Tone -> className must stay as literal strings (not built from a
-// template with the tone name) so Tailwind's scanner can find them.
-const TONE_CLASSES: Record<Tone, string> = {
+// template with the tone name) so Tailwind's scanner can find them. Two
+// full sets (not one set + theme-variable overrides) since the 'editorial'
+// shape's pill is a structurally different treatment -- bordered/tinted
+// instead of solid-filled, plus a dot the 'default' shape never renders --
+// not just a different color on the same shape.
+const TONE_CLASSES_DEFAULT: Record<Tone, string> = {
   success: 'bg-success/15 text-success',
   info: 'bg-info/15 text-info',
   warning: 'bg-warning/15 text-warning',
@@ -89,6 +94,24 @@ const TONE_CLASSES: Record<Tone, string> = {
   neutral: 'bg-neutral/15 text-neutral',
   progress: 'bg-progress/15 text-progress',
   highlight: 'bg-highlight/15 text-highlight',
+}
+const TONE_CLASSES_EDITORIAL: Record<Tone, string> = {
+  success: 'border-success/50 bg-success/10 text-success',
+  info: 'border-info/50 bg-info/10 text-info',
+  warning: 'border-warning/50 bg-warning/10 text-warning',
+  danger: 'border-danger/50 bg-danger/10 text-danger',
+  neutral: 'border-border-soft bg-white/[0.02] text-neutral',
+  progress: 'border-progress/50 bg-progress/10 text-progress',
+  highlight: 'border-highlight/50 bg-highlight/10 text-highlight',
+}
+const TONE_DOT_CLASSES: Record<Tone, string> = {
+  success: 'bg-success',
+  info: 'bg-info',
+  warning: 'bg-warning',
+  danger: 'bg-danger-strong',
+  neutral: 'bg-neutral',
+  progress: 'bg-progress',
+  highlight: 'bg-highlight',
 }
 
 // Exported so other components (e.g. the Conversations list's avatar rings)
@@ -103,11 +126,32 @@ interface StatusPillProps {
   className?: string
 }
 
+// Dual themes: 'default' shape keeps its original plain filled pill;
+// 'editorial' shape (ui/restyle-v3, integrated as the "Editorial Gold"
+// preset) gets the Jura-tracked bordered pill with a tone-colored dot,
+// matching that reference mockup's .badge. Every status pill in the app
+// renders through this one component, so branching here is what keeps
+// both shapes correct everywhere at once (Inquiries, Projects, Clients,
+// Team, Kanban cards, the Conversations badge) without touching any of
+// those call sites.
 export default function StatusPill({ status, label, className = '' }: StatusPillProps) {
   const tone = STATUS_TONE[status] ?? 'neutral'
+  const { shape } = useThemePreset()
+
+  if (shape === 'editorial') {
+    return (
+      <span
+        className={`inline-flex items-center gap-2 whitespace-nowrap rounded-full border px-3 py-1.5 font-jura text-[10px] font-bold tracking-[0.16em] uppercase ${TONE_CLASSES_EDITORIAL[tone]} ${className}`}
+      >
+        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${TONE_DOT_CLASSES[tone]}`} aria-hidden="true" />
+        {label ?? formatStatus(status)}
+      </span>
+    )
+  }
+
   return (
     <span
-      className={`inline-flex items-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium ${TONE_CLASSES[tone]} ${className}`}
+      className={`inline-flex items-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium ${TONE_CLASSES_DEFAULT[tone]} ${className}`}
     >
       {label ?? formatStatus(status)}
     </span>

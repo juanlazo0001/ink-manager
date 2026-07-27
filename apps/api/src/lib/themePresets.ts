@@ -6,7 +6,7 @@
 // apps/api <-> apps/web boundary since no shared package exists between
 // them anywhere else in this codebase either -- same convention already
 // noted in apps/api/src/lib/realtime/registry.ts's own comment).
-export const THEME_PRESET_KEYS = ["onyx-lime", "slate-teal", "ember-amber", "orchid-magenta"] as const;
+export const THEME_PRESET_KEYS = ["onyx-lime", "slate-teal", "ember-amber", "orchid-magenta", "editorial-gold"] as const;
 
 export type ThemePresetKey = (typeof THEME_PRESET_KEYS)[number];
 

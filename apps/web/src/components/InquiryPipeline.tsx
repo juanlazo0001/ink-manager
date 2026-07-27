@@ -1,4 +1,5 @@
 import { CheckIcon } from './icons'
+import { useThemePreset } from '../lib/useThemePreset'
 
 // Single source of truth for "what step is this inquiry on, relative to the
 // whole process" -- consumed by InquiryDetail (horizontal, full width), the
@@ -60,6 +61,8 @@ export default function InquiryPipeline({
   steps,
   activeIndex: activeIndexProp,
 }: InquiryPipelineProps) {
+  const { shape } = useThemePreset()
+  const isEditorial = shape === 'editorial'
   const effectiveSteps: readonly PipelineStepLike[] = steps ?? PIPELINE_STEPS
   const isClosed = !steps && CLOSED_STATUSES.includes(status)
   // Service lines: CANDIDACY_REVIEW is deliberately NOT one of PIPELINE_STEPS
@@ -74,7 +77,7 @@ export default function InquiryPipeline({
   if (isCandidacyReview) {
     return (
       <div className={className}>
-        {!hideLabel && <p className="text-xs font-semibold uppercase tracking-wider text-fg-muted">Pipeline</p>}
+        {!hideLabel && <p className={isEditorial ? "font-jura text-[10px] font-semibold uppercase tracking-[0.3em] text-fg-muted" : "text-xs font-semibold uppercase tracking-wider text-fg-muted"}>Pipeline</p>}
         <div className={`flex items-center gap-2 ${hideLabel ? '' : 'mt-2'}`}>
           <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-warning" />
           <span className="text-sm font-semibold text-fg">Awaiting candidacy review</span>
@@ -86,7 +89,7 @@ export default function InquiryPipeline({
   if (isClosed) {
     return (
       <div className={className}>
-        {!hideLabel && <p className="text-xs font-semibold uppercase tracking-wider text-fg-muted">Pipeline</p>}
+        {!hideLabel && <p className={isEditorial ? "font-jura text-[10px] font-semibold uppercase tracking-[0.3em] text-fg-muted" : "text-xs font-semibold uppercase tracking-wider text-fg-muted"}>Pipeline</p>}
         <div className={`flex items-center gap-2 ${hideLabel ? '' : 'mt-2'}`}>
           <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-neutral" />
           <span className="text-sm font-semibold text-fg">
@@ -117,12 +120,27 @@ export default function InquiryPipeline({
                 />
               )}
               <span
-                className={[
-                  'z-10 flex h-5 w-5 shrink-0 items-center justify-center rounded-full',
-                  done || current ? 'bg-accent text-bg' : 'border border-border bg-surface-inset',
-                ].join(' ')}
+                className={
+                  isEditorial
+                    ? [
+                        'hex z-10 flex h-6 w-5 shrink-0 items-center justify-center font-display text-[10px] italic',
+                        done
+                          ? 'bg-accent text-accent-fg font-semibold not-italic'
+                          : current
+                            ? 'bg-danger-strong text-white font-semibold not-italic shadow-[0_0_0_6px_rgba(194,64,47,0.16)]'
+                            : 'bg-surface-raised text-fg-muted ring-1 ring-inset ring-border-strong',
+                      ].join(' ')
+                    : [
+                        'z-10 flex h-5 w-5 shrink-0 items-center justify-center rounded-full',
+                        done || current ? 'bg-accent text-bg' : 'border border-border bg-surface-inset',
+                      ].join(' ')
+                }
               >
-                {done && <CheckIcon className="h-3 w-3" />}
+                {isEditorial
+                  ? done
+                    ? <CheckIcon className="h-3 w-3" />
+                    : index + 1
+                  : done && <CheckIcon className="h-3 w-3" />}
               </span>
               <span
                 className={[
@@ -140,7 +158,7 @@ export default function InquiryPipeline({
 
   const vertical = (
     <div className={className}>
-      {!hideLabel && <p className="text-xs font-semibold uppercase tracking-wider text-fg-muted">Pipeline</p>}
+      {!hideLabel && <p className={isEditorial ? "font-jura text-[10px] font-semibold uppercase tracking-[0.3em] text-fg-muted" : "text-xs font-semibold uppercase tracking-wider text-fg-muted"}>Pipeline</p>}
       {stepsList}
     </div>
   )
@@ -179,16 +197,28 @@ export default function InquiryPipeline({
                   />
                 )}
                 <span
-                  className={[
-                    'z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold',
-                    done || current ? 'bg-accent text-bg' : 'border border-border bg-surface-inset text-fg-muted',
-                  ].join(' ')}
+                  className={
+                    isEditorial
+                      ? [
+                          'hex z-10 flex h-8 w-7 shrink-0 items-center justify-center font-display text-[13px] italic',
+                          done
+                            ? 'bg-accent text-accent-fg font-semibold not-italic'
+                            : current
+                              ? 'bg-danger-strong text-white font-semibold not-italic shadow-[0_0_0_7px_rgba(194,64,47,0.16)]'
+                              : 'bg-surface-raised text-fg-muted ring-1 ring-inset ring-border-strong',
+                        ].join(' ')
+                      : [
+                          'z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold',
+                          done || current ? 'bg-accent text-bg' : 'border border-border bg-surface-inset text-fg-muted',
+                        ].join(' ')
+                  }
                 >
-                  {done ? <CheckIcon className="h-3 w-3" /> : index + 1}
+                  {done ? <CheckIcon className={isEditorial ? 'h-3.5 w-3.5' : 'h-3 w-3'} /> : index + 1}
                 </span>
                 <span
                   className={[
-                    'mt-1.5 whitespace-nowrap text-[11px] font-medium',
+                    isEditorial ? 'mt-2' : 'mt-1.5',
+                    'whitespace-nowrap text-[11px] font-medium',
                     current ? 'text-fg' : done ? 'text-fg-secondary' : 'text-fg-muted',
                   ].join(' ')}
                 >

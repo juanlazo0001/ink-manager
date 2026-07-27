@@ -5,14 +5,50 @@
 @import "@fontsource/inter/600.css";
 @import "@fontsource/inter/700.css";
 
+/* Dual themes: the ui/restyle-v3 branch's three-font system, self-hosted
+   the same way Inter is, loaded unconditionally alongside it -- both font
+   systems are always available so switching the "editorial-gold" preset
+   in/out is purely a CSS custom-property swap (see the @theme block and
+   the [data-theme="editorial-gold"] block below), never a font (re)load
+   or a page reload. See REPORT.md's "Dual themes" entry. */
+@import "@fontsource/fraunces/400.css";
+@import "@fontsource/fraunces/400-italic.css";
+@import "@fontsource/fraunces/500.css";
+@import "@fontsource/fraunces/500-italic.css";
+@import "@fontsource/fraunces/600.css";
+@import "@fontsource/jura/500.css";
+@import "@fontsource/jura/600.css";
+@import "@fontsource/jura/700.css";
+@import "@fontsource/outfit/300.css";
+@import "@fontsource/outfit/400.css";
+@import "@fontsource/outfit/500.css";
+
 /* UI-2 design tokens -- one place, consumed everywhere via Tailwind
    utilities generated from these custom properties (bg-surface,
    text-secondary, border-border, bg-success/15, etc.). No hardcoded hex
    values in components; if a new color is needed, it goes here first.
    Reference: public/desktop/screenshots/layout v3.jpg -- near-black
-   canvas, charcoal cards, one lime accent. */
+   canvas, charcoal cards, one lime accent. These are the DEFAULTS every
+   preset in the "default" shape (onyx-lime/slate-teal/ember-amber/
+   orchid-magenta) uses as-is; "editorial-gold" overrides nearly all of
+   them in its own [data-theme] block further down. */
 @theme {
   --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  /* font-display/font-jura exist purely so editorial-gold has somewhere to
+     override them -- under every "default"-shape preset they're identical
+     to font-sans, so any component that unconditionally reaches for
+     font-display/font-jura (rather than branching on useThemePreset()'s
+     `shape`) still renders in plain Inter, not a foreign font. */
+  --font-display: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-jura: 'Inter', ui-sans-serif, system-ui, sans-serif;
+
+  /* radius-btn defaults to a full pill (9999px), matching this shape's own
+     rounded-full button convention exactly -- editorial-gold overrides it
+     to 10px. radius-card already equals Tailwind's built-in 2xl (16px) by
+     coincidence, so no override is even needed for editorial-gold to also
+     use 16px cards; listed for clarity. */
+  --radius-btn: 9999px;
+  --radius-card: 1rem;
 
   /* Surfaces */
   --color-bg: #0a0a0b;
@@ -21,9 +57,13 @@
   --color-surface-inset: #121214;
 
   /* Borders -- 1px hairlines, white at low alpha per the reference's
-     barely-there card edges. */
+     barely-there card edges. border-soft exists so editorial-gold (which
+     uses a gold-tinted --color-border/-strong) still has a plain, hairline
+     divider color for places that shouldn't read as accent-tinted -- under
+     every "default" preset it's identical to --color-border. */
   --color-border: #ffffff14; /* ~8% */
   --color-border-strong: #ffffff26; /* ~15%, hover/focus-adjacent emphasis */
+  --color-border-soft: #ffffff14;
 
   /* Text -- never pure white on pure black. Named fg/fg-secondary/fg-muted
      (not text-primary/etc) so the generated utility reads text-fg rather
@@ -44,6 +84,14 @@
   --color-accent-fg: #0a0a0b;
   --color-accent-hover: #b8dd25;
 
+  /* danger-strong exists purely for editorial-gold's fills/borders/icon-
+     strokes-only red (its raw brand red fails the 4.5:1 AA text floor,
+     see that preset's own comment below) -- under every "default" preset
+     it's identical to --color-danger, so components that render it
+     unconditionally (rather than branching) show no visible difference. */
+  --color-danger: #f87171;
+  --color-danger-strong: #f87171;
+
   /* Semantic status -- used as bg-{name}/15 (translucent tint) +
      text-{name} (solid), per the reference's pill treatment. Mapping is
      documented in components/StatusPill.tsx, not scattered per-page.
@@ -53,7 +101,6 @@
   --color-success: #4ade80;
   --color-info: #60a5fa;
   --color-warning: #fbbf24;
-  --color-danger: #f87171;
   --color-neutral: #b4b4bd;
   --color-progress: #a78bfa;
   --color-highlight: #d97706;
@@ -80,18 +127,19 @@
   --animate-fade-slide-up: fade-slide-up var(--duration-base) ease-out;
 }
 
-/* Package C2: theme presets. Every preset shares the exact same near-black
-   surface/border/text tokens above (already independently verified WCAG
-   AA -- see REPORT.md) and only overrides the accent trio, so contrast on
-   every existing fg/bg pairing never needs re-checking per preset; only
-   the new accent-fg-on-accent and accent-as-text-on-bg/surface pairings
-   are preset-specific, each verified AA (see REPORT.md for the exact
-   ratios). ThemeApplier (apps/web/src/components/ThemeApplier.tsx) sets
-   this attribute on <html> from StudioSettings.themePreset; every public
-   page applies it the same way from its own public route's themePreset
-   field. "onyx-lime" is listed explicitly (even though it's identical to
-   the @theme defaults above) so all four presets' full palettes are
-   visible together in one place. */
+/* Package C2: theme presets. Every "default"-shape preset shares the exact
+   same near-black surface/border/text/font/radius tokens above (already
+   independently verified WCAG AA -- see REPORT.md) and only overrides the
+   accent trio, so contrast on every existing fg/bg pairing never needs
+   re-checking per preset; only the new accent-fg-on-accent and
+   accent-as-text-on-bg/surface pairings are preset-specific, each verified
+   AA (see REPORT.md for the exact ratios). ThemeApplier
+   (apps/web/src/components/ThemeApplier.tsx) sets this attribute on <html>
+   from StudioSettings.themePreset; every public page applies it the same
+   way from its own public route's themePreset field. "onyx-lime" is
+   listed explicitly (even though it's identical to the @theme defaults
+   above) so all five presets' full palettes are visible together in one
+   place. */
 :root[data-theme="onyx-lime"] {
   --color-accent: #c9f031;
   --color-accent-fg: #0a0a0b;
@@ -111,6 +159,55 @@
   --color-accent: #e879f9;
   --color-accent-fg: #0a0a0b;
   --color-accent-hover: #d946ef;
+}
+
+/* Dual themes: "editorial-gold" -- the ui/restyle-v3 branch's full palette,
+   integrated as a fifth preset rather than the app's only look. Overrides
+   nearly every token above (surfaces/borders/text/accent/status/fonts/
+   radii), not just the accent trio like the other four presets, since this
+   is a genuinely different visual identity, not a recolor. Every value and
+   contrast ratio here is unchanged from the ui/restyle-v3 branch's own
+   REPORT.md entry (5.16-16.68:1 across every real pairing) -- carried
+   forward, not recomputed. */
+:root[data-theme="editorial-gold"] {
+  --font-sans: 'Outfit', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Fraunces', ui-serif, serif;
+  --font-jura: 'Jura', ui-sans-serif, system-ui, sans-serif;
+
+  --radius-btn: 0.625rem; /* 10px, reference's --r-btn */
+  --radius-card: 1rem; /* 16px, reference's --r-card */
+
+  --color-bg: #0e0b08; /* reference --ink */
+  --color-surface: #171310; /* reference --panel */
+  --color-surface-raised: #1d1813; /* reference --panel-2 */
+  --color-surface-inset: #120f0b; /* reference --wall */
+
+  --color-border: rgba(201, 154, 91, 0.18);
+  --color-border-strong: rgba(201, 154, 91, 0.38);
+  --color-border-soft: rgba(255, 255, 255, 0.08);
+
+  --color-fg: #f2ece0; /* reference --cream */
+  --color-fg-secondary: #c7bea9;
+  --color-fg-muted: #9b927f; /* reference --smoke */
+
+  --color-accent: #c99a5b; /* reference --gold */
+  --color-accent-fg: #171208;
+  --color-accent-hover: #e4be85; /* reference --gold-hi */
+
+  /* Split into two tokens the same way the reference's own CSS does: the
+     raw brand red only clears the 3:1 non-text-UI floor against
+     surface/surface-inset (3.58-3.70:1), not the 4.5:1 text floor, so
+     danger-strong is reserved for fills/borders/icon-strokes/dots and
+     danger stays the readable-as-text tint (6.69-7.11:1). */
+  --color-danger: #e08272;
+  --color-danger-strong: #c2402f; /* reference --red -- backgrounds/borders/icons only, never text */
+
+  --color-success: #5f9e6e; /* reference --green */
+  --color-info: #96aad6;
+  --color-warning: #d9a441;
+  --color-neutral: #9b927f;
+  --color-progress: #c1a6de;
+  --color-highlight: #e0995a;
 }
 
 @utility duration-fast {
@@ -227,6 +324,126 @@
     background-size: 1rem;
     padding-right: 2.25rem;
   }
+}
+
+/* Dual themes: grain texture -- scoped entirely under
+   [data-theme="editorial-gold"] so it never renders under any other
+   preset (no rule at all applies to body::after otherwise, rather than a
+   rule that exists everywhere but is hidden/zeroed-out for other themes --
+   easier to verify "absent" than "present but suppressed"). Exact SVG
+   feTurbulence technique and opacity (4.5%) from the ui/restyle-v3
+   reference mockup. pointer-events: none guarantees it never intercepts
+   clicks regardless of z-index/paint order. */
+:root[data-theme="editorial-gold"] body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 95;
+  opacity: 0.045;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.9'/%3E%3C/svg%3E");
+}
+
+/* Dual themes: shared visual-language primitives for the 'editorial' shape
+   -- mirrors the reference mockup's own reusable class set (.sc, .hex,
+   .ornament, .arcs). Components consuming these (Widget, Modal,
+   InquiryPipeline, Sidebar, TopBar) branch on useThemePreset()'s `shape`
+   before applying the className that references them, so these class
+   DEFINITIONS existing globally is harmless -- under the 'default' shape
+   nothing in the DOM ever gets the class name in the first place. See
+   REPORT.md's "Dual themes" entry for the full component-by-component
+   investigation. */
+.sc {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-variant: small-caps;
+  text-transform: lowercase;
+  letter-spacing: 0.06em;
+  color: var(--color-fg);
+}
+
+.hex {
+  clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
+}
+
+.ornament {
+  position: relative;
+  height: 15px;
+}
+.ornament::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 7px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--color-border-strong), transparent);
+}
+.ornament::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 3px;
+  transform: translateX(-50%) rotate(45deg);
+  width: 8px;
+  height: 8px;
+  background: var(--color-danger-strong);
+}
+
+.arc-decor {
+  position: fixed;
+  left: 50%;
+  top: -560px;
+  transform: translateX(-46%);
+  width: 1400px;
+  height: 1400px;
+  pointer-events: none;
+  z-index: 0;
+}
+.arc-decor i {
+  position: absolute;
+  inset: 0;
+  border: 1px solid rgba(201, 154, 91, 0.1);
+  border-radius: 50%;
+  display: block;
+}
+.arc-decor i:nth-child(2) {
+  inset: 110px;
+  border-color: rgba(201, 154, 91, 0.07);
+}
+.arc-decor i:nth-child(3) {
+  inset: 230px;
+  border-color: rgba(201, 154, 91, 0.05);
+}
+@media (max-width: 767px) {
+  .arc-decor {
+    display: none;
+  }
+}
+
+.side-nav-link {
+  position: relative;
+  border: 1px solid transparent;
+}
+.side-nav-link::before {
+  content: '';
+  position: absolute;
+  left: -0.875rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 20px;
+  background: var(--color-danger-strong);
+  border-radius: 0 2px 2px 0;
+  opacity: 0;
+  transition: opacity var(--duration-base) ease-out;
+}
+.side-nav-link.on {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+}
+.side-nav-link.on::before {
+  opacity: 1;
 }
 
 /* Sidebar's mobile hamburger button is fixed (top-4, h-10), so it doesn't

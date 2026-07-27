@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { useSortable } from '@dnd-kit/react/sortable'
 import { ChevronDownIcon, DragHandleIcon } from './icons'
+import { useThemePreset } from '../lib/useThemePreset'
 
 interface WidgetProps {
   // Always set explicitly by the page -- a stable key identifying this
@@ -45,6 +46,8 @@ export default function Widget({
   onToggleCollapsed,
 }: WidgetProps) {
   const { ref, handleRef, isDragging } = useSortable({ id, index, group })
+  const { shape } = useThemePreset()
+  const isEditorial = shape === 'editorial'
 
   return (
     <div
@@ -54,7 +57,12 @@ export default function Widget({
       // before this component existed.
       id={id}
       ref={ref}
-      className={`rounded-2xl border border-border bg-surface p-5 ${className ?? ''}`}
+      className={[
+        isEditorial
+          ? 'rounded-card border border-border bg-gradient-to-b from-white/[0.012] to-transparent bg-surface p-6'
+          : 'rounded-2xl border border-border bg-surface p-5',
+        className ?? '',
+      ].join(' ')}
       style={{ opacity: isDragging ? 0.5 : 1 }}
     >
       <div className="flex items-center justify-between gap-2">
@@ -77,12 +85,14 @@ export default function Widget({
           >
             <ChevronDownIcon className={`h-4 w-4 transition-transform ${collapsed ? '-rotate-90' : ''}`} />
           </button>
-          <h2 className="truncate text-base font-semibold text-fg">{title}</h2>
+          <h2 className={isEditorial ? 'sc truncate text-[19px]' : 'truncate text-base font-semibold text-fg'}>
+            {title}
+          </h2>
         </div>
         {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
       </div>
 
-      {!collapsed && <div className="mt-4">{children}</div>}
+      {!collapsed && <div className={isEditorial ? 'mt-5' : 'mt-4'}>{children}</div>}
     </div>
   )
 }

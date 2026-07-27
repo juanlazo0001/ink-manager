@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { CloseIcon, DragHandleIcon } from './icons'
+import { useThemePreset } from '../lib/useThemePreset'
 
 interface ModalProps {
   title: string
@@ -22,6 +23,8 @@ const CLOSE_ANIMATION_MS = 200
 
 export default function Modal({ title, onClose, children, size = 'default' }: ModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
+  const { shape } = useThemePreset()
+  const isEditorial = shape === 'editorial'
   // Mounts in its "before" state (invisible/scaled down) on the very first
   // render, then flips to "entered" a tick later so the transition to that
   // state is what actually animates -- mounting already-visible would skip
@@ -133,7 +136,9 @@ export default function Modal({ title, onClose, children, size = 'default' }: Mo
           size === 'large'
             ? 'flex w-[92vw] max-w-[92vw] flex-col md:w-[60vw] md:max-w-[60vw] h-[80vh] max-h-[80vh]'
             : 'w-full max-w-md',
-          'rounded-2xl border border-border bg-surface p-6 duration-base',
+          isEditorial
+            ? 'rounded-card border border-border bg-surface-raised p-6 shadow-2xl duration-base'
+            : 'rounded-2xl border border-border bg-surface p-6 duration-base',
           // Transform is driven by the inline style below (translate for
           // dragging, composed with scale for the enter/exit animation) --
           // while actively dragging, the transform transition is dropped
@@ -151,7 +156,9 @@ export default function Modal({ title, onClose, children, size = 'default' }: Mo
         >
           <div className="flex min-w-0 items-center gap-1.5">
             <DragHandleIcon className="h-4 w-4 shrink-0 text-fg-muted" />
-            <h2 className="truncate text-lg font-semibold text-fg">{title}</h2>
+            <h2 className={isEditorial ? 'sc truncate text-[19px]' : 'truncate text-lg font-semibold text-fg'}>
+              {title}
+            </h2>
           </div>
           <button
             type="button"

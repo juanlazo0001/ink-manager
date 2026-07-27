@@ -21,6 +21,7 @@ import ArtistSelect from './ArtistSelect'
 import { ArtistAvatar, artistLabel, FlatArtistAvatar } from './ArtistAvatar'
 import { navCountsQueryKey } from '../lib/queryKeys'
 import type { NavCounts } from '../lib/useNavCounts'
+import { useThemePreset } from '../lib/useThemePreset'
 import {
   ArrowLeftIcon,
   ArrowUpRightIcon,
@@ -432,11 +433,17 @@ const TONE_RING_COLORS: Record<Tone, string> = {
 
 // Literal, complete class strings per branch (not built from a template) so
 // Tailwind's static scanner can find them -- see ChannelDot above for the
-// same constraint.
+// same constraint. Dual themes: this used to hardcode raw hex (a lime tint
+// for the non-terminal case) instead of going through --color-accent/
+// --color-danger/--color-neutral like the rest of the app -- meant this
+// one badge silently stayed lime under every OTHER accent preset too
+// (slate-teal, ember-amber, orchid-magenta), not just onyx-lime. Fixed to
+// route through the same tokens StatusPill uses, so it now correctly
+// tracks whichever preset (including the new editorial-gold) is active.
 function badgeClasses(status: string): string {
-  if (status === 'CLOSED_LOST') return 'bg-[#e05252]/15 text-[#e05252]'
-  if (status === 'COLD_LEAD') return 'bg-[#6b6b73]/15 text-[#6b6b73]'
-  return 'bg-[#3a4118] text-[#c8e04a]'
+  if (status === 'CLOSED_LOST') return 'bg-danger/15 text-danger'
+  if (status === 'COLD_LEAD') return 'bg-neutral/15 text-neutral'
+  return 'bg-accent/15 text-accent-hover'
 }
 
 // Progress-ring avatar for the conversation list (see
@@ -1142,7 +1149,7 @@ function ConversationListView({
               onClick={() => setQuickFilter(value)}
               className={[
                 'rounded-full px-3.5 py-1.5 text-[12.5px] font-semibold transition-colors duration-fast ease-out',
-                quickFilter === value ? 'bg-[#3a4118] text-[#c8e04a]' : 'text-fg-muted hover:text-fg',
+                quickFilter === value ? 'bg-accent text-accent-fg' : 'text-fg-muted hover:text-fg',
               ].join(' ')}
             >
               {label}
@@ -1394,6 +1401,8 @@ function ThreadView({
   const { studio } = useStudio()
   const queryClient = useQueryClient()
   const scrollRef = useRef<HTMLDivElement>(null)
+  const { shape } = useThemePreset()
+  const isEditorial = shape === 'editorial'
 
   const { data, isLoading } = useQuery({
     queryKey: ['conversation-thread', conversationId],
@@ -2308,10 +2317,14 @@ function ThreadView({
                     <button
                       type="button"
                       onClick={handleOpenDraftModal}
-                      className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
+                      className={
+                        isEditorial
+                          ? 'flex w-full items-center gap-2 rounded-md px-3 py-2 text-left font-jura text-[11px] font-bold uppercase tracking-[0.14em] text-accent-hover hover:bg-accent/10'
+                          : 'flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface'
+                      }
                     >
                       <SparkleIcon className="h-3.5 w-3.5" />
-                      Draft inquiry from conversation
+                      {isEditorial ? 'Draft with AI' : 'Draft inquiry from conversation'}
                     </button>
                   </div>
                 </>
@@ -2597,11 +2610,18 @@ function ThreadView({
 
             return (
               <div key={firstMessage.id}>
-                {group.showDaySeparator && (
-                  <p className="my-2 text-center text-[11px] uppercase tracking-wider text-fg-muted">
-                    {dayLabel(firstMessage.createdAt)}
-                  </p>
-                )}
+                {group.showDaySeparator &&
+                  (isEditorial ? (
+                    <p className="my-2 flex items-center justify-center gap-3.5 text-center font-jura text-[9px] font-semibold tracking-[0.28em] text-fg-muted uppercase">
+                      <span className="h-px w-8 bg-border-soft" aria-hidden="true" />
+                      {dayLabel(firstMessage.createdAt)}
+                      <span className="h-px w-8 bg-border-soft" aria-hidden="true" />
+                    </p>
+                  ) : (
+                    <p className="my-2 text-center text-[11px] uppercase tracking-wider text-fg-muted">
+                      {dayLabel(firstMessage.createdAt)}
+                    </p>
+                  ))}
 
                 <div className={`flex ${group.isOutboundSide ? 'justify-end' : 'justify-start'}`}>
                   <div className="flex max-w-[75%] items-end gap-2">
@@ -2640,13 +2660,22 @@ function ThreadView({
                             className={[
                               'group relative',
                               i === 0 ? '' : 'mt-[3px]',
-                              'max-w-full px-4 py-2.5 text-sm text-[#f2f2f0]',
+                              'max-w-full px-4 py-2.5 text-sm text-fg',
                               cornerClass,
+                              // Dual themes: these used to be hardcoded olive-
+                              // tinted hex (bg-[#23281a]/border-[#3d461f]) --
+                              // hardcoded regardless of the studio's own accent
+                              // preset, so every non-lime preset's outbound
+                              // bubbles silently showed an unrelated olive
+                              // tint. Routed through --color-accent/-border
+                              // instead, a universal fix (not shape-specific)
+                              // that correctly tracks whichever of the five
+                              // presets is active.
                               sharedInquiryId
                                 ? 'border border-border bg-surface-raised/80'
                                 : group.isOutboundSide
-                                  ? 'border border-[#3d461f] bg-[#23281a]'
-                                  : 'border border-[#26262c] bg-[#1c1c21]',
+                                  ? 'border border-border bg-accent/[0.12]'
+                                  : 'border border-border-soft bg-surface-raised',
                               recentlyAddedIds.has(message.id) ? 'animate-fade-slide-up' : '',
                             ].join(' ')}
                           >
@@ -3207,7 +3236,7 @@ function ThreadView({
                   >
                     <ChannelDot channel={channel} />
                     <span className="font-bold text-fg">{channelLabel(channel)}</span>
-                    <span className="ml-0.5 font-medium text-[#5a5a62]">
+                    <span className="ml-0.5 font-medium text-fg-muted">
                       {direction === 'OUTBOUND' ? 'Our reply' : 'Their message'}
                     </span>
                     {((channel === 'SMS' && integrationStatus?.sms) || (channel === 'EMAIL' && integrationStatus?.email)) &&
@@ -3221,7 +3250,7 @@ function ThreadView({
                         aria-hidden="true"
                       />
                       <div className="absolute bottom-full right-0 z-20 mb-2 w-[210px] origin-bottom-right animate-scale-fade-in rounded-[14px] border border-border bg-surface-raised p-2.5 shadow-xl">
-                        <p className="px-1.5 pb-1.5 pt-1 text-[10.5px] font-semibold uppercase tracking-wider text-[#5a5a62]">
+                        <p className="px-1.5 pb-1.5 pt-1 text-[10.5px] font-semibold uppercase tracking-wider text-fg-muted">
                           Channel
                         </p>
                         {CLIENT_CHANNELS.map((c) => {
@@ -3238,7 +3267,7 @@ function ThreadView({
                                 !available
                                   ? 'cursor-not-allowed text-fg-muted opacity-50'
                                   : c === channel
-                                    ? 'bg-[#3a4118] text-[#c8e04a]'
+                                    ? 'bg-accent text-accent-fg'
                                     : 'text-fg-secondary hover:bg-surface',
                               ].join(' ')}
                             >
@@ -3251,7 +3280,7 @@ function ThreadView({
 
                         <div className="my-1.5 h-px bg-border" />
 
-                        <p className="px-1.5 pb-1.5 pt-1 text-[10.5px] font-semibold uppercase tracking-wider text-[#5a5a62]">
+                        <p className="px-1.5 pb-1.5 pt-1 text-[10.5px] font-semibold uppercase tracking-wider text-fg-muted">
                           Reply as
                         </p>
                         <button
@@ -3259,7 +3288,7 @@ function ThreadView({
                           onClick={() => setDirection('OUTBOUND')}
                           className={[
                             'block w-full rounded-lg px-2.5 py-2 text-left text-sm font-medium',
-                            direction === 'OUTBOUND' ? 'bg-[#3a4118] text-[#c8e04a]' : 'text-fg-secondary hover:bg-surface',
+                            direction === 'OUTBOUND' ? 'bg-accent text-accent-fg' : 'text-fg-secondary hover:bg-surface',
                           ].join(' ')}
                         >
                           Our reply
@@ -3269,7 +3298,7 @@ function ThreadView({
                           onClick={() => setDirection('INBOUND')}
                           className={[
                             'block w-full rounded-lg px-2.5 py-2 text-left text-sm font-medium',
-                            direction === 'INBOUND' ? 'bg-[#3a4118] text-[#c8e04a]' : 'text-fg-secondary hover:bg-surface',
+                            direction === 'INBOUND' ? 'bg-accent text-accent-fg' : 'text-fg-secondary hover:bg-surface',
                           ].join(' ')}
                         >
                           Their message (log only)

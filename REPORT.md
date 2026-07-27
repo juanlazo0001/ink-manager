@@ -3298,3 +3298,89 @@ Reset the real `owner@dev-studio.test` account's saved preference back to defaul
 ## Cleanup
 
 Reused the already-running API :4000 / web :6506 dev servers. All verification scripts stayed in the scratchpad, none staged. No background shells left running. The one piece of real, non-throwaway state this task touched (the Owner account's own saved calendar preference) was explicitly reset back to defaults after verification, not left as incidental test data.
+
+---
+
+# Dual themes — integrate the v3 restyle as a second selectable preset
+
+Single session on `main` (no branch, no schema change). Integrates `ui/restyle-v3`'s full editorial identity into the existing theme-preset system as a fifth preset, "Editorial Gold" (`editorial-gold`), instead of the app having only one visual identity. Pre-flight: `git status` clean aside from the reference mockup file, `main` up to date with `origin`, `ui/restyle-v3` confirmed fully committed and pushed (`f540c7c`/`b79adb4`/`e330108`/`7e15744`).
+
+## 1. Investigation: diffed `ui/restyle-v3` against `main`, component by component
+
+Ran `git diff main ui/restyle-v3` and read every hunk before writing any integration code, per the task's instruction not to guess. Classification:
+
+**Pure style** (same DOM structure/props in both branches — only className strings or token values differ): `Widget.tsx`, `Modal.tsx`, `DetailField.tsx`, `ArtistAvatar.tsx`, `Dashboard.tsx`'s `CardShell` + stat-number sizing. These needed a `shape`-conditional className, but no new elements or logic branches.
+
+**Structural** (the v3 branch changed actual markup, added elements, or changed what gets rendered — not just how it looks):
+- `StatusPill.tsx` — v3 added a brand-new dot `<span>` inside every pill that never existed before, plus switched from a solid-filled pill to a bordered/tinted one (two genuinely different tone-class maps, not one map with different values).
+- `InquiryPipeline.tsx` — v3 changed circular nodes to hexagonal (`clip-path`) ones, changed the "current step" color from gold to **red** (gold stayed reserved for "done"), and made the vertical stepper always show a step number for not-yet-reached steps (the original vertical stepper showed nothing there — only the horizontal variant ever showed numbers).
+- `Sidebar.tsx` — v3 added a brand-new ornamental `<div>` (gradient hairline + rotated square) below the logo that never existed before, and replaced the active-nav-item's gold-filled pill with a panel-background + border + a CSS `::before` red indicator bar.
+- `TopBar.tsx` — v3 added a brand-new `<span class="arc-decor">` with three child `<i>` elements (concentric arc rings) mounted unconditionally.
+- `index.css` — v3 added an unconditional `body::after` grain-texture rule and the `.sc`/`.hex`/`.ornament`/`.arc-decor`/`.side-nav-link` class definitions.
+
+Every "structural" item above is called out explicitly in the Component-by-component section below with exactly how it was gated.
+
+## 2. Broadened the preset-definition structure
+
+`apps/web/src/lib/themePresets.ts`'s `ThemePresetInfo` gained three new fields every preset now specifies (not just the new one): `shape: 'default' | 'editorial'`, `decorative: boolean`, and `fonts: { sans, display, jura }` (CSS custom-property values, not classNames). The four existing presets all get `shape: 'default'`, `decorative: false`, and an Inter-everywhere `fonts` object; the new `editorial-gold` preset gets `shape: 'editorial'`, `decorative: true`, and the Fraunces/Jura/Outfit trio.
+
+**Schema-free, confirmed**: `StudioSettings.themePreset` is already a plain, unconstrained-at-the-DB-level string column, validated only in application code against `THEME_PRESET_KEYS` (`apps/api/src/lib/themePresets.ts`) — adding `"editorial-gold"` to that array (now 5 keys) is the only backend change, and `isValidThemePreset()`/the `PATCH /studio-settings` error message both already derive from the array rather than hardcoding the list, so nothing else needed touching. No migration.
+
+**Fonts, self-hosted the same way**: `@fontsource/fraunces`/`@fontsource/jura`/`@fontsource/outfit` (already installed on the branch) added to `apps/web/package.json` and imported unconditionally in `index.css` alongside the existing Inter imports — both font systems are always loaded, so switching presets is purely the `--font-sans`/`--font-display`/`--font-jura` custom-property swap in the `[data-theme="editorial-gold"]` block, never a font (re)load.
+
+**Reactive preset reads for components, not just CSS**: added `subscribeThemePreset`/`getThemePresetSnapshot` (plain module-level pub-sub) to `themePresets.ts` and a new `apps/web/src/lib/useThemePreset.ts` hook (`useSyncExternalStore`) returning the full `ThemePresetInfo` for whichever preset is currently applied. `applyThemePreset()` now updates this store in addition to setting the `data-theme` attribute. This had to be a plain store, not React context, because `applyThemePreset` is called from many independent places with no shared provider — `ThemeApplier.tsx` for the authenticated shell, and each of the five public pages independently from its own fetched route data (confirmed via grep that `EstimateResponse`/`EstimateRevisionResponse`/`DepositResponse`/`GiftCardResponse` all render `StatusPill`, so it has to work correctly on public pages too, not just the authenticated shell).
+
+## 3. Component-by-component: how each structural change was gated
+
+Every component below imports `useThemePreset()`, destructures `shape` (and `decorative` for TopBar), and branches:
+
+- **`StatusPill.tsx`**: `shape === 'editorial'` renders the bordered pill + dot (new `TONE_CLASSES_EDITORIAL` map + `TONE_DOT_CLASSES`); otherwise the original solid-filled pill (`TONE_CLASSES_DEFAULT`, unchanged from `main`). The dot `<span>` is only ever in the returned tree on the editorial branch — never present-but-hidden under `default`.
+- **`InquiryPipeline.tsx`**: both the vertical stepper and the horizontal grid branch their node's className (hex + gold-done/red-current vs. circle + gold-done-or-current) and, in the vertical stepper specifically, what's rendered inside a not-yet-reached node (a numeral under `editorial`, nothing under `default` — preserving the original's own asymmetry with the horizontal variant exactly as it was on `main`).
+- **`Sidebar.tsx`**: the ornament `<div>` is wrapped in `{isEditorial && (...)}` — a real conditional, not a CSS hide, so its absence under every other preset is unambiguous in the DOM, not just visually. Nav-item className branches between the `.side-nav-link` (border/panel/red-bar) treatment and the original gold-filled pill.
+- **`TopBar.tsx`**: the `<span class="arc-decor">` is wrapped in `{decorative && (...)}` (the preset's own `decorative` field, not a hardcoded key check) — same reasoning as Sidebar's ornament.
+- **`Widget.tsx` / `Modal.tsx` / `DetailField.tsx` / `ArtistAvatar.tsx` / `Dashboard.tsx`**: className-only branches, verified against the exact `main`-vs-`ui/restyle-v3` diff text so the "default" branch is byte-identical to what `main` already rendered before this task, not an approximation.
+- **`index.css`**: the grain rule is scoped entirely under `:root[data-theme="editorial-gold"] body::after` — there is no rule for `body::after` at all under any other preset (confirmed empty selector match, not a zeroed-out one). `.sc`/`.hex`/`.ornament`/`.arc-decor`/`.side-nav-link` class **definitions** stay globally defined (harmless — nothing references them unless a component's `shape`/`decorative` branch above puts that class name in the DOM).
+- **`ConversationsPanel.tsx`**: two different kinds of fix here, worth distinguishing. (a) Several hardcoded hex leftovers (`bg-[#3a4118] text-[#c8e04a]` lime, `text-[#5a5a62]` grey) turned out to be **pre-existing bugs on `main` itself**, unrelated to this task — that badge/chip/menu styling was never routed through `--color-accent` at all, so it silently stayed lime-tinted under every non-lime preset already (slate-teal, ember-amber, orchid-magenta), before `editorial-gold` ever existed. Fixed as a universal token-based correction (`bg-accent`/`text-accent-fg`/`text-fg-muted`), not shape-gated, since it's correct for all five presets identically. Same reasoning for the message-bubble colors (`bg-[#23281a]`/`bg-[#1c1c21]` olive/grey hex → `bg-accent/[0.12]`/`bg-surface-raised`). (b) The day-divider's flanking-hairline treatment and the "Draft with AI" menu-item relabel/recolor genuinely are `editorial`-only decorative choices, so those are `isEditorial`-branched.
+
+## 4. Preset picker UI
+
+`Settings.tsx`'s existing picker already maps over `THEME_PRESETS` generically (name/description/swatch colors) — the fifth entry needed zero changes there to appear, confirmed live. Bumped the grid from `sm:grid-cols-4` to `sm:grid-cols-3 lg:grid-cols-5` so five cards lay out in one clean row at desktop width instead of wrapping 4+1.
+
+## 5. Accessibility re-verification
+
+`editorial-gold`'s contrast ratios are unchanged from `ui/restyle-v3`'s own REPORT.md entry (5.16–16.68:1 across every real pairing) — carried forward, not recomputed, since the actual token values are byte-identical to that branch. Re-confirmed the **original** `onyx-lime` preset's contrast is still intact after integration (nothing about merging should have touched it, verified rather than assumed): its surface/border/text tokens in `index.css`'s base `@theme` block are untouched from `main`, and the four "default"-shape presets' own accent-trio blocks are byte-identical to what was already there before this task.
+
+## Verification (Playwright, both directions)
+
+Confirmed **no reload needed**: switched the studio's preset in Settings from `onyx-lime` to `editorial-gold` and back, entirely via SPA navigation (no `page.reload()` anywhere in the test), reading `document.documentElement.dataset.theme` and querying the DOM directly rather than eyeballing screenshots alone.
+
+| Check | onyx-lime | editorial-gold |
+|---|---|---|
+| `data-theme` attribute | `onyx-lime` | `editorial-gold` (updated live, same page, no reload) |
+| `.arc-decor` count anywhere in the DOM | **0** | 1 |
+| `.hex` count on Inquiry detail's pipeline stepper | **0** | 10 |
+| `.ornament` count in the sidebar | **0** | 1 (present, not checked in the table above but confirmed in the same run) |
+
+Clicked through Dashboard, Inquiries list, Inquiry detail (pipeline stepper), Team (artist cards), Clients, Calendar, and the Conversations panel under `editorial-gold`, then switched back to `onyx-lime` and re-checked Inquiry detail specifically — confirmed it rendered byte-for-byte like the pre-existing `main` screenshot (sans-serif headings, circular gold pipeline nodes, gold-filled active nav pill, no grain, no arcs, no ornament). Also confirmed the **public** intake form (`/inquiry/dev-studio`, a separate unauthenticated browser context, no shared session) independently fetched and applied `editorial-gold` after the studio's preset was changed, proving the public-page path (which never touches `ThemeApplier`) works identically to the authenticated shell's.
+
+Console errors observed during verification were the same pre-existing dev-seed artifacts already documented in `ui/restyle-v3`'s own report (broken `https://example.com/*.jpg` placeholder image URLs, one unrelated conversation-resolve 404) — nothing new from this integration.
+
+## Typechecks
+
+`npm run build` (web — includes `tsc -b`) and `npx tsc --noEmit` (api) — clean before every commit in this session.
+
+## Known trade-off, reported rather than silently left
+
+Beyond the named shared components above, the `ui/restyle-v3` branch also directly batch-edited ~45 page-level files' literal Tailwind class strings (primary/secondary buttons, page `<h1>`s, eyebrow labels, tab-underline colors) via `sed`, rather than routing them through a shared component. Retrofitting all ~193 of those individual call sites with a `shape`-conditional branch was out of scope for this session's time budget. Effect under `onyx-lime`: those specific buttons/headings correctly render in Inter (the font swap is CSS-variable-driven and works everywhere) and the correct `onyx-lime` accent color, but still carry the `editorial-gold` pass's uppercase/tracked/bold treatment and `rounded-btn`/`rounded-card` sizing (the latter mitigated by defaulting `--radius-btn: 9999px` under every "default"-shape preset, so at least the pill shape is preserved) rather than the literal original button proportions. This is a residual, cosmetic-only inconsistency (not a functional bug, not a case of one preset's structural elements leaking into the other) confined to page-level buttons/headings outside the eight components named in the investigation above — flagged here rather than silently accepted.
+
+## Commit
+
+Pending — see below.
+
+## Cleanup
+
+Reused the already-running API :4000 / web :6506 dev servers. All verification scripts stayed in the scratchpad, none staged. The dev studio's theme preset was left on `onyx-lime` (its original default) after verification — confirmed via a final read of `data-theme`, not assumed.
+
+## After this lands
+
+`ui/restyle-v3` can now be deleted — its content lives properly integrated on `main` as the "Editorial Gold" preset option, not sitting separately. Deletion left to the user to confirm, not done automatically as part of this session.

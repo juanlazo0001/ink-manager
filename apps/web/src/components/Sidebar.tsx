@@ -9,6 +9,7 @@ import { apiFetch } from '../lib/api'
 import { clientsQueryKey, inquiriesQueryKey } from '../lib/queryKeys'
 import { useNavCounts, formatBubbleCount } from '../lib/useNavCounts'
 import { Skeleton } from './Skeleton'
+import { useThemePreset } from '../lib/useThemePreset'
 
 type NavCountSection = 'inquiries' | 'appointments' | 'clients' | 'conversations'
 
@@ -42,6 +43,8 @@ export default function Sidebar() {
 
   const { data: navCounts } = useNavCounts()
   const showBadges = navCounts?.showSidebarBadges ?? false
+  const { shape } = useThemePreset()
+  const isEditorial = shape === 'editorial'
 
   // Closing on route change covers both nav-link clicks and logout's
   // redirect, so the drawer never stays open covering the next page. Adjusted
@@ -78,7 +81,7 @@ export default function Sidebar() {
           type="button"
           onClick={() => setMobileOpen(true)}
           aria-label="Open menu"
-          className={`fixed left-4 z-30 flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface text-fg shadow-lg md:hidden ${viewAsTarget ? 'top-14' : 'top-4'}`}
+          className={`fixed left-4 z-30 flex h-11 w-11 items-center justify-center rounded-full border shadow-lg md:hidden ${isEditorial ? 'border-border-soft bg-surface-inset text-fg-muted transition-colors hover:text-fg hover:border-border-strong' : 'border-border bg-surface text-fg'} ${viewAsTarget ? 'top-14' : 'top-4'}`}
         >
           <MenuIcon className="h-5 w-5" />
         </button>
@@ -94,47 +97,83 @@ export default function Sidebar() {
 
       <aside
         className={[
-          'fixed inset-y-0 left-0 z-50 flex w-[80vw] shrink-0 flex-col overflow-y-auto border-r border-border bg-bg px-4 py-6 transition-transform duration-200 ease-in-out',
+          'fixed inset-y-0 left-0 z-50 flex w-[80vw] shrink-0 flex-col overflow-y-auto transition-transform duration-200 ease-in-out',
+          isEditorial ? 'border-r border-border-soft bg-surface-inset px-4 py-6' : 'border-r border-border bg-bg px-4 py-6',
           mobileOpen ? 'translate-x-0' : '-translate-x-full',
           'md:relative md:w-64 md:translate-x-0',
         ].join(' ')}
       >
-        <div className="px-2">
+        <div className={isEditorial ? 'flex justify-center px-2' : 'px-2'}>
           {studioLoading ? (
             // Reserve the logo's space with a neutral placeholder rather
             // than the Ink Manager wordmark -- showing that while the
             // studio's own logo is still loading reads as a branding flash.
             <Skeleton className="h-16 w-full" />
           ) : studio?.logoUrl ? (
-            <img src={studio.logoUrl} alt={studio.name} className="h-auto max-h-32 w-full object-contain" />
+            <img
+              src={studio.logoUrl}
+              alt={studio.name}
+              className={isEditorial ? 'h-auto max-h-28 w-full object-contain' : 'h-auto max-h-32 w-full object-contain'}
+            />
           ) : (
             <img
               src="/branding/logo-white-512.png"
               alt="Ink Manager"
-              className="h-auto max-h-32 w-full object-contain"
+              className={isEditorial ? 'h-auto max-h-28 w-full object-contain' : 'h-auto max-h-32 w-full object-contain'}
             />
           )}
         </div>
 
-        <p className="mt-6 px-3 text-xs font-semibold uppercase tracking-wider text-fg-muted">Main</p>
+        {/* Dual themes: the sidebar's ornamental divider is a genuinely new
+            DOM element the 'default' shape never had -- only mounted for
+            'editorial', not just hidden via CSS, so its absence under every
+            other preset is unambiguous. */}
+        {isEditorial && (
+          <div className="mx-3 mt-2">
+            <div className="ornament" aria-hidden="true" />
+          </div>
+        )}
 
-        <nav className="mt-2 flex flex-col gap-1">
+        <p
+          className={
+            isEditorial
+              ? 'mt-3 px-3 font-jura text-[10px] font-semibold uppercase tracking-[0.34em] text-fg-muted'
+              : 'mt-6 px-3 text-xs font-semibold uppercase tracking-wider text-fg-muted'
+          }
+        >
+          Main
+        </p>
+
+        <nav className={isEditorial ? 'mt-2 flex flex-col gap-1 px-1' : 'mt-2 flex flex-col gap-1'}>
           {NAV_ITEMS.filter((item) => !item.roles || (user?.role && item.roles.includes(user.role))).map(
             ({ label, to, icon: Icon, section }) => {
               const isActive = to != null && (location.pathname === to || location.pathname.startsWith(`${to}/`))
-              const itemClassName = [
-                'flex items-center gap-3 rounded-full px-3 py-2 text-sm font-medium transition',
-                isActive ? 'bg-accent text-bg' : 'text-fg-secondary hover:bg-surface hover:text-fg',
-              ].join(' ')
+              const itemClassName = isEditorial
+                ? [
+                    'side-nav-link flex items-center gap-3 rounded-btn px-3 py-2.5 text-[15px] font-normal transition-colors',
+                    isActive ? 'on text-fg' : 'text-fg-muted hover:text-fg',
+                  ].join(' ')
+                : [
+                    'flex items-center gap-3 rounded-full px-3 py-2 text-sm font-medium transition',
+                    isActive ? 'bg-accent text-bg' : 'text-fg-secondary hover:bg-surface hover:text-fg',
+                  ].join(' ')
 
               const bubbleCount = showBadges && section ? navCounts?.[section] ?? 0 : 0
 
               const bubble =
                 bubbleCount > 0 ? (
-                  <span className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-danger px-1.5 text-[11px] font-semibold text-bg">
+                  <span
+                    className={
+                      isEditorial
+                        ? 'ml-auto flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-danger-strong px-1.5 text-[11px] font-medium text-white'
+                        : 'ml-auto flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-danger px-1.5 text-[11px] font-semibold text-bg'
+                    }
+                  >
                     {formatBubbleCount(bubbleCount)}
                   </span>
                 ) : null
+
+              const iconClassName = isEditorial ? 'h-[17px] w-[17px] shrink-0 opacity-85' : 'h-5 w-5'
 
               if (to) {
                 return (
@@ -145,7 +184,7 @@ export default function Sidebar() {
                     onMouseEnter={() => handlePrefetch(to)}
                     onFocus={() => handlePrefetch(to)}
                   >
-                    <Icon className="h-5 w-5" />
+                    <Icon className={iconClassName} />
                     {label}
                     {bubble}
                   </Link>
@@ -154,7 +193,7 @@ export default function Sidebar() {
 
               return (
                 <span key={label} className={`${itemClassName} cursor-default opacity-60`}>
-                  <Icon className="h-5 w-5" />
+                  <Icon className={iconClassName} />
                   {label}
                   {bubble}
                 </span>

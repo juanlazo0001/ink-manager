@@ -12,6 +12,7 @@ import { formatBubbleCount } from '../lib/useNavCounts'
 import { BellIcon, ChevronDownIcon, LogoutIcon, SearchIcon, SettingsIcon, TasksIcon, ViewIcon } from './icons'
 import ViewAsPicker from './ViewAsPicker'
 import SearchPalette from './SearchPalette'
+import { useThemePreset } from '../lib/useThemePreset'
 
 interface TasksBadgeResponse {
   system: unknown[]
@@ -80,133 +81,167 @@ export default function TopBar() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [canSearch])
 
+  const { shape, decorative } = useThemePreset()
+  const isEditorial = shape === 'editorial'
+
   if (!user) return null
 
+  const iconBtnClass = isEditorial
+    ? 'flex h-11 w-11 items-center justify-center rounded-full border border-border-soft bg-surface-inset/80 text-fg-muted shadow-lg backdrop-blur-sm transition hover:text-fg hover:border-border-strong'
+    : 'flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface text-fg-secondary shadow-lg transition hover:text-fg'
+  const menuPanelClass = isEditorial
+    ? 'rounded-card border border-border bg-surface-raised shadow-xl'
+    : 'rounded-2xl border border-border bg-surface-raised shadow-xl'
+  const menuItemClass = isEditorial
+    ? 'rounded-btn px-3 py-2 text-sm text-fg-secondary transition hover:bg-surface hover:text-fg'
+    : 'rounded-xl px-3 py-2 text-sm text-fg-secondary transition hover:bg-surface hover:text-fg'
+
   return (
-    <div className={`fixed right-4 z-30 flex items-center gap-2 ${viewAsTarget ? 'top-14' : 'top-4'}`}>
-      {canSearch && (
-        <button
-          type="button"
-          onClick={() => setSearchOpen(true)}
-          aria-label="Search"
-          className="flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface text-fg-secondary shadow-lg transition hover:text-fg"
-        >
-          <SearchIcon className="h-5 w-5" />
-        </button>
+    <>
+      {/* Dual themes: faint concentric arcs behind the header area -- a
+          genuinely new DOM element the 'default' shape never had, so it's
+          only mounted when the active preset's `decorative` flag is set
+          (today, only 'editorial-gold'), not just hidden via CSS under
+          other presets. Gated on the same "logged in" condition as the
+          rest of TopBar so public token pages never mount it either. */}
+      {decorative && (
+        <span className="arc-decor" aria-hidden="true">
+          <i />
+          <i />
+          <i />
+        </span>
       )}
-
-      {canSeeTasks && (
-        <Link
-          to="/tasks"
-          onClick={closeMenus}
-          aria-label="My Tasks"
-          className="relative flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface text-fg-secondary shadow-lg transition hover:text-fg"
-        >
-          <TasksIcon className="h-5 w-5" />
-          {taskBadgeCount > 0 && (
-            <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-danger px-1 text-[11px] font-semibold text-bg">
-              {formatBubbleCount(taskBadgeCount)}
-            </span>
-          )}
-        </Link>
-      )}
-
-      <div className="relative">
-        <button
-          type="button"
-          onClick={() => {
-            setShowMentions((v) => !v)
-            setShowAccountMenu(false)
-          }}
-          aria-label="Mentions"
-          className="flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface text-fg-secondary shadow-lg transition hover:text-fg"
-        >
-          <BellIcon className="h-5 w-5" />
-        </button>
-
-        {showMentions && (
-          <>
-            <div className="fixed inset-0 z-10" onClick={() => setShowMentions(false)} aria-hidden="true" />
-            <div className="absolute right-0 top-12 z-20 w-64 rounded-2xl border border-border bg-surface-raised p-4 shadow-xl">
-              <p className="text-sm text-fg-secondary">
-                No mentions yet — internal mentions are coming to Conversations.
-              </p>
-            </div>
-          </>
+      <div className={`fixed right-4 z-30 flex items-center gap-2 ${viewAsTarget ? 'top-14' : 'top-4'}`}>
+        {canSearch && (
+          <button type="button" onClick={() => setSearchOpen(true)} aria-label="Search" className={iconBtnClass}>
+            <SearchIcon className="h-5 w-5" />
+          </button>
         )}
-      </div>
 
-      <div className="relative">
-        <button
-          type="button"
-          onClick={() => {
-            setShowAccountMenu((v) => !v)
-            setShowMentions(false)
-          }}
-          aria-label="Account menu"
-          className="flex items-center gap-2 rounded-full border border-border bg-surface py-1 pl-1 pr-3 shadow-lg transition hover:border-border-strong"
-        >
-          {profile?.avatarUrl ? (
-            <img src={profile.avatarUrl} alt="" className="h-8 w-8 rounded-full object-cover" />
-          ) : (
-            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-surface-raised text-xs font-semibold text-fg">
-              {(profile?.name ?? user.role ?? 'U').slice(0, 1)}
-            </span>
+        {canSeeTasks && (
+          <Link to="/tasks" onClick={closeMenus} aria-label="My Tasks" className={`relative ${iconBtnClass}`}>
+            <TasksIcon className="h-5 w-5" />
+            {taskBadgeCount > 0 && (
+              <span
+                className={
+                  isEditorial
+                    ? 'absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-danger-strong px-1 text-[11px] font-medium text-white'
+                    : 'absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-danger px-1 text-[11px] font-semibold text-bg'
+                }
+              >
+                {formatBubbleCount(taskBadgeCount)}
+              </span>
+            )}
+          </Link>
+        )}
+
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => {
+              setShowMentions((v) => !v)
+              setShowAccountMenu(false)
+            }}
+            aria-label="Mentions"
+            className={iconBtnClass}
+          >
+            <BellIcon className="h-5 w-5" />
+          </button>
+
+          {showMentions && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setShowMentions(false)} aria-hidden="true" />
+              <div className={`absolute right-0 top-12 z-20 w-64 p-4 ${menuPanelClass}`}>
+                <p className="text-sm text-fg-secondary">
+                  No mentions yet — internal mentions are coming to Conversations.
+                </p>
+              </div>
+            </>
           )}
-          <span className="hidden flex-col items-start leading-tight sm:flex">
-            <span className="text-sm font-medium text-fg">{profile?.name ?? formatStatus(user.role)}</span>
-            <span className="text-xs text-fg-muted">{formatStatus(user.role)}</span>
-          </span>
-          <ChevronDownIcon className="h-3.5 w-3.5 text-fg-muted" />
-        </button>
+        </div>
 
-        {showAccountMenu && (
-          <>
-            <div className="fixed inset-0 z-10" onClick={() => setShowAccountMenu(false)} aria-hidden="true" />
-            <div className="absolute right-0 top-12 z-20 w-48 rounded-2xl border border-border bg-surface-raised p-1 shadow-xl">
-              <Link
-                to="/profile"
-                onClick={() => setShowAccountMenu(false)}
-                className="block rounded-xl px-3 py-2 text-sm text-fg-secondary transition hover:bg-surface hover:text-fg"
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => {
+              setShowAccountMenu((v) => !v)
+              setShowMentions(false)
+            }}
+            aria-label="Account menu"
+            className={
+              isEditorial
+                ? 'flex items-center gap-2 rounded-full border border-border-soft bg-surface-inset/80 py-1 pl-1 pr-3 shadow-lg backdrop-blur-sm transition hover:border-border-strong'
+                : 'flex items-center gap-2 rounded-full border border-border bg-surface py-1 pl-1 pr-3 shadow-lg transition hover:border-border-strong'
+            }
+          >
+            {profile?.avatarUrl ? (
+              <img
+                src={profile.avatarUrl}
+                alt=""
+                className={isEditorial ? 'h-9 w-9 rounded-full object-cover' : 'h-8 w-8 rounded-full object-cover'}
+              />
+            ) : (
+              <span
+                className={
+                  isEditorial
+                    ? 'flex h-9 w-9 items-center justify-center rounded-full bg-surface-raised font-display text-sm text-accent-hover'
+                    : 'flex h-8 w-8 items-center justify-center rounded-full bg-surface-raised text-xs font-semibold text-fg'
+                }
               >
-                Profile
-              </Link>
-              <Link
-                to="/settings"
-                onClick={() => setShowAccountMenu(false)}
-                className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-fg-secondary transition hover:bg-surface hover:text-fg"
-              >
-                <SettingsIcon className="h-3.5 w-3.5" />
-                Settings
-              </Link>
-              {canUseViewAs && (
+                {(profile?.name ?? user.role ?? 'U').slice(0, 1)}
+              </span>
+            )}
+            <span className="hidden flex-col items-start leading-tight sm:flex">
+              <span className="text-sm font-medium text-fg">{profile?.name ?? formatStatus(user.role)}</span>
+              <span className="text-xs text-fg-muted">{formatStatus(user.role)}</span>
+            </span>
+            <ChevronDownIcon className="h-3.5 w-3.5 text-fg-muted" />
+          </button>
+
+          {showAccountMenu && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setShowAccountMenu(false)} aria-hidden="true" />
+              <div className={`absolute right-0 top-12 z-20 w-48 p-1 ${menuPanelClass}`}>
+                <Link to="/profile" onClick={() => setShowAccountMenu(false)} className={`block ${menuItemClass}`}>
+                  Profile
+                </Link>
+                <Link
+                  to="/settings"
+                  onClick={() => setShowAccountMenu(false)}
+                  className={`flex items-center gap-2 ${menuItemClass}`}
+                >
+                  <SettingsIcon className="h-3.5 w-3.5" />
+                  Settings
+                </Link>
+                {canUseViewAs && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAccountMenu(false)
+                      setShowViewAsPicker(true)
+                    }}
+                    className={`flex w-full items-center gap-2 text-left ${menuItemClass}`}
+                  >
+                    <ViewIcon className="h-3.5 w-3.5" />
+                    View portal as...
+                  </button>
+                )}
                 <button
                   type="button"
-                  onClick={() => {
-                    setShowAccountMenu(false)
-                    setShowViewAsPicker(true)
-                  }}
-                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-fg-secondary transition hover:bg-surface hover:text-fg"
+                  onClick={handleLogout}
+                  className={`flex w-full items-center gap-2 text-left ${menuItemClass}`}
                 >
-                  <ViewIcon className="h-3.5 w-3.5" />
-                  View portal as...
+                  <LogoutIcon className="h-3.5 w-3.5" />
+                  Log out
                 </button>
-              )}
-              <button
-                type="button"
-                onClick={handleLogout}
-                className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-fg-secondary transition hover:bg-surface hover:text-fg"
-              >
-                <LogoutIcon className="h-3.5 w-3.5" />
-                Log out
-              </button>
-            </div>
-          </>
-        )}
-      </div>
+              </div>
+            </>
+          )}
+        </div>
 
-      {showViewAsPicker && <ViewAsPicker onClose={() => setShowViewAsPicker(false)} />}
-      {searchOpen && canSearch && <SearchPalette onClose={() => setSearchOpen(false)} />}
-    </div>
+        {showViewAsPicker && <ViewAsPicker onClose={() => setShowViewAsPicker(false)} />}
+        {searchOpen && canSearch && <SearchPalette onClose={() => setSearchOpen(false)} />}
+      </div>
+    </>
   )
 }

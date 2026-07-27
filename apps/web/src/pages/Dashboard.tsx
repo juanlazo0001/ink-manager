@@ -11,6 +11,7 @@ import { reportsDashboardQueryKey } from '../lib/queryKeys'
 import { formatCents } from '../lib/money'
 import { formatStatus } from '../lib/format'
 import { ArtistsIcon, CheckIcon, ClockIcon, DocumentIcon, TagIcon } from '../components/icons'
+import { useThemePreset } from '../lib/useThemePreset'
 
 interface FunnelStage {
   stage: string
@@ -54,15 +55,32 @@ function formatPct(pct: number | null): string {
 }
 
 function CardShell({ title, caption, children }: { title: string; caption?: string; children: React.ReactNode }) {
+  const { shape } = useThemePreset()
+  const isEditorial = shape === 'editorial'
   return (
-    <div className="rounded-2xl border border-border bg-surface p-5">
+    <div
+      className={
+        isEditorial
+          ? 'relative rounded-card border border-border bg-gradient-to-b from-white/[0.012] to-transparent bg-surface p-6'
+          : 'rounded-2xl border border-border bg-surface p-5'
+      }
+    >
       <div className="flex items-start justify-between gap-2">
-        <h2 className="text-base font-semibold text-fg">{title}</h2>
+        <h2 className={isEditorial ? 'sc text-[20px]' : 'text-base font-semibold text-fg'}>{title}</h2>
         {caption && <span className="shrink-0 text-xs text-fg-muted">{caption}</span>}
       </div>
-      <div className="mt-4">{children}</div>
+      <div className={isEditorial ? 'mt-5' : 'mt-4'}>{children}</div>
     </div>
   )
+}
+
+// Big stat figure -- shared className across every card below, so the
+// original "4xl/3xl font-bold" size never has to be repeated per site.
+function bigStatClass(isEditorial: boolean, size: 'lg' | 'xl') {
+  if (!isEditorial) return size === 'xl' ? 'text-4xl font-bold text-fg' : 'text-3xl font-bold text-fg'
+  return size === 'xl'
+    ? 'font-display text-5xl font-normal tracking-[-0.015em] text-fg'
+    : 'font-display text-4xl font-normal tracking-[-0.015em] text-fg'
 }
 
 export default function Dashboard() {
@@ -70,6 +88,8 @@ export default function Dashboard() {
   const { profile } = useUserProfile()
   const [range, setRange] = useState<DateRange>(() => presetRange(30))
   const [activeDays, setActiveDays] = useState<number | null>(30)
+  const { shape } = useThemePreset()
+  const isEditorial = shape === 'editorial'
 
   const { data, isLoading, error } = useQuery({
     queryKey: reportsDashboardQueryKey(user!.studioId, range.start, range.end),
@@ -88,10 +108,25 @@ export default function Dashboard() {
         <div className="mx-auto max-w-7xl px-6 py-6 sm:px-10 sm:py-8">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h1 className="text-2xl font-bold text-fg sm:text-3xl">
+              <h1
+                className={
+                  isEditorial
+                    ? 'font-display text-[clamp(32px,4vw,44px)] font-normal tracking-[-0.015em] text-fg'
+                    : 'text-2xl font-bold text-fg sm:text-3xl'
+                }
+              >
                 Welcome, {profile?.name?.trim().split(' ')[0] || (user ? formatStatus(user.role) : '')}
               </h1>
-              <p className="mt-1 text-sm text-fg-secondary">Here's how the studio is doing.</p>
+              {isEditorial ? (
+                <p className="mt-2.5 inline-flex items-center gap-3 font-jura text-[11px] font-semibold tracking-[0.34em] text-fg-muted uppercase">
+                  Here's how the studio is doing.
+                  <span className="text-danger-strong text-[13px] tracking-normal" aria-hidden="true">
+                    +
+                  </span>
+                </p>
+              ) : (
+                <p className="mt-1 text-sm text-fg-secondary">Here's how the studio is doing.</p>
+              )}
             </div>
 
             <DateRangePresetFilter
@@ -132,8 +167,9 @@ export default function Dashboard() {
               </CardShell>
 
               <CardShell title="Lost / Cold Rate" caption={`${range.start} – ${range.end}`}>
-                <p className="text-4xl font-bold text-fg">{formatPct(data.lostRate.lostColdRate)}</p>
-                <p className="mt-1 text-xs text-fg-muted">
+                {isEditorial && <span className="mb-3 block h-0.5 w-8 rounded-full bg-danger-strong" aria-hidden="true" />}
+                <p className={bigStatClass(isEditorial, 'xl')}>{formatPct(data.lostRate.lostColdRate)}</p>
+                <p className={isEditorial ? 'mt-2 text-[13.5px] text-fg-muted' : 'mt-1 text-xs text-fg-muted'}>
                   of inquiries that reached a terminal outcome ended lost or cold, rest converted
                 </p>
                 <div className="mt-4 flex flex-wrap gap-4 text-sm">
@@ -155,14 +191,18 @@ export default function Dashboard() {
                     <div className="flex items-center gap-1.5 text-xs text-fg-muted">
                       <ClockIcon className="h-3.5 w-3.5" /> Received → Estimate Sent
                     </div>
-                    <p className="mt-2 text-3xl font-bold text-fg">{formatHours(data.responseTime.avgHoursToEstimateSent)}</p>
+                    <p className={`mt-2 ${bigStatClass(isEditorial, 'lg')}`}>
+                      {formatHours(data.responseTime.avgHoursToEstimateSent)}
+                    </p>
                     <p className="mt-1 text-xs text-fg-muted">avg, n={data.responseTime.sampleSizeEstimateSent}</p>
                   </div>
                   <div>
                     <div className="flex items-center gap-1.5 text-xs text-fg-muted">
                       <ClockIcon className="h-3.5 w-3.5" /> Estimate Sent → Response
                     </div>
-                    <p className="mt-2 text-3xl font-bold text-fg">{formatHours(data.responseTime.avgHoursToResponse)}</p>
+                    <p className={`mt-2 ${bigStatClass(isEditorial, 'lg')}`}>
+                      {formatHours(data.responseTime.avgHoursToResponse)}
+                    </p>
                     <p className="mt-1 text-xs text-fg-muted">avg, n={data.responseTime.sampleSizeResponse}</p>
                   </div>
                 </div>
@@ -185,9 +225,9 @@ export default function Dashboard() {
               </CardShell>
 
               <CardShell title="Deposit Conversion" caption="All-time, not affected by the date range above">
-                <div className="flex items-center gap-2">
-                  <CheckIcon className="h-4 w-4 text-fg-muted" />
-                  <p className="text-4xl font-bold text-fg">{formatPct(data.depositConversion.conversionRate)}</p>
+                <div className={isEditorial ? 'flex items-center gap-3' : 'flex items-center gap-2'}>
+                  <CheckIcon className={isEditorial ? 'h-4 w-4 text-danger-strong' : 'h-4 w-4 text-fg-muted'} />
+                  <p className={bigStatClass(isEditorial, 'xl')}>{formatPct(data.depositConversion.conversionRate)}</p>
                 </div>
                 <p className="mt-1 text-xs text-fg-muted">
                   {data.depositConversion.paid} of {data.depositConversion.sent} deposit forms sent have been paid
@@ -198,9 +238,9 @@ export default function Dashboard() {
               </CardShell>
 
               <CardShell title="Outstanding Gift Card Liability" caption="Right now, not affected by the date range above">
-                <div className="flex items-center gap-2">
-                  <TagIcon className="h-4 w-4 text-fg-muted" />
-                  <p className="text-4xl font-bold text-fg">{formatCents(data.giftCardLiability.totalCents)}</p>
+                <div className={isEditorial ? 'flex items-center gap-3' : 'flex items-center gap-2'}>
+                  <TagIcon className={isEditorial ? 'h-4 w-4 text-accent' : 'h-4 w-4 text-fg-muted'} />
+                  <p className={bigStatClass(isEditorial, 'xl')}>{formatCents(data.giftCardLiability.totalCents)}</p>
                 </div>
                 <p className="mt-1 text-xs text-fg-muted">
                   across {data.giftCardLiability.activeCardCount} active, unredeemed gift card
