@@ -771,24 +771,34 @@
   --login-gold-fg: #171208;
 }
 
-.login-serif {
-  font-family: 'Fraunces', ui-serif, serif;
-}
-.login-sans-light {
-  font-family: 'Outfit', ui-sans-serif, system-ui, sans-serif;
-}
 .login-jura {
   font-family: 'Jura', ui-sans-serif, system-ui, sans-serif;
 }
 
+/* Visual refinement pass (no source CSS available -- values below are a
+   best-effort match against a reference screenshot, not exact numbers
+   from a design file): frosted-glass card, not a solid panel -- the photo
+   should stay visibly, softly present behind it. Translucent background
+   (login-panel at ~62% opacity, rgba not var(), since var()-based colors
+   can't have their alpha channel adjusted independently) plus blur so the
+   photo underneath reads as blurred, not sharp. Border tint lowered from
+   the original --login-line's 0.18 alpha to 0.10 -- reads softer/more
+   atmospheric, less like a crisp outline. Radius brought down to 10px
+   (was 1rem/16px, the standard --r-card token) -- this page's own,
+   architectural take, not required to match the app-wide card radius
+   given its distinct full-screen atmospheric treatment. */
 .login-panel-surface {
-  background: var(--login-panel);
-  border: 1px solid var(--login-line);
+  background: rgba(23, 19, 16, 0.62);
+  border: 1px solid rgba(201, 154, 91, 0.1);
+  border-radius: 10px;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
 }
 
 .login-input {
   background: var(--login-panel-2);
   border: 1px solid var(--login-line);
+  border-radius: 10px;
   color: var(--login-cream);
 }
 .login-input::placeholder {
@@ -800,13 +810,24 @@
   box-shadow: 0 0 0 1px var(--login-gold);
 }
 
+/* Lighter weight, no added tracking -- plainer sans presentation than the
+   Jura-tracked treatment used on the button/nav labels elsewhere. */
 .login-label {
   color: var(--login-gold);
+  font-weight: 400;
+  letter-spacing: 0;
 }
 
+/* Button radius corrected in the OPPOSITE direction from the card above --
+   noticeably more rectangular (6px), not the card's softer 10px, and a
+   world away from the app-wide pill-shaped button convention. Tracking
+   dialed back from an initial 0.2em (too wide against the reference) to
+   0.08em. */
 .login-button {
   background: var(--login-gold);
   color: var(--login-gold-fg);
+  border-radius: 6px;
+  letter-spacing: 0.08em;
   transition: background-color var(--duration-base) ease-out;
 }
 .login-button:hover:not(:disabled) {

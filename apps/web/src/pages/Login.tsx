@@ -50,27 +50,17 @@ export default function Login() {
         <i />
       </span>
 
-      <form
-        onSubmit={handleSubmit}
-        className="login-panel-surface relative z-10 w-full max-w-sm rounded-[1rem] p-8 shadow-2xl"
-      >
-        <p className="mb-8 text-center text-[34px] leading-none">
-          <span className="login-serif" style={{ color: 'var(--login-cream)' }}>
-            ink
-          </span>
-          <span className="login-sans-light" style={{ color: 'var(--login-cream)', fontWeight: 300 }}>
-            manager
-          </span>
-        </p>
+      <form onSubmit={handleSubmit} className="login-panel-surface relative z-10 w-full max-w-sm p-8 shadow-2xl">
+        <img src="/branding/logo-white-512.png" alt="Ink Manager" className="mx-auto mb-8 h-12 w-auto" />
 
         {error && (
-          <div className="mb-4 rounded-[0.625rem] border border-red-900/40 bg-red-950/40 px-3 py-2 text-sm text-red-300">
+          <div className="mb-4 rounded-md border border-red-900/40 bg-red-950/40 px-3 py-2 text-sm text-red-300">
             {error}
           </div>
         )}
 
         <div className="mb-4">
-          <label htmlFor="email" className="login-label mb-1.5 block text-sm font-medium">
+          <label htmlFor="email" className="login-label mb-1.5 block text-sm">
             Email
           </label>
           <input
@@ -79,12 +69,12 @@ export default function Login() {
             required
             value={email}
             onChange={(event) => setEmail(event.target.value)}
-            className="login-input w-full rounded-[0.625rem] px-3 py-2 text-sm"
+            className="login-input w-full px-3 py-2 text-sm"
           />
         </div>
 
         <div className="mb-6">
-          <label htmlFor="password" className="login-label mb-1.5 block text-sm font-medium">
+          <label htmlFor="password" className="login-label mb-1.5 block text-sm">
             Password
           </label>
           <input
@@ -93,14 +83,14 @@ export default function Login() {
             required
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            className="login-input w-full rounded-[0.625rem] px-3 py-2 text-sm"
+            className="login-input w-full px-3 py-2 text-sm"
           />
         </div>
 
         <button
           type="submit"
           disabled={submitting}
-          className="login-button login-jura w-full rounded-[0.625rem] px-4 py-3 text-xs font-bold tracking-[0.2em] uppercase disabled:opacity-60"
+          className="login-button login-jura w-full px-4 py-3 text-xs font-bold uppercase disabled:opacity-60"
         >
           {submitting ? 'Signing in…' : 'Sign in'}
         </button>

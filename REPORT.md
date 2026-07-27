@@ -3434,3 +3434,51 @@ The provided `apps/web/src/assets/login-background.png` was a 1672×941 photo sa
 ## Cleanup
 
 Both temporary dev servers (`:4000` api, `:5555` web) killed after verification. The pre-existing, long-running dev server on the web app's usual port was never touched. `sharp` uninstalled after the one-off image compression (never landed in `package.json`). All diagnostic scripts stayed in the session scratchpad, none staged.
+
+---
+
+# Login page — visual refinement pass (matching reference, no source CSS)
+
+Single small session on `main`. No schema changes. Refines the login page built in the prior session against a reference screenshot the owner had but no source CSS for — every value below is derived from careful visual comparison, not read off a design file, so treat it as a precise best-effort rather than a guaranteed exact match.
+
+## Also fixed in passing: the `VITE_API_URL` drift
+
+Confirmed the actual cause this time rather than routing around it: this machine's current LAN IP is `192.168.22.174` (via `ipconfig`), but `apps/web/.env`'s `VITE_API_URL` still pointed at `10.0.0.31` (stale, presumably from a different network). Since `.env` is only read at dev-server startup, fixing the file alone would not have helped the already-running server -- **restarted it** (killed the process on its usual port, relaunched `vite --port <same port>` so nothing else about the setup changed) after starting a fresh API dev server (none was running at session start). Verified with a real network capture, not assumed: the browser's actual `POST` now goes to `http://192.168.22.174:4000/login` and returns `200`, with the app correctly redirecting to `/dashboard` afterward.
+
+## 1. Real logo, not a text wordmark
+
+Swapped the "ink" (Fraunces) + "manager" (Outfit) text wordmark for the actual `apps/web/public/branding/logo-white-512.png` image, `h-12` (48px tall, rendering at 128×48 in the browser at that aspect ratio) and centered where the text sat -- sized by rendering and looking at it against the card, not guessed blind. Removed the now-dead `.login-serif`/`.login-sans-light` CSS classes (confirmed unused anywhere else via `grep` before deleting).
+
+## 2. Frosted glass card
+
+- `background: rgba(23, 19, 16, 0.62)` -- was the solid `var(--login-panel)` (`#171310` opaque); now the same color at 62% opacity so the blurred photo shows through. Used a literal `rgba()`, not `color-mix()`/`var()` with an alpha modifier, since this page's whole point is literal, non-token-driven values (see the prior session's "fixed identity" rationale).
+- `backdrop-filter: blur(16px)` + `-webkit-backdrop-filter: blur(16px)` -- middle of the suggested 12-20px range.
+- Border softened from `rgba(201, 154, 91, 0.18)` to `rgba(201, 154, 91, 0.1)` -- lower-alpha, more atmospheric, less like a crisp outline.
+
+## 3. Corner radius, corrected in opposite directions
+
+- **Card**: `1rem` (16px, the standard `--r-card` token) down to **10px** -- more architectural, and deliberately not required to match the app-wide card radius given this page's own distinct full-screen treatment.
+- **Button**: `0.625rem` (10px) down to **6px** -- noticeably more rectangular, the opposite correction from the card. Inputs were also brought to 10px (matching the card, not the button) since they read as container surfaces rather than the specifically-called-out button correction -- an inference, not explicit in the brief, noted here rather than left silent.
+
+## 4. Typography dialed back
+
+- **Labels**: `font-medium` (500) removed in favor of the default `font-weight: 400`, explicit `letter-spacing: 0` -- lighter, plainer sans presentation, still the gold accent color.
+- **Button**: `tracking-[0.2em]` down to `letter-spacing: 0.08em` -- computed value confirmed at `0.96px` on the actual `<button>` (`0.08em` × the button's `12px`/`0.75rem` font-size), noticeably tighter than the original very-wide tracking without losing the tracked-caps feel entirely.
+
+## Verification
+
+- Screenshotted at 1600px desktop and 390px mobile -- logo renders at a sensible size, card reads as a soft translucent panel with the photo visible (if dark and subdued, both by design -- the 70% page-level overlay and the card's own dark tone mean the "glass" effect is intentionally atmospheric rather than bright/obvious) rather than a flat opaque block, both radius corrections landed in opposite directions as intended, labels read plainer, button tracking is visibly tighter.
+- Confirmed via `getComputedStyle` on the real rendered elements (not just reading the source CSS): card `background: rgba(23, 19, 16, 0.62)`, `border-color: rgba(201, 154, 91, 0.1)`, `border-radius: 10px`, `backdrop-filter: blur(16px)`; button `border-radius: 6px`, `letter-spacing: 0.96px`; label `font-weight: 400`, `letter-spacing: normal`.
+- Real end-to-end login re-confirmed after all visual changes: submitted real dev credentials against the (now correctly configured) long-running dev server, got a real `200` from `POST http://192.168.22.174:4000/login`, redirected into `/dashboard`. No functional change anywhere in `handleSubmit`/`useAuth`.
+
+## Typechecks
+
+`npm run build` (web) and `npx tsc --noEmit` (api) -- clean.
+
+## Commit
+
+Pending -- see next entry once pushed.
+
+## Cleanup
+
+**Deliberately left running, not killed**: the API dev server (`:4000`) and the web dev server (`:6506`, restarted with the corrected `.env`) -- these aren't throwaway verification-only processes from this session, they're this project's actual persistent dev environment, and the whole point of the `VITE_API_URL` fix was to leave it in a working state rather than tear the fix back down. Flagging this explicitly since it's a different call than the prior session's (which killed everything it started) -- if a clean slate is wanted, both are safe to stop manually. All diagnostic/verification scripts stayed in the session scratchpad, none staged.
