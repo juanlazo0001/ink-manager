@@ -15,7 +15,7 @@ import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useViewAs } from '../context/useViewAs'
 import { useSocket } from '../context/useSocket'
 import PresenceDot from '../components/PresenceDot'
-import { PlusIcon, ViewIcon, InstagramIcon, FacebookIcon, ChevronDownIcon } from '../components/icons'
+import { PlusIcon, ViewIcon, InstagramIcon, FacebookIcon, ChevronDownIcon, PencilIcon, TrashIcon } from '../components/icons'
 
 type PermissionMatrix = Record<string, Record<string, boolean>>
 type TeamTab = 'staff' | 'artists' | 'permissions'
@@ -570,34 +570,37 @@ export default function Team() {
                             />
                           </td>
                           <td className="py-3 text-right">
-                            <div className="flex justify-end gap-2">
+                            <div className="flex justify-end gap-1.5 sm:gap-2">
                               {canUseViewAs && teamUser.id !== realUser?.userId && teamUser.role !== 'CUSTOMER' && (
                                 <button
                                   type="button"
                                   onClick={() => handleViewAs(teamUser.id)}
-                                  className="flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                                  title="View as"
+                                  className="flex items-center gap-1.5 rounded-full border border-border px-2 py-1.5 text-xs font-medium text-fg transition hover:bg-surface sm:px-3"
                                 >
-                                  <ViewIcon className="h-3.5 w-3.5" />
-                                  View as
+                                  <ViewIcon className="h-3.5 w-3.5 shrink-0" />
+                                  <span className="hidden sm:inline">View as</span>
                                 </button>
                               )}
                               <button
                                 type="button"
                                 onClick={() => openEdit(teamUser)}
                                 disabled={isSelf}
-                                title={isSelf ? 'Edit your own account from your profile' : undefined}
-                                className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
+                                title={isSelf ? 'Edit your own account from your profile' : 'Edit'}
+                                className="flex items-center gap-1.5 rounded-full border border-border px-2 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40 sm:px-3"
                               >
-                                Edit
+                                <PencilIcon className="h-3.5 w-3.5 shrink-0" />
+                                <span className="hidden sm:inline">Edit</span>
                               </button>
                               <button
                                 type="button"
                                 onClick={() => openDeleteModal(teamUser)}
                                 disabled={isSelf}
-                                title={isSelf ? "You can't delete your own account" : undefined}
-                                className="rounded-full border border-danger/40 px-3 py-1.5 text-xs font-medium text-danger transition hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-40"
+                                title={isSelf ? "You can't delete your own account" : 'Delete'}
+                                className="flex items-center gap-1.5 rounded-full border border-danger/40 px-2 py-1.5 text-xs font-medium text-danger transition hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-40 sm:px-3"
                               >
-                                Delete
+                                <TrashIcon className="h-3.5 w-3.5 shrink-0" />
+                                <span className="hidden sm:inline">Delete</span>
                               </button>
                             </div>
                           </td>

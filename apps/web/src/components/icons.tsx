@@ -279,6 +279,16 @@ export function PencilIcon({ className }: IconProps) {
 
 // iOS-style "share" glyph -- arrow up out of a box. Used for Share-with-
 // artist actions (Phase UI-3).
+export function TrashIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <path d="M4 6h12M8 6V4.5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1V6M6 6l.6 9.4a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9L14 6" strokeLinecap="round" strokeLinejoin="round" />
+      <line x1="8.5" y1="8.75" x2="8.5" y2="13.25" strokeLinecap="round" />
+      <line x1="11.5" y1="8.75" x2="11.5" y2="13.25" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 export function ShareIcon({ className }: IconProps) {
   return (
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
