@@ -842,38 +842,63 @@
   background: var(--login-gold-hi);
 }
 
-/* Same concentric-ring technique as .arc-decor (header-anchored, in the
-   authenticated shell) -- centered in the viewport instead of anchored
-   behind a header, since this page's layout is a single full-screen
-   centered card rather than a page with a fixed top header. */
-.login-arc-decor {
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 1400px;
-  height: 1400px;
-  pointer-events: none;
-  z-index: 0;
-}
-.login-arc-decor i {
+/* Same gradient-vignette technique as the marketing site's own
+   .hero-shade (marketing/index.html) -- darkens the background photo
+   more toward the edges/bottom than the flat black overlay this replaced,
+   keeping the center (where the card sits) relatively legible instead of
+   crushing the whole photo uniformly. */
+.hero-shade {
   position: absolute;
   inset: 0;
-  border: 1px solid rgba(201, 154, 91, 0.1);
+  z-index: 1;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(12, 10, 8, 0.72) 0%, rgba(12, 10, 8, 0.38) 34%, rgba(12, 10, 8, 0.55) 66%, rgba(12, 10, 8, 0.96) 100%),
+    linear-gradient(90deg, rgba(12, 10, 8, 0.72) 0%, rgba(12, 10, 8, 0.15) 30%, rgba(12, 10, 8, 0.15) 70%, rgba(12, 10, 8, 0.6) 100%);
+}
+
+/* Same concentric-ring technique as the marketing site's own .rings
+   (marketing/index.html), gold orbit dot included -- replaces the
+   previous .login-arc-decor version below, which was the identical
+   concept (see its own old comment) with plainer nested-inset rings and
+   no dot; keeping both would have doubled up two overlapping ring sets. */
+.rings {
+  position: absolute;
+  left: 50%;
+  top: 47%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 2;
+}
+.rings i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(201, 154, 91, 0.18);
   border-radius: 50%;
   display: block;
 }
-.login-arc-decor i:nth-child(2) {
-  inset: 110px;
+.rings i:nth-child(1) {
+  width: 520px;
+  height: 520px;
+}
+.rings i:nth-child(2) {
+  width: 780px;
+  height: 780px;
+  border-color: rgba(201, 154, 91, 0.12);
+}
+.rings i:nth-child(3) {
+  width: 1060px;
+  height: 1060px;
   border-color: rgba(201, 154, 91, 0.07);
 }
-.login-arc-decor i:nth-child(3) {
-  inset: 230px;
-  border-color: rgba(201, 154, 91, 0.05);
-}
-@media (max-width: 640px) {
-  .login-arc-decor {
-    width: 900px;
-    height: 900px;
-  }
+.rings s {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--login-gold);
+  left: calc(50% + 184px);
+  top: calc(50% - 184px);
 }

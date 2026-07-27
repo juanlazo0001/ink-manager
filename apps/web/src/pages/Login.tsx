@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
-import loginBackground from '../assets/login-background.jpg'
+import loginBackground from '../assets/login-background-no-artist.png'
 
 // The Ink Manager platform's own login screen -- deliberately a FIXED
 // identity, not themed by the per-studio preset system the rest of the
@@ -43,12 +43,13 @@ export default function Login() {
         aria-hidden="true"
         className="absolute inset-0 h-full w-full object-cover"
       />
-      <div className="absolute inset-0 bg-black/70" aria-hidden="true" />
-      <span className="login-arc-decor" aria-hidden="true">
+      <div className="hero-shade" aria-hidden="true" />
+      <div className="rings" aria-hidden="true">
         <i />
         <i />
         <i />
-      </span>
+        <s />
+      </div>
 
       <form onSubmit={handleSubmit} className="login-panel-surface relative z-10 w-full max-w-sm p-8 shadow-2xl">
         <img src="/branding/logo-white-512.png" alt="Ink Manager" className="mx-auto mb-4 h-18 w-auto" />
