@@ -3262,3 +3262,39 @@ Confirmed the exact per-view increment by reading RBC's own `Month.navigate`/`We
 ## Cleanup (all three parts)
 
 Reused the already-running API :4000 / web :6506 dev servers throughout — no new dev servers started at any point across all three parts. All verification scripts (CSS audits, resize/drag network checks, keyboard-shortcut and jump-to-date tests) stayed in the scratchpad, confirmed via `git status` never staged. No background shells left running. Test data: two real consultation appointments for `Louie G` (from the immediately-prior Month-view session), one appointment's duration genuinely extended by a live resize-handle drag during Part 2 verification — all left in place, consistent with this session's standing convention.
+
+---
+
+# Calendar: persist view/filter/etc. per user
+
+Same session, immediate follow-up: the user asked for the Calendar's view, artist filter, and similar display state to be remembered per-user across navigating away and back.
+
+## Design decision, asked up front
+
+Whether the specific *date* navigated to should also be remembered was a real fork (not a confident default either way), so asked directly rather than guessing: confirmed the calendar should always reopen on **today**, regardless of what date was showing when the user last left — only the view mode and filter/display toggles should survive, matching how mainstream calendar apps behave (Google Calendar doesn't reopen on whatever day you last scrolled to).
+
+## Mechanism: the same per-user pattern this app already has, not a new one
+
+Found `UserWidgetLayout` (`apps/api/prisma/schema.prisma`) / `GET,PUT /widget-layouts/:pageKey` (`widgetLayouts.ts`) / `useWidgetLayout.ts` already solve this exact shape of problem — a personal, backend-persisted, per-user display preference — for the Inquiry/Project detail pages' reorderable widget layout. Mirrored it directly rather than reaching for `localStorage` (which the user's own "save it to the user" phrasing also pointed away from — a preference that only lived in one browser wouldn't follow them across devices) or inventing a different pattern:
+
+- **Schema**: `UserCalendarPreference` — one row per user (no `pageKey` needed, unlike `UserWidgetLayout`, since there's only one Calendar), storing `view`, `selectedArtistIds` (`Json?`, `SQL NULL` meaning "no filter" — the exact same null-means-unfiltered convention `Calendar.tsx`'s own `selectedArtistIds` state already used, so the column maps straight to/from that state with zero translation), `selectedLocationId`, `includePastGuests`. Migration is a single new, purely additive table (`--create-only` inspected before applying).
+- **Backend**: `apps/api/src/routes/calendarPreferences.ts`, `GET,PUT /calendar-preferences` — same role gate as `widget-layouts` (OWNER/FRONT_DESK/ARTIST), same "not audited, carries no business meaning" treatment, same defaults-if-no-row-yet behavior on `GET`, same upsert on `PUT`.
+- **Frontend**: `useCalendarPreferences.ts`, mirroring `useWidgetLayout.ts`'s own shape almost exactly — a query for the current value plus an optimistic, best-effort `persist()` (updates the local query cache immediately regardless of the `PUT`'s outcome; a failed save just doesn't survive a refresh, never worth blocking a filter click over).
+
+## Wiring into `Calendar.tsx`
+
+Seeded `view`/`selectedArtistIds`/`selectedLocationId`/`includePastGuests` from the saved preference exactly once when it loads (the same render-time "seed once" pattern already used elsewhere in this app, e.g. `InquiryDetail.tsx`'s estimate form) — deliberately never seeds `date`. A single `updateCalendarPreferences(partial)` helper merges one changed field into the other three's current values and persists the full bundle; wired into all four places that change one of these: the toolbar's `onView`, `toggleArtistFilter` (restructured to compute the next array as a plain value first, rather than inside a `setState` updater callback, so the computed value is available to also hand to `updateCalendarPreferences`), the location `<select>`, and both the desktop and mobile "Include past guests" checkboxes.
+
+## Live-verified, not just read
+
+Set Week view + filtered down to a single artist (`Louie G`) by deselecting every other chip — confirmed each toggle fired its own real `PUT /calendar-preferences` with the correctly-updated body, the last one landing on `{"view":"week","selectedArtistIds":["<Louie G's id>"],"selectedLocationId":null,"includePastGuests":false}`. **Fully reloaded the page** (not just an in-app navigation) — Week view came back selected, only Louie G's chip showed as active, and the calendar correctly rendered only their single resource column with their real events — confirming the preference actually round-trips through the backend on a cold load, not just an in-memory React Query cache surviving a soft navigation. Also independently re-verified, via direct per-slot computed-style checks, that the Part 1 weekend-tint and artist-unavailable-grey logic were both still applying correctly on the exact days they should (an initial screenshot read had miscounted which day-of-week column was tinted by eye; the actual computed values confirmed every column correct once checked precisely, not assumed from the screenshot).
+
+Reset the real `owner@dev-studio.test` account's saved preference back to defaults (`month`, no filter) afterward via a direct `PUT`, since this is the same account this session's users actually use day to day, not disposable seed data — leaving it filtered to one random artist would have been a confusing surprise on their next real visit.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npx tsc --noEmit` + `npm run build` (web) — clean.
+
+## Cleanup
+
+Reused the already-running API :4000 / web :6506 dev servers. All verification scripts stayed in the scratchpad, none staged. No background shells left running. The one piece of real, non-throwaway state this task touched (the Owner account's own saved calendar preference) was explicitly reset back to defaults after verification, not left as incidental test data.

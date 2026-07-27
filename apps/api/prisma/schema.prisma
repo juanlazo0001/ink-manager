@@ -325,6 +325,7 @@ model User {
   dismissedDuplicatePairs   DismissedDuplicatePair[]
   uploadedImportBatches     ImportBatch[]
   widgetLayouts             UserWidgetLayout[]
+  calendarPreference        UserCalendarPreference?
 
   locationId String?
   location   Location? @relation(fields: [locationId], references: [id])
@@ -1877,6 +1878,29 @@ model UserWidgetLayout {
   user   User   @relation(fields: [userId], references: [id])
 
   @@unique([userId, pageKey])
+}
+
+// Per-user Calendar page preference -- one row per user (unlike
+// UserWidgetLayout above, there's only ever one Calendar, no pageKey
+// needed). Deliberately does NOT include the currently-viewed date: on a
+// fresh visit the calendar should always open on today, the same
+// convention every mainstream calendar app uses -- only the VIEW (Month/
+// Week/Day) and the filter/display toggles below are meant to survive
+// navigating away and back.
+model UserCalendarPreference {
+  id   String @id @default(cuid())
+  view String @default("month")
+  // Array<string> of artist ids, or SQL NULL for "no filter, show every
+  // artist" -- the exact same null-means-unfiltered convention
+  // Calendar.tsx's own selectedArtistIds state already uses, so this
+  // column can be handed straight to/from that state with no translation.
+  selectedArtistIds  Json?
+  selectedLocationId String?
+  includePastGuests  Boolean  @default(false)
+  updatedAt          DateTime @updatedAt
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id])
 }
 
 // Phase 7A scheduler foundation. One row per (jobName, scheduledFor) slot --

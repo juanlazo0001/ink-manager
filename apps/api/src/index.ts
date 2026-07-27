@@ -21,6 +21,7 @@ import { publicRouter as waiversPublicRouter, staffRouter as waiversStaffRouter 
 import tasksRouter from "./routes/tasks";
 import navCountsRouter from "./routes/navCounts";
 import widgetLayoutsRouter from "./routes/widgetLayouts";
+import calendarPreferencesRouter from "./routes/calendarPreferences";
 import conversationsRouter from "./routes/conversations";
 import prefillDraftsRouter from "./routes/prefillDrafts";
 import intakeFormsRouter from "./routes/intakeForms";
@@ -109,6 +110,7 @@ app.use("/waivers", waiversStaffRouter);
 app.use("/tasks", tasksRouter);
 app.use("/nav-counts", navCountsRouter);
 app.use("/widget-layouts", widgetLayoutsRouter);
+app.use("/calendar-preferences", calendarPreferencesRouter);
 app.use("/conversations", conversationsRouter);
 app.use("/prefill-drafts", prefillDraftsRouter);
 app.use("/intake-forms", intakeFormsRouter);

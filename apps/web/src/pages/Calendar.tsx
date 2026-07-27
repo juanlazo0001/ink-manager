@@ -34,6 +34,7 @@ import { useEffectiveUser } from '../context/useEffectiveUser'
 import { appointmentsQueryKey, appointmentsRangeQueryKey } from '../lib/queryKeys'
 import { useMarkSectionSeen } from '../lib/useMarkSectionSeen'
 import { colorForArtistId } from '../lib/artistColors'
+import { useCalendarPreferences, type CalendarPreferences } from '../lib/useCalendarPreferences'
 
 const localizer = dayjsLocalizer(dayjs)
 
@@ -457,6 +458,37 @@ export default function Calendar() {
     locations?.find((l) => l.id === selectedLocationId) ?? locations?.[0] ?? null
   const businessHours = activeLocation?.hours ?? undefined
 
+  // Per-user saved Calendar preference (view/filter/location/past-guests --
+  // deliberately not the currently-viewed date, see the schema's own
+  // comment on why). Seeded into the local state above exactly once, the
+  // moment it loads -- adjusted during render rather than an effect, same
+  // "reset local state from a query result" pattern this app already uses
+  // elsewhere (e.g. InquiryDetail.tsx's estimate form). Every subsequent
+  // user-initiated change to one of these four goes through
+  // updateCalendarPreferences below, which both updates local state (for
+  // the current session) and persists it (for the next visit).
+  const { preferences: calendarPreferences, persist: persistCalendarPreferences } = useCalendarPreferences()
+  const [seededCalendarPreferences, setSeededCalendarPreferences] = useState(false)
+  if (calendarPreferences && !seededCalendarPreferences) {
+    setSeededCalendarPreferences(true)
+    setView(
+      calendarPreferences.view === 'week' ? Views.WEEK : calendarPreferences.view === 'day' ? Views.DAY : Views.MONTH,
+    )
+    setSelectedArtistIds(calendarPreferences.selectedArtistIds)
+    setSelectedLocationId(calendarPreferences.selectedLocationId)
+    setIncludePastGuests(calendarPreferences.includePastGuests)
+  }
+
+  function updateCalendarPreferences(partial: Partial<CalendarPreferences>) {
+    persistCalendarPreferences({
+      view: view === Views.WEEK ? 'week' : view === Views.DAY ? 'day' : 'month',
+      selectedArtistIds,
+      selectedLocationId,
+      includePastGuests,
+      ...partial,
+    })
+  }
+
   // The live current-time indicator (Day/Week view) needs the studio's own
   // configured timezone, not the browser's -- same GET /studio-settings
   // Settings.tsx already reads for this exact reason (see its own
@@ -568,10 +600,10 @@ export default function Calendar() {
   }, [showResourceColumns, visibleArtistOptions, activeArtistIds])
 
   function toggleArtistFilter(id: string) {
-    setSelectedArtistIds((current) => {
-      const base = current ?? visibleArtistOptions?.map((a) => a.id) ?? []
-      return base.includes(id) ? base.filter((x) => x !== id) : [...base, id]
-    })
+    const base = selectedArtistIds ?? visibleArtistOptions?.map((a) => a.id) ?? []
+    const next = base.includes(id) ? base.filter((x) => x !== id) : [...base, id]
+    setSelectedArtistIds(next)
+    updateCalendarPreferences({ selectedArtistIds: next })
   }
 
   function invalidateAppointments() {
@@ -750,7 +782,10 @@ export default function Calendar() {
     // needed here, just a studio-local instant instead of the browser's.
     getNow: () => studioNow(studioTimezone),
     onNavigate: (next: Date) => setDate(next),
-    onView: (next: View) => setView(next),
+    onView: (next: View) => {
+      setView(next)
+      updateCalendarPreferences({ view: next === Views.WEEK ? 'week' : next === Views.DAY ? 'day' : 'month' })
+    },
     onSelectEvent: (event: CalEvent) => setPreviewAppointment(event.appointment),
     // Color still encodes artist (unchanged); a consultation additionally
     // gets a dashed accent border so it reads as visually distinct from a
@@ -814,7 +849,10 @@ export default function Calendar() {
                   <input
                     type="checkbox"
                     checked={includePastGuests}
-                    onChange={(e) => setIncludePastGuests(e.target.checked)}
+                    onChange={(e) => {
+                      setIncludePastGuests(e.target.checked)
+                      updateCalendarPreferences({ includePastGuests: e.target.checked })
+                    }}
                     className="h-3.5 w-3.5 rounded border-border bg-surface-inset accent-accent"
                   />
                   Include past guests
@@ -828,7 +866,10 @@ export default function Calendar() {
               <span className="text-xs font-medium uppercase tracking-wide text-fg-muted">Hours for</span>
               <select
                 value={activeLocation?.id ?? ''}
-                onChange={(event) => setSelectedLocationId(event.target.value)}
+                onChange={(event) => {
+                  setSelectedLocationId(event.target.value)
+                  updateCalendarPreferences({ selectedLocationId: event.target.value })
+                }}
                 className="rounded-full border border-border bg-surface-inset px-3 py-1 text-xs font-medium text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               >
                 {locations.map((location) => (
@@ -854,7 +895,10 @@ export default function Calendar() {
                   <input
                     type="checkbox"
                     checked={includePastGuests}
-                    onChange={(e) => setIncludePastGuests(e.target.checked)}
+                    onChange={(e) => {
+                      setIncludePastGuests(e.target.checked)
+                      updateCalendarPreferences({ includePastGuests: e.target.checked })
+                    }}
                     className="h-3.5 w-3.5 rounded border-border bg-surface-inset accent-accent"
                   />
                   Include past guests
