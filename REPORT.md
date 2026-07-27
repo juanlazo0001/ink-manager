@@ -3429,7 +3429,7 @@ The provided `apps/web/src/assets/login-background.png` was a 1672×941 photo sa
 
 ## Commit
 
-Pending — see next entry once pushed.
+`e8cb842` on `main`.
 
 ## Cleanup
 
