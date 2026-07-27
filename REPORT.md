@@ -3477,7 +3477,7 @@ Swapped the "ink" (Fraunces) + "manager" (Outfit) text wordmark for the actual `
 
 ## Commit
 
-Pending -- see next entry once pushed.
+`6d793e1` on `main`.
 
 ## Cleanup
 
