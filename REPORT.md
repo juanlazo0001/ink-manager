@@ -3875,7 +3875,7 @@ Pulled the button out to its own top-level slot in `SignInOrForgotCard.tsx`, bet
 
 ## Commit
 
-`<pending>` on `main`.
+`c4e1742` on `main`.
 
 ## Cleanup
 
