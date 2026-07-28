@@ -3943,7 +3943,7 @@ Playwright, local dev stack: computed each dot's angle around `.rings`' own cent
 
 ## Commit
 
-TBD -- filled in by a follow-up commit once this one lands, per this file's own established pattern.
+`e49df52` on `main`.
 
 ## Cleanup
 
