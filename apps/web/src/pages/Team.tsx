@@ -53,7 +53,7 @@ interface TeamUser {
   artist?: { bio: string | null; specialties: string[] }
 }
 
-const EMPTY_INVITE_FORM = { email: '', role: 'FRONT_DESK' }
+const EMPTY_INVITE_FORM = { email: '', name: '', phone: '', role: 'FRONT_DESK' }
 
 interface StaffDeletePreview {
   isArtist: boolean
@@ -390,6 +390,11 @@ export default function Team() {
   async function handleInviteSubmit(event: FormEvent) {
     event.preventDefault()
     if (!user?.studioId) return
+
+    if (!isValidPhoneDigits(inviteForm.phone)) {
+      setInviteFormError('Enter a complete 10-digit phone number.')
+      return
+    }
 
     setInviteFormError(null)
     setInviteSubmitting(true)
@@ -1195,6 +1200,31 @@ export default function Team() {
                 {inviteFormError}
               </div>
             )}
+
+            <div className="mb-3">
+              <label htmlFor="inviteName" className="mb-1 block text-sm font-medium text-fg-secondary">
+                Name
+              </label>
+              <input
+                id="inviteName"
+                type="text"
+                value={inviteForm.name}
+                onChange={(event) => setInviteForm({ ...inviteForm, name: event.target.value })}
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+            </div>
+
+            <div className="mb-3">
+              <label htmlFor="invitePhone" className="mb-1 block text-sm font-medium text-fg-secondary">
+                Phone
+              </label>
+              <PhoneInput
+                id="invitePhone"
+                value={inviteForm.phone}
+                onChange={(digits) => setInviteForm({ ...inviteForm, phone: digits })}
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+            </div>
 
             <div className="mb-3">
               <label htmlFor="inviteEmail" className="mb-1 block text-sm font-medium text-fg-secondary">

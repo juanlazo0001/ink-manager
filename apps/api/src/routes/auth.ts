@@ -8,6 +8,7 @@ import { requireAuth } from "../middleware/auth";
 import type { AuthPayload } from "../middleware/auth";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { sendPlatformEmail } from "../lib/platformEmail";
+import { renderPlatformEmailHtml } from "../lib/emailTemplate";
 
 const router = Router();
 
@@ -110,7 +111,13 @@ router.post("/auth/forgot-password", async (req, res) => {
       to: user.email,
       subject: "Reset your Ink Manager password",
       text: `We received a request to reset your Ink Manager password. Reset it here: ${resetUrl}\n\nThis link expires in ${PASSWORD_RESET_TOKEN_TTL_HOURS} hour(s). If you didn't request this, you can safely ignore this email.`,
-      html: `<p>We received a request to reset your Ink Manager password.</p><p><a href="${resetUrl}">Reset your password</a></p><p>This link expires in ${PASSWORD_RESET_TOKEN_TTL_HOURS} hour(s). If you didn't request this, you can safely ignore this email.</p>`,
+      html: renderPlatformEmailHtml({
+        heading: "Reset your password",
+        bodyParagraphs: ["We received a request to reset your Ink Manager password. Click the button below to choose a new one."],
+        buttonText: "Reset password",
+        buttonUrl: resetUrl,
+        footnote: `This link expires in ${PASSWORD_RESET_TOKEN_TTL_HOURS} hour(s). If you didn't request this, you can safely ignore this email.`,
+      }),
     });
   }
 
@@ -200,7 +207,13 @@ router.post("/auth/change-email", requireAuth, async (req, res) => {
     to: trimmedEmail,
     subject: "Confirm your new Ink Manager email",
     text: `Confirm this email address for your Ink Manager account: ${confirmUrl}\n\nThis link expires in ${EMAIL_CHANGE_TOKEN_TTL_HOURS} hours. Until confirmed, your account keeps signing in with your current email. If you didn't request this, you can safely ignore this email.`,
-    html: `<p>Confirm this email address for your Ink Manager account.</p><p><a href="${confirmUrl}">Confirm new email</a></p><p>This link expires in ${EMAIL_CHANGE_TOKEN_TTL_HOURS} hours. Until confirmed, your account keeps signing in with your current email. If you didn't request this, you can safely ignore this email.</p>`,
+    html: renderPlatformEmailHtml({
+      heading: "Confirm your new email",
+      bodyParagraphs: ["Confirm this email address to finish updating your Ink Manager account. Until you do, your account keeps signing in with your current email."],
+      buttonText: "Confirm new email",
+      buttonUrl: confirmUrl,
+      footnote: `This link expires in ${EMAIL_CHANGE_TOKEN_TTL_HOURS} hours. If you didn't request this, you can safely ignore this email.`,
+    }),
   });
 
   res.json({ message: "Check your new email address to confirm the change." });

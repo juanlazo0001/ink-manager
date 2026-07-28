@@ -17,6 +17,7 @@ import { isStringArray, isValidDateOrNull, isValidPreferredSchedule } from "../l
 import { slugify } from "../lib/slug";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { sendPlatformEmail } from "../lib/platformEmail";
+import { renderPlatformEmailHtml } from "../lib/emailTemplate";
 
 const router = Router();
 
@@ -270,7 +271,7 @@ router.post("/:studioId/users", requireAuth, requirePermission("team.manage"), a
       });
     }
 
-    return tx.user.findUniqueOrThrow({ where: { id: created.id }, include: { artist: { select: { id: true } } } });
+    return tx.user.findUniqueOrThrow({ where: { id: created.id }, include: USER_INCLUDE_ARTIST });
   });
 
   await logAudit({
@@ -282,8 +283,7 @@ router.post("/:studioId/users", requireAuth, requirePermission("team.manage"), a
     changes: { email, role, name: name || null },
   });
 
-  const { password: _userPassword, ...userWithoutPassword } = user;
-  res.status(201).json(userWithoutPassword);
+  res.status(201).json(serializeUser(user));
 });
 
 const INVITE_TOKEN_TTL_DAYS = 7;
@@ -292,7 +292,13 @@ function inviteEmailContent(studioName: string, inviteUrl: string) {
   return {
     subject: `You've been invited to join ${studioName} on Ink Manager`,
     text: `You've been invited to join ${studioName} on Ink Manager. Set up your account here: ${inviteUrl}\n\nThis link expires in ${INVITE_TOKEN_TTL_DAYS} days.`,
-    html: `<p>You've been invited to join <strong>${studioName}</strong> on Ink Manager.</p><p><a href="${inviteUrl}">Set up your account</a></p><p>This link expires in ${INVITE_TOKEN_TTL_DAYS} days.</p>`,
+    html: renderPlatformEmailHtml({
+      heading: "You've been invited",
+      bodyParagraphs: [`You've been invited to join ${studioName} on Ink Manager. Click the button below to set up your account.`],
+      buttonText: "Set up your account",
+      buttonUrl: inviteUrl,
+      footnote: `This link expires in ${INVITE_TOKEN_TTL_DAYS} days.`,
+    }),
   };
 }
 
@@ -314,13 +320,16 @@ router.post("/:studioId/invites", requireAuth, requirePermission("team.manage"),
   }
 
   const body = req.body ?? {};
-  const { email, role, name } = body;
+  const { email, role, name, phone } = body;
 
   if (!email || typeof email !== "string") {
     return res.status(400).json({ error: "email is required" });
   }
   if (!STAFF_ROLES.includes(role)) {
     return res.status(400).json({ error: `role must be one of: ${STAFF_ROLES.join(", ")}` });
+  }
+  if (phone !== undefined && phone !== null && typeof phone !== "string") {
+    return res.status(400).json({ error: "phone must be a string or null" });
   }
 
   const trimmedEmail = email.trim();
@@ -344,6 +353,7 @@ router.post("/:studioId/invites", requireAuth, requirePermission("team.manage"),
         role,
         studioId,
         name: typeof name === "string" && name.trim() ? name.trim() : null,
+        phone: typeof phone === "string" && phone.trim() ? normalizePhone(phone) : null,
         password: null,
         inviteToken,
         inviteTokenExpiresAt,

@@ -242,6 +242,25 @@
   }
 }
 
+/* AuthLayout's card-swap transition (Sign In <-> Forgot Password <-> Reset
+   Password <-> Accept Invite): the "in" phase reuses the app's existing
+   animate-fade-slide-up utility above; this is just its "out" half, run
+   first and shorter/quicker so the swap reads as a snappy hand-off rather
+   than two equally slow animations back to back. */
+@keyframes auth-card-fade-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+.auth-card-out {
+  animation: auth-card-fade-out 140ms ease-in forwards;
+}
+
 @layer base {
   body {
     @apply bg-bg text-fg;

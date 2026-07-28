@@ -3582,3 +3582,57 @@ Tokens were read directly from the dev DB in place of an inbox (documented as a 
 ## Cleanup
 
 Killed both dev server processes (api `:4000`, web `:6506`) per this task's explicit instruction — a deliberate departure from the "leave dev servers running" convention the last few sessions established, since this task asked directly for every background shell to be stopped. Restart with `npm run dev` in each of `apps/api`/`apps/web` when picking this back up. All ad-hoc verification scripts (`_verify_lookup.ts`, `_tmp_token_lookup.ts`, `_cleanup.ts`, `_final_check.ts`) were temporary, unstaged, and deleted before commit — none were left in the repo.
+
+---
+
+# Branded auth emails, invite details, profile redirect, persistent auth layout
+
+Single session on `main`. Extends the existing invite/forgot-password/change-email flows and the login page's chrome — none of it rebuilt from scratch.
+
+## 1. Branded HTML email template
+
+One shared `apps/api/src/lib/emailTemplate.ts` (`renderPlatformEmailHtml({ heading, bodyParagraphs, buttonText, buttonUrl, footnote })`), reused by all three email types (invite, password-reset, email-change-confirmation) via their existing `sendPlatformEmail`/`sendPlatformEmailBestEffort` call sites in `auth.ts`/`studios.ts` — no per-email one-off markup. Real HTML-email conventions, not web CSS: every rule inline (no `<style>` block, which many clients strip), nested `<table>` layout (Outlook's Word rendering engine has no flexbox/grid support), Georgia for the heading / system sans-serif stack for body copy (not Fraunces/Jura — most clients strip custom web fonts entirely, so naming them would just silently fall back anyway), and a table-based "bulletproof button" `<a>` (real `<button>` support is inconsistent across clients) styled to match the login page's own gold button.
+
+**Logo delivery — base64 data URI, not a URL.** `apps/api` and `apps/web` deploy as separate Railway services with separate filesystems and domains, so there's no `${PUBLIC_APP_URL}/branding/...` link this API could build that's guaranteed reachable from a real inbox in every environment — least of all local dev, where `PUBLIC_APP_URL` is just `http://localhost:5173`. `apps/api/src/lib/emailLogo.ts` inlines `apps/web/public/branding/logo-black-512.png` as a base64 constant (generated once via a Node one-liner, documented in that file's own comment for re-generating if the logo ever changes) — ships with the compiled output regardless of deploy topology, and renders identically in dev and production. Caught and fixed a real bug before sending anything real: the source PNG is 480×95 (a wide wordmark, not square) — an initial `width="120" height="120"` badly distorted it; corrected to `180×36`, the real aspect ratio.
+
+**Confirmed `apps/web/public/branding/logo-black-512.png` exists** at that exact path before starting, per the task's own instruction (it does — present on disk, newly added but not yet committed by whatever process put it there; committed now as part of this session since the email template needs it).
+
+## 2. Name + phone at invite time
+
+**Investigated first, per the task's own instruction**: `User` does NOT have `firstName`/`lastName` — the whole app (Team.tsx's existing Add/Edit forms, Profile.tsx, every other user-facing surface) already uses a single `name` field, consistently. `phone` already existed (nullable `String`). **No schema change, no migration** — both fields were already exactly what was needed; the task's "only add what's genuinely missing" resolved to nothing missing at all, just wiring an existing field through one more entry point.
+
+`POST /:studioId/invites` now accepts an optional `phone` (validated as a string, normalized the same way `POST /:studioId/users` already does) alongside the existing `email`/`name`/`role`. Team.tsx's "Invite team member" modal grew matching Name/Phone fields (same `PhoneInput` component and 10-digit validation the direct-create form already uses).
+
+## 3. Redirect to Profile after accepting an invite
+
+`InviteAccept.tsx`: `navigate('/dashboard')` → `navigate('/profile')` — one line, plus a comment explaining why (a fresh account has nothing on the dashboard yet, but real setup worth finishing).
+
+**Found and fixed a real bug while verifying this in an actual browser** (not just checking the API response): the invite-accept flow wrote the fresh JWT straight to `localStorage` and navigated away, but `AuthContext`'s `token`/`user` React state only ever initializes from `localStorage` once, on mount — so `ProtectedRoute`'s own `useAuth().token` stayed `null` on the very next render and bounced the brand-new user straight back to `/login`, despite a valid token now sitting on disk. This bug predates this session (it was already broken when the invite-accept flow redirected to `/dashboard`, just never caught since the prior session's verification was pure HTTP calls, never driven through the actual frontend). Fixed by adding `setSession(token)` to `AuthContext` — the same `localStorage.setItem` + `setToken`/`setUser` `login()` already does, factored out and reused by both — and switching `InviteAccept.tsx` to call it instead of writing to storage directly. Verified via Playwright: logged the exact same DOM/URL state that used to silently bounce to `/login`, confirmed it now lands on and stays on `/profile`, authenticated, with the invited name/phone/email showing correctly.
+
+## 4. Persistent auth-page layout
+
+New `apps/web/src/components/AuthLayout.tsx` renders the background photo/overlay/rings chrome exactly once; `App.tsx` nests `/login`, `/forgot-password`, `/reset-password/:token`, `/invite/:token`, and `/confirm-email-change/:token` under it as child routes (`<Route element={<AuthLayout />}>`), each page now rendering just its own card content via `<Outlet />`. Deleted the now-unused `AuthPageChrome.tsx` (the old per-page wrapper every one of these pages mounted independently, which was the actual root cause of the reload-flash feeling — remounting the whole background layer on every navigation, even without a literal hard refresh). `Login.tsx` itself is included in the persistent layout too — its own previously-duplicated background markup was stripped down to just the card, matching the other four; every hand-tuned style value on the card itself (frosted glass, radius, gold button, tracking) is untouched.
+
+**Crossfade + slide, no new dependency**: no animation library was already a project dependency, so this uses `useOutlet(location)` (react-router's documented technique for animating between nested routes — decouples what a `<Outlet/>` renders from the router's actual current location) plus two small CSS pieces already mostly present: the "in" half reuses the app's existing `animate-fade-slide-up` utility (already used by `Calendar.tsx`/`ConversationsPanel.tsx` for the same "new content just appeared" moment), the "out" half is a new couple-line `auth-card-fade-out` keyframe in `index.css`, run first and quicker (140ms vs. the existing 200ms `--duration-base`) so the swap reads as a snappy hand-off.
+
+**Direct URLs verified working**, not just in-app navigation: fresh `page.goto()` loads (no prior in-app navigation, cold Playwright context) of `/login`, `/reset-password/:token`, and `/invite/:token` all render correctly — nested routes match identically on a cold load as a top-level route would, confirmed rather than assumed.
+
+## Verification
+
+- **Emails**: rendered locally first (Playwright screenshot of the raw HTML at desktop + mobile widths) to catch the logo aspect-ratio bug before sending anything real. Then triggered three actual sends through the live dev API to a real Gmail inbox (`juan.lazo0001+ims-invite@gmail.com`, `+ims-reset`, `+ims-emailchange` — Gmail's `+` aliasing, all deliver to the same real inbox): an invite, a forgot-password reset, and a change-email confirmation. **User confirmed via the actual received Gmail messages that all three rendered correctly** — logo, gold accent rule, button, and layout all as expected. Email client tested against: **Gmail** (the task's specified minimum bar).
+- **Name/phone at invite**: sent a real invite with `name`/`phone` in the payload, confirmed both stored correctly in the API response and later showing correctly on the resulting Profile page.
+- **Profile redirect**: drove the full invite-accept flow in a real headless browser (not just the API call) — confirmed landing on `/profile`, authenticated, and *staying* there (this is what caught the `setSession` bug above; the very first attempt silently bounced to `/login` and only showed up because the test checked the actual rendered page, not just the response body).
+- **Persistent layout**: captured the background `<img>` DOM node's own object identity before and after an in-app Sign In → Forgot Password navigation and confirmed it's the literal same node (`true`, not just visually similar) — direct proof the layout isn't remounting, not an inference from a screenshot. Confirmed fresh direct loads of `/reset-password/:token` and `/invite/:token` (simulating opening a real emailed link cold) both render correctly.
+- **Incidental fix**: `POST /:studioId/users` (the direct-create-with-password route) was still using the old unsafe `{ password: _p, ...rest }` spread instead of the `serializeUser` allowlist the prior session's security fix was supposed to apply everywhere — found by accident while creating a test user for the forgot-password check (its response included raw `inviteToken`/`passwordResetToken`/`emailChangeToken` fields, all `null` in that instance since the row was brand new, but the same unsafe pattern the prior fix explicitly set out to eliminate). Fixed to go through `serializeUser` like every other user-returning route now does.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npm run build` (web) — both clean, re-run after every change including the `setSession` fix and the `serializeUser` incidental fix.
+
+## Commit
+
+`<pending>` on `main`.
+
+## Cleanup
+
+Killed both dev server processes (api `:4000`, web `:6506`) started for this session's verification. All ad-hoc scripts (`_get_invite_token.ts`, `_get_user_state.ts`, `_get_token2.ts`, `_cleanup2.ts`, and the local email-preview renderer) were temporary and deleted before commit. All test users created during verification (Gmail-alias accounts and plain test accounts alike) were deleted from the dev database afterward.

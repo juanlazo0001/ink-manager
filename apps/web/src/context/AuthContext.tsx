@@ -26,6 +26,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return stored ? decodeJwtPayload(stored) : null
   })
 
+  // Shared by login() below and by any other flow that ends with a fresh,
+  // already-issued JWT (invite-accept, most notably) -- writing straight to
+  // localStorage without also calling this was a real bug: AuthContext's
+  // token/user state is only ever initialized from localStorage once, on
+  // mount, so a raw localStorage.setItem elsewhere is invisible to every
+  // component already rendering (ProtectedRoute's own useAuth().token stays
+  // null), and the very next render bounces straight back to /login even
+  // though a valid token now exists on disk.
+  function setSession(token: string) {
+    localStorage.setItem(TOKEN_STORAGE_KEY, token)
+    setToken(token)
+    setUser(decodeJwtPayload(token))
+  }
+
   async function login(email: string, password: string) {
     const response = await fetch(`${API_URL}/login`, {
       method: 'POST',
@@ -39,11 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     const data = await response.json()
-    const decoded = decodeJwtPayload(data.token)
-
-    localStorage.setItem(TOKEN_STORAGE_KEY, data.token)
-    setToken(data.token)
-    setUser(decoded)
+    setSession(data.token)
   }
 
   function logout() {
@@ -52,5 +62,5 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null)
   }
 
-  return <AuthContext.Provider value={{ token, user, login, logout }}>{children}</AuthContext.Provider>
+  return <AuthContext.Provider value={{ token, user, login, logout, setSession }}>{children}</AuthContext.Provider>
 }

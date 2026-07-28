@@ -1,7 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
-import loginBackground from '../assets/login-background-no-artist.png'
 
 // The Ink Manager platform's own login screen -- deliberately a FIXED
 // identity, not themed by the per-studio preset system the rest of the
@@ -12,6 +11,10 @@ import loginBackground from '../assets/login-background-no-artist.png'
 // looks the same regardless of which preset any studio later picks after
 // logging in (and regardless of a stale [data-theme] left on <html> from
 // a previous session in the same tab).
+//
+// Background/overlay/rings chrome moved to AuthLayout (persistent-layout
+// restructure) -- this component now renders only the card, same as every
+// other page nested under that layout.
 export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -36,67 +39,51 @@ export default function Login() {
   }
 
   return (
-    <div className="login-shell relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-12">
-      <img
-        src={loginBackground}
-        alt=""
-        aria-hidden="true"
-        className="absolute inset-0 h-full w-full object-cover"
+    <form onSubmit={handleSubmit} className="login-panel-surface relative z-10 w-full max-w-sm p-8 shadow-2xl">
+      <img src="/branding/logo-white-512.png" alt="Ink Manager" className="mx-auto mb-2 h-24 w-auto" />
+
+      {error && (
+        <div className="mb-4 rounded-md border border-red-900/40 bg-red-950/40 px-3 py-2 text-sm text-red-300">
+          {error}
+        </div>
+      )}
+
+      <input
+        id="email"
+        type="email"
+        required
+        placeholder="Email"
+        aria-label="Email"
+        value={email}
+        onChange={(event) => setEmail(event.target.value)}
+        className="login-input mb-6 w-full px-3 py-3 text-sm"
       />
-      <div className="hero-shade" aria-hidden="true" />
-      <div className="rings" aria-hidden="true">
-        <i />
-        <i />
-        <i />
-        <s />
-      </div>
 
-      <form onSubmit={handleSubmit} className="login-panel-surface relative z-10 w-full max-w-sm p-8 shadow-2xl">
-        <img src="/branding/logo-white-512.png" alt="Ink Manager" className="mx-auto mb-2 h-24 w-auto" />
+      <input
+        id="password"
+        type="password"
+        required
+        placeholder="Password"
+        aria-label="Password"
+        value={password}
+        onChange={(event) => setPassword(event.target.value)}
+        className="login-input mb-6 w-full px-3 py-3 text-sm"
+      />
 
-        {error && (
-          <div className="mb-4 rounded-md border border-red-900/40 bg-red-950/40 px-3 py-2 text-sm text-red-300">
-            {error}
-          </div>
-        )}
+      <button
+        type="submit"
+        disabled={submitting}
+        className="login-button login-jura w-full px-4 py-3 text-xs font-bold uppercase disabled:opacity-60"
+      >
+        {submitting ? 'Signing in…' : 'Sign in'}
+      </button>
 
-        <input
-          id="email"
-          type="email"
-          required
-          placeholder="Email"
-          aria-label="Email"
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          className="login-input mb-6 w-full px-3 py-3 text-sm"
-        />
-
-        <input
-          id="password"
-          type="password"
-          required
-          placeholder="Password"
-          aria-label="Password"
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-          className="login-input mb-6 w-full px-3 py-3 text-sm"
-        />
-
-        <button
-          type="submit"
-          disabled={submitting}
-          className="login-button login-jura w-full px-4 py-3 text-xs font-bold uppercase disabled:opacity-60"
-        >
-          {submitting ? 'Signing in…' : 'Sign in'}
-        </button>
-
-        <Link
-          to="/forgot-password"
-          className="login-jura mt-4 block text-center text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--login-smoke)] hover:text-[var(--login-cream)]"
-        >
-          Forgot password?
-        </Link>
-      </form>
-    </div>
+      <Link
+        to="/forgot-password"
+        className="login-jura mt-4 block text-center text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--login-smoke)] hover:text-[var(--login-cream)]"
+      >
+        Forgot password?
+      </Link>
+    </form>
   )
 }

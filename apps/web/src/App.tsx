@@ -1,5 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import ProtectedRoute from './components/ProtectedRoute'
+import AuthLayout from './components/AuthLayout'
 import Login from './pages/Login'
 import ForgotPassword from './pages/ForgotPassword'
 import ResetPassword from './pages/ResetPassword'
@@ -43,11 +44,20 @@ function App() {
       <ErrorBoundary label="App">
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/forgot-password" element={<ForgotPassword />} />
-        <Route path="/reset-password/:token" element={<ResetPassword />} />
-        <Route path="/invite/:token" element={<InviteAccept />} />
-        <Route path="/confirm-email-change/:token" element={<ConfirmEmailChange />} />
+        {/* Persistent-layout auth pages: AuthLayout renders the background/
+            overlay/rings chrome ONCE and never unmounts while navigating
+            between these four -- only the card content (the individual
+            page's own element, via Outlet) swaps. Each is still its own
+            real, directly-linkable URL (nested routes work identically to
+            top-level ones on a fresh load); this only changes what happens
+            when moving between them from within the app. */}
+        <Route element={<AuthLayout />}>
+          <Route path="/login" element={<Login />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password/:token" element={<ResetPassword />} />
+          <Route path="/invite/:token" element={<InviteAccept />} />
+          <Route path="/confirm-email-change/:token" element={<ConfirmEmailChange />} />
+        </Route>
         <Route path="/inquiry/:studioSlug" element={<IntakeForm />} />
         <Route path="/inquiry/:studioSlug/:formSlug" element={<IntakeForm />} />
         <Route path="/policies/:studioSlug" element={<Policies />} />
