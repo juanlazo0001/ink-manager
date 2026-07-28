@@ -58,6 +58,7 @@ export default function Widget({
       id={id}
       ref={ref}
       className={[
+        'card-surface',
         isEditorial
           ? 'rounded-card border border-border bg-gradient-to-b from-white/[0.012] to-transparent bg-surface p-6'
           : 'rounded-2xl border border-border bg-surface p-5',

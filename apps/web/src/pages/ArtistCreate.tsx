@@ -227,7 +227,7 @@ export default function ArtistCreate() {
               </div>
             )}
 
-            <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+            <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
               <h2 className="text-base font-semibold text-fg">Account</h2>
 
               <div className="mt-4 flex items-center gap-3">
@@ -325,7 +325,7 @@ export default function ArtistCreate() {
               </div>
             </div>
 
-            <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+            <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
               <h2 className="text-base font-semibold text-fg">Guest Artist</h2>
               <p className="mt-1 text-xs text-fg-muted">
                 A guest artist working a limited window. Once their end date passes, they drop out of Calendar's
@@ -357,7 +357,7 @@ export default function ArtistCreate() {
               )}
             </div>
 
-            <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+            <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
               <h2 className="text-base font-semibold text-fg">Bio</h2>
               <textarea
                 rows={4}
@@ -368,7 +368,7 @@ export default function ArtistCreate() {
               />
             </div>
 
-            <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+            <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
               <h2 className="text-base font-semibold text-fg">Social Links</h2>
               <div className="mt-3 space-y-3">
                 <div>
@@ -400,14 +400,14 @@ export default function ArtistCreate() {
               </div>
             </div>
 
-            <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+            <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
               <h2 className="text-base font-semibold text-fg">Specialties</h2>
               <div className="mt-3">
                 <SpecialtiesInput value={specialties} onChange={setSpecialties} />
               </div>
             </div>
 
-            <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+            <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
               <h2 className="text-base font-semibold text-fg">Preferred Schedule</h2>
               <p className="mt-1 text-xs text-fg-muted">
                 Advisory availability only — doesn't block scheduling, just informs staff.
@@ -417,7 +417,7 @@ export default function ArtistCreate() {
               </div>
             </div>
 
-            <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+            <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
               <h2 className="text-base font-semibold text-fg">Portfolio</h2>
 
               <input

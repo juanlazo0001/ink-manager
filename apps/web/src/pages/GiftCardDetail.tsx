@@ -161,7 +161,7 @@ export default function GiftCardDetail() {
           </Link>
 
           {error && (
-            <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+            <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
               <p className="text-sm text-danger">{error}</p>
             </div>
           )}
@@ -170,7 +170,7 @@ export default function GiftCardDetail() {
 
           {!error && card && (
             <>
-              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+              <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
                 <div className="flex flex-wrap items-start justify-between gap-6">
                   <div>
                     <h1 className="text-xl font-bold text-fg">

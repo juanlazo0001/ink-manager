@@ -284,7 +284,7 @@ export default function MyInquiries() {
           )}
 
           {viewMode === 'kanban' && (
-            <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+            <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
               {kanbanLoading && <p className="text-sm text-fg-secondary">Loading…</p>}
               {!kanbanLoading && (
                 <InquiryKanbanBoard
@@ -302,7 +302,7 @@ export default function MyInquiries() {
           )}
 
           {viewMode === 'list' && error && (
-            <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+            <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
               <p className="text-sm text-danger">{error}</p>
             </div>
           )}
@@ -312,7 +312,7 @@ export default function MyInquiries() {
           )}
 
           {viewMode === 'list' && !error && inquiries !== null && inquiries.length === 0 && (
-            <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+            <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
               <p className="text-sm text-fg-secondary">Nothing assigned to you right now.</p>
             </div>
           )}
@@ -320,7 +320,7 @@ export default function MyInquiries() {
           {viewMode === 'list' && !error && inquiries && inquiries.length > 0 && (
             <div className="mt-6 space-y-5">
               {inquiries.map((inquiry) => (
-                <div key={inquiry.id} className="rounded-2xl border border-border bg-surface p-5">
+                <div key={inquiry.id} className="rounded-2xl card-surface border border-border bg-surface p-5">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <h2 className="text-lg font-semibold text-fg">

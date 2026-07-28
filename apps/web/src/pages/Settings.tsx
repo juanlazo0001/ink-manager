@@ -1362,7 +1362,7 @@ export default function Settings() {
           </div>
 
           {activeTab === 'general' && (
-          <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
+          <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
             <h2 className="text-lg font-semibold text-fg">Studio Profile</h2>
             <p className="mt-1 text-sm text-fg-secondary">
               {canManageStudio ? 'Manage your studio profile and branding.' : 'Your studio profile.'}
@@ -1501,7 +1501,7 @@ export default function Settings() {
           )}
 
           {activeTab === 'general' && canEditPolicies && policies && (
-            <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
+            <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
               <h2 className="text-lg font-semibold text-fg">Theme</h2>
               <p className="mt-1 text-sm text-fg-secondary">
                 Applies everywhere — the app, public forms and links, everything your clients see.
@@ -1547,7 +1547,7 @@ export default function Settings() {
           )}
 
           {activeTab === 'general' && studio && (
-            <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
+            <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
               <div className="flex items-center justify-between gap-4">
                 <div>
                   <h2 className="text-lg font-semibold text-fg">Locations</h2>
@@ -1628,7 +1628,7 @@ export default function Settings() {
           )}
 
           {activeTab === 'policies' && canViewPolicies && policies && (
-            <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
+            <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
               <div>
                 <h2 className="text-lg font-semibold text-fg">Policies</h2>
                 <p className="mt-1 text-sm text-fg-secondary">
@@ -1663,7 +1663,7 @@ export default function Settings() {
           )}
 
           {activeTab === 'policies' && canViewPolicies && policies && (
-            <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
+            <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
               <div className="flex items-center justify-between gap-4">
                 <div>
                   <h2 className="text-lg font-semibold text-fg">Defaults</h2>
@@ -1719,7 +1719,7 @@ export default function Settings() {
           )}
 
           {activeTab === 'policies' && canViewPolicies && policies && (
-            <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
+            <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <h2 className="text-lg font-semibold text-fg">Waiver Questions &amp; Clauses</h2>
@@ -1875,7 +1875,7 @@ export default function Settings() {
           {activeTab === 'services' && canViewServices && <ServicesManager canEdit={canViewServices} />}
 
           {activeTab === 'policies' && canViewPolicies && policies && (
-            <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
+            <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <h2 className="text-lg font-semibold text-fg">Message Templates</h2>
@@ -1970,7 +1970,7 @@ export default function Settings() {
           )}
 
           {activeTab === 'policies' && canViewPolicies && policies && (
-            <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
+            <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
               <div>
                 <h2 className="text-lg font-semibold text-fg">Reminder Templates &amp; Send Times</h2>
                 <p className="mt-1 text-sm text-fg-secondary">
@@ -2078,7 +2078,7 @@ export default function Settings() {
           )}
 
           {activeTab === 'policies' && canViewPolicies && (
-            <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
+            <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 className="text-lg font-semibold text-fg">Custom Policies</h2>
@@ -2190,7 +2190,7 @@ export default function Settings() {
           )}
 
           {activeTab === 'policies' && canViewPolicies && policies && (
-            <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
+            <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 className="text-lg font-semibold text-fg">Deposit Tiers</h2>
@@ -2558,7 +2558,7 @@ export default function Settings() {
           )}
 
           {activeTab === 'integrations' && canViewIntegrations && (
-            <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
+            <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
               <h2 className="text-lg font-semibold text-fg">Integrations</h2>
               <p className="mt-1 text-sm text-fg-secondary">
                 Connect your own provider accounts -- your credentials, encrypted, never shared across studios.
@@ -2954,7 +2954,7 @@ export default function Settings() {
           )}
 
           {activeTab === 'system' && canViewSystem && (
-            <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
+            <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
               <h2 className="text-lg font-semibold text-fg">System</h2>
               <p className="mt-1 text-sm text-fg-secondary">
                 These automatic tasks run on their own schedule (some nightly, some every 15 minutes) to keep your

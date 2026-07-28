@@ -931,7 +931,7 @@ export default function Calendar() {
               fade-slide-up every other "new content just appeared" moment
               in this app already uses, not a bespoke calendar-only motion. */}
           <div key={`${effectiveView}-${dayjs(date).format('YYYY-MM-DD')}`} className="animate-fade-slide-up">
-            <div className="mt-4 rounded-2xl border border-border bg-surface p-4 sm:p-5">
+            <div className="mt-4 rounded-2xl card-surface border border-border bg-surface p-4 sm:p-5">
               {isLoading ? (
                 <p className="text-sm text-fg-secondary">Loading…</p>
               ) : (

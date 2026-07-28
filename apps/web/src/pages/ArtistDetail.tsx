@@ -283,7 +283,7 @@ export default function ArtistDetail() {
           </Link>
 
           {error && (
-            <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+            <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
               <p className="text-sm text-danger">{error}</p>
             </div>
           )}
@@ -292,7 +292,7 @@ export default function ArtistDetail() {
 
           {!error && artist && (
             <>
-              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+              <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
                 <div className="flex items-center gap-4">
                   {artist.user.avatarUrl ? (
                     <img

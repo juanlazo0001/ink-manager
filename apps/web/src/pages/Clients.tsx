@@ -162,7 +162,7 @@ export default function Clients() {
             />
           </div>
 
-          <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+          <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
             {errorMessage && <p className="text-sm text-danger">{errorMessage}</p>}
 
             {!errorMessage && !isLoading && filteredClients?.length === 0 && (

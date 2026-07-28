@@ -108,7 +108,7 @@ export default function IntakeFormsManager({ canEdit }: { canEdit: boolean }) {
   if (forms === null) return null
 
   return (
-    <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
+    <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-6">
       <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-fg">Intake Forms</h2>

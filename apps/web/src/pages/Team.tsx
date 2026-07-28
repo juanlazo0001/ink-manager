@@ -674,7 +674,7 @@ export default function Team() {
           )}
 
           {activeTab === 'staff' && isOwner && (
-          <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+          <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-5">
             {viewAsError && <p className="mb-3 text-sm text-danger">{viewAsError}</p>}
             {error && <p className="text-sm text-danger">{error}</p>}
 
@@ -772,7 +772,7 @@ export default function Team() {
           {activeTab === 'artists' && (
             <div className="mt-6">
               {artistsErrorMessage && (
-                <div className="rounded-2xl border border-border bg-surface p-5">
+                <div className="card-surface rounded-2xl border border-border bg-surface p-5">
                   <p className="text-sm text-danger">{artistsErrorMessage}</p>
                 </div>
               )}
@@ -780,7 +780,7 @@ export default function Team() {
               {!artistsErrorMessage && artistsLoading && <SkeletonCards count={6} />}
 
               {!artistsErrorMessage && !artistsLoading && artists?.length === 0 && (
-                <div className="rounded-2xl border border-border bg-surface p-5">
+                <div className="card-surface rounded-2xl border border-border bg-surface p-5">
                   <p className="text-sm text-fg-secondary">
                     No artists yet.{' '}
                     {isOwner ? 'Use "Add Artist" above to add one.' : 'Ask a studio owner to add one.'}
@@ -805,7 +805,7 @@ export default function Team() {
                             <div
                               key={artist.id}
                               onClick={() => navigate(`/artists/${artist.id}`)}
-                              className="cursor-pointer rounded-2xl border border-border bg-surface p-5 transition hover:border-border-strong"
+                              className="cursor-pointer card-surface rounded-2xl border border-border bg-surface p-5 transition hover:border-border-strong"
                             >
                       <div className="flex items-center gap-3">
                         <div className="relative h-12 w-12 shrink-0">
@@ -959,7 +959,7 @@ export default function Team() {
           )}
 
           {activeTab === 'permissions' && isOwner && (
-          <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+          <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-5">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
                 <h2 className="text-lg font-semibold text-fg">Permissions</h2>

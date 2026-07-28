@@ -222,7 +222,7 @@ export default function Profile() {
           <h1 className="text-2xl font-bold text-fg sm:text-3xl">My profile</h1>
           <p className="mt-1 text-sm text-fg-secondary">Manage your account details and login.</p>
 
-          <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
+          <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-6">
             {loading && !profile && <p className="text-sm text-fg-secondary">Loading profile…</p>}
 
             {!loading && !profile && <p className="text-sm text-danger">Could not load your profile.</p>}
@@ -400,7 +400,7 @@ export default function Profile() {
           </div>
 
           {profile && (
-            <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
+            <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-6">
               <p className="text-xs font-semibold uppercase tracking-wider text-fg-muted">Login &amp; security</p>
 
               <div className="mt-4 border-t border-border pt-4">

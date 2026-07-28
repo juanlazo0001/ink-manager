@@ -214,7 +214,7 @@ export default function WaiverSign() {
         {state === 'loading' && <p className="text-center text-sm text-fg-secondary">Loading…</p>}
 
         {state === 'invalid' && (
-          <div className="rounded-2xl border border-border bg-surface p-6 text-center">
+          <div className="rounded-2xl card-surface border border-border bg-surface p-6 text-center">
             <h1 className="text-xl font-semibold text-fg">This link isn't available</h1>
             <p className="mt-2 text-sm text-fg-secondary">{invalidMessage}</p>
             <p className="mt-4 text-sm text-fg-secondary">Please ask the front desk for a new link.</p>
@@ -222,7 +222,7 @@ export default function WaiverSign() {
         )}
 
         {state === 'success' && (
-          <div className="rounded-2xl border border-border bg-surface p-6 text-center">
+          <div className="rounded-2xl card-surface border border-border bg-surface p-6 text-center">
             <h1 className="text-xl font-semibold text-fg">Thanks — you're all set!</h1>
             <p className="mt-2 text-sm text-fg-secondary">
               Your waiver has been received. Please have your government ID ready for the front desk to verify.
@@ -231,7 +231,7 @@ export default function WaiverSign() {
         )}
 
         {state === 'ready' && data && (
-          <div className="rounded-2xl border border-border bg-surface p-5">
+          <div className="rounded-2xl card-surface border border-border bg-surface p-5">
             <h1 className="text-xl font-bold text-fg">Liability Waiver</h1>
             <p className="mt-1 text-sm text-fg-secondary">{data.studioName}</p>
             <p className="mt-1 text-sm text-fg-secondary">

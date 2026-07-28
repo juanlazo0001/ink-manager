@@ -671,7 +671,7 @@ export default function AppointmentDetail() {
           </Link>
 
           {error && (
-            <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+            <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
               <p className="text-sm text-danger">{error}</p>
             </div>
           )}
@@ -680,7 +680,7 @@ export default function AppointmentDetail() {
 
           {!error && appointment && (
             <>
-              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+              <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
                     <h1 className="flex items-center gap-2 text-xl font-bold text-fg">

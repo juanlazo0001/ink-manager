@@ -267,7 +267,7 @@ export default function Tasks() {
           {data && (
             <>
               {user?.role !== 'ARTIST' && (
-              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+              <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
                 <h2 className="text-base font-semibold text-fg">Studio Queue</h2>
                 <p className="mt-1 text-sm text-fg-secondary">
                   Shared and unassigned -- anyone can act on an item; it disappears once resolved.
@@ -312,7 +312,7 @@ export default function Tasks() {
               </div>
               )}
 
-              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+              <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
                 <h2 className="text-base font-semibold text-fg">Assigned to Me</h2>
 
                 <form onSubmit={handleAddTask} className="mt-4 flex flex-wrap gap-2">
@@ -427,7 +427,7 @@ export default function Tasks() {
               </div>
 
               {canAssign && (
-                <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
                   <h2 className="text-base font-semibold text-fg">Assigned by Me</h2>
                   <p className="mt-1 text-sm text-fg-secondary">
                     Tasks you've handed to someone else -- only they can mark these complete.

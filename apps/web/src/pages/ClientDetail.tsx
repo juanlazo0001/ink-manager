@@ -1122,7 +1122,7 @@ export default function ClientDetail() {
           </Link>
 
           {error && (
-            <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+            <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
               <p className="text-sm text-danger">{error}</p>
             </div>
           )}
@@ -1158,7 +1158,7 @@ export default function ClientDetail() {
               )}
               {archiveError && <p className="mt-2 text-sm text-danger">{archiveError}</p>}
 
-              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+              <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
                 {editing ? (
                   <form onSubmit={handleEditSubmit}>
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

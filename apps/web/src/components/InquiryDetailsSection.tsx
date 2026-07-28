@@ -246,7 +246,7 @@ export default function InquiryDetailsSection({ inquiry, bare = false, onVisibil
   if (bare) return content
 
   return (
-    <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+    <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
       <h2 className="text-base font-semibold text-fg">Inquiry Details</h2>
       {content}
     </div>

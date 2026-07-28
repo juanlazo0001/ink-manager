@@ -451,7 +451,7 @@ export default function NotesSection({ notesPath, queryKeyId, canManage, readOnl
   if (bare) return content
 
   return (
-    <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+    <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
       <h2 className="text-base font-semibold text-fg">Notes</h2>
       {content}
     </div>

@@ -705,7 +705,7 @@ export default function IntakeForm() {
   if (!studioSlug || studioCheck === 'invalid') {
     return (
       <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
-        <div className="w-full max-w-lg rounded-2xl border border-border bg-surface p-8 text-center">
+        <div className="w-full max-w-lg rounded-2xl card-surface border border-border bg-surface p-8 text-center">
           <h1 className="text-xl font-semibold text-fg">We couldn't find this studio</h1>
           <p className="mt-2 text-sm text-fg-secondary">
             Please double-check the link you were given, or contact the studio directly.
@@ -726,7 +726,7 @@ export default function IntakeForm() {
   if (submitted) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
-        <div className="w-full max-w-lg rounded-2xl border border-border bg-surface p-8 text-center">
+        <div className="w-full max-w-lg rounded-2xl card-surface border border-border bg-surface p-8 text-center">
           <h1 className="text-xl font-semibold text-fg">Thanks — your inquiry is in!</h1>
           <p className="mt-2 text-sm text-fg-secondary">
             We've received your submission and someone from the studio will reach out soon.
@@ -738,7 +738,7 @@ export default function IntakeForm() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
-      <div className="w-full max-w-2xl rounded-2xl border border-border bg-surface p-8">
+      <div className="w-full max-w-2xl rounded-2xl card-surface border border-border bg-surface p-8">
         <h1 className="text-2xl font-bold text-fg">Tattoo Inquiry</h1>
         <p className="mt-1 text-sm text-fg-secondary">Tell us about the tattoo you have in mind.</p>
 

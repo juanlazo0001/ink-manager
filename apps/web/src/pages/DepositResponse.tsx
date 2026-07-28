@@ -184,7 +184,7 @@ export default function DepositResponse() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
-      <div className="w-full max-w-lg rounded-2xl border border-border bg-surface p-8">
+      <div className="w-full max-w-lg rounded-2xl card-surface border border-border bg-surface p-8">
         {state === 'loading' && <p className="text-center text-sm text-fg-secondary">Loading…</p>}
 
         {state === 'invalid' && (

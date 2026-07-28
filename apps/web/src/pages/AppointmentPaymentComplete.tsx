@@ -13,7 +13,7 @@ export default function AppointmentPaymentComplete() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
-      <div className="w-full max-w-md rounded-2xl border border-border bg-surface p-8 text-center">
+      <div className="w-full max-w-md rounded-2xl card-surface border border-border bg-surface p-8 text-center">
         <h1 className="text-xl font-semibold text-fg">{canceled ? 'Payment canceled' : 'Thank you!'}</h1>
         <p className="mt-3 text-sm text-fg-secondary">
           {canceled

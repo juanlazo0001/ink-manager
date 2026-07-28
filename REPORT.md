@@ -3745,3 +3745,60 @@ A new heading element was added to `AuthLayout.tsx` itself (not to any of the fi
 ## Cleanup
 
 Killed both dev server processes (api `:4000`, web `:6506`) started for this session's verification. Deleted every ad-hoc `.mjs` verification/tracing script and test invite account created during verification. Left the unrelated concurrent work (`index.css`, `Team.tsx`, `Profile.tsx`, and many other files, plus an untracked `apps/api/scratch-check.ts`) completely untouched -- none of it staged or committed by this session.
+
+---
+
+# Editorial Gold — Login's CSS becomes the canonical token source, frosted-glass cards app-wide
+
+Single session, on `main`. No schema changes. Read the prior session's live-chat CSS diagnostic (never written to `REPORT.md` per that task's own instruction) directly from conversation memory rather than from this file -- confirmed accurate against the current codebase before acting on it.
+
+## 1. Card system gained the tokens it never had
+
+`--radius-card`/`--radius-btn` under `:root[data-theme="editorial-gold"]` changed from the ui/restyle-v3 reference's original 16px/10px to Login's own exact numbers -- 10px/0px (fully square). Three genuinely new tokens, since nothing like them existed before: `--color-card-glass` (`#100f0ed6`, translucent), `--color-border-glass` (`rgba(201,154,91,0.1)`, fainter than the general-purpose `--color-border`), `--blur-card` (`16px`). Two more new tokens exist purely so Login's own button/input become token-driven without touching any other button/input in the app: `--color-accent-button` (`#d5a05c`, Login's own lighter/warmer gold, deliberately distinct from the app-wide `--color-accent`) and `--color-input-bg`/`--color-input-border` (`#0f0e0d`/`#252322`, Login's neutral non-gold-tinted input treatment). Nothing else in the app references these last three, so adding them changed nothing anywhere except Login itself.
+
+## 2. Frosted glass, app-wide -- not a Login special case
+
+New `.card-surface` marker class, scoped entirely under `[data-theme="editorial-gold"] .card-surface { ... }` (border-radius/background/border-color/backdrop-filter from the tokens above) -- does nothing at all under any other preset, so `onyx-lime` and friends stay flat/opaque exactly as before. Added to every genuine content-card wrapper across the app: `Widget.tsx` and Dashboard's `CardShell` (already editorial-aware), plus ~30 previously non-theme-aware `rounded-2xl border border-border bg-surface` sites across Team, Settings, Inquiries, Inquiry/Appointment/Client/Artist/GiftCard detail pages, and several public client-facing pages (deposit/estimate/waiver/intake-form/gift-card links, which already apply a studio's own `themePreset`). Deliberately **excluded**: `Modal.tsx`, `TopBar.tsx`'s dropdown, `SearchPalette.tsx`, and `ConversationsPanel.tsx`'s draft-inquiry dialog and its own docked side panel -- all either genuine modal/overlay surfaces or dense scrollable text a user needs to read while typing, where a blurred background would hurt rather than help. Caught and reverted two false-positive matches from the bulk substitution (small circular icon buttons that happened to share the `border border-border bg-surface` substring) before they shipped.
+
+## 3. Cards needed something real to blur against
+
+The `.arc-decor` rings (TopBar-mounted, editorial-gold only) were positioned almost entirely *above* the viewport (`top: -560px` on a 1400px circle), visible only as a sliver behind the header and never again once a page scrolled past its first screenful. Recentered on the viewport (`top: 50%`, matching the login/marketing pages' own proven `.rings` positioning) -- staying `position: fixed` means the same rings now sit centered in whatever's currently in view at any scroll position, on every page, with zero per-page integration work (TopBar already mounts this once, globally). Deliberately did *not* lean on the grain texture for this -- confirmed by isolation-testing (see Performance below) that a 16px blur smooths fine high-frequency grain away almost entirely; only large, soft, low-frequency shapes like the rings actually survive being blurred and read as genuine texture.
+
+## 4. Login is genuinely locked to editorial-gold, not just visually similar
+
+`.login-shell` now shares the *exact same selector* as `:root[data-theme="editorial-gold"]` (`:root[data-theme="editorial-gold"], .login-shell { ... }`) rather than an independent hand-copied set of hex values -- every `--color-*`/`--font-*`/`--radius-*`/`--blur-card`/etc. token Login reads is the real, shared editorial-gold definition, not a second copy that can drift. This is deliberately **not** achieved by having `.login-shell` read the swappable tokens the normal way (i.e. relying on `[data-theme="editorial-gold"]` being set on `<html>`) -- that would make Login follow whichever preset the currently-logged-in studio (or a stale value left over in the same tab) happens to have active, which is exactly what a "fixed platform identity" page must never do. Instead, `.login-shell`'s own selector always applies regardless of `<html>`'s attribute, so the shared values land on Login unconditionally.
+
+The pre-existing `--login-*` custom property *names* (`--login-gold`, `--login-cream`, etc.) were kept rather than renamed everywhere the five auth pages (Sign In, Forgot Password, Reset Password, Accept Invite, Confirm Email Change) reference them inline via Tailwind arbitrary values (`text-[var(--login-gold)]` and similar) -- but their *values* are now `var(--color-accent)`, `var(--color-fg)`, etc., derived from the shared block one level up instead of independently hardcoded. `.login-panel-surface`/`.login-input`/`.login-button` now reference `var(--radius-card)`, `var(--color-card-glass)`, `var(--color-border-glass)`, `var(--blur-card)`, `var(--radius-btn)`, `var(--color-accent-button)`, `var(--color-input-bg)`, `var(--color-input-border)` directly instead of hardcoded literals. `.login-jura` (used across all five auth pages) changed from hardcoding `font-family: 'Jura', ...` to a thin `font-family: var(--font-jura)` pass-through -- the font itself is now 100% shared/inherited, though the class name itself wasn't removed (renaming it would have touched ~10 call sites across five files for no functional gain over just fixing its one definition).
+
+**Verified via the actual failure mode this is meant to prevent**, not just a visual glance: logged into `dev-studio` (onyx-lime active), confirmed via `getComputedStyle` that `<html data-theme="onyx-lime">` was still genuinely present while client-side-navigating to `/login` (no full reload, replicating the "logged out without closing the tab" scenario the original code comment warned about) -- and that `.login-panel-surface`'s computed `background-color` was still `rgba(16,15,14,0.84)` (the editorial glass value), never onyx-lime's flat `--color-surface`. Login is locked, not merely coincidentally correct.
+
+## Verification
+
+Playwright against the local dev stack, `dev-studio` switched to `editorial-gold` via direct DB update (reverted to its original `onyx-lime` after):
+- Dashboard, an Inquiry detail page (Widget-based sections: Pipeline/Assignment/Estimate/Appointments/Reference Images/etc.), Team, and Settings all screenshot with genuine frosted glass -- translucent cards with the recentered `.arc-decor` rings visibly crossing through them, 10px radius, fainter gold border. Screenshots in the scratchpad (`shots/edt-*.png`).
+- `onyx-lime` re-verified completely unaffected: same Dashboard, flat/opaque cards, 16px radius, no rings, no blur (`shots/onyx-dashboard.png`).
+- Login re-verified locked regardless of active preset, both visually (`shots/onyx-then-login-check.png`, `shots/lock-check-spa-nav.png`) and via the `getComputedStyle` check described above.
+- Conversations: the docked side panel intentionally stayed solid/opaque (see item 2's exclusions) -- confirmed it still renders correctly and legibly under editorial-gold, no regression (`shots/edt-conversations.png`).
+
+## Performance
+
+Measured real scroll-frame timing (`requestAnimationFrame` deltas during a scripted 2000px scroll) on the two pages named in the task -- Dashboard's card grid and the ~60-row Inquiries list -- under both presets:
+
+| Page | onyx-lime (baseline) | editorial-gold |
+|---|---|---|
+| Dashboard (has `.card-surface` + blur) | avg 16.4ms, max 16.8ms, 0 long frames | avg 18.1ms, max 50ms, 4-5 long frames (out of ~78) |
+| Inquiries list (plain table, **no cards at all**) | avg 16.4ms, max 16.8ms, 0 long frames | avg 32-37ms, max ~100ms, 23-25 long frames (out of ~40) |
+
+Dashboard's actual new frosted-glass cards cost a small, acceptable amount of scroll smoothness -- a handful of dropped frames during a fast scroll, nothing alarming. The Inquiries list result looks worse at a glance, but **the Inquiries list has zero `.card-surface` elements on it at all** (it's a plain table) -- this session's card/blur work cannot be its cause. Isolated by reverting `.arc-decor`'s new position back to its original off-screen placement and separately by zeroing out the pre-existing grain texture's opacity, one at a time, and re-measuring: the slowdown persisted almost unchanged both times. This is a **pre-existing editorial-gold characteristic on long scrollable pages**, present before this session's changes, not something this session introduced or worsened. Root cause not identified (candidates: `Outfit`/`Fraunces` per-row text metrics cost, dev-server-only overhead, something else in editorial-gold's existing per-page treatment) -- flagging for separate investigation rather than silently absorbing it into this session's scope or claiming it's fine without having actually measured it.
+
+## Typechecks
+
+`npx tsc --noEmit` (api, unaffected -- no API files touched) and `npm run build` (web) -- both clean. Hit one genuine syntax bug of my own along the way: two new comments contained a literal `*/` substring (an asterisk immediately followed by a slash inside prose like `bg-surface/rounded-*/border`), which prematurely closed the CSS comment and broke the build -- found by comparing `/*` vs `*/` counts across the file, fixed by rewording both comments to avoid the adjacency, rebuilt clean.
+
+## Commit
+
+`<pending -- see next commit on main>`
+
+## Cleanup
+
+Reverted `dev-studio`'s `themePreset` back to `onyx-lime` (its state before this session). Deleted every ad-hoc Playwright script in the scratchpad; screenshots left in place for reference. Killed the API dev server process started for this session's verification.

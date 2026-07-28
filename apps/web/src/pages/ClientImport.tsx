@@ -325,7 +325,7 @@ export default function ClientImport() {
           </p>
 
           {stage === 'upload' && (
-            <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
+            <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-6">
               <label className="block text-sm font-medium text-fg-secondary">CSV file</label>
               <p className="mt-1 text-xs text-fg-muted">
                 Any CSV works -- you'll map its columns to Ink Manager fields on the next screen. Nothing is created
@@ -361,7 +361,7 @@ export default function ClientImport() {
 
               {columnsData && (
                 <>
-                  <div className="rounded-2xl border border-border bg-surface p-4">
+                  <div className="rounded-2xl card-surface border border-border bg-surface p-4">
                     <p className="text-sm text-fg-secondary">
                       Best-guess mapping shown below -- correct or confirm each one. Columns left "Not imported" are
                       kept in the original file but never read by Ink Manager. Map any column of leftover context
@@ -372,7 +372,7 @@ export default function ClientImport() {
                     </p>
                   </div>
 
-                  <div className="overflow-x-auto rounded-2xl border border-border bg-surface">
+                  <div className="overflow-x-auto rounded-2xl card-surface border border-border bg-surface">
                     <table className="w-full text-left text-sm">
                       <thead>
                         <tr className="border-b border-border text-xs uppercase tracking-wider text-fg-muted">
@@ -439,7 +439,7 @@ export default function ClientImport() {
 
           {stage === 'review' && reviewBatch && (
             <div className="mt-6 space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-surface p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl card-surface border border-border bg-surface p-4">
                 <div>
                   <p className="text-sm font-semibold text-fg">
                     {reviewBatch.rows.length} row{reviewBatch.rows.length === 1 ? '' : 's'} · status: {reviewBatch.status}
@@ -509,7 +509,7 @@ export default function ClientImport() {
                 </div>
               )}
 
-              <div className="overflow-x-auto rounded-2xl border border-border bg-surface">
+              <div className="overflow-x-auto rounded-2xl card-surface border border-border bg-surface">
                 <table className="w-full text-left text-sm">
                   <thead>
                     <tr className="border-b border-border text-xs uppercase tracking-wider text-fg-muted">

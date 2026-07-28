@@ -168,14 +168,28 @@
    is a genuinely different visual identity, not a recolor. Every value and
    contrast ratio here is unchanged from the ui/restyle-v3 branch's own
    REPORT.md entry (5.16-16.68:1 across every real pairing) -- carried
-   forward, not recomputed. */
-:root[data-theme="editorial-gold"] {
+   forward, not recomputed.
+
+   Card/button/input tokens below (radius-card, radius-btn, and every
+   --color-*-glass/--blur-card/--color-accent-button/--color-input-*
+   addition) are Login's own hand-tuned CSS made canonical -- see
+   REPORT.md's "Login becomes the canonical editorial-gold token source"
+   entry. .login-shell shares this exact selector (not a separate copy) so
+   both sides of the app draw from one definition; see .login-shell's own
+   comment further down for why that's safe against the active studio
+   preset. */
+:root[data-theme="editorial-gold"],
+.login-shell {
   --font-sans: 'Outfit', ui-sans-serif, system-ui, sans-serif;
   --font-display: 'Fraunces', ui-serif, serif;
   --font-jura: 'Jura', ui-sans-serif, system-ui, sans-serif;
 
-  --radius-btn: 0.625rem; /* 10px, reference's --r-btn */
-  --radius-card: 1rem; /* 16px, reference's --r-card */
+  /* radius-card/radius-btn: Login's own exact numbers (10px card, 0px --
+     fully square -- button), not the ui/restyle-v3 reference's original
+     16px/10px. Diagnostic-verified mismatch; Login's hand-tuned values won
+     since this session makes Login canonical. */
+  --radius-btn: 0px;
+  --radius-card: 0.625rem; /* 10px */
 
   --color-bg: #0e0b08; /* reference --ink */
   --color-surface: #171310; /* reference --panel */
@@ -193,6 +207,35 @@
   --color-accent: #c99a5b; /* reference --gold */
   --color-accent-fg: #171208;
   --color-accent-hover: #e4be85; /* reference --gold-hi */
+
+  /* New: the card system had no concept of translucency/blur at all
+     before this session (every card was a solid, opaque bg-surface panel)
+     -- these three back the shared frosted-glass card treatment
+     (.card-surface, below) and are Login's own exact values, not derived
+     from --color-surface/-border (a genuinely different, lower-opacity
+     base color and a fainter border than the general-purpose tokens
+     above, by design -- see .login-panel-surface's original comment). */
+  --color-card-glass: #100f0ed6;
+  --color-border-glass: rgba(201, 154, 91, 0.1);
+  --blur-card: 16px;
+
+  /* New: Login's button is a distinctly lighter/warmer gold than the
+     general --color-accent -- deliberately hand-tuned for a filled button
+     surface specifically, not a recolor of the app-wide accent (which
+     stays #c99a5b everywhere else -- nav pills, links, icons). Nothing
+     else references this token yet; adding it only makes Login's own
+     button token-driven instead of hardcoded, without changing any other
+     button's color. */
+  --color-accent-button: #d5a05c;
+
+  /* New: Login's input fields use a neutral (non-gold-tinted) dark
+     background/border, deliberately distinct from the general
+     --color-surface-inset/--color-border pairing other inputs across the
+     app use -- same reasoning as --color-accent-button above: this makes
+     Login's own inputs token-driven without changing any other input's
+     styling, since nothing else references these two yet. */
+  --color-input-bg: #0f0e0d;
+  --color-input-border: #252322;
 
   /* Split into two tokens the same way the reference's own CSS does: the
      raw brand red only clears the 3:1 non-text-UI floor against
@@ -390,11 +433,46 @@
   background: var(--color-danger-strong);
 }
 
+/* Frosted-glass card treatment -- app-wide, not a Login-exclusive special
+   case (see REPORT.md's "Login becomes the canonical editorial-gold token
+   source" entry). .card-surface is a marker class added to every card
+   wrapper across the app (Dashboard's CardShell, Widget, Team, Settings,
+   ...) alongside each one's own existing bg-surface, rounded-2xl/card,
+   and border
+   Tailwind utilities -- it does nothing on its own under any "default"-
+   shape preset (onyx-lime and friends stay flat/opaque, completely
+   unaffected, exactly as before this session). The actual glass
+   treatment only fires under [data-theme="editorial-gold"], reusing the
+   exact same tokens Login's own card uses (.login-panel-surface, above)
+   -- one shared definition, not a second copy that can drift. Higher
+   specificity than the plain bg-surface/border-border/rounded-*
+   utilities on the same element, so it wins regardless of Tailwind's own
+   class order. */
+[data-theme="editorial-gold"] .card-surface {
+  border-radius: var(--radius-card);
+  background: var(--color-card-glass);
+  border-color: var(--color-border-glass);
+  backdrop-filter: blur(var(--blur-card));
+  -webkit-backdrop-filter: blur(var(--blur-card));
+}
+
+/* Recentered on the viewport (was top: -560px, anchored almost entirely
+   above it -- visible only as a sliver behind the header/TopBar area, and
+   never again once a page scrolled past its first screenful). Frosted-
+   glass cards (.card-surface) need something with real, soft, low-
+   frequency shape behind them to make the blur perceptible -- fine
+   high-frequency detail (like the grain texture) gets smoothed away by a
+   16px blur almost entirely, but large soft rings survive it, the same
+   proven combination the login/marketing pages already use. Staying
+   `position: fixed` (not tied to document scroll) means these same rings
+   stay centered in the current viewport at any scroll position on any
+   page, with zero per-page integration -- TopBar already mounts this once
+   on every authenticated page. */
 .arc-decor {
   position: fixed;
   left: 50%;
-  top: -560px;
-  transform: translateX(-46%);
+  top: 50%;
+  transform: translate(-46%, -50%);
   width: 1400px;
   height: 1400px;
   pointer-events: none;
@@ -747,62 +825,75 @@
 /* ============================================================
    Login page: a fixed platform identity
    ============================================================
-   Deliberately NOT wired to the color and font custom properties
-   above -- those are per-studio theme-preset values (see
-   lib/themePresets.ts), swapped via the [data-theme] attribute
-   on <html>. There is no authenticated studio context yet at
-   /login, and since this is an SPA, a stale [data-theme] value can
-   still be sitting on <html> from whatever preset was last applied
-   in this tab (e.g. a user who logged out without a full page
-   reload) -- referencing the swappable tokens here would make this
-   page look depend on browsing history. Every value below is a
-   literal constant matching the editorial restyle palette (see the
-   [data-theme="editorial-gold"] block above), not a var() reference,
-   so this page always renders identically. */
+   Login is genuinely LOCKED to editorial-gold, not just visually similar
+   to it: .login-shell shares the exact same selector as
+   :root[data-theme="editorial-gold"] above (see that block's own
+   comment), so every --color-*, --font-*, and --radius-* custom property below
+   is real, shared editorial-gold state -- not a hand-copied number that
+   can drift, and not dependent on whatever [data-theme] happens to be
+   sitting on <html> (which reflects the currently-logged-in studio's OWN
+   preset choice, and can even be stale from a previous session in the
+   same tab). Since .login-shell's own selector always applies regardless
+   of <html>'s attribute, this page renders identically no matter which
+   preset a studio has active -- the critical property a "fixed platform
+   identity" page needs, now achieved via a shared source instead of an
+   independent copy.
+
+   --login-*: kept as their own names (rather than renaming every
+   var(--login-gold) etc. reference across the five auth pages that read
+   them) but now DERIVED from the shared tokens one level up, not
+   independently hardcoded -- changing editorial-gold's own --color-accent
+   etc. now changes these too, automatically. */
 .login-shell {
-  --login-panel: #171310;
-  --login-panel-2: #1d1813;
-  --login-line: rgba(201, 154, 91, 0.18);
-  --login-line-strong: rgba(201, 154, 91, 0.38);
-  --login-cream: #f2ece0;
-  --login-smoke: #9b927f;
-  --login-gold: #c99a5b;
-  --login-gold-hi: #e4be85;
-  --login-gold-fg: #171208;
+  --login-panel: var(--color-surface);
+  --login-panel-2: var(--color-surface-raised);
+  --login-line: var(--color-border);
+  --login-line-strong: var(--color-border-strong);
+  --login-cream: var(--color-fg);
+  --login-smoke: var(--color-fg-muted);
+  --login-gold: var(--color-accent);
+  --login-gold-hi: var(--color-accent-hover);
+  --login-gold-fg: var(--color-accent-fg);
 }
 
+/* No longer a Login-specific hardcoded font -- a thin pass-through onto
+   the shared --font-jura token, which editorial-gold's own block (and now
+   .login-shell, via the same selector) already sets to Jura. Kept as a
+   named utility (rather than inlining font-family: var(--font-jura) at
+   every call site across five auth pages) purely to avoid a wider rename;
+   the font itself is 100% shared/inherited now, not overridden here. */
 .login-jura {
-  font-family: 'Jura', ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--font-jura);
 }
 
-/* Visual refinement pass (no source CSS available -- values below are a
-   best-effort match against a reference screenshot, not exact numbers
-   from a design file, later hand-tuned further live in DevTools and
-   transcribed back here exactly): frosted-glass card, not a solid panel
-   -- the photo should stay visibly, softly present behind it. Translucent
-   background (8-digit hex so the alpha channel is tunable independent of
-   the base color, not var()-based) plus blur so the photo underneath
-   reads as blurred, not sharp. Border tint kept low/gold, reading as
-   soft/atmospheric rather than a crisp outline. Radius brought down to
-   10px (was 1rem/16px, the standard --r-card token) -- this page's own,
-   architectural take, not required to match the app-wide card radius
-   given its distinct full-screen atmospheric treatment. */
+/* Frosted-glass card, not a solid panel -- the photo should stay visibly,
+   softly present behind it. --color-card-glass/--color-border-glass are
+   Login's own values, now shared editorial-gold tokens (see that block) --
+   deliberately NOT --color-surface/--color-border themselves, since a
+   plain 100%-opaque surface has no meaning for a translucent element and
+   this page's border is meant to read fainter than the app-wide default.
+   --radius-card is the real shared token (10px under editorial-gold,
+   Login's own number now that this session made it canonical) --
+   app-wide cards use the exact same variable, see .card-surface below. */
 .login-panel-surface {
-  background: #100f0ed6;
-  border: 1px solid #c99a5b1a;
-  border-radius: 10px;
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  background: var(--color-card-glass);
+  border: 1px solid var(--color-border-glass);
+  border-radius: var(--radius-card);
+  backdrop-filter: blur(var(--blur-card));
+  -webkit-backdrop-filter: blur(var(--blur-card));
 }
 
-/* Neutral dark border (not gold-tinted, unlike the card/label) and a
-   tighter 5px radius -- inputs read as plainer, more recessed fields
-   against the card's own softer 10px corners. Focus state below still
-   switches to gold, so the accent color still shows up the moment a
-   field is actually being used. */
+/* Neutral dark background/border (not gold-tinted, unlike the card/label)
+   -- --color-input-bg/--color-input-border are Login's own values, shared
+   editorial-gold tokens now rather than hardcoded here, though nothing
+   else in the app references them yet (this page's input treatment was
+   never meant to become the app-wide input style, just token-driven
+   instead of a hardcoded copy). Radius stays a plain literal -- reads
+   plainer/more recessed against the card's own --radius-card corners, and
+   was never part of the diagnostic's canonicalized property list. */
 .login-input {
-  background: #0f0e0d;
-  border: 1px solid #252322;
+  background: var(--color-input-bg);
+  border: 1px solid var(--color-input-border);
   border-radius: 5px;
   color: var(--login-cream);
 }
@@ -815,17 +906,22 @@
   box-shadow: 0 0 0 1px var(--login-gold);
 }
 
-/* Button radius corrected in the OPPOSITE direction from the card above --
-   fully square (0px), not the card's softer 10px, and a world away from
-   the app-wide pill-shaped button convention. Tracking dialed back from
-   an initial 0.2em (too wide against the reference) to 0.08em. margin-top
-   adds breathing room above the button on top of the password field's own
-   mb-6, since the reference read as needing more separation than that
-   alone gave it. */
+/* --radius-btn is the real shared token (0px under editorial-gold, fully
+   square, Login's own number now that this session made it canonical --
+   a world away from the app-wide pill-shaped button convention every
+   OTHER preset still uses, since --radius-btn stays 9999px there).
+   --color-accent-button is Login's own lighter/warmer gold, a shared
+   token now rather than hardcoded, deliberately distinct from the
+   app-wide --color-accent (used everywhere else -- nav, links, icons) --
+   nothing else references it, so no other button's color changes.
+   Tracking dialed back from an initial 0.2em (too wide against the
+   reference) to 0.08em. margin-top adds breathing room above the button
+   on top of the password field's own mb-6, since the reference read as
+   needing more separation than that alone gave it. */
 .login-button {
-  background: #d5a05c;
+  background: var(--color-accent-button);
   color: var(--login-gold-fg);
-  border-radius: 0px;
+  border-radius: var(--radius-btn);
   letter-spacing: 0.08em;
   margin-top: 1em;
   transition: background-color var(--duration-base) ease-out;

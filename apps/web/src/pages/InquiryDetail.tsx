@@ -1944,7 +1944,7 @@ export default function InquiryDetail() {
           </Link>
 
           {error && (
-            <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+            <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-5">
               <p className="text-sm text-danger">{error}</p>
             </div>
           )}
@@ -1953,7 +1953,7 @@ export default function InquiryDetail() {
 
           {!error && inquiry && (
             <>
-              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+              <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <h1 className="text-xl font-bold text-fg">

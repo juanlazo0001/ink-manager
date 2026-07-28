@@ -61,8 +61,8 @@ function CardShell({ title, caption, children }: { title: string; caption?: stri
     <div
       className={
         isEditorial
-          ? 'relative rounded-card border border-border bg-gradient-to-b from-white/[0.012] to-transparent bg-surface p-6'
-          : 'rounded-2xl border border-border bg-surface p-5'
+          ? 'card-surface relative rounded-card border border-border bg-gradient-to-b from-white/[0.012] to-transparent bg-surface p-6'
+          : 'card-surface rounded-2xl border border-border bg-surface p-5'
       }
     >
       <div className="flex items-start justify-between gap-2">
