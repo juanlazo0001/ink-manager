@@ -3978,3 +3978,45 @@ Spot-checked three other modals to confirm the fix came from the shared componen
 ## Cleanup
 
 Playwright and its Chromium browser were installed ad hoc into the scratch directory (not added as a project dependency); both the install and every driver script/screenshot were deleted afterward. Killed the two scratch dev server processes started for this session's verification (api `:4020`, web `:5195` -- picked to avoid an already-running concurrent session on `:5173`/other scratch ports in use). Left the unrelated concurrent working-tree changes (both branding PNGs, the untracked marketing screenshot HTML) untouched. No new test data was created in the dev database beyond toggling an existing seeded client's gift-card checkbox during verification (not submitted, no appointment actually created).
+
+---
+
+# Platform-level /privacy and /terms (Twilio A2P 10DLC resubmission fix)
+
+Single session on `main`. Fixes a real Twilio A2P 10DLC carrier-review rejection (errors 30908/30882) caused by `https://web.inkmanager.app/privacy` and `/terms` not resolving to real content. Read the task's own content drafts (`privacy-policy-platform.md`/`terms-platform.md`, pasted directly into chat rather than committed files) and used them verbatim, with three placeholders filled in per explicit confirmation rather than guessed: `[DATE]` -> July 28, 2026; `[CONTACT EMAIL]` -> `juan.lazo@inkmanager.app`; `[GOVERNING LAW/JURISDICTION]` (Terms only) -> the State of North Carolina, United States.
+
+## Investigated before building, per the task's own instruction
+
+- **No bare `/privacy`/`/terms` route existed.** Only studio-scoped `/privacy/:studioSlug` and `/terms/:studioSlug` (`App.tsx`, backed by `PublicPolicyPage.tsx`, which fetches a Studio's own `StudioSettings.privacyPolicy`/`termsAndConditions` field) -- visiting the bare path with no slug renders "This studio couldn't be found," which is almost certainly what a carrier-review crawler hit. No earlier "Black Hive"-specific privacy/terms draft was found anywhere in the repo to replace (checked; "Black Hive" only appears as a customer/case-study reference on the marketing site).
+- **Existing reusable rendering pattern**, confirmed and reused rather than building a new one: `sanitizeHtml()` (`lib/sanitizeHtml.ts`, DOMPurify, allow-listing `p/br/strong/em/u/ul/ol/li/a/h2/h3`) + a `tiptap-content` CSS class + `dangerouslySetInnerHTML`, exactly as `PublicPolicyPage.tsx` and `Policies.tsx` already do for Studio-authored HTML. Applied that same path to this session's own fixed, developer-authored copy (a plain HTML-string constant in the new `content/platformPolicies.ts`, not a database field -- there's no Studio to author it) rather than inventing a second mechanism.
+- **`web.inkmanager.app` is not referenced anywhere in the repo** (no env file, CORS config, or vite config names it) -- confirmed it's genuinely live via a direct `curl -I` before trusting the task's own URL claim (`Server: railway-hikari`, real 200), rather than assuming.
+- **No CI/CD config exists in-repo** (no `.github/workflows/`, no Dockerfile, no `railway.json`) -- deploy trigger behavior (auto vs. manual on push to `main`) isn't discoverable from the repo, and this session has no Railway credentials/CLI access. **Stopped and asked** rather than assuming a push would go live automatically or silently claiming a live check that didn't happen; confirmed auto-deploy-on-push before proceeding.
+
+## Build
+
+- **New route**, `App.tsx`: `<Route path="/privacy" element={<PlatformPolicyPage title="Privacy Policy" bodyHtml={PLATFORM_PRIVACY_POLICY_HTML} />} />` and the equivalent for `/terms` -- placed so they don't collide with the existing `/privacy/:studioSlug`/`/terms/:studioSlug` (React Router v6 matches these as distinct exact paths, confirmed no regression to the scoped routes below them).
+- **New `PlatformPolicyPage.tsx`**: takes `title`/`bodyHtml` directly (no fetch, no `studioSlug`, no `applyThemePreset()` call) -- deliberately the opposite of every other public page in this app, which are all Studio-themed via `applyThemePreset`. This is the first non-auth public page needing the "fixed platform identity" treatment `AuthLayout`'s `.login-shell` already established for Login.
+- **New `.policy-shell` CSS class** (`index.css`), joining the exact same selector `.login-shell` already shares with `:root[data-theme="editorial-gold"]` -- real shared token state, locked regardless of whatever `[data-theme]` happens to be on `<html>` (a logged-in Studio's own preset, possibly stale in the same tab), not a hand-copied value that can drift.
+- **New `content/platformPolicies.ts`**: `PLATFORM_PRIVACY_POLICY_HTML`/`PLATFORM_TERMS_HTML`, hand-converted from the task's Markdown drafts into the sanitizer's exact allowed-tag subset (h2/p/strong/ul/li/a only -- no h1, since the page component renders the title itself).
+
+## Verification
+
+- **Local dev stack, Playwright**: both routes render with `.policy-shell` present, computed `background-color: rgb(14, 11, 8)` (`#0e0b08`, editorial-gold's locked `--color-bg`) confirming the identity lock holds regardless of the default active theme; correct `<h1>` per route; body text length sane (4373/3302 chars); zero leftover `[DATE]`/`[CONTACT EMAIL]`/`[GOVERNING LAW...]` placeholder text anywhere on either page; **no horizontal scroll at a 390px mobile viewport** (`scrollWidth === clientWidth`) at both routes; no console/page errors. Full-page screenshots at 1280px and 390px both confirm clean, readable rendering.
+- **Production, pre-push**: confirmed `web.inkmanager.app` is a real live Railway deployment (not assumed from the task text) and that both `/privacy` and `/terms` currently 200 (SPA fallback already serves `index.html` for unknown client-side paths -- no server-side 404 to fix, only the missing React Router match).
+- **Production, post-push -- the actual deliverable**: pushed, then polled the live site's served JS bundle filename every 15s until it changed from the pre-push baseline (`index-DfwgUrvi.js` -> `index-M7-HKCQT.js`, confirming Railway's auto-deploy-on-push genuinely picked up this commit, ~45s after push) rather than assuming a fixed wait was long enough. Then, against the real production domain (not localhost): `curl -I` on both exact URLs -- `https://web.inkmanager.app/privacy` and `https://web.inkmanager.app/terms` -- both a real `200 OK` with a fresh `etag` matching the new build. Followed by an actual browser render (Playwright, since a plain `curl` of this client-side-rendered SPA only ever returns the static shell, never the real content -- see the residual-risk note below): both routes render the correct `<h1>` title and full body text (4373/3302 characters), zero leftover placeholder text, no horizontal overflow at a 390px mobile viewport, no console/page errors, both at 1280px and 390px. Screenshot of the live mobile-width `/privacy` page confirms clean rendering.
+
+## Typechecks
+
+`npx tsc --noEmit` (api, untouched) and `npm run build` (web) -- both clean.
+
+## A residual risk flagged, not silently absorbed
+
+This app is a client-side-only Vite SPA with no server-side rendering or prerendering anywhere (confirmed via `curl` against production: the raw HTML response for every route, including `/privacy`/`/terms`, is the same empty `<div id="root"></div>` shell regardless of path -- real content only appears after the JS bundle executes). If Twilio's carrier-review crawler fetches the URL without executing JavaScript, it will see an empty shell, not the rendered policy text, **regardless of this session's fix** -- this is a pre-existing, site-wide architecture characteristic, not something introduced or fixable within this session's scope. Every other public page on this site (including the already-live studio-scoped `/privacy/:studioSlug`) has the identical characteristic. Flagging this explicitly rather than claiming the crawler-visible content problem is fully solved; if the resubmission is rejected again on the same grounds, server-side rendering/prerendering for public routes would be the real fix, a materially larger undertaking outside this session's scope.
+
+## Commit
+
+`35418c2` on `main`.
+
+## Cleanup
+
+Killed the web dev server (`:5182`) started for this session's local verification. Deleted every ad-hoc `.mjs` verification/screenshot script and screenshot from the scratch directory afterward. Left the unrelated concurrent working-tree changes (both branding PNGs, the untracked marketing screenshot HTML) untouched; the `Modal.tsx` scroll-lock fix seen mid-session as an unstaged concurrent change was committed by that other work itself (`f22d451`/`745758c`, already on `main` before this session's own commit) -- not authored or staged by this session.
