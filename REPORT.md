@@ -3948,3 +3948,33 @@ Playwright, local dev stack: computed each dot's angle around `.rings`' own cent
 ## Cleanup
 
 Killed the web dev server (`:5182`) started for this session's verification. Deleted the ad-hoc `.mjs` verification script and screenshots from the scratch directory afterward. Left the unrelated concurrent working-tree changes (`Modal.tsx`, both branding PNGs, the untracked marketing screenshot HTML) untouched, same as the immediately preceding session.
+
+---
+
+# Modal overflow + scroll-lock fix (shared component, app-wide)
+
+Single small session on `main`. Reported on the New Appointment/Consultation modal (tall content -- Type, artist-assignment warning, duration, suggested times, mini-schedule slider, Date/Start/End, Notes -- got cropped top and bottom with no way to reach the hidden portion, and the page behind it stayed scrollable). Fixed at the shared `Modal` component (`apps/web/src/components/Modal.tsx`) rather than per-instance, since every modal in the app already goes through it.
+
+## Fix
+
+1. **Height cap + internal scroll for `size="default"`**: the dialog previously had no height constraint at all (`w-full max-w-md`, content just grew to its natural height). Changed to `flex w-full max-w-md max-h-[85vh] flex-col`, with the content wrapper below the header switched from a plain `mt-4` to `mt-4 min-h-0 flex-1 overflow-y-auto`. `size="large"` already had a height cap (`h-[80vh] max-h-[80vh]`) and a flexed body area for `fill`-mode children (e.g. `RichTextEditor`) -- left that branch's content-wrapper class untouched so the existing fill-to-parent behavior for the policy/legal-text editor isn't disturbed.
+2. **Header stays pinned**: added `shrink-0` to the header row (drag handle, title, close button) on both size variants, so it can't be squeezed by an oversized flex sibling -- previously relied on it implicitly never growing, which happens to hold today but isn't guaranteed by flexbox itself.
+3. **Background scroll-lock**: new ref-counted `lockBodyScroll`/`unlockBodyScroll` pair (module-level counter + saved previous `body.style.overflow`) called from a `useEffect` on mount/unmount. Ref-counted specifically so two modals open at once (there's no code path today that nests them, but nothing prevents it) don't fight over restoring the body's overflow value -- only the outermost lock/unlock pair actually touches the style.
+
+## Verification (Playwright against a local dev stack, scratch ports so as not to collide with a concurrent session already on `:5173`)
+
+Reproduced the exact reported scenario: opened Calendar's New Appointment modal, selected a client/project/gift-card/artist to expand it to its full height (Suggested times + mini schedule slider + Date/Start/End + Notes + Create button) at a 1400x720 viewport -- confirmed the dialog clips at `max-h-[85vh]` (measured bounding box height 612px = 0.85 x 720), the header stayed visible throughout, and scrolling the modal's own content area (verified via `scrollIntoViewIfNeeded` reaching the "Create Appointment" button) revealed every field, while `window.scrollY` on the underlying page was unchanged by a mouse-wheel event issued while the modal was open (`document.body`'s computed `overflow` was `hidden`, and reverted to `visible` immediately after closing). Repeated the same flow at a smaller 650px-tall viewport (small-laptop scenario) -- same result, dialog height scaled to the new 85vh cap (552.5px), still fully scrollable, background still locked.
+
+Spot-checked three other modals to confirm the fix came from the shared component, not this one call site: Clients' "Add Client" (short `default`-size content, unaffected by the height cap, scroll-lock still engages/releases correctly), Settings > Policies & Templates > "Edit Refund Policy" (a `size="large"` modal wrapping `RichTextEditor` in `fill` mode -- confirmed the pre-existing 80vh cap and fill-editor layout still render correctly, no regression from the `shrink-0` header change), and Team's "Invite team member" (`default`-size, confirmed scroll-lock engages). All three centered correctly with margin from the viewport edges, none touched top/bottom.
+
+## Typechecks
+
+`npm run build` (web) and `npx tsc --noEmit` (api, untouched) -- both clean.
+
+## Commit
+
+`TBD` on `main`.
+
+## Cleanup
+
+Playwright and its Chromium browser were installed ad hoc into the scratch directory (not added as a project dependency); both the install and every driver script/screenshot were deleted afterward. Killed the two scratch dev server processes started for this session's verification (api `:4020`, web `:5195` -- picked to avoid an already-running concurrent session on `:5173`/other scratch ports in use). Left the unrelated concurrent working-tree changes (both branding PNGs, the untracked marketing screenshot HTML) untouched. No new test data was created in the dev database beyond toggling an existing seeded client's gift-card checkbox during verification (not submitted, no appointment actually created).

@@ -16,6 +16,27 @@ interface ModalProps {
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
+// Ref-counted so nested/stacked modals don't fight over restoring the
+// body's previous overflow value -- only the outermost lock/unlock pair
+// actually touches the style.
+let scrollLockCount = 0
+let previousBodyOverflow = ''
+
+function lockBodyScroll() {
+  if (scrollLockCount === 0) {
+    previousBodyOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+  }
+  scrollLockCount += 1
+}
+
+function unlockBodyScroll() {
+  scrollLockCount -= 1
+  if (scrollLockCount === 0) {
+    document.body.style.overflow = previousBodyOverflow
+  }
+}
+
 // Every modal in the app (new client, draft inquiry, etc.) goes through
 // this one component, so its open/close motion is the single place that
 // needs to carry it -- no per-call-site animation work anywhere else.
@@ -45,6 +66,11 @@ export default function Modal({ title, onClose, children, size = 'default' }: Mo
   useEffect(() => {
     const id = requestAnimationFrame(() => setEntered(true))
     return () => cancelAnimationFrame(id)
+  }, [])
+
+  useEffect(() => {
+    lockBodyScroll()
+    return unlockBodyScroll
   }, [])
 
   useEffect(() => {
@@ -135,7 +161,7 @@ export default function Modal({ title, onClose, children, size = 'default' }: Mo
         className={[
           size === 'large'
             ? 'flex w-[92vw] max-w-[92vw] flex-col md:w-[60vw] md:max-w-[60vw] h-[80vh] max-h-[80vh]'
-            : 'w-full max-w-md',
+            : 'flex w-full max-w-md max-h-[85vh] flex-col',
           isEditorial
             ? 'rounded-card border border-border bg-surface-raised p-6 shadow-2xl duration-base'
             : 'rounded-2xl border border-border bg-surface p-6 duration-base',
@@ -152,7 +178,7 @@ export default function Modal({ title, onClose, children, size = 'default' }: Mo
       >
         <div
           onPointerDown={handleHeaderPointerDown}
-          className={['flex items-center gap-1.5 justify-between', dragging ? 'cursor-grabbing select-none' : 'cursor-grab'].join(' ')}
+          className={['flex shrink-0 items-center gap-1.5 justify-between', dragging ? 'cursor-grabbing select-none' : 'cursor-grab'].join(' ')}
         >
           <div className="flex min-w-0 items-center gap-1.5">
             <DragHandleIcon className="h-4 w-4 shrink-0 text-fg-muted" />
@@ -170,7 +196,13 @@ export default function Modal({ title, onClose, children, size = 'default' }: Mo
           </button>
         </div>
 
-        <div className={size === 'large' ? 'mt-4 flex min-h-0 flex-1 flex-col' : 'mt-4'}>{children}</div>
+        <div
+          className={
+            size === 'large' ? 'mt-4 flex min-h-0 flex-1 flex-col' : 'mt-4 min-h-0 flex-1 overflow-y-auto'
+          }
+        >
+          {children}
+        </div>
       </div>
     </div>
   )
