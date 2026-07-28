@@ -3919,7 +3919,7 @@ Deliberately small (a few degrees, ~1-2% scale) -- reads as background depth/atm
 
 ## Commit
 
-TBD -- filled in by a follow-up commit once this one lands, per this file's own established pattern.
+`8c8ecb4` on `main`.
 
 ## Cleanup
 
