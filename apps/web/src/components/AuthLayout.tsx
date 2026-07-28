@@ -106,6 +106,13 @@ export default function AuthLayout() {
         <div className="ring-orbit">
           <s />
         </div>
+        {/* Second satellite on ring 2, spinning the opposite direction
+            (`.ring-orbit-2`'s `animation-direction: reverse`) -- same
+            wrapper technique as the first dot, just a different ring
+            radius and a class on <s> for its own position/size. */}
+        <div className="ring-orbit ring-orbit-2">
+          <s className="dot-2" />
+        </div>
       </motion.div>
 
       <MotionConfig transition={authSpringTransition}>

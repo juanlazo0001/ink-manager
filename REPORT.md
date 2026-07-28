@@ -3924,3 +3924,27 @@ Deliberately small (a few degrees, ~1-2% scale) -- reads as background depth/atm
 ## Cleanup
 
 Killed both dev server processes (api `:4000`, web `:5182` -- the usual `:6506`/`:5173` were both already in use by something else in this environment) started for this session's verification. Deleted every ad-hoc `.mjs` verification/screenshot script from the scratch directory afterward. Left the unrelated concurrent working-tree changes (`Modal.tsx`, both branding PNGs, an untracked marketing screenshot HTML file) completely untouched -- confirmed via `git diff --stat` against exactly this session's own three files (`AuthLayout.tsx`, `index.css`, `lib/motion.ts`) before staging/committing.
+
+---
+
+# Auth page background rings: second orbit dot, opposite direction
+
+Tiny follow-up to the immediately preceding ring-motion session, same day, on `main`. Adds a second gold dot orbiting ring 2 (780px diameter / 390px radius, versus the original dot's ring 1 / 260px radius), spinning the opposite direction from the first.
+
+Reused the exact same `.ring-orbit` wrapper technique -- a second `.ring-orbit.ring-orbit-2` wrapper around a second `<s className="dot-2">`, same `ring-orbit-spin` keyframe and 42s duration as the first dot, but with `animation-direction: reverse` rather than a duplicated keyframe with negated degrees. Positioned at ring 2's own radius (276px/276px offset), starting at the opposite corner (bottom-left) from the first dot's (top-right) purely so they don't start out visually overlapping along the same diagonal. Slightly smaller (6px vs 7px) and `opacity: 0.7`, echoing ring 2 already being fainter than ring 1 in the existing CSS.
+
+## Verification
+
+Playwright, local dev stack: computed each dot's angle around `.rings`' own center from its live `getBoundingClientRect()`, sampled 1.5s apart -- dot 1 moved +12.86 degrees, dot 2 moved -12.86 degrees in the same window, confirming equal speed and genuinely opposite direction (not just a different start position). Screenshot confirms both dots render at their intended positions/sizes, no visual overlap on load. No console/page errors.
+
+## Typechecks
+
+`npx tsc --noEmit` (api, untouched) and `npm run build` (web) -- both clean.
+
+## Commit
+
+TBD -- filled in by a follow-up commit once this one lands, per this file's own established pattern.
+
+## Cleanup
+
+Killed the web dev server (`:5182`) started for this session's verification. Deleted the ad-hoc `.mjs` verification script and screenshots from the scratch directory afterward. Left the unrelated concurrent working-tree changes (`Modal.tsx`, both branding PNGs, the untracked marketing screenshot HTML) untouched, same as the immediately preceding session.
