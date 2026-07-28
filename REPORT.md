@@ -3647,4 +3647,4 @@ Rebuilt `AuthLayout.tsx` around a real overlapping crossfade: the outgoing card 
 
 Also cleaned up every ad-hoc verification script (`.mjs`/`.ts`) and dev-server log file this conversation had accumulated in the local scratch directory across both this task and the preceding account-lifecycle one -- none of it was ever part of the repo, but it was still clutter sitting on disk.
 
-Typechecks re-run clean (`npx tsc --noEmit` / `npm run build`). Commit: `<pending>` on `main`. Same two dev server processes killed again after verification.
+Typechecks re-run clean (`npx tsc --noEmit` / `npm run build`). Commit: `6e0d29e` on `main`. Same two dev server processes killed again after verification.
