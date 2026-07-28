@@ -3797,7 +3797,7 @@ Dashboard's actual new frosted-glass cards cost a small, acceptable amount of sc
 
 ## Commit
 
-`<pending -- see next commit on main>`
+`96db04a` on `main`.
 
 ## Cleanup
 
