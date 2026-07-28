@@ -981,6 +981,35 @@
   height: 1060px;
   border-color: rgba(201, 154, 91, 0.07);
 }
+/* Wraps just the dot (not the rings themselves) so it can spin
+   continuously and independently of the `.rings` container's own
+   mode-driven rotate/scale above it -- the two transforms compose (parent
+   spring rotation + this child's constant spin) rather than conflicting.
+   Zero-size, positioned at the same anchor point `.rings` itself uses, so
+   rotating it carries `.rings s`'s existing fixed left/top offset around
+   in a circle on ring 1's own path (184px/184px offset = 260px radius,
+   matching ring 1's 520px diameter) without changing that offset at all.
+   Linear + infinite, not the spring used elsewhere on this page -- an
+   idle ambient loop should read as constant-speed motion, not something
+   that eases and settles. Covered by the global
+   prefers-reduced-motion:reduce rule above (animation-duration -> 0.01ms),
+   so no separate media query needed here. */
+.ring-orbit {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  animation: ring-orbit-spin 42s linear infinite;
+}
+@keyframes ring-orbit-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
 .rings s {
   position: absolute;
   width: 7px;

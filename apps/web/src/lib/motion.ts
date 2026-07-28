@@ -50,3 +50,20 @@ export const blurTextVariants: Variants = {
   animate: { opacity: 1, filter: 'blur(0px)', y: 0 },
   exit: { opacity: 0, filter: 'blur(10px)', y: 10 },
 }
+
+// Background `.rings` decoration: a small rotate + scale nudge per auth
+// mode, driven by AuthLayout's existing `mode` value (same one that keys
+// the card/button transition) and animated with the same
+// `authSpringTransition` spring -- deliberately small (a few degrees, a
+// couple percent) so it reads as atmospheric depth behind the card, not a
+// showy background effect competing with the foreground transition. Keyed
+// by every AuthMode (not just sign-in/forgot-password) so Reset Password /
+// Accept Invite / Confirm Email Change get their own subtle position too,
+// rather than all three sharing sign-in's default.
+export const ringModeTransform: Record<string, { rotate: number; scale: number }> = {
+  'sign-in': { rotate: 0, scale: 1 },
+  'forgot-password': { rotate: 4, scale: 1.015 },
+  'reset-password': { rotate: -4, scale: 0.985 },
+  'accept-invite': { rotate: 6, scale: 1.02 },
+  'confirm-email-change': { rotate: -6, scale: 0.98 },
+}

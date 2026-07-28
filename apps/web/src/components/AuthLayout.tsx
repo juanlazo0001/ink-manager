@@ -1,7 +1,7 @@
 import { forwardRef, type ReactNode } from 'react'
 import { AnimatePresence, motion, MotionConfig } from 'framer-motion'
 import { useLocation, useOutlet } from 'react-router-dom'
-import { authSpringTransition, crossfadeVariants } from '../lib/motion'
+import { authSpringTransition, crossfadeVariants, ringModeTransform } from '../lib/motion'
 import SignInOrForgotCard, { type SignInOrForgotMode } from './SignInOrForgotCard'
 import loginBackground from '../assets/login-background-no-artist.png'
 
@@ -84,12 +84,29 @@ export default function AuthLayout() {
         className="absolute inset-0 h-full w-full object-cover"
       />
       <div className="hero-shade" aria-hidden="true" />
-      <div className="rings" aria-hidden="true">
+      {/* Rotate/scale keyed off the same `mode` that drives the card/button
+          transition below -- a deliberately subtle background echo of the
+          same state change, not an independent effect. `ringModeTransform`
+          falls back to sign-in's neutral values for any mode it doesn't
+          list, though every AuthMode currently has its own entry. The dot
+          ("electron")'s own continuous orbit lives entirely in CSS
+          (`.ring-orbit`'s keyframe animation) rather than here, since it
+          must keep running independent of `mode`/React state -- nesting
+          its plain CSS rotation inside this motion.div's spring rotation
+          composes fine, the two transforms just stack. */}
+      <motion.div
+        className="rings"
+        aria-hidden="true"
+        animate={ringModeTransform[mode] ?? ringModeTransform['sign-in']}
+        transition={authSpringTransition}
+      >
         <i />
         <i />
         <i />
-        <s />
-      </div>
+        <div className="ring-orbit">
+          <s />
+        </div>
+      </motion.div>
 
       <MotionConfig transition={authSpringTransition}>
         <motion.div layout className="relative z-10 flex w-full max-w-sm flex-col items-center">

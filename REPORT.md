@@ -3880,3 +3880,47 @@ Pulled the button out to its own top-level slot in `SignInOrForgotCard.tsx`, bet
 ## Cleanup
 
 Killed both dev server processes (api `:4000`, web `:6506`) started for this session's verification. Deleted every ad-hoc `.mjs` verification/tracing script from the scratch directory afterward.
+
+---
+
+# Auth page background rings: continuous idle orbit + mode-tied rotation
+
+Single small session on `main`. Adds two distinct kinds of motion to the auth page's existing background `.rings` decoration (three concentric arcs + the gold "electron" dot), reusing the persistent-shell architecture and shared `mode`/`MotionConfig` setup from the immediately preceding sessions rather than rebuilding them. No schema changes, no other files touched.
+
+## 1. Continuous idle orbit (CSS keyframes, not framer-motion)
+
+The dot was previously a static fixed offset (`left: calc(50% + 184px); top: calc(50% - 184px)`, 45 degrees around ring 1's 260px radius). Wrapped it in a new zero-size `.ring-orbit` div (`apps/web/src/index.css`) positioned at the same anchor point `.rings` itself uses, with `animation: ring-orbit-spin 42s linear infinite`. Rotating that zero-size wrapper carries the dot's existing fixed offset around in a circle on ring 1's own path without changing the offset value at all -- CSS's standard "transform on an ancestor visually carries absolutely-positioned descendants with it" behavior, no JS involved.
+
+Deliberately plain CSS, not a framer-motion `animate`/`repeat: Infinity` loop: an always-running ambient animation has a different performance profile than a one-shot transition (runs for as long as the page is open), so it's cheapest to hand entirely to the compositor thread via a native CSS transform animation rather than keeping JS ticking indefinitely. Linear easing, not the page's spring -- an idle loop should read as constant-speed, not something that eases/settles. Landed on **42s per revolution** -- slow enough to read as ambient/atmospheric rather than a distraction, fast enough that patient observation confirms it's genuinely moving (~2.4 degrees over the roughly 2.5s window sampled during verification, consistent with 360 degrees/42s). Already covered by the codebase's existing global `prefers-reduced-motion: reduce` rule (`index.css`, collapses all `animation-duration` to 0.01ms) -- no separate media query needed.
+
+## 2. Mode-tied ring rotation + scale
+
+`.rings` (`AuthLayout.tsx`) changed from a plain `div` to a `motion.div`, `animate`d off the same `mode` value (`getAuthMode(location.pathname)`) that already drives the card/button crossfade, using the same `authSpringTransition` spring already established (currently still at the prior session's temporarily-doubled `visualDuration: 0.76` -- untouched by this session, dial-back is that session's own follow-up, not this one's). New `ringModeTransform` map in `lib/motion.ts`, one small `{ rotate, scale }` pair per `AuthMode` (all five, not just Sign In/Forgot Password, so Reset Password/Accept Invite/Confirm Email Change each get their own subtle position instead of defaulting to Sign In's):
+
+| mode | rotate | scale |
+|---|---|---|
+| sign-in | 0deg | 1 |
+| forgot-password | 4deg | 1.015 |
+| reset-password | -4deg | 0.985 |
+| accept-invite | 6deg | 1.02 |
+| confirm-email-change | -6deg | 0.98 |
+
+Deliberately small (a few degrees, ~1-2% scale) -- reads as background depth/atmosphere behind the card, not a competing effect. The continuous CSS spin and this spring rotation compose naturally (nested transforms), no conflict.
+
+## Verification
+
+- **Desktop, Playwright-scripted** (own ad-hoc `.mjs` scripts against the local dev stack, deleted after): confirmed `.ring-orbit`'s computed style carries the real `animation-name`/`duration`/`iteration-count`; sampled the dot's actual on-screen `getBoundingClientRect()` position 6 times over ~2.5s -- coordinates shifted smoothly and continuously (e.g. x 437.5 -> 477.1, y 254.3 -> 321.9), confirming genuine motion rather than a static dot. Confirmed `.rings`' computed `transform` is `none` (identity) on Sign In and a real non-identity `matrix(...)` on Forgot Password after the spring settles; repeated across all five routes (`/login`, `/forgot-password`, `/reset-password/:token`, `/invite/:token`, `/confirm-email-change/:token`) -- each produced its own distinct rotate/scale matrix, no console/page errors on any of them. Screenshot confirms the dot and rings render as intended, subtle and legible against the card.
+- **Mobile viewport + CPU throttle (still desktop-run, an emulated proxy, not a real device)**: Playwright's iPhone 13 device emulation with 4x CPU throttling via CDP, sampling 200 animation frames idle and 120 more through a live mode transition. Idle orbit: avg 17.1ms/frame, 1 long frame (>33ms) out of 200. During+after the mode transition: avg 18.5ms/frame, 4 long frames out of 120. No sustained jank under this throttled proxy.
+- Both standing typechecks clean: `npx tsc --noEmit` (api, untouched -- no API files touched) and `npm run build` (web).
+
+## Real-phone testing: NOT performed -- explicit gap, not a claim of completion
+
+**This task's own instructions required confirming on a real phone, not a resized desktop browser window, and explicitly said not to approve on desktop alone.** I do not have access to physical device hardware from this environment -- everything above (including the "mobile" CPU-throttled measurement) ran through Playwright's emulation on the same desktop dev machine, which is a reasonable proxy but categorically not the same test the task asked for. **A human still needs to open this page on a real phone** and confirm the idle orbit doesn't introduce stutter or battery-drain-feeling jank, and that the mode-transition still feels smooth with the added ring motion layered in. Flagging this explicitly rather than reporting the task as fully verified.
+
+## Commit
+
+TBD -- filled in by a follow-up commit once this one lands, per this file's own established pattern.
+
+## Cleanup
+
+Killed both dev server processes (api `:4000`, web `:5182` -- the usual `:6506`/`:5173` were both already in use by something else in this environment) started for this session's verification. Deleted every ad-hoc `.mjs` verification/screenshot script from the scratch directory afterward. Left the unrelated concurrent working-tree changes (`Modal.tsx`, both branding PNGs, an untracked marketing screenshot HTML file) completely untouched -- confirmed via `git diff --stat` against exactly this session's own three files (`AuthLayout.tsx`, `index.css`, `lib/motion.ts`) before staging/committing.
