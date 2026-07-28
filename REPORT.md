@@ -3692,3 +3692,56 @@ Duration/easing landed on: **320ms, `cubic-bezier(0.16, 1, 0.3, 1)`** (an "expo-
 ## Cleanup
 
 Killed both dev server processes (api `:4000`, web `:6506`) started for this session's verification. Deleted every ad-hoc `.mjs` verification/tracing script from the local scratch directory afterward -- none were ever part of the repo.
+
+---
+
+# Auth-page transitions: rebuild using specific Motion techniques (Clerk sign-in reference)
+
+Single small session on `main`. Replaces the prior session's `AnimatePresence`-default-mode approach with the specific techniques from motion.dev's "Clerk: Sign-in-or-up" example -- read directly from the live page (`https://motion.dev/examples/react-clerk-sign-in` / its rendered example at `examples.motion.dev/react/clerk-sign-in`), not guessed at. Only the animation mechanics were borrowed -- no Clerk UI (email/password reveal, OTP card-stack) applies here and none was added. Persistent `AuthLayout` background/rings, untouched.
+
+**Note on working conditions**: a large, unrelated concurrent refactor (`.card-surface`/editorial-gold token consolidation, per its own in-progress `index.css`/`Team.tsx`/`Profile.tsx`/etc. changes) was actively running in this same working tree throughout this session -- confirmed by file-modification timestamps updating in real time. Left entirely untouched, including one moment where it left `index.css` in a transiently build-breaking state that resolved itself a short wait later (confirmed via `npx tsc -b` staying clean the whole time -- the failure was scoped to Tailwind's CSS processing of someone else's in-flight edit, never this session's own TypeScript). Only `apps/web/src/components/AuthLayout.tsx` and `apps/web/src/lib/motion.ts` were staged/committed -- verified via `git diff --stat` against exactly those two paths before committing, so none of the other session's in-progress work is included in this commit.
+
+## The four techniques, confirmed against the real source before implementing
+
+Fetched the actual example page rather than assuming the task brief's description was exact. Confirmed verbatim:
+```
+<MotionConfig transition={{ type: "spring", bounce: 0.3, visualDuration: 0.4 }}>
+
+const TEXT_VARIANTS = {
+    initial: { opacity: 0, filter: "blur(10px)", y: -10 },
+    animate: { opacity: 1, filter: "blur(0px)", y: 0 },
+    exit: { opacity: 0, filter: "blur(10px)", y: 10 },
+}
+
+<AnimatePresence mode="popLayout">
+```
+
+1. **`AnimatePresence mode="popLayout"`** -- adopted for both the heading and the card. Also confirmed via `motion.dev`'s own docs text (not assumed from the prop name): popLayout "pops" exiting elements out of document flow via `position: absolute` the instant they start exiting, letting siblings/the incoming element reflow immediately, and "pairs especially well with the `layout` prop" on individual children -- which is why `AuthCard`'s own `motion.div` carries `layout` directly, not just the outer wrapper. Docs also flag that any custom-component direct child of `AnimatePresence` must forward its ref for popLayout to work; `AuthCard` is wrapped in `forwardRef` accordingly (a real requirement, not decorative -- popLayout needs the DOM node to measure/position it while popped out).
+2. **Spring via `MotionConfig`**: `{ type: "spring", bounce: 0.25, visualDuration: 0.38 }`, set once at the top of the transitioning region (not a fixed-duration easing curve, and not repeated per element). Landed on 0.25/0.38 by eye, inside the brief's own suggested 0.2-0.3 / 0.35-0.4 ranges -- enough bounce to read as alive without any visible oscillation/overshoot wobble.
+3. **One shared piece of state cascading to two named-variant elements**: `getAuthMode(pathname)` maps the route to one of five `AuthMode` values (`sign-in` / `forgot-password` / `reset-password` / `accept-invite` / `confirm-email-change`), used as the heading's `AnimatePresence` key; the card's own `AnimatePresence` still keys off the literal pathname (finer-grained, but they move in lockstep since every mode maps to exactly one route in practice).
+4. **Distinct heading treatment**: new `headingVariants` in `lib/motion.ts` (fade + `blur(10px)` &rarr; `blur(0px)` + a mirrored y-offset) versus the card's own `crossfadeVariants` (fade + y-offset only, no blur) -- the heading visibly "resolves into focus" while the card underneath just fades/slides, giving the two their own distinct character even though both run off the same spring.
+
+A new heading element was added to `AuthLayout.tsx` itself (not to any of the five individual page components, which stayed untouched) -- none of Sign In / Forgot Password / Reset Password / Accept Invite / Confirm Email Change had any heading text before this session, just each page's own logo. Added there rather than in each page file to keep "one shared piece of state... cascading to the heading" literally true (a single lookup table in the layout, not five separate hardcoded strings), and to keep this session's footprint to layout/animation mechanics only, per its own scope.
+
+## Verification
+
+- **`popLayout` confirmed to actually fix the height-jump**, not assumed from the mode name: same `requestAnimationFrame`-polling technique as the prior session, tracing the container's real `getBoundingClientRect().height` frame-by-frame through a Sign In &harr; Forgot Password swap. Interpolated smoothly (442.5px &rarr; 428.1px, with a small ~0.4px spring-overshoot-then-settle visible in the trailing frames -- consistent with real spring physics, not a snap) across ~15 sampled frames, no jump.
+- **Genuine overlap** re-confirmed with a screenshot 280ms into a real click-triggered navigation: both the outgoing Sign In fields and the incoming Forgot Password card/heading visibly blended together mid-transition.
+- **Heading's distinct feel**: visually confirmed the blur is real (not just present in the variant object but actually applied) via `getComputedStyle` on a settled heading (`filter: "blur(0px)"`, confirming the property is live and animatable, not stripped/ignored).
+- **Every reachable view checked**, not just the two obvious ones: Sign In, Forgot Password, Reset Password, Accept Invite (both the invalid-token and a real valid-token happy path), and Confirm Email Change all screenshotted with their own correct heading and card content.
+- **Persistent background reconfirmed**: captured the background `<img>` DOM node's own identity before/after a real navigation -- still the literal same node.
+- **No regression in the invite-accept &rarr; Profile flow** (fixed two sessions ago): drove a real invite end-to-end through the new `AuthLayout` -- still lands on, and stays authenticated on, `/profile`.
+- **Cold-load sanity check**: fresh `/login` load shows both the card (`opacity: 1`) and heading (`opacity: 1`, `filter: blur(0px)`) fully settled immediately, no unwanted entrance animation (`AnimatePresence`'s `initial={false}` on both groups).
+- No console/page errors in any of the above (aside from the expected 404s from deliberately-bogus test tokens on the invalid-state screenshots).
+
+## Typechecks
+
+`npx tsc --noEmit` (api, unaffected -- no API files touched) and `npm run build` (web) -- both clean. (`npm run build` did fail once mid-session on the unrelated concurrent `index.css` edit described above; confirmed via `npx tsc -b` in isolation that this session's own code was never the cause, and the failure resolved once that other edit finished.)
+
+## Commit
+
+`<pending>` on `main`.
+
+## Cleanup
+
+Killed both dev server processes (api `:4000`, web `:6506`) started for this session's verification. Deleted every ad-hoc `.mjs` verification/tracing script and test invite account created during verification. Left the unrelated concurrent work (`index.css`, `Team.tsx`, `Profile.tsx`, and many other files, plus an untracked `apps/api/scratch-check.ts`) completely untouched -- none of it staged or committed by this session.

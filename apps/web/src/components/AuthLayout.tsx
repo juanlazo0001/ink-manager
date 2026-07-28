@@ -1,58 +1,73 @@
-import type { ReactNode } from 'react'
-import { AnimatePresence, motion, useIsPresent } from 'framer-motion'
+import { forwardRef, type ReactNode } from 'react'
+import { AnimatePresence, motion, MotionConfig } from 'framer-motion'
 import { useLocation, useOutlet } from 'react-router-dom'
-import { crossfadeTransition, crossfadeVariants } from '../lib/motion'
+import { authSpringTransition, crossfadeVariants, headingVariants } from '../lib/motion'
 import loginBackground from '../assets/login-background-no-artist.png'
 
 // Persistent chrome for every "fixed platform identity" public auth page
 // (Sign In, Forgot Password, Reset Password, Accept Invite, Confirm Email
 // Change) -- this component (background photo, overlay, rings) renders
-// once and never unmounts while navigating between them; only the card
-// content inside swaps.
+// once and never unmounts while navigating between them; only the
+// heading + card content inside swaps.
 //
-// The card swap is Framer Motion's AnimatePresence in its DEFAULT mode
-// (no `mode` prop -- NOT "wait", which forces the outgoing element to
-// finish exiting before the incoming one starts entering, i.e. exactly
-// the sequential fade-out-then-fade-in this replaces). Default mode
-// mounts both simultaneously and lets their own initial/animate/exit
-// transitions run concurrently, which is what makes this a real
-// overlapping crossfade rather than a scripted illusion of one -- a hand-
-// rolled setTimeout-based version of the same idea existed here before
-// and was replaced outright (not left dormant) because fighting React's
-// default "unmount the instant the condition goes false" behavior with
-// manual timers is exactly the kind of thing that stays "almost right" no
-// matter how many timing tweaks it gets.
+// Rebuilt around the specific techniques from motion.dev's "Clerk: Sign-
+// in-or-up" example (borrowed for the animation mechanics only -- none of
+// its email/password/OTP UI applies here):
 //
-// AuthCard below is why this ALSO fixes the height-jump between cards of
-// different lengths (e.g. Sign In vs. the shorter Forgot Password form):
-// `useIsPresent()` is true for the current/entering card and false for
-// the one mid-exit, so only the entering card stays in normal document
-// flow -- the exiting one switches to absolute positioning (visually
-// still overlapping, stacked on top) the instant it starts leaving. That
-// means at any moment there's only ever ONE card actually contributing to
-// this container's height, so the `layout` prop on the wrapper below can
-// FLIP-animate a real height change smoothly instead of snapping (nothing
-// to snap to -- the box just tracks whichever single card is in flow).
-function AuthCard({ children }: { children: ReactNode }) {
-  const isPresent = useIsPresent()
-
+//   - `AnimatePresence mode="popLayout"`, not the default "sync" mode a
+//     prior version of this used. popLayout pops an exiting element out
+//     of document flow (position: absolute) the INSTANT it starts
+//     animating out, so the incoming element takes its layout position
+//     immediately rather than waiting -- this is what actually fixes the
+//     height-jump between differently-sized cards (Sign In's 3 fields vs.
+//     Forgot Password's 1, etc). It replaces the previous version's
+//     manual `useIsPresent()` position-toggling hack outright: popLayout
+//     does the same thing internally, more robustly.
+//   - A single spring (`authSpringTransition`, see lib/motion.ts) set
+//     once via `MotionConfig` for the whole transitioning region, not a
+//     fixed-duration easing curve per element.
+//   - One shared piece of state (`mode`, derived from the route) driving
+//     two independently-varianted, independently-animated elements: the
+//     heading and the card. Both key off the same `mode`/pathname so they
+//     swap in lockstep, but the heading uses its own `headingVariants`
+//     (fade + blur) while the card uses `crossfadeVariants` (fade + slide,
+//     no blur) -- giving the heading its own distinct "materialize"
+//     moment rather than just a bigger copy of the card's own effect.
+//
+// popLayout requires any custom component that's a direct AnimatePresence
+// child to forward its ref to the actual DOM node (so Framer can measure
+// and position it while it's popped out) -- hence AuthCard is wrapped in
+// forwardRef rather than being a plain function component.
+const AuthCard = forwardRef<HTMLDivElement, { children: ReactNode }>(function AuthCard({ children }, ref) {
   return (
-    <motion.div
-      style={{ position: isPresent ? 'static' : 'absolute', top: 0, left: 0, right: 0 }}
-      variants={crossfadeVariants}
-      initial="initial"
-      animate="animate"
-      exit="exit"
-      transition={crossfadeTransition}
-    >
+    <motion.div ref={ref} layout variants={crossfadeVariants} initial="initial" animate="animate" exit="exit">
       {children}
     </motion.div>
   )
+})
+
+type AuthMode = 'sign-in' | 'forgot-password' | 'reset-password' | 'accept-invite' | 'confirm-email-change'
+
+const AUTH_HEADINGS: Record<AuthMode, string> = {
+  'sign-in': 'Sign in',
+  'forgot-password': 'Forgot your password?',
+  'reset-password': 'Reset your password',
+  'accept-invite': 'Join your studio',
+  'confirm-email-change': 'Confirm your email',
+}
+
+function getAuthMode(pathname: string): AuthMode {
+  if (pathname.startsWith('/forgot-password')) return 'forgot-password'
+  if (pathname.startsWith('/reset-password')) return 'reset-password'
+  if (pathname.startsWith('/invite')) return 'accept-invite'
+  if (pathname.startsWith('/confirm-email-change')) return 'confirm-email-change'
+  return 'sign-in'
 }
 
 export default function AuthLayout() {
   const location = useLocation()
   const outlet = useOutlet()
+  const mode = getAuthMode(location.pathname)
 
   return (
     <div className="login-shell relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-12">
@@ -70,20 +85,26 @@ export default function AuthLayout() {
         <s />
       </div>
 
-      {/* transition={{ layout: crossfadeTransition }}: `layout` animations
-          use Framer's own default spring by default, which settles on a
-          noticeably different (longer, bouncier-tailed) timeline than the
-          card's own opacity/y transition -- measured at ~500ms to fully
-          rest versus the card's 320ms fade, so the box was visibly still
-          resizing after the incoming card had already fully faded in.
-          Pinning the layout transition to the exact same preset makes the
-          height change and the crossfade read as one motion instead of
-          two independently-timed ones. */}
-      <motion.div layout transition={{ layout: crossfadeTransition }} className="relative z-10 w-full max-w-sm">
-        <AnimatePresence initial={false}>
-          <AuthCard key={location.pathname}>{outlet}</AuthCard>
-        </AnimatePresence>
-      </motion.div>
+      <MotionConfig transition={authSpringTransition}>
+        <motion.div layout className="relative z-10 flex w-full max-w-sm flex-col items-center">
+          <AnimatePresence mode="popLayout" initial={false}>
+            <motion.h1
+              key={mode}
+              variants={headingVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              className="font-display mb-4 text-center text-2xl font-normal tracking-[-0.01em] text-[var(--login-cream)]"
+            >
+              {AUTH_HEADINGS[mode]}
+            </motion.h1>
+          </AnimatePresence>
+
+          <AnimatePresence mode="popLayout" initial={false}>
+            <AuthCard key={location.pathname}>{outlet}</AuthCard>
+          </AnimatePresence>
+        </motion.div>
+      </MotionConfig>
     </div>
   )
 }
