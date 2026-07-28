@@ -1,15 +1,15 @@
 import { forwardRef, type ReactNode } from 'react'
 import { AnimatePresence, motion, MotionConfig } from 'framer-motion'
 import { useLocation, useOutlet } from 'react-router-dom'
-import { authSpringTransition, crossfadeVariants, headingVariants } from '../lib/motion'
+import { authSpringTransition, crossfadeVariants } from '../lib/motion'
 import SignInOrForgotCard, { type SignInOrForgotMode } from './SignInOrForgotCard'
 import loginBackground from '../assets/login-background-no-artist.png'
 
 // Persistent chrome for every "fixed platform identity" public auth page
 // (Sign In, Forgot Password, Reset Password, Accept Invite, Confirm Email
 // Change) -- this component (background photo, overlay, rings) renders
-// once and never unmounts while navigating between them; only the
-// heading + card content inside swaps.
+// once and never unmounts while navigating between them; only the card
+// content inside swaps.
 //
 // Rebuilt around the specific techniques from motion.dev's "Clerk: Sign-
 // in-or-up" example (borrowed for the animation mechanics only -- none of
@@ -27,13 +27,12 @@ import loginBackground from '../assets/login-background-no-artist.png'
 //   - A single spring (`authSpringTransition`, see lib/motion.ts) set
 //     once via `MotionConfig` for the whole transitioning region, not a
 //     fixed-duration easing curve per element.
-//   - One shared piece of state (`mode`, derived from the route) driving
-//     two independently-varianted, independently-animated elements: the
-//     heading and the card. Both key off the same `mode`/pathname so they
-//     swap in lockstep, but the heading uses its own `headingVariants`
-//     (fade + blur) while the card uses `crossfadeVariants` (fade + slide,
-//     no blur) -- giving the heading its own distinct "materialize"
-//     moment rather than just a bigger copy of the card's own effect.
+//
+// A separate per-mode heading used to live here (its own AnimatePresence
+// + blur-fade text swap) but was removed once the same blur-fade
+// technique moved onto SignInOrForgotCard's own submit button label --
+// that button already communicates "this is a different action now,"
+// making a redundant heading above the card unnecessary.
 //
 // popLayout requires any custom component that's a direct AnimatePresence
 // child to forward its ref to the actual DOM node (so Framer can measure
@@ -54,14 +53,6 @@ const AuthCard = forwardRef<HTMLDivElement, { children: ReactNode }>(function Au
 })
 
 type AuthMode = 'sign-in' | 'forgot-password' | 'reset-password' | 'accept-invite' | 'confirm-email-change'
-
-const AUTH_HEADINGS: Record<AuthMode, string> = {
-  'sign-in': 'Sign in',
-  'forgot-password': 'Forgot your password?',
-  'reset-password': 'Reset your password',
-  'accept-invite': 'Join your studio',
-  'confirm-email-change': 'Confirm your email',
-}
 
 function getAuthMode(pathname: string): AuthMode {
   if (pathname.startsWith('/forgot-password')) return 'forgot-password'
@@ -102,19 +93,6 @@ export default function AuthLayout() {
 
       <MotionConfig transition={authSpringTransition}>
         <motion.div layout className="relative z-10 flex w-full max-w-sm flex-col items-center">
-          <AnimatePresence mode="popLayout" initial={false}>
-            <motion.h1
-              key={mode}
-              variants={headingVariants}
-              initial="initial"
-              animate="animate"
-              exit="exit"
-              className="font-display mb-4 text-center text-2xl font-normal tracking-[-0.01em] text-[var(--login-cream)]"
-            >
-              {AUTH_HEADINGS[mode]}
-            </motion.h1>
-          </AnimatePresence>
-
           {/* SignInOrForgotCard is keyed identically regardless of which of
               the two routes matched -- that's what makes it ONE
               continuously-mounted instance across that switch rather than

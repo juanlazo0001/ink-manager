@@ -3842,3 +3842,41 @@ Proved the "never remounts, never fades" claim with actual DOM identity and comp
 ## Cleanup
 
 Killed both dev server processes (api `:4000`, web `:6506`) started for this session's verification. Deleted every ad-hoc `.mjs` verification script from the scratch directory afterward.
+
+---
+
+# Auth transitions: persistent button (not two swapped ones) + slower tuning pass
+
+Single small follow-up on `main`. Two fixes to the immediately preceding session's `SignInOrForgotCard`: the submit button gets the same "one persistent element" treatment already applied to the card/logo/email, and the shared spring's `visualDuration` is temporarily doubled for tuning.
+
+## 1. The button is now one persistent element, not two swapped ones
+
+Previously the submit button lived *inside* each mode's own swapped content block (`sign-in-fields` / `forgot-fields`), so it was a genuinely different button instance each time -- unmounting and remounting on every switch, same class of problem the card/logo/email fix addressed a session ago.
+
+Pulled the button out to its own top-level slot in `SignInOrForgotCard.tsx`, between two now-separate `AnimatePresence` regions (one for the content above it -- password field/error banner vs. explanatory paragraph -- one for the content below -- the mode-switch link, or the done-state confirmation): a single `motion.button` with `layout`, rendered unconditionally except for the one state that genuinely never had a button at all (Forgot Password's post-submit confirmation). Only the label *text* inside swaps, via a small nested `AnimatePresence` wrapping a `motion.span` keyed on the label string itself, using the same blur-fade preset the now-removed heading used to use (renamed `headingVariants` -> `blurTextVariants` in `lib/motion.ts` since it's no longer heading-specific).
+
+**The heading is removed entirely** (`AuthLayout.tsx`, its own `AUTH_HEADINGS` map and `motion.h1` block deleted) -- the button label swap now carries the "this is a different action" signal that the heading used to, making a redundant heading above the card unnecessary. This affects all five auth views, not just Sign In/Forgot Password, since the heading was previously shared across all of them.
+
+## 2. Spring tuning: `visualDuration` doubled, temporarily
+
+`authSpringTransition.visualDuration`: `0.38` -> `0.76`, explicitly as a tuning aid (commented in `lib/motion.ts` as temporary) -- slow enough to actually watch each phase of the motion rather than guessing from a blur. Not a final value; dial back toward something snappier once the restructured button/card feels right at this slower speed.
+
+## Verification
+
+- **Button node identity, proven not assumed**: captured the `<button type="submit">` element's own reference before clicking "Forgot password?" and confirmed by `===` comparison after the transition settled -- the literal same DOM node.
+- **The label crossfade is real, traced frame-by-frame** (a screenshot alone was misleading here -- the blur diffuses the overlap enough that a static image at typical scale just looks like a slightly soft single label, not two visibly overlapping words): polled `getComputedStyle` on both the outgoing and incoming `<span>` every animation frame through the transition. Both genuinely coexist from ~72ms to ~615ms, "Sign in" fading opacity 1&rarr;0 with blur 0&rarr;10px while "Send reset link" simultaneously fades 0&rarr;1 with blur 10px&rarr;0px, crossing near their midpoints around 280-300ms. A tightly-cropped screenshot at that exact 290ms midpoint visibly shows the incoming label mid-blur.
+- **Confirmed the slower `visualDuration` actually took effect**, not just assumed from the source edit: traced the card's real height in pixels frame-by-frame -- it now takes roughly 900ms-1.2s to fully settle (was ~350-500ms before), consistent with a genuine ~2x slowdown, ruling out a stale dev-server bundle.
+- Re-confirmed no regressions: a real end-to-end login (real credentials, redirect to `/dashboard`), and the two other still-`AuthCard`-driven routes (Reset Password, Accept Invite) rendering correctly.
+- No console/page errors in any of the above.
+
+## Typechecks
+
+`npx tsc --noEmit` (api, untouched) and `npm run build` (web) -- both clean.
+
+## Commit
+
+`<pending>` on `main`.
+
+## Cleanup
+
+Killed both dev server processes (api `:4000`, web `:6506`) started for this session's verification. Deleted every ad-hoc `.mjs` verification/tracing script from the scratch directory afterward.
