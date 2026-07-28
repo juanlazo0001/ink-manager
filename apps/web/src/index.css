@@ -242,44 +242,6 @@
   }
 }
 
-/* AuthLayout's card-swap transition (Sign In <-> Forgot Password <-> Reset
-   Password <-> Accept Invite <-> Confirm Email Change): a real overlapping
-   crossfade, not sequential -- enter and exit run over the SAME 320ms
-   window (see AuthLayout.tsx), so there's never a frame with neither card
-   visible. An earlier version faded the old card out completely, then
-   swapped, then faded the new one in -- the gap in between read as the
-   modal itself "reloading" even though the background never moved.
-   cubic-bezier(0.16, 1, 0.3, 1) ("expo-out") on the enter and a mirrored
-   ease-in on the exit -- a noticeably smoother, more natural deceleration
-   than a linear/basic ease-in-out gives, especially paired with the small
-   scale change (a subtle settle/lift rather than a flat slide). */
-@keyframes auth-card-enter {
-  from {
-    opacity: 0;
-    transform: translateY(10px) scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-@keyframes auth-card-exit {
-  from {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-  to {
-    opacity: 0;
-    transform: translateY(-10px) scale(0.98);
-  }
-}
-.auth-card-enter {
-  animation: auth-card-enter 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-.auth-card-exit {
-  animation: auth-card-exit 320ms cubic-bezier(0.4, 0, 1, 1) both;
-}
-
 @layer base {
   body {
     @apply bg-bg text-fg;

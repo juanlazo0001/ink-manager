@@ -24,6 +24,7 @@
     "@tiptap/starter-kit": "^3.28.0",
     "dayjs": "^1.11.21",
     "dompurify": "^3.4.12",
+    "framer-motion": "^12.42.2",
     "qrcode": "^1.5.4",
     "react": "^19.2.7",
     "react-big-calendar": "^1.20.0",

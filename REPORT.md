@@ -3648,3 +3648,47 @@ Rebuilt `AuthLayout.tsx` around a real overlapping crossfade: the outgoing card 
 Also cleaned up every ad-hoc verification script (`.mjs`/`.ts`) and dev-server log file this conversation had accumulated in the local scratch directory across both this task and the preceding account-lifecycle one -- none of it was ever part of the repo, but it was still clutter sitting on disk.
 
 Typechecks re-run clean (`npx tsc --noEmit` / `npm run build`). Commit: `6e0d29e` on `main`. Same two dev server processes killed again after verification.
+
+---
+
+# Auth-page transitions: replace hand-rolled crossfade with Framer Motion
+
+Single small session on `main`. Replaces only the card-swap transition inside the existing persistent `AuthLayout` (background/ornaments already don't remount, untouched) -- no schema changes, no other part of the app animated.
+
+## Why the hand-rolled version stayed "almost right"
+
+Confirmed the diagnosis before writing any code: a manually-timed CSS crossfade has to fight React's default "unmount the instant the condition goes false" behavior to keep the outgoing element around long enough to animate out -- the previous version did this with a `setTimeout` + a ref tracking "what was rendered last render," which worked but was inherently fragile. Separately, and independently, it never accounted for content-height differences between cards at all -- the container just snapped to whatever the new card's natural height was.
+
+## 1. Framer Motion installed and set up as reusable infrastructure
+
+`npm install framer-motion` in `apps/web` (confirmed not already a dependency anywhere via `npm ls framer-motion` first -- it wasn't). New `apps/web/src/lib/motion.ts` exports exactly two things, deliberately not a speculative preset library: `crossfadeVariants` (opacity + a 10px vertical settle, mirrored on exit) and `crossfadeTransition` (`{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }`). Both are consumed by `AuthLayout.tsx` and are the reusable starting point for animation work elsewhere in the app whenever that's actually asked for -- nothing beyond what this session needed was built out.
+
+## 2. `AuthLayout.tsx` rebuilt around `AnimatePresence`
+
+- **Default mode, not `"wait"`**: no `mode` prop on `AnimatePresence`, so outgoing and incoming cards mount and animate simultaneously -- confirmed via a real overlap, not inferred (see Verification).
+- **The height-jump fix, solved as part of the same system, not bolted on separately**: a small `AuthCard` wrapper calls Framer's `useIsPresent()` -- `true` for the current/entering card, `false` for the one mid-exit. Only the entering card stays in normal document flow; the exiting one switches to `position: absolute` the instant it starts leaving (still visually stacked on top, still animating its own exit). That means at any given moment exactly one card is actually contributing to the container's height, which is what lets the outer wrapper's `layout` prop FLIP-animate a real height change smoothly instead of having two candidate heights to reconcile.
+- **Old hand-rolled code deleted outright**, not left dormant: the `useRef`/`useState`/`setTimeout` machinery in `AuthLayout.tsx` and the `auth-card-enter`/`auth-card-exit` `@keyframes` + classes in `index.css` are gone. `grep` confirms no remaining references anywhere in `apps/web/src`.
+- **Unified the layout-transition timing with the crossfade timing** -- not in the original brief, but caught during verification (see below) and worth fixing in the same pass rather than shipping something subtly two-toned: Framer's `layout` prop uses its own default spring transition unless told otherwise, which measured out to a ~500ms settle versus the card's own 320ms opacity fade -- meaning the box was still visibly resizing after the incoming card had already fully faded in. Pinned via `transition={{ layout: crossfadeTransition }}` on the wrapper so both animations share the exact same duration/easing and read as one motion.
+
+## Verification
+
+Duration/easing landed on: **320ms, `cubic-bezier(0.16, 1, 0.3, 1)`** (an "expo-out"-style curve) -- picked by eye against the real transition, same values the previous CSS version had converged on, which held up under the new mechanism too.
+
+- **Genuine overlap, proven, not assumed**: screenshotted 30ms after a real click-triggered navigation and captured both the outgoing Sign In card and the incoming Forgot Password card visibly blended together mid-transition -- not sequential, not a scripted illusion of one.
+- **Height animation, proven with a real numeric trace, not just eyeballed**: injected a `requestAnimationFrame` poller into the page to log the container's `getBoundingClientRect().height` every frame across two real navigations. Login → Forgot Password (394.5px → 380.5px) interpolated smoothly across ~15 intermediate values, no jump. Confirm Email Change → Sign In (240px → 394.5px, a much bigger and more obvious swing) interpolated through ~20 intermediate values over ~350ms, also smooth. Neither shows a value snapping straight from start to end.
+- **Persistent background reconfirmed, not just re-assumed**: captured the background `<img>` DOM node's own object identity before and after a real navigation -- still the literal same node (`true`), so the prior session's remount fix is intact.
+- **Reset Password and Accept Invite views checked directly**, not just the two most obvious ones (Sign In / Forgot Password) -- both render correctly with the new system, no visual regressions.
+- **Cold-load sanity check**: confirmed a fresh `/login` load shows the card at `opacity: 1` immediately, no unwanted fade-in on first mount (`AnimatePresence`'s `initial={false}` is what prevents this -- verified via `getComputedStyle`, not assumed from reading the prop name).
+- No console/page errors in any of the above.
+
+## Typechecks
+
+`npx tsc --noEmit` (api, unaffected by this session -- no API files touched) and `npm run build` (web) -- both clean.
+
+## Commit
+
+`<pending>` on `main`.
+
+## Cleanup
+
+Killed both dev server processes (api `:4000`, web `:6506`) started for this session's verification. Deleted every ad-hoc `.mjs` verification/tracing script from the local scratch directory afterward -- none were ever part of the repo.
