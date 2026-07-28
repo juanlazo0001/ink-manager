@@ -9,6 +9,7 @@ export interface UserProfile {
   role: string
   studioId: string
   createdAt: string
+  pendingEmail: string | null
   artist?: { bio: string | null; specialties: string[] }
   permissions: string[]
 }

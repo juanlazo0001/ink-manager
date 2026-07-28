@@ -48,8 +48,12 @@ interface TeamUser {
   isActive: boolean
   createdAt: string
   locationId: string | null
+  pending: boolean
+  inviteExpiresAt: string | null
   artist?: { bio: string | null; specialties: string[] }
 }
+
+const EMPTY_INVITE_FORM = { email: '', role: 'FRONT_DESK' }
 
 interface StaffDeletePreview {
   isArtist: boolean
@@ -179,6 +183,24 @@ export default function Team() {
     setShowAddModal(true)
   }
 
+  const [showInviteModal, setShowInviteModal] = useState(false)
+  const [inviteForm, setInviteForm] = useState(EMPTY_INVITE_FORM)
+  const [inviteFormError, setInviteFormError] = useState<string | null>(null)
+  const [inviteSubmitting, setInviteSubmitting] = useState(false)
+
+  function openInvite() {
+    setInviteForm(EMPTY_INVITE_FORM)
+    setInviteFormError(null)
+    setShowInviteModal(true)
+  }
+
+  const [resendingInviteId, setResendingInviteId] = useState<string | null>(null)
+  const [resendError, setResendError] = useState<string | null>(null)
+  const [resendSuccessId, setResendSuccessId] = useState<string | null>(null)
+  const [cancellingInvite, setCancellingInvite] = useState<TeamUser | null>(null)
+  const [cancelSubmitting, setCancelSubmitting] = useState(false)
+  const [cancelError, setCancelError] = useState<string | null>(null)
+
   const [editingUser, setEditingUser] = useState<TeamUser | null>(null)
   const [editForm, setEditForm] = useState(EMPTY_EDIT_FORM)
   const [editAvatarUrl, setEditAvatarUrl] = useState<string | null>(null)
@@ -207,7 +229,9 @@ export default function Team() {
   // Artists tab now, even though `users` (the full roster fetch below)
   // still includes them, since the Artists tab's "Edit account"/"View as"
   // actions reuse this same data + the edit modal below.
-  const staffUsers = users?.filter((u) => u.role === 'OWNER' || u.role === 'FRONT_DESK') ?? []
+  const allStaff = users?.filter((u) => u.role === 'OWNER' || u.role === 'FRONT_DESK') ?? []
+  const pendingInvites = allStaff.filter((u) => u.pending)
+  const staffUsers = allStaff.filter((u) => !u.pending)
 
   useEffect(() => {
     if (!isOwner || !user?.studioId) return
@@ -363,6 +387,59 @@ export default function Team() {
     }
   }
 
+  async function handleInviteSubmit(event: FormEvent) {
+    event.preventDefault()
+    if (!user?.studioId) return
+
+    setInviteFormError(null)
+    setInviteSubmitting(true)
+
+    try {
+      await apiFetch(`/studios/${user.studioId}/invites`, {
+        method: 'POST',
+        body: JSON.stringify(inviteForm),
+      })
+      setShowInviteModal(false)
+      setInviteForm(EMPTY_INVITE_FORM)
+      setRefreshIndex((index) => index + 1)
+    } catch (err) {
+      setInviteFormError(err instanceof Error ? err.message : 'Failed to send invite')
+    } finally {
+      setInviteSubmitting(false)
+    }
+  }
+
+  async function handleResendInvite(teamUser: TeamUser) {
+    if (!user?.studioId) return
+    setResendError(null)
+    setResendSuccessId(null)
+    setResendingInviteId(teamUser.id)
+    try {
+      await apiFetch(`/studios/${user.studioId}/invites/${teamUser.id}/resend`, { method: 'POST' })
+      setResendSuccessId(teamUser.id)
+      setRefreshIndex((index) => index + 1)
+    } catch (err) {
+      setResendError(err instanceof Error ? err.message : 'Failed to resend invite')
+    } finally {
+      setResendingInviteId(null)
+    }
+  }
+
+  async function handleConfirmCancelInvite() {
+    if (!user?.studioId || !cancellingInvite) return
+    setCancelSubmitting(true)
+    setCancelError(null)
+    try {
+      await apiFetch(`/studios/${user.studioId}/invites/${cancellingInvite.id}`, { method: 'DELETE' })
+      setCancellingInvite(null)
+      setRefreshIndex((index) => index + 1)
+    } catch (err) {
+      setCancelError(err instanceof Error ? err.message : 'Failed to cancel invite')
+    } finally {
+      setCancelSubmitting(false)
+    }
+  }
+
   function openEdit(teamUser: TeamUser) {
     setEditingUser(teamUser)
     setEditForm(emptyEditForm(teamUser))
@@ -470,14 +547,24 @@ export default function Team() {
             </div>
 
             {isOwner && activeTab === 'staff' && (
-              <button
-                type="button"
-                onClick={openAddStaff}
-                className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover"
-              >
-                <PlusIcon className="h-4 w-4" />
-                Add team member
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={openAddStaff}
+                  title="Create an account directly with a password, without sending an invite email"
+                  className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
+                >
+                  Add directly
+                </button>
+                <button
+                  type="button"
+                  onClick={openInvite}
+                  className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover"
+                >
+                  <PlusIcon className="h-4 w-4" />
+                  Invite team member
+                </button>
+              </div>
             )}
 
             {isOwner && activeTab === 'artists' && (
@@ -517,6 +604,69 @@ export default function Team() {
                 </button>
               ))}
           </div>
+
+          {activeTab === 'staff' && isOwner && pendingInvites.length > 0 && (
+            <div className="mt-6 rounded-2xl border border-warning/30 bg-warning/5 p-5">
+              <h2 className="text-sm font-semibold text-fg">Pending invites</h2>
+              <p className="mt-1 text-xs text-fg-secondary">
+                Sent, but not yet activated. An invite link expires 7 days after it's sent or last resent.
+              </p>
+              {resendError && <p className="mt-3 text-sm text-danger">{resendError}</p>}
+
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="text-xs text-fg-muted">
+                      <th className="pb-2 font-medium">Email</th>
+                      <th className="hidden pb-2 font-medium sm:table-cell">Role</th>
+                      <th className="pb-2 font-medium">Status</th>
+                      <th className="pb-2 font-medium"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-warning/20">
+                    {pendingInvites.map((invite) => {
+                      const expired = invite.inviteExpiresAt ? new Date(invite.inviteExpiresAt) < new Date() : false
+                      return (
+                        <tr key={invite.id}>
+                          <td className="py-2.5 text-fg">{invite.email}</td>
+                          <td className="hidden py-2.5 text-fg-secondary sm:table-cell">{formatStatus(invite.role)}</td>
+                          <td className="py-2.5">
+                            <StatusPill status="PENDING" label={expired ? 'Expired' : 'Pending'} />
+                          </td>
+                          <td className="py-2.5 text-right">
+                            <div className="flex justify-end gap-1.5 sm:gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleResendInvite(invite)}
+                                disabled={resendingInviteId === invite.id}
+                                className="rounded-full border border-border px-2 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40 sm:px-3"
+                              >
+                                {resendingInviteId === invite.id
+                                  ? 'Resending…'
+                                  : resendSuccessId === invite.id
+                                    ? 'Sent!'
+                                    : 'Resend'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setCancellingInvite(invite)
+                                  setCancelError(null)
+                                }}
+                                className="rounded-full border border-danger/40 px-2 py-1.5 text-xs font-medium text-danger transition hover:bg-danger/10 sm:px-3"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           {activeTab === 'staff' && isOwner && (
           <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
@@ -1030,6 +1180,91 @@ export default function Team() {
               {addSubmitting ? 'Adding…' : 'Add team member'}
             </button>
           </form>
+        </Modal>
+      )}
+
+      {showInviteModal && (
+        <Modal title="Invite team member" onClose={() => setShowInviteModal(false)}>
+          <form onSubmit={handleInviteSubmit}>
+            <p className="mb-4 text-sm text-fg-secondary">
+              They'll get an email with a link to set their own password and activate their account.
+            </p>
+
+            {inviteFormError && (
+              <div className="mb-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+                {inviteFormError}
+              </div>
+            )}
+
+            <div className="mb-3">
+              <label htmlFor="inviteEmail" className="mb-1 block text-sm font-medium text-fg-secondary">
+                Email
+              </label>
+              <input
+                id="inviteEmail"
+                type="email"
+                required
+                value={inviteForm.email}
+                onChange={(event) => setInviteForm({ ...inviteForm, email: event.target.value })}
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="inviteRole" className="mb-1 block text-sm font-medium text-fg-secondary">
+                Role
+              </label>
+              <select
+                id="inviteRole"
+                value={inviteForm.role}
+                onChange={(event) => setInviteForm({ ...inviteForm, role: event.target.value })}
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+              >
+                {STAFF_ROLE_OPTIONS.map((role) => (
+                  <option key={role} value={role}>
+                    {formatStatus(role)}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              type="submit"
+              disabled={inviteSubmitting}
+              className="mt-5 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
+            >
+              {inviteSubmitting ? 'Sending…' : 'Send invite'}
+            </button>
+          </form>
+        </Modal>
+      )}
+
+      {cancellingInvite && (
+        <Modal title="Cancel invite" onClose={() => setCancellingInvite(null)}>
+          <p className="text-sm text-fg-secondary">
+            Cancel the pending invite for <span className="font-semibold">{cancellingInvite.email}</span>? Their invite
+            link will stop working and they won't be able to activate an account unless invited again.
+          </p>
+
+          {cancelError && <p className="mt-3 text-sm text-danger">{cancelError}</p>}
+
+          <div className="mt-5 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setCancellingInvite(null)}
+              className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
+            >
+              Keep invite
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmCancelInvite}
+              disabled={cancelSubmitting}
+              className="rounded-full bg-danger px-4 py-2 text-sm font-medium text-bg transition hover:bg-danger/90 disabled:opacity-60"
+            >
+              {cancelSubmitting ? 'Cancelling…' : 'Cancel invite'}
+            </button>
+          </div>
         </Modal>
       )}
 

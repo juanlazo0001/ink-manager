@@ -3516,3 +3516,69 @@ Confirmed every value via `getComputedStyle` on the real rendered page, not just
 ## Cleanup
 
 Same dev servers from the prior session (api `:4000`, web `:6506`) reused for verification, left running for the same reason stated there. No new background processes started this session. No scratch scripts staged.
+
+---
+
+# Team account lifecycle — invite, forgot password, change email, change password, deactivation
+
+Single session on `main`. Security-sensitive, so verification below is adversarial (reuse/expiry/immediate-revocation checks), not just happy-path. No public studio signup was built — invites only add a teammate to an existing studio, sent by someone with `team.manage`.
+
+## 1. Schema — all on `User`, no new models
+
+`inviteToken`/`inviteTokenExpiresAt`, `passwordResetToken`/`passwordResetTokenExpiresAt`, `pendingEmail`/`emailChangeToken`/`emailChangeTokenExpiresAt`, `passwordChangedAt`, `deactivatedAt`/`deactivatedById` (self-relation, audit metadata only — `isActive` stays the one field every read path actually checks). `password` relaxed to nullable (confirmed it was required first) since an invited-but-not-yet-activated user has no password hash at all. Same token+expiry-on-record pattern as deposits/waivers/estimates — nothing new invented. Migration `20260728003429_user_account_lifecycle`, applied and resolved (`prisma migrate status` confirms up to date).
+
+## 2. Platform email — Bird, `lib/platformEmail.ts`
+
+`sendPlatformEmail({ to, subject, text, html })` posts to `https://{region}.platform.bird.com/v1/email/messages` (region from the `BIRD_API_KEY` prefix, e.g. `bk_us1_...` → `us1`), from `accounts@mail.inkmanager.app`. Every call site is fire-and-forget (`.catch(err => console.error(...))`, never awaited in the request path) — the token/DB write is the durable effect and always happens first, so a Bird outage degrades to "the link exists but the email didn't arrive," never a failed or slow request. This also closes a timing side-channel on forgot-password specifically: awaiting a real network call only on the "email exists" branch would make that branch measurably slower than the "doesn't exist" branch.
+
+## 3. Invite flow
+
+`POST /:studioId/invites` (`team.manage`) creates a passwordless `User` with a token, emails the link, returns `serializeUser(...)`. Public `GET /invite/verify/:token` and `POST /invite/accept/:token { password }` (sets the hash, clears the token, activates, returns a fresh JWT so the new teammate lands signed in). `POST /:studioId/invites/:userId/resend` overwrites the token (old one stops matching anything — invalidated by construction, not a separate revocation step) and re-emails. `DELETE /:studioId/invites/:userId` (Cancel) deletes the row outright — a pending invite never had a real account, nothing about it is worth keeping. Login on a pending account returns `"Check your email to activate your account."`, not the generic invalid-credentials message.
+
+**Team.tsx**: kept the existing direct-create-with-password flow (now labeled "Add directly," secondary button) alongside a new "Invite team member" primary flow — the backend comment on the old route explicitly kept it for "an owner handing over a printed credential in person," so both stayed rather than removing one. Added a distinct amber "Pending invites" section (email/role/expiry, Resend/Cancel) above the regular staff table.
+
+## 4. Forgot password
+
+`POST /auth/forgot-password { email }` — byte-identical response whether or not the account exists (confirmed, not assumed — see verification). `POST /auth/reset-password/:token { newPassword }` sets the hash and `passwordChangedAt` in one update.
+
+**Session invalidation**: `requireAuth` (`middleware/auth.ts`) now does a live `prisma.user.findUnique` on every authenticated request (not just at login) and rejects if the token's own `iat` predates `passwordChangedAt`. This is the only way to get true immediate revocation out of stateless JWTs, and it's a real per-request DB round-trip cost, accepted deliberately. `optionalAuth` was deliberately left as pure JWT verification (no DB hit) — narrower semi-public surface, flagging this as a known asymmetry rather than silently leaving it unexamined.
+
+## 5. Change email (logged in)
+
+`POST /auth/change-email { newEmail, currentPassword }` requires the current password, sends the confirmation to the **new** address, and only ever writes to `pendingEmail`/`emailChangeToken` — `email` itself is untouched until `POST /auth/confirm-email-change/:token` (public, since the link may be opened on a different device/session) succeeds. Does not touch `passwordChangedAt`, so the current session stays valid throughout — correct, since nothing about the credential changed yet.
+
+**Profile.tsx**: split the old single combined form (name/phone/**email**/**password**, one submit) into three independent pieces — profile fields still via `PATCH /users/me`, plus separate "Change email" and "Change password" mini-forms hitting the two new routes. This was a live regression fix, not just new UI: the old form still POSTed `email`/`currentPassword`/`newPassword` to `/users/me`, which the rewritten route now silently ignores, so email/password edits were silently no-ops before this. `serializeUser` also grew a `pendingEmail` field so the profile page can show "confirmation pending" state.
+
+## 6. Change password (logged in)
+
+`POST /auth/change-password { currentPassword, newPassword }` verifies the current hash, sets the new one, and bumps `passwordChangedAt` — which invalidates every session, including the one making this request (its own token was already resolved before the handler ran, but the *next* request 401s). `Profile.tsx` calls `logout()` immediately on success rather than showing a "success" screen the user can't do anything from with an already-dead token.
+
+## 7. Deactivation — judgment call: gated under `team.manage`, same as invite
+
+The task flagged this as a real judgment call rather than a settled decision. Went with `team.manage` (not OWNER-only) for consistency with invite/resend/cancel/team-list, all already gated the same way — a studio that already trusts someone with `team.manage` to add and manage teammates is trusting them with the same authority to pause one. One-line change (`requireRole(OWNER)` → `requirePermission("team.manage")`) if OWNER-only turns out to be the better call.
+
+No new deactivate/reactivate routes: `isActive` was already the real, pre-existing deactivation mechanism (already checked at login, already toggleable via `PATCH /:studioId/users/:userId`) — extended that route to keep `deactivatedAt`/`deactivatedById` in sync as audit metadata whenever `isActive` changes, never a second competing status signal. `requireAuth`'s live check (section 4) also rejects any token for a user with `deactivatedAt` set, **regardless of token age** — so deactivation takes effect on the very next request, not just future logins.
+
+## Verification — adversarial, run against the live dev API (`:4000`) with real HTTP calls, not mocked
+
+Tokens were read directly from the dev DB in place of an inbox (documented as a standing pattern for these token+expiry flows). All test users created during verification were deleted afterward — confirmed via a final DB query.
+
+- **Invite**: created → `GET /invite/verify/:token` → `POST /invite/accept/:token` → login with the new credentials, all succeeded. Reusing the same accept token afterward: `404`. Re-verifying the same token: `404`. A separately-expired token (`inviteTokenExpiresAt` forced into the past): verify `410`, accept `410`. Resend: the pre-resend token now `404`s, the fresh one verifies fine. Login attempt on a still-pending account: `401` with the clear "Check your email…" message, not generic invalid-credentials. Cancel: `204`, row actually deleted (confirmed by successfully re-inviting the same email afterward with no `409`).
+- **Forgot password**: real-email and definitely-nonexistent-email requests returned the identical message string. Captured a JWT, then reset the password — **confirmed that exact pre-reset JWT is rejected (`401`) on the very next authenticated request**, after first confirming it worked before the reset (sanity check, not assumed).
+- **Change email**: requested a change; old email still logged in; new email returned `401` (not yet confirmed); confirmed the token; old email now `401`s, new email logs in; reusing the confirm token afterward: `404`.
+- **Deactivation**: logged in as the target user to get a live JWT, then deactivated them as owner — **that exact already-issued token was rejected (`401`) on the very next request**, immediately, not just on the next login attempt. Login while deactivated: `401` with the clear message. Reactivated: login works again.
+- **Permission gating**: `frontdesk@dev-studio.test` (default `team.manage: false`) got `403` on both invite-creation and deactivation. Enabled `team.manage` for `FRONT_DESK` via the permissions matrix, retried invite-creation: succeeded. Restored the default (`false`) afterward.
+
+**UI, in a real headless browser (Playwright, since `chromium-cli` wasn't available in this environment) against the running dev servers**: Team page's "Invite team member" modal → pending-invite row appears in the new amber section → Resend shows "Sent!" → Cancel's confirm modal → row disappears. Profile page's split "Login & security" section, both the change-email and change-password sub-forms render and expand correctly. All four new public pages (`/forgot-password`, `/reset-password/:token`, `/invite/:token`, `/confirm-email-change/:token`) render the fixed platform identity chrome correctly, both for a valid invite token (real invite copy, studio name, role) and invalid/bogus tokens (correct error state). Screenshotted at each step; no unexpected console errors (the only console entries were the expected `404`s from deliberately-bogus test tokens on the invalid-state screenshots).
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npm run build` (web) — both clean, re-run after every remaining change (Profile.tsx split, Team.tsx invite UI, `pendingEmail` addition).
+
+## Commit
+
+`<pending>` on `main`.
+
+## Cleanup
+
+Killed both dev server processes (api `:4000`, web `:6506`) per this task's explicit instruction — a deliberate departure from the "leave dev servers running" convention the last few sessions established, since this task asked directly for every background shell to be stopped. Restart with `npm run dev` in each of `apps/api`/`apps/web` when picking this back up. All ad-hoc verification scripts (`_verify_lookup.ts`, `_tmp_token_lookup.ts`, `_cleanup.ts`, `_final_check.ts`) were temporary, unstaged, and deleted before commit — none were left in the repo.

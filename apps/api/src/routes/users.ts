@@ -1,5 +1,4 @@
 import { Router } from "express";
-import bcrypt from "bcrypt";
 import { prisma } from "../lib/prisma";
 import { requireAuth } from "../middleware/auth";
 import { Role } from "../../generated/prisma/enums";
@@ -11,8 +10,16 @@ const router = Router();
 
 router.use(requireAuth);
 
-const SALT_ROUNDS = 10;
-
+// Explicit allowlist (pick the safe fields), not a denylist (spread
+// everything then destructure out the unsafe ones) -- the account-
+// lifecycle work added several sensitive columns to User (inviteToken,
+// passwordResetToken, emailChangeToken, pendingEmail, deactivatedById,
+// etc.). A denylist silently leaks any NEW sensitive column a future
+// change adds until someone remembers to also exclude it here; an
+// allowlist can't leak a column it was never told to include. `password`
+// specifically is caught by every call site's own `{ password: _password,
+// ...rest }` destructuring before this even runs, but this function no
+// longer trusts that as the only line of defense.
 export function serializeUser(user: {
   id: string;
   email: string;
@@ -22,10 +29,39 @@ export function serializeUser(user: {
   role: Role;
   studioId: string;
   createdAt: Date;
+  locationId: string | null;
+  isActive: boolean;
+  inviteToken: string | null;
+  inviteTokenExpiresAt: Date | null;
+  deactivatedAt: Date | null;
+  deactivatedById: string | null;
+  pendingEmail: string | null;
   artist: { bio: string | null; specialties: string[] } | null;
 }) {
-  const { artist, ...rest } = user;
-  return { ...rest, artist: artist ?? undefined };
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    phone: user.phone,
+    avatarUrl: user.avatarUrl,
+    role: user.role,
+    studioId: user.studioId,
+    createdAt: user.createdAt,
+    locationId: user.locationId,
+    isActive: user.isActive,
+    // Derived, not the raw token -- the Team page's pending-invites
+    // section needs to know a user is still pending and when that invite
+    // expires, never the token itself (that would let anyone who can see
+    // the team list activate someone else's invite).
+    pending: user.inviteToken != null,
+    inviteExpiresAt: user.inviteTokenExpiresAt,
+    deactivatedAt: user.deactivatedAt,
+    deactivatedById: user.deactivatedById,
+    // The new address a change-email request is waiting to be confirmed
+    // to -- never the token itself, same reasoning as inviteExpiresAt.
+    pendingEmail: user.pendingEmail,
+    artist: user.artist ?? undefined,
+  };
 }
 
 // No :userId param anywhere in this file — every route acts on
@@ -80,33 +116,16 @@ router.patch("/me", async (req, res) => {
     data.avatarUrl = result.value;
   }
 
-  const changingEmail = typeof body.email === "string" && body.email.trim() !== existing.email;
-  const changingPassword = body.newPassword !== undefined;
-
-  if (changingEmail || changingPassword) {
-    if (typeof body.currentPassword !== "string" || body.currentPassword.length === 0) {
-      return res.status(400).json({ error: "currentPassword is required to change your email or password" });
-    }
-
-    const currentPasswordMatches = await bcrypt.compare(body.currentPassword, existing.password);
-    if (!currentPasswordMatches) {
-      return res.status(401).json({ error: "Current password is incorrect" });
-    }
-  }
-
-  if (changingEmail) {
-    if (body.email.trim().length === 0) {
-      return res.status(400).json({ error: "email must be a non-empty string" });
-    }
-    data.email = body.email.trim();
-  }
-
-  if (changingPassword) {
-    if (typeof body.newPassword !== "string" || body.newPassword.length < 8) {
-      return res.status(400).json({ error: "newPassword must be at least 8 characters" });
-    }
-    data.password = await bcrypt.hash(body.newPassword, SALT_ROUNDS);
-  }
+  // Email and password changes moved to their own dedicated, confirmation-
+  // gated flows (account-lifecycle work) -- POST /auth/change-email (sends
+  // a confirm link to the NEW address, never switches over until that
+  // link is used) and POST /auth/change-password (updates
+  // passwordChangedAt so existing sessions are invalidated, which this
+  // route never did). Both still require currentPassword, same as before;
+  // this route is profile-fields-only now. body.email/newPassword/
+  // currentPassword are silently ignored here rather than erroring, since
+  // Profile.tsx's old combined form no longer sends them, but no other
+  // caller of this route needs to be treated as invalid via a leftover key.
 
   // Artist-only fields: no-op for any other role, and no-op if the caller's
   // role is ARTIST but somehow has no Artist row yet (created separately by

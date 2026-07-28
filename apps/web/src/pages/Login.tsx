@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
 import loginBackground from '../assets/login-background-no-artist.png'
 
@@ -89,6 +89,13 @@ export default function Login() {
         >
           {submitting ? 'Signing in…' : 'Sign in'}
         </button>
+
+        <Link
+          to="/forgot-password"
+          className="login-jura mt-4 block text-center text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--login-smoke)] hover:text-[var(--login-cream)]"
+        >
+          Forgot password?
+        </Link>
       </form>
     </div>
   )

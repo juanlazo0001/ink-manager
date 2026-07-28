@@ -15,6 +15,8 @@ import { diffObjects, logAudit } from "../lib/audit";
 import { normalizePhone } from "../lib/phone";
 import { isStringArray, isValidDateOrNull, isValidPreferredSchedule } from "../lib/artistValidation";
 import { slugify } from "../lib/slug";
+import { PUBLIC_APP_URL } from "../lib/publicUrl";
+import { sendPlatformEmail } from "../lib/platformEmail";
 
 const router = Router();
 
@@ -284,6 +286,168 @@ router.post("/:studioId/users", requireAuth, requirePermission("team.manage"), a
   res.status(201).json(userWithoutPassword);
 });
 
+const INVITE_TOKEN_TTL_DAYS = 7;
+
+function inviteEmailContent(studioName: string, inviteUrl: string) {
+  return {
+    subject: `You've been invited to join ${studioName} on Ink Manager`,
+    text: `You've been invited to join ${studioName} on Ink Manager. Set up your account here: ${inviteUrl}\n\nThis link expires in ${INVITE_TOKEN_TTL_DAYS} days.`,
+    html: `<p>You've been invited to join <strong>${studioName}</strong> on Ink Manager.</p><p><a href="${inviteUrl}">Set up your account</a></p><p>This link expires in ${INVITE_TOKEN_TTL_DAYS} days.</p>`,
+  };
+}
+
+// Team account lifecycle: invite a teammate to an EXISTING studio (never
+// public signup -- that's explicitly out of scope for this feature). A
+// pending invite is a real User row from the moment this creates it (so it
+// can carry a role/studio/token and show up in the Team page's own
+// pending-invites section), just with no password yet -- see the schema
+// comment on User.password for why that column is nullable. Distinct from
+// POST /:studioId/users just above: that route is an admin directly
+// setting someone's password (kept as-is, still useful e.g. for an owner
+// handing over a printed credential in person); this route never learns
+// the invitee's password at all, which is the point of an invite flow.
+router.post("/:studioId/invites", requireAuth, requirePermission("team.manage"), async (req, res) => {
+  const studioId = req.params.studioId as string;
+
+  if (studioId !== req.user!.studioId) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const body = req.body ?? {};
+  const { email, role, name } = body;
+
+  if (!email || typeof email !== "string") {
+    return res.status(400).json({ error: "email is required" });
+  }
+  if (!STAFF_ROLES.includes(role)) {
+    return res.status(400).json({ error: `role must be one of: ${STAFF_ROLES.join(", ")}` });
+  }
+
+  const trimmedEmail = email.trim();
+  const existing = await prisma.user.findUnique({ where: { email: trimmedEmail } });
+  if (existing) {
+    return res.status(409).json({ error: "A user with that email already exists." });
+  }
+
+  const studio = await prisma.studio.findUniqueOrThrow({ where: { id: studioId }, select: { name: true } });
+  const inviteToken = crypto.randomBytes(32).toString("hex");
+  const inviteTokenExpiresAt = new Date(Date.now() + INVITE_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000);
+
+  // Same invariant POST /:studioId/users above already keeps for a
+  // directly-created ARTIST-role user: an Artist profile always exists
+  // alongside the User row, so the Team/Artists pages never fall out of
+  // sync regardless of which of the two creation paths made this account.
+  const invited = await prisma.$transaction(async (tx) => {
+    const created = await tx.user.create({
+      data: {
+        email: trimmedEmail,
+        role,
+        studioId,
+        name: typeof name === "string" && name.trim() ? name.trim() : null,
+        password: null,
+        inviteToken,
+        inviteTokenExpiresAt,
+      },
+    });
+
+    if (role === Role.ARTIST) {
+      await tx.artist.create({ data: { userId: created.id, specialties: [], portfolioImages: [] } });
+    }
+
+    return tx.user.findUniqueOrThrow({ where: { id: created.id }, include: USER_INCLUDE_ARTIST });
+  });
+
+  await logAudit({
+    studioId,
+    actorUserId: req.user!.userId,
+    entityType: "User",
+    entityId: invited.id,
+    action: "invite_sent",
+    changes: { email: trimmedEmail, role },
+  });
+
+  const inviteUrl = `${PUBLIC_APP_URL}/invite/${inviteToken}`;
+  sendPlatformEmail({ to: trimmedEmail, ...inviteEmailContent(studio.name, inviteUrl) }).catch((err) => {
+    console.error("Failed to send invite email", { userId: invited.id, err });
+  });
+
+  res.status(201).json(serializeUser(invited));
+});
+
+// Regenerates the token (invalidating the old one outright -- it's simply
+// overwritten, so a follow-up request with the stale token finds no
+// matching row) and re-sends. Only valid for a still-pending invite --
+// resending to an already-activated or deactivated account isn't a
+// meaningful action and would be a confusing way to reset either of those.
+router.post("/:studioId/invites/:userId/resend", requireAuth, requirePermission("team.manage"), async (req, res) => {
+  const studioId = req.params.studioId as string;
+  const userId = req.params.userId as string;
+
+  if (studioId !== req.user!.studioId) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const existing = await loadStudioUser(studioId, userId);
+  if (!existing || !existing.inviteToken) {
+    return res.status(404).json({ error: "No pending invite found for that user." });
+  }
+
+  const studio = await prisma.studio.findUniqueOrThrow({ where: { id: studioId }, select: { name: true } });
+  const inviteToken = crypto.randomBytes(32).toString("hex");
+  const inviteTokenExpiresAt = new Date(Date.now() + INVITE_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000);
+
+  await prisma.user.update({ where: { id: userId }, data: { inviteToken, inviteTokenExpiresAt } });
+
+  await logAudit({
+    studioId,
+    actorUserId: req.user!.userId,
+    entityType: "User",
+    entityId: userId,
+    action: "invite_resent",
+    changes: { email: existing.email },
+  });
+
+  const inviteUrl = `${PUBLIC_APP_URL}/invite/${inviteToken}`;
+  sendPlatformEmail({ to: existing.email, ...inviteEmailContent(studio.name, inviteUrl) }).catch((err) => {
+    console.error("Failed to send invite email", { userId, err });
+  });
+
+  res.json({ message: "Invite resent." });
+});
+
+// Cancel: the invitee never had a real account (no password was ever
+// set), so this deletes the row outright rather than deactivating it --
+// nothing about a pending invite is worth preserving the way an actual
+// staff member's history is. Also only valid for a still-pending invite,
+// same reasoning as resend above (an active account is deactivated, not
+// "cancelled").
+router.delete("/:studioId/invites/:userId", requireAuth, requirePermission("team.manage"), async (req, res) => {
+  const studioId = req.params.studioId as string;
+  const userId = req.params.userId as string;
+
+  if (studioId !== req.user!.studioId) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const existing = await loadStudioUser(studioId, userId);
+  if (!existing || !existing.inviteToken) {
+    return res.status(404).json({ error: "No pending invite found for that user." });
+  }
+
+  await logAudit({
+    studioId,
+    actorUserId: req.user!.userId,
+    entityType: "User",
+    entityId: userId,
+    action: "invite_cancelled",
+    changes: { email: existing.email },
+  });
+
+  await prisma.user.delete({ where: { id: userId } });
+
+  res.status(204).send();
+});
+
 const USER_INCLUDE_ARTIST = { artist: { select: { bio: true, specialties: true } } } as const;
 type UserWithArtist = Prisma.UserGetPayload<{ include: typeof USER_INCLUDE_ARTIST }>;
 
@@ -402,7 +566,20 @@ router.patch("/:studioId/users/:userId", requireAuth, requirePermission("team.ma
   }
 
   if (body.role !== undefined) data.role = body.role;
-  if (body.isActive !== undefined) data.isActive = body.isActive;
+
+  // Team account lifecycle: deactivatedAt/deactivatedById are audit
+  // metadata riding alongside the pre-existing isActive toggle, not a
+  // second, competing status signal -- isActive is still the one field
+  // every other read path (login, the JWT middleware's live session
+  // check, etc.) actually checks. Kept in sync here, in the same update,
+  // so the two can never drift apart: going inactive stamps who/when,
+  // going active again clears both back to null.
+  const isDeactivating = body.isActive !== undefined && body.isActive !== existing.isActive;
+  if (body.isActive !== undefined) {
+    data.isActive = body.isActive;
+    data.deactivatedAt = body.isActive ? null : new Date().toISOString();
+    data.deactivatedById = body.isActive ? null : req.user!.userId;
+  }
 
   if (body.newPassword !== undefined) {
     if (typeof body.newPassword !== "string" || body.newPassword.length < 8) {
@@ -423,6 +600,21 @@ router.patch("/:studioId/users/:userId", requireAuth, requirePermission("team.ma
   }
 
   const updated = await prisma.user.update({ where: { id: userId }, data, include: USER_INCLUDE_ARTIST });
+
+  // Distinct action names (not just a generic "update") so deactivation/
+  // reactivation reads clearly in the audit trail, same reasoning as
+  // invite_sent/invite_resent/invite_cancelled above rather than a single
+  // catch-all "update" for every kind of team-management change.
+  if (isDeactivating) {
+    await logAudit({
+      studioId,
+      actorUserId: req.user!.userId,
+      entityType: "User",
+      entityId: userId,
+      action: body.isActive ? "user_reactivated" : "user_deactivated",
+      changes: { email: existing.email },
+    });
+  }
 
   if (body.locationId !== undefined) {
     await logAudit({

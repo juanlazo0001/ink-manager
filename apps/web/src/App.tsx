@@ -1,6 +1,10 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import ProtectedRoute from './components/ProtectedRoute'
 import Login from './pages/Login'
+import ForgotPassword from './pages/ForgotPassword'
+import ResetPassword from './pages/ResetPassword'
+import InviteAccept from './pages/InviteAccept'
+import ConfirmEmailChange from './pages/ConfirmEmailChange'
 import Dashboard from './pages/Dashboard'
 import Clients from './pages/Clients'
 import ClientImport from './pages/ClientImport'
@@ -40,6 +44,10 @@ function App() {
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password/:token" element={<ResetPassword />} />
+        <Route path="/invite/:token" element={<InviteAccept />} />
+        <Route path="/confirm-email-change/:token" element={<ConfirmEmailChange />} />
         <Route path="/inquiry/:studioSlug" element={<IntakeForm />} />
         <Route path="/inquiry/:studioSlug/:formSlug" element={<IntakeForm />} />
         <Route path="/policies/:studioSlug" element={<Policies />} />

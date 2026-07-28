@@ -288,15 +288,68 @@ model Location {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  password  String
+  id       String  @id @default(cuid())
+  email    String  @unique
+  // Nullable as of the account-lifecycle work: a freshly-invited user has a
+  // real row (so the invite can carry a role/studio/token) but no password
+  // yet -- they set one for the first time in POST /invite/accept/:token.
+  // Relaxing this (String -> String?) is the safe direction: every existing
+  // row already has a real hash, so no data migration is needed, and every
+  // login/team-management read path below already treats a null password as
+  // "can't possibly match" rather than assuming a hash is always present.
+  password  String?
   name      String?
   phone     String?
   avatarUrl String?
   role      Role
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
+
+  // Pending invite: set together at invite time, both cleared together on
+  // accept (or on cancel, which deletes the row outright -- see
+  // routes/studios.ts). A non-null inviteToken with no expired check yet is
+  // what GET /invite/verify/:token and the Team page's "pending invites"
+  // section both key off, rather than a separate status enum.
+  inviteToken          String?   @unique
+  inviteTokenExpiresAt DateTime?
+
+  // Forgot-password recovery. Deliberately separate from emailChangeToken/
+  // inviteToken below (three independent flows, three independent tokens)
+  // rather than one shared "pendingToken" column -- a user could otherwise
+  // have two of these flows in flight at once (e.g. an admin resends an
+  // invite while the invitee is also mid password-reset) and clobber one
+  // with the other.
+  passwordResetToken          String?   @unique
+  passwordResetTokenExpiresAt DateTime?
+
+  // Change-email (while logged in). The account keeps authenticating with
+  // `email` (the OLD address) until POST /auth/confirm-email-change/:token
+  // succeeds, at which point `email` becomes `pendingEmail` and both
+  // pending fields clear -- see that route. Never switches over on request,
+  // only on confirmed accept, so a typo'd new address can't lock anyone out.
+  pendingEmail             String?
+  emailChangeToken         String?   @unique
+  emailChangeTokenExpiresAt DateTime?
+
+  // Session invalidation. Sifted directly in the JWT auth middleware: a
+  // token whose `iat` predates this (password reset or self-service change)
+  // is rejected outright, even if it hasn't expired yet -- see
+  // middleware/auth.ts. Null means "never changed since the account was
+  // created," which is never itself treated as a reason to reject a token.
+  passwordChangedAt DateTime?
+
+  // Deactivation. isActive is still the actual authority (already checked
+  // at login and already toggle-able via PATCH /:studioId/users/:userId,
+  // both pre-existing) -- these two are audit metadata recording WHEN and
+  // BY WHOM, kept in sync with isActive by that same PATCH route rather
+  // than introduced as a second, competing status signal. The auth
+  // middleware also rejects any token for a user with deactivatedAt set,
+  // regardless of the token's own age, so deactivation takes effect on the
+  // very next request, not just future logins.
+  deactivatedAt   DateTime?
+  deactivatedById String?
+  deactivatedBy   User?   @relation("UserDeactivatedBy", fields: [deactivatedById], references: [id])
+  deactivatedUsers User[] @relation("UserDeactivatedBy")
 
   studioId String
   studio   Studio @relation(fields: [studioId], references: [id])

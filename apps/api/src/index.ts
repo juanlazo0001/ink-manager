@@ -5,6 +5,7 @@ import cors from "cors";
 import compression from "compression";
 import studiosRouter from "./routes/studios";
 import authRouter from "./routes/auth";
+import invitesRouter from "./routes/invites";
 import usersRouter from "./routes/users";
 import artistsRouter from "./routes/artists";
 import clientsRouter from "./routes/clients";
@@ -83,6 +84,7 @@ app.get("/health", (_req, res) => {
 
 app.use("/studios", studiosRouter);
 app.use(authRouter);
+app.use(invitesRouter);
 app.use("/users", usersRouter);
 app.use("/artists", artistsRouter);
 app.use("/clients", clientsRouter);

@@ -3,11 +3,20 @@ import jwt from "jsonwebtoken";
 import { JWT_SECRET } from "../lib/jwt";
 import { Role } from "../../generated/prisma/enums";
 import { VIEW_AS_HEADER, resolveViewAsTarget } from "../lib/viewAs";
+import { prisma } from "../lib/prisma";
 
 export interface AuthPayload {
   userId: string;
   studioId: string;
   role: Role;
+  // jsonwebtoken adds this automatically (seconds since epoch) on every
+  // token minted by jwt.sign -- not something this app ever sets itself,
+  // but needed here to compare a token's own issue time against the
+  // user's passwordChangedAt (see the live session-invalidation check in
+  // requireAuth below). Optional only because a hand-constructed
+  // AuthPayload elsewhere in the code (there isn't one today) wouldn't
+  // have it.
+  iat?: number;
 }
 
 declare global {
@@ -44,6 +53,38 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   try {
     realUser = jwt.verify(token, JWT_SECRET) as AuthPayload;
   } catch {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  // Live session-invalidation check (account-lifecycle work): a JWT's own
+  // signature/expiry says nothing about whether the account behind it was
+  // deactivated or had its password changed AFTER this specific token was
+  // issued -- that can only be known by asking the database on every
+  // request, so this is a real DB round-trip on every authenticated call,
+  // not just a JWT decode. Two independent conditions, both immediate
+  // (checked regardless of the token's own age):
+  //   1. isActive/deactivatedAt -- deactivation takes effect on the very
+  //      next request, not just future logins (a token minted seconds ago
+  //      is rejected exactly the same as one minted a week ago).
+  //   2. passwordChangedAt vs the token's own iat -- a password reset or
+  //      self-service password change invalidates every session that
+  //      existed before it, not just the device that made the change.
+  // Same rejection shape (401 "Unauthorized") as an invalid/expired JWT
+  // itself, deliberately -- this isn't a case that needs a different error
+  // message to the caller (the frontend's response is identical either
+  // way: bounce to /login), and not leaking WHY a token stopped working
+  // avoids handing back a signal an attacker could use to distinguish
+  // "expired" from "revoked."
+  const liveUser = await prisma.user.findUnique({
+    where: { id: realUser.userId },
+    select: { isActive: true, deactivatedAt: true, passwordChangedAt: true },
+  });
+
+  if (!liveUser || !liveUser.isActive || liveUser.deactivatedAt) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  if (liveUser.passwordChangedAt && realUser.iat != null && realUser.iat * 1000 < liveUser.passwordChangedAt.getTime()) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
