@@ -2,6 +2,7 @@ import { forwardRef, type ReactNode } from 'react'
 import { AnimatePresence, motion, MotionConfig } from 'framer-motion'
 import { useLocation, useOutlet } from 'react-router-dom'
 import { authSpringTransition, crossfadeVariants, headingVariants } from '../lib/motion'
+import SignInOrForgotCard, { type SignInOrForgotMode } from './SignInOrForgotCard'
 import loginBackground from '../assets/login-background-no-artist.png'
 
 // Persistent chrome for every "fixed platform identity" public auth page
@@ -38,6 +39,12 @@ import loginBackground from '../assets/login-background-no-artist.png'
 // child to forward its ref to the actual DOM node (so Framer can measure
 // and position it while it's popped out) -- hence AuthCard is wrapped in
 // forwardRef rather than being a plain function component.
+//
+// AuthCard now only handles Reset Password / Accept Invite / Confirm
+// Email Change -- Sign In and Forgot Password moved to their own
+// persistent SignInOrForgotCard (see that file's own comment for why:
+// they share a real email field, which AuthCard's per-route remount
+// model can't represent without it briefly fading/resetting).
 const AuthCard = forwardRef<HTMLDivElement, { children: ReactNode }>(function AuthCard({ children }, ref) {
   return (
     <motion.div ref={ref} layout variants={crossfadeVariants} initial="initial" animate="animate" exit="exit">
@@ -62,6 +69,14 @@ function getAuthMode(pathname: string): AuthMode {
   if (pathname.startsWith('/invite')) return 'accept-invite'
   if (pathname.startsWith('/confirm-email-change')) return 'confirm-email-change'
   return 'sign-in'
+}
+
+// A type guard (not just a boolean) so the branch below can narrow
+// `mode` down to SignInOrForgotCard's own narrower prop type -- a plain
+// `mode === 'sign-in' || mode === 'forgot-password'` stored in a boolean
+// variable doesn't carry that narrowing through to a later ternary.
+function isSignInOrForgotMode(mode: AuthMode): mode is SignInOrForgotMode {
+  return mode === 'sign-in' || mode === 'forgot-password'
 }
 
 export default function AuthLayout() {
@@ -100,8 +115,17 @@ export default function AuthLayout() {
             </motion.h1>
           </AnimatePresence>
 
+          {/* SignInOrForgotCard is keyed identically regardless of which of
+              the two routes matched -- that's what makes it ONE
+              continuously-mounted instance across that switch rather than
+              an exit+enter. Every other mode still gets AuthCard, keyed by
+              the literal route, same as before. */}
           <AnimatePresence mode="popLayout" initial={false}>
-            <AuthCard key={location.pathname}>{outlet}</AuthCard>
+            {isSignInOrForgotMode(mode) ? (
+              <SignInOrForgotCard key="sign-in-or-forgot" mode={mode} />
+            ) : (
+              <AuthCard key={location.pathname}>{outlet}</AuthCard>
+            )}
           </AnimatePresence>
         </motion.div>
       </MotionConfig>

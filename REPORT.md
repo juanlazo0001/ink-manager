@@ -3802,3 +3802,43 @@ Dashboard's actual new frosted-glass cards cost a small, acceptable amount of sc
 ## Cleanup
 
 Reverted `dev-studio`'s `themePreset` back to `onyx-lime` (its state before this session). Deleted every ad-hoc Playwright script in the scratchpad; screenshots left in place for reference. Killed the API dev server process started for this session's verification.
+
+---
+
+# Auth transitions, take 3: a genuinely persistent card, not two swapping ones
+
+Single small session on `main`. Follow-up correction to the immediately preceding "Clerk sign-in reference" session -- that session made Sign In and Forgot Password crossfade nicely into each other, but they were still, underneath, two entirely separate cards/pages being swapped (each with its own logo + email input), so the shared elements between them still briefly faded/reset on every switch. This session restructures so the elements that are genuinely the SAME thing across both views -- the card surface, the logo, the email field -- are one continuously-mounted instance, never unmounted or faded at all, while only the content that's actually different (password field vs. explanatory text, button label, link) animates.
+
+**Note on working conditions**: the large concurrent `.card-surface`/editorial-gold refactor mentioned in the prior session's report finished and committed (`96db04a`/`83d6240`, directly above this entry) partway through this session. Confirmed the build stayed clean against that new base once it landed; none of that work was touched by this session.
+
+## The restructuring
+
+New `apps/web/src/components/SignInOrForgotCard.tsx` owns the persistent pieces and both flows' logic (previously split across `Login.tsx`/`ForgotPassword.tsx`, which are deleted -- their JSX became entirely unreachable once `AuthLayout` stopped using it for these two routes, and dead code doesn't get left dormant):
+
+- **Card surface**: one `motion.div` with `layout`, rendered unconditionally regardless of `mode`. Never wrapped in `AnimatePresence`, never given an `exit`/`initial` variant -- there's nothing to enter or exit, since it's the same element the whole time. `layout` alone handles it smoothly resizing as the content inside changes height.
+- **Logo and email field**: same treatment -- plain `motion.img`/`motion.input` with `layout`, rendered once, no variants, no `AnimatePresence`. Since the email input is now real shared state (lifted into this one component instead of duplicated per-page `useState`), typing an email on Sign In and clicking through to Forgot Password carries it over rather than starting blank -- a real, visible side effect of the architecture, not just an animation nicety.
+- **Only the genuinely different content** -- the password field (+ its error banner) on Sign In; the explanatory paragraph on Forgot Password (moved to render *after* the email field instead of before, so it doesn't need two separate swap slots on either side of a persistent element); the button's label; the link's text/destination; Forgot Password's post-submit confirmation message -- lives in one small region wrapped in `AnimatePresence mode="popLayout"`, using the same `crossfadeVariants` preset as before.
+- **`AuthLayout.tsx`**: still the single source of truth for which mode is active, still handles the heading crossfade and the persistent background/rings (both untouched). Its own outer `AnimatePresence mode="popLayout"` now branches: `SignInOrForgotCard` gets a **constant key** (`"sign-in-or-forgot"`) regardless of whether the route is `/login` or `/forgot-password`, so switching between them is a same-key re-render (no exit/enter at all) -- while every other route still gets the previous session's `AuthCard`, keyed by the literal pathname, unaffected. A type guard (`isSignInOrForgotMode`) narrows `AuthMode` down to `SignInOrForgotCard`'s own prop type at the call site, rather than trusting a plain boolean to carry that narrowing through a ternary (it doesn't).
+- `/login` and `/forgot-password`'s `<Route>` entries in `App.tsx` now have `element={null}` -- they still need to exist so the URLs match/resolve, but `AuthLayout` never reads their `Outlet` content for these two paths, so there's nothing meaningful to render there anymore.
+
+## Verification
+
+Proved the "never remounts, never fades" claim with actual DOM identity and computed-style checks, not visual impressions:
+
+- Captured the card, logo, and email input's own DOM node references before clicking "Forgot password?", then compared by reference (`===`) after the transition settled: **all three came back `true`** -- the literal same nodes, not new ones that merely look the same.
+- Typed an email on Sign In, switched to Forgot Password, submitted it (reaching the "done" confirmation state), then clicked back to Sign In: the email value survived the entire round trip untouched, and the password field reappeared correctly.
+- Polled the email input's `getComputedStyle(...).opacity` on every animation frame for 500ms through the Sign In &rarr; Forgot Password transition: **`"1"` at all 20 sampled frames**, never dipping -- it genuinely never fades, confirmed frame-by-frame rather than assumed from the code structure.
+- Re-verified the three untouched routes (Reset Password, Accept Invite, Confirm Email Change) still render correctly, and did a real end-to-end login (real credentials, real redirect to `/dashboard`) to confirm the sign-in submit path still works exactly as before after being relocated into the new component.
+- No console/page errors in any of the above.
+
+## Typechecks
+
+`npx tsc --noEmit` (api, untouched) and `npm run build` (web) -- both clean, re-checked once more after the concurrent editorial-gold work landed on top of this session's base.
+
+## Commit
+
+`<pending>` on `main`.
+
+## Cleanup
+
+Killed both dev server processes (api `:4000`, web `:6506`) started for this session's verification. Deleted every ad-hoc `.mjs` verification script from the scratch directory afterward.

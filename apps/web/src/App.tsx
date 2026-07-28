@@ -1,8 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import ProtectedRoute from './components/ProtectedRoute'
 import AuthLayout from './components/AuthLayout'
-import Login from './pages/Login'
-import ForgotPassword from './pages/ForgotPassword'
 import ResetPassword from './pages/ResetPassword'
 import InviteAccept from './pages/InviteAccept'
 import ConfirmEmailChange from './pages/ConfirmEmailChange'
@@ -46,14 +44,20 @@ function App() {
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         {/* Persistent-layout auth pages: AuthLayout renders the background/
             overlay/rings chrome ONCE and never unmounts while navigating
-            between these four -- only the card content (the individual
-            page's own element, via Outlet) swaps. Each is still its own
-            real, directly-linkable URL (nested routes work identically to
-            top-level ones on a fresh load); this only changes what happens
-            when moving between them from within the app. */}
+            between these five. Each is still its own real, directly-
+            linkable URL (nested routes work identically to top-level ones
+            on a fresh load); this only changes what happens when moving
+            between them from within the app.
+            /login and /forgot-password have no `element` of their own --
+            AuthLayout renders its own SignInOrForgotCard for both
+            (ignoring Outlet entirely for these two paths) so that shared
+            component can own the email field as ONE persistent instance
+            across the two, rather than each being a separate page
+            component AuthLayout would otherwise swap between. These Route
+            entries exist purely so the URLs still match/resolve. */}
         <Route element={<AuthLayout />}>
-          <Route path="/login" element={<Login />} />
-          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/login" element={null} />
+          <Route path="/forgot-password" element={null} />
           <Route path="/reset-password/:token" element={<ResetPassword />} />
           <Route path="/invite/:token" element={<InviteAccept />} />
           <Route path="/confirm-email-change/:token" element={<ConfirmEmailChange />} />
