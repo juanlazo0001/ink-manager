@@ -3636,3 +3636,15 @@ New `apps/web/src/components/AuthLayout.tsx` renders the background photo/overla
 ## Cleanup
 
 Killed both dev server processes (api `:4000`, web `:6506`) started for this session's verification. All ad-hoc scripts (`_get_invite_token.ts`, `_get_user_state.ts`, `_get_token2.ts`, `_cleanup2.ts`, and the local email-preview renderer) were temporary and deleted before commit. All test users created during verification (Gmail-alias accounts and plain test accounts alike) were deleted from the dev database afterward.
+
+## Follow-up: crossfade felt like a reload, fixed
+
+Reported after the above landed: the Forgot Password ↔ Sign In swap didn't reload the *page* (background stayed put, confirmed), but the *card* itself still visibly blinked away and back, reading as a "modal reload" anyway, and didn't feel smooth. Root cause: the original transition was sequential, not overlapping -- fade the outgoing card fully out (140ms), swap, fade the incoming card in (200ms via the shared `animate-fade-slide-up` utility), with a hard cut in the middle where neither card was on screen. That gap was the actual jarring cue.
+
+Rebuilt `AuthLayout.tsx` around a real overlapping crossfade: the outgoing card is captured (via a ref that lags one render behind the live route) and kept mounted, absolutely positioned on top, fading+sliding out, while the incoming card renders normally underneath, fading+sliding in -- both running over the *same* 320ms window, so there's never a frame with neither visible. New `auth-card-enter`/`auth-card-exit` keyframes in `index.css` replace the old `auth-card-out` + borrowed `animate-fade-slide-up` combo, both using `cubic-bezier(0.16, 1, 0.3, 1)`-style easing (paired with a subtle scale, not just a flat slide) for a noticeably more natural deceleration than the previous linear/basic-ease version. The exiting overlay is `inert` (unclickable/unfocusable/unreachable by accessibility tools) while it fades.
+
+**Verified with frame-by-frame screenshots** through the transition window (not just before/after), both directions (Sign In → Forgot Password and back) -- confirmed both cards genuinely overlap mid-transition rather than one appearing only after the other fully disappears, and that both directions settle back to a pixel-identical resting state.
+
+Also cleaned up every ad-hoc verification script (`.mjs`/`.ts`) and dev-server log file this conversation had accumulated in the local scratch directory across both this task and the preceding account-lifecycle one -- none of it was ever part of the repo, but it was still clutter sitting on disk.
+
+Typechecks re-run clean (`npx tsc --noEmit` / `npm run build`). Commit: `<pending>` on `main`. Same two dev server processes killed again after verification.
