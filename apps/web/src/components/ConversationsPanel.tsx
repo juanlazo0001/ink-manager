@@ -792,7 +792,12 @@ export default function ConversationsPanel() {
           // Fully opaque, no backdrop-filter -- a dense scrolling list of
           // threads needs legibility more than atmosphere; frosted glass
           // belongs on a single centered card (Login), not this panel.
+          // conversations-panel-bg (index.css) is inert outside
+          // editorial-gold, same as .card-surface elsewhere -- bg-
+          // surface-raised stays the real background under every other
+          // preset, unaffected.
           'fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-border bg-surface-raised shadow-2xl transition-[transform,width] duration-base',
+          isEditorialFab ? 'conversations-panel-bg' : '',
           isOpen ? 'translate-x-0 ease-out' : 'translate-x-full ease-in',
           contextOpen ? 'sm:w-[848px]' : 'sm:w-[560px]',
         ].join(' ')}

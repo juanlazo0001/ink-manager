@@ -221,6 +221,10 @@
   --color-card-glass: #100f0ed6;
   --color-border-glass: rgba(201, 154, 91, 0.1);
   --blur-card: 16px;
+  /* Same RGB as --color-card-glass, alpha stripped -- for the few spots
+     (Conversations panel, Sidebar) that need to visually match what a
+     card looks like without the translucency/blur itself. */
+  --color-card-glass-opaque: #100f0e;
 
   /* New: Login's button is a distinctly lighter/warmer gold than the
      general --color-accent -- deliberately hand-tuned for a filled button
@@ -457,6 +461,28 @@
   border-color: var(--color-border-glass);
   backdrop-filter: blur(var(--blur-card));
   -webkit-backdrop-filter: blur(var(--blur-card));
+}
+
+/* Conversations panel: --color-card-glass-opaque (above) -- not
+   --color-surface-raised, a different, lighter token. The panel used to
+   render this color translucently via .card-surface's own glass
+   treatment; reverting the transparency (bleed-through was the actual
+   problem) accidentally swapped in a different color entirely instead of
+   just opaquing this one. Higher specificity than the plain
+   bg-surface-raised utility on the same element, same reasoning as
+   .card-surface above. */
+[data-theme="editorial-gold"] .conversations-panel-bg {
+  background-color: var(--color-card-glass-opaque);
+}
+
+/* Sidebar: same background color every card/widget box in the app uses
+   -- under editorial-gold that's the glass treatment's own base color
+   (--color-card-glass-opaque), since .card-surface overrides plain
+   bg-surface there. No blur/translucency added to the sidebar itself
+   (a permanently-open, viewport-height rail), just the matching flat
+   color. */
+[data-theme="editorial-gold"] .sidebar-panel-bg {
+  background-color: var(--color-card-glass-opaque);
 }
 
 /* Heavily-blurred photo background layer, TopBar-mounted alongside

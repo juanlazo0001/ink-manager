@@ -127,9 +127,7 @@ export default function Dashboard() {
                       rather than one plain heading line. */}
                   <Eyebrow>Here's how the studio is doing.</Eyebrow>
                   <h1 className="mt-3 font-display text-[clamp(32px,4vw,44px)] font-normal leading-[1.05] tracking-[-0.015em] text-fg">
-                    Welcome,
-                    <br />
-                    <span className="text-accent-hover italic">{welcomeName}</span>
+                    Welcome, <span className="text-accent-hover italic">{welcomeName}</span>
                   </h1>
                 </>
               ) : (

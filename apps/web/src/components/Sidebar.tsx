@@ -111,7 +111,14 @@ export default function Sidebar() {
       <aside
         className={[
           'fixed inset-y-0 left-0 z-50 flex w-[80vw] shrink-0 flex-col overflow-y-auto transition-transform duration-200 ease-in-out',
-          isEditorial ? 'border-r border-border-soft bg-surface-inset px-4 py-6' : 'border-r border-border bg-bg px-4 py-6',
+          // Same background every card/widget box in the app uses, so the
+          // sidebar reads as part of the same surface system instead of a
+          // separately-toned rail. Under editorial-gold that's the glass
+          // treatment's own base color (sidebar-panel-bg, index.css) since
+          // .card-surface overrides plain bg-surface there; every other
+          // preset's cards never get that override, so bg-surface itself
+          // (unconditional fallback here) already matches them exactly.
+          isEditorial ? 'border-r border-border-soft bg-surface sidebar-panel-bg px-4 py-6' : 'border-r border-border bg-surface px-4 py-6',
           mobileOpen ? 'translate-x-0' : '-translate-x-full',
           'md:relative md:w-64 md:translate-x-0',
         ].join(' ')}

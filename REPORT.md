@@ -4472,3 +4472,38 @@ Found the source pattern at `Inquiries.tsx`'s tab strip (`Inquiries`/`Projects` 
 ## Cleanup
 
 Killed the isolated dev API/web server instances used for this session's own verification (ports 4093/5292). Deleted every ad-hoc verification script and screenshot from the scratch directory afterward.
+
+---
+
+# Quick fixes: Conversations background, sidebar color match, Dashboard welcome line break
+
+Small session on `main`. Editorial Gold only for all three -- `onyx-lime` unaffected throughout.
+
+## 1. Conversations panel color, precisely
+
+The prior revert session swapped the panel's background token from `--color-card-glass` (translucent, `#100f0ed6`) to `--color-surface-raised` (`#1d1813`) when removing the transparency -- fixed the bleed-through but silently changed the actual color, since those are two different tokens. Corrected: new `--color-card-glass-opaque` token (`#100f0e`, `--color-card-glass`'s own RGB with the alpha stripped) applied via `.conversations-panel-bg`. Same color as before, just opaque now -- confirmed via computed style (`rgb(16, 15, 14)`, `backdropFilter: none`).
+
+## 2. Sidebar background matches cards
+
+Sidebar was `bg-surface-inset` (editorial) / `bg-bg` (default) -- neither matches what cards actually render. Cards use plain `bg-surface` under every "default"-shape preset (matches there already, so the default branch was simply changed to `bg-surface`), but under editorial-gold `.card-surface` overrides that to the glass treatment -- so the sidebar needed the same `--color-card-glass-opaque` token used for item 1 (flat, no blur added to a permanently-open rail) to actually match what's on screen, not just the token name in source. Confirmed via computed style: sidebar and card background now share the identical `rgb(16, 15, 14)` base under editorial-gold (card itself stays translucent per its own glass treatment); both are `rgb(23, 23, 26)` under `onyx-lime`, exactly matching there too (unaffected, that branch of the fix already applied equally to both presets).
+
+## 3. Dashboard welcome header
+
+Removed the hardcoded `<br />` between "Welcome," and the name in `Dashboard.tsx`'s editorial-gold heading. Now `Welcome, <span>{name}</span>` as one run, wrapping naturally on narrow viewports rather than always forcing two lines. Confirmed via `innerHTML` (no `<br>` present) and a 380px-viewport screenshot.
+
+## Verification
+
+- Fresh reloads, Editorial Gold: Conversations panel confirmed same near-black as before (not `--color-surface-raised`), sidebar visually matches card tone, welcome header reads as one continuous element.
+- `onyx-lime` re-confirmed unaffected on all three: sidebar/card colors match there too (were never broken), Conversations panel untouched (`rgb(30, 30, 34)`, this session's CSS is editorial-gold-scoped only), welcome header was never using the `<br>` branch to begin with.
+
+## Typechecks
+
+`npx tsc --noEmit` (api, untouched) and `npm run build` (web) -- both clean.
+
+## Commit
+
+Pending (this entry commits alongside the code changes).
+
+## Cleanup
+
+Killed the isolated dev API/web server instances used for this session's own verification (ports 4093/5292). Deleted every ad-hoc verification script and screenshot from the scratch directory afterward.
