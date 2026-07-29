@@ -535,12 +535,11 @@
    `--color-bg` itself (not a hardcoded duplicate rgba triplet), same
    technique already used for .rbc-calendar's slot-selection tint above,
    so this stays correct if editorial-gold's own --color-bg ever changes.
-   70%, not the wash's own value -- found and confirmed via real manual
-   testing to be the value that lets the photo read through the page
-   shell without the shell itself losing its own legibility-guaranteeing
-   darkness. */
+   80% (originally 70%, tuned darker afterward) -- not the wash's own
+   value, this is what lets the photo read through the page shell without
+   the shell itself losing its own legibility-guaranteeing darkness. */
 [data-theme="editorial-gold"] .bg-bg {
-  background-color: color-mix(in srgb, var(--color-bg) 70%, transparent);
+  background-color: color-mix(in srgb, var(--color-bg) 80%, transparent);
 }
 
 /* Recentered on the viewport (was top: -560px, anchored almost entirely
