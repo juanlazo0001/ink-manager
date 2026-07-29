@@ -1,9 +1,11 @@
 import { useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
+import { AnimatePresence, motion } from 'framer-motion'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import { apiFetch } from '../lib/api'
 import { formatDateTime } from '../lib/format'
+import { uiSpringTransition } from '../lib/motion'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useUserProfile } from '../context/useUserProfile'
 import { useViewAs } from '../context/useViewAs'
@@ -180,7 +182,15 @@ export default function Tasks() {
 
   function renderPersonalTaskItem(task: PersonalTask) {
     return (
-      <li key={task.id} className="flex items-center gap-3 rounded-lg border border-border p-3 text-sm">
+      <motion.li
+        key={task.id}
+        layout
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={uiSpringTransition}
+        className="flex items-center gap-3 rounded-lg border border-border p-3 text-sm"
+      >
         <button
           type="button"
           onClick={() => toggleComplete(task)}
@@ -240,7 +250,7 @@ export default function Tasks() {
         >
           <CloseIcon className="h-3.5 w-3.5" />
         </button>
-      </li>
+      </motion.li>
     )
   }
 
@@ -288,9 +298,15 @@ export default function Tasks() {
                       {TASK_TYPE_LABELS[type] ?? type}
                     </p>
                     <ul className="mt-2 space-y-2">
+                      <AnimatePresence initial={false}>
                       {tasks.map((task) => (
-                        <li
+                        <motion.li
                           key={`${task.type}:${task.dismissalKey}`}
+                          layout
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          transition={uiSpringTransition}
                           className="flex items-center justify-between gap-3 rounded-lg border border-border p-3 text-sm"
                         >
                           <div className="min-w-0">
@@ -309,8 +325,9 @@ export default function Tasks() {
                           >
                             Dismiss
                           </button>
-                        </li>
+                        </motion.li>
                       ))}
+                      </AnimatePresence>
                     </ul>
                   </div>
                 ))}
@@ -376,7 +393,7 @@ export default function Tasks() {
                       <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">My tasks</p>
                     )}
                     <ul className={assignedByOthersIncomplete.length > 0 ? 'mt-2 space-y-2' : 'space-y-2'}>
-                      {myOwnIncomplete.map(renderPersonalTaskItem)}
+                      <AnimatePresence initial={false}>{myOwnIncomplete.map(renderPersonalTaskItem)}</AnimatePresence>
                     </ul>
                   </div>
                 )}
@@ -384,7 +401,9 @@ export default function Tasks() {
                 {assignedByOthersIncomplete.length > 0 && (
                   <div className="mt-4">
                     <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Assigned by others</p>
-                    <ul className="mt-2 space-y-2">{assignedByOthersIncomplete.map(renderPersonalTaskItem)}</ul>
+                    <ul className="mt-2 space-y-2">
+                      <AnimatePresence initial={false}>{assignedByOthersIncomplete.map(renderPersonalTaskItem)}</AnimatePresence>
+                    </ul>
                   </div>
                 )}
 
@@ -400,10 +419,16 @@ export default function Tasks() {
 
                     {showCompleted && (
                       <ul className="mt-2 space-y-2">
+                        <AnimatePresence initial={false}>
                         {completedPersonal.map((task) => (
-                          <li
+                          <motion.li
                             key={task.id}
-                            className="flex items-center gap-3 rounded-lg border border-border p-3 text-sm opacity-60"
+                            layout
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 0.6 }}
+                            exit={{ opacity: 0 }}
+                            transition={uiSpringTransition}
+                            className="flex items-center gap-3 rounded-lg border border-border p-3 text-sm"
                           >
                             <button
                               type="button"
@@ -423,8 +448,9 @@ export default function Tasks() {
                             >
                               <CloseIcon className="h-3.5 w-3.5" />
                             </button>
-                          </li>
+                          </motion.li>
                         ))}
+                        </AnimatePresence>
                       </ul>
                     )}
                   </div>
@@ -444,8 +470,17 @@ export default function Tasks() {
 
                   {incompleteAssignedByMe.length > 0 && (
                     <ul className="mt-4 space-y-2">
+                      <AnimatePresence initial={false}>
                       {incompleteAssignedByMe.map((task) => (
-                        <li key={task.id} className="flex items-center gap-3 rounded-lg border border-border p-3 text-sm">
+                        <motion.li
+                          key={task.id}
+                          layout
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          transition={uiSpringTransition}
+                          className="flex items-center gap-3 rounded-lg border border-border p-3 text-sm"
+                        >
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-fg">{task.title}</p>
                             <p className="mt-0.5 text-xs text-fg-muted">
@@ -468,8 +503,9 @@ export default function Tasks() {
                           >
                             <CloseIcon className="h-3.5 w-3.5" />
                           </button>
-                        </li>
+                        </motion.li>
                       ))}
+                      </AnimatePresence>
                     </ul>
                   )}
 
@@ -485,10 +521,16 @@ export default function Tasks() {
 
                       {showCompletedAssignedByMe && (
                         <ul className="mt-2 space-y-2">
+                          <AnimatePresence initial={false}>
                           {completedAssignedByMe.map((task) => (
-                            <li
+                            <motion.li
                               key={task.id}
-                              className="flex items-center gap-3 rounded-lg border border-border p-3 text-sm opacity-60"
+                              layout
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 0.6 }}
+                              exit={{ opacity: 0 }}
+                              transition={uiSpringTransition}
+                              className="flex items-center gap-3 rounded-lg border border-border p-3 text-sm"
                             >
                               <div className="min-w-0 flex-1">
                                 <p className="truncate text-fg-secondary line-through">{task.title}</p>
@@ -504,8 +546,9 @@ export default function Tasks() {
                               >
                                 <CloseIcon className="h-3.5 w-3.5" />
                               </button>
-                            </li>
+                            </motion.li>
                           ))}
+                          </AnimatePresence>
                         </ul>
                       )}
                     </div>

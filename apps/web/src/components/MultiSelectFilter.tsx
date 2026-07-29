@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
 import { ChevronDownIcon } from './icons'
+import { dropdownVariants, uiSpringTransition } from '../lib/motion'
 
 interface MultiSelectFilterOption {
   value: string
@@ -58,33 +60,42 @@ export default function MultiSelectFilter({ placeholder, options, selected, onCh
         <ChevronDownIcon className="h-4 w-4 shrink-0 text-fg-muted" />
       </button>
 
-      {open && (
-        <div className="absolute z-10 mt-1 max-h-72 w-56 overflow-auto rounded-lg border border-border bg-surface-inset py-1 shadow-lg">
-          {selected.length > 0 && (
-            <button
-              type="button"
-              onClick={() => onChange([])}
-              className="block w-full px-3 py-1.5 text-left text-xs font-medium text-fg-secondary hover:bg-surface"
-            >
-              Clear all
-            </button>
-          )}
-          {options.map((option) => (
-            <label
-              key={option.value}
-              className="flex cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm text-fg hover:bg-surface"
-            >
-              <input
-                type="checkbox"
-                checked={selected.includes(option.value)}
-                onChange={() => toggle(option.value)}
-                className="h-4 w-4 shrink-0 rounded border-border accent-accent"
-              />
-              <span className="min-w-0 flex-1 truncate">{option.label}</span>
-            </label>
-          ))}
-        </div>
-      )}
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            className="absolute z-10 mt-1 max-h-72 w-56 overflow-auto rounded-lg border border-border bg-surface-inset py-1 shadow-lg"
+            variants={dropdownVariants}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            transition={uiSpringTransition}
+          >
+            {selected.length > 0 && (
+              <button
+                type="button"
+                onClick={() => onChange([])}
+                className="block w-full px-3 py-1.5 text-left text-xs font-medium text-fg-secondary hover:bg-surface"
+              >
+                Clear all
+              </button>
+            )}
+            {options.map((option) => (
+              <label
+                key={option.value}
+                className="flex cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm text-fg hover:bg-surface"
+              >
+                <input
+                  type="checkbox"
+                  checked={selected.includes(option.value)}
+                  onChange={() => toggle(option.value)}
+                  className="h-4 w-4 shrink-0 rounded border-border accent-accent"
+                />
+                <span className="min-w-0 flex-1 truncate">{option.label}</span>
+              </label>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

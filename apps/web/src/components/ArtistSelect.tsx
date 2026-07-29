@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
 import { ArtistAvatar, artistLabel, type ArtistLike } from './ArtistAvatar'
 import { ChevronDownIcon } from './icons'
+import { dropdownVariants, uiSpringTransition } from '../lib/motion'
 
 export interface ArtistOption extends ArtistLike {
   id: string
@@ -71,11 +73,17 @@ export default function ArtistSelect({
         )}
         <ChevronDownIcon className="h-4 w-4 shrink-0 text-fg-muted" />
       </button>
-      {open && artists && artists.length > 0 && (
-        <ul
+      <AnimatePresence>
+        {open && artists && artists.length > 0 && (
+        <motion.ul
           role="listbox"
           aria-labelledby={id}
           className="absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-lg border border-border bg-surface-inset py-1 shadow-lg"
+          variants={dropdownVariants}
+          initial="initial"
+          animate="animate"
+          exit="exit"
+          transition={uiSpringTransition}
         >
           {clearLabel && (
             <li>
@@ -110,8 +118,9 @@ export default function ArtistSelect({
               </button>
             </li>
           ))}
-        </ul>
-      )}
+        </motion.ul>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

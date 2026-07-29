@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { DragDropProvider, useDroppable, type DragEndEvent } from '@dnd-kit/react'
+import { AnimatePresence } from 'framer-motion'
 import InquiryKanbanCard from './InquiryKanbanCard'
 import type { KanbanColumn, KanbanInquiry, KanbanTransition } from '../../lib/kanban'
 
@@ -74,16 +75,18 @@ function Column({
       {showCards && (
         <div className="flex flex-col gap-2">
           {column.cards.length === 0 && <p className="px-1 py-4 text-center text-xs text-fg-muted">No cards</p>}
-          {column.cards.map((inquiry) => (
-            <div key={inquiry.id} className={pendingCardId === inquiry.id ? 'opacity-50' : undefined}>
+          <AnimatePresence initial={false}>
+            {column.cards.map((inquiry) => (
               <InquiryKanbanCard
+                key={inquiry.id}
                 inquiry={inquiry}
                 columnKey={column.key}
                 draggable={interactive && pendingCardId === null}
                 onOpen={onOpenCard}
+                pending={pendingCardId === inquiry.id}
               />
-            </div>
-          ))}
+            ))}
+          </AnimatePresence>
         </div>
       )}
     </div>
@@ -217,9 +220,11 @@ export default function InquiryKanbanBoard({
           {mobileColumn && mobileColumn.cards.length === 0 && (
             <p className="py-8 text-center text-xs text-fg-muted">No cards</p>
           )}
-          {mobileColumn?.cards.map((inquiry) => (
-            <InquiryKanbanCard key={inquiry.id} inquiry={inquiry} columnKey={mobileColumn.key} draggable={false} onOpen={onOpenCard} />
-          ))}
+          <AnimatePresence initial={false}>
+            {mobileColumn?.cards.map((inquiry) => (
+              <InquiryKanbanCard key={inquiry.id} inquiry={inquiry} columnKey={mobileColumn.key} draggable={false} onOpen={onOpenCard} />
+            ))}
+          </AnimatePresence>
         </div>
       </div>
     </div>

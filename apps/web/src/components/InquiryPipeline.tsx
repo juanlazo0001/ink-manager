@@ -115,7 +115,7 @@ export default function InquiryPipeline({
             <li key={step.label} className="relative flex gap-3 pb-5 last:pb-0">
               {!isLast && (
                 <span
-                  className={`absolute left-[9px] top-5 h-full w-0.5 ${done ? 'bg-accent' : 'bg-border'}`}
+                  className={`absolute left-[9px] top-5 h-full w-0.5 transition-colors duration-base ${done ? 'bg-accent' : 'bg-border'}`}
                   aria-hidden="true"
                 />
               )}
@@ -123,7 +123,7 @@ export default function InquiryPipeline({
                 className={
                   isEditorial
                     ? [
-                        'hex z-10 flex h-6 w-5 shrink-0 items-center justify-center font-display text-[10px] italic',
+                        'hex z-10 flex h-6 w-5 shrink-0 items-center justify-center font-display text-[10px] italic transition-colors duration-base',
                         done
                           ? 'bg-accent text-accent-fg font-semibold not-italic'
                           : current
@@ -131,7 +131,7 @@ export default function InquiryPipeline({
                             : 'bg-surface-raised text-fg-muted ring-1 ring-inset ring-border-strong',
                       ].join(' ')
                     : [
-                        'z-10 flex h-5 w-5 shrink-0 items-center justify-center rounded-full',
+                        'z-10 flex h-5 w-5 shrink-0 items-center justify-center rounded-full transition-colors duration-base',
                         done || current ? 'bg-accent text-bg' : 'border border-border bg-surface-inset',
                       ].join(' ')
                 }
@@ -192,7 +192,7 @@ export default function InquiryPipeline({
               <div key={step.label} className="relative flex flex-col items-center">
                 {!isLast && (
                   <div
-                    className={`absolute left-1/2 top-3 h-0.5 w-full ${done ? 'bg-accent' : 'bg-border'}`}
+                    className={`absolute left-1/2 top-3 h-0.5 w-full transition-colors duration-base ${done ? 'bg-accent' : 'bg-border'}`}
                     aria-hidden="true"
                   />
                 )}
@@ -200,7 +200,7 @@ export default function InquiryPipeline({
                   className={
                     isEditorial
                       ? [
-                          'hex z-10 flex h-8 w-7 shrink-0 items-center justify-center font-display text-[13px] italic',
+                          'hex z-10 flex h-8 w-7 shrink-0 items-center justify-center font-display text-[13px] italic transition-colors duration-base',
                           done
                             ? 'bg-accent text-accent-fg font-semibold not-italic'
                             : current
@@ -208,7 +208,7 @@ export default function InquiryPipeline({
                               : 'bg-surface-raised text-fg-muted ring-1 ring-inset ring-border-strong',
                         ].join(' ')
                       : [
-                          'z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold',
+                          'z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold transition-colors duration-base',
                           done || current ? 'bg-accent text-bg' : 'border border-border bg-surface-inset text-fg-muted',
                         ].join(' ')
                   }

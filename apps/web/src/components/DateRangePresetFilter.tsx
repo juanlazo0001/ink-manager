@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
 import { ChevronDownIcon, CheckIcon } from './icons'
 import { useThemePreset } from '../lib/useThemePreset'
+import { dropdownVariants, uiSpringTransition } from '../lib/motion'
 
 export interface DateRange {
   start: string // YYYY-MM-DD
@@ -88,8 +90,16 @@ export default function DateRangePresetFilter({ value, activeDays, onChange }: D
         <ChevronDownIcon className={isEditorial ? 'h-4 w-4 shrink-0' : 'h-4 w-4 shrink-0 text-fg-muted'} />
       </button>
 
-      {open && (
-        <div className="absolute z-10 mt-1 w-64 rounded-lg border border-border bg-surface-inset py-1 shadow-lg">
+      <AnimatePresence>
+        {open && (
+        <motion.div
+          className="absolute z-10 mt-1 w-64 rounded-lg border border-border bg-surface-inset py-1 shadow-lg"
+          variants={dropdownVariants}
+          initial="initial"
+          animate="animate"
+          exit="exit"
+          transition={uiSpringTransition}
+        >
           {PRESETS.map((preset) => (
             <button
               key={preset.days}
@@ -133,8 +143,9 @@ export default function DateRangePresetFilter({ value, activeDays, onChange }: D
               Apply
             </button>
           </div>
-        </div>
-      )}
+        </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

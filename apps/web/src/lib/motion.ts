@@ -43,6 +43,17 @@ export const uiSpringTransition: Transition = {
   visualDuration: 0.22,
 }
 
+// Dropdown/menu open -- scale + fade from just above the trigger button,
+// brief enough to read as instant despite being animated. One shared
+// shape for every button+popover dropdown in the app (Filter/Sort in
+// ConversationsPanel, DateRangePresetFilter, MultiSelectFilter,
+// ArtistSelect) rather than each inventing its own variant.
+export const dropdownVariants: Variants = {
+  initial: { opacity: 0, scale: 0.96, y: -4 },
+  animate: { opacity: 1, scale: 1, y: 0 },
+  exit: { opacity: 0, scale: 0.96, y: -4 },
+}
+
 // The card itself: opacity + a small vertical settle, no blur -- kept
 // visually distinct from the heading's own treatment below so the
 // heading swap reads as its own small "materialize" moment rather than

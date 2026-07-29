@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { motion } from 'framer-motion'
+import { AnimatePresence, motion } from 'framer-motion'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '../lib/api'
-import { uiSpringTransition } from '../lib/motion'
+import { dropdownVariants, uiSpringTransition } from '../lib/motion'
 import StatusPill, { getStatusTone, type Tone } from './StatusPill'
 import InquiryPipeline from './InquiryPipeline'
 import { formatDateTime, formatRelativeTime, formatPriceEstimate } from '../lib/format'
@@ -909,8 +909,16 @@ function PillMenu<T extends string>({
         <ChevronDownIcon className="h-3 w-3 shrink-0" />
       </button>
 
-      {open && (
-        <div className="absolute z-10 mt-1 w-44 rounded-lg border border-border bg-surface-inset py-1 shadow-lg">
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            className="absolute z-10 mt-1 w-44 rounded-lg border border-border bg-surface-inset py-1 shadow-lg"
+            variants={dropdownVariants}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            transition={uiSpringTransition}
+          >
           {options.map((option) => (
             <button
               key={option.value}
@@ -925,8 +933,9 @@ function PillMenu<T extends string>({
               {value === option.value && <CheckIcon className="h-4 w-4 shrink-0 text-accent" />}
             </button>
           ))}
-        </div>
-      )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
@@ -1368,11 +1377,19 @@ function ConversationListView({
         )}
 
         <ul className="divide-y divide-border">
+          <AnimatePresence initial={false}>
           {visibleConversations.map((conversation) => {
             const name = conversation.counterpart?.name ?? 'Unknown'
             const isUnread = conversation.unreadCount > 0
             return (
-              <li key={conversation.id}>
+              <motion.li
+                key={conversation.id}
+                layout
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={uiSpringTransition}
+              >
                 <button
                   type="button"
                   onClick={() => onSelect(conversation.id)}
@@ -1415,9 +1432,10 @@ function ConversationListView({
                     )}
                   </div>
                 </button>
-              </li>
+              </motion.li>
             )
           })}
+          </AnimatePresence>
         </ul>
       </div>
 
