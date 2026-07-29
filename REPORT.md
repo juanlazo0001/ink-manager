@@ -4429,7 +4429,7 @@ Didn't accept that as the full story -- isolated timing from cause with a second
 
 ## Commit
 
-Pending (this entry commits alongside the code changes).
+`e5149f3` on `main`.
 
 ## Cleanup
 
