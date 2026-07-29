@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
+import Eyebrow from '../components/Eyebrow'
 import { SkeletonTableRows } from '../components/Skeleton'
 import StatusPill from '../components/StatusPill'
 import StaffInquiryForm from '../components/StaffInquiryForm'
@@ -20,6 +21,7 @@ import { inquiriesQueryKey, artistsQueryKey } from '../lib/queryKeys'
 import { useMarkSectionSeen } from '../lib/useMarkSectionSeen'
 import { useDebouncedValue } from '../lib/useDebouncedValue'
 import { ArtistAvatar, artistLabel } from '../components/ArtistAvatar'
+import { useThemePreset } from '../lib/useThemePreset'
 
 interface Inquiry {
   id: string
@@ -165,6 +167,8 @@ export default function Inquiries() {
   // -- POST /inquiries is requirePermission("inquiries.create"), not a
   // hardcoded role gate.
   const canCreateInquiry = profile?.permissions.includes('inquiries.create') ?? false
+  const { shape } = useThemePreset()
+  const isEditorial = shape === 'editorial'
   const [searchParams, setSearchParams] = useSearchParams()
   const [showNewInquiry, setShowNewInquiry] = useState(false)
   const [showNewAppointment, setShowNewAppointment] = useState(false)
@@ -455,7 +459,16 @@ export default function Inquiries() {
 
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-bold text-fg sm:text-3xl">Inquiries &amp; Projects</h1>
+              {isEditorial && <Eyebrow>{activeTab === 'projects' ? 'Confirmed Work' : 'The Pipeline'}</Eyebrow>}
+              <h1
+                className={
+                  isEditorial
+                    ? 'mt-1 font-display text-[clamp(28px,3.4vw,38px)] font-normal tracking-[-0.015em] text-fg'
+                    : 'text-2xl font-bold text-fg sm:text-3xl'
+                }
+              >
+                Inquiries &amp; Projects
+              </h1>
               <p className="mt-1 text-sm text-fg-secondary">
                 {activeTab === 'projects'
                   ? 'Confirmed work: deposit paid through completed.'
@@ -467,7 +480,11 @@ export default function Inquiries() {
               <button
                 type="button"
                 onClick={() => setShowNewAppointment(true)}
-                className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover"
+                className={
+                  isEditorial
+                    ? 'editorial-btn-primary flex items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-bg transition hover:bg-accent-hover'
+                    : 'flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover'
+                }
               >
                 <PlusIcon className="h-4 w-4" />
                 New Appointment
@@ -478,7 +495,11 @@ export default function Inquiries() {
               <button
                 type="button"
                 onClick={() => setShowNewInquiry(true)}
-                className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover"
+                className={
+                  isEditorial
+                    ? 'editorial-btn-primary flex items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-bg transition hover:bg-accent-hover'
+                    : 'flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover'
+                }
               >
                 <PlusIcon className="h-4 w-4" />
                 New Inquiry

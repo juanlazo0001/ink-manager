@@ -605,6 +605,11 @@ export default function ConversationsPanel() {
   const queryClient = useQueryClient()
   const { isOpen, activeConversationId, openPanel, closePanel } = useConversationPanel()
   const panelRef = useRef<HTMLDivElement>(null)
+  // Used by the FAB trigger below -- the OTHER `isEditorial` further down
+  // this file (~line 1404) is scoped inside a different render path, not
+  // reachable from the trigger button's own return.
+  const { shape: fabShape } = useThemePreset()
+  const isEditorialFab = fabShape === 'editorial'
 
   const isArtist = user?.role === 'ARTIST'
   const [tab, setTab] = useState<Tab>(isArtist ? 'STAFF' : 'CLIENT')
@@ -733,9 +738,24 @@ export default function ConversationsPanel() {
         onMouseEnter={prefetchPanelData}
         onFocus={prefetchPanelData}
         aria-label="Open conversations"
-        className="fixed bottom-6 right-6 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-bg shadow-xl transition hover:bg-accent-hover"
+        className={
+          isEditorialFab
+            ? // text-white, not text-fg (cream) -- cream-on-danger-strong
+              // measures 4.39:1, just under the 4.5:1 AA floor small text
+              // needs; white clears it at 5.16:1. Checked, not assumed.
+              'fixed bottom-6 right-6 z-40 flex h-16 w-16 flex-col items-center justify-center gap-0.5 rounded-full bg-danger-strong text-white shadow-xl shadow-black/40 transition hover:brightness-110'
+            : 'fixed bottom-6 right-6 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-bg shadow-xl transition hover:bg-accent-hover'
+        }
       >
-        <MessageIcon className="h-6 w-6" />
+        {/* Faint hairline halo, matching the marketing site's own red FAB
+            character (marketing/index.html's .go) -- red is punctuation
+            here (a thin ring), not a fill, per this session's own design
+            principle. */}
+        {isEditorialFab && (
+          <span className="pointer-events-none absolute -inset-2 rounded-full border border-danger-strong/25" aria-hidden="true" />
+        )}
+        <MessageIcon className={isEditorialFab ? 'h-5 w-5' : 'h-6 w-6'} />
+        {isEditorialFab && <span className="font-jura text-[8px] font-bold tracking-[0.14em] uppercase">Chat</span>}
         {!!badgeCounts?.conversations && badgeCounts.conversations > 0 && (
           <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-danger px-1 text-[11px] font-semibold text-bg">
             {badgeCounts.conversations > 99 ? '99+' : badgeCounts.conversations}

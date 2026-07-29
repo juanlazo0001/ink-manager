@@ -933,6 +933,39 @@
   background: var(--login-gold-hi);
 }
 
+/* Editorial Gold's two app-wide button treatments (item 5 of this
+   session's own brief), typography-only -- color/shape/padding stay
+   whatever Tailwind utilities each call site already used (bg-accent,
+   rounded-full, etc.), so this only adds the letterspaced-uppercase-Jura
+   character, not a new color system. Deliberately NOT reusing
+   --color-accent-button/--radius-btn from .login-button above -- those
+   were scoped to Login's own "fixed platform identity" on purpose (see
+   that block's own comment: "nothing else references this token yet");
+   in-app editorial buttons stay on the ordinary --color-accent/pill-shape
+   convention every other preset also uses, just with this typography
+   layered on top under editorial-gold specifically. No [data-theme]
+   scoping needed here since callers only add these classNames when
+   useThemePreset()'s isEditorial is already true, same convention as
+   every other editorial-only class in this file. */
+.editorial-btn-primary,
+.editorial-btn-secondary {
+  font-family: var(--font-jura);
+  font-weight: 700;
+  font-size: 11.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.editorial-btn-secondary {
+  background: transparent;
+  border-color: var(--color-border-strong);
+  color: var(--color-fg-secondary);
+}
+.editorial-btn-secondary:hover {
+  border-color: var(--color-accent);
+  color: var(--color-fg);
+  background: rgba(201, 154, 91, 0.08);
+}
+
 /* Same gradient-vignette technique as the marketing site's own
    .hero-shade (marketing/index.html) -- darkens the background photo
    more toward the edges/bottom than the flat black overlay this replaced,

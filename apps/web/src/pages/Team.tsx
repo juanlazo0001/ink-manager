@@ -2,6 +2,7 @@ import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
+import Eyebrow from '../components/Eyebrow'
 import Modal from '../components/Modal'
 import PhoneInput from '../components/PhoneInput'
 import { SkeletonCards } from '../components/Skeleton'
@@ -16,6 +17,7 @@ import { useViewAs } from '../context/useViewAs'
 import { useSocket } from '../context/useSocket'
 import PresenceDot from '../components/PresenceDot'
 import { PlusIcon, ViewIcon, InstagramIcon, FacebookIcon, ChevronDownIcon, PencilIcon, TrashIcon } from '../components/icons'
+import { useThemePreset } from '../lib/useThemePreset'
 
 type PermissionMatrix = Record<string, Record<string, boolean>>
 type TeamTab = 'staff' | 'artists' | 'permissions'
@@ -130,6 +132,8 @@ export default function Team() {
   const { onlineUserIds } = useSocket()
   const queryClient = useQueryClient()
   const isOwner = user?.role === 'OWNER'
+  const { shape } = useThemePreset()
+  const isEditorial = shape === 'editorial'
   const { target: viewAsTarget, startViewAs } = useViewAs()
   // The View As entry point reflects who's REALLY logged in, not the
   // impersonated target -- and is hidden entirely while already viewing as
@@ -547,7 +551,16 @@ export default function Team() {
         <div className="mx-auto max-w-7xl px-6 py-6 sm:px-10 sm:py-8">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-bold text-fg sm:text-3xl">Team</h1>
+              {isEditorial && <Eyebrow>The Roster</Eyebrow>}
+              <h1
+                className={
+                  isEditorial
+                    ? 'mt-1 font-display text-[clamp(28px,3.4vw,38px)] font-normal tracking-[-0.015em] text-fg'
+                    : 'text-2xl font-bold text-fg sm:text-3xl'
+                }
+              >
+                Team
+              </h1>
               <p className="mt-1 text-sm text-fg-secondary">Everyone with access to your studio's portal.</p>
             </div>
 
@@ -557,14 +570,22 @@ export default function Team() {
                   type="button"
                   onClick={openAddStaff}
                   title="Create an account directly with a password, without sending an invite email"
-                  className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
+                  className={
+                    isEditorial
+                      ? 'editorial-btn-secondary flex items-center gap-2 rounded-full border px-4 py-2.5 transition'
+                      : 'flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface'
+                  }
                 >
                   Add directly
                 </button>
                 <button
                   type="button"
                   onClick={openInvite}
-                  className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover"
+                  className={
+                    isEditorial
+                      ? 'editorial-btn-primary flex items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-bg transition hover:bg-accent-hover'
+                      : 'flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover'
+                  }
                 >
                   <PlusIcon className="h-4 w-4" />
                   Invite team member

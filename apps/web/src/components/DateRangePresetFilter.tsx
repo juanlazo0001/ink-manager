@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ChevronDownIcon, CheckIcon } from './icons'
+import { useThemePreset } from '../lib/useThemePreset'
 
 export interface DateRange {
   start: string // YYYY-MM-DD
@@ -43,6 +44,8 @@ export default function DateRangePresetFilter({ value, activeDays, onChange }: D
   const [customStart, setCustomStart] = useState(value.start)
   const [customEnd, setCustomEnd] = useState(value.end)
   const ref = useRef<HTMLDivElement>(null)
+  const { shape } = useThemePreset()
+  const isEditorial = shape === 'editorial'
 
   useEffect(() => {
     setCustomStart(value.start)
@@ -75,10 +78,14 @@ export default function DateRangePresetFilter({ value, activeDays, onChange }: D
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className="flex items-center gap-2 rounded-lg border border-border bg-surface-inset px-3 py-2 text-left text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+        className={
+          isEditorial
+            ? 'editorial-btn-secondary flex items-center gap-2 rounded-full border px-4 py-2 text-left transition'
+            : 'flex items-center gap-2 rounded-lg border border-border bg-surface-inset px-3 py-2 text-left text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
+        }
       >
         <span>{buttonLabel}</span>
-        <ChevronDownIcon className="h-4 w-4 shrink-0 text-fg-muted" />
+        <ChevronDownIcon className={isEditorial ? 'h-4 w-4 shrink-0' : 'h-4 w-4 shrink-0 text-fg-muted'} />
       </button>
 
       {open && (

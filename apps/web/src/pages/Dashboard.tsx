@@ -4,6 +4,7 @@ import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useUserProfile } from '../context/useUserProfile'
 import Sidebar from '../components/Sidebar'
 import DateRangePresetFilter, { presetRange, type DateRange } from '../components/DateRangePresetFilter'
+import Eyebrow from '../components/Eyebrow'
 import HorizontalBarList from '../components/HorizontalBarList'
 import { SkeletonCards } from '../components/Skeleton'
 import { apiFetch } from '../lib/api'
@@ -68,9 +69,14 @@ function CardShell({ title, caption, children }: { title: string; caption?: stri
           : 'card-surface rounded-2xl border border-border bg-surface p-5'
       }
     >
+      {/* Caption moves into the shared Eyebrow above the title under
+          Editorial Gold -- a consistent place for a card's contextual
+          metadata (the date range, "All-time", etc.) instead of the
+          floating grey span the non-editorial layout still uses. */}
+      {isEditorial && caption ? <Eyebrow className="mb-2">{caption}</Eyebrow> : null}
       <div className="flex items-start justify-between gap-2">
         <h2 className={isEditorial ? 'sc text-[20px]' : 'text-base font-semibold text-fg'}>{title}</h2>
-        {caption && <span className="shrink-0 text-xs text-fg-muted">{caption}</span>}
+        {!isEditorial && caption && <span className="shrink-0 text-xs text-fg-muted">{caption}</span>}
       </div>
       <div className={isEditorial ? 'mt-5' : 'mt-4'}>{children}</div>
     </div>
@@ -103,6 +109,8 @@ export default function Dashboard() {
     placeholderData: keepPreviousData,
   })
 
+  const welcomeName = profile?.name?.trim().split(' ')[0] || (user ? formatStatus(user.role) : '')
+
   return (
     <div className="flex min-h-screen bg-bg text-fg">
       <Sidebar />
@@ -111,24 +119,24 @@ export default function Dashboard() {
         <div className="mx-auto max-w-7xl px-6 py-6 sm:px-10 sm:py-8">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h1
-                className={
-                  isEditorial
-                    ? 'font-display text-[clamp(32px,4vw,44px)] font-normal tracking-[-0.015em] text-fg'
-                    : 'text-2xl font-bold text-fg sm:text-3xl'
-                }
-              >
-                Welcome, {profile?.name?.trim().split(' ')[0] || (user ? formatStatus(user.role) : '')}
-              </h1>
               {isEditorial ? (
-                <p className="mt-2.5 inline-flex items-center gap-3 font-jura text-[11px] font-semibold tracking-[0.34em] text-fg-muted uppercase">
-                  Here's how the studio is doing.
-                  <span className="text-danger-strong text-[13px] tracking-normal" aria-hidden="true">
-                    +
-                  </span>
-                </p>
+                <>
+                  {/* Marketing-site hero treatment (marketing/index.html's
+                      .kicker + h2 em) -- eyebrow above, serif "Welcome,"
+                      with the name set apart in italic serif beneath,
+                      rather than one plain heading line. */}
+                  <Eyebrow>Here's how the studio is doing.</Eyebrow>
+                  <h1 className="mt-3 font-display text-[clamp(32px,4vw,44px)] font-normal leading-[1.05] tracking-[-0.015em] text-fg">
+                    Welcome,
+                    <br />
+                    <span className="text-accent-hover italic">{welcomeName}</span>
+                  </h1>
+                </>
               ) : (
-                <p className="mt-1 text-sm text-fg-secondary">Here's how the studio is doing.</p>
+                <>
+                  <h1 className="text-2xl font-bold text-fg sm:text-3xl">Welcome, {welcomeName}</h1>
+                  <p className="mt-1 text-sm text-fg-secondary">Here's how the studio is doing.</p>
+                </>
               )}
             </div>
 
@@ -171,10 +179,33 @@ export default function Dashboard() {
 
               <CardShell title="Lost / Cold Rate" caption={`${range.start} – ${range.end}`}>
                 {isEditorial && <span className="mb-3 block h-0.5 w-8 rounded-full bg-danger-strong" aria-hidden="true" />}
-                <p className={bigStatClass(isEditorial, 'xl')}>{formatPct(data.lostRate.lostColdRate)}</p>
-                <p className={isEditorial ? 'mt-2 text-[13.5px] text-fg-muted' : 'mt-1 text-xs text-fg-muted'}>
-                  of inquiries that reached a terminal outcome ended lost or cold, rest converted
-                </p>
+                {isEditorial && data.lostRate.lostColdRate == null ? (
+                  // Designed empty state (item 6) rather than the bare "—"
+                  // formatPct falls back to -- red dash + italic serif
+                  // message, same red-as-punctuation/gold-free vocabulary
+                  // as everywhere else this session touched.
+                  <div className="flex items-center gap-3">
+                    <span className="text-danger-strong text-3xl font-light leading-none" aria-hidden="true">
+                      —
+                    </span>
+                    <p className="font-display text-[15px] italic text-fg-secondary">No outcomes yet in this range.</p>
+                  </div>
+                ) : isEditorial ? (
+                  // Cream highlight chip (item 4) -- deliberately the ONLY
+                  // use of this treatment on the page, reserved for this
+                  // one headline percentage rather than sprinkled across
+                  // every stat card.
+                  <span className="bg-fg text-accent-fg font-display inline-block px-4 py-1 text-4xl italic shadow-lg shadow-black/30">
+                    {formatPct(data.lostRate.lostColdRate)}
+                  </span>
+                ) : (
+                  <p className={bigStatClass(isEditorial, 'xl')}>{formatPct(data.lostRate.lostColdRate)}</p>
+                )}
+                {!(isEditorial && data.lostRate.lostColdRate == null) && (
+                  <p className={isEditorial ? 'mt-3 text-[13.5px] text-fg-muted' : 'mt-1 text-xs text-fg-muted'}>
+                    of inquiries that reached a terminal outcome ended lost or cold, rest converted
+                  </p>
+                )}
                 <div className="mt-4 flex flex-wrap gap-4 text-sm">
                   <span className="flex items-center gap-1.5">
                     <span className="h-2 w-2 rounded-full bg-danger" /> {data.lostRate.lost} Closed Lost
