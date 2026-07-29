@@ -42,6 +42,21 @@ function App() {
   return (
     <BrowserRouter>
       <ErrorBoundary label="App">
+      {/* position: relative + a real z-index -- without this, every routed
+          page's own top-level wrapper is a plain, non-positioned block, so
+          under CSS's stacking-paint-order rules it paints BEHIND any
+          positioned sibling with z-index 0/auto, including TopBar's own
+          fixed decorative layers (app-bg-photo/app-bg-wash/arc-decor),
+          which mount AFTER this tree in the DOM. Harmless for Login/public
+          routes -- TopBar returns null with no logged-in user, so those
+          layers never mount there regardless; this only matters once an
+          authenticated page and TopBar's background layers are both on
+          screen at once. Discovered for real (not theorized) when
+          app-bg-wash's own near-opaque fill visibly blotted out Dashboard's
+          entire card grid in a screenshot -- .arc-decor's own rings never
+          exposed this same latent issue only because they have no opaque
+          fill to reveal it. */}
+      <div className="relative z-10">
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         {/* Persistent-layout auth pages: AuthLayout renders the background/
@@ -253,6 +268,7 @@ function App() {
           }
         />
       </Routes>
+      </div>
       </ErrorBoundary>
       <ViewAsBanner />
       <TopBar />

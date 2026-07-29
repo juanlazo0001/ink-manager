@@ -459,6 +459,53 @@
   -webkit-backdrop-filter: blur(var(--blur-card));
 }
 
+/* Heavily-blurred photo background layer, TopBar-mounted alongside
+   .arc-decor below (same `decorative` gate, same fixed/viewport-wide/
+   z-index:0 approach) -- one more atmospheric layer behind the app shell
+   under Editorial Gold, matching Login's own photo/hero-shade/rings stack
+   but for the general authenticated app rather than just the auth pages.
+   app-bg-blurred.jpg is a PRE-blurred static asset (640x360, ~7KB,
+   generated once offline via sharp: downscaled from the same source
+   Login's own photo uses, then a strong gaussian blur, then re-encoded as
+   a small JPEG) -- never a live CSS filter: blur(), which would be a
+   continuous GPU cost recomputed on every scroll/repaint (the same
+   category of issue as the mobile backdrop-filter stutter fixed earlier
+   this project). Rendering a small pre-blurred JPEG costs the same as any
+   other static background image; there is nothing left to compute at
+   runtime.
+   Paint order among these z-index:0 siblings follows DOM order (earlier =
+   further back) rather than a negative z-index -- deliberately, since a
+   negative z-index on a `position: fixed` child can end up painting
+   BEHIND <body>'s own background box in some engines (body is a normal
+   in-flow box, not a stacking context, so its background doesn't
+   necessarily count as "this stacking context's own background" for
+   paint-order purposes). Staying at z-index: 0 and controlling order via
+   JSX position (TopBar.tsx: photo, then wash, then arc-decor) sidesteps
+   that entirely, using the exact mechanism .arc-decor below already
+   proves works. */
+.app-bg-photo {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+/* Flat, strong dark wash rather than Login's own directional vignette --
+   Login's hero-shade gradient is shaped for a single centered hero photo
+   framing one card; the app shell scrolls and has no single focal point,
+   so a uniform wash (same near-black base color Login's own wash uses)
+   guarantees legibility at every scroll position regardless of which part
+   of the now-abstract blurred photo happens to sit underneath. */
+.app-bg-wash {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: rgba(12, 10, 8, 0.88);
+}
+
 /* Recentered on the viewport (was top: -560px, anchored almost entirely
    above it -- visible only as a sliver behind the header/TopBar area, and
    never again once a page scrolled past its first screenful). Frosted-

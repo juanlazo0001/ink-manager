@@ -13,6 +13,7 @@ import { BellIcon, ChevronDownIcon, LogoutIcon, SearchIcon, SettingsIcon, TasksI
 import ViewAsPicker from './ViewAsPicker'
 import SearchPalette from './SearchPalette'
 import { useThemePreset } from '../lib/useThemePreset'
+import appBgBlurred from '../assets/app-bg-blurred.jpg'
 
 interface TasksBadgeResponse {
   system: unknown[]
@@ -98,6 +99,24 @@ export default function TopBar() {
 
   return (
     <>
+      {/* Heavily-blurred photo + dark wash, behind the arc-ornament below --
+          layer order back to front is photo, wash, arc-decor/grain, then
+          real content, matching Login's own photo/hero-shade/rings stack.
+          The photo itself is a PRE-blurred static asset (app-bg-blurred.jpg,
+          640x360, ~7KB), never a live CSS filter: blur() -- that would
+          recompute every scroll/repaint, the same category of cost that
+          caused the mobile backdrop-filter stutter on Login's card earlier.
+          Same `decorative` gate and DOM-order-establishes-paint-order
+          technique as .arc-decor immediately below (both z-index: 0 --
+          see index.css's own comment on why this works instead of a
+          negative z-index, which risks painting behind body's own
+          background in some browsers). */}
+      {decorative && (
+        <>
+          <img src={appBgBlurred} alt="" aria-hidden="true" className="app-bg-photo" />
+          <span className="app-bg-wash" aria-hidden="true" />
+        </>
+      )}
       {/* Dual themes: faint concentric arcs behind the header area -- a
           genuinely new DOM element the 'default' shape never had, so it's
           only mounted when the active preset's `decorative` flag is set
