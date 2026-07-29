@@ -459,22 +459,6 @@
   -webkit-backdrop-filter: blur(var(--blur-card));
 }
 
-/* Same frosted-glass tokens as .card-surface above, minus its
-   border-radius -- the Conversations panel is a flush right-docked
-   slide-over (border-l border-border, full viewport height), not a
-   free-floating card, so rounding its outer edges would look wrong. Lets
-   TopBar's own fixed photo/wash/arc-decor layers (z-index 0-2, same
-   viewport, this panel sits at z-50 above them) show through blurred,
-   same "something real to blur against" reasoning .card-surface's own
-   comment describes -- the panel no longer reads as a flat black box
-   disconnected from the rest of the app. */
-[data-theme="editorial-gold"] .conversations-panel-glass {
-  background: var(--color-card-glass);
-  border-color: var(--color-border-glass);
-  backdrop-filter: blur(var(--blur-card));
-  -webkit-backdrop-filter: blur(var(--blur-card));
-}
-
 /* Heavily-blurred photo background layer, TopBar-mounted alongside
    .arc-decor below (same `decorative` gate, same fixed/viewport-wide
    approach) -- one more atmospheric layer behind the app shell under

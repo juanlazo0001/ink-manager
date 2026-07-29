@@ -27,13 +27,17 @@ import {
   ArrowUpRightIcon,
   ArtistsIcon,
   AttachmentIcon,
+  CheckIcon,
+  ChevronDownIcon,
   CloseIcon,
+  FilterIcon,
   InfoIcon,
   MessageIcon,
   MoreIcon,
   PencilIcon,
   PlusIcon,
   SendIcon,
+  SortIcon,
   SparkleIcon,
   TagIcon,
 } from './icons'
@@ -785,12 +789,10 @@ export default function ConversationsPanel() {
         aria-modal="true"
         aria-label="Conversations"
         className={[
-          'fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-border shadow-2xl transition-[transform,width] duration-base',
-          // conversations-panel-glass (index.css) is inert outside
-          // editorial-gold, same as .card-surface everywhere else -- bg-
-          // surface-raised stays the real background under every other
-          // preset, unaffected.
-          isEditorialFab ? 'conversations-panel-glass bg-surface-raised' : 'bg-surface-raised',
+          // Fully opaque, no backdrop-filter -- a dense scrolling list of
+          // threads needs legibility more than atmosphere; frosted glass
+          // belongs on a single centered card (Login), not this panel.
+          'fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-border bg-surface-raised shadow-2xl transition-[transform,width] duration-base',
           isOpen ? 'translate-x-0 ease-out' : 'translate-x-full ease-in',
           contextOpen ? 'sm:w-[848px]' : 'sm:w-[560px]',
         ].join(' ')}
@@ -819,6 +821,99 @@ export default function ConversationsPanel() {
           ))}
       </div>
     </>
+  )
+}
+
+const QUICK_FILTER_OPTIONS = [
+  { value: 'all', label: 'All' },
+  { value: 'unread', label: 'Unread' },
+  { value: 'needs-action', label: 'Needs action' },
+] as const
+
+const SORT_OPTIONS = [
+  { value: 'recent', label: 'Most recent' },
+  { value: 'oldest', label: 'Oldest' },
+  { value: 'unread', label: 'Unread first' },
+  { value: 'name', label: 'Name (A–Z)' },
+] as const
+
+// Same button+popover shape as DateRangePresetFilter.tsx (Dashboard's own
+// date-range dropdown) -- trigger button, click-outside-to-close, absolute
+// panel listing options with a checkmark on the active one. Generalized
+// over label/icon/options here since this file needs the same shape twice
+// (Filter, Sort) rather than once.
+function PillMenu<T extends string>({
+  label,
+  icon,
+  value,
+  options,
+  onChange,
+  isEditorial,
+  active = false,
+}: {
+  label: string
+  icon: React.ReactNode
+  value: T
+  options: ReadonlyArray<{ value: T; label: string }>
+  onChange: (value: T) => void
+  isEditorial: boolean
+  active?: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function handleClickOutside(event: MouseEvent) {
+      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [open])
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className={
+          isEditorial
+            ? [
+                'editorial-btn-secondary flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 transition',
+                active ? 'border-accent bg-accent/10 text-accent' : 'border-transparent text-fg-muted hover:border-border-strong',
+              ].join(' ')
+            : [
+                'flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12.5px] font-semibold transition-colors duration-fast ease-out',
+                active ? 'bg-accent text-accent-fg' : 'text-fg-muted hover:text-fg',
+              ].join(' ')
+        }
+      >
+        {icon}
+        {label}
+        <ChevronDownIcon className="h-3 w-3 shrink-0" />
+      </button>
+
+      {open && (
+        <div className="absolute z-10 mt-1 w-44 rounded-lg border border-border bg-surface-inset py-1 shadow-lg">
+          {options.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => {
+                onChange(option.value)
+                setOpen(false)
+              }}
+              className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm text-fg hover:bg-surface"
+            >
+              {option.label}
+              {value === option.value && <CheckIcon className="h-4 w-4 shrink-0 text-accent" />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -1134,33 +1229,24 @@ function ConversationListView({
       )}
 
       {showTabs && (
-        <div className="border-b border-border px-3 py-2.5">
-          <div className="inline-flex items-center gap-0.5 rounded-full bg-surface p-[3px]">
-            {(['CLIENT', 'STAFF'] as const).map((t) => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => onTabChange(t)}
-                className={
-                  isEditorial
-                    ? // Gold-outline for the active segment, same
-                      // editorial-btn-secondary typography as every other
-                      // secondary control here, laid out as a segmented
-                      // toggle rather than a standalone bordered button.
-                      [
-                        'editorial-btn-secondary rounded-full border px-4 py-1.5 transition',
-                        tab === t ? 'border-accent bg-accent/10 text-accent' : 'border-transparent text-fg-muted hover:border-border-strong',
-                      ].join(' ')
-                    : [
-                        'rounded-full px-4 py-1.5 text-[13.5px] font-semibold transition-colors duration-fast ease-out',
-                        tab === t ? 'bg-surface-raised text-fg' : 'text-fg-muted hover:text-fg',
-                      ].join(' ')
-                }
-              >
-                {t === 'CLIENT' ? 'Clients' : 'Team'}
-              </button>
-            ))}
-          </div>
+        // Same underline-tab treatment as the Inquiries/Projects split on
+        // the Inquiries & Projects page (Inquiries.tsx) -- reused verbatim,
+        // not re-themed, since that pattern already reads correctly under
+        // every preset via plain CSS-variable-driven tokens.
+        <div className="flex gap-1 border-b border-border px-3">
+          {(['CLIENT', 'STAFF'] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => onTabChange(t)}
+              className={[
+                'rounded-t-lg px-4 py-2 text-sm font-medium transition',
+                tab === t ? 'border-b-2 border-accent text-fg' : 'text-fg-muted hover:text-fg',
+              ].join(' ')}
+            >
+              {t === 'CLIENT' ? 'Clients' : 'Team'}
+            </button>
+          ))}
         </div>
       )}
 
@@ -1177,54 +1263,25 @@ function ConversationListView({
       )}
 
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
-        <div className="inline-flex items-center gap-0.5 rounded-full bg-surface p-[3px]">
-          {(
-            [
-              ['all', 'All'],
-              ['unread', 'Unread'],
-              ['needs-action', 'Needs action'],
-            ] as const
-          ).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => setQuickFilter(value)}
-              className={
-                isEditorial
-                  ? [
-                      'editorial-btn-secondary rounded-full border px-3.5 py-1.5 transition',
-                      quickFilter === value
-                        ? 'border-accent bg-accent/10 text-accent'
-                        : 'border-transparent text-fg-muted hover:border-border-strong',
-                    ].join(' ')
-                  : [
-                      'rounded-full px-3.5 py-1.5 text-[12.5px] font-semibold transition-colors duration-fast ease-out',
-                      quickFilter === value ? 'bg-accent text-accent-fg' : 'text-fg-muted hover:text-fg',
-                    ].join(' ')
-              }
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <PillMenu
+          label="Filter"
+          icon={<FilterIcon className="h-3.5 w-3.5" />}
+          value={quickFilter}
+          options={QUICK_FILTER_OPTIONS}
+          onChange={setQuickFilter}
+          isEditorial={isEditorial}
+          active={quickFilter !== 'all'}
+        />
 
         <div className="flex shrink-0 items-center gap-1.5">
-          <select
+          <PillMenu
+            label="Sort"
+            icon={<SortIcon className="h-3.5 w-3.5" />}
             value={sortOption}
-            onChange={(e) => setSortOption(e.target.value as typeof sortOption)}
-            aria-label="Sort conversations"
-            title="Sort conversations"
-            className={
-              isEditorial
-                ? 'editorial-btn-secondary rounded-full border px-2.5 py-1.5 transition focus:border-accent focus:outline-none'
-                : 'rounded-full border border-border bg-surface-inset px-2.5 py-1.5 text-[12.5px] font-medium text-fg-secondary focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
-            }
-          >
-            <option value="recent">Most recent</option>
-            <option value="oldest">Oldest</option>
-            <option value="unread">Unread first</option>
-            <option value="name">Name (A–Z)</option>
-          </select>
+            options={SORT_OPTIONS}
+            onChange={setSortOption}
+            isEditorial={isEditorial}
+          />
 
           {tab === 'CLIENT' && (
             <button

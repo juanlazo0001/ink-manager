@@ -251,6 +251,23 @@ export function MoreIcon({ className }: IconProps) {
   )
 }
 
+export function FilterIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <path d="M3 4.5h14l-5.5 6.2v4.3l-3 1.5v-5.8L3 4.5Z" strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+export function SortIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <path d="M6.5 16V4M6.5 4 3.5 7M6.5 4l3 3" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M13.5 4v12M13.5 16l3-3M13.5 16l-3-3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 export function SparkleIcon({ className }: IconProps) {
   return (
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>

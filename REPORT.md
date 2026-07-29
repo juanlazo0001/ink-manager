@@ -4434,3 +4434,41 @@ Didn't accept that as the full story -- isolated timing from cause with a second
 ## Cleanup
 
 Killed the isolated dev API/web server instances used for this session's own verification (ports 4093/5292). Deleted every ad-hoc verification and perf-debug script and screenshot from the scratch directory afterward.
+
+---
+
+# Conversations panel: revert transparency overreach, consolidate filter/sort, restyle tabs
+
+Direct follow-up on `main` to the immediately prior session's own overreach. Editorial Gold only, `onyx-lime` unaffected.
+
+## 1. Transparency fully reverted, not just reduced
+
+Removed `.conversations-panel-glass` from `index.css` entirely (was `background: var(--color-card-glass); backdrop-filter: blur(var(--blur-card))`, editorial-gold-scoped) and its class from the panel root in `ConversationsPanel.tsx` -- the panel is unconditionally `bg-surface-raised` now, same for every preset, no `isEditorial` branch left on this element at all. Confirmed via computed style: `backgroundColor: rgb(29, 24, 19)` (solid), `backdropFilter: 'none'` under Editorial Gold. Frosted glass stays exactly where it already was appropriate -- `.card-surface` (Dashboard cards, Login) is untouched.
+
+## 2. Filter/Sort consolidated into two dropdown buttons
+
+New `PillMenu` component (`ConversationsPanel.tsx`, above `ConversationListView`) reuses the exact button+popover shape already established by `DateRangePresetFilter.tsx` (Dashboard's own date-range dropdown, the only precedent for this pattern in the app) -- trigger button, click-outside-to-close via the same `useRef`/`mousedown`-listener approach, absolute-positioned panel (`border border-border bg-surface-inset py-1 shadow-lg`) listing options with a `CheckIcon` on the active one. Generalized over label/icon/options since this file needs the same shape twice rather than once; no new dropdown pattern invented.
+
+Replaced the three always-visible "All/Unread/Needs action" pills with one `Filter` button (tints accent-colored when a non-"All" filter is active, reusing the same active-tint convention as the adjacent "More filters" tag button in this same row) and the separate `<select>` sort pill with one `Sort` button. Both scale to any number of future options without adding more pills. Two small icons added to `icons.tsx` (`FilterIcon`, `SortIcon`) matching the existing icon set's own minimal line-icon style -- neither existed before, and the task's own brief asked for "icon + label" triggers.
+
+## 3. Clients/Team toggle restyled to match Inquiries/Projects
+
+Found the source pattern at `Inquiries.tsx`'s tab strip (`Inquiries`/`Projects` split) -- a plain underline-tab treatment (`border-b-2 border-accent text-fg` when active, `text-fg-muted hover:text-fg` otherwise) with no `isEditorial` branch at all, since it already reads correctly under every preset via CSS-variable-driven tokens. Replaced the old segmented-pill toggle (which *did* have a separate editorial-gold gold-outline variant) with this exact classname string, verbatim, dropping the `isEditorial` branch entirely to match the source component's own approach. Labels unchanged -- still "Clients" and "Team".
+
+## Verification
+
+- Fresh hard reload, Editorial Gold: panel screenshot confirms solid background, zero bleed-through; Filter/Sort read as two compact buttons with no overflow; Clients/Team now underline-styled identically to Inquiries/Projects (`rounded-t-lg px-4 py-2 text-sm font-medium transition` + active/inactive classes, confirmed by direct className comparison, not just visually).
+- Filter and Sort dropdowns both open correctly, list their expected options (`All`/`Unread`/`Needs action`; `Most recent`/`Oldest`/`Unread first`/`Name (A-Z)`), and mark the active selection with a checkmark.
+- `onyx-lime` re-confirmed unaffected: panel stays solid (`rgb(30, 30, 34)`, no backdrop-filter -- unchanged from before, since the glass rule was always editorial-gold-scoped), Filter/Sort buttons and tab restyle both render correctly there too (the tab pattern and `PillMenu`'s non-editorial branch are shared code, not editorial-only).
+
+## Typechecks
+
+`npx tsc --noEmit` (api, untouched) and `npm run build` (web) -- both clean.
+
+## Commit
+
+Pending (this entry commits alongside the code changes).
+
+## Cleanup
+
+Killed the isolated dev API/web server instances used for this session's own verification (ports 4093/5292). Deleted every ad-hoc verification script and screenshot from the scratch directory afterward.
