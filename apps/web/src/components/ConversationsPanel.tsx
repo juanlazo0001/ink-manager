@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '../lib/api'
 import StatusPill, { getStatusTone, type Tone } from './StatusPill'
 import InquiryPipeline from './InquiryPipeline'
-import { formatDateTime, formatRelativeTime, formatStatus, formatPriceEstimate } from '../lib/format'
+import { formatDateTime, formatRelativeTime, formatPriceEstimate } from '../lib/format'
 import { uploadImageToCloudinary } from '../lib/cloudinary'
 import { linkifyText } from '../lib/linkify'
 import { useEffectiveUser } from '../context/useEffectiveUser'
@@ -431,21 +431,6 @@ const TONE_RING_COLORS: Record<Tone, string> = {
   highlight: 'var(--color-highlight)',
 }
 
-// Literal, complete class strings per branch (not built from a template) so
-// Tailwind's static scanner can find them -- see ChannelDot above for the
-// same constraint. Dual themes: this used to hardcode raw hex (a lime tint
-// for the non-terminal case) instead of going through --color-accent/
-// --color-danger/--color-neutral like the rest of the app -- meant this
-// one badge silently stayed lime under every OTHER accent preset too
-// (slate-teal, ember-amber, orchid-magenta), not just onyx-lime. Fixed to
-// route through the same tokens StatusPill uses, so it now correctly
-// tracks whichever preset (including the new editorial-gold) is active.
-function badgeClasses(status: string): string {
-  if (status === 'CLOSED_LOST') return 'bg-danger/15 text-danger'
-  if (status === 'COLD_LEAD') return 'bg-neutral/15 text-neutral'
-  return 'bg-accent/15 text-accent-hover'
-}
-
 // Progress-ring avatar for the conversation list (see
 // public/desktop/screenshots/conversation-list-mockup.html): an SVG ring
 // around the initials circle, filling clockwise from 12 o'clock as the
@@ -559,7 +544,11 @@ function ProgressRingAvatar({
     <div className="relative h-[52px] w-[52px] shrink-0">
       {status && (
         <svg className="absolute inset-0 -rotate-90" width={size} height={size} aria-hidden="true">
-          <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="#2a2a30" strokeWidth={3} />
+          {/* Track color -- was a hardcoded #2a2a30 (unaffected by any
+              preset), now the same border token everywhere else in this
+              app uses for an inset/recessed line. SVG presentation
+              attributes accept var() same as any CSS property. */}
+          <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="var(--color-border)" strokeWidth={3} />
           {fraction > 0 && (
             <circle
               cx={size / 2}
@@ -796,7 +785,12 @@ export default function ConversationsPanel() {
         aria-modal="true"
         aria-label="Conversations"
         className={[
-          'fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-border bg-surface-raised shadow-2xl transition-[transform,width] duration-base',
+          'fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-border shadow-2xl transition-[transform,width] duration-base',
+          // conversations-panel-glass (index.css) is inert outside
+          // editorial-gold, same as .card-surface everywhere else -- bg-
+          // surface-raised stays the real background under every other
+          // preset, unaffected.
+          isEditorialFab ? 'conversations-panel-glass bg-surface-raised' : 'bg-surface-raised',
           isOpen ? 'translate-x-0 ease-out' : 'translate-x-full ease-in',
           contextOpen ? 'sm:w-[848px]' : 'sm:w-[560px]',
         ].join(' ')}
@@ -843,6 +837,8 @@ function ConversationListView({
   onSelect: (id: string) => void
   onClose: () => void
 }) {
+  const { shape: listShape } = useThemePreset()
+  const isEditorial = listShape === 'editorial'
   const [entityTypeFilter, setEntityTypeFilter] = useState('')
   const [artistIdFilter, setArtistIdFilter] = useState('')
   const [search, setSearch] = useState('')
@@ -1029,7 +1025,9 @@ function ConversationListView({
           >
             <ArrowLeftIcon className="h-4 w-4" />
           </button>
-          <h2 className="text-sm font-semibold text-fg">Conversations</h2>
+          <h2 className={isEditorial ? 'font-display text-base font-normal tracking-[-0.01em] text-fg' : 'text-sm font-semibold text-fg'}>
+            Conversations
+          </h2>
         </div>
         {/* Backdrop click and Escape (see ConversationsPanel's keydown
             handler) also close the panel, same as the thread view relies
@@ -1050,7 +1048,11 @@ function ConversationListView({
               setNewChatError(null)
             }}
             aria-pressed={showNewChat}
-            className="flex items-center gap-1.5 rounded-full bg-accent px-3 py-1.5 text-sm font-semibold text-bg transition hover:bg-accent-hover"
+            className={
+              isEditorial
+                ? 'editorial-btn-primary flex items-center gap-1.5 rounded-full bg-accent px-3 py-2 text-bg transition hover:bg-accent-hover'
+                : 'flex items-center gap-1.5 rounded-full bg-accent px-3 py-1.5 text-sm font-semibold text-bg transition hover:bg-accent-hover'
+            }
           >
             <PlusIcon className="h-3.5 w-3.5" />
             New Chat
@@ -1139,10 +1141,21 @@ function ConversationListView({
                 key={t}
                 type="button"
                 onClick={() => onTabChange(t)}
-                className={[
-                  'rounded-full px-4 py-1.5 text-[13.5px] font-semibold transition-colors duration-fast ease-out',
-                  tab === t ? 'bg-surface-raised text-fg' : 'text-fg-muted hover:text-fg',
-                ].join(' ')}
+                className={
+                  isEditorial
+                    ? // Gold-outline for the active segment, same
+                      // editorial-btn-secondary typography as every other
+                      // secondary control here, laid out as a segmented
+                      // toggle rather than a standalone bordered button.
+                      [
+                        'editorial-btn-secondary rounded-full border px-4 py-1.5 transition',
+                        tab === t ? 'border-accent bg-accent/10 text-accent' : 'border-transparent text-fg-muted hover:border-border-strong',
+                      ].join(' ')
+                    : [
+                        'rounded-full px-4 py-1.5 text-[13.5px] font-semibold transition-colors duration-fast ease-out',
+                        tab === t ? 'bg-surface-raised text-fg' : 'text-fg-muted hover:text-fg',
+                      ].join(' ')
+                }
               >
                 {t === 'CLIENT' ? 'Clients' : 'Team'}
               </button>
@@ -1176,10 +1189,19 @@ function ConversationListView({
               key={value}
               type="button"
               onClick={() => setQuickFilter(value)}
-              className={[
-                'rounded-full px-3.5 py-1.5 text-[12.5px] font-semibold transition-colors duration-fast ease-out',
-                quickFilter === value ? 'bg-accent text-accent-fg' : 'text-fg-muted hover:text-fg',
-              ].join(' ')}
+              className={
+                isEditorial
+                  ? [
+                      'editorial-btn-secondary rounded-full border px-3.5 py-1.5 transition',
+                      quickFilter === value
+                        ? 'border-accent bg-accent/10 text-accent'
+                        : 'border-transparent text-fg-muted hover:border-border-strong',
+                    ].join(' ')
+                  : [
+                      'rounded-full px-3.5 py-1.5 text-[12.5px] font-semibold transition-colors duration-fast ease-out',
+                      quickFilter === value ? 'bg-accent text-accent-fg' : 'text-fg-muted hover:text-fg',
+                    ].join(' ')
+              }
             >
               {label}
             </button>
@@ -1192,7 +1214,11 @@ function ConversationListView({
             onChange={(e) => setSortOption(e.target.value as typeof sortOption)}
             aria-label="Sort conversations"
             title="Sort conversations"
-            className="rounded-full border border-border bg-surface-inset px-2.5 py-1.5 text-[12.5px] font-medium text-fg-secondary focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+            className={
+              isEditorial
+                ? 'editorial-btn-secondary rounded-full border px-2.5 py-1.5 transition focus:border-accent focus:outline-none'
+                : 'rounded-full border border-border bg-surface-inset px-2.5 py-1.5 text-[12.5px] font-medium text-fg-secondary focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
+            }
           >
             <option value="recent">Most recent</option>
             <option value="oldest">Oldest</option>
@@ -1314,11 +1340,7 @@ function ConversationListView({
                       </p>
                     )}
                     {conversation.primaryInquiry && (
-                      <span
-                        className={`mt-1.5 inline-block rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${badgeClasses(conversation.primaryInquiry.status)}`}
-                      >
-                        {formatStatus(conversation.primaryInquiry.status)}
-                      </span>
+                      <StatusPill status={conversation.primaryInquiry.status} className="mt-1.5 px-2.5 py-0.5 text-[11px]" />
                     )}
                   </div>
                 </button>
@@ -2285,7 +2307,13 @@ function ThreadView({
         )}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <h2 className="truncate text-sm font-semibold text-fg">
+            <h2
+              className={
+                isEditorial
+                  ? 'truncate font-display text-base font-normal tracking-[-0.01em] text-fg'
+                  : 'truncate text-sm font-semibold text-fg'
+              }
+            >
               {isClientThread && data?.conversation.counterpart?.id ? (
                 <Link
                   to={`/clients/${data.conversation.counterpart.id}`}

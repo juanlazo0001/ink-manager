@@ -4391,3 +4391,46 @@ Killed the isolated dev API/web server instances used for this session's own ver
 One-line tuning follow-up on `main`. `[data-theme="editorial-gold"] .bg-bg`'s `color-mix()` percentage raised from 70% to 80% (the page-wrapper shell reads darker, less of the blurred background photo shows through). Verified via computed style (`color(srgb ... / 0.8)`) and a fresh screenshot -- still fully legible, `onyx-lime` re-confirmed unaffected. Both typechecks clean.
 
 Commit: `a4525d7` on `main`.
+
+---
+
+# Editorial Gold: Conversations panel consistency + overlay opacity correction
+
+Propagation session on `main` -- every pattern reused from elsewhere in the app, nothing new designed. Editorial Gold only, `onyx-lime` unaffected.
+
+## 1. `.bg-bg` opacity
+
+Already at 80% from the immediately preceding session's commit (`a4525d7`) -- confirmed via computed style, no further change needed.
+
+## 2. Conversations panel brought in line with the rest of Editorial Gold
+
+- **Typography**: "Conversations" header and the thread-detail counterpart-name header both now use the same `font-display` (Fraunces) treatment as Dashboard's "Welcome" heading, gated on `useThemePreset().shape === 'editorial'`.
+- **Background layer**: new `.conversations-panel-glass` class (`index.css`), reusing `.card-surface`'s exact frosted-glass tokens (`--color-card-glass`, `--color-border-glass`, `--blur-card`) minus its `border-radius` -- the panel is a flush right-docked slide-over, not a free-floating card, so rounding its outer edges would look wrong. Lets TopBar's fixed photo/wash/arc-decor layers show through blurred, same as every other glass surface in the app.
+- **Buttons and pills**: "+ New Chat" now verified using `.editorial-btn-primary` (was already close, confirmed rather than assumed). Clients/Team tab switch, All/Unread/Needs Action filter pills, and the sort `<select>` converted from solid-fill to `.editorial-btn-secondary` gold-outline, matching the task's primary-vs-secondary distinction.
+- **Status pills**: found genuine drift -- thread list rows were using a one-off `badgeClasses()` function instead of the shared `StatusPill` component. Removed `badgeClasses()` entirely; rows now render `<StatusPill status={...} />`, matching the detail header's own (already-correct) usage.
+- **Avatar ring colors**: investigated, not arbitrary -- `ProgressRingAvatar`'s SVG ring color comes from the same `getStatusTone()` mapping `StatusPill` uses (`TONE_RING_COLORS[tone]`), filling clockwise as the linked inquiry progresses through pipeline phases, full ring at terminal status. No ring at all for STAFF threads with no linked inquiry -- intentional, confirmed via screenshots (partial blue ring for NEW/info-tone inquiries, full green ring for SCHEDULING/success-tone, no ring for staff threads). One cosmetic fix: the ring's background track was hardcoded `stroke="#2a2a30"`; changed to `var(--color-border)` so it responds to theme.
+- **Thread list cards**: used judgment per the task's own instruction -- applied glass to the panel as a whole rather than per-row, since a list-dense view with per-row glass would compete with itself; search bar and filter row read as part of the same glass surface as everything else.
+
+## Performance check (self-initiated, not requested)
+
+Verifying the new `backdrop-filter` on a panel this large (up to 848px wide, full viewport height -- much bigger than any existing `.card-surface` instance) against the standard `requestAnimationFrame`-delta methodology first showed a real-looking regression: `avg=19.62ms max=66.70ms longFrames=5/60` at idle, vs. the ~16ms/0-long-frames baseline everywhere else, and disabling `backdrop-filter` outright brought it back to baseline.
+
+Didn't accept that as the full story -- isolated timing from cause with a second test that left `backdrop-filter` on throughout: measuring immediately after the panel's open transition reproduced the jank (`avg=21.31ms`, `8/60` long frames), but measuring the *same still-open panel* again after an extra 2s with nothing forced off returned cleanly to baseline (`avg=16.15ms`, `0/60`). The forced-disable test's "fix" was a false positive -- toggling `backdrop-filter` off triggers its own repaint, which coincidentally let in-flight thread-avatar image decode/the `translate-x` open transition finish before the next measurement. The cost is transient settling right after the panel mounts, not `backdrop-filter`'s steady-state rendering cost. No fix applied -- there was nothing to fix; `blur(var(--blur-card))` at the existing radius performs identically to every other `.card-surface` instance once settled.
+
+## Verification
+
+- Fresh hard reloads, Editorial Gold: panel reads as part of the same app as Dashboard -- serif headings, gold-outline toggles, gold-fill primary action, glass background with photo/arcs visible through it, `StatusPill` rendering correctly on thread rows.
+- `onyx-lime` re-confirmed unaffected: panel background fully opaque, no `backdrop-filter`, header font not Fraunces.
+- `.bg-bg` 80% opacity confirmed via computed style, fresh reload, no devtools overrides.
+
+## Typechecks
+
+`npx tsc --noEmit` (api, untouched) and `npm run build` (web) -- both clean.
+
+## Commit
+
+Pending (this entry commits alongside the code changes).
+
+## Cleanup
+
+Killed the isolated dev API/web server instances used for this session's own verification (ports 4093/5292). Deleted every ad-hoc verification and perf-debug script and screenshot from the scratch directory afterward.
