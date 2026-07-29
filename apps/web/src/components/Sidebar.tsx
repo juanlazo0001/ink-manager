@@ -182,7 +182,11 @@ export default function Sidebar() {
                   <span
                     className={
                       isEditorial
-                        ? 'ml-auto flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-danger-strong px-1.5 text-[11px] font-medium text-white'
+                        ? // Same bg-fg/text-accent-fg pairing as TopBar's
+                          // Tasks badge and the Conversations FAB's own --
+                          // matches the Welcome header's "Welcome," text
+                          // color specifically, not the italic name.
+                          'ml-auto flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-fg px-1.5 text-[11px] font-medium text-accent-fg'
                         : 'ml-auto flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-danger px-1.5 text-[11px] font-semibold text-bg'
                     }
                   >

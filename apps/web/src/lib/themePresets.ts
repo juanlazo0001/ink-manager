@@ -128,6 +128,34 @@ export function getThemePresetInfo(key: string | null | undefined): ThemePresetI
   return THEME_PRESETS.find((preset) => preset.key === key) ?? THEME_PRESETS.find((preset) => preset.key === DEFAULT_THEME_PRESET)!
 }
 
+// Last-applied preset, cached across page loads so a returning user's very
+// FIRST paint already uses their real theme instead of always starting
+// from onyx-lime and visibly swapping once /studio-settings resolves --
+// the flash this was added to fix. Read synchronously at module load
+// (before React even mounts, via main.tsx's own top-level call into this
+// module) and re-written every time applyThemePreset runs, so it tracks
+// whatever the studio's real preset actually is. try/catch guards private
+// browsing / storage-disabled environments, where this is just a no-op --
+// ThemeLoadingOverlay (ThemeApplier.tsx) is the fallback for exactly that
+// case (and any genuine first-ever visit with no cache yet).
+const THEME_CACHE_KEY = 'ink-manager-theme-preset'
+
+export function getCachedThemePresetKey(): string | null {
+  try {
+    return localStorage.getItem(THEME_CACHE_KEY)
+  } catch {
+    return null
+  }
+}
+
+function setCachedThemePresetKey(key: string): void {
+  try {
+    localStorage.setItem(THEME_CACHE_KEY, key)
+  } catch {
+    // Non-critical -- next load just falls back to the loading overlay.
+  }
+}
+
 // Reactive store behind useThemePreset() (lib/useThemePreset.ts). Plain
 // module-level pub-sub, not React context -- applyThemePreset is called
 // from many independent places with no shared React tree connecting them
@@ -137,7 +165,7 @@ export function getThemePresetInfo(key: string | null | undefined): ThemePresetI
 // this safe to read from during render.
 type Listener = () => void
 const listeners = new Set<Listener>()
-let currentPresetKey: string = DEFAULT_THEME_PRESET
+let currentPresetKey: string = getCachedThemePresetKey() || DEFAULT_THEME_PRESET
 
 export function subscribeThemePreset(listener: Listener): () => void {
   listeners.add(listener)
@@ -159,6 +187,7 @@ export function getThemePresetSnapshot(): string {
 export function applyThemePreset(preset: string | null | undefined): void {
   const key = preset || DEFAULT_THEME_PRESET
   document.documentElement.setAttribute('data-theme', key)
+  setCachedThemePresetKey(key)
   if (key !== currentPresetKey) {
     currentPresetKey = key
     listeners.forEach((listener) => listener())

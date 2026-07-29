@@ -144,7 +144,13 @@ export default function TopBar() {
               <span
                 className={
                   isEditorial
-                    ? 'absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-danger-strong px-1 text-[11px] font-medium text-white'
+                    ? // Matches the Welcome header's own "Welcome," text
+                      // color (--color-fg, cream) -- not the italic
+                      // accent-hover name beneath it -- per this session's
+                      // own instruction. Every notification bubble
+                      // (Tasks here, Sidebar, the Conversations FAB) uses
+                      // this same pairing.
+                      'absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-fg px-1 text-[11px] font-medium text-accent-fg'
                     : 'absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-danger px-1 text-[11px] font-semibold text-bg'
                 }
               >

@@ -757,7 +757,16 @@ export default function ConversationsPanel() {
         <MessageIcon className={isEditorialFab ? 'h-5 w-5' : 'h-6 w-6'} />
         {isEditorialFab && <span className="font-jura text-[8px] font-bold tracking-[0.14em] uppercase">Chat</span>}
         {!!badgeCounts?.conversations && badgeCounts.conversations > 0 && (
-          <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-danger px-1 text-[11px] font-semibold text-bg">
+          <span
+            className={
+              isEditorialFab
+                ? // Same bg-fg/text-accent-fg pairing as TopBar's Tasks
+                  // badge and Sidebar's own -- matches the Welcome
+                  // header's "Welcome," text color, not the italic name.
+                  'absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-fg px-1 text-[11px] font-semibold text-accent-fg'
+                : 'absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-danger px-1 text-[11px] font-semibold text-bg'
+            }
+          >
             {badgeCounts.conversations > 99 ? '99+' : badgeCounts.conversations}
           </span>
         )}

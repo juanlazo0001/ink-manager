@@ -11,6 +11,14 @@ import { UserProfileProvider } from './context/UserProfileContext'
 import { ViewAsProvider } from './context/ViewAsContext'
 import { ConversationPanelProvider } from './context/ConversationPanelContext'
 import { queryClient } from './lib/queryClient'
+import { applyThemePreset, getCachedThemePresetKey } from './lib/themePresets'
+
+// Applied to <html> before React even renders -- a returning user's very
+// first paint already uses their real theme instead of onyx-lime, the
+// flash ThemeApplier's own loading overlay covers for everyone else (a
+// genuine first-ever visit, or private browsing where nothing persists).
+const cachedThemePreset = getCachedThemePresetKey()
+if (cachedThemePreset) applyThemePreset(cachedThemePreset)
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
