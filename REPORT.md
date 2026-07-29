@@ -4633,3 +4633,40 @@ Escape didn't close the lightbox on the first pass -- it turned out to also be i
 ## Cleanup
 
 Killed the isolated dev API/web server instances used for this session's own verification (ports 4093/5292). Deleted every ad-hoc verification script, test image, and screenshot from the scratch directory afterward. Left the two test messages sent during verification in the dev database's "Emily Rodriguez" thread -- that thread (and this dev studio generally) is already full of pre-existing seed/test data (SmsKeyword TestClient, XssTest Estimate, etc.), so a couple more test messages blend into existing dev-data hygiene rather than polluting anything real; no delete-message feature exists to clean them up via the UI, and direct DB manipulation wasn't worth the risk for this.
+
+---
+
+# Fixes: ring placement + slower page transition
+
+Small follow-up session on `main`, addressing owner feedback on the two most recent changes.
+
+## 1. Ring moved off the sidebar, onto the main background
+
+The sidebar's own ring decoration (added two sessions ago) was confined to the sidebar's own opaque surface -- correct per its own reasoning at the time, but not what was wanted: it should read as part of the main background, the same way the app's existing centered `.arc-decor` already does everywhere else.
+
+Removed the ring entirely from `Sidebar.tsx`/its own CSS. New `.arc-decor-sidebar-edge` (index.css) mounted in `TopBar.tsx` instead -- same home, same `decorative` gate, same `z-index: 2` as the existing centered `.arc-decor`, not nested inside the sidebar at all. `left: 40px; width: 380px` means the left portion of the circle sits under the sidebar's own opaque `z-index: 50` fill (hidden for free, no clip-path needed) while the right portion bleeds out over the main content -- reads as emerging from behind the sidebar's edge rather than floating independently, and sidesteps the `translate`-creates-a-containing-block problem the old sidebar-nested version ran into entirely, since TopBar's own elements have no transform/translate anywhere in their ancestor chain.
+
+**Two real bugs found via a decisive on/off check (forced bright-red borders, not guessed), not shipped on faith:**
+- The reused `i:nth-child(2)/(3)` inset values (110px/230px) were tuned for the original 1400px `.arc-decor` box. On this smaller 380px box, `inset: 230px` leaves less than 0px of usable diameter -- the third ring was silently collapsing to nothing instead of scaling down. Fixed with proportional insets (40px/80px) for this specific smaller instance.
+- Even with insets fixed, the base `.arc-decor` border opacity (0.1/0.07/0.05) was genuinely invisible at this size and position -- confirmed by comparing a zoomed crop against the same region with borders forced bright red (positioning confirmed correct) versus normal opacity (nothing visible, even zoomed in). The center `.arc-decor` gets away with the same low opacity because its much larger radius crosses a lot of plain background at once, reading as ambient atmosphere; this smaller ring sits over a visibly busier header area (photo grain/gradient plus heading text) where the same faint gold-on-warm-background line has too little contrast to register. Roughly 4-5x the base opacity (0.5/0.4/0.3) was what it actually took to read as a deliberate element without looking garish -- checked via full-page screenshots on Dashboard and Clients, not just the zoomed crop.
+
+## 2. Page transition slowed down
+
+New `pageTransition` (`lib/motion.ts`) -- same spring feel as `uiSpringTransition` (identical `type`/`bounce`) but `visualDuration: 0.5`, roughly double the `0.22` used for everyday chrome. Kept as its own named constant rather than bumping `uiSpringTransition` itself, since that one is shared by dropdowns, list items, and panel open/close, which still need to stay fast -- only the iris route transition (`App.tsx`) switched to the new constant. Verified the actual speed change via direct `clip-path` sampling across real elapsed time, not assumed from the number alone: full growth to ~150% now lands around 413ms (was ~262ms), settling by roughly 800ms with the same restrained spring overshoot (was ~410ms) -- genuinely about 2x slower, matching the `visualDuration` change.
+
+## Verification
+
+- Both fixes confirmed correctly gated off under `onyx-lime` (ring: not mounted at all, DOM-level check, not just visually hidden).
+- Performance re-checked on the now-slower transition specifically, since a longer-duration animation is a reasonable thing to worry about: 16.16ms avg, 0 long frames throughout the transition and after settling -- a longer duration animates the same per-frame cost across more frames, not more expensive frames, so no regression from slowing it down.
+
+## Typechecks
+
+`npx tsc --noEmit` (api, untouched) and `npm run build` + `npx tsc -b` (web) -- clean.
+
+## Commit
+
+Pending (this entry commits alongside the code changes).
+
+## Cleanup
+
+Dev servers killed via PowerShell `Stop-Process` by exact PID this time, not `taskkill //IM node.exe` -- the latter wiped out unrelated `node` processes system-wide earlier this session (including, harmlessly, this same session's own dev servers mid-debugging, requiring a restart) when a test script hung and got force-killed by process name instead of PID. Scratch scripts and screenshots deleted afterward.

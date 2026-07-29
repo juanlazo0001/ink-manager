@@ -110,7 +110,7 @@ export default function Sidebar() {
 
       <aside
         className={[
-          'fixed inset-y-0 left-0 z-50 flex w-[80vw] shrink-0 flex-col overflow-y-auto overflow-x-hidden transition-transform duration-200 ease-in-out',
+          'fixed inset-y-0 left-0 z-50 flex w-[80vw] shrink-0 flex-col overflow-y-auto transition-transform duration-200 ease-in-out',
           // Same background every card/widget box in the app uses, so the
           // sidebar reads as part of the same surface system instead of a
           // separately-toned rail. Under editorial-gold that's the glass
@@ -123,18 +123,6 @@ export default function Sidebar() {
           'md:relative md:w-64 md:translate-x-0',
         ].join(' ')}
       >
-        {/* Fully opaque now (see sidebar-panel-bg above), so it's the one
-            surface in the app shell that shows none of TopBar's own
-            photo/wash/arc-decor rings behind it -- same concentric-ring
-            technique, scoped locally and anchored off the bottom-left
-            corner so it reads as bleeding in from off-canvas. */}
-        {isEditorial && (
-          <span className="panel-ring-decor sidebar-ring-decor" aria-hidden="true">
-            <i />
-            <i />
-            <i />
-          </span>
-        )}
         <div className={isEditorial ? 'flex justify-center px-2' : 'px-2'}>
           {studioLoading ? (
             // Reserve the logo's space with a neutral placeholder rather

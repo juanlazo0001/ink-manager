@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useRef, useState, type ReactNode } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { uiSpringTransition } from './lib/motion'
+import { pageTransition } from './lib/motion'
 import ProtectedRoute from './components/ProtectedRoute'
 import AuthLayout from './components/AuthLayout'
 import ResetPassword from './pages/ResetPassword'
@@ -57,9 +57,10 @@ import ErrorBoundary from './components/ErrorBoundary'
 // non-`none` clip-path -- even one large enough to clip nothing visible --
 // creates a new containing block for every position: fixed descendant on
 // the page, the same category of effect `transform` has. Found this the
-// hard way: it silently broke Sidebar's own fixed-position ring
-// decoration, which started behaving like `position: absolute` against
-// this wrapper instead of the viewport.
+// hard way: it silently broke a fixed-position ring decoration nested in
+// Sidebar's own <aside> (since moved out to TopBar, see
+// .arc-decor-sidebar-edge in index.css), which started behaving like
+// `position: absolute` against this wrapper instead of the viewport.
 //
 // That circle(150%) -> none switch needs its own instant, zero-duration
 // transition, scoped to clipPath specifically (not the whole `transition`
@@ -90,7 +91,7 @@ const IrisReveal = forwardRef<HTMLDivElement, { children: ReactNode; skipAnimati
         initial={{ clipPath: 'circle(0% at 50% 50%)' }}
         animate={{ clipPath: revealed ? 'none' : 'circle(150% at 50% 50%)' }}
         exit={{ opacity: 0 }}
-        transition={{ default: uiSpringTransition, clipPath: revealed ? { duration: 0 } : uiSpringTransition }}
+        transition={{ default: pageTransition, clipPath: revealed ? { duration: 0 } : pageTransition }}
         onAnimationComplete={() => setRevealed(true)}
       >
         {children}
