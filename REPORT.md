@@ -4311,3 +4311,41 @@ Statistically indistinguishable -- both sit at the 60fps frame budget (~16.7ms) 
 ## Cleanup
 
 Killed the isolated dev API/web server instances used for this session's own verification (ports 4097/5296 -- another concurrent session's own dev server on :4000 was left completely untouched). Deleted every ad-hoc `.mjs`/`.mjs`-adjacent script (including the temporary root-level image-processing script, removed immediately after generating the shipped asset), the temporary Playwright install, and every screenshot from the scratch directory afterward.
+
+---
+
+# Background-blur fix: the real bug was `.bg-bg`, not the z-index alone
+
+Small follow-up on `main`, same day. User-reported: two real bugs found through manual testing ("confirmed working" at specific values), not a design change -- fix properly in the source, not as devtools overrides.
+
+## The reported bugs didn't initially make sense together -- investigated rather than pattern-matched
+
+The two reports: (1) "the blurred background image is sitting behind another opaque layer... confirmed working after manually increasing the image's z-index by 1," and (2) "`.bg-bg`'s default opacity is too high, nearly hiding the photo entirely... change the real default to 70%." First instinct was to read "`.bg-bg`" as shorthand for this session's own `.app-bg-wash` element (both are dark background-ish things stacked in the same visual area) -- applied both fixes literally (`app-bg-photo` z-index 0->1, `app-bg-wash` alpha 0.88->0.70), rebuilt, and re-tested with a genuine hard reload.
+
+**That didn't hold up under verification.** A decisive test -- setting `.app-bg-wash` to a solid bright color and screenshotting -- showed zero visible change anywhere on the page. Something else, entirely opaque, was sitting above both elements regardless of their own z-index. Traced it: `.bg-bg` is Tailwind's own generated utility class, literally named `.bg-bg`, and it's applied directly (not through this session's naming) on **every page's own top-level wrapper** -- `Dashboard.tsx` and 27 other files, all `<div className="flex min-h-screen bg-bg text-fg">`. That div paints a fully opaque fill across the entire viewport height in normal document flow, sitting above `.app-bg-photo`/`.app-bg-wash` (z-index 0/1) regardless of anything done to those two elements' own stacking -- because it's the thing they're supposed to render *behind*, not a peer competing with them for a z-index slot. The user meant literally `.bg-bg`, not this session's own class; re-reading their report with that correction, both bugs cohere completely.
+
+## The actual fix
+
+- **The real bug**: `[data-theme="editorial-gold"] .bg-bg { background-color: color-mix(in srgb, var(--color-bg) 70%, transparent); }` -- one scoped rule, higher specificity than Tailwind's plain `.bg-bg`, so it wins under Editorial Gold only. Checked the blast radius first: grepped all 30 `bg-bg` usages in the codebase -- 28 are exactly this `min-h-screen` page-wrapper pattern; the other two (`Sidebar.tsx`'s non-editorial branch, `ViewAsBanner.tsx`'s already-distinct `bg-bg/10` Tailwind opacity-modifier class) are unaffected by a rule targeting the plain `.bg-bg` selector specifically. `color-mix()` over the token itself (not a hardcoded duplicate RGB triplet) matches the exact technique already used elsewhere in this file (`.rbc-calendar .rbc-slot-selection`), so this stays correct if editorial-gold's own `--color-bg` ever changes.
+- **The secondary fix**, once the real blocker was gone: explicit, distinct z-index per decorative layer instead of three siblings all at 0 relying on DOM order -- wash `0`, photo `1` (per the user's own confirmed value), arc-decor `2`.
+- **A regression caught before shipping, not by the user's own report**: bumping only the photo above wash (without also moving arc-decor) would have hidden arc-decor's thin ring borders behind the now-fully-opaque photo. Confirmed this was real via a targeted on/off toggle -- removing `.arc-decor` from the DOM produced a byte-identical screenshot to leaving it in, proving the rings were already invisible at that intermediate state. Bumped arc-decor to z-index `2` to keep it visible above the photo, restoring the original task's own explicit layer order (photo, wash, arc-ornament, content).
+- `.app-bg-wash`'s own alpha reverted back to its original `0.88` -- the 70% figure belongs to `.bg-bg`, not this element. Once the photo (opaque, z-index 1) sits above the wash, the wash's own alpha stops being visually consequential either way; kept in place as the floor color visible for the brief window before the JPEG decodes.
+
+## Verification
+
+- **Decisive on/off tests, not just eyeballing screenshots**: swapped `.app-bg-photo`'s `src` for a solid lime-green data URI post-fix -- the whole page (sidebar, cards, header) rendered visibly lime-tinted through the now-translucent `.bg-bg`, proving the photo genuinely composites through real page content. Boosted `.arc-decor`'s ring borders to a thick lime stroke -- confirmed the rings cross visibly over cards, the sidebar, and the header text, proving they render above content as intended.
+- **True fresh hard reloads throughout** (`page.goto(url, { waitUntil: 'load' })`, never SPA client-side navigation) on Dashboard, Inquiries & Projects, Team, and Settings, under Editorial Gold -- photo and rings both render correctly by default, zero manual/devtools intervention needed, matching the user's own explicit verification requirement.
+- **`onyx-lime` re-confirmed completely unaffected** -- flat black background, `.bg-bg` fully opaque, screenshotted fresh after reverting `dev-studio`'s theme.
+- **Performance re-checked**, since this is now a materially bigger change (every page's own wrapper became translucent, stacked with the already-blurred `.card-surface` frosted-glass cards): scroll-frame timing on Dashboard and the full Inquiries list, `onyx-lime` baseline vs. `editorial-gold` post-fix -- 16.31ms/16.39ms avg vs. 16.13ms/16.59ms avg, zero long frames either way. No regression from the wider `.bg-bg` change.
+
+## Typechecks
+
+`npx tsc --noEmit` (api, untouched) and `npm run build` (web) -- both clean.
+
+## Commit
+
+`fe5aee7` on `main`.
+
+## Cleanup
+
+Killed the isolated dev API/web server instances used for this session's own verification (ports 4096/5295). Deleted every ad-hoc verification script and screenshot from the scratch directory afterward.
