@@ -4349,3 +4349,37 @@ The two reports: (1) "the blurred background image is sitting behind another opa
 ## Cleanup
 
 Killed the isolated dev API/web server instances used for this session's own verification (ports 4096/5295). Deleted every ad-hoc verification script and screenshot from the scratch directory afterward.
+
+---
+
+# Editorial Gold: notification-bubble color match + theme-load flash fix
+
+Small follow-up on `main`, same day. Two independent quick updates.
+
+## 1. Notification bubbles match the Welcome header's text color
+
+Found every "notification bubble" (a count badge, not a status pill or the FAB's own fill): `TopBar.tsx`'s Tasks-icon badge, `Sidebar.tsx`'s nav-item badges, and `ConversationsPanel.tsx`'s Conversations-FAB badge -- three spots, confirmed complete by grepping every `bg-danger-strong`/`bg-danger` usage across the app and excluding the ones that are something else (status pills, pipeline dots, the FAB's own red fill, a thin red rule) rather than a count bubble.
+
+Two of the three were already `isEditorial`-gated (just the wrong color, `bg-danger-strong`); the FAB's own badge wasn't gated at all (`bg-danger` unconditionally, every preset). All three now use `bg-fg`/`text-accent-fg` under Editorial Gold specifically -- the literal color pair the Welcome header's own "Welcome," text uses (`text-fg`), not the italic `text-accent-hover` name beneath it, per the explicit instruction. Verified via computed style, not assumed: `Welcome` h1 color and all three badges' background color are byte-identical (`rgb(242, 236, 224)`), text inside is `rgb(23, 18, 8)` (`--color-accent-fg`) for contrast. `onyx-lime` re-confirmed unaffected -- the FAB badge stayed `rgb(248, 113, 113)` (its original red) there.
+
+## 2. Theme-load flash, fixed at the source rather than papered over
+
+The reported symptom: every page load briefly showed `onyx-lime` before visibly swapping to the studio's real Editorial Gold preset. Root cause: `ThemeApplier.tsx`'s `/studio-settings` fetch is async and only calls `applyThemePreset()` once it resolves -- between mount and then, the app rendered whatever theme happened to already be on `<html>` (index.css's own `onyx-lime` default on a cold load, since nothing sets the attribute before this fetch completes).
+
+Two-part fix:
+- **`lib/themePresets.ts`**: the last-applied preset key now persists to `localStorage`, and `main.tsx` applies it to `<html>` **synchronously, before `createRoot(...).render(...)` even runs** -- a returning user's very first paint already uses their real theme. `currentPresetKey`'s own initial value now also reads from this cache, so `useThemePreset()`'s first React render is correct immediately too, not just the raw CSS attribute.
+- **`ThemeApplier.tsx`**: for the cases the cache can't cover (a genuine first-ever visit, or private browsing where nothing persists) -- renders a small full-screen loading overlay (the Ink Manager wordmark, `animate-pulse`, on a plain near-black background that isn't tied to any specific preset's own token, since which preset is even correct is the unresolved question) until the fetch settles, then reveals the app.
+
+**Verified with actual frame-by-frame sampling, not assumed from the code**: cleared the theme cache and hard-reloaded, sampling `data-theme` + overlay-presence every ~50ms through the load -- confirmed the overlay covers the entire unresolved window (theme `null`, overlay showing) until the fetch lands, at which point `data-theme` becomes `editorial-gold` and the overlay disappears in the same tick; the real content never renders un-themed underneath it. Reloaded again immediately after (cache now warm) -- `overlayPresent` was `false` at every single sample, theme jumped straight to `editorial-gold` with no intermediate flash. Screenshotted the overlay itself under an artificially delayed `/studio-settings` response (2s, via a Playwright route intercept) to confirm it actually renders correctly, not just exists in the DOM -- caught and fixed an early sizing bug this same check surfaced: the wordmark asset (`logo-white-512.png`, despite its name, is a wide 3590x1339 PNG, not square) rendered squished at a forced `h-14 w-14`; fixed to `w-40 h-auto object-contain`, matching how `Sidebar.tsx` already sizes the same asset elsewhere.
+
+## Typechecks
+
+`npx tsc --noEmit` (api, untouched) and `npm run build` (web) -- both clean.
+
+## Commit
+
+`067ff4a` on `main`.
+
+## Cleanup
+
+Killed the isolated dev API/web server instances used for this session's own verification (ports 4095/5294). Deleted every ad-hoc verification script and screenshot from the scratch directory afterward.
