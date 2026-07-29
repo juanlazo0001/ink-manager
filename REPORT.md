@@ -4507,3 +4507,58 @@ Removed the hardcoded `<br />` between "Welcome," and the name in `Dashboard.tsx
 ## Cleanup
 
 Killed the isolated dev API/web server instances used for this session's own verification (ports 4093/5292). Deleted every ad-hoc verification script and screenshot from the scratch directory afterward.
+
+---
+
+# App-wide Motion rollout
+
+Three-part session on `main`, committed and pushed separately per part. Reuses the auth page's existing Framer Motion setup throughout (`lib/motion.ts`, `AnimatePresence mode="popLayout"`, `forwardRef` for custom AnimatePresence children) rather than inventing a competing approach.
+
+One deliberate addition to the shared config: `authSpringTransition` (`visualDuration: 0.76`, itself still mid-tuning toward a slower final value) was built for one dramatic card swap, not everyday chrome that fires on every click. New `uiSpringTransition` -- same `type: 'spring'`/`bounce: 0.25` physics, `visualDuration: 0.22` -- is the actual default used everywhere in this rollout, keeping things in the 150-300ms range the brief asked for. Same spring language app-wide, scaled per context, not a second competing config.
+
+## Part 1 -- page/panel motion (`4922b6a`)
+
+- **Route/section transitions**: `App.tsx` restructured into an `AppRoutes` component so `useLocation()` is available; `<Routes location={location}>` now sits inside `AnimatePresence mode="popLayout"` + a `motion.div` keyed by pathname (brief fade + 8px settle). Scoped to routed content only -- TopBar/ConversationsPanel/ViewAsBanner are persistent chrome outside this tree and never re-animate.
+- **Modal**: converted from a hand-rolled `entered`/`closing` state machine + `setTimeout(onClose, 200)` to Motion's own `initial`/`animate`/`exit` + `onAnimationComplete`. Drag-to-move, focus trap, and scroll lock all preserved untouched; verified drag still works with a real pointer-move sequence (dialog moved from `{496,318}` to `{626,428}` on drag).
+- **Conversations panel**: slide-over transform converted to Motion (`x: '0%' | '100%'`); the `contextOpen` width swap (560px/848px) stays a plain CSS transition since it's a Tailwind breakpoint className change, not a value Motion can interpolate.
+- **No toast system exists** in the app (only a page-local `copyToast` in `ClientDetail.tsx`) -- not building new infrastructure for it, per the task's own "if the app has one" framing.
+
+## Part 2 -- list and control motion (`51c933a`)
+
+- **Dropdowns**: `DateRangePresetFilter`, `MultiSelectFilter`, `ArtistSelect`, and the new Conversations Filter/Sort `PillMenu` all converted to `AnimatePresence` + a shared `dropdownVariants` (scale 0.96→1 + fade), rather than each inventing its own.
+- **List item enter/exit**: Conversations thread list and every list in `Tasks.tsx` (studio queue, my tasks, assigned-by-others, completed, assigned-by-me) get `motion.li` + `layout` inside `AnimatePresence` -- filtering, completing, and deleting now settle instead of popping.
+- **Kanban card drop settle**: `InquiryKanbanCard` restructured with `forwardRef` (matching `AuthCard`'s established pattern) so it can be a direct `AnimatePresence` child; its root `motion.div` owns `layout` + enter/exit, while dnd-kit's own ref stays on an isolated inner `<div>` so Motion's layout transform and dnd-kit's live-drag transform never fight over the same node.
+- **Pipeline stepper**: left as plain CSS (`transition-colors duration-base` added to the existing hard class-swap in `InquiryPipeline.tsx`) rather than a Motion conversion -- it's a color swap on a component with a custom `.hex` clip-path shape across two orientations, not a layout/gesture case Motion is for, and the codebase already has an established CSS-transition precedent for exactly this (the button baseline below).
+
+**Known verification gap, disclosed rather than glossed over**: Kanban drag-and-drop could not be end-to-end verified through Playwright. `@dnd-kit/react`'s `PointerSensor` doesn't respond to Playwright's synthetic mouse events (tried `page.mouse`, then raw CDP `Input.dispatchMouseEvent` -- both produced the same result: a browser text-selection artifact instead of a drag, no floating card, no drop). Confirmed this is a pre-existing tooling limitation, not something this session broke: git-stashed the Kanban changes back to the original code and reproduced the *identical* non-drag behavior on the untouched baseline. Structurally the change is safe -- dnd-kit's ref sits on its own DOM node, isolated from Motion's `layout` prop on the wrapping element -- but the drag gesture itself needs manual/real-browser confirmation, which this report doesn't have.
+
+## Part 3 -- micro-interactions (`0d49e8b`)
+
+- **StatusPill**: `transition-colors duration-base` added to both the editorial and default variants -- a status change now transitions instead of hard-swapping.
+- **Loading fade-in**: Dashboard's skeleton→data swap now uses `AnimatePresence mode="wait"` (it toggles both directions as the date range changes); Tasks' loading→content swap gets a simple one-way mount fade (never reverts once loaded).
+- **Deliberately not added**:
+  - Button/hover press feedback -- `index.css` already has a consistent, global `button:active { scale(0.98) }` + color/background/transform transition baseline covering every button app-wide with zero per-component maintenance. Converting that to per-component Motion `whileTap`/`whileHover` would mean touching every `<button>` in the codebase to replace something that already works consistently, for no visible improvement -- exactly the kind of "would have hurt usability with no upside" case the brief asked to skip and document.
+  - Inquiries' table loading skeleton -- `SkeletonTableRows` returns its own `<tbody>`, and the real data path is a three-way branch across differently-shaped row groups. Wrapping that in Motion risks fragile or invalid nested-`<tbody>` DOM for a minor polish gain; left as the existing instant swap.
+  - Conversations panel's "Loading…" text -- the thread list itself already fades items in individually via Part 2's `AnimatePresence`, which already covers the "content arriving" moment this bullet is about.
+
+## Performance verification
+
+Per-part, on the busiest real pages, using the established `requestAnimationFrame`-delta methodology:
+
+- **Route transitions and panel opens genuinely show elevated frame times *during* the ~220ms transition window** (avg ~30-40ms, several frames over 20ms) when the destination page also has real mount/data-fetch work to do. Isolated cause from symptom before accepting this: measuring the *same still-open* panel/page again 500ms later (animation long finished, nothing forced off) returns cleanly to baseline (~15.7-16ms avg, 0 long frames) every time -- this is transient work overlapping the animation window, not a sustained cost from the animation itself. Confirmed via a real A/B: temporarily git-stashed the Part 1 `App.tsx` change and re-measured the identical mobile route transition -- the baseline *without* any motion wrapper showed the same single-frame spike (483ms vs. 516ms with motion, well within noise), proving the app's own page-mount cost under throttled CPU, not something this rollout introduced.
+- **Final steady-state check**, mobile-emulated (Playwright's Pixel 7 device profile) with CPU throttled 4x, on Dashboard's card grid and the Inquiries list, both idle and scrolling: 16.1-16.5ms avg, 0-1 long frames out of 50-60 sampled, every case. Clean.
+- **Disclosed limitation**: "mobile-emulated + CPU-throttled" is Playwright's device emulation, not a real phone. This session did not have physical hardware to test on; the brief's own "confirm on a real phone" verification step is unmet for that reason, not skipped by choice. Everything reported above is the closest available proxy, run consistently across all three parts.
+
+## Typechecks
+
+`npx tsc --noEmit` (api, untouched) and `npm run build` + `npx tsc -b` (web) -- clean after every part.
+
+## Commits
+
+- Part 1: `4922b6a`
+- Part 2: `51c933a`
+- Part 3: `0d49e8b`
+
+## Cleanup
+
+Killed the isolated dev API/web server instances used for this session's own verification (ports 4093/5292) after each part's checks. Deleted every ad-hoc verification script and screenshot from the scratch directory throughout.
