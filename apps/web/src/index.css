@@ -460,10 +460,10 @@
 }
 
 /* Heavily-blurred photo background layer, TopBar-mounted alongside
-   .arc-decor below (same `decorative` gate, same fixed/viewport-wide/
-   z-index:0 approach) -- one more atmospheric layer behind the app shell
-   under Editorial Gold, matching Login's own photo/hero-shade/rings stack
-   but for the general authenticated app rather than just the auth pages.
+   .arc-decor below (same `decorative` gate, same fixed/viewport-wide
+   approach) -- one more atmospheric layer behind the app shell under
+   Editorial Gold, matching Login's own photo/hero-shade/rings stack but
+   for the general authenticated app rather than just the auth pages.
    app-bg-blurred.jpg is a PRE-blurred static asset (640x360, ~7KB,
    generated once offline via sharp: downscaled from the same source
    Login's own photo uses, then a strong gaussian blur, then re-encoded as
@@ -473,20 +473,26 @@
    this project). Rendering a small pre-blurred JPEG costs the same as any
    other static background image; there is nothing left to compute at
    runtime.
-   Paint order among these z-index:0 siblings follows DOM order (earlier =
-   further back) rather than a negative z-index -- deliberately, since a
-   negative z-index on a `position: fixed` child can end up painting
-   BEHIND <body>'s own background box in some engines (body is a normal
-   in-flow box, not a stacking context, so its background doesn't
-   necessarily count as "this stacking context's own background" for
-   paint-order purposes). Staying at z-index: 0 and controlling order via
-   JSX position (TopBar.tsx: photo, then wash, then arc-decor) sidesteps
-   that entirely, using the exact mechanism .arc-decor below already
-   proves works. */
+   Explicit, distinct z-index per layer (wash 0, photo 1, .arc-decor
+   below 2) rather than all three at 0 relying on DOM order -- an earlier
+   version of this comment theorized DOM order among equal-z-index
+   siblings would be enough, matching how .arc-decor alone had always
+   behaved. Real manual testing found that wasn't the actual blocker: the
+   photo was rendering behind the *real* opaque layer, each page's own
+   top-level wrapper's plain `bg-bg` (Tailwind's fully-opaque utility,
+   `min-h-screen ... bg-bg ...`, sitting in normal document flow above
+   any z-index:0 fixed sibling regardless of DOM order between the two).
+   See `[data-theme="editorial-gold"] .bg-bg` below for that actual fix;
+   the explicit z-index values here are the smaller, secondary fix on top
+   of it (found the same way) so photo/wash/rings still layer correctly
+   relative to EACH OTHER once the real blocker is gone. */
 .app-bg-photo {
   position: fixed;
   inset: 0;
-  z-index: 0;
+  /* z-index: 1, one above .app-bg-wash -- found via real manual testing:
+     at equal z-index: 0 the photo rendered behind .app-bg-wash by DOM
+     order. Confirmed fixed at exactly this value. */
+  z-index: 1;
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -497,13 +503,44 @@
    framing one card; the app shell scrolls and has no single focal point,
    so a uniform wash (same near-black base color Login's own wash uses)
    guarantees legibility at every scroll position regardless of which part
-   of the now-abstract blurred photo happens to sit underneath. */
+   of the now-abstract blurred photo happens to sit underneath. Now sits
+   BEHIND the fully-opaque photo (z-index 1 above), so its own alpha is no
+   longer visually consequential once the photo has decoded -- kept as the
+   floor color for the brief window before that happens (a plain color
+   paints before an <img> decodes; an invisible one would show as a flash
+   of raw --color-bg instead). */
 .app-bg-wash {
   position: fixed;
   inset: 0;
   z-index: 0;
   pointer-events: none;
   background: rgba(12, 10, 8, 0.88);
+}
+/* THE actual bug (found via real manual testing, not theorized): every
+   page's own top-level wrapper (Dashboard.tsx and 27 others, all
+   `min-h-screen ... bg-bg ...`) paints Tailwind's plain, fully OPAQUE
+   `.bg-bg` utility -- a solid fill covering the entire viewport height,
+   sitting in normal document flow ABOVE .app-bg-photo/.app-bg-wash
+   (z-index 0/1) regardless of anything done to those two elements' own
+   stacking, since it's the thing those two are supposed to sit BEHIND in
+   the first place. This is what "the image is behind another opaque
+   layer" actually meant -- confirmed by setting .app-bg-wash to a bright
+   solid color and finding zero pixel difference anywhere on screen,
+   proving it wasn't rendering at all.
+   Scoped to editorial-gold only, and to the exact `.bg-bg` utility class
+   (not `.bg-bg/NN` opacity-modifier variants like ViewAsBanner's own
+   `bg-bg/10`, a separate generated class Tailwind's slash-opacity syntax
+   produces, unaffected by this rule) -- every other preset's page
+   wrappers stay fully opaque, exactly as before. color-mix over
+   `--color-bg` itself (not a hardcoded duplicate rgba triplet), same
+   technique already used for .rbc-calendar's slot-selection tint above,
+   so this stays correct if editorial-gold's own --color-bg ever changes.
+   70%, not the wash's own value -- found and confirmed via real manual
+   testing to be the value that lets the photo read through the page
+   shell without the shell itself losing its own legibility-guaranteeing
+   darkness. */
+[data-theme="editorial-gold"] .bg-bg {
+  background-color: color-mix(in srgb, var(--color-bg) 70%, transparent);
 }
 
 /* Recentered on the viewport (was top: -560px, anchored almost entirely
@@ -526,7 +563,13 @@
   width: 1400px;
   height: 1400px;
   pointer-events: none;
-  z-index: 0;
+  /* z-index 2, above .app-bg-photo (1) -- otherwise the now-opaque photo
+     (see its own comment on why it needed to move to z-index 1) would sit
+     in front of these rings and hide them entirely. Confirmed via a
+     targeted on/off toggle: at the old z-index: 0, removing this element
+     produced an IDENTICAL screenshot to leaving it in, proving it was
+     already invisible, hidden behind the photo -- not a hypothetical. */
+  z-index: 2;
 }
 .arc-decor i {
   position: absolute;
