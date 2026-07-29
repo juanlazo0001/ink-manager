@@ -617,6 +617,90 @@
   }
 }
 
+/* Sidebar and the Conversations panel are both fully opaque (see their
+   own comments -- legibility over atmosphere for a dense nav rail / list
+   panel), so neither shows .arc-decor or the photo/wash behind them at
+   all -- under Editorial Gold they'd otherwise be the only flat,
+   undecorated boxes in the app shell. Same concentric-ring technique as
+   .arc-decor (identical border treatment), just scoped locally and
+   anchored off one corner so the ring reads as bleeding in from
+   off-canvas instead of centered, which doesn't work in a narrow rail
+   the way it does in a full viewport.
+
+   position: absolute, against the panel itself -- position: fixed looked
+   like the obvious choice (matches .arc-decor's own approach, and would
+   have sidestepped depending on either panel's own box entirely) but
+   doesn't actually work here: Sidebar's own <aside> carries Tailwind's
+   translate-x-full/translate-x-0 utilities for its mobile slide-in/out
+   drawer, and those compile to the standalone CSS `translate` property
+   (Tailwind v4), not the `transform` shorthand -- easy to miss checking
+   for, since `getComputedStyle(aside).transform` still reads `none`.
+   `translate` set to ANY value other than the keyword `none` (even an
+   identity `0px`) creates a new containing block for position: fixed
+   descendants, exactly like `transform` does -- so a `position: fixed`
+   ring nested inside <aside> was silently behaving like `position:
+   absolute` against it anyway, just without the intent behind that
+   choice: anchored off the aside's BOTTOM edge, whose own content height
+   (1277px, content-driven at the md breakpoint's `position: relative`
+   desktop layout) comfortably exceeds a typical viewport, landing the
+   ring below the fold and inflating the aside's own scrollable content
+   height by its own footprint in the process (confirmed via
+   getBoundingClientRect). Anchored off the TOP instead (see
+   .sidebar-ring-decor below) sidesteps this entirely -- guaranteed
+   visible without depending on the aside's total height or scroll
+   position at all, at the cost of overlapping the logo area slightly
+   (harmless: z-index -1, very low opacity, reads as background texture
+   the same way it does everywhere else). Panels themselves need
+   overflow-hidden (added at each call site) so the part of the ring
+   extending past the edge is actually clipped, not just
+   invisible-but-still-occupying-layout.
+
+   z-index: -1, not 0 -- same category of bug as the app-shell's own
+   .relative.z-10 fix (App.tsx): within a stacking context, POSITIONED
+   descendants (even z-index: 0/auto) paint after -- on top of -- plain
+   non-positioned block children regardless of DOM order, so at z-index 0
+   this would sit in front of the sidebar's logo/nav (neither of which is
+   itself positioned). Negative z-index puts it in the one paint category
+   that comes before non-positioned content, while still painting above
+   the parent panel's own background (that always paints first,
+   regardless of any descendant's z-index) -- safe here specifically
+   because the parent (aside / the panel's own fixed div) is itself
+   positioned and establishes its own stacking context, unlike a
+   negative-z-index element at the page root, which can escape behind
+   body's own background in some browsers. */
+.panel-ring-decor {
+  position: absolute;
+  pointer-events: none;
+  z-index: -1;
+}
+.panel-ring-decor i {
+  position: absolute;
+  inset: 0;
+  border: 1px solid rgba(201, 154, 91, 0.1);
+  border-radius: 50%;
+  display: block;
+}
+.panel-ring-decor i:nth-child(2) {
+  inset: 60px;
+  border-color: rgba(201, 154, 91, 0.07);
+}
+.panel-ring-decor i:nth-child(3) {
+  inset: 120px;
+  border-color: rgba(201, 154, 91, 0.05);
+}
+.sidebar-ring-decor {
+  left: -180px;
+  top: -60px;
+  width: 420px;
+  height: 420px;
+}
+.conversations-ring-decor {
+  right: -160px;
+  bottom: -160px;
+  width: 460px;
+  height: 460px;
+}
+
 .side-nav-link {
   position: relative;
   border: 1px solid transparent;

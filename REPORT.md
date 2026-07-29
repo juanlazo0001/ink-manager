@@ -4562,3 +4562,46 @@ Per-part, on the busiest real pages, using the established `requestAnimationFram
 ## Cleanup
 
 Killed the isolated dev API/web server instances used for this session's own verification (ports 4093/5292) after each part's checks. Deleted every ad-hoc verification script and screenshot from the scratch directory throughout.
+
+---
+
+# Sidebar/Conversations panel rings + Iris route transition
+
+Small follow-up on `main`, same day. Two independent additions.
+
+## 1. Ring ornaments on the Sidebar and Conversations panel
+
+Both are fully opaque (per the two most recent "revert transparency"/"quick fixes" sessions), so under Editorial Gold they were the only flat, undecorated surfaces in the app shell -- everywhere else shows `.arc-decor`'s concentric rings through a translucent page wrapper. New `.panel-ring-decor` (index.css) reuses the exact same ring markup/border treatment, scoped locally to each panel and anchored off one corner (top-left for Sidebar, bottom-right for the Conversations panel) rather than centered, gated the same way as `.arc-decor` itself (`isEditorial`/`isEditorialFab`, DOM-level, not just CSS-hidden under other presets).
+
+**Real bug found and fixed along the way, not just theorized**: a `position: fixed` ring nested inside Sidebar's `<aside>` was silently behaving like `position: absolute` against it instead of the viewport. Root cause: Tailwind's `translate-x-full`/`translate-x-0` utilities (needed for the sidebar's own mobile slide-in/out drawer) compile to the standalone CSS `translate` property in Tailwind v4, not the `transform` shorthand -- and `translate` set to anything other than the keyword `none` (even an identity `0px`) creates a new containing block for `position: fixed` descendants, same as `transform` does. Easy to miss: `getComputedStyle(aside).transform` still read `none`. Confirmed via a full ancestor-chain walk checking `transform`/`filter`/`perspective`/`contain`/`will-change`/`translate`/`scale`/`rotate` at every level -- `translate: 0px` on the aside was the only hit. Fixed by keeping the ring `position: absolute` (its real, unavoidable behavior) and anchoring off the TOP of the aside's content instead of the bottom -- the aside's own content height (1277px at this viewport) exceeds most screens, so a bottom-anchored ring landed off-screen below the fold and, since a scrollable ancestor's scrollable area includes its own out-of-flow descendants, silently inflated the sidebar's own scrollable height by the ring's footprint (confirmed via `scrollHeight`: 1457 with the ring, 1277 without -- fixed to 1277 either way after the anchor change).
+
+## 2. Iris route transition
+
+Replaced Part 1's fade+8px-settle route transition with a circular reveal: the incoming page's own `clip-path` grows from `circle(0% at 50% 50%)` to `circle(150% at 50% 50%)` (150% comfortably exceeds a centered circle's required radius at any realistic aspect ratio, per the CSS spec's percentage-resolves-against-diagonal/√2 formula), progressively covering the outgoing page rather than the two crossfading. Verified the actual curved boundary is visible mid-transition (not just trusting the clip-path values) by polling `getComputedStyle` via `requestAnimationFrame` until the radius crossed a known threshold, then screenshotting at that exact instant -- confirms a real arc, not a uniform fade.
+
+**Two more real bugs found while building this, not assumed away**:
+- Motion leaves the final `animate` value as a permanent inline style once a transition settles. A lingering non-`none` `clip-path` -- even one large enough to clip nothing visible -- creates a new containing block for every `position: fixed` descendant on the page, the exact same category of bug as the Sidebar ring issue above, except app-wide instead of one component. First fix attempt (clearing the inline style directly via a ref in `onAnimationComplete`) didn't stick -- Motion re-asserts its own `animate` target on every render, so a manual DOM mutation just gets overwritten on the next one. Real fix: a new `IrisReveal` component (`forwardRef`, matching `AuthCard`'s established pattern for custom `AnimatePresence` children) owns a `revealed` boolean in state; once true, the `animate` target itself switches to `clipPath: 'none'` -- changing the value through Motion's own reactive model, not fighting it externally.
+- `circle(150% at 50% 50%)` and the keyword `none` aren't a valid interpolation pair -- letting Motion spring-animate between them produced real, verified visual garbage (`getComputedStyle` briefly showed nonsense values like `circle(3.13% at 1.04% 1.04%)` mid-"transition"). Fixed by giving that specific switch its own instant, zero-duration transition, scoped to the `clipPath` property only (`transition={{ default: uiSpringTransition, clipPath: revealed ? { duration: 0 } : uiSpringTransition }}`) -- scoping it to just that property, not the whole `transition` prop, matters because the same prop also governs the exit fade's opacity, which needs to stay a real animation.
+- `skipAnimation`, passed down from a `useRef`-tracked "is this AppRoutes' very first render" flag, handles the one case `onAnimationComplete` can't reach at all: `AnimatePresence`'s own `initial={false}` skips the enter transition entirely on a fresh page load (as opposed to an in-app navigation), so nothing ever completes to trigger the reveal -- that one instance now starts already revealed instead of leaving a permanent clip-path behind.
+
+## Performance
+
+Same `requestAnimationFrame`-delta methodology as every other check this session. Desktop, warm cache: 15.81ms avg, 0 long frames during the transition itself (an earlier measurement, taken before the circle-to-none interpolation bug above was fixed, showed real elevated jank -- 31ms avg, 8 long frames -- which the fix resolved, not just moved elsewhere). Mobile-emulated (Pixel 7 profile) with 4x CPU throttle: 18.30ms avg, 2 long frames out of 39, max 66.7ms -- consistent with the same transient-during-transition/clean-after pattern established throughout the Motion rollout, not a new regression.
+
+## Verification
+
+- Fresh reloads and in-app navigation both confirmed clean: `clip-path` settles to `none` in both the first-mount (`skipAnimation`) and post-navigation (`onAnimationComplete`) cases.
+- Sidebar ring visible top-left (screenshotted), Conversations panel ring visible bottom-right (screenshotted), both correctly gated off under `onyx-lime` (DOM-level check: ring element not mounted at all, not just hidden).
+- No console/page errors across the full verification pass.
+
+## Typechecks
+
+`npx tsc --noEmit` (api, untouched) and `npm run build` + `npx tsc -b` (web) -- clean.
+
+## Commit
+
+Pending (this entry commits alongside the code changes).
+
+## Cleanup
+
+Killed the isolated dev API/web server instances used for this session's own verification (ports 4093/5292). Deleted every ad-hoc verification script and screenshot from the scratch directory afterward.

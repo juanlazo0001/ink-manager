@@ -803,7 +803,7 @@ export default function ConversationsPanel() {
           // editorial-gold, same as .card-surface elsewhere -- bg-
           // surface-raised stays the real background under every other
           // preset, unaffected.
-          'fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-border bg-surface-raised shadow-2xl transition-[width] duration-base',
+          'fixed inset-y-0 right-0 z-50 flex w-full flex-col overflow-hidden border-l border-border bg-surface-raised shadow-2xl transition-[width] duration-base',
           isEditorialFab ? 'conversations-panel-bg' : '',
           contextOpen ? 'sm:w-[848px]' : 'sm:w-[560px]',
         ].join(' ')}
@@ -812,6 +812,18 @@ export default function ConversationsPanel() {
         transition={uiSpringTransition}
         aria-hidden={!isOpen}
       >
+        {/* Fully opaque (see the comment above), so it shows none of
+            TopBar's own photo/wash/arc-decor rings behind it -- same
+            concentric-ring technique as the sidebar's own, anchored off
+            the bottom-right corner instead (this panel docks to the
+            right edge). */}
+        {isEditorialFab && (
+          <span className="panel-ring-decor conversations-ring-decor" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+          </span>
+        )}
         {hasOpenedOnce &&
           (selectedId ? (
             <ThreadView
