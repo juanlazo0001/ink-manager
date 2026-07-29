@@ -141,9 +141,9 @@ export default function StatusPill({ status, label, className = '' }: StatusPill
   if (shape === 'editorial') {
     return (
       <span
-        className={`inline-flex items-center gap-2 whitespace-nowrap rounded-full border px-3 py-1.5 font-jura text-[10px] font-bold tracking-[0.16em] uppercase ${TONE_CLASSES_EDITORIAL[tone]} ${className}`}
+        className={`inline-flex items-center gap-2 whitespace-nowrap rounded-full border px-3 py-1.5 font-jura text-[10px] font-bold tracking-[0.16em] uppercase transition-colors duration-base ${TONE_CLASSES_EDITORIAL[tone]} ${className}`}
       >
-        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${TONE_DOT_CLASSES[tone]}`} aria-hidden="true" />
+        <span className={`h-1.5 w-1.5 shrink-0 rounded-full transition-colors duration-base ${TONE_DOT_CLASSES[tone]}`} aria-hidden="true" />
         {label ?? formatStatus(status)}
       </span>
     )
@@ -151,7 +151,7 @@ export default function StatusPill({ status, label, className = '' }: StatusPill
 
   return (
     <span
-      className={`inline-flex items-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium ${TONE_CLASSES_DEFAULT[tone]} ${className}`}
+      className={`inline-flex items-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium transition-colors duration-base ${TONE_CLASSES_DEFAULT[tone]} ${className}`}
     >
       {label ?? formatStatus(status)}
     </span>

@@ -280,7 +280,7 @@ export default function Tasks() {
           {error && <p className="mt-6 text-sm text-danger">{error instanceof Error ? error.message : 'Failed to load tasks'}</p>}
 
           {data && (
-            <>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={uiSpringTransition}>
               {user?.role !== 'ARTIST' && (
               <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
                 <h2 className="text-base font-semibold text-fg">Studio Queue</h2>
@@ -555,7 +555,7 @@ export default function Tasks() {
                   )}
                 </div>
               )}
-            </>
+            </motion.div>
           )}
         </div>
       </div>

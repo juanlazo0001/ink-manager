@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useUserProfile } from '../context/useUserProfile'
@@ -8,6 +9,7 @@ import Eyebrow from '../components/Eyebrow'
 import HorizontalBarList from '../components/HorizontalBarList'
 import { SkeletonCards } from '../components/Skeleton'
 import { apiFetch } from '../lib/api'
+import { uiSpringTransition } from '../lib/motion'
 import { reportsDashboardQueryKey } from '../lib/queryKeys'
 import { formatCents } from '../lib/money'
 import { formatStatus } from '../lib/format'
@@ -154,12 +156,27 @@ export default function Dashboard() {
             </p>
           )}
 
+          <AnimatePresence mode="wait" initial={false}>
           {isLoading && !data ? (
-            <div className="mt-6">
+            <motion.div
+              key="skeleton"
+              className="mt-6"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={uiSpringTransition}
+            >
               <SkeletonCards count={6} />
-            </div>
+            </motion.div>
           ) : data ? (
-            <div className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <motion.div
+              key="data"
+              className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-2"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={uiSpringTransition}
+            >
               <CardShell title="Inquiry Funnel" caption={`${range.start} – ${range.end}`}>
                 <div className="mb-3 flex items-center gap-2 text-xs text-fg-muted">
                   <DocumentIcon className="h-3.5 w-3.5" />
@@ -283,8 +300,9 @@ export default function Dashboard() {
                   </p>
                 </CardShell>
               )}
-            </div>
+            </motion.div>
           ) : null}
+          </AnimatePresence>
         </div>
       </div>
     </div>
