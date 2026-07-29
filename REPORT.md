@@ -4193,3 +4193,66 @@ No valid Bird SMS sender is confirmed for this workspace. `sendPlatformSms()` wi
 ## Cleanup
 
 Killed the isolated dev API/web server instances used for this session's own verification (ports 4099/5299 -- left the other session's own dev server on :4000 completely untouched throughout). Deleted every ad-hoc `.mjs` verification script, the temporary `@messagebird/sdk` install used purely to read its type docs, and screenshots from the scratch directory afterward.
+
+---
+
+# Editorial Gold refinement — closing the gap with the marketing site
+
+Single session on `main`. No schema changes. Extends the existing Editorial Gold token system (Login/glass-card unification, Dual Themes) rather than building a parallel one -- every color/font token used below already existed before this session.
+
+## Investigated before building, per the task's own instruction
+
+- **The red accent token already existed.** `--color-danger-strong: #c2402f` (`index.css`) already carried the comment `/* reference --red -- backgrounds/borders/icons only, never text */` from an earlier session -- confirmed against `marketing/index.html`'s own `--red:#C2402F` (`/* trad flash spot red -- micro-accents only */`), same exact hex. Reused directly everywhere red shows up below; no new red token was added.
+- **The arc-ornament component already ran globally, not header-only.** `.arc-decor` (`index.css`) is `position: fixed`, viewport-centered, `pointer-events: none`, mounted once by `TopBar.tsx` on every authenticated page -- a prior session ("Login becomes the canonical editorial-gold token source") had already recentered and globalized it. Verified this is still true by screenshot (visible behind Dashboard/Inquiries/Team cards) rather than trusting the old `REPORT.md` claim at face value. **No changes were needed here** -- item 3 of the brief was already satisfied by existing work; this session just confirmed and documented it instead of rebuilding something that already existed.
+- **No existing shared `Button` component** (`apps/web/src/components/` has none) -- every button in the app is a raw `<button>` with inline Tailwind, styled per call site, several with zero `isEditorial` branching at all (`DateRangePresetFilter.tsx`, Inquiries'/Team's action buttons). "Reusing whatever button component/classes already exist" therefore meant the *token system* (`.login-button`'s precedent of a typography-only editorial button class), not a nonexistent component -- built two small CSS classes rather than a heavier React component, consistent with the codebase's existing `.sc`/`.hex`/`.ornament` pattern of shared editorial-only class *definitions* that are inert everywhere else.
+
+## What's new vs. reused
+
+**Reused, zero new tokens:** `--color-danger-strong` (red punctuation everywhere), `--color-fg`/`--color-accent-fg` (cream chip bg/text -- literally the same pair the rest of the app already uses for text-on-light-accent), `--color-accent`/`--color-accent-hover` (gold, untouched, still does buttons/bars/links), `--font-jura`/`--font-display`, `.arc-decor`, `useThemePreset()`. Deliberately did **not** extend `--color-accent-button`/`--radius-btn` (Login's own square-corner, warmer-gold tokens) to in-app buttons -- those were scoped to Login's "fixed platform identity" on purpose per their own original comment ("nothing else references this token yet"); in-app editorial buttons keep the ordinary pill-shaped `--color-accent` convention every other preset also uses, just with new typography on top.
+
+**New:**
+- `components/Eyebrow.tsx` -- the reusable eyebrow-label component (item 2). Renders the marketing site's `.kicker` pattern (letterspaced uppercase, red "+" flanks, optional `meta` slot for contextual metadata like a date range) under Editorial Gold; a plain caption under every other preset. **Where it now lives, for future pages to pick up**: imported by `Dashboard.tsx` (`CardShell`'s caption, the welcome header), `Inquiries.tsx`, and `Team.tsx` (both page headers) -- any future Editorial Gold page imports the same component rather than re-implementing the pattern.
+- `.editorial-btn-primary` / `.editorial-btn-secondary` (`index.css`, item 5) -- typography-only classes (Jura, 700/600 weight, 0.14em tracking, uppercase, 11.5px), layered onto each call site's own existing color/shape Tailwind classes rather than replacing them. Applied to: `DateRangePresetFilter.tsx`'s trigger button (secondary), `Inquiries.tsx`'s "New Appointment"/"New Inquiry" (primary), `Team.tsx`'s "Invite team member" (primary) and "Add directly" (secondary).
+- Conversations FAB restyle (`ConversationsPanel.tsx`, item 1) -- red (`bg-danger-strong`), icon + tiny uppercase "CHAT" label stacked (not icon-only), a hairline halo ring (a plain absolutely-positioned sibling span, `border-danger-strong/25`, no new CSS). The button was already `rounded-full` in code (the brief's "current rounded-square treatment" didn't match what's actually in the DOM -- checked before assuming, flagging the discrepancy rather than silently "fixing" a shape that wasn't broken); this session's actual changes were color, label, and halo only.
+- Cream highlight chip -- inlined at its one call site (Dashboard's Lost/Cold Rate stat) rather than a separate component, since the brief explicitly wants this rare/one-off, not a general card style; a reusable component would invite exactly the overuse the brief warns against.
+- Designed empty state for Lost/Cold Rate with no data (item 6): red dash + italic serif "No outcomes yet in this range.", replacing the bare `formatPct` "—" fallback under Editorial Gold only.
+- Dashboard welcome header (item 6): eyebrow above, serif "Welcome," with the first name in italic serif (`text-accent-hover`) beneath, mirroring `marketing/index.html`'s hero `.kicker` + `h2 em` pattern.
+
+## Verification
+
+- **Propagation, not just Dashboard**: screenshotted Dashboard, Inquiries & Projects, and Team all under Editorial Gold (switched `dev-studio` via the real Settings UI, not a DB write) -- Eyebrow labels and both button treatments render correctly on all three, confirming they're genuine shared patterns.
+- **`onyx-lime` completely unaffected**: screenshotted Dashboard under `onyx-lime` both before touching anything and again after switching back at the end -- plain "Welcome, Dev" heading, no eyebrows, no cream chip (plain "50%" text), FAB back to its original lime icon-only circle, no arc rings. Reverted `dev-studio`'s `themePreset` back to `onyx-lime` afterward (its state before this session), confirmed via a direct API check, not just the UI.
+- **Cream chip rarity**: exactly one use on the one page it was added to (Dashboard's Lost/Cold Rate) -- confirmed by grep, not just intent.
+- **Empty state**: forced a real zero-data date range (Jan 2027) through the actual UI and screenshotted the result -- red dash + italic serif message renders correctly, not just written and assumed.
+- **Mobile**: 390px viewport, Editorial Gold -- `document.documentElement.scrollWidth === clientWidth` (no horizontal overflow), eyebrow labels wrap cleanly, FAB stays correctly pinned at every scroll position (a `fullPage` screenshot's apparent FAB/chip overlap was traced to Playwright's own fixed-position stitching artifact in full-page capture, not a real layout bug -- confirmed by a second, viewport-only screenshot at the same scroll position).
+- **No console/page errors** in any of the above (one unrelated `ERR_NAME_NOT_RESOLVED` for a resource load, present regardless of this session's changes).
+
+## Contrast, checked not assumed
+
+Computed WCAG relative-luminance contrast for every new color pairing this session introduced:
+
+| Pairing | Ratio | Floor | Result |
+|---|---|---|---|
+| FAB icon/label vs. red bg (cream, as first tried) | 4.39:1 | 4.5:1 (small text) | **Failed** -- caught before shipping |
+| FAB icon/label vs. red bg (white, shipped) | 5.16:1 | 4.5:1 (small text) | Pass |
+| Cream chip text vs. chip bg | 15.85:1 | 4.5:1 | Pass |
+| `.editorial-btn-secondary` text vs. page bg | 10.62:1 | 4.5:1 | Pass |
+| `.editorial-btn-primary` text vs. gold bg | 7.72:1 | 4.5:1 | Pass |
+| Eyebrow "+" glyph vs. page bg (decorative, `aria-hidden`) | 3.80:1 | 3:1 (non-text) | Pass |
+| Eyebrow label text vs. page bg | 6.37:1 | 4.5:1 | Pass |
+| FAB red bg vs. page bg (non-text UI floor) | 3.80:1 | 3:1 | Pass |
+| Welcome name (italic, `accent-hover`) vs. page bg | 11.22:1 | 4.5:1 | Pass |
+
+The FAB's label color was the one real near-miss: cream (`--color-fg`, the same color the marketing site's own `.go` button uses) measured 4.39:1 against the red background -- just under the 4.5:1 AA floor small text needs. Switched to plain white (5.16:1) rather than shipping the marketing site's own value uncritically. Confirmed live via `getComputedStyle` on the actual rendered button (`rgb(255, 255, 255)` on `rgb(194, 64, 47)`), not just the source class name.
+
+## Typechecks
+
+`npx tsc --noEmit` (api, untouched -- no API files touched) and `npm run build` (web) -- both clean.
+
+## Commit
+
+`a17d516` on `main`.
+
+## Cleanup
+
+Killed the isolated dev API/web server instances used for this session's own verification (ports 4098/5297 -- another concurrent session's own dev server on :4000 was left completely untouched). Deleted every ad-hoc `.mjs` verification script, the temporary Playwright install, and every screenshot from the scratch directory afterward. `dev-studio`'s `themePreset` confirmed back to `onyx-lime` via a direct API check as the final step.
