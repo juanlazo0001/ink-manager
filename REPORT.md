@@ -4628,7 +4628,7 @@ Escape didn't close the lightbox on the first pass -- it turned out to also be i
 
 ## Commit
 
-Pending (this entry commits alongside the code changes).
+`4d2be0b` on `main`.
 
 ## Cleanup
 
