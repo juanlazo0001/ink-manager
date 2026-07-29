@@ -1,4 +1,6 @@
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { AnimatePresence, motion } from 'framer-motion'
+import { uiSpringTransition } from './lib/motion'
 import ProtectedRoute from './components/ProtectedRoute'
 import AuthLayout from './components/AuthLayout'
 import ResetPassword from './pages/ResetPassword'
@@ -38,27 +40,44 @@ import TopBar from './components/TopBar'
 import ViewAsBanner from './components/ViewAsBanner'
 import ErrorBoundary from './components/ErrorBoundary'
 
-function App() {
+// Brief, subtle fade+settle between routes -- reuses the exact spring
+// physics uiSpringTransition already carries app-wide, not a one-off
+// value for this spot. mode="popLayout" + a location-keyed <Routes>
+// (rather than keying individual page elements) is the standard React
+// Router + Framer Motion recipe: <Routes> itself becomes the thing that
+// exits/enters as a whole on every pathname change, so no per-page file
+// needs to know about this at all. Scoped to just the routed content --
+// TopBar/ConversationsPanel/ViewAsBanner are persistent chrome mounted
+// outside this tree and never re-animate on navigation.
+function AppRoutes() {
+  const location = useLocation()
   return (
-    <BrowserRouter>
-      <ErrorBoundary label="App">
-      {/* position: relative + a real z-index -- without this, every routed
-          page's own top-level wrapper is a plain, non-positioned block, so
-          under CSS's stacking-paint-order rules it paints BEHIND any
-          positioned sibling with z-index 0/auto, including TopBar's own
-          fixed decorative layers (app-bg-photo/app-bg-wash/arc-decor),
-          which mount AFTER this tree in the DOM. Harmless for Login/public
-          routes -- TopBar returns null with no logged-in user, so those
-          layers never mount there regardless; this only matters once an
-          authenticated page and TopBar's background layers are both on
-          screen at once. Discovered for real (not theorized) when
-          app-bg-wash's own near-opaque fill visibly blotted out Dashboard's
-          entire card grid in a screenshot -- .arc-decor's own rings never
-          exposed this same latent issue only because they have no opaque
-          fill to reveal it. */}
-      <div className="relative z-10">
-      <Routes>
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+    <AnimatePresence mode="popLayout" initial={false}>
+      {/* relative z-10 lives on this element now (was a separate wrapper
+          div) -- without it, every routed page's own top-level wrapper is
+          a plain, non-positioned block, so under CSS's stacking-paint-
+          order rules it paints BEHIND any positioned sibling with z-index
+          0/auto, including TopBar's own fixed decorative layers (app-bg-
+          photo/app-bg-wash/arc-decor), which mount AFTER this tree in the
+          DOM. Harmless for Login/public routes -- TopBar returns null
+          with no logged-in user, so those layers never mount there
+          regardless; this only matters once an authenticated page and
+          TopBar's background layers are both on screen at once.
+          Discovered for real (not theorized) when app-bg-wash's own
+          near-opaque fill visibly blotted out Dashboard's entire card
+          grid in a screenshot -- .arc-decor's own rings never exposed
+          this same latent issue only because they have no opaque fill to
+          reveal it. */}
+      <motion.div
+        key={location.pathname}
+        className="relative z-10"
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -8 }}
+        transition={uiSpringTransition}
+      >
+        <Routes location={location}>
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
         {/* Persistent-layout auth pages: AuthLayout renders the background/
             overlay/rings chrome ONCE and never unmounts while navigating
             between these five. Each is still its own real, directly-
@@ -267,8 +286,17 @@ function App() {
             </ProtectedRoute>
           }
         />
-      </Routes>
-      </div>
+        </Routes>
+      </motion.div>
+    </AnimatePresence>
+  )
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <ErrorBoundary label="App">
+        <AppRoutes />
       </ErrorBoundary>
       <ViewAsBanner />
       <TopBar />

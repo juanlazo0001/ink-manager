@@ -28,6 +28,21 @@ export const authSpringTransition: Transition = {
   visualDuration: 0.76,
 }
 
+// Same spring feel as authSpringTransition (type/bounce identical -- one
+// physics language app-wide, not a competing config) but scaled down for
+// everyday UI motion: route transitions, panels, dropdowns, list items.
+// authSpringTransition's own 0.76s (itself still mid-tuning toward a
+// slower final 0.38s) was built for one dramatic, rarely-repeated card
+// swap; app-wide chrome that fires on every click/nav needs to stay in
+// the 150-300ms "polish, not spectacle" range or it starts to feel like
+// it's delaying real work. 0.22s keeps the same restrained bounce
+// perceptible without that cost.
+export const uiSpringTransition: Transition = {
+  type: 'spring',
+  bounce: 0.25,
+  visualDuration: 0.22,
+}
+
 // The card itself: opacity + a small vertical settle, no blur -- kept
 // visually distinct from the heading's own treatment below so the
 // heading swap reads as its own small "materialize" moment rather than

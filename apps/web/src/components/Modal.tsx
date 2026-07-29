@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { motion } from 'framer-motion'
 import { CloseIcon, DragHandleIcon } from './icons'
 import { useThemePreset } from '../lib/useThemePreset'
+import { uiSpringTransition } from '../lib/motion'
 
 interface ModalProps {
   title: string
@@ -37,23 +39,19 @@ function unlockBodyScroll() {
   }
 }
 
-// Every modal in the app (new client, draft inquiry, etc.) goes through
-// this one component, so its open/close motion is the single place that
-// needs to carry it -- no per-call-site animation work anywhere else.
-const CLOSE_ANIMATION_MS = 200
+// Instant, no-transition override for x/y specifically while dragging --
+// Motion's own spring would otherwise chase the pointer's fast-moving
+// target every frame instead of tracking it 1:1, i.e. visible lag.
+const NO_TRANSITION = { duration: 0 }
 
 export default function Modal({ title, onClose, children, size = 'default' }: ModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
   const { shape } = useThemePreset()
   const isEditorial = shape === 'editorial'
-  // Mounts in its "before" state (invisible/scaled down) on the very first
-  // render, then flips to "entered" a tick later so the transition to that
-  // state is what actually animates -- mounting already-visible would skip
-  // the transition entirely (no state change to observe).
-  const [entered, setEntered] = useState(false)
-  // Closing intercepts the real onClose: it plays the exit transition first,
-  // then calls onClose after CLOSE_ANIMATION_MS so the parent doesn't unmount
-  // this component out from under its own animation.
+  // Closing intercepts the real onClose: it plays the exit animation
+  // first, then calls onClose from the dialog's own onAnimationComplete
+  // once that animation actually finishes -- no hardcoded duration to
+  // keep in sync with the animation itself.
   const [closing, setClosing] = useState(false)
 
   // Drag-to-move: an offset from the dialog's normal centered position,
@@ -62,11 +60,6 @@ export default function Modal({ title, onClose, children, size = 'default' }: Mo
   const [position, setPosition] = useState({ x: 0, y: 0 })
   const [dragging, setDragging] = useState(false)
   const dragStartRef = useRef({ x: 0, y: 0 })
-
-  useEffect(() => {
-    const id = requestAnimationFrame(() => setEntered(true))
-    return () => cancelAnimationFrame(id)
-  }, [])
 
   useEffect(() => {
     lockBodyScroll()
@@ -101,7 +94,6 @@ export default function Modal({ title, onClose, children, size = 'default' }: Mo
 
   function requestClose() {
     setClosing(true)
-    setTimeout(onClose, CLOSE_ANIMATION_MS)
   }
 
   // Accessibility floor: Esc closes, focus starts inside and stays trapped
@@ -143,17 +135,15 @@ export default function Modal({ title, onClose, children, size = 'default' }: Mo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const shown = entered && !closing
-
   return (
-    <div
-      className={[
-        'fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 transition-opacity duration-base',
-        shown ? 'opacity-100 ease-out' : 'opacity-0 ease-in',
-      ].join(' ')}
+    <motion.div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: closing ? 0 : 1 }}
+      transition={uiSpringTransition}
       onClick={requestClose}
     >
-      <div
+      <motion.div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
@@ -163,17 +153,15 @@ export default function Modal({ title, onClose, children, size = 'default' }: Mo
             ? 'flex w-[92vw] max-w-[92vw] flex-col md:w-[60vw] md:max-w-[60vw] h-[80vh] max-h-[80vh]'
             : 'flex w-full max-w-md max-h-[85vh] flex-col',
           isEditorial
-            ? 'rounded-card border border-border bg-surface-raised p-6 shadow-2xl duration-base'
-            : 'rounded-2xl border border-border bg-surface p-6 duration-base',
-          // Transform is driven by the inline style below (translate for
-          // dragging, composed with scale for the enter/exit animation) --
-          // while actively dragging, the transform transition is dropped
-          // entirely so the dialog tracks the pointer instantly instead of
-          // lagging behind it.
-          dragging ? 'transition-opacity' : 'transition-[opacity,transform]',
-          shown ? 'opacity-100 ease-out' : 'opacity-0 ease-in',
+            ? 'rounded-card border border-border bg-surface-raised p-6 shadow-2xl'
+            : 'rounded-2xl border border-border bg-surface p-6',
         ].join(' ')}
-        style={{ transform: `translate3d(${position.x}px, ${position.y}px, 0) scale(${shown ? 1 : 0.95})` }}
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: closing ? 0 : 1, scale: closing ? 0.95 : 1, x: position.x, y: position.y }}
+        transition={dragging ? { default: uiSpringTransition, x: NO_TRANSITION, y: NO_TRANSITION } : uiSpringTransition}
+        onAnimationComplete={() => {
+          if (closing) onClose()
+        }}
         onClick={(event) => event.stopPropagation()}
       >
         <div
@@ -203,7 +191,7 @@ export default function Modal({ title, onClose, children, size = 'default' }: Mo
         >
           {children}
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   )
 }

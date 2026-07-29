@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { motion } from 'framer-motion'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '../lib/api'
+import { uiSpringTransition } from '../lib/motion'
 import StatusPill, { getStatusTone, type Tone } from './StatusPill'
 import InquiryPipeline from './InquiryPipeline'
 import { formatDateTime, formatRelativeTime, formatPriceEstimate } from '../lib/format'
@@ -768,11 +770,12 @@ export default function ConversationsPanel() {
       {/* Scrim -- always mounted (even closed) so its opacity can transition
           instead of popping; pointer-events-none while closed so it never
           blocks the rest of the page. */}
-      <div
-        className={[
-          'fixed inset-0 z-50 bg-black/60 transition-opacity duration-base',
-          isOpen ? 'opacity-100 ease-out' : 'pointer-events-none opacity-0 ease-in',
-        ].join(' ')}
+      <motion.div
+        className="fixed inset-0 z-50 bg-black/60"
+        initial={false}
+        animate={{ opacity: isOpen ? 1 : 0 }}
+        transition={uiSpringTransition}
+        style={{ pointerEvents: isOpen ? 'auto' : 'none' }}
         onClick={closePanel}
         aria-hidden="true"
       />
@@ -782,8 +785,12 @@ export default function ConversationsPanel() {
           animates. Desktop gets real working width (~560px) rather than a
           cramped floating card; mobile is a full-screen takeover. Rendered
           once at the app root (see App.tsx), so it -- and whichever thread
-          is open -- survives route changes while open. */}
-      <div
+          is open -- survives route changes while open. Width (the
+          contextOpen 560/848px swap) stays a plain CSS transition -- a
+          Tailwind responsive-breakpoint className swap, not a value Motion
+          can interpolate directly; only the open/close transform is
+          Motion's. */}
+      <motion.div
         ref={panelRef}
         role="dialog"
         aria-modal="true"
@@ -796,11 +803,13 @@ export default function ConversationsPanel() {
           // editorial-gold, same as .card-surface elsewhere -- bg-
           // surface-raised stays the real background under every other
           // preset, unaffected.
-          'fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-border bg-surface-raised shadow-2xl transition-[transform,width] duration-base',
+          'fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-border bg-surface-raised shadow-2xl transition-[width] duration-base',
           isEditorialFab ? 'conversations-panel-bg' : '',
-          isOpen ? 'translate-x-0 ease-out' : 'translate-x-full ease-in',
           contextOpen ? 'sm:w-[848px]' : 'sm:w-[560px]',
         ].join(' ')}
+        initial={false}
+        animate={{ x: isOpen ? '0%' : '100%' }}
+        transition={uiSpringTransition}
         aria-hidden={!isOpen}
       >
         {hasOpenedOnce &&
@@ -824,7 +833,7 @@ export default function ConversationsPanel() {
               onClose={closePanel}
             />
           ))}
-      </div>
+      </motion.div>
     </>
   )
 }
