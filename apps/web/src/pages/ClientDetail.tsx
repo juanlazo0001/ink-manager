@@ -352,8 +352,10 @@ export default function ClientDetail() {
   const canEditInquiry = profile?.permissions.includes('inquiries.edit') ?? false
   const canGenerateWaiver = profile?.permissions.includes('waivers.generate') ?? false
   const isOwner = user?.role === 'OWNER'
-  const canIssueGiftCards = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
+  const canIssueGiftCards = profile?.permissions.includes('giftCards.issue') ?? false
   const canMessage = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
+  // POST /prefill-drafts is a hardcoded requireRole(OWNER, FRONT_DESK) on
+  // the API, not a configurable permission -- matches that directly.
   const canGeneratePrefillLink = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
   const { openPanel } = useConversationPanel()
   const [startingConversation, setStartingConversation] = useState(false)

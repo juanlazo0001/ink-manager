@@ -31,6 +31,7 @@ import { apiFetch, ApiError } from '../lib/api'
 import { describeAppointmentStatus, formatDateTime } from '../lib/format'
 import { useAuth } from '../context/useAuth'
 import { useEffectiveUser } from '../context/useEffectiveUser'
+import { useUserProfile } from '../context/useUserProfile'
 import { appointmentsQueryKey, appointmentsRangeQueryKey } from '../lib/queryKeys'
 import { useMarkSectionSeen } from '../lib/useMarkSectionSeen'
 import { colorForArtistId } from '../lib/artistColors'
@@ -335,8 +336,16 @@ function CalendarToolbar({ date, label, view, views, onNavigate, onView }: Toolb
 export default function Calendar() {
   const { user } = useAuth()
   const effectiveUser = useEffectiveUser()
+  const { profile } = useUserProfile()
   const isArtist = effectiveUser?.role === 'ARTIST'
-  const canManageCalendar = !isArtist
+  const canCreateAppointment = profile?.permissions.includes('appointments.create') ?? false
+  const canRescheduleAppointment = profile?.permissions.includes('appointments.reschedule') ?? false
+  // Picks which calendar variant renders (full drag-and-drop vs read-only)
+  // -- the interactive one is worth showing if either underlying action is
+  // actually available; handleSelectSlot/applyAppointmentTimeChange below
+  // each re-check their own specific permission too, since a studio could
+  // grant just one of the two.
+  const canManageCalendar = canCreateAppointment || canRescheduleAppointment
   const queryClient = useQueryClient()
   const isMobile = useIsMobile()
   useMarkSectionSeen('appointments')
@@ -616,7 +625,7 @@ export default function Calendar() {
   }
 
   function handleSelectSlot(slotInfo: SlotInfo) {
-    if (!canManageCalendar) return
+    if (!canCreateAppointment) return
     const start = slotInfo.start as Date
     const end = slotInfo.end as Date
     setCreateSlot({
@@ -633,6 +642,7 @@ export default function Calendar() {
   // they validate about resourceId beforehand and what error copy makes
   // sense for what the user just did.
   async function applyAppointmentTimeChange(event: CalEvent, newStart: Date, newEnd: Date) {
+    if (!canRescheduleAppointment) return
     if (!isSameLocalDay(newStart, newEnd)) {
       setDragError("Appointments can't span more than one day — try a shorter session or a different time.")
       return

@@ -385,6 +385,18 @@ export default function InquiryDetail() {
   // call it makes) agree, instead of the button showing regardless and the
   // API 403ing on submit.
   const canMarkLost = profile?.permissions.includes('inquiries.markLost') ?? false
+  // GET/POST/PATCH/DELETE .../notes are all requirePermission
+  // ("inquiries.notes.manage") on the API -- unlike AppointmentNote (whose
+  // routes are hardcoded requireRole(OWNER, FRONT_DESK)), this one's
+  // genuinely configurable, so it gets its own check rather than reusing
+  // canMessage.
+  const canManageNotes = profile?.permissions.includes('inquiries.notes.manage') ?? false
+  const canShareWithArtist = profile?.permissions.includes('inquiries.shareWithArtist') ?? false
+  const canEditInquiry = profile?.permissions.includes('inquiries.edit') ?? false
+  const canAssignArtist = profile?.permissions.includes('inquiries.assignArtist') ?? false
+  const canSendEstimate = profile?.permissions.includes('inquiries.sendEstimate') ?? false
+  const canEnterEstimate = profile?.permissions.includes('inquiries.enterEstimate') ?? false
+  const canCreateAppointment = profile?.permissions.includes('appointments.create') ?? false
   const [startingConversation, setStartingConversation] = useState(false)
 
   async function handleMessage() {
@@ -2000,7 +2012,7 @@ export default function InquiryDetail() {
                         <span className="hidden text-sm font-semibold md:inline">Message</span>
                       </button>
                     )}
-                    {canMessage && (
+                    {canShareWithArtist && (
                       <button
                         type="button"
                         onClick={() => {
@@ -2025,7 +2037,7 @@ export default function InquiryDetail() {
                       </button>
                     )}
                     <StatusPill status={inquiry.status} label={describeInquiryStatus(inquiry)} />
-                    {(canMessage || isOwner) && (
+                    {(canMarkLost || canEditInquiry || isOwner) && (
                       <div className="relative">
                         <button
                           type="button"
@@ -2045,7 +2057,7 @@ export default function InquiryDetail() {
                               aria-hidden="true"
                             />
                             <div className="absolute right-0 top-9 z-20 w-48 rounded-xl border border-border bg-surface-raised p-1 shadow-xl">
-                              {canMessage && canMarkLost && !isTerminal && (
+                              {canMarkLost && !isTerminal && (
                                 <button
                                   type="button"
                                   onClick={() => {
@@ -2059,7 +2071,7 @@ export default function InquiryDetail() {
                                   Mark as lost
                                 </button>
                               )}
-                              {canMessage && (
+                              {canEditInquiry && (
                                 <button
                                   type="button"
                                   onClick={() => {
@@ -2113,7 +2125,7 @@ export default function InquiryDetail() {
                         <p className="mt-1 text-sm text-fg-muted">No activity for a while -- automatically marked cold.</p>
                       )}
                     </div>
-                    {canMessage && (
+                    {canEditInquiry && (
                       <button
                         type="button"
                         onClick={() => {
@@ -2132,7 +2144,7 @@ export default function InquiryDetail() {
                 {inquiry.archivedAt && (
                   <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
                     <span>Archived {formatDateTime(inquiry.archivedAt)}. Hidden from the inbox, but fully intact.</span>
-                    {canMessage && (
+                    {canEditInquiry && (
                       <button
                         type="button"
                         onClick={handleUnarchive}
@@ -2196,7 +2208,7 @@ export default function InquiryDetail() {
                           </p>
                           {reopenProjectError && <p className="mt-1 text-sm text-danger">{reopenProjectError}</p>}
                         </div>
-                        {canMessage && (
+                        {canEditInquiry && (
                           <button
                             type="button"
                             onClick={handleReopenProject}
@@ -2208,7 +2220,7 @@ export default function InquiryDetail() {
                         )}
                       </div>
                     ) : (
-                      canMessage && (
+                      canEditInquiry && (
                         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
                           {completeProjectError && <p className="text-sm text-danger">{completeProjectError}</p>}
                           <button
@@ -2240,23 +2252,27 @@ export default function InquiryDetail() {
                     below, then choose one of the three options.
                   </p>
 
-                  {canMessage && (
+                  {(canEditInquiry || canCreateAppointment || canMarkLost) && (
                     <div className="mt-4 flex flex-wrap gap-3">
-                      <button
-                        type="button"
-                        onClick={handleMarkGoodCandidate}
-                        disabled={markingGoodCandidate}
-                        className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
-                      >
-                        {markingGoodCandidate ? 'Saving…' : 'Mark Good Candidate'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setAppointmentModalType('CONSULTATION')}
-                        className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
-                      >
-                        Schedule Consultation
-                      </button>
+                      {canEditInquiry && (
+                        <button
+                          type="button"
+                          onClick={handleMarkGoodCandidate}
+                          disabled={markingGoodCandidate}
+                          className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                        >
+                          {markingGoodCandidate ? 'Saving…' : 'Mark Good Candidate'}
+                        </button>
+                      )}
+                      {canCreateAppointment && (
+                        <button
+                          type="button"
+                          onClick={() => setAppointmentModalType('CONSULTATION')}
+                          className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
+                        >
+                          Schedule Consultation
+                        </button>
+                      )}
                       {canMarkLost && (
                         <button
                           type="button"
@@ -2275,7 +2291,7 @@ export default function InquiryDetail() {
 
               <Widget key="assignment-section" id="assignment-section" title="Assignment">
 
-                {inquiry.status === 'NEW' || (!inquiry.assignedArtist && !isTerminal) ? (
+                {(inquiry.status === 'NEW' || (!inquiry.assignedArtist && !isTerminal)) && canAssignArtist ? (
                   <div className="mt-4 flex flex-wrap items-center gap-3">
                     {/* A never-assigned inquiry can reach this state past NEW
                         (send-estimate never requires one) -- a deposit can't
@@ -2322,7 +2338,7 @@ export default function InquiryDetail() {
                 )}
               </Widget>
 
-              {((!isTerminal && canMessage) ||
+              {((!isTerminal && (canSendEstimate || canEnterEstimate)) ||
                 inquiry.estimateSentAt ||
                 inquiry.closedReason ||
                 inquiry.priceEstimateLow != null ||
@@ -2334,7 +2350,7 @@ export default function InquiryDetail() {
                   id="estimate-section"
                   title="Estimate"
                   actions={
-                    !isTerminal && !canReviseEstimate && canMessage && inquiry.assignedArtist && !editingEstimate ? (
+                    !isTerminal && !canReviseEstimate && canSendEstimate && inquiry.assignedArtist && !editingEstimate ? (
                       <button
                         type="button"
                         onClick={openEditEstimate}
@@ -2345,7 +2361,7 @@ export default function InquiryDetail() {
                         <PencilIcon className="h-4 w-4" />
                         <span className="hidden text-sm font-semibold md:inline">Edit</span>
                       </button>
-                    ) : canReviseEstimate && canMessage ? (
+                    ) : canReviseEstimate && canEnterEstimate ? (
                       <button
                         type="button"
                         onClick={openReviseEstimateModal}
@@ -2452,11 +2468,11 @@ export default function InquiryDetail() {
                     </div>
                   )}
 
-                  {!isTerminal && !canReviseEstimate && canMessage && !inquiry.assignedArtist && (
+                  {!isTerminal && !canReviseEstimate && canSendEstimate && !inquiry.assignedArtist && (
                     <p className="mt-4 text-sm text-fg-muted">Assign an artist before entering an estimate.</p>
                   )}
 
-                  {!isTerminal && !canReviseEstimate && canMessage && editingEstimate && (
+                  {!isTerminal && !canReviseEstimate && canSendEstimate && editingEstimate && (
                     <>
                       <label className="mt-4 flex items-center gap-2 text-xs font-medium text-fg-secondary">
                         <input
@@ -3055,7 +3071,7 @@ export default function InquiryDetail() {
                 id="appointments"
                 title="Appointments"
                 actions={
-                  canMessage ? (
+                  canCreateAppointment ? (
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
@@ -3367,7 +3383,7 @@ export default function InquiryDetail() {
                             </Link>
                           )}
 
-                          {depositStatus === 'not_generated' && canMessage && (
+                          {depositStatus === 'not_generated' && canEditInquiry && (
                             <div className="mt-2">
                               {!inquiry.assignedArtist ? (
                                 <p className="text-xs text-fg-muted">Assign an artist before requesting a deposit.</p>
@@ -3457,7 +3473,7 @@ export default function InquiryDetail() {
                               (isNewSessionForTarget is false once
                               depositFormId is already set), so this is a
                               single action, not the full mini-form above. */}
-                          {depositStatus === 'pending' && canMessage && (
+                          {depositStatus === 'pending' && canEditInquiry && (
                             <div className="mt-2">
                               <button
                                 type="button"
@@ -3503,7 +3519,7 @@ export default function InquiryDetail() {
                               about whether the button is worth showing. */}
                           {(depositStatus === 'paid' || hasAvailableGiftCard) &&
                             appointmentStatus === 'not_booked' &&
-                            canMessage && (
+                            canCreateAppointment && (
                               <button
                                 type="button"
                                 onClick={() => setBookingPlannedSessionId(ps.id)}
@@ -3569,7 +3585,7 @@ export default function InquiryDetail() {
                 id="reference-images"
                 title="Reference images"
                 actions={
-                  !editingReferenceImages ? (
+                  !editingReferenceImages && canEditInquiry ? (
                     <button
                       type="button"
                       onClick={() => setEditingReferenceImages(true)}
@@ -3625,7 +3641,7 @@ export default function InquiryDetail() {
                 id="placement-photos"
                 title="Placement photos"
                 actions={
-                  !editingPlacementImages ? (
+                  !editingPlacementImages && canEditInquiry ? (
                     <button
                       type="button"
                       onClick={() => setEditingPlacementImages(true)}
@@ -3682,7 +3698,7 @@ export default function InquiryDetail() {
                   id="custom-fields"
                   title="Inquiry Details"
                   actions={
-                    !editingDetails ? (
+                    !editingDetails && canEditInquiry ? (
                       <button
                         type="button"
                         onClick={() => setEditingDetails(true)}
@@ -3782,12 +3798,12 @@ export default function InquiryDetail() {
                 </Widget>
               )}
 
-              {canMessage && (
+              {canManageNotes && (
                 <Widget key="notes" id="notes" title="Notes">
                   <NotesSection
                     notesPath={`/inquiries/${inquiry.id}/notes`}
                     queryKeyId={inquiry.id}
-                    canManage={canMessage}
+                    canManage={canManageNotes}
                     readOnly={!!viewAsTarget}
                     bare
                   />

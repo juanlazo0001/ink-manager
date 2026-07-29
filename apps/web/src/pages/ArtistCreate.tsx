@@ -11,6 +11,7 @@ import { uploadPortfolioImage } from '../lib/cloudinary'
 import { isValidPhoneDigits, readFileAsDataUrl, MAX_IMAGE_FILE_BYTES } from '../lib/format'
 import { ArrowLeftIcon, CloseIcon, InstagramIcon, FacebookIcon } from '../components/icons'
 import { useEffectiveUser } from '../context/useEffectiveUser'
+import { useUserProfile } from '../context/useUserProfile'
 import { artistsQueryKey } from '../lib/queryKeys'
 
 interface LocationOption {
@@ -48,6 +49,7 @@ const EMPTY_FORM = {
 export default function ArtistCreate() {
   const navigate = useNavigate()
   const user = useEffectiveUser()
+  const { profile } = useUserProfile()
   const queryClient = useQueryClient()
 
   const [form, setForm] = useState(EMPTY_FORM)
@@ -192,11 +194,11 @@ export default function ArtistCreate() {
     }
   }
 
-  // Same restriction the creation endpoint itself enforces (requireRole
-  // OWNER) -- redirected here rather than left on a form that would only
-  // ever 403 on submit. Placed after every hook above so hook call order
-  // never depends on role.
-  if (user && user.role !== 'OWNER') {
+  // Same restriction the creation endpoint itself enforces
+  // (requirePermission("artists.manage")) -- redirected here rather than
+  // left on a form that would only ever 403 on submit. Placed after every
+  // hook above so hook call order never depends on role/permissions.
+  if (user && !(profile?.permissions.includes('artists.manage') ?? false)) {
     return <Navigate to="/team?tab=artists" replace />
   }
 

@@ -4,6 +4,7 @@ import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime } from '../lib/format'
 import { ArrowLeftIcon } from '../components/icons'
 import { useEffectiveUser } from '../context/useEffectiveUser'
+import { useUserProfile } from '../context/useUserProfile'
 import Sidebar from '../components/Sidebar'
 import QrCode from '../components/QrCode'
 import AuditTrail from '../components/AuditTrail'
@@ -34,8 +35,15 @@ interface GiftCard {
 export default function GiftCardDetail() {
   const { id } = useParams<{ id: string }>()
   const user = useEffectiveUser()
-  const canManage = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
-  const canVoidOrEditExpiry = user?.role === 'OWNER'
+  const { profile } = useUserProfile()
+  const canTextReceipt = profile?.permissions.includes('giftCards.issue') ?? false
+  const canViewAudit = profile?.permissions.includes('audit.view') ?? false
+  const canVoid = profile?.permissions.includes('giftCards.void') ?? false
+  // PATCH /:id (expiration) is deliberately left hardcoded OWNER-only on
+  // the API -- no configurable permission key covers "edit a card's
+  // expiration" without either overreaching giftCards.issue's default
+  // scope or inventing a new key, so this one genuinely stays a role check.
+  const canEditExpiry = user?.role === 'OWNER'
 
   const [card, setCard] = useState<GiftCard | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -249,7 +257,7 @@ export default function GiftCardDetail() {
                     </button>
                   )}
 
-                  {canManage && card.status === 'ACTIVE' && (
+                  {canTextReceipt && card.status === 'ACTIVE' && (
                     <button
                       type="button"
                       onClick={handleTextReceipt}
@@ -260,7 +268,7 @@ export default function GiftCardDetail() {
                     </button>
                   )}
 
-                  {canVoidOrEditExpiry && card.status !== 'VOID' && (
+                  {canEditExpiry && card.status !== 'VOID' && (
                     <button
                       type="button"
                       onClick={() => setEditingExpiry((v) => !v)}
@@ -270,7 +278,7 @@ export default function GiftCardDetail() {
                     </button>
                   )}
 
-                  {canVoidOrEditExpiry && card.status !== 'VOID' && (
+                  {canVoid && card.status !== 'VOID' && (
                     <button
                       type="button"
                       onClick={handleVoid}
@@ -309,7 +317,7 @@ export default function GiftCardDetail() {
                 )}
               </div>
 
-              {canManage && <AuditTrail entityType="GiftCard" entityId={card.id} />}
+              {canViewAudit && <AuditTrail entityType="GiftCard" entityId={card.id} />}
             </>
           )}
         </div>

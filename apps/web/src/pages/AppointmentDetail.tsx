@@ -32,8 +32,8 @@ import NotesSection from '../components/NotesSection'
 
 // Built-in fallback order for a user who's never customized this page's
 // layout (or one shipped after their last save) -- "checkout" is simply
-// absent from presentIds for an ARTIST (canManage false), same as any
-// other conditionally-hidden widget.
+// absent from presentIds for a role lacking appointments.checkout, same as
+// any other conditionally-hidden widget.
 const APPOINTMENT_WIDGET_ORDER = ['project-details', 'liability-waiver', 'checkout', 'photos', 'notes', 'activity-history']
 
 interface WaiverSummary {
@@ -162,6 +162,16 @@ export default function AppointmentDetail() {
   const { openPanel } = useConversationPanel()
   const canManage = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
   const canViewAudit = profile?.permissions.includes('audit.view') ?? false
+  // These are each their own configurable permission on the API (no
+  // requireRole stacked alongside), so they're checked directly rather
+  // than folded into canManage above -- e.g. an ARTIST granted
+  // appointments.checkout should see the checkout widget even though
+  // canManage (OWNER/FRONT_DESK) would otherwise exclude them.
+  const canReschedule = profile?.permissions.includes('appointments.reschedule') ?? false
+  const canCheckout = profile?.permissions.includes('appointments.checkout') ?? false
+  const canManagePhotos = profile?.permissions.includes('appointments.photos.manage') ?? false
+  const canGenerateWaiver = profile?.permissions.includes('waivers.generate') ?? false
+  const canVerifyWaiver = profile?.permissions.includes('waivers.verify') ?? false
   const [startingConversation, setStartingConversation] = useState(false)
 
   const [appointment, setAppointment] = useState<Appointment | null>(null)
@@ -729,7 +739,7 @@ export default function AppointmentDetail() {
                         <span className="hidden text-xs font-medium md:inline">Message</span>
                       </button>
                     )}
-                    {canManage ? (
+                    {canReschedule ? (
                       <>
                         <select
                           value={appointment.status}
@@ -755,7 +765,7 @@ export default function AppointmentDetail() {
                     ) : (
                       <StatusPill status={describeAppointmentStatus(appointment)} />
                     )}
-                    {canManage && (
+                    {(canReschedule || user?.role === 'OWNER') && (
                       <div className="relative flex self-stretch">
                         <button
                           type="button"
@@ -775,31 +785,35 @@ export default function AppointmentDetail() {
                               aria-hidden="true"
                             />
                             <div className="absolute right-0 top-9 z-20 w-48 rounded-xl border border-border bg-surface-raised p-1 shadow-xl">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setShowMoreMenu(false)
-                                  openRescheduleModal()
-                                }}
-                                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
-                              >
-                                Reschedule
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setShowMoreMenu(false)
-                                  if (appointment.archivedAt) {
-                                    handleUnarchive()
-                                  } else {
-                                    handleArchive()
-                                  }
-                                }}
-                                disabled={archiving}
-                                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface disabled:opacity-60"
-                              >
-                                {appointment.archivedAt ? 'Unarchive' : 'Archive'}
-                              </button>
+                              {canReschedule && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setShowMoreMenu(false)
+                                    openRescheduleModal()
+                                  }}
+                                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
+                                >
+                                  Reschedule
+                                </button>
+                              )}
+                              {canReschedule && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setShowMoreMenu(false)
+                                    if (appointment.archivedAt) {
+                                      handleUnarchive()
+                                    } else {
+                                      handleArchive()
+                                    }
+                                  }}
+                                  disabled={archiving}
+                                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface disabled:opacity-60"
+                                >
+                                  {appointment.archivedAt ? 'Unarchive' : 'Archive'}
+                                </button>
+                              )}
                               {user?.role === 'OWNER' && (
                                 <button
                                   type="button"
@@ -828,7 +842,7 @@ export default function AppointmentDetail() {
                     <span>
                       Archived {formatDateTime(appointment.archivedAt)}. Hidden from the calendar, but fully intact.
                     </span>
-                    {canManage && (
+                    {canReschedule && (
                       <button
                         type="button"
                         onClick={handleUnarchive}
@@ -911,7 +925,7 @@ export default function AppointmentDetail() {
               {/* Waiver section */}
               <Widget key="liability-waiver" id="liability-waiver" title="Liability Waiver">
 
-                {!appointment.liabilityWaiver && canManage && (
+                {!appointment.liabilityWaiver && canManage && canGenerateWaiver && (
                   <div className="mt-4">
                     <p className="text-sm text-fg-secondary">No waiver created for this appointment yet.</p>
                     <button
@@ -932,7 +946,7 @@ export default function AppointmentDetail() {
                   </div>
                 )}
 
-                {!appointment.liabilityWaiver && !canManage && (
+                {!appointment.liabilityWaiver && !(canManage && canGenerateWaiver) && (
                   <p className="mt-4 text-sm text-fg-secondary">No waiver yet.</p>
                 )}
 
@@ -1117,7 +1131,7 @@ export default function AppointmentDetail() {
                           </p>
                         )}
 
-                        {waiverDetail.status === 'SIGNED' && canManage && (
+                        {waiverDetail.status === 'SIGNED' && canManage && canVerifyWaiver && (
                           <div>
                             <button
                               type="button"
@@ -1135,7 +1149,7 @@ export default function AppointmentDetail() {
                   </div>
                 )}
 
-                {canManage && appointment.liabilityWaiver && (
+                {canViewAudit && appointment.liabilityWaiver && (
                   <AuditTrail entityType="LiabilityWaiver" entityId={appointment.liabilityWaiver.id} />
                 )}
               </Widget>
@@ -1144,7 +1158,7 @@ export default function AppointmentDetail() {
                   "Mark Complete" flow instead (no gift-card requirement to
                   begin with, so none of the financial checkout machinery
                   below ever applies to it). */}
-              {canManage && appointment.appointmentType === 'CONSULTATION' && (
+              {canCheckout && appointment.appointmentType === 'CONSULTATION' && (
                 <Widget key="checkout" id="checkout" title="Consultation">
                   {!appointment.checkedOutAt && (
                     <form onSubmit={handleCompleteConsultation} className="mt-4 space-y-4">
@@ -1203,7 +1217,7 @@ export default function AppointmentDetail() {
                 </Widget>
               )}
 
-              {canManage && appointment.appointmentType === 'TATTOO_SESSION' && (
+              {canCheckout && appointment.appointmentType === 'TATTOO_SESSION' && (
                 <Widget key="checkout" id="checkout" title="Checkout">
 
                   {!appointment.checkedOutAt && appointment.giftCards.length === 0 && (
@@ -1453,7 +1467,7 @@ export default function AppointmentDetail() {
                           {formatDateTime(photo.uploadedAt)}
                           {photo.uploadedBy && ` · ${photo.uploadedBy.name ?? photo.uploadedBy.email}`}
                         </div>
-                        {canManage && (
+                        {canManagePhotos && (
                           <button
                             type="button"
                             onClick={() => handleDeletePhoto(photo.id)}
@@ -1470,7 +1484,7 @@ export default function AppointmentDetail() {
                   </div>
                 )}
 
-                {canManage && (
+                {canManagePhotos && (
                   <div className="mt-4 border-t border-border pt-4">
                     <ImageUploadSection
                       key={addPhotosKey}

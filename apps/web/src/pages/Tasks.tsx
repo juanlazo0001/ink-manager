@@ -5,6 +5,7 @@ import Sidebar from '../components/Sidebar'
 import { apiFetch } from '../lib/api'
 import { formatDateTime } from '../lib/format'
 import { useEffectiveUser } from '../context/useEffectiveUser'
+import { useUserProfile } from '../context/useUserProfile'
 import { useViewAs } from '../context/useViewAs'
 import { tasksQueryKey } from '../lib/queryKeys'
 import { PlusIcon, CloseIcon, CheckIcon } from '../components/icons'
@@ -84,10 +85,14 @@ const EMPTY_FORM = { title: '', dueAt: '', assigneeUserId: '' }
 
 export default function Tasks() {
   const user = useEffectiveUser()
+  const { profile } = useUserProfile()
   const { target: viewAsTarget } = useViewAs()
   const queryClient = useQueryClient()
   const queryKey = tasksQueryKey(user!.userId)
-  const canAssign = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
+  // Matches POST /tasks/personal's own tasks.assignToOthers check (only
+  // enforced when assigneeUserId differs from the actor -- everyone with
+  // tasks.manageOwn can always assign to themselves regardless).
+  const canAssign = profile?.permissions.includes('tasks.assignToOthers') ?? false
 
   const [showCompleted, setShowCompleted] = useState(false)
   const [showCompletedAssignedByMe, setShowCompletedAssignedByMe] = useState(false)

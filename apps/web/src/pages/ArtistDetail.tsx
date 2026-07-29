@@ -159,8 +159,14 @@ export default function ArtistDetail() {
     setScheduleDays(scheduleBlocksToDays(artist.preferredSchedule))
   }
 
+  // Matches PATCH /:id/preferred-schedule's own gate: requirePermission
+  // artistSchedules.manage first (a studio can revoke this from ARTIST
+  // entirely, even for their own schedule), then -- only for an ARTIST --
+  // narrowed to their own profile. OWNER/FRONT_DESK have no such narrowing.
   const canEditSchedule =
-    !!artist && (user?.role === 'OWNER' || user?.role === 'FRONT_DESK' || artist.user.id === user?.userId)
+    !!artist &&
+    (profile?.permissions.includes('artistSchedules.manage') ?? false) &&
+    (user?.role !== 'ARTIST' || artist.user.id === user?.userId)
 
   const isEndedGuest =
     !!artist?.isGuest && !!artist.guestEndDate && new Date(artist.guestEndDate) < new Date()

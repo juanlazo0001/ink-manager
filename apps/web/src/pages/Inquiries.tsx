@@ -161,9 +161,10 @@ export default function Inquiries() {
   const { user } = useAuth()
   const { profile } = useUserProfile()
   const canCreateAppointment = profile?.permissions.includes('appointments.create') ?? false
-  // Matches the backend's requireRole(OWNER, FRONT_DESK) gate on the staff
-  // inquiries routes -- there's no dedicated permission key for inquiries.
-  const canCreateInquiry = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
+  // Same permission ClientDetail.tsx's own canCreateInquiry already checks
+  // -- POST /inquiries is requirePermission("inquiries.create"), not a
+  // hardcoded role gate.
+  const canCreateInquiry = profile?.permissions.includes('inquiries.create') ?? false
   const [searchParams, setSearchParams] = useSearchParams()
   const [showNewInquiry, setShowNewInquiry] = useState(false)
   const [showNewAppointment, setShowNewAppointment] = useState(false)

@@ -78,7 +78,7 @@ interface JobInfo {
 }
 
 // Phase 7B: Settings -> Integrations (self-serve provider connections).
-type IntegrationChannelValue = 'SMS' | 'EMAIL' | 'INSTAGRAM' | 'FACEBOOK' | 'GOOGLE_CALENDAR' | 'STRIPE'
+type IntegrationChannelValue = 'SMS' | 'EMAIL' | 'INSTAGRAM' | 'FACEBOOK' | 'GOOGLE_CALENDAR' | 'STRIPE' | 'BIRD_SMS'
 type IntegrationStatusValue = 'NOT_CONNECTED' | 'CONNECTED' | 'ERROR'
 
 interface IntegrationInfo {
@@ -97,6 +97,11 @@ const CHANNEL_LABELS: Record<IntegrationChannelValue, string> = {
   FACEBOOK: 'Facebook',
   GOOGLE_CALENDAR: 'Google Calendar',
   STRIPE: 'Stripe (payments)',
+  // Coexists with SMS (Twilio) above rather than replacing it -- see
+  // schema.prisma's own comment on IntegrationChannel.BIRD_SMS. Client-
+  // facing sends still go through Twilio until a future session migrates
+  // them; this is opt-in/test-only for now.
+  BIRD_SMS: 'SMS (Bird) — new',
 }
 
 // Phase 7C: metadata shape for the STRIPE channel specifically -- stored
@@ -369,7 +374,22 @@ export default function Settings() {
   const canManageStudio = profile?.permissions.includes('studio.manage') ?? false
   const canManageLocations = profile?.permissions.includes('locations.manage') ?? false
   const canViewPolicies = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
-  const canEditPolicies = user?.role === 'OWNER'
+  const isOwner = user?.role === 'OWNER'
+  // The "Policies" tab bundles several independently-configurable
+  // permissions behind one screen -- each edit control below is gated on
+  // its own actual key (matching apps/api/src/routes/studioSettings.ts's
+  // own presentSettingsPermissionGroups, which checks each field-group
+  // separately), not one shared OWNER-only flag. Custom Policies and the
+  // intake-form editor stay real isOwner checks -- those two routes
+  // (customPolicies.ts's write routes, intakeForms.ts's PUT /:id/fields)
+  // are hardcoded requireRole(OWNER) on the backend, not configurable
+  // permissions, so there's no matrix key for them to follow.
+  const canManageTheme = profile?.permissions.includes('settings.manageTheme') ?? false
+  const canManagePolicies = profile?.permissions.includes('settings.managePolicies') ?? false
+  const canManageDefaults = profile?.permissions.includes('settings.manageDefaults') ?? false
+  const canManageReferral = profile?.permissions.includes('settings.manageReferral') ?? false
+  const canManageTemplates = profile?.permissions.includes('conversations.manageTemplates') ?? false
+  const canManageDepositTiers = profile?.permissions.includes('depositTiers.manage') ?? false
   // OWNER only, matching GET/POST /jobs's own requireRole(Role.OWNER) --
   // stricter than canViewPolicies above, which also lets FRONT_DESK in.
   const canViewSystem = user?.role === 'OWNER'
@@ -462,6 +482,12 @@ export default function Settings() {
   const [connectingStripe, setConnectingStripe] = useState(false)
   const [stripeError, setStripeError] = useState<string | null>(null)
 
+  const [connectingBirdSms, setConnectingBirdSms] = useState(false)
+  const [birdSmsError, setBirdSmsError] = useState<string | null>(null)
+  const [testBirdSmsTo, setTestBirdSmsTo] = useState('')
+  const [testBirdSmsSending, setTestBirdSmsSending] = useState(false)
+  const [testBirdSmsResult, setTestBirdSmsResult] = useState<string | null>(null)
+
   // Picks up after the Gmail OAuth redirect (or Stripe's Account Link
   // return_url/refresh_url) lands back here -- reads the query params it
   // was redirected with, shows a one-time banner / re-syncs Stripe's
@@ -513,6 +539,40 @@ export default function Settings() {
     }
   }
 
+  // No credential to collect (see CHANNEL_LABELS.BIRD_SMS's own comment)
+  // -- "connect" is a single opt-in POST, not a form submit, same shape as
+  // handleConnectStripe's request/refresh pattern minus the redirect.
+  async function handleConnectBirdSms() {
+    setConnectingBirdSms(true)
+    setBirdSmsError(null)
+    try {
+      await apiFetch('/integrations/BIRD_SMS/connect', { method: 'POST' })
+      setIntegrationsRefreshIndex((i) => i + 1)
+    } catch (err) {
+      setBirdSmsError(err instanceof Error ? err.message : 'Failed to connect')
+    } finally {
+      setConnectingBirdSms(false)
+    }
+  }
+
+  async function handleSendTestBirdSms(event: FormEvent) {
+    event.preventDefault()
+    setTestBirdSmsSending(true)
+    setTestBirdSmsResult(null)
+
+    try {
+      await apiFetch('/integrations/BIRD_SMS/test-message', {
+        method: 'POST',
+        body: JSON.stringify({ to: testBirdSmsTo }),
+      })
+      setTestBirdSmsResult('Test message sent.')
+    } catch (err) {
+      setTestBirdSmsResult(err instanceof Error ? err.message : 'Failed to send the test message')
+    } finally {
+      setTestBirdSmsSending(false)
+    }
+  }
+
   const [copiedWebhook, setCopiedWebhook] = useState(false)
 
   useEffect(() => {
@@ -561,6 +621,7 @@ export default function Settings() {
       setShowDisconnectConfirm(null)
       setTestMessageResult(null)
       setTestEmailResult(null)
+      setTestBirdSmsResult(null)
       setIntegrationsRefreshIndex((i) => i + 1)
     } catch (err) {
       setIntegrationsError(err instanceof Error ? err.message : 'Failed to disconnect')
@@ -928,12 +989,20 @@ export default function Settings() {
     try {
       const updated = await apiFetch<StudioSettingsData>('/studio-settings', {
         method: 'PATCH',
+        // referralRewardAmountCents is its own permission group
+        // (settings.manageReferral) on the API, separate from the rest of
+        // this form (settings.manageDefaults) -- only sent when the actor
+        // actually has that permission, so someone granted just
+        // "Manage studio defaults" (without "Manage referral program")
+        // isn't 403'd on a field they never got to edit in this modal.
         body: JSON.stringify({
           estimateFollowUpHours: Number(defaultsForm.estimateFollowUpHours) || 0,
           giftCardDefaultExpirationDays: defaultsForm.giftCardDefaultExpirationDays
             ? Number(defaultsForm.giftCardDefaultExpirationDays)
             : null,
-          referralRewardAmountCents: dollarsToCents(Number(defaultsForm.referralRewardDollars) || 0),
+          ...(canManageReferral
+            ? { referralRewardAmountCents: dollarsToCents(Number(defaultsForm.referralRewardDollars) || 0) }
+            : {}),
           coldLeadDays: Number(defaultsForm.coldLeadDays) || 90,
           timezone: defaultsForm.timezone,
           showSidebarBadges: defaultsForm.showSidebarBadges,
@@ -1500,7 +1569,7 @@ export default function Settings() {
           </div>
           )}
 
-          {activeTab === 'general' && canEditPolicies && policies && (
+          {activeTab === 'general' && canManageTheme && policies && (
             <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
               <h2 className="text-lg font-semibold text-fg">Theme</h2>
               <p className="mt-1 text-sm text-fg-secondary">
@@ -1645,7 +1714,7 @@ export default function Settings() {
                         {stripHtmlPreview(policies[key] as string | null)}
                       </p>
                     </div>
-                    {canEditPolicies && (
+                    {canManagePolicies && (
                       <button
                         type="button"
                         onClick={() => openFieldModal(key)}
@@ -1671,7 +1740,7 @@ export default function Settings() {
                     Studio-wide defaults for estimates, gift cards, referrals, and lead handling.
                   </p>
                 </div>
-                {canEditPolicies && (
+                {(canManageDefaults || canManageReferral) && (
                   <button
                     type="button"
                     onClick={openDefaultsModal}
@@ -1728,7 +1797,7 @@ export default function Settings() {
                       {waiverClauses.length} clause{waiverClauses.length === 1 ? '' : 's'}
                     </p>
                   </div>
-                  {canEditPolicies && !editingWaiverList && (
+                  {canManagePolicies && !editingWaiverList && (
                     <button
                       type="button"
                       onClick={() => setEditingWaiverList(true)}
@@ -1869,7 +1938,7 @@ export default function Settings() {
           )}
 
           {activeTab === 'policies' && canViewPolicies && policies && (
-            <IntakeFormsManager canEdit={canEditPolicies} />
+            <IntakeFormsManager canEdit={isOwner} />
           )}
 
           {activeTab === 'services' && canViewServices && <ServicesManager canEdit={canViewServices} />}
@@ -1884,7 +1953,7 @@ export default function Settings() {
                       in the conversation composer
                     </p>
                   </div>
-                  {canEditPolicies && !editingTemplates && (
+                  {canManageTemplates && !editingTemplates && (
                     <button
                       type="button"
                       onClick={() => setEditingTemplates(true)}
@@ -1988,7 +2057,7 @@ export default function Settings() {
                         {policies.reminderTemplates?.[key] || 'Not set'}
                       </p>
                     </div>
-                    {canEditPolicies && (
+                    {canManageDefaults && (
                       <button
                         type="button"
                         onClick={() => openReminderTemplateModal(key)}
@@ -2006,7 +2075,7 @@ export default function Settings() {
               <div className="mt-4 rounded-xl border border-border p-4">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-sm font-semibold text-fg">Send Times</p>
-                  {canEditPolicies && !editingSendTimes && (
+                  {canManageDefaults && !editingSendTimes && (
                     <button
                       type="button"
                       onClick={() => setEditingSendTimes(true)}
@@ -2087,7 +2156,7 @@ export default function Settings() {
                     /policies page.
                   </p>
                 </div>
-                {canEditPolicies && (
+                {isOwner && (
                   <button
                     type="button"
                     onClick={() => openCustomPolicyModal('new')}
@@ -2123,7 +2192,7 @@ export default function Settings() {
                           {stripHtmlPreview(policy.bodyHtml)}
                         </p>
                       </div>
-                      {canEditPolicies && (
+                      {isOwner && (
                         <div className="flex shrink-0 items-center gap-1">
                           <button
                             type="button"
@@ -2198,7 +2267,7 @@ export default function Settings() {
                     The deposit amount charged depends on which tier the average price estimate falls into.
                   </p>
                 </div>
-                {canEditPolicies && !editingDepositTiers && (
+                {canManageDepositTiers && !editingDepositTiers && (
                   <button
                     type="button"
                     onClick={startEditingDepositTiers}
@@ -2454,84 +2523,94 @@ export default function Settings() {
           {showDefaultsModal && (
             <Modal title="Edit Defaults" onClose={() => setShowDefaultsModal(false)}>
               <div className="space-y-4">
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-fg-secondary">
-                    Estimate follow-up (hours)
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={defaultsForm.estimateFollowUpHours}
-                    onChange={(e) => setDefaultsForm({ ...defaultsForm, estimateFollowUpHours: e.target.value })}
-                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-fg-secondary">
-                    Gift card expiration (days, blank = never)
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={defaultsForm.giftCardDefaultExpirationDays}
-                    onChange={(e) =>
-                      setDefaultsForm({ ...defaultsForm, giftCardDefaultExpirationDays: e.target.value })
-                    }
-                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-fg-secondary">Referral reward ($)</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={defaultsForm.referralRewardDollars}
-                    onChange={(e) => setDefaultsForm({ ...defaultsForm, referralRewardDollars: e.target.value })}
-                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-fg-secondary">
-                    Cold lead after (days of no activity)
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    value={defaultsForm.coldLeadDays}
-                    onChange={(e) => setDefaultsForm({ ...defaultsForm, coldLeadDays: e.target.value })}
-                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-fg-secondary">Timezone</label>
-                  <select
-                    value={defaultsForm.timezone}
-                    onChange={(e) => setDefaultsForm({ ...defaultsForm, timezone: e.target.value })}
-                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                  >
-                    {TIMEZONE_OPTIONS.map((tz) => (
-                      <option key={tz.value} value={tz.value}>
-                        {tz.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="flex items-center gap-2 text-sm text-fg-secondary">
+                {canManageDefaults && (
+                  <>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-fg-secondary">
+                        Estimate follow-up (hours)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={defaultsForm.estimateFollowUpHours}
+                        onChange={(e) => setDefaultsForm({ ...defaultsForm, estimateFollowUpHours: e.target.value })}
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-fg-secondary">
+                        Gift card expiration (days, blank = never)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={defaultsForm.giftCardDefaultExpirationDays}
+                        onChange={(e) =>
+                          setDefaultsForm({ ...defaultsForm, giftCardDefaultExpirationDays: e.target.value })
+                        }
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                      />
+                    </div>
+                  </>
+                )}
+                {canManageReferral && (
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-fg-secondary">Referral reward ($)</label>
                     <input
-                      type="checkbox"
-                      checked={defaultsForm.showSidebarBadges}
-                      onChange={(e) => setDefaultsForm({ ...defaultsForm, showSidebarBadges: e.target.checked })}
-                      className="h-4 w-4 rounded border-border bg-surface-inset accent-accent"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={defaultsForm.referralRewardDollars}
+                      onChange={(e) => setDefaultsForm({ ...defaultsForm, referralRewardDollars: e.target.value })}
+                      className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                     />
-                    Show new-item count badges on sidebar navigation
-                  </label>
-                  <p className="mt-1 text-xs text-fg-muted">
-                    Off by default. Doesn't affect the conversations unread badge or the Tasks icon's count, both of
-                    which always show.
-                  </p>
-                </div>
+                  </div>
+                )}
+                {canManageDefaults && (
+                  <>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-fg-secondary">
+                        Cold lead after (days of no activity)
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={defaultsForm.coldLeadDays}
+                        onChange={(e) => setDefaultsForm({ ...defaultsForm, coldLeadDays: e.target.value })}
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-fg-secondary">Timezone</label>
+                      <select
+                        value={defaultsForm.timezone}
+                        onChange={(e) => setDefaultsForm({ ...defaultsForm, timezone: e.target.value })}
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                      >
+                        {TIMEZONE_OPTIONS.map((tz) => (
+                          <option key={tz.value} value={tz.value}>
+                            {tz.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="flex items-center gap-2 text-sm text-fg-secondary">
+                        <input
+                          type="checkbox"
+                          checked={defaultsForm.showSidebarBadges}
+                          onChange={(e) => setDefaultsForm({ ...defaultsForm, showSidebarBadges: e.target.checked })}
+                          className="h-4 w-4 rounded border-border bg-surface-inset accent-accent"
+                        />
+                        Show new-item count badges on sidebar navigation
+                      </label>
+                      <p className="mt-1 text-xs text-fg-muted">
+                        Off by default. Doesn't affect the conversations unread badge or the Tasks icon's count, both
+                        of which always show.
+                      </p>
+                    </div>
+                  </>
+                )}
 
                 {defaultsError && <p className="text-sm text-danger">{defaultsError}</p>}
 
@@ -2722,6 +2801,81 @@ export default function Settings() {
                         )}
 
                         {stripeError && <p className="mt-3 text-xs text-danger">{stripeError}</p>}
+                      </div>
+                    )
+                  }
+
+                  if (integration.channel === 'BIRD_SMS') {
+                    return (
+                      <div key="BIRD_SMS" className="rounded-xl border border-border p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold text-fg">{CHANNEL_LABELS.BIRD_SMS}</p>
+                            <p className="mt-0.5 text-xs text-fg-muted">
+                              Test-only for now -- client-facing texts still send through SMS (Twilio) above.
+                            </p>
+                            {integration.status === 'ERROR' && integration.lastError && (
+                              <p className="mt-0.5 text-xs text-danger">Last attempt failed: {integration.lastError}</p>
+                            )}
+                          </div>
+
+                          <div className="flex shrink-0 items-center gap-2">
+                            {integration.status === 'CONNECTED' ? (
+                              <>
+                                <span className="rounded-full bg-success/15 px-3 py-1 text-xs font-medium text-success">
+                                  Connected
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => setShowDisconnectConfirm('BIRD_SMS')}
+                                  className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                                >
+                                  Disconnect
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={handleConnectBirdSms}
+                                disabled={connectingBirdSms}
+                                className="rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                              >
+                                {connectingBirdSms ? 'Connecting…' : integration.status === 'ERROR' ? 'Try again' : 'Connect'}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {birdSmsError && <p className="mt-3 text-xs text-danger">{birdSmsError}</p>}
+
+                        {integration.status === 'CONNECTED' && (
+                          <div className="mt-4 space-y-4 border-t border-border pt-4">
+                            {integration.connectedAt && (
+                              <p className="text-xs text-fg-muted">Connected {formatDateTime(integration.connectedAt)}</p>
+                            )}
+
+                            <form onSubmit={handleSendTestBirdSms} className="flex flex-wrap items-end gap-2">
+                              <div className="min-w-[200px] flex-1">
+                                <label className="mb-1 block text-xs font-medium text-fg-secondary">
+                                  Send test message to
+                                </label>
+                                <PhoneInput
+                                  value={testBirdSmsTo}
+                                  onChange={setTestBirdSmsTo}
+                                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                                />
+                              </div>
+                              <button
+                                type="submit"
+                                disabled={testBirdSmsSending || !isValidPhoneDigits(testBirdSmsTo)}
+                                className="rounded-full border border-border px-3 py-2 text-xs font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                              >
+                                {testBirdSmsSending ? 'Sending…' : 'Send test message'}
+                              </button>
+                            </form>
+                            {testBirdSmsResult && <p className="text-xs text-fg-secondary">{testBirdSmsResult}</p>}
+                          </div>
+                        )}
                       </div>
                     )
                   }
@@ -2930,7 +3084,9 @@ export default function Settings() {
                   ? 'Outbound messages will fall back to log-only (no real send) until Email is reconnected. Inbound emails will no longer be polled or land in threads.'
                   : showDisconnectConfirm === 'STRIPE'
                     ? "This only clears Ink Manager's own record of the connection -- your Stripe account itself is untouched and still exists. Deposits and checkout will fall back to manual-only payment collection until Stripe is reconnected."
-                    : 'Outbound messages will fall back to log-only (no real send) until SMS is reconnected. Inbound texts will no longer be validated or land in threads.'}
+                    : showDisconnectConfirm === 'BIRD_SMS'
+                      ? "This just turns off test-sending via Bird for this studio -- nothing client-facing uses it yet, so there's no fallback to worry about."
+                      : 'Outbound messages will fall back to log-only (no real send) until SMS is reconnected. Inbound texts will no longer be validated or land in threads.'}
               </p>
               <div className="mt-5 flex gap-3">
                 <button
