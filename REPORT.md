@@ -4605,3 +4605,31 @@ Same `requestAnimationFrame`-delta methodology as every other check this session
 ## Cleanup
 
 Killed the isolated dev API/web server instances used for this session's own verification (ports 4093/5292). Deleted every ad-hoc verification script and screenshot from the scratch directory afterward.
+
+---
+
+# Conversations: image lightbox for message attachments
+
+Small session on `main`. New `ImageLightbox.tsx` -- full-screen click-to-enlarge viewer for message attachments in the Conversations panel, theme-agnostic (a fixed black overlay, no Editorial Gold/onyx-lime branching needed). Clicking any attachment thumbnail in a thread now opens it full-size; if the same message has more than one attachment, left/right arrows (and the arrow keys) step between them, with a count indicator. Escape or clicking the scrim closes it. The existing "Add to inquiry" picker button (a separate, unrelated feature -- attaching a received photo to an inquiry's reference images) is untouched, just now sitting inside the same `<div>` as a sibling to a new `<button>` wrapping the thumbnail.
+
+## Real bug found and fixed, not just implemented and assumed correct
+
+Escape didn't close the lightbox on the first pass -- it turned out to also be intercepted by the Conversations panel's own pre-existing window-level Escape handler (`closePanel()`, registered on the panel's own mount, well before the lightbox ever exists). Both are plain bubble-phase `window.addEventListener('keydown', ...)` listeners on the same target, which fire in registration order regardless of DOM nesting depth -- the panel's, registered first, always ran first. Traced this concretely (not guessed): confirmed via `document.activeElement` that a "stuck focus in the composer textarea" theory was wrong, then found the actual pre-existing handler in `ConversationsPanel.tsx` and confirmed the fix by checking the panel's own `transform` stayed `none` (i.e. still fully open) after the lightbox's Escape closed only itself. Fixed by registering the lightbox's own listener with `{ capture: true }` and calling `stopPropagation()` -- capture-phase listeners run before any bubble-phase listener regardless of registration order, so this reliably takes priority without needing to touch the panel's own existing handler at all.
+
+## Verification
+
+- Full round-trip tested with a real attachment: uploaded an image through the composer (real Cloudinary upload, confirmed via network trace), sent it. Found -- and confirmed via direct network inspection, not assumed -- that this specific dev studio's outbound-SMS-to-a-fake-test-number flow doesn't persist `attachments` on the returned message (POST body included the Cloudinary URL; the subsequent GET came back with an empty `attachments` array) -- a pre-existing dev-data/Twilio-sandbox limitation, unrelated to this session's code, not something to chase down further here.
+- Verified the actual lightbox behavior against the real render path anyway (not skipped) by intercepting the thread's own GET response via `page.route()` and injecting two real attachment URLs onto a message -- confirms: both thumbnails render and open on click, next/previous arrows correctly step between them with a live `1 / 2` → `2 / 2` counter, scrim click closes, Escape closes (only the lightbox, panel stays open -- see bug above), and the "Add to inquiry" button (a real, unmocked pre-existing feature) still works independently alongside the new click-to-enlarge behavior.
+- Re-confirmed the same flow renders correctly under `onyx-lime` (no theme branching in this component, but checked for real rather than assumed).
+
+## Typechecks
+
+`npx tsc --noEmit` (api, untouched) and `npm run build` + `npx tsc -b` (web) -- clean.
+
+## Commit
+
+Pending (this entry commits alongside the code changes).
+
+## Cleanup
+
+Killed the isolated dev API/web server instances used for this session's own verification (ports 4093/5292). Deleted every ad-hoc verification script, test image, and screenshot from the scratch directory afterward. Left the two test messages sent during verification in the dev database's "Emily Rodriguez" thread -- that thread (and this dev studio generally) is already full of pre-existing seed/test data (SmsKeyword TestClient, XssTest Estimate, etc.), so a couple more test messages blend into existing dev-data hygiene rather than polluting anything real; no delete-message feature exists to clean them up via the UI, and direct DB manipulation wasn't worth the risk for this.

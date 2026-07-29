@@ -18,6 +18,7 @@ import { useStudio } from '../context/useStudio'
 import { useIntakeForms, type IntakeFormOption } from '../lib/useIntakeForms'
 import IntakeFormPicker from './IntakeFormPicker'
 import Modal from './Modal'
+import ImageLightbox from './ImageLightbox'
 import PresenceDot from './PresenceDot'
 import ArtistSelect from './ArtistSelect'
 import { ArtistAvatar, artistLabel, FlatArtistAvatar } from './ArtistAvatar'
@@ -1583,6 +1584,7 @@ function ThreadView({
   const [tagError, setTagError] = useState<string | null>(null)
   const [imagePickerFor, setImagePickerFor] = useState<string | null>(null)
   const [imageAttachError, setImageAttachError] = useState<string | null>(null)
+  const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null)
   // Message editing: STAFF/GROUP only, author-only (see PATCH route) --
   // only one message editable at a time, matching InquiryNotesSection's
   // single-editingNoteId pattern.
@@ -2911,11 +2913,20 @@ function ThreadView({
                               <div className={sharedInquiryId ? 'mt-1.5 grid grid-cols-2 gap-1' : 'mt-1.5 space-y-1.5'}>
                                 {message.attachments.map((url) => (
                                   <div key={url} className="group relative">
-                                    <img
-                                      src={url}
-                                      alt="Attachment"
-                                      className={sharedInquiryId ? 'max-h-48 rounded-lg' : 'w-full rounded-[12px]'}
-                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setLightbox({ images: message.attachments!, index: message.attachments!.indexOf(url) })
+                                      }
+                                      aria-label="View image larger"
+                                      className="block w-full cursor-zoom-in"
+                                    >
+                                      <img
+                                        src={url}
+                                        alt="Attachment"
+                                        className={sharedInquiryId ? 'max-h-48 rounded-lg' : 'w-full rounded-[12px]'}
+                                      />
+                                    </button>
                                     {isClientThread && !sharedInquiryId && (
                                       <button
                                         type="button"
@@ -3574,6 +3585,17 @@ function ThreadView({
           onSelect={(form: IntakeFormOption) => insertPrefillLink(form.slug)}
         />
       )}
+
+      <AnimatePresence>
+        {lightbox && (
+          <ImageLightbox
+            images={lightbox.images}
+            index={lightbox.index}
+            onIndexChange={(index) => setLightbox({ images: lightbox.images, index })}
+            onClose={() => setLightbox(null)}
+          />
+        )}
+      </AnimatePresence>
     </>
   )
 }
