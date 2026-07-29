@@ -4140,3 +4140,56 @@ Full three-role (OWNER/FRONT_DESK/ARTIST) x 13-page Playwright sweep (console er
 ## Cleanup
 
 Reused the same scratch dev servers/Playwright install from earlier in this session (api `:4040`, web `:5220` this time, after the first pair was torn down) -- both stopped and the scratch `pw` directory deleted at the end. No dev-database rows created; the one real write in this session's verification (the Defaults-modal save as FRONT_DESK) intentionally persisted (`estimateFollowUpHours` -> 48), left as-is per the standing convention of not rolling back legitimate dev-database changes made during verification.
+
+---
+
+# Platform SMS via Bird, Part 1: sendPlatformSms() + BIRD_SMS integration channel
+
+Single session on `main`. Part 1 of migrating platform SMS from Twilio to Bird, scoped to match how the original Twilio build was phased: the connect flow in Settings, a basic outbound send wired to a real manually-triggered test message, and confirming delivery. Client-facing sends (composer, reminders, keyword handling) deliberately untouched -- those stay on Twilio until a separate future session migrates them once this foundation is proven.
+
+## A premise conflict, checked against code before building
+
+The task brief described `sendPlatformSms()` with a platform-only request shape (one Bird API key from `.env`, no per-studio credential) but also asked for "the connect/credential-storage flow in Settings, matching how the original Twilio build was phased" -- Twilio's actual flow (`lib/twilio.ts`, `routes/integrations.ts`) is per-studio: each studio enters and validates their own Account SID/Auth Token. Those two descriptions don't describe the same architecture. Investigated rather than guessing which one to build: found `IntegrationChannel.STRIPE` already exists as a real precedent for exactly this situation -- a platform-keyed channel on the same `StudioIntegration` chassis, `encryptedSecret` permanently null, "connect" provisioning state rather than collecting a secret. Presented both interpretations (full Stripe-style channel vs. skip the chassis entirely for now) to the user rather than picking one silently -- Stripe-style, full integration channel was the confirmed direction.
+
+## Build
+
+- **New `IntegrationChannel.BIRD_SMS`** (`schema.prisma`, migration `20260729011247_add_bird_sms_integration_channel`) -- coexists with `SMS` (Twilio) rather than replacing it, `encryptedSecret` stays permanently null (nothing per-studio to encrypt).
+- **`lib/platformSms.ts`**: `sendPlatformSms({ to, text })`, raw `fetch` matching `sendPlatformEmail()`'s exact pattern (not the Bird SDK, per the task's own "stay consistent" instruction) -- `POST https://{region}.platform.bird.com/v1/sms/messages`, Bearer auth. Uses a separate `BIRD_SMS_API_KEY` (not the email channel's `BIRD_API_KEY`) -- a dedicated, more narrowly-scoped `sms:WRITE` key, confirmed regenerated after the original testing key was exposed in chat (used only the new one, never the exposed one).
+- **`routes/integrations.ts`**: `BIRD_SMS` branches on `/connect` (no credential to validate -- just an `isPlatformSmsConfigured()` gate + upsert to `CONNECTED`), `/test-message` (calls `sendPlatformSms` directly, gated on the studio's own `CONNECTED` row so a studio can't test-send without having opted in), and `/disconnect` (already generic, needed no change).
+- **`Settings.tsx`**: new "SMS (Bird) -- new" card in the Integrations tab, styled after the `STRIPE` card's simple-connect-button shape (no form) rather than Twilio's SID/token modal -- `handleConnectBirdSms`, `handleSendTestBirdSms`, its own disconnect-confirm copy ("nothing client-facing uses it yet, so there's no fallback to worry about").
+
+## Real end-to-end testing surfaced a genuine gap in the task's own "confirmed" request shape
+
+The task's request shape omitted `from`. Real testing against Bird's live API (via an isolated dev API instance on a spare port, so as not to disturb the concurrently-running dev server another session had up on :4000) hit a real `422 SMSNoEligibleSender`. Rather than guess a fix, fetched the official `@messagebird/sdk` package (confirmed via `npm view` to be Bird's own current-generation TypeScript SDK, not the legacy MessageBird REST client) and read its `SmsMessageSendRequest` type docs directly: `from` is required on every free-text send -- an E.164 number, alphanumeric ID, or short code the workspace actually owns.
+
+Three real candidate values were tried against Bird's actual API, each producing a genuine, distinct, informative error -- not guessed at, not silently worked around:
+1. No `from` -- `422 SMSNoEligibleSender`.
+2. Short code "30300" (initially reported as this workspace's sender) -- `422 SMSSenderReserved`: "This sender identity is reserved and cannot be used as a sender."
+3. `+15005550006` -- back to `422 SMSNoEligibleSender`. Flagged before trying it that this is a well-known Twilio test/magic number (NANPA's reserved 555 exchange), almost certainly not a real Bird-owned sender -- confirmed by the result once tried, at the user's own request to see Bird's actual response rather than assume.
+
+No valid, owned Bird SMS sender is confirmed for this workspace as of this session. Rather than hardcode any of the three failed guesses into checked-in source (which would be actively wrong, not just incomplete), `BIRD_SMS_FROM` is an env var, not a constant -- `isPlatformSmsConfigured()` now requires both `BIRD_SMS_API_KEY` and `BIRD_SMS_FROM`, so the connect route correctly refuses to let a studio "connect" to something that can't actually send (verified: without `BIRD_SMS_FROM` set, clicking Connect in Settings surfaces "Bird SMS isn't available right now" rather than a false-positive Connected state). The code is complete and correct regardless of when a real sender is provisioned on Bird's side -- setting the env var is the only remaining step, no redeploy/code change needed.
+
+## A cross-session collision, caught and reported rather than silently absorbed
+
+A different concurrent session was actively editing `Settings.tsx` in this same shared working tree throughout (a permission-flag refactor, `canEditPolicies` -> several granular `canManageX` checks) -- confirmed via `git log` once discovered. That session committed its own changes (`ef205b4` through `a1e9480`) while this session's Bird SMS UI edits were still sitting uncommitted in the same physical file; since git has no way to distinguish "whose" uncommitted changes are in a shared file, their `git add`/`commit` swept up this session's `Settings.tsx` changes alongside their own. Caught via an unexpectedly large/interleaved `git diff` before staging (135 insertions where ~90 were expected), traced to the actual cause (not assumed) by checking `git log` for a moved `HEAD`.
+
+Handled by: not rewriting or amending their commits (not this session's history to alter, and doing so risks their in-progress work) -- confirmed the swept-up `Settings.tsx` content is intact and uncorrupted (grepped for every `BIRD_SMS` reference, present and correct), reconfirmed both typechecks clean against the actual current `HEAD`, and committed only the files that weren't already caught up in that sweep (`schema.prisma`, `lib/platformSms.ts`, `routes/integrations.ts`, `.env.example`, the migration) as this session's own commit. Those four permission-refactor commits are local-only (not yet pushed), so no external/shared-state damage -- flagging this here as a real risk of multiple concurrent agent sessions sharing one working tree, not something to quietly paper over.
+
+## Verification
+
+- **Connect + test-message, real API calls** (isolated API instance on a spare port, direct HTTP against `owner@dev-studio.test`'s JWT, not the UI, for the send-path testing -- the UI itself separately screenshotted): `GET /integrations` lists `BIRD_SMS` correctly; `POST /integrations/BIRD_SMS/connect` returns real `200 CONNECTED`; three `POST /integrations/BIRD_SMS/test-message` attempts against the real Bird API, each returning genuinely different, correctly-differentiated error responses as the `from` value changed (see above) -- proving the integration talks to Bird's real endpoint with the real key, not a stub.
+- **Settings UI, screenshotted**: the "SMS (Bird) -- new" card renders correctly alongside the existing Twilio/Stripe/Email cards, distinct label and explanatory subtext. Clicked "Connect" with `BIRD_SMS_FROM` deliberately unset (its real current state) -- confirmed the UI correctly surfaces "Bird SMS isn't available right now -- ask an admin to check the server configuration" in red under the button, proving the `isPlatformSmsConfigured()` gate works end-to-end through the real UI, not just the API.
+- **Dev-database cleanup**: disconnected the `BIRD_SMS` test connection created on `dev-studio` during verification (shared Railway dev DB, not a throwaway local one) so it doesn't sit in a misleading connected-but-can't-actually-send state.
+- Both standing typechecks clean, re-confirmed against the actual final `HEAD` after the cross-session collision above: `npx tsc --noEmit` (api) and `npm run build` (web).
+
+## Commit
+
+`95ce749` on `main` (this session's own commit -- the `Settings.tsx` UI half landed inside the concurrent session's `ef205b4`..`a1e9480`, per the collision section above).
+
+## Outstanding, explicitly not resolved this session
+
+No valid Bird SMS sender is confirmed for this workspace. `sendPlatformSms()` will throw ("Platform SMS is not configured") and the Settings connect flow will correctly refuse to connect until `BIRD_SMS_FROM` is set in `apps/api/.env` to a real, Bird-confirmed E.164 number or short code the workspace actually owns -- check Bird's dashboard under Numbers/Senders specifically, not a number from memory. Once that's set, delivery can be confirmed with the same "Send test message" button already wired up in Settings -- no further code changes needed.
+
+## Cleanup
+
+Killed the isolated dev API/web server instances used for this session's own verification (ports 4099/5299 -- left the other session's own dev server on :4000 completely untouched throughout). Deleted every ad-hoc `.mjs` verification script, the temporary `@messagebird/sdk` install used purely to read its type docs, and screenshots from the scratch directory afterward.
