@@ -4256,3 +4256,58 @@ The FAB's label color was the one real near-miss: cream (`--color-fg`, the same 
 ## Cleanup
 
 Killed the isolated dev API/web server instances used for this session's own verification (ports 4098/5297 -- another concurrent session's own dev server on :4000 was left completely untouched). Deleted every ad-hoc `.mjs` verification script, the temporary Playwright install, and every screenshot from the scratch directory afterward. `dev-studio`'s `themePreset` confirmed back to `onyx-lime` via a direct API check as the final step.
+
+---
+
+# Editorial Gold — heavily-blurred photo background layer
+
+Single small session on `main`. No schema changes. Editorial Gold only.
+
+## The source photo, checked before use
+
+The brief named `apps/web/src/assets/login-background.jpg` as the source to reuse. Grepped for it first: **that file is unused dead weight** -- `AuthLayout.tsx` actually imports `login-background-no-artist.png`, the file genuinely visible on the live Login page today. Used the real one, not the named-but-stale one; flagging the discrepancy rather than silently reusing an orphaned asset that would have produced a background bearing no relation to what anyone actually sees on Login.
+
+## Pre-processed into a static asset -- confirmed, not just described
+
+`apps/web/src/assets/app-bg-blurred.jpg`: generated once via a temporary offline script (`sharp`, already present in `node_modules` -- no new dependency added), placed at the repo root only long enough to run (module resolution needs to find `node_modules` by walking up from the script's own location, which a scratch-directory script outside the repo tree can't do), then deleted. Two stacked techniques, not blur alone: **downscale first** (1672x941 source -> 640px wide, destroying fine detail before blur even runs) **then Gaussian blur** (sigma 28) **then re-encode** as a small JPEG (quality 72). Result: 640x360, ~7KB. Visually confirmed zero recognizable detail (no chair, lamp, or frame identifiable) against the source photo side by side, and confirmed the warm wood/dark-wall color palette survived intent. No live `filter: blur()` anywhere -- grepped the diff to confirm.
+
+## Layer order, and a real bug found building it
+
+Mounted in `TopBar.tsx` (same `decorative`-gated pattern as the existing `.arc-decor`, same file, immediately before it in the JSX): pre-blurred photo, then a flat dark wash (`rgba(12, 10, 8, 0.88)` -- Login's own near-black base color, but a uniform wash rather than Login's directional hero-vignette, since the app shell scrolls and has no single hero focal point for a vignette to frame), then the existing arc-decor/grain layer, then real content -- exactly the order the brief specified.
+
+**Building this exposed a genuine, previously-invisible stacking bug.** The first attempt (photo + wash both at the same `z-index: 0` as `.arc-decor`, ordered earlier in the DOM) produced a screenshot where Dashboard's entire card grid had vanished -- not a rendering glitch, a real CSS stacking-order fact: every routed page's own top-level wrapper (`<div className="flex min-h-screen ...">`) is a plain, non-positioned block, and CSS's paint-order rules put non-positioned static content *behind* any positioned sibling at `z-index: 0`/`auto`, regardless of DOM order between the two. `.arc-decor` has always technically had this same problem -- it just never showed, because thin unfilled ring borders have nothing opaque to reveal it. This session's wash is a real opaque fill, so it was the first thing to expose it.
+
+Fixed at one shared point rather than patching every individual page: `App.tsx`'s routed-content wrapper (`<Routes>...</Routes>`, everything every authenticated page renders through) now gets `className="relative z-10"`. That single change makes every page's content genuinely positioned with a real z-index, so it correctly paints above TopBar's background layers everywhere at once -- confirmed harmless for Login/public routes too, since `TopBar` returns `null` outright with no logged-in user (those routes never mount the background layers to begin with).
+
+## Verification
+
+- **Dashboard, Inquiries & Projects, Settings, all under Editorial Gold**: screenshotted after the stacking fix -- full card grids, tables, and theme picker all fully legible, no content obscured. Sampled background-only pixel regions from a real screenshot (`sharp`'s `.stats()`, not eyeballing): RGB channel means (63, 51, 35) -- a genuine warm brown/amber tint, confirming the blurred photo is actually contributing visible color/mood under the wash, not crushed to flat black.
+- **`onyx-lime` completely unaffected**: screenshotted before touching anything and again after reverting -- flat black background, no photo, no wash, identical to before this session. `.app-bg-photo` confirmed absent from the DOM entirely under `onyx-lime` (`decorative` is `false` for that preset, so `TopBar` never mounts it) both before and after.
+- **Reverted `dev-studio`'s `themePreset` back to `onyx-lime`** at the end, confirmed via the live UI, matching this project's own established convention for sessions that touch the shared dev database's theme.
+
+## Performance -- checked on the same busy pages tested before
+
+Scripted scroll-frame timing (`requestAnimationFrame` deltas over a scrolled distance, 60 samples each), `onyx-lime` baseline vs. `editorial-gold` with this session's new layer, on Dashboard's card grid and the full Inquiries list:
+
+| Page | onyx-lime (baseline) | editorial-gold (+ bg-blur layer) |
+|---|---|---|
+| Dashboard | avg 16.30ms, max 16.80ms, 0 long frames | avg 16.33ms, max 16.80ms, 0 long frames |
+| Inquiries (full list) | avg 16.28ms, max 16.80ms, 0 long frames | avg 16.35ms, max 16.80ms, 0 long frames |
+
+Statistically indistinguishable -- both sit at the 60fps frame budget (~16.7ms) with zero dropped frames either way, exactly what "a static pre-blurred asset costs the same as any other static background image" predicts.
+
+## Real-phone testing: NOT performed -- explicit gap
+
+**This session's own brief required confirming on a real phone, not just desktop, given the project's own prior mobile `backdrop-filter` stutter precedent.** I have no access to physical device hardware from this environment -- the performance numbers above are Playwright-driven desktop-Chromium measurements only, a reasonable proxy but not the real test asked for. A human still needs to open an Editorial Gold page on a real phone and confirm it doesn't introduce stutter or battery-drain-feeling jank. Flagging this explicitly rather than reporting the task as fully verified -- the theoretical case for "no cost" is strong (a 7KB static JPEG, no live filter, confirmed identical desktop scroll timing), but it is a case, not a real-device measurement.
+
+## Typechecks
+
+`npx tsc --noEmit` (api, untouched) and `npm run build` (web) -- both clean.
+
+## Commit
+
+`3757bfb` on `main`.
+
+## Cleanup
+
+Killed the isolated dev API/web server instances used for this session's own verification (ports 4097/5296 -- another concurrent session's own dev server on :4000 was left completely untouched). Deleted every ad-hoc `.mjs`/`.mjs`-adjacent script (including the temporary root-level image-processing script, removed immediately after generating the shipped asset), the temporary Playwright install, and every screenshot from the scratch directory afterward.
