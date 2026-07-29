@@ -158,6 +158,16 @@ enum IntegrationChannel {
   // null for this channel; metadata holds
   // { stripeAccountId, chargesEnabled, payoutsEnabled } instead.
   STRIPE
+  // Platform-level SMS via Bird, migrating off Twilio (the SMS channel
+  // above) studio by studio -- same "no per-studio secret" shape as
+  // STRIPE: the platform's own BIRD_SMS_API_KEY (lib/platformSms.ts)
+  // sends for every studio, encryptedSecret stays permanently null.
+  // "Connect" for this channel is just an opt-in flag, not a real
+  // credential exchange -- there's nothing studio-specific to validate.
+  // Coexists with SMS (Twilio) rather than replacing it: client-facing
+  // sends (composer, reminders, keyword handling) stay on Twilio until a
+  // separate future session migrates them once this foundation is proven.
+  BIRD_SMS
 }
 
 enum IntegrationStatus {

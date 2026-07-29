@@ -21,6 +21,7 @@ import {
 } from "../lib/gmail";
 import { createOnboardingLink, createStandardConnectedAccount, getConnectedAccountStatus } from "../lib/stripeConnect";
 import { isStripeConfigured } from "../lib/stripe";
+import { isPlatformSmsConfigured, sendPlatformSms } from "../lib/platformSms";
 
 // Public: Google's redirect after the user grants (or denies) consent hits
 // this directly -- it can't carry this app's own Bearer JWT (a full-page
@@ -344,6 +345,41 @@ router.post("/:channel/connect", async (req, res) => {
   const studioId = req.user!.studioId;
   const channel = req.params.channel as string;
 
+  // BIRD_SMS has no per-studio credential at all (see schema.prisma's own
+  // comment on the enum value) -- "connect" is just an opt-in flag, not a
+  // real credential exchange, so this is its own short branch rather than
+  // falling into the SID/token flow below.
+  if (channel === IntegrationChannel.BIRD_SMS) {
+    if (!isPlatformSmsConfigured()) {
+      return res.status(503).json({ error: "Bird SMS isn't available right now -- ask an admin to check the server configuration" });
+    }
+
+    const connectedAt = new Date();
+    await prisma.studioIntegration.upsert({
+      where: { studioId_channel: { studioId, channel: IntegrationChannel.BIRD_SMS } },
+      create: { studioId, channel: IntegrationChannel.BIRD_SMS, status: IntegrationStatus.CONNECTED, connectedAt, lastError: null },
+      update: {
+        status: IntegrationStatus.CONNECTED,
+        connectedAt,
+        lastError: null,
+        encryptedSecret: null,
+        metadata: Prisma.JsonNull,
+        displayName: null,
+      },
+    });
+
+    await logAudit({
+      studioId,
+      actorUserId: req.user!.userId,
+      entityType: "StudioIntegration",
+      entityId: `${studioId}:BIRD_SMS`,
+      action: "integration_connected",
+      changes: { channel: "BIRD_SMS" },
+    });
+
+    return res.json({ channel: IntegrationChannel.BIRD_SMS, status: IntegrationStatus.CONNECTED, connectedAt });
+  }
+
   if (channel !== IntegrationChannel.SMS) {
     return res.status(400).json({ error: `${channel} is not supported yet -- coming soon` });
   }
@@ -517,6 +553,34 @@ router.post("/:channel/test-message", async (req, res) => {
       return res.json({ sent: true, id: result.id });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to send the test email";
+      return res.status(400).json({ error: message });
+    }
+  }
+
+  if (channel === IntegrationChannel.BIRD_SMS) {
+    const { to } = req.body ?? {};
+    if (typeof to !== "string" || !to.trim()) {
+      return res.status(400).json({ error: "A phone number to send to is required" });
+    }
+
+    const integration = await prisma.studioIntegration.findUnique({
+      where: { studioId_channel: { studioId, channel: IntegrationChannel.BIRD_SMS } },
+    });
+    if (!integration || integration.status !== IntegrationStatus.CONNECTED) {
+      return res.status(400).json({ error: "Bird SMS is not connected for this studio" });
+    }
+
+    const normalized = normalizePhone(to.trim());
+    const toE164 = normalized.length === 10 ? `+1${normalized}` : to.trim();
+
+    try {
+      await sendPlatformSms({
+        to: toE164,
+        text: "This is a test message from Ink Manager -- your Bird SMS integration is connected.",
+      });
+      return res.json({ sent: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to send the test message";
       return res.status(400).json({ error: message });
     }
   }
