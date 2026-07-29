@@ -4383,3 +4383,11 @@ Two-part fix:
 ## Cleanup
 
 Killed the isolated dev API/web server instances used for this session's own verification (ports 4095/5294). Deleted every ad-hoc verification script and screenshot from the scratch directory afterward.
+
+---
+
+# Editorial Gold: `.bg-bg` tint 70% -> 80%
+
+One-line tuning follow-up on `main`. `[data-theme="editorial-gold"] .bg-bg`'s `color-mix()` percentage raised from 70% to 80% (the page-wrapper shell reads darker, less of the blurred background photo shows through). Verified via computed style (`color(srgb ... / 0.8)`) and a fresh screenshot -- still fully legible, `onyx-lime` re-confirmed unaffected. Both typechecks clean.
+
+Commit: `a4525d7` on `main`.
