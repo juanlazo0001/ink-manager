@@ -4665,7 +4665,7 @@ New `pageTransition` (`lib/motion.ts`) -- same spring feel as `uiSpringTransitio
 
 ## Commit
 
-Pending (this entry commits alongside the code changes).
+`4fd7923` on `main`.
 
 ## Cleanup
 
