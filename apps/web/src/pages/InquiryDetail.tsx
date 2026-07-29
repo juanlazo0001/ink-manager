@@ -47,6 +47,7 @@ import {
   TagIcon,
 } from '../components/icons'
 import { useEffectiveUser } from '../context/useEffectiveUser'
+import { useUserProfile } from '../context/useUserProfile'
 import { useViewAs } from '../context/useViewAs'
 import { useConversationPanel } from '../context/useConversationPanel'
 import { artistsQueryKey, inquiriesQueryKey, inquiryQueryKey } from '../lib/queryKeys'
@@ -372,11 +373,18 @@ export default function InquiryDetail() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const user = useEffectiveUser()
+  const { profile } = useUserProfile()
   const { target: viewAsTarget } = useViewAs()
   const queryClient = useQueryClient()
   const { openPanel } = useConversationPanel()
   const canMessage = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
   const isOwner = user?.role === 'OWNER'
+  // Mark as lost has its own granular permission (inquiries.markLost) a
+  // studio can revoke from FRONT_DESK independently of everything else
+  // canMessage gates -- checked separately so the button (and the backend
+  // call it makes) agree, instead of the button showing regardless and the
+  // API 403ing on submit.
+  const canMarkLost = profile?.permissions.includes('inquiries.markLost') ?? false
   const [startingConversation, setStartingConversation] = useState(false)
 
   async function handleMessage() {
@@ -2037,7 +2045,7 @@ export default function InquiryDetail() {
                               aria-hidden="true"
                             />
                             <div className="absolute right-0 top-9 z-20 w-48 rounded-xl border border-border bg-surface-raised p-1 shadow-xl">
-                              {canMessage && !isTerminal && (
+                              {canMessage && canMarkLost && !isTerminal && (
                                 <button
                                   type="button"
                                   onClick={() => {
@@ -2249,13 +2257,15 @@ export default function InquiryDetail() {
                       >
                         Schedule Consultation
                       </button>
-                      <button
-                        type="button"
-                        onClick={handleOpenNotACandidate}
-                        className="rounded-full border border-danger/40 px-4 py-2 text-sm font-medium text-danger transition hover:bg-danger/10"
-                      >
-                        Not a Candidate
-                      </button>
+                      {canMarkLost && (
+                        <button
+                          type="button"
+                          onClick={handleOpenNotACandidate}
+                          className="rounded-full border border-danger/40 px-4 py-2 text-sm font-medium text-danger transition hover:bg-danger/10"
+                        >
+                          Not a Candidate
+                        </button>
+                      )}
                     </div>
                   )}
 

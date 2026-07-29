@@ -4020,3 +4020,70 @@ This app is a client-side-only Vite SPA with no server-side rendering or prerend
 ## Cleanup
 
 Killed the web dev server (`:5182`) started for this session's local verification. Deleted every ad-hoc `.mjs` verification/screenshot script and screenshot from the scratch directory afterward. Left the unrelated concurrent working-tree changes (both branding PNGs, the untracked marketing screenshot HTML) untouched; the `Modal.tsx` scroll-lock fix seen mid-session as an unstaged concurrent change was committed by that other work itself (`f22d451`/`745758c`, already on `main` before this session's own commit) -- not authored or staged by this session.
+
+---
+
+# Permissions sweep: OWNER / FRONT_DESK / ARTIST, prompted by a reported Inquiry Detail bug
+
+Single session on `main`. Triggering report: "Inquiry details don't load when you are front desk, which should not be the case." Investigated that specific claim first, then broadened into a systematic Playwright sweep of every major page as all three staff roles, since the root cause turned out to be a general bug *shape* (not a one-off), and the sweep found three more real instances of related shapes plus one confirmed live UX bug. No schema changes.
+
+## 1. The reported bug: `intake-forms/:id/fields` 403s for FRONT_DESK (and ARTIST) — fixed
+
+Root cause was **Express middleware registration order**, not the permission/role config itself (which was already correct — `inquiries.view` is `true` for FRONT_DESK in both `DEFAULT_ROLE_PERMISSIONS` and this dev studio's own explicit override). `apps/api/src/routes/intakeForms.ts` had:
+
+```
+router.get("/", requireRole(OWNER, FRONT_DESK, ARTIST), ...)   // line 19
+router.use(requireRole(OWNER));                                 // line 27 -- blanket, applies to everything below
+...
+router.get("/:id/fields", requireRole(OWNER, FRONT_DESK, ARTIST), ...)  // line 152 -- unreachable for non-OWNER
+```
+
+Express evaluates middleware in registration order — the blanket `router.use(requireRole(OWNER))` at line 27 already rejects a FRONT_DESK/ARTIST request with 403 before it ever reaches line 152's own (broader) `requireRole`, making that route's stated role list dead code. Confirmed by checking every other `router.use(requireRole(...))` blanket in the API (`calendarPreferences.ts`, `conversations.ts`, `integrations.ts`, `jobs.ts`, `navCounts.ts`, `scheduling.ts`, `search.ts`, `services.ts`, `tasks.ts`, `widgetLayouts.ts`) — `intakeForms.ts` was the only one where a broader per-route gate was registered *after* a narrower blanket one; `waivers.ts` has the identical shape done correctly (narrow ARTIST-inclusive `/:id/status` registered *before* its `OWNER, FRONT_DESK`-only blanket), confirming this is a known-correct pattern the fixed file just had backwards.
+
+**Fix**: moved the `GET /:id/fields` handler to before the blanket `router.use(requireRole(OWNER))`, same position as the already-correct `GET "/"` above it.
+
+**Downstream effect on the actual reported symptom**: `InquiryDetail.tsx`'s "Inquiry Details" widget (`InquiryDetailsSection.tsx`) fetches this exact endpoint to render the studio's live intake-form fields (placement, size, color, budget, etc.) against the inquiry's answers; that component's own fetch is wrapped in `.catch(() => { /* section just doesn't render if this fails */ })` — so the 403 didn't crash the page, it silently produced an **empty "Inquiry Details" section** for FRONT_DESK, which is what "doesn't load" meant in practice. Confirmed live: FRONT_DESK now sees the full field list, matching OWNER.
+
+## 2. Dashboard crashes for ARTIST with `TypeError: Cannot read properties of undefined (reading 'conversionRate')` — fixed
+
+Found via a systematic per-role page sweep (18 pages x 3 roles, Playwright, watching console errors + failed network requests), not from the reported bug directly. A real ErrorBoundary-caught crash, not a console warning.
+
+Root cause: an incomplete rollout of a previous session's own `reports.viewFinancial` permission split (see this file's earlier "Granular permissions expansion" entry). `apps/api/src/routes/reports.ts` was deliberately changed to **omit** `depositConversion`/`giftCardLiability` from the `GET /reports/dashboard` response entirely (not zero them) for a role without `reports.viewFinancial` — ARTIST, by that same session's own explicit, documented design choice — specifically so the frontend could "tell 'no data' apart from 'not allowed' and hide the section." The frontend (`Dashboard.tsx`) was never updated to match: its `ReportsDashboard` interface declared both fields non-optional, and two `CardShell`s read `data.depositConversion.conversionRate` / `data.giftCardLiability.totalCents` unconditionally — crashing the whole page for ARTIST the moment they load `/dashboard`, which is also their post-login landing page.
+
+**Fix**: marked both fields optional on the interface, wrapped both cards in `{data.depositConversion && (...)}` / `{data.giftCardLiability && (...)}`. Verified live: ARTIST's dashboard now renders cleanly (funnel, lost/cold rate, response time, artist utilization) without the two financial cards; OWNER/FRONT_DESK unaffected.
+
+## 3. ARTIST's own sidebar links to "Clients," which is 403-only for them — fixed
+
+Also found via the sweep, then confirmed as reachable through completely normal navigation (not just a manually-typed URL): `Sidebar.tsx`'s `NAV_ITEMS` had no `roles` restriction on "Clients" at all, unlike "Inquiries & Projects" (already correctly `roles: ['OWNER', 'FRONT_DESK']`) right next to it. ARTIST has no `clients.view` permission by default, and this dev studio's own override set also explicitly has `ARTIST / clients.view = false`. Live repro: logged in as ARTIST, "Clients" is present and clickable in the sidebar, leads to `/clients`, which 403s and renders as a **permanently, silently empty table** — no error shown, indistinguishable from "this studio genuinely has zero clients."
+
+**Fix**: gated the nav item on the actual `clients.view` permission (`profile.permissions.includes('clients.view')`) rather than a hardcoded role list, so it also follows a studio's own Settings → Permissions customization (e.g., an OWNER later granting ARTIST `clients.view`) instead of needing a second code change. This required confirming `profile.permissions` (from `GET /users/me`) is reliably correct during an active "View As" session too — it is: `ViewAsContext.tsx` already explicitly calls `refreshProfile()` on both activate and deactivate. Verified live for all three roles: ARTIST no longer sees "Clients"; OWNER and FRONT_DESK still do.
+
+Also gated `AppointmentDetail.tsx`'s "Activity History" widget (an `AuditTrail` call, unconditional before this fix) on `audit.view`, since the sweep caught the same shape there for ARTIST — not a crash, but a raw "Forbidden" string rendered mid-page instead of the section just not appearing.
+
+## 4. Confirmed, but not from the sweep — "Mark as lost" ignores a studio's own permission override — fixed
+
+Separate from the sweep, prompted by noticing this dev studio's `RolePermission` table has an explicit, deliberate `FRONT_DESK / inquiries.markLost = false` override (every other `inquiries.*` key is `true` for FRONT_DESK — this one specifically toggled off, clearly a real customization, not a stray default). `InquiryDetail.tsx`'s "Mark as lost" button (More-actions menu) and "Not a Candidate" button (candidacy-review flow, same underlying action) were gated only by the coarse `canMessage = role === OWNER || role === FRONT_DESK`, never checking the actual `inquiries.markLost` permission. Live repro: FRONT_DESK sees "Mark as lost," fills out the confirmation modal, submits, and gets a raw **"Forbidden"** error rendered on the page — the API correctly enforces the override, the UI just never knew to hide the button.
+
+**Fix**: added `canMarkLost = profile.permissions.includes('inquiries.markLost')`, required alongside `canMessage` for both entry points. Verified live: hidden for FRONT_DESK under this studio's actual override; still visible for OWNER (always has every permission).
+
+## A broader pattern flagged, not chased further this session
+
+Items 3 and 4 are two confirmed instances of the same general shape: `InquiryDetail.tsx` and other pages have **~14** call sites already correctly using the granular `profile.permissions.includes(...)` system (`clients.edit`, `artists.manage`, `waivers.generate`, etc.), but a larger number of buttons/sections across the app — assign-artist, send-estimate, notes-manage, share-with-artist, archive, and more — are still gated only by coarse `role === 'OWNER'`/`role === 'FRONT_DESK'` checks left over from before the granular permission matrix existed. Any of these will show a button a studio has specifically toggled off in Settings → Permissions, and fail with a raw error on submit, exactly like #3 and #4 above. This dev studio happens to have a full explicit override row for every key (apparently saved once from the Permissions tab's UI), which is what made 3 and 4 concretely reproducible here rather than theoretical — a studio using pure defaults wouldn't currently hit either, since the defaults happen to match the old hardcoded role checks. Not fixing every instance in this session (it's a real, separate, page-by-page audit and fix effort); flagging it here as the actual scope of the underlying issue class rather than claiming this session closed it completely.
+
+## Also checked, no issues found
+
+- **Cross-studio boundaries**: a second dev studio's OWNER token against `dev-studio`'s own inquiry/client/appointment/artist IDs — all four correctly `404` (not `403`, matching this codebase's existing not-found-not-forbidden convention for cross-tenant access, so existence isn't leaked). That studio's own `GET /clients` correctly returns only its own 2 rows.
+- **ARTIST's remaining sweep `⚠`s** (`/inquiries`, `/inquiries/:id`, `/clients`, `/clients/:id` all 403 for ARTIST on direct URL entry) are all intentional, by-design restrictions matching `DEFAULT_ROLE_PERMISSIONS` and this studio's own override — and, after the Sidebar fix in #3, none of them are linked from ARTIST's own nav anymore, so they're only reachable by manually typing a URL. Correct hardening, not a bug.
+- Full three-role, 18-page-each regression sweep re-run after all four fixes above: clean except for the intentional ARTIST direct-URL 403s just described.
+
+## Typechecks
+
+`npx tsc -b` (web) and `npx tsc --noEmit` (api) -- both clean, run after each individual fix and again at the end.
+
+## Commit
+
+`TBD` on `main`.
+
+## Cleanup
+
+Playwright and Chromium were installed ad hoc into the scratch directory (not a project dependency); the whole scratch `pw` directory (driver scripts, screenshots, the standalone dev-DB lookup script) was deleted at the end. Killed the two scratch dev server processes used for this session (api `:4030`, web `:5210` -- chosen to avoid the concurrent session already holding `:5173`). No dev-database rows were created or modified by this session -- every check was read-only against existing seeded data (the one write, a test "Mark as lost" submission during the FRONT_DESK repro, correctly 403'd before it could persist anything).

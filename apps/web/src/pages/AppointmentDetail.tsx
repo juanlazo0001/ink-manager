@@ -19,6 +19,7 @@ import { formatCents, dollarsToCents } from '../lib/money'
 import { ArrowLeftIcon, CheckIcon, ClientsIcon, CopyIcon, DocumentIcon, MessageIcon, MoreIcon } from '../components/icons'
 import { ArtistAvatar, artistLabel } from '../components/ArtistAvatar'
 import { useEffectiveUser } from '../context/useEffectiveUser'
+import { useUserProfile } from '../context/useUserProfile'
 import { useConversationPanel } from '../context/useConversationPanel'
 import { appointmentsQueryKey } from '../lib/queryKeys'
 import ImageUploadSection, { type ImageUploadState } from '../components/ImageUploadSection'
@@ -156,9 +157,11 @@ export default function AppointmentDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const user = useEffectiveUser()
+  const { profile } = useUserProfile()
   const queryClient = useQueryClient()
   const { openPanel } = useConversationPanel()
   const canManage = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
+  const canViewAudit = profile?.permissions.includes('audit.view') ?? false
   const [startingConversation, setStartingConversation] = useState(false)
 
   const [appointment, setAppointment] = useState<Appointment | null>(null)
@@ -1501,9 +1504,11 @@ export default function AppointmentDetail() {
                 </Widget>
               )}
 
-              <Widget key="activity-history" id="activity-history" title="Activity History">
-                <AuditTrail bare entityType="Appointment" entityId={appointment.id} />
-              </Widget>
+              {canViewAudit && (
+                <Widget key="activity-history" id="activity-history" title="Activity History">
+                  <AuditTrail bare entityType="Appointment" entityId={appointment.id} />
+                </Widget>
+              )}
               </ReorderableWidgetList>
 
               {showRescheduleModal && (

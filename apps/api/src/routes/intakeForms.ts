@@ -24,6 +24,33 @@ router.get("/", requireRole(Role.OWNER, Role.FRONT_DESK, Role.ARTIST), async (re
   res.json(forms);
 });
 
+// Staff-facing field list for ONE form -- moved here from
+// GET /studio-settings/intake-form-fields once a studio could have more
+// than one form. Returns every field including disabled ones, since the
+// Settings editor needs to show (and let OWNER re-enable) a field a studio
+// previously turned off, not just what the public form currently renders.
+// Same any-staff-role read visibility as GET "/" above, so it's declared
+// before the OWNER-only router.use(...) below -- placing it after would
+// have that blanket gate 403 FRONT_DESK/ARTIST before this route's own
+// (broader) requireRole ever ran, since Express evaluates middleware in
+// registration order.
+router.get("/:id/fields", requireRole(Role.OWNER, Role.FRONT_DESK, Role.ARTIST), async (req, res) => {
+  const studioId = req.user!.studioId;
+  const formId = req.params.id as string;
+
+  const form = await prisma.intakeForm.findUnique({ where: { id: formId } });
+  if (!form || form.studioId !== studioId) {
+    return res.status(404).json({ error: "Intake form not found" });
+  }
+
+  await ensureDefaultSystemFields(studioId, formId);
+  const fields = await prisma.intakeFormField.findMany({
+    where: { intakeFormId: formId },
+    orderBy: { order: "asc" },
+  });
+  res.json(fields);
+});
+
 router.use(requireRole(Role.OWNER));
 
 router.post("/", async (req, res) => {
@@ -142,28 +169,6 @@ router.delete("/:id", async (req, res) => {
   });
 
   res.json({ success: true });
-});
-
-// Staff-facing field list for ONE form -- moved here from
-// GET /studio-settings/intake-form-fields once a studio could have more
-// than one form. Returns every field including disabled ones, since the
-// Settings editor needs to show (and let OWNER re-enable) a field a studio
-// previously turned off, not just what the public form currently renders.
-router.get("/:id/fields", requireRole(Role.OWNER, Role.FRONT_DESK, Role.ARTIST), async (req, res) => {
-  const studioId = req.user!.studioId;
-  const formId = req.params.id as string;
-
-  const form = await prisma.intakeForm.findUnique({ where: { id: formId } });
-  if (!form || form.studioId !== studioId) {
-    return res.status(404).json({ error: "Intake form not found" });
-  }
-
-  await ensureDefaultSystemFields(studioId, formId);
-  const fields = await prisma.intakeFormField.findMany({
-    where: { intakeFormId: formId },
-    orderBy: { order: "asc" },
-  });
-  res.json(fields);
 });
 
 // Full-list replace, scoped to one form -- the drag-and-drop editor always

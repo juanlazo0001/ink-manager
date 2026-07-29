@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { AppointmentsIcon, ClientsIcon, DashboardIcon, DocumentIcon, MenuIcon, TeamIcon } from './icons'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useViewAs } from '../context/useViewAs'
+import { useUserProfile } from '../context/useUserProfile'
 import { useStudio } from '../context/useStudio'
 import { apiFetch } from '../lib/api'
 import { clientsQueryKey, inquiriesQueryKey } from '../lib/queryKeys'
@@ -18,6 +19,11 @@ interface NavItem {
   to?: string
   icon: ComponentType<{ className?: string }>
   roles?: string[]
+  // Checked against the effective user's granular permissions (respects a
+  // studio's own Settings -> Permissions overrides, unlike the coarser
+  // `roles` list above) -- use this over `roles` whenever the item maps
+  // cleanly onto a single existing permission key.
+  permission?: string
   section?: NavCountSection
 }
 
@@ -29,13 +35,20 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Inquiries & Projects', to: '/inquiries', icon: DocumentIcon, roles: ['OWNER', 'FRONT_DESK'], section: 'inquiries' },
   { label: 'My Inquiries', to: '/my-inquiries', icon: DocumentIcon, roles: ['ARTIST'], section: 'inquiries' },
   { label: 'Calendar', to: '/calendar', icon: AppointmentsIcon, section: 'appointments' },
-  { label: 'Clients', to: '/clients', icon: ClientsIcon, section: 'clients' },
+  // ARTIST has no clients.view permission by default -- the API 403s the
+  // list/detail routes for a role lacking it, so showing the link
+  // unconditionally led to a permanently-empty, silently-broken page for
+  // any role a studio hasn't granted this to. Permission-gated (not a
+  // hardcoded roles list) so it also follows a studio's own Settings ->
+  // Permissions customization, e.g. an OWNER granting ARTIST clients.view.
+  { label: 'Clients', to: '/clients', icon: ClientsIcon, permission: 'clients.view', section: 'clients' },
   { label: 'Team', to: '/team', icon: TeamIcon, roles: ['OWNER'] },
 ]
 
 export default function Sidebar() {
   const location = useLocation()
   const user = useEffectiveUser()
+  const { profile } = useUserProfile()
   const { target: viewAsTarget } = useViewAs()
   const { studio, loading: studioLoading } = useStudio()
   const queryClient = useQueryClient()
@@ -145,7 +158,11 @@ export default function Sidebar() {
         </p>
 
         <nav className={isEditorial ? 'mt-2 flex flex-col gap-1 px-1' : 'mt-2 flex flex-col gap-1'}>
-          {NAV_ITEMS.filter((item) => !item.roles || (user?.role && item.roles.includes(user.role))).map(
+          {NAV_ITEMS.filter(
+            (item) =>
+              (!item.roles || (user?.role && item.roles.includes(user.role))) &&
+              (!item.permission || (profile?.permissions.includes(item.permission) ?? false)),
+          ).map(
             ({ label, to, icon: Icon, section }) => {
               const isActive = to != null && (location.pathname === to || location.pathname.startsWith(`${to}/`))
               const itemClassName = isEditorial

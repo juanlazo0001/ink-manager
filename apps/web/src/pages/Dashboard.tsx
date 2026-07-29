@@ -31,8 +31,11 @@ interface ReportsDashboard {
     sampleSizeResponse: number
   }
   artistUtilization: { artistId: string; name: string; appointmentCount: number }[]
-  depositConversion: { sent: number; paid: number; conversionRate: number | null; avgHoursToPayment: number | null }
-  giftCardLiability: { activeCardCount: number; totalCents: number }
+  // Omitted entirely (not sent as null/zeroed) by the API for a role
+  // without reports.viewFinancial -- absent, not just empty, so it must be
+  // checked before rendering rather than assumed present.
+  depositConversion?: { sent: number; paid: number; conversionRate: number | null; avgHoursToPayment: number | null }
+  giftCardLiability?: { activeCardCount: number; totalCents: number }
 }
 
 // Bucketed on the magnitude, sign kept separate -- a negative value (only
@@ -224,29 +227,33 @@ export default function Dashboard() {
                 />
               </CardShell>
 
-              <CardShell title="Deposit Conversion" caption="All-time, not affected by the date range above">
-                <div className={isEditorial ? 'flex items-center gap-3' : 'flex items-center gap-2'}>
-                  <CheckIcon className={isEditorial ? 'h-4 w-4 text-danger-strong' : 'h-4 w-4 text-fg-muted'} />
-                  <p className={bigStatClass(isEditorial, 'xl')}>{formatPct(data.depositConversion.conversionRate)}</p>
-                </div>
-                <p className="mt-1 text-xs text-fg-muted">
-                  {data.depositConversion.paid} of {data.depositConversion.sent} deposit forms sent have been paid
-                </p>
-                <p className="mt-3 text-sm text-fg-secondary">
-                  Avg time to payment: <span className="font-medium text-fg">{formatHours(data.depositConversion.avgHoursToPayment)}</span>
-                </p>
-              </CardShell>
+              {data.depositConversion && (
+                <CardShell title="Deposit Conversion" caption="All-time, not affected by the date range above">
+                  <div className={isEditorial ? 'flex items-center gap-3' : 'flex items-center gap-2'}>
+                    <CheckIcon className={isEditorial ? 'h-4 w-4 text-danger-strong' : 'h-4 w-4 text-fg-muted'} />
+                    <p className={bigStatClass(isEditorial, 'xl')}>{formatPct(data.depositConversion.conversionRate)}</p>
+                  </div>
+                  <p className="mt-1 text-xs text-fg-muted">
+                    {data.depositConversion.paid} of {data.depositConversion.sent} deposit forms sent have been paid
+                  </p>
+                  <p className="mt-3 text-sm text-fg-secondary">
+                    Avg time to payment: <span className="font-medium text-fg">{formatHours(data.depositConversion.avgHoursToPayment)}</span>
+                  </p>
+                </CardShell>
+              )}
 
-              <CardShell title="Outstanding Gift Card Liability" caption="Right now, not affected by the date range above">
-                <div className={isEditorial ? 'flex items-center gap-3' : 'flex items-center gap-2'}>
-                  <TagIcon className={isEditorial ? 'h-4 w-4 text-accent' : 'h-4 w-4 text-fg-muted'} />
-                  <p className={bigStatClass(isEditorial, 'xl')}>{formatCents(data.giftCardLiability.totalCents)}</p>
-                </div>
-                <p className="mt-1 text-xs text-fg-muted">
-                  across {data.giftCardLiability.activeCardCount} active, unredeemed gift card
-                  {data.giftCardLiability.activeCardCount === 1 ? '' : 's'}
-                </p>
-              </CardShell>
+              {data.giftCardLiability && (
+                <CardShell title="Outstanding Gift Card Liability" caption="Right now, not affected by the date range above">
+                  <div className={isEditorial ? 'flex items-center gap-3' : 'flex items-center gap-2'}>
+                    <TagIcon className={isEditorial ? 'h-4 w-4 text-accent' : 'h-4 w-4 text-fg-muted'} />
+                    <p className={bigStatClass(isEditorial, 'xl')}>{formatCents(data.giftCardLiability.totalCents)}</p>
+                  </div>
+                  <p className="mt-1 text-xs text-fg-muted">
+                    across {data.giftCardLiability.activeCardCount} active, unredeemed gift card
+                    {data.giftCardLiability.activeCardCount === 1 ? '' : 's'}
+                  </p>
+                </CardShell>
+              )}
             </div>
           ) : null}
         </div>
