@@ -38,10 +38,24 @@
 // in-app navigation. One content source, two render paths (this static
 // file for the first/direct hit, the React route for anyone already
 // inside the loaded SPA) -- not a second copy to keep in sync by hand.
-// That file has zero TypeScript-specific syntax (no type annotations),
-// so it's loaded here via esbuild's transform (already a transitive
-// dependency of Vite, no new package needed) rather than requiring a
-// dedicated TS-execution toolchain for one small build script.
+//
+// That file has zero TypeScript-specific syntax (no type annotations,
+// no imports at all -- just two `export const NAME = \`...\`` template
+// literals), which is exactly why it's loaded here via a `data:` URL
+// dynamic import rather than a real TS/bundler toolchain: its text is
+// already valid, standalone ECMAScript-module syntax as-is, so Node can
+// import it directly with zero transformation. An earlier version of
+// this script used `esbuild`'s transform for this (unnecessary, given
+// the above) without ever declaring it as a real dependency anywhere in
+// package.json -- it only resolved locally because esbuild is a
+// transitive dependency of Vite, hoisted into this npm workspace's root
+// node_modules, reachable from any package during local dev/build.
+// Railway's actual production build container does not expose that
+// hoisted transitive package the same way (`Cannot find package
+// 'esbuild'`, confirmed against a real production build failure, not a
+// local repro) -- a real, silent local/production drift this data-URL
+// approach avoids entirely, rather than papering over by adding
+// `esbuild` as an explicit dependency it doesn't actually need.
 //
 // No DOMPurify pass here (unlike the React render path) -- this content
 // is fixed, developer-authored copy, not user input, and DOMPurify is a
@@ -49,25 +63,19 @@
 // project. Trusted at the source, same as it already is in
 // platformPolicies.ts itself.
 
-import { transformSync } from 'esbuild'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import Module from 'node:module'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const webRoot = path.resolve(__dirname, '..')
 const contentPath = path.join(webRoot, 'src/content/platformPolicies.ts')
 const distDir = path.join(webRoot, 'dist')
 
-function loadPlatformPolicies() {
+async function loadPlatformPolicies() {
   const source = fs.readFileSync(contentPath, 'utf8')
-  const { code } = transformSync(source, { loader: 'ts', format: 'cjs' })
-  const mod = new Module(contentPath)
-  mod.filename = contentPath
-  mod.paths = Module._nodeModulePaths(path.dirname(contentPath))
-  mod._compile(code, contentPath)
-  return mod.exports
+  const dataUrl = `data:text/javascript;charset=utf-8,${encodeURIComponent(source)}`
+  return import(dataUrl)
 }
 
 function renderPage(title, bodyHtml) {
@@ -149,6 +157,6 @@ if (!fs.existsSync(distDir)) {
   throw new Error(`dist/ not found at ${distDir} -- run vite build before this script`)
 }
 
-const { PLATFORM_PRIVACY_POLICY_HTML, PLATFORM_TERMS_HTML } = loadPlatformPolicies()
+const { PLATFORM_PRIVACY_POLICY_HTML, PLATFORM_TERMS_HTML } = await loadPlatformPolicies()
 writePage('privacy', 'Privacy Policy', PLATFORM_PRIVACY_POLICY_HTML)
 writePage('terms', 'Terms & Conditions', PLATFORM_TERMS_HTML)
