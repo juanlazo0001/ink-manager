@@ -36,6 +36,8 @@ import { appointmentsQueryKey, appointmentsRangeQueryKey } from '../lib/queryKey
 import { useMarkSectionSeen } from '../lib/useMarkSectionSeen'
 import { colorForArtistId } from '../lib/artistColors'
 import { useCalendarPreferences, type CalendarPreferences } from '../lib/useCalendarPreferences'
+import { useThemePreset } from '../lib/useThemePreset'
+import Eyebrow from '../components/Eyebrow'
 
 const localizer = dayjsLocalizer(dayjs)
 
@@ -264,32 +266,31 @@ function viewsAsArray(views: ViewsProps<CalEvent, ArtistResource>): View[] {
 
 function CalendarToolbar({ date, label, view, views, onNavigate, onView }: ToolbarProps<CalEvent, ArtistResource>) {
   const viewList = viewsAsArray(views)
+  // Self-gating like Eyebrow/StatusPill -- this is its own function
+  // component (a react-big-calendar Components.toolbar override), so it
+  // reads the theme directly rather than needing it threaded down as a prop.
+  const { shape } = useThemePreset()
+  const isEditorial = shape === 'editorial'
+
+  const navBtnClass = isEditorial
+    ? 'editorial-btn-secondary rounded-full border px-3 py-1.5 transition'
+    : 'rounded-full border border-border px-3 py-1.5 text-sm font-medium text-fg transition hover:bg-surface'
 
   return (
     <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
       <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => onNavigate('TODAY')}
-          className="rounded-full border border-border px-3 py-1.5 text-sm font-medium text-fg transition hover:bg-surface"
-        >
+        <button type="button" onClick={() => onNavigate('TODAY')} className={navBtnClass}>
           Today
         </button>
-        <button
-          type="button"
-          onClick={() => onNavigate('PREV')}
-          className="rounded-full border border-border px-3 py-1.5 text-sm font-medium text-fg transition hover:bg-surface"
-        >
+        <button type="button" onClick={() => onNavigate('PREV')} className={navBtnClass}>
           Back
         </button>
-        <button
-          type="button"
-          onClick={() => onNavigate('NEXT')}
-          className="rounded-full border border-border px-3 py-1.5 text-sm font-medium text-fg transition hover:bg-surface"
-        >
+        <button type="button" onClick={() => onNavigate('NEXT')} className={navBtnClass}>
           Next
         </button>
-        <span className="ml-2 text-sm font-semibold text-fg">{label}</span>
+        <span className={isEditorial ? 'ml-2 font-display text-base font-normal text-fg' : 'ml-2 text-sm font-semibold text-fg'}>
+          {label}
+        </span>
       </div>
 
       <div className="flex items-center gap-3">
@@ -313,15 +314,22 @@ function CalendarToolbar({ date, label, view, views, onNavigate, onView }: Toolb
         </div>
 
         {viewList.length > 1 && (
-        <div className="flex gap-1 rounded-full border border-border p-1">
+        <div className={isEditorial ? 'flex gap-0.5 rounded-full bg-surface p-[3px]' : 'flex gap-1 rounded-full border border-border p-1'}>
           {viewList.map((v) => (
             <button
               key={v}
               type="button"
               onClick={() => onView(v)}
-              className={`rounded-full px-3 py-1 text-xs font-medium capitalize transition ${
-                v === view ? 'bg-accent text-bg' : 'text-fg-secondary hover:bg-surface'
-              }`}
+              className={
+                isEditorial
+                  ? [
+                      'editorial-btn-secondary rounded-full border px-3 py-1 capitalize transition',
+                      v === view ? 'border-accent bg-accent/10 text-accent' : 'border-transparent text-fg-muted hover:border-border-strong',
+                    ].join(' ')
+                  : `rounded-full px-3 py-1 text-xs font-medium capitalize transition ${
+                      v === view ? 'bg-accent text-bg' : 'text-fg-secondary hover:bg-surface'
+                    }`
+              }
             >
               {v}
             </button>
@@ -335,6 +343,8 @@ function CalendarToolbar({ date, label, view, views, onNavigate, onView }: Toolb
 
 export default function Calendar() {
   const { user } = useAuth()
+  const { shape } = useThemePreset()
+  const isEditorial = shape === 'editorial'
   const effectiveUser = useEffectiveUser()
   const { profile } = useUserProfile()
   const isArtist = effectiveUser?.role === 'ARTIST'
@@ -824,12 +834,23 @@ export default function Calendar() {
         <div className="mx-auto max-w-7xl px-6 py-6 sm:px-10 sm:py-8">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-bold text-fg sm:text-3xl">Calendar</h1>
-              <p className="mt-1 text-sm text-fg-secondary">
-                {canManageCalendar
-                  ? 'Every booking across your studio. Click a slot to book, drag to reschedule.'
-                  : 'Your upcoming and past appointments.'}
-              </p>
+              {isEditorial && <Eyebrow>The studio's own schedule.</Eyebrow>}
+              <h1
+                className={
+                  isEditorial
+                    ? 'mt-1 font-display text-[clamp(28px,3.4vw,38px)] font-normal tracking-[-0.015em] text-fg'
+                    : 'text-2xl font-bold text-fg sm:text-3xl'
+                }
+              >
+                Calendar
+              </h1>
+              {!isEditorial && (
+                <p className="mt-1 text-sm text-fg-secondary">
+                  {canManageCalendar
+                    ? 'Every booking across your studio. Click a slot to book, drag to reschedule.'
+                    : 'Your upcoming and past appointments.'}
+                </p>
+              )}
             </div>
           </div>
 
@@ -843,11 +864,18 @@ export default function Calendar() {
                     key={artist.id}
                     type="button"
                     onClick={() => toggleArtistFilter(artist.id)}
-                    className={`flex items-center gap-1.5 rounded-full border py-1 pl-1 pr-3 text-xs font-medium transition ${
-                      active
-                        ? 'border-accent bg-accent/10 text-accent'
-                        : 'border-border text-fg-muted hover:bg-surface'
-                    }`}
+                    className={
+                      isEditorial
+                        ? [
+                            'editorial-btn-secondary flex items-center gap-1.5 rounded-full border py-1 pl-1 pr-3 transition',
+                            active ? 'border-accent bg-accent/10 text-accent' : 'border-transparent text-fg-muted hover:border-border-strong',
+                          ].join(' ')
+                        : `flex items-center gap-1.5 rounded-full border py-1 pl-1 pr-3 text-xs font-medium transition ${
+                            active
+                              ? 'border-accent bg-accent/10 text-accent'
+                              : 'border-border text-fg-muted hover:bg-surface'
+                          }`
+                    }
                   >
                     <ArtistAvatar artist={artist} className="h-5 w-5" />
                     {artistDisplayName(artist)}
@@ -880,7 +908,11 @@ export default function Calendar() {
                   setSelectedLocationId(event.target.value)
                   updateCalendarPreferences({ selectedLocationId: event.target.value })
                 }}
-                className="rounded-full border border-border bg-surface-inset px-3 py-1 text-xs font-medium text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                className={
+                  isEditorial
+                    ? 'editorial-btn-secondary rounded-full border px-3 py-1 transition focus:border-accent focus:outline-none'
+                    : 'rounded-full border border-border bg-surface-inset px-3 py-1 text-xs font-medium text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
+                }
               >
                 {locations.map((location) => (
                   <option key={location.id} value={location.id}>
@@ -941,7 +973,14 @@ export default function Calendar() {
               fade-slide-up every other "new content just appeared" moment
               in this app already uses, not a bespoke calendar-only motion. */}
           <div key={`${effectiveView}-${dayjs(date).format('YYYY-MM-DD')}`} className="animate-fade-slide-up">
-            <div className="mt-4 rounded-2xl card-surface border border-border bg-surface p-4 sm:p-5">
+            {/* No .card-surface here, deliberately -- the calendar grid is
+                dense, information-critical content (same category as
+                Conversations' thread list), not a glass-treatment
+                candidate. It had .card-surface applied (likely from an
+                earlier broad template pass, not a deliberate choice) --
+                removed so it stays fully solid/opaque under Editorial
+                Gold, matching the rule already applied to Conversations. */}
+            <div className="mt-4 rounded-2xl border border-border bg-surface p-4 sm:p-5">
               {isLoading ? (
                 <p className="text-sm text-fg-secondary">Loading…</p>
               ) : (
