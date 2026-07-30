@@ -4704,3 +4704,54 @@ Simplified `AppRoutes` considerably in the process -- the iris version needed a 
 ## Cleanup
 
 Dev servers killed via PowerShell `Stop-Process` by exact PID. Scratch scripts and screenshots deleted afterward.
+
+---
+
+# Editorial Gold — propagate to Calendar, Clients, Team
+
+Three-page propagation session on `main`, one commit per page as a checkpoint per the task's own instruction. Editorial Gold only, `onyx-lime` re-confirmed unaffected on every page.
+
+**One thing found before any styling work began**: `.card-surface` was already present on Calendar's grid wrapper, Clients' table wrapper, and Team's staff table + permissions matrix wrappers -- inherited from an earlier broad template pass, not a deliberate choice. Since the frosted-glass rule fires purely off `[data-theme="editorial-gold"] .card-surface` (theme-global, not page-scoped), this meant all four of those dense, information-critical surfaces would have silently gone translucent the moment Editorial Gold activated anywhere -- the exact mistake this task's own headline rule warns about, already latent before this session touched anything. Removed on all four; called out explicitly per page below.
+
+## Calendar (`091d050`)
+
+- Serif eyebrow+heading; `CalendarToolbar` (its own react-big-calendar `Components.toolbar` override, a separate function component) now self-gates via `useThemePreset()` the same way `Eyebrow`/`StatusPill` do -- Today/Back/Next buttons and the Month/Week/Day segmented control both get the gold-outline treatment, active view gets the filled-active-segment look already established on Conversations' Clients/Team toggle. Artist filter chips and the location `<select>` reuse the same secondary-button pattern.
+- `.card-surface` removed from the calendar-grid wrapper -- grid and appointment blocks stay fully solid.
+- No "New Appointment" toolbar button exists on this page (the task brief assumed one; checked the actual code -- creation is click-to-create-a-slot only, permission-gated) -- nothing to wire there.
+- **Functionality verified, not assumed**: keyboard shortcuts (`T` for today, arrow-key navigation) both confirmed via toolbar-label state checks; drag-and-drop confirmed via network trace -- dragging an event block to a new day produced a real `PATCH /appointments/:id` returning `200`, i.e. an actual successful reschedule, not just a visual drag.
+
+## Clients (`b49e4f1`)
+
+- Serif eyebrow+heading, gold-fill "Add Client" / gold-outline "Import Clients" buttons.
+- `.card-surface` removed from the client table wrapper -- table stays fully solid. Row-click-to-navigate confirmed still works.
+- Add Client modal's internal form fields left untouched -- outside the task's explicit scope (header + toolbar + list), and `Modal.tsx` itself is already theme-aware.
+
+## Team (`07a440f`)
+
+Already had partial Editorial Gold wiring from an earlier session (header, Staff-tab buttons, tabs) -- confirmed those still correct rather than redone from scratch, and finished the rest:
+
+- Artists-tab "Add Artist" button and Permissions' "Save changes" button now use `editorial-btn-primary` (previously plain, unwired).
+- `.card-surface` removed from the staff table and permissions matrix wrappers (same latent issue as Calendar/Clients) -- both confirmed `backdrop-filter: none`.
+- **Artist profile cards kept `.card-surface`, deliberately** -- discrete, card-shaped content (photo/name/bio/tags), the reasonable glass candidate this task's own rule calls out. Confirmed via computed style: all 11 rendered cards show `backdrop-filter: blur(16px)`, both dense-list wrappers show `none`.
+- Tabs (Staff/Artists/Permissions) investigated per the task's own question ("should these pick up the Conversations tab restyle pattern") -- they already use the identical underline classNames (confirmed byte-for-byte against `ConversationsPanel.tsx`'s own Clients/Team toggle and `Inquiries.tsx`'s original), so no change was needed; noting this explicitly rather than leaving it unaddressed.
+- `StatusPill` already correctly used on the staff table (Active/Deactivated) -- confirmed, not re-implemented.
+
+## Verification (all three pages)
+
+- Every dense-content wrapper checked via `getComputedStyle(...).backdropFilter` directly, not just eyeballed screenshots -- `none` on all five (Calendar grid, Clients table, Team staff table, Team permissions matrix) confirmed after the `.card-surface` removals; `blur(16px)` confirmed on Team's artist cards, the one deliberate exception.
+- Fresh screenshots on all three pages, all three Team tabs, both Calendar Month/Week views -- all read as clearly part of the same app as Dashboard/Conversations (sidebar background match holds throughout, already fixed in an earlier session, reconfirmed not regressed).
+- `onyx-lime` re-confirmed completely unaffected on all three pages (screenshots + `data-theme` checks) -- flat/opaque throughout, no `.card-surface` blur anywhere including Team's artist cards.
+
+## Typechecks
+
+`npx tsc --noEmit` (api, untouched) and `npm run build` + `npx tsc -b` (web) -- clean before every commit.
+
+## Commits
+
+- Calendar: `091d050`
+- Clients: `b49e4f1`
+- Team: `07a440f`
+
+## Cleanup
+
+Killed the isolated dev API/web server instances used for this session's own verification (ports 4093/5292), via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification script and screenshot from the scratch directory throughout.
