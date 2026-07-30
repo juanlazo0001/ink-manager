@@ -4670,3 +4670,37 @@ New `pageTransition` (`lib/motion.ts`) -- same spring feel as `uiSpringTransitio
 ## Cleanup
 
 Dev servers killed via PowerShell `Stop-Process` by exact PID this time, not `taskkill //IM node.exe` -- the latter wiped out unrelated `node` processes system-wide earlier this session (including, harmlessly, this same session's own dev servers mid-debugging, requiring a restart) when a test script hung and got force-killed by process name instead of PID. Scratch scripts and screenshots deleted afterward.
+
+---
+
+# Revert: remove the satellite rings, iris transition back to a slower fade
+
+Small follow-up on `main`, undoing two things from the last two sessions per direct owner feedback -- the sidebar-edge ring didn't look as good as hoped even after the opacity/inset fixes, and the iris reveal read as distracting rather than smooth.
+
+## 1. Rings removed
+
+Removed `.arc-decor-sidebar-edge` (TopBar.tsx + its CSS, added last session to bleed a ring from behind the sidebar into the main content) and the Conversations panel's own `.panel-ring-decor`/`.conversations-ring-decor` (ConversationsPanel.tsx + CSS, added two sessions ago). The original, long-standing centered `.arc-decor` -- part of the foundational photo/wash/arc-decor background stack, never the subject of any complaint -- is untouched; confirmed still mounted after the removal, not accidentally caught by the same cleanup.
+
+## 2. Iris transition reverted to a (slower) fade
+
+`App.tsx`'s `IrisReveal` component (circular clip-path reveal) replaced with `PageFade` -- the original crossfade+8px-settle this app-wide Motion rollout first shipped with, before the iris reveal replaced it. Kept the slower `pageTransition` timing from two sessions ago rather than reverting all the way back to the original fast `uiSpringTransition` -- the owner's ask was specifically to slow down what was there before, not just literally the very first version. Verified via direct opacity/transform sampling across real elapsed time: clean fade+slide, both directions, settling around 524ms.
+
+Simplified `AppRoutes` considerably in the process -- the iris version needed a `skipAnimation` prop, a `revealed` state machine, and a `useRef` "is this the first render" tracker, all specifically to handle clip-path's containing-block side effect and its non-interpolable transition back to `none`. None of that machinery is needed for a plain opacity/transform fade, which has no equivalent side effects -- removed all of it along with the unused `useEffect`/`useState`/`useRef` imports it required.
+
+## Verification
+
+- DOM-level check confirms both rings gone, centered `.arc-decor` still present and unaffected.
+- Fade transition timing sampled directly (not assumed): exiting page opacity 0.99 → 0 and entering page opacity 0 → 1 over ~524ms, y-transform settling from ±8px to 0 in the same window -- matches the slower `pageTransition` constant, no leftover clip-path-era artifacts.
+- Performance re-checked: same transient-elevation-during-transition, clean-settle-after pattern established throughout this whole Motion rollout (avg 26.88ms during, 8 long frames out of 34 during transition-plus-real-page-mount-work; 15.87ms avg, 0 long frames once settled) -- not a new regression, consistent with every other transition measured this way in this project.
+
+## Typechecks
+
+`npx tsc --noEmit` (api, untouched) and `npm run build` + `npx tsc -b` (web) -- clean.
+
+## Commit
+
+Pending (this entry commits alongside the code changes).
+
+## Cleanup
+
+Dev servers killed via PowerShell `Stop-Process` by exact PID. Scratch scripts and screenshots deleted afterward.

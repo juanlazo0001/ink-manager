@@ -130,20 +130,6 @@ export default function TopBar() {
           <i />
         </span>
       )}
-      {/* Second, smaller ring bleeding out from behind the sidebar's right
-          edge into the main content -- see .arc-decor-sidebar-edge's own
-          comment in index.css. The sidebar itself is fully opaque
-          (legibility over atmosphere for a dense nav rail), so this reads
-          as part of the main background rather than a decoration on the
-          rail -- half of it sits under the sidebar's own z-50 fill,
-          hidden for free. */}
-      {decorative && (
-        <span className="arc-decor arc-decor-sidebar-edge" aria-hidden="true">
-          <i />
-          <i />
-          <i />
-        </span>
-      )}
       <div className={`fixed right-4 z-30 flex items-center gap-2 ${viewAsTarget ? 'top-14' : 'top-4'}`}>
         {canSearch && (
           <button type="button" onClick={() => setSearchOpen(true)} aria-label="Search" className={iconBtnClass}>

@@ -813,18 +813,6 @@ export default function ConversationsPanel() {
         transition={uiSpringTransition}
         aria-hidden={!isOpen}
       >
-        {/* Fully opaque (see the comment above), so it shows none of
-            TopBar's own photo/wash/arc-decor rings behind it -- same
-            concentric-ring technique as the sidebar's own, anchored off
-            the bottom-right corner instead (this panel docks to the
-            right edge). */}
-        {isEditorialFab && (
-          <span className="panel-ring-decor conversations-ring-decor" aria-hidden="true">
-            <i />
-            <i />
-            <i />
-          </span>
-        )}
         {hasOpenedOnce &&
           (selectedId ? (
             <ThreadView
