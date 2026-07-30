@@ -386,7 +386,26 @@ export default function IntakeForm() {
             <PhoneInput value={phone} onChange={setPhone} className={INPUT_CLASS} />
             <p className="mt-1 text-[11px] leading-snug text-fg-muted">
               {field.helpText ||
-                'By providing your phone number, you consent to receive SMS messages about your inquiry and appointment. Message and data rates may apply. Reply STOP to opt out.'}
+                'By providing your phone number, you consent to receive SMS messages about your inquiry and appointment. Message and data rates may apply. Reply STOP to opt out.'}{' '}
+              See our{' '}
+              <Link
+                to={`/privacy/${studioSlug}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline hover:text-fg-secondary"
+              >
+                Privacy Policy
+              </Link>{' '}
+              and{' '}
+              <Link
+                to={`/terms/${studioSlug}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline hover:text-fg-secondary"
+              >
+                Terms
+              </Link>
+              .
             </p>
           </div>
         )
