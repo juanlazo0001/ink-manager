@@ -12,6 +12,8 @@ import { useUserProfile } from '../context/useUserProfile'
 import { useAuth } from '../context/useAuth'
 import { clientsQueryKey } from '../lib/queryKeys'
 import { useMarkSectionSeen } from '../lib/useMarkSectionSeen'
+import { useThemePreset } from '../lib/useThemePreset'
+import Eyebrow from '../components/Eyebrow'
 
 interface Client {
   id: string
@@ -27,6 +29,8 @@ export default function Clients() {
   const navigate = useNavigate()
   const location = useLocation()
   const { user } = useAuth()
+  const { shape } = useThemePreset()
+  const isEditorial = shape === 'editorial'
   const { profile } = useUserProfile()
   // clients.manage was retired (split into clients.view/edit/merge/archive/
   // import) -- Add Client hits POST /clients (gated clients.edit on the
@@ -123,8 +127,17 @@ export default function Clients() {
 
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-bold text-fg sm:text-3xl">Clients</h1>
-              <p className="mt-1 text-sm text-fg-secondary">Everyone who's booked with your studio.</p>
+              {isEditorial && <Eyebrow>Everyone who's booked with your studio.</Eyebrow>}
+              <h1
+                className={
+                  isEditorial
+                    ? 'mt-1 font-display text-[clamp(28px,3.4vw,38px)] font-normal tracking-[-0.015em] text-fg'
+                    : 'text-2xl font-bold text-fg sm:text-3xl'
+                }
+              >
+                Clients
+              </h1>
+              {!isEditorial && <p className="mt-1 text-sm text-fg-secondary">Everyone who's booked with your studio.</p>}
             </div>
 
             {(canImportClients || canAddClient) && (
@@ -132,7 +145,11 @@ export default function Clients() {
                 {canImportClients && (
                   <Link
                     to="/clients/import"
-                    className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
+                    className={
+                      isEditorial
+                        ? 'editorial-btn-secondary flex items-center gap-2 rounded-full border px-4 py-2 transition'
+                        : 'flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface'
+                    }
                   >
                     Import Clients
                   </Link>
@@ -141,7 +158,11 @@ export default function Clients() {
                   <button
                     type="button"
                     onClick={() => setShowAddModal(true)}
-                    className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover"
+                    className={
+                      isEditorial
+                        ? 'editorial-btn-primary flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-bg transition hover:bg-accent-hover'
+                        : 'flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover'
+                    }
                   >
                     <PlusIcon className="h-4 w-4" />
                     Add Client
@@ -162,7 +183,14 @@ export default function Clients() {
             />
           </div>
 
-          <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
+          {/* No .card-surface here, deliberately -- the client table is
+              dense, information-critical content (same category as
+              Conversations' thread list / Calendar's grid), not a glass-
+              treatment candidate. It had .card-surface applied (likely
+              from an earlier broad template pass, not a deliberate
+              choice) -- removed so it stays fully solid/opaque under
+              Editorial Gold. */}
+          <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
             {errorMessage && <p className="text-sm text-danger">{errorMessage}</p>}
 
             {!errorMessage && !isLoading && filteredClients?.length === 0 && (
