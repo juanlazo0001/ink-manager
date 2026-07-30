@@ -4755,3 +4755,44 @@ Already had partial Editorial Gold wiring from an earlier session (header, Staff
 ## Cleanup
 
 Killed the isolated dev API/web server instances used for this session's own verification (ports 4093/5292), via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification script and screenshot from the scratch directory throughout.
+
+---
+
+# Editorial Gold — propagate to Tasks, Settings
+
+Continuation of the same propagation, two pages this time, one commit per page. Editorial Gold only, `onyx-lime` re-confirmed unaffected on both.
+
+## Tasks (`05af449`)
+
+- Serif eyebrow+heading; `.sc` small-caps treatment on all three section headings (Studio Queue, Assigned to Me, Assigned by Me). `editorial-btn-primary` on Add, `editorial-btn-secondary` on Dismiss.
+- `.card-surface` was **not** present on any of the three wrappers here (unlike Calendar/Clients/Team) -- confirmed all three stay `backdrop-filter: none` as-is, nothing to remove.
+- **Functionality verified past a first false negative**: the initial add-task check (fixed 800ms wait before checking DOM) reported "task added successfully: false" — turned out to be a test-script timing artifact, not a regression. Re-ran with response-status logging: `POST /tasks/personal` returns `201`, and the new task text renders once given a longer wait. No handler/state code was touched this session, only classNames and JSX structure.
+
+## Settings (`44d18c4`)
+
+- Serif eyebrow+heading; all 12 card-section headings (Studio Profile, Theme, Locations, Policies, Defaults, Waiver Questions & Clauses, Message Templates, Reminder Templates & Send Times, Custom Policies, Deposit Tiers, Integrations, System) get `.sc`. `editorial-btn-primary`/`editorial-btn-secondary` applied to every section-level action button (~30 instances, batched via grep-confirmed `replace_all` edits, one typecheck pass after each batch).
+- `LocationForm` is a separate top-level function component living in the same file (used for the location add/edit form) -- one of the batch edits matched its Save/Cancel buttons too, which don't share the parent `Settings()` component's scope. Caught immediately by `tsc -b` (`Cannot find name 'isEditorial'`); fixed by having `LocationForm` call `useThemePreset()` itself, same self-gating convention as `CalendarToolbar`. Worth calling out as a general risk: broad `replace_all` edits on a file with multiple independent function components sharing near-identical JSX can silently cross component-scope boundaries — needs a typecheck immediately after each batch, which is what caught this.
+- Two card headings on this page don't live in `Settings.tsx` itself — **Intake Forms** and **Services**, rendered by the separately-imported `IntakeFormsManager.tsx` / `ServicesManager.tsx`. Confirmed both components are used nowhere else in the app, so extended the identical treatment into them: `.sc` heading, `editorial-btn-secondary` on their own "+ New form"/"+ New service" header buttons, `editorial-btn-primary` on their create-modal submit buttons, `editorial-btn-secondary` on their cancel buttons. Both had `.card-surface` on their dense row-list wrapper -- the same latent bug already fixed on Calendar/Clients/Team/Tasks-adjacent pages, removed here too (`backdrop-filter: none` confirmed). Danger-styled delete buttons and per-row Edit/Deactivate chips left untouched, matching the established "don't over-style every row control" precedent.
+- Considered swapping `JobStatusDisplay` (System tab) for the shared `StatusPill` component since their tone names match -- decided against it. `JobStatusDisplay`'s existing spinner-for-RUNNING / truncated-inline-error-for-FAILED / distinct-null-state treatment is genuinely richer than `StatusPill`'s fixed `{status, label, className}` API; forcing the swap would trade information density for cosmetic consistency. Left untouched.
+- Theme-preset picker (the live theme switcher) confirmed still correctly theme-agnostic -- swatches must always show each preset's own true colors regardless of which theme is currently active. Not touched.
+
+## Verification (both pages)
+
+- Every dense-list wrapper checked via `getComputedStyle(...).backdropFilter` directly: Tasks' three sections, Settings' Intake Forms card, Settings' Services card -- all `none`.
+- Full-page screenshots on Tasks and on all 5 Settings tabs (General, Policies & Templates, Services, Integrations, System) under Editorial Gold.
+- `LocationForm` opened and screenshotted directly -- renders and functions correctly.
+- Theme picker exercised both directions (onyx-lime → editorial-gold → onyx-lime) as part of the same script that does every other check, confirming the switching mechanism itself wasn't broken by any of this session's edits.
+- `onyx-lime` re-confirmed completely unaffected on both pages -- default classNames/typography throughout, no `.card-surface` blur anywhere.
+
+## Typechecks
+
+`npx tsc -b` and `npm run build` (web) -- clean before every commit.
+
+## Commits
+
+- Tasks: `05af449`
+- Settings (+ IntakeFormsManager, ServicesManager): `44d18c4`
+
+## Cleanup
+
+Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification script and screenshot from the scratch directory.
