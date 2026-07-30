@@ -141,10 +141,23 @@ export default function StatusPill({ status, label, className = '' }: StatusPill
   if (shape === 'editorial') {
     return (
       <span
-        className={`inline-flex items-center gap-2 whitespace-nowrap rounded-full border px-3 py-1.5 font-jura text-[10px] font-bold tracking-[0.16em] uppercase transition-colors duration-base ${TONE_CLASSES_EDITORIAL[tone]} ${className}`}
+        // Mobile-first: smaller padding/font-size/tracking than desktop,
+        // and text allowed to wrap (no whitespace-nowrap) below the `sm`
+        // breakpoint -- the longest real labels (describeInquiryStatus's
+        // "Opened, awaiting response" / "Sent, not opened yet", rendered
+        // uppercase) don't comfortably fit on one line at narrow phone
+        // widths even at the reduced size, and wrapping onto a second
+        // line reads far better than shrinking the font past legibility.
+        // `sm:` restores the original desktop sizing (px-3 py-1.5
+        // text-[10px] tracking-[0.16em]) and re-forces one line, since
+        // desktop rows have the horizontal room for it.
+        className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-1 font-jura text-[9px] font-bold tracking-[0.08em] uppercase transition-colors duration-base sm:gap-2 sm:whitespace-nowrap sm:px-3 sm:py-1.5 sm:text-[10px] sm:tracking-[0.16em] ${TONE_CLASSES_EDITORIAL[tone]} ${className}`}
       >
-        <span className={`h-1.5 w-1.5 shrink-0 rounded-full transition-colors duration-base ${TONE_DOT_CLASSES[tone]}`} aria-hidden="true" />
-        {label ?? formatStatus(status)}
+        <span
+          className={`mt-px h-1 w-1 shrink-0 rounded-full transition-colors duration-base sm:mt-0 sm:h-1.5 sm:w-1.5 ${TONE_DOT_CLASSES[tone]}`}
+          aria-hidden="true"
+        />
+        <span className="leading-tight">{label ?? formatStatus(status)}</span>
       </span>
     )
   }

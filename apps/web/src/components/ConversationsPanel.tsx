@@ -1429,7 +1429,21 @@ function ConversationListView({
                       </p>
                     )}
                     {conversation.primaryInquiry && (
-                      <StatusPill status={conversation.primaryInquiry.status} className="mt-1.5 px-2.5 py-0.5 text-[11px]" />
+                      <StatusPill
+                        status={conversation.primaryInquiry.status}
+                        // `!` (Tailwind important) on every overridden utility --
+                        // StatusPill's own editorial-shape classes now include
+                        // sm: responsive variants (mobile-squish fix), which
+                        // otherwise out-rank this plain override at >=640px
+                        // (Tailwind's responsive utilities are emitted after
+                        // the base ones, so they win when active) and would
+                        // silently enlarge this deliberately compact
+                        // thread-list badge back toward the full pill size on
+                        // desktop. Verified via computed style at both 375px
+                        // and 1440px that this keeps the badge's own intended
+                        // size (not StatusPill's default) at every width.
+                        className="mt-1.5 !px-2.5 !py-0.5 !text-[11px]"
+                      />
                     )}
                   </div>
                 </button>
@@ -2417,7 +2431,12 @@ function ThreadView({
                 counterpartName
               )}
             </h2>
-            {primaryInquiry && <StatusPill status={primaryInquiry.status} className="px-2 py-0.5 text-[11px]" />}
+            {primaryInquiry && (
+              // `!` (important) for the same reason as the thread-list badge
+              // above -- keeps this compact override winning over StatusPill's
+              // own new sm: responsive classes at every breakpoint.
+              <StatusPill status={primaryInquiry.status} className="!px-2 !py-0.5 !text-[11px]" />
+            )}
           </div>
           {primaryInquiry && (
             <p className="truncate text-xs text-fg-muted">
