@@ -4932,3 +4932,45 @@ Real live checks against the local dev stack, not just code review:
 ## Cleanup
 
 Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification script and screenshot from the scratch directory. Test data created during verification (an artist reassignment on inquiry `cms201u9s000e9si2l5zj95em`, and a first assignment on the previously-seeded `LongDesc TestClient` inquiry) left in the dev database, same convention as prior sessions.
+
+---
+
+# Editorial Gold: semi-bold/bold text becomes regular weight
+
+Single-file CSS fix (`index.css`) on `main`. App-wide by design -- the whole point was not having to touch dozens of individual components.
+
+## Why one CSS rule instead of a per-file sweep
+
+The literal ask ("all of the fonts that are semi-bold and bold") spans the entire app: 57 `.tsx` files use Tailwind's `font-bold`/`font-semibold` somewhere, most of them conditionally under `isEditorial`. Rather than tracking down and editing every one of those call sites, overrode the two *compiled Tailwind utility classes themselves*, scoped under `[data-theme="editorial-gold"]`:
+
+```css
+[data-theme="editorial-gold"] .font-bold,
+[data-theme="editorial-gold"] .font-semibold {
+  font-weight: 400;
+}
+```
+
+This works because `applyThemePreset()` sets `data-theme="editorial-gold"` on `<html>` if and only if `useThemePreset()`'s `shape` is `'editorial'` -- the exact same condition every `isEditorial` branch in the codebase already checks (confirmed in `themePresets.ts`: `'editorial-gold'` is the *only* preset key with `shape: 'editorial'`). So this one rule is 1:1 synchronized with every existing `isEditorial` check without duplicating that logic anywhere, and it's scoped by attribute selector + class (higher specificity than Tailwind's own bare `.font-bold`/`.font-semibold`), so it always wins regardless of the compiled stylesheet's internal class ordering -- no `!important` needed, no risk of the same kind of source-order fragility hit in an earlier session's `serve -s` investigation.
+
+Separately, `.editorial-btn-primary`/`.editorial-btn-secondary` -- the shared typography class already layered onto every editorial button app-wide (established in an earlier session) -- doesn't use Tailwind's `font-bold` class at all; it sets `font-weight: 700` directly in its own rule. Lowered that to `400` too, in the same place.
+
+`font-medium` (500) was left untouched -- the request was specifically semi-bold and bold, not every weight above regular.
+
+## Verification
+
+Real computed-style checks against the local dev stack, not just visual impression:
+- **Onyx Lime** (and by extension every other non-editorial preset, since none of them ever set this attribute value): sampled `.font-bold`/`.font-semibold` elements on Inquiries and Team -- all still compute `font-weight: 700`/`600` exactly as before, confirmed via `getComputedStyle`.
+- **Editorial Gold**: same elements on the same two pages, plus `.editorial-btn-primary`/`-secondary` buttons -- all now compute `font-weight: 400`.
+- Screenshotted Dashboard, the full Inquiries list (every `StatusPill` tone/label combination visible in the seed data), and Team under Editorial Gold at 1440px -- headings, buttons, table text, and status pills all render at regular weight and stay fully legible; hierarchy still reads clearly through size/color/letter-spacing/uppercase treatment rather than boldness, not just "smaller-looking" or broken. One visual double-take during review (staff names in the Team table still looked bold-ish) turned out to be Outfit's own regular-weight letterforms at that size/contrast, not a missed case -- confirmed via direct `getComputedStyle` that the element was already `400` and had never carried a bold/semibold class in the first place.
+
+## Typechecks
+
+`npx tsc -b` (web) and `npx tsc --noEmit` (api, untouched) -- both clean before commit. (Pure CSS change; typecheck is a formality here, still run per the standing rule.)
+
+## Commit
+
+`20d743a` on `main`.
+
+## Cleanup
+
+Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification script and screenshot from the scratch directory.
