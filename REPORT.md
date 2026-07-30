@@ -4974,3 +4974,42 @@ Real computed-style checks against the local dev stack, not just visual impressi
 ## Cleanup
 
 Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification script and screenshot from the scratch directory.
+
+---
+
+# Single source of truth for platform Privacy Policy / Terms content
+
+Single-session content-accuracy fix on `main`. No schema changes.
+
+## Investigation
+
+`generate-static-policies.mjs` doesn't have embedded text -- it already reads from `src/content/platformPolicies.ts`'s `PLATFORM_PRIVACY_POLICY_HTML`/`PLATFORM_TERMS_HTML` constants, the exact same source `PlatformPolicyPage.tsx` renders client-side (one content source, two render paths, established in an earlier session). So the drift wasn't a duplication-between-two-copies problem -- it was that **no canonical draft ever existed as a checked-in file** for either policy, for either script or component to be checked against. `platformPolicies.ts` was hand-authored HTML with nothing to diff it against, and it silently drifted from the actual published draft: a carrier-compliance SMS-consent disclosure ("No mobile information will be shared with third parties or affiliates for marketing or promotional purposes...") existed in the real, live-published Privacy Policy in two places, and in neither place in this repo's `platformPolicies.ts`.
+
+## Fix
+
+- Added `apps/web/src/content/privacy-policy-platform.md` -- the provided canonical draft, saved verbatim (including its own `[DATE — fill in at publish time]`/`[CONTACT EMAIL — fill in at publish time]` template placeholders, since those are explicitly authoring markers, not values meant to overwrite what's actually live).
+- Diffed the rest of the draft against `platformPolicies.ts` section by section -- confirmed every other sentence already matched word-for-word; only the two additions were missing (end of "SMS and email communications," and appended to the last bullet of "Who we share information with"). Added both, hand-converted to the file's existing HTML tag conventions (matches exactly, confirmed by rebuilding and diffing the generated output against the `.md`, not just eyeballing the source edit).
+- Added `apps/web/src/content/terms-platform.md` too, for parity -- no drift was reported for Terms, so this one derives from the current (already-correct) `PLATFORM_TERMS_HTML` rather than a fresh draft, simply so a canonical, diffable reference now exists there too before it has the chance to drift the same way Privacy did.
+- Added a comment in `platformPolicies.ts` pointing at both `.md` files as the source to edit first for any future wording change, with the HTML constants hand-converted from them afterward -- explicit that nothing enforces this sync automatically, it's a discipline, not a mechanism.
+- Confirmed via a repo-wide search that neither policy's text exists as a stray copy anywhere else in the codebase (only `platformPolicies.ts` + its own `.md` counterpart, plus the gitignored `dist/` build artifact).
+
+Neither `.md` file is parsed or imported by any code -- deliberately not a bigger architecture change (e.g. adding a markdown-parsing dependency so the HTML is literally generated from the `.md` at build time). The task's own instructions specifically branched on this: "if [the script] already reads from a file, simply confirm that file now matches this updated version exactly" -- it already does (via `platformPolicies.ts`), so the fix is confirming/updating that file's content against a now-real canonical draft, not restructuring the render pipeline.
+
+## Verification
+
+- Rebuilt (`npm run build`) and diffed the full generated `dist/privacy/index.html` against `privacy-policy-platform.md` section by section -- exact match, including both instances of the added sentence (`grep -c` confirms exactly 2 in the built output).
+- Confirmed the client-side React route (`PlatformPolicyPage.tsx`, reading the same constant) also shows the sentence twice, against the local dev stack -- both render paths genuinely share one source, not just in theory.
+- Terms output diffed the same way against its own new canonical `.md` -- exact match (no drift existed, confirmed rather than assumed).
+- **Production check pending explicit push** -- per this project's standing convention, changes aren't pushed without the user's direct instruction. Once pushed, the remaining step is a `curl`/View Page Source check against the live `web.inkmanager.app/privacy` and `/terms` to confirm the deployed content matches word-for-word, same rigor as the original static-HTML fix session.
+
+## Typechecks
+
+`npx tsc -b` (web) and `npx tsc --noEmit` (api, untouched) -- both clean before commit.
+
+## Commit
+
+`99d2fd0` on `main`.
+
+## Cleanup
+
+Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification script from the scratch directory.
