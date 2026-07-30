@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { apiFetch, ApiError } from '../lib/api'
 import { dollarsToCents, formatCents } from '../lib/money'
 import Modal from './Modal'
+import { useThemePreset } from '../lib/useThemePreset'
 
 type PricingModel = 'RANGE' | 'FLAT'
 type DepositModel = 'TIER_BASED' | 'FLAT'
@@ -43,6 +44,8 @@ const EMPTY_FORM = {
 // separately via IntakeFormsManager/IntakeFormFieldsEditor); this manager
 // only lets an OWNER pick which one, not edit its fields.
 export default function ServicesManager({ canEdit }: { canEdit: boolean }) {
+  const { shape } = useThemePreset()
+  const isEditorial = shape === 'editorial'
   const [services, setServices] = useState<ServiceSummary[] | null>(null)
   const [servicesError, setServicesError] = useState<string | null>(null)
   const [refreshIndex, setRefreshIndex] = useState(0)
@@ -172,10 +175,10 @@ export default function ServicesManager({ canEdit }: { canEdit: boolean }) {
   if (services === null) return null
 
   return (
-    <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-6">
+    <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-fg">Services</h2>
+          <h2 className={isEditorial ? 'sc text-[22px]' : 'text-lg font-semibold text-fg'}>Services</h2>
           <p className="mt-1 text-sm text-fg-secondary">
             {services.length} service{services.length === 1 ? '' : 's'} &middot; what this studio offers, each with
             its own pricing, deposit, and intake form
@@ -185,7 +188,11 @@ export default function ServicesManager({ canEdit }: { canEdit: boolean }) {
           <button
             type="button"
             onClick={() => openModal('new')}
-            className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+            className={
+              isEditorial
+                ? 'editorial-btn-secondary shrink-0 rounded-full border px-3 py-1.5 transition'
+                : 'shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface'
+            }
           >
             + New service
           </button>
@@ -391,7 +398,11 @@ export default function ServicesManager({ canEdit }: { canEdit: boolean }) {
             <button
               type="submit"
               disabled={saving || !form.intakeFormId}
-              className="w-full rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+              className={
+                isEditorial
+                  ? 'editorial-btn-primary w-full rounded-full bg-accent px-4 py-2 text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                  : 'w-full rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60'
+              }
             >
               {saving ? 'Saving…' : editingService === 'new' ? 'Create' : 'Save changes'}
             </button>
@@ -419,7 +430,11 @@ export default function ServicesManager({ canEdit }: { canEdit: boolean }) {
               type="button"
               onClick={() => setShowDeleteConfirm(null)}
               disabled={deleting}
-              className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+              className={
+                isEditorial
+                  ? 'editorial-btn-secondary rounded-full border px-4 py-2 transition disabled:opacity-60'
+                  : 'rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60'
+              }
             >
               Cancel
             </button>

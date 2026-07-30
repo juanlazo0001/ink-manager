@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { apiFetch } from '../lib/api'
 import IntakeFormFieldsEditor from './IntakeFormFieldsEditor'
 import Modal from './Modal'
+import { useThemePreset } from '../lib/useThemePreset'
 
 export interface IntakeFormSummary {
   id: string
@@ -18,6 +19,8 @@ export interface IntakeFormSummary {
 // parameterized by whichever form is currently selected instead of one
 // studio-wide list.
 export default function IntakeFormsManager({ canEdit }: { canEdit: boolean }) {
+  const { shape } = useThemePreset()
+  const isEditorial = shape === 'editorial'
   const [forms, setForms] = useState<IntakeFormSummary[] | null>(null)
   const [formsError, setFormsError] = useState<string | null>(null)
   const [refreshIndex, setRefreshIndex] = useState(0)
@@ -108,10 +111,10 @@ export default function IntakeFormsManager({ canEdit }: { canEdit: boolean }) {
   if (forms === null) return null
 
   return (
-    <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-6">
+    <div className="mt-6 rounded-2xl border border-border bg-surface p-6">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-fg">Intake Forms</h2>
+          <h2 className={isEditorial ? 'sc text-[22px]' : 'text-lg font-semibold text-fg'}>Intake Forms</h2>
           <p className="mt-1 text-sm text-fg-secondary">
             {forms.length} form{forms.length === 1 ? '' : 's'} &middot; each has its own fields and its own public
             link
@@ -125,7 +128,11 @@ export default function IntakeFormsManager({ canEdit }: { canEdit: boolean }) {
               setCreateName('')
               setShowCreate(true)
             }}
-            className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+            className={
+              isEditorial
+                ? 'editorial-btn-secondary shrink-0 rounded-full border px-3 py-1.5 transition'
+                : 'shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface'
+            }
           >
             + New form
           </button>
@@ -213,7 +220,11 @@ export default function IntakeFormsManager({ canEdit }: { canEdit: boolean }) {
             <button
               type="submit"
               disabled={creating || !createName.trim()}
-              className="mt-4 w-full rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+              className={
+                isEditorial
+                  ? 'editorial-btn-primary mt-4 w-full rounded-full bg-accent px-4 py-2 text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                  : 'mt-4 w-full rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60'
+              }
             >
               {creating ? 'Creating…' : 'Create'}
             </button>
@@ -241,7 +252,11 @@ export default function IntakeFormsManager({ canEdit }: { canEdit: boolean }) {
               type="button"
               onClick={() => setShowDeleteConfirm(null)}
               disabled={deleting}
-              className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+              className={
+                isEditorial
+                  ? 'editorial-btn-secondary rounded-full border px-4 py-2 transition disabled:opacity-60'
+                  : 'rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60'
+              }
             >
               Cancel
             </button>

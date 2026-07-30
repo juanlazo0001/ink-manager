@@ -23,6 +23,8 @@ import { useUserProfile } from '../context/useUserProfile'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { THEME_PRESETS, applyThemePreset } from '../lib/themePresets'
 import { dollarsToCents } from '../lib/money'
+import { useThemePreset } from '../lib/useThemePreset'
+import Eyebrow from '../components/Eyebrow'
 
 interface HealthQuestion {
   question: string
@@ -368,6 +370,8 @@ function hoursSummary(hours: LocationHoursDay[] | null) {
 }
 
 export default function Settings() {
+  const { shape } = useThemePreset()
+  const isEditorial = shape === 'editorial'
   const { studio, loading, refresh } = useStudio()
   const { profile } = useUserProfile()
   const user = useEffectiveUser()
@@ -1409,9 +1413,26 @@ export default function Settings() {
 
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-2xl px-6 py-6 sm:px-10 sm:py-8">
-          <h1 className="text-2xl font-bold text-fg sm:text-3xl">Settings</h1>
-          <p className="mt-1 text-sm text-fg-secondary">Manage your studio, its policies, and how it connects.</p>
+          {isEditorial && <Eyebrow>Manage your studio, its policies, and how it connects.</Eyebrow>}
+          <h1
+            className={
+              isEditorial
+                ? 'mt-1 font-display text-[clamp(28px,3.4vw,38px)] font-normal tracking-[-0.015em] text-fg'
+                : 'text-2xl font-bold text-fg sm:text-3xl'
+            }
+          >
+            Settings
+          </h1>
+          {!isEditorial && (
+            <p className="mt-1 text-sm text-fg-secondary">Manage your studio, its policies, and how it connects.</p>
+          )}
 
+          {/* Tabs already read correctly under every preset via plain
+              CSS-variable-driven tokens (border-accent/text-fg/
+              text-fg-secondary) -- same underline shape already reused
+              verbatim elsewhere (Conversations' Clients/Team toggle,
+              Team.tsx's own Staff/Artists/Permissions tabs), no
+              isEditorial branch needed. */}
           <div className="mt-6 flex gap-1 overflow-x-auto border-b border-border">
             {SETTINGS_TABS.filter((tab) => tab.visible).map((tab) => (
               <button
@@ -1432,7 +1453,7 @@ export default function Settings() {
 
           {activeTab === 'general' && (
           <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
-            <h2 className="text-lg font-semibold text-fg">Studio Profile</h2>
+            <h2 className={isEditorial ? 'sc text-[22px]' : 'text-lg font-semibold text-fg'}>Studio Profile</h2>
             <p className="mt-1 text-sm text-fg-secondary">
               {canManageStudio ? 'Manage your studio profile and branding.' : 'Your studio profile.'}
             </p>
@@ -1470,7 +1491,11 @@ export default function Settings() {
                   <button
                     type="button"
                     onClick={handleEdit}
-                    className="shrink-0 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
+                    className={
+                      isEditorial
+                        ? 'editorial-btn-secondary shrink-0 rounded-full border px-4 py-2 transition'
+                        : 'shrink-0 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface'
+                    }
                   >
                     Edit
                   </button>
@@ -1529,7 +1554,13 @@ export default function Settings() {
                       </div>
                     )}
 
-                    <label className="cursor-pointer rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface">
+                    <label
+                      className={
+                        isEditorial
+                          ? 'editorial-btn-secondary cursor-pointer rounded-full border px-4 py-2 transition'
+                          : 'cursor-pointer rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface'
+                      }
+                    >
                       {logoUrl ? 'Change logo' : 'Upload logo'}
                       <input type="file" accept="image/*" onChange={handleLogoChange} className="hidden" />
                     </label>
@@ -1550,7 +1581,11 @@ export default function Settings() {
                   <button
                     type="submit"
                     disabled={submitting}
-                    className="flex-1 rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                    className={
+                      isEditorial
+                        ? 'editorial-btn-primary flex-1 rounded-full bg-accent px-4 py-2 text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                        : 'flex-1 rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                    }
                   >
                     {submitting ? 'Saving…' : 'Save changes'}
                   </button>
@@ -1558,7 +1593,11 @@ export default function Settings() {
                     type="button"
                     onClick={handleCancel}
                     disabled={submitting}
-                    className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                    className={
+                      isEditorial
+                        ? 'editorial-btn-secondary rounded-full border px-4 py-2 transition disabled:opacity-60'
+                        : 'rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60'
+                    }
                   >
                     Cancel
                   </button>
@@ -1571,7 +1610,7 @@ export default function Settings() {
 
           {activeTab === 'general' && canManageTheme && policies && (
             <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
-              <h2 className="text-lg font-semibold text-fg">Theme</h2>
+              <h2 className={isEditorial ? 'sc text-[22px]' : 'text-lg font-semibold text-fg'}>Theme</h2>
               <p className="mt-1 text-sm text-fg-secondary">
                 Applies everywhere — the app, public forms and links, everything your clients see.
               </p>
@@ -1619,7 +1658,7 @@ export default function Settings() {
             <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
               <div className="flex items-center justify-between gap-4">
                 <div>
-                  <h2 className="text-lg font-semibold text-fg">Locations</h2>
+                  <h2 className={isEditorial ? 'sc text-[22px]' : 'text-lg font-semibold text-fg'}>Locations</h2>
                   <p className="mt-1 text-sm text-fg-secondary">
                     {canManageLocations ? 'Every shop location, its hours, and how to reach it.' : 'Where to find us.'}
                   </p>
@@ -1629,7 +1668,11 @@ export default function Settings() {
                   <button
                     type="button"
                     onClick={handleAddLocation}
-                    className="shrink-0 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
+                    className={
+                      isEditorial
+                        ? 'editorial-btn-secondary shrink-0 rounded-full border px-4 py-2 transition'
+                        : 'shrink-0 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface'
+                    }
                   >
                     Add location
                   </button>
@@ -1699,7 +1742,7 @@ export default function Settings() {
           {activeTab === 'policies' && canViewPolicies && policies && (
             <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
               <div>
-                <h2 className="text-lg font-semibold text-fg">Policies</h2>
+                <h2 className={isEditorial ? 'sc text-[22px]' : 'text-lg font-semibold text-fg'}>Policies</h2>
                 <p className="mt-1 text-sm text-fg-secondary">
                   Wording used across estimates, deposits, gift cards, and waivers.
                 </p>
@@ -1735,7 +1778,7 @@ export default function Settings() {
             <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
               <div className="flex items-center justify-between gap-4">
                 <div>
-                  <h2 className="text-lg font-semibold text-fg">Defaults</h2>
+                  <h2 className={isEditorial ? 'sc text-[22px]' : 'text-lg font-semibold text-fg'}>Defaults</h2>
                   <p className="mt-1 text-sm text-fg-secondary">
                     Studio-wide defaults for estimates, gift cards, referrals, and lead handling.
                   </p>
@@ -1791,7 +1834,7 @@ export default function Settings() {
             <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <h2 className="text-lg font-semibold text-fg">Waiver Questions &amp; Clauses</h2>
+                    <h2 className={isEditorial ? 'sc text-[22px]' : 'text-lg font-semibold text-fg'}>Waiver Questions &amp; Clauses</h2>
                     <p className="mt-1 text-sm text-fg-secondary">
                       {waiverHealthQuestions.length} health question{waiverHealthQuestions.length === 1 ? '' : 's'},{' '}
                       {waiverClauses.length} clause{waiverClauses.length === 1 ? '' : 's'}
@@ -1801,7 +1844,11 @@ export default function Settings() {
                     <button
                       type="button"
                       onClick={() => setEditingWaiverList(true)}
-                      className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                      className={
+                        isEditorial
+                          ? 'editorial-btn-secondary shrink-0 rounded-full border px-3 py-1.5 transition'
+                          : 'shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface'
+                      }
                     >
                       Edit
                     </button>
@@ -1914,7 +1961,11 @@ export default function Settings() {
                         type="button"
                         onClick={handleWaiverListSave}
                         disabled={waiverListSaving}
-                        className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                        className={
+                        isEditorial
+                          ? 'editorial-btn-primary rounded-full bg-accent px-4 py-2 text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                          : 'rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                      }
                       >
                         {waiverListSaving ? 'Saving…' : 'Save'}
                       </button>
@@ -1927,7 +1978,11 @@ export default function Settings() {
                           setWaiverListError(null)
                         }}
                         disabled={waiverListSaving}
-                        className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
+                        className={
+                      isEditorial
+                        ? 'editorial-btn-secondary rounded-full border px-4 py-2 transition disabled:opacity-60'
+                        : 'rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60'
+                    }
                       >
                         Cancel
                       </button>
@@ -1947,7 +2002,7 @@ export default function Settings() {
             <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <h2 className="text-lg font-semibold text-fg">Message Templates</h2>
+                    <h2 className={isEditorial ? 'sc text-[22px]' : 'text-lg font-semibold text-fg'}>Message Templates</h2>
                     <p className="mt-1 text-sm text-fg-secondary">
                       {messageTemplates.length} template{messageTemplates.length === 1 ? '' : 's'} &middot; available
                       in the conversation composer
@@ -1957,7 +2012,11 @@ export default function Settings() {
                     <button
                       type="button"
                       onClick={() => setEditingTemplates(true)}
-                      className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                      className={
+                        isEditorial
+                          ? 'editorial-btn-secondary shrink-0 rounded-full border px-3 py-1.5 transition'
+                          : 'shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface'
+                      }
                     >
                       Edit
                     </button>
@@ -2016,7 +2075,11 @@ export default function Settings() {
                         type="button"
                         onClick={handleTemplatesSave}
                         disabled={templatesSaving}
-                        className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                        className={
+                        isEditorial
+                          ? 'editorial-btn-primary rounded-full bg-accent px-4 py-2 text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                          : 'rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                      }
                       >
                         {templatesSaving ? 'Saving…' : 'Save'}
                       </button>
@@ -2028,7 +2091,11 @@ export default function Settings() {
                           setTemplatesError(null)
                         }}
                         disabled={templatesSaving}
-                        className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
+                        className={
+                      isEditorial
+                        ? 'editorial-btn-secondary rounded-full border px-4 py-2 transition disabled:opacity-60'
+                        : 'rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60'
+                    }
                       >
                         Cancel
                       </button>
@@ -2041,7 +2108,7 @@ export default function Settings() {
           {activeTab === 'policies' && canViewPolicies && policies && (
             <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
               <div>
-                <h2 className="text-lg font-semibold text-fg">Reminder Templates &amp; Send Times</h2>
+                <h2 className={isEditorial ? 'sc text-[22px]' : 'text-lg font-semibold text-fg'}>Reminder Templates &amp; Send Times</h2>
                 <p className="mt-1 text-sm text-fg-secondary">
                   Wording and local send times for the automatic client/artist appointment reminders and the estimate
                   follow-up text.
@@ -2079,7 +2146,11 @@ export default function Settings() {
                     <button
                       type="button"
                       onClick={() => setEditingSendTimes(true)}
-                      className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                      className={
+                        isEditorial
+                          ? 'editorial-btn-secondary shrink-0 rounded-full border px-3 py-1.5 transition'
+                          : 'shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface'
+                      }
                     >
                       Edit
                     </button>
@@ -2124,7 +2195,11 @@ export default function Settings() {
                       type="button"
                       onClick={handleSendTimesSave}
                       disabled={sendTimesSaving}
-                      className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                      className={
+                        isEditorial
+                          ? 'editorial-btn-primary rounded-full bg-accent px-4 py-2 text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                          : 'rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                      }
                     >
                       {sendTimesSaving ? 'Saving…' : 'Save times'}
                     </button>
@@ -2136,7 +2211,11 @@ export default function Settings() {
                         setReminderSendTimes(policies.reminderSendTimes ?? DEFAULT_REMINDER_SEND_TIMES)
                       }}
                       disabled={sendTimesSaving}
-                      className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                      className={
+                      isEditorial
+                        ? 'editorial-btn-secondary rounded-full border px-4 py-2 transition disabled:opacity-60'
+                        : 'rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60'
+                    }
                     >
                       Cancel
                     </button>
@@ -2150,7 +2229,7 @@ export default function Settings() {
             <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-lg font-semibold text-fg">Custom Policies</h2>
+                  <h2 className={isEditorial ? 'sc text-[22px]' : 'text-lg font-semibold text-fg'}>Custom Policies</h2>
                   <p className="mt-1 text-sm text-fg-secondary">
                     Add your own policy sections beyond the fixed set above. Public ones appear on your studio's
                     /policies page.
@@ -2160,7 +2239,11 @@ export default function Settings() {
                   <button
                     type="button"
                     onClick={() => openCustomPolicyModal('new')}
-                    className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                    className={
+                        isEditorial
+                          ? 'editorial-btn-secondary shrink-0 rounded-full border px-3 py-1.5 transition'
+                          : 'shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface'
+                      }
                   >
                     + Add Policy
                   </button>
@@ -2262,7 +2345,7 @@ export default function Settings() {
             <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-lg font-semibold text-fg">Deposit Tiers</h2>
+                  <h2 className={isEditorial ? 'sc text-[22px]' : 'text-lg font-semibold text-fg'}>Deposit Tiers</h2>
                   <p className="mt-1 text-sm text-fg-secondary">
                     The deposit amount charged depends on which tier the average price estimate falls into.
                   </p>
@@ -2271,7 +2354,11 @@ export default function Settings() {
                   <button
                     type="button"
                     onClick={startEditingDepositTiers}
-                    className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                    className={
+                        isEditorial
+                          ? 'editorial-btn-secondary shrink-0 rounded-full border px-3 py-1.5 transition'
+                          : 'shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface'
+                      }
                   >
                     Edit
                   </button>
@@ -2357,7 +2444,11 @@ export default function Settings() {
                       type="button"
                       onClick={handleDepositTiersSave}
                       disabled={depositTiersSaving}
-                      className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                      className={
+                        isEditorial
+                          ? 'editorial-btn-primary rounded-full bg-accent px-4 py-2 text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                          : 'rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                      }
                     >
                       {depositTiersSaving ? 'Saving…' : 'Save tiers'}
                     </button>
@@ -2368,7 +2459,11 @@ export default function Settings() {
                         setDepositTiersError(null)
                       }}
                       disabled={depositTiersSaving}
-                      className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                      className={
+                      isEditorial
+                        ? 'editorial-btn-secondary rounded-full border px-4 py-2 transition disabled:opacity-60'
+                        : 'rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60'
+                    }
                     >
                       Cancel
                     </button>
@@ -2393,7 +2488,11 @@ export default function Settings() {
                   type="button"
                   onClick={handleFieldSave}
                   disabled={fieldSaving}
-                  className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                  className={
+                        isEditorial
+                          ? 'editorial-btn-primary rounded-full bg-accent px-4 py-2 text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                          : 'rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                      }
                 >
                   {fieldSaving ? 'Saving…' : 'Save'}
                 </button>
@@ -2401,7 +2500,11 @@ export default function Settings() {
                   type="button"
                   onClick={() => setEditingField(null)}
                   disabled={fieldSaving}
-                  className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
+                  className={
+                      isEditorial
+                        ? 'editorial-btn-secondary rounded-full border px-4 py-2 transition disabled:opacity-60'
+                        : 'rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60'
+                    }
                 >
                   Cancel
                 </button>
@@ -2444,7 +2547,11 @@ export default function Settings() {
                   type="button"
                   onClick={handleCustomPolicySave}
                   disabled={customPolicySaving || !customPolicyTitleDraft.trim()}
-                  className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                  className={
+                        isEditorial
+                          ? 'editorial-btn-primary rounded-full bg-accent px-4 py-2 text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                          : 'rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                      }
                 >
                   {customPolicySaving ? 'Saving…' : 'Save'}
                 </button>
@@ -2452,7 +2559,11 @@ export default function Settings() {
                   type="button"
                   onClick={() => setEditingCustomPolicy(null)}
                   disabled={customPolicySaving}
-                  className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
+                  className={
+                      isEditorial
+                        ? 'editorial-btn-secondary rounded-full border px-4 py-2 transition disabled:opacity-60'
+                        : 'rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60'
+                    }
                 >
                   Cancel
                 </button>
@@ -2504,7 +2615,11 @@ export default function Settings() {
                   type="button"
                   onClick={handleReminderTemplateSave}
                   disabled={reminderTemplateSaving}
-                  className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                  className={
+                        isEditorial
+                          ? 'editorial-btn-primary rounded-full bg-accent px-4 py-2 text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                          : 'rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                      }
                 >
                   {reminderTemplateSaving ? 'Saving…' : 'Save'}
                 </button>
@@ -2512,7 +2627,11 @@ export default function Settings() {
                   type="button"
                   onClick={() => setEditingReminderTemplate(null)}
                   disabled={reminderTemplateSaving}
-                  className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
+                  className={
+                      isEditorial
+                        ? 'editorial-btn-secondary rounded-full border px-4 py-2 transition disabled:opacity-60'
+                        : 'rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60'
+                    }
                 >
                   Cancel
                 </button>
@@ -2619,7 +2738,11 @@ export default function Settings() {
                     type="button"
                     onClick={handleDefaultsSave}
                     disabled={defaultsSaving}
-                    className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                    className={
+                        isEditorial
+                          ? 'editorial-btn-primary rounded-full bg-accent px-4 py-2 text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                          : 'rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                      }
                   >
                     {defaultsSaving ? 'Saving…' : 'Save'}
                   </button>
@@ -2627,7 +2750,11 @@ export default function Settings() {
                     type="button"
                     onClick={() => setShowDefaultsModal(false)}
                     disabled={defaultsSaving}
-                    className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
+                    className={
+                      isEditorial
+                        ? 'editorial-btn-secondary rounded-full border px-4 py-2 transition disabled:opacity-60'
+                        : 'rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60'
+                    }
                   >
                     Cancel
                   </button>
@@ -2638,7 +2765,7 @@ export default function Settings() {
 
           {activeTab === 'integrations' && canViewIntegrations && (
             <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
-              <h2 className="text-lg font-semibold text-fg">Integrations</h2>
+              <h2 className={isEditorial ? 'sc text-[22px]' : 'text-lg font-semibold text-fg'}>Integrations</h2>
               <p className="mt-1 text-sm text-fg-secondary">
                 Connect your own provider accounts -- your credentials, encrypted, never shared across studios.
               </p>
@@ -2687,7 +2814,11 @@ export default function Settings() {
                                 type="button"
                                 onClick={handleConnectGmail}
                                 disabled={connectingGmail}
-                                className="rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                                className={
+                                  isEditorial
+                                    ? 'editorial-btn-primary rounded-full bg-accent px-3 py-1.5 text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                                    : 'rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                                }
                               >
                                 {connectingGmail ? 'Redirecting…' : integration.status === 'ERROR' ? 'Try again' : 'Connect Gmail'}
                               </button>
@@ -2762,7 +2893,11 @@ export default function Settings() {
                                     type="button"
                                     onClick={handleConnectStripe}
                                     disabled={connectingStripe}
-                                    className="rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                                    className={
+                                  isEditorial
+                                    ? 'editorial-btn-primary rounded-full bg-accent px-3 py-1.5 text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                                    : 'rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                                }
                                   >
                                     {connectingStripe ? 'Redirecting…' : 'Finish setup'}
                                   </button>
@@ -2780,7 +2915,11 @@ export default function Settings() {
                                 type="button"
                                 onClick={handleConnectStripe}
                                 disabled={connectingStripe}
-                                className="rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                                className={
+                                  isEditorial
+                                    ? 'editorial-btn-primary rounded-full bg-accent px-3 py-1.5 text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                                    : 'rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                                }
                               >
                                 {connectingStripe ? 'Redirecting…' : 'Connect with Stripe'}
                               </button>
@@ -2838,7 +2977,11 @@ export default function Settings() {
                                 type="button"
                                 onClick={handleConnectBirdSms}
                                 disabled={connectingBirdSms}
-                                className="rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                                className={
+                                  isEditorial
+                                    ? 'editorial-btn-primary rounded-full bg-accent px-3 py-1.5 text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                                    : 'rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                                }
                               >
                                 {connectingBirdSms ? 'Connecting…' : integration.status === 'ERROR' ? 'Try again' : 'Connect'}
                               </button>
@@ -2930,7 +3073,11 @@ export default function Settings() {
                                 setSmsConnectError(null)
                                 setShowConnectSms(true)
                               }}
-                              className="rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-bg transition hover:bg-accent-hover"
+                              className={
+                                isEditorial
+                                  ? 'editorial-btn-primary rounded-full bg-accent px-3 py-1.5 text-bg transition hover:bg-accent-hover'
+                                  : 'rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-bg transition hover:bg-accent-hover'
+                              }
                             >
                               {integration.status === 'ERROR' ? 'Try again' : 'Connect'}
                             </button>
@@ -3069,7 +3216,11 @@ export default function Settings() {
                 <button
                   type="submit"
                   disabled={smsConnecting}
-                  className="w-full rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                  className={
+                    isEditorial
+                      ? 'editorial-btn-primary w-full rounded-full bg-accent px-4 py-2 text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                      : 'w-full rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                  }
                 >
                   {smsConnecting ? 'Connecting…' : 'Connect'}
                 </button>
@@ -3101,7 +3252,11 @@ export default function Settings() {
                   type="button"
                   onClick={() => setShowDisconnectConfirm(null)}
                   disabled={disconnecting}
-                  className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                  className={
+                      isEditorial
+                        ? 'editorial-btn-secondary rounded-full border px-4 py-2 transition disabled:opacity-60'
+                        : 'rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60'
+                    }
                 >
                   Cancel
                 </button>
@@ -3111,7 +3266,7 @@ export default function Settings() {
 
           {activeTab === 'system' && canViewSystem && (
             <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
-              <h2 className="text-lg font-semibold text-fg">System</h2>
+              <h2 className={isEditorial ? 'sc text-[22px]' : 'text-lg font-semibold text-fg'}>System</h2>
               <p className="mt-1 text-sm text-fg-secondary">
                 These automatic tasks run on their own schedule (some nightly, some every 15 minutes) to keep your
                 data up to date.
@@ -3141,7 +3296,11 @@ export default function Settings() {
                             type="button"
                             onClick={() => handleRunNow(job.jobName)}
                             disabled={runningJob === job.jobName}
-                            className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                            className={
+                              isEditorial
+                                ? 'editorial-btn-secondary shrink-0 rounded-full border px-3 py-1.5 transition disabled:opacity-60'
+                                : 'shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:opacity-60'
+                            }
                           >
                             {runningJob === job.jobName ? 'Running…' : 'Run Now'}
                           </button>
@@ -3330,6 +3489,8 @@ function LocationForm({
   onSubmit: (event: FormEvent) => void
   onCancel: () => void
 }) {
+  const { shape } = useThemePreset()
+  const isEditorial = shape === 'editorial'
   return (
     <form onSubmit={onSubmit} className="rounded-xl border border-border bg-bg p-4">
       {error && (
@@ -3434,7 +3595,11 @@ function LocationForm({
         <button
           type="submit"
           disabled={submitting}
-          className="flex-1 rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
+          className={
+                      isEditorial
+                        ? 'editorial-btn-primary flex-1 rounded-full bg-accent px-4 py-2 text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                        : 'flex-1 rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                    }
         >
           {submitting ? 'Saving…' : 'Save location'}
         </button>
@@ -3442,7 +3607,11 @@ function LocationForm({
           type="button"
           onClick={onCancel}
           disabled={submitting}
-          className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+          className={
+                      isEditorial
+                        ? 'editorial-btn-secondary rounded-full border px-4 py-2 transition disabled:opacity-60'
+                        : 'rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60'
+                    }
         >
           Cancel
         </button>
