@@ -1065,7 +1065,7 @@
 .editorial-btn-primary,
 .editorial-btn-secondary {
   font-family: var(--font-jura);
-  font-weight: 700;
+  font-weight: 400;
   font-size: 11.5px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -1079,6 +1079,27 @@
   border-color: var(--color-accent);
   color: var(--color-fg);
   background: rgba(201, 154, 91, 0.08);
+}
+
+/* Editorial Gold: every semi-bold/bold weight across the app becomes
+   regular, theme-scoped. Rather than hunting down every call site that
+   conditionally applies Tailwind's font-bold (700) / font-semibold (600)
+   under isEditorial (dozens of files -- StatusPill, Team, Settings,
+   Inquiries, IntakeForm, etc.), this overrides the two compiled Tailwind
+   utility classes directly, scoped under [data-theme="editorial-gold"] --
+   the exact same attribute applyThemePreset() sets on <html> whenever
+   useThemePreset()'s shape is 'editorial' (the only preset with that
+   shape), so this is 1:1 synchronized with every isEditorial check
+   already in the codebase without needing to duplicate that logic here.
+   font-medium (500) is untouched -- only semi-bold/bold, per this
+   session's own ask. Higher specificity than Tailwind's own bare
+   .font-bold/.font-semibold rules (attribute selector + class vs. just a
+   class), so this always wins regardless of stylesheet source order --
+   no !important needed. Onyx Lime and every other preset are completely
+   unaffected, since none of them ever set this attribute value. */
+[data-theme="editorial-gold"] .font-bold,
+[data-theme="editorial-gold"] .font-semibold {
+  font-weight: 400;
 }
 
 /* Same gradient-vignette technique as the marketing site's own
