@@ -4796,3 +4796,58 @@ Continuation of the same propagation, two pages this time, one commit per page. 
 ## Cleanup
 
 Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification script and screenshot from the scratch directory.
+
+---
+
+# Editorial Gold — reduce StatusPill size, especially on mobile
+
+Single-file fix (plus one downstream call-site adjustment forced by it) on `main`. Editorial Gold only, `onyx-lime` unaffected.
+
+## Values landed on (`StatusPill.tsx`, editorial-shape branch)
+
+Mobile-first responsive classes -- smaller by default, restored to the original desktop sizing at `sm:` (640px) and up:
+
+| | Mobile (base) | Desktop (`sm:` and up, unchanged from before) |
+|---|---|---|
+| Horizontal padding | `px-2` (8px) | `px-3` (12px) |
+| Vertical padding | `py-1` (4px) | `py-1.5` (6px) |
+| Font size | `text-[9px]` | `text-[10px]` |
+| Letter-spacing | `tracking-[0.08em]` | `tracking-[0.16em]` |
+| Dot size | `h-1 w-1` | `h-1.5 w-1.5` |
+| Icon/text gap | `gap-1.5` | `gap-2` |
+| Line wrapping | allowed (no `whitespace-nowrap`) | `whitespace-nowrap` (forced single line) |
+
+The label text itself is now wrapped in its own `<span className="leading-tight">` so a two-line wrap doesn't pick up extra default line-height.
+
+## Wrap-fallback decision
+
+The longest real labels (`describeInquiryStatus`'s "Opened, awaiting response" / "Sent, not opened yet", rendered uppercase) still don't comfortably fit on one line at 375px even at the reduced size. Per the task's own stated preference, went with wrapping onto a second line rather than shrinking the font further toward illegibility -- confirmed via computed style at 375px that this produces **zero horizontal overflow** (`document.documentElement.scrollWidth === window.innerWidth`) on the worst-case row. No row-layout change (avatar+name+pill stacking vertically) was needed anywhere checked -- the wrap alone was sufficient, so that escalation wasn't used.
+
+## A real regression found and fixed along the way
+
+`ConversationsPanel.tsx`'s two thread-list status badges pass their own smaller `className` override (`px-2.5 py-0.5 text-[11px]`, a deliberately more compact treatment for the dense conversation list). Once `StatusPill`'s base classes gained `sm:`-prefixed variants, those started out-ranking the plain override at >=640px (Tailwind emits responsive utilities after the base ones in its generated stylesheet, so they win when their media query is active) -- verified this empirically via `getComputedStyle` before concluding it, not just reasoned about it: pre-fix, the badge measured `fontSize: 10px, paddingLeft: 12px` at 1440px vs. `fontSize: 11px, paddingLeft: 10px` at 375px, a real, unintended desktop-only size change for a call site that wasn't broken before. Fixed by adding `!` (Tailwind's important modifier) to both overrides. Re-verified: the badge now measures byte-identical (`fontSize: 11px, paddingLeft: 10px, paddingTop: 2px`) at both 375px and 1440px -- and as a side effect, this also fixed a pre-existing quirk where the override's own `py-0.5` had never actually applied at any width (the base component's `py` value was silently winning even before this session's change; now the override wins cleanly everywhere, as originally intended).
+
+## Verification
+
+Real narrow-viewport (375px, iPhone-SE width) Playwright checks against the local dev stack, Editorial Gold active:
+
+- **Inquiries & Projects** (`/inquiries`): worst-case row ("Opened, awaiting response") wraps cleanly onto two lines, zero horizontal overflow -- confirmed via `scrollWidth`/`innerWidth` equality, not just a screenshot.
+- **Team** (`/team`, Staff tab): avatar + name + "ACTIVE" pill row no longer squishes the name column.
+- **Client detail** (`/clients/:id`): checked across five separate `StatusPill`-rendering sections in one real client's page -- Inquiries, Projects, Gift Cards, Appointments (including "CHECKOUT OVERDUE"), Waivers. All render cleanly; "CHECKOUT OVERDUE" happened to fit on one line here since that table column has more room than the Inquiries page's -- confirms the wrap is adaptive to actual available width, not a fixed break.
+- **Gift card detail** (`/gift-cards/:id`) and **Appointment detail** (`/appointments/:id`): standalone pages, both confirmed clean.
+- **Conversations panel** (floating chat overlay): confirmed both at 375px and 1440px after the `!important` fix above.
+- **Desktop** (1440px): re-checked Inquiries' worst-case row and Team -- both single-line, matching the original pre-fix sizing exactly (`10px` font, `230.5px`-wide single-line pill measured directly, not eyeballed).
+- **Onyx Lime**: confirmed via `getComputedStyle` that the default-shape pill's className is byte-identical to before this change (`whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium ...`) -- completely unaffected, as expected since only the `shape === 'editorial'` branch was touched.
+- Calendar's appointment-preview popover and the public `GiftCardResponse` page weren't reached with a live automated click this session (calendar filter/date state and a public-page auth path made scripted navigation slow to set up) -- both render through this exact same shared component and branch with no page-specific overrides, so the fix applies identically; flagging that these two specifically weren't eyeballed live, unlike everything above.
+
+## Typechecks
+
+`npx tsc -b` (web) and `npx tsc --noEmit` (api, untouched) -- both clean before commit.
+
+## Commit
+
+`2adc2b0` on `main`.
+
+## Cleanup
+
+Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification script and screenshot from the scratch directory.
