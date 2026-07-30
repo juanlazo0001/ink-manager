@@ -122,28 +122,31 @@ const SORT_LABELS: Record<SortOption, string> = {
   clientName_desc: 'Client name (Z–A)',
 }
 
-function truncate(text: string, max: number) {
-  return text.length > max ? `${text.slice(0, max).trimEnd()}…` : text
-}
-
-// List-view column visibility. Client and Status stay permanently visible
-// (the row's identity and current state) -- everything else is optional,
-// toggled from the "Columns" menu and persisted so the choice survives a
-// reload. Shared between both tabs (same table, same toggles) rather than
-// a separate preference per tab, since hiding e.g. Description is just as
-// useful looking at either one.
-type ColumnKey = 'channel' | 'description' | 'date' | 'artist'
+// List-view column visibility, toggled from the "Columns" menu and
+// persisted so the choice survives a reload. Shared between both tabs
+// (same table, same toggles) rather than a separate preference per tab,
+// since hiding e.g. Description is just as useful looking at either one.
+// Client and Status default to visible (every existing user keeps today's
+// layout until they explicitly hide one) but, unlike the other four, are
+// NOT the row's only remaining identity if hidden -- the photo/avatar
+// column is the one thing that's never optional, since a row with every
+// column off would otherwise render as a completely blank clickable strip.
+type ColumnKey = 'clientName' | 'channel' | 'description' | 'date' | 'artist' | 'status'
 const COLUMN_DEFS: { key: ColumnKey; label: string }[] = [
+  { key: 'clientName', label: 'Client' },
   { key: 'channel', label: 'Channel' },
   { key: 'description', label: 'Description' },
   { key: 'date', label: 'Date' },
   { key: 'artist', label: 'Assigned Artist' },
+  { key: 'status', label: 'Status' },
 ]
 const DEFAULT_COLUMN_VISIBILITY: Record<ColumnKey, boolean> = {
+  clientName: true,
   channel: true,
   description: true,
   date: true,
   artist: true,
+  status: true,
 }
 const COLUMN_VISIBILITY_STORAGE_KEY = 'ink-manager:inquiries-columns'
 
@@ -393,27 +396,42 @@ export default function Inquiries() {
             </div>
           )}
         </td>
-        <td className="py-3 text-fg">
-          {/* Below sm, only this cell and Status are visible with nothing
-              else to give the row width -- a long full name would shove
-              into (or under) the status pill with no room to wrap. Bounded
-              max-widths + truncate at every breakpoint (never max-w-none)
-              guarantee the name can never overlap Status, however long it
-              is; below sm it also drops to first-name-only so the common
-              case reads clean instead of ellipsis-clipped mid-word. */}
-          <span className="block max-w-[96px] truncate sm:hidden">{inquiry.client.firstName}</span>
-          <span className="hidden max-w-[140px] truncate sm:block md:max-w-[200px] lg:max-w-[280px]">
-            {inquiry.client.firstName} {inquiry.client.lastName}
-          </span>
-        </td>
+        {columnVisibility.clientName && (
+          <td className={`py-3 text-fg ${lastVisibleColumnKey === 'clientName' ? 'pr-3' : ''}`}>
+            {/* Below sm, if Status is also visible, this is the only other
+                cell giving the row width -- a long full name would shove
+                into (or under) the status pill with no room to wrap. Bounded
+                max-widths + truncate at every breakpoint (never max-w-none)
+                guarantee the name can never overlap Status, however long it
+                is; below sm it also drops to first-name-only so the common
+                case reads clean instead of ellipsis-clipped mid-word. */}
+            <span className="block max-w-[96px] truncate sm:hidden">{inquiry.client.firstName}</span>
+            <span className="hidden max-w-[140px] truncate sm:block md:max-w-[200px] lg:max-w-[280px]">
+              {inquiry.client.firstName} {inquiry.client.lastName}
+            </span>
+          </td>
+        )}
         {columnVisibility.channel && (
-          <td className="hidden py-3 text-fg-secondary md:table-cell">{formatStatus(inquiry.channel)}</td>
+          <td className={`hidden py-3 text-fg-secondary md:table-cell ${lastVisibleColumnKey === 'channel' ? 'pr-3' : ''}`}>
+            {formatStatus(inquiry.channel)}
+          </td>
         )}
         {columnVisibility.description && (
-          <td className="hidden py-3 text-fg-secondary md:table-cell">{truncate(inquiry.description, 60)}</td>
+          // Unlike Channel/Date/Artist, this one isn't hidden below md --
+          // toggling it on means the user wants to see it, including on a
+          // phone. CSS truncate (width-aware ellipsis, not a fixed
+          // character count) + a responsive max-width keeps it from
+          // overflowing the already-tight mobile row regardless of actual
+          // font metrics, growing at each breakpoint as more columns free
+          // up room.
+          <td
+            className={`max-w-[70px] truncate py-3 text-fg-secondary sm:max-w-[160px] md:max-w-[220px] lg:max-w-xs ${lastVisibleColumnKey === 'description' ? 'pr-3' : ''}`}
+          >
+            {inquiry.description}
+          </td>
         )}
         {columnVisibility.date && (
-          <td className="hidden py-3 text-fg-secondary sm:table-cell">
+          <td className={`hidden py-3 text-fg-secondary sm:table-cell ${lastVisibleColumnKey === 'date' ? 'pr-3' : ''}`}>
             {activeTab === 'projects'
               ? inquiry.appointment
                 ? formatDateTime(inquiry.appointment.startTime)
@@ -422,7 +440,7 @@ export default function Inquiries() {
           </td>
         )}
         {columnVisibility.artist && (
-          <td className="hidden py-3 text-fg-secondary lg:table-cell">
+          <td className={`hidden py-3 text-fg-secondary lg:table-cell ${lastVisibleColumnKey === 'artist' ? 'pr-3' : ''}`}>
             {inquiry.assignedArtist ? (
               <span className="flex min-w-0 items-center gap-1.5">
                 <ArtistAvatar artist={inquiry.assignedArtist} className="h-5 w-5" />
@@ -433,14 +451,23 @@ export default function Inquiries() {
             )}
           </td>
         )}
-        <td className="py-3 pr-3">
-          <StatusPill status={inquiry.status} label={describeInquiryStatus(inquiry)} />
-        </td>
+        {columnVisibility.status && (
+          <td className={`py-3 ${lastVisibleColumnKey === 'status' ? 'pr-3' : ''}`}>
+            <StatusPill status={inquiry.status} label={describeInquiryStatus(inquiry)} />
+          </td>
+        )}
       </tr>
     )
   }
 
-  const visibleColumnCount = 3 + COLUMN_DEFS.filter((c) => columnVisibility[c.key]).length
+  // Photo/avatar column has no header label and is never optional -- the
+  // one thing every row always shows regardless of Columns menu state.
+  const visibleColumnCount = 1 + COLUMN_DEFS.filter((c) => columnVisibility[c.key]).length
+  // The header row's right rounded corner needs to land on whichever <th>
+  // actually renders last now that Status (previously always the last
+  // column) can be hidden -- falls back to the photo <th> itself in the
+  // degenerate case where every optional column is off.
+  const lastVisibleColumnKey = [...COLUMN_DEFS].reverse().find((c) => columnVisibility[c.key])?.key ?? null
 
   return (
     <div className="flex min-h-screen bg-bg text-fg">
@@ -625,8 +652,9 @@ export default function Inquiries() {
             </div>
 
             {/* Column visibility only applies to the table, not Kanban cards.
-                Client and Status are always shown; everything else here is
-                optional and persisted across reloads (localStorage). */}
+                Every column here, including Client and Status, is optional
+                and persisted across reloads (localStorage) -- only the
+                photo/avatar column (no header label) is never toggleable. */}
             {viewMode === 'list' && (
               <div ref={columnMenuRef} className="relative shrink-0">
                 <button
@@ -708,23 +736,41 @@ export default function Inquiries() {
                 <table className="w-full text-left text-sm">
                   <thead>
                     <tr className="bg-surface-inset text-xs text-fg-muted">
-                      <th className="rounded-l-lg py-2 pl-3 font-medium"></th>
-                      <th className="py-2 font-medium">Client</th>
+                      <th className={`py-2 pl-3 font-medium ${lastVisibleColumnKey === null ? 'rounded-l-lg rounded-r-lg' : 'rounded-l-lg'}`}></th>
+                      {columnVisibility.clientName && (
+                        <th className={`py-2 font-medium ${lastVisibleColumnKey === 'clientName' ? 'rounded-r-lg pr-3' : ''}`}>
+                          Client
+                        </th>
+                      )}
                       {columnVisibility.channel && (
-                        <th className="hidden py-2 font-medium md:table-cell">Channel</th>
+                        <th
+                          className={`hidden py-2 font-medium md:table-cell ${lastVisibleColumnKey === 'channel' ? 'rounded-r-lg pr-3' : ''}`}
+                        >
+                          Channel
+                        </th>
                       )}
                       {columnVisibility.description && (
-                        <th className="hidden py-2 font-medium md:table-cell">Description</th>
+                        <th className={`py-2 font-medium ${lastVisibleColumnKey === 'description' ? 'rounded-r-lg pr-3' : ''}`}>
+                          Description
+                        </th>
                       )}
                       {columnVisibility.date && (
-                        <th className="hidden py-2 font-medium sm:table-cell">
+                        <th
+                          className={`hidden py-2 font-medium sm:table-cell ${lastVisibleColumnKey === 'date' ? 'rounded-r-lg pr-3' : ''}`}
+                        >
                           {activeTab === 'projects' ? 'Scheduled Date' : 'Submitted'}
                         </th>
                       )}
                       {columnVisibility.artist && (
-                        <th className="hidden py-2 font-medium lg:table-cell">Assigned Artist</th>
+                        <th
+                          className={`hidden py-2 font-medium lg:table-cell ${lastVisibleColumnKey === 'artist' ? 'rounded-r-lg pr-3' : ''}`}
+                        >
+                          Assigned Artist
+                        </th>
                       )}
-                      <th className="rounded-r-lg py-2 pr-3 font-medium">Status</th>
+                      {columnVisibility.status && (
+                        <th className={`py-2 font-medium ${lastVisibleColumnKey === 'status' ? 'rounded-r-lg pr-3' : ''}`}>Status</th>
+                      )}
                     </tr>
                   </thead>
                   {isLoading ? (
@@ -733,12 +779,12 @@ export default function Inquiries() {
                       columns={visibleColumnCount}
                       columnClassNames={[
                         '',
-                        '',
+                        ...(columnVisibility.clientName ? [''] : []),
                         ...(columnVisibility.channel ? ['hidden md:table-cell'] : []),
-                        ...(columnVisibility.description ? ['hidden md:table-cell'] : []),
+                        ...(columnVisibility.description ? ['max-w-[70px] sm:max-w-[160px] md:max-w-[220px] lg:max-w-xs'] : []),
                         ...(columnVisibility.date ? ['hidden sm:table-cell'] : []),
                         ...(columnVisibility.artist ? ['hidden lg:table-cell'] : []),
-                        '',
+                        ...(columnVisibility.status ? [''] : []),
                       ]}
                     />
                   ) : groupedInquiries ? (
