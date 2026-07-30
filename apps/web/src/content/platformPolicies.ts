@@ -5,6 +5,22 @@
 // Manager itself, so it lives as a plain HTML-string constant here rather
 // than a database field -- there's nothing for a Studio to author.
 //
+// Canonical source: ./privacy-policy-platform.md and ./terms-platform.md,
+// in this same directory -- the actual markdown drafts this HTML is
+// hand-converted from. Neither file is imported/parsed at build or
+// render time (this HTML is what genuinely renders, both here and in
+// scripts/generate-static-policies.mjs's static /privacy and /terms
+// output -- see that script's own header comment) -- they exist so a
+// canonical, diffable, checked-in draft actually exists at all. Previously
+// there was no such file anywhere in the repo, only this hand-authored
+// HTML with no reference to check it against; the live /privacy page
+// drifted from the real canonical draft as a direct result (a carrier-
+// compliance SMS-consent disclosure existed in the actual published
+// policy but not here, undetected until an explicit audit). Any future
+// change to either policy's wording: edit the .md file first, then
+// hand-convert the change into the matching HTML constant below --
+// keep them in sync, since nothing enforces that automatically.
+//
 // Still passed through sanitizeHtml() at render time (see
 // PlatformPolicyPage.tsx) and restricted to sanitizeHtml's own allowed-tag
 // list (p, br, strong, em, u, ul, ol, li, a, h2, h3) even though this
@@ -50,12 +66,13 @@ export const PLATFORM_PRIVACY_POLICY_HTML = `
 <li><strong>Opting out</strong>: reply <strong>STOP</strong> at any time to stop receiving SMS messages. Reply <strong>HELP</strong> for assistance. You can also ask the Studio directly to stop contacting you by a given channel.</li>
 <li>Opting out of SMS does not opt you out of email, and vice versa &mdash; each channel is managed separately.</li>
 </ul>
+<p>No mobile information will be shared with third parties or affiliates for marketing or promotional purposes. Text messaging originator opt-in data and consent will not be shared with any third parties, excluding the messaging providers necessary to deliver messages on our behalf.</p>
 
 <h2>Who we share information with</h2>
 <ul>
 <li><strong>The Studio you're interacting with</strong> &mdash; they are the primary party responsible for your service and will have access to the information you submit.</li>
 <li><strong>Service providers</strong> who help us operate the platform, including our payment processor (Stripe) and messaging providers, solely to the extent necessary to provide those services.</li>
-<li>We do not share your information with third parties for their own marketing purposes.</li>
+<li>We do not share your information with third parties for their own marketing purposes. No mobile information will be shared with third parties or affiliates for marketing or promotional purposes, and text messaging originator opt-in data and consent will not be shared with any third parties.</li>
 </ul>
 
 <h2>Data retention and security</h2>
