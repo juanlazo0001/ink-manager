@@ -597,7 +597,11 @@ export default function Team() {
               <button
                 type="button"
                 onClick={() => navigate('/artists/new')}
-                className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover"
+                className={
+                  isEditorial
+                    ? 'editorial-btn-primary flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-bg transition hover:bg-accent-hover'
+                    : 'flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover'
+                }
               >
                 <PlusIcon className="h-4 w-4" />
                 Add Artist
@@ -695,7 +699,14 @@ export default function Team() {
           )}
 
           {activeTab === 'staff' && isOwner && (
-          <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-5">
+          // No .card-surface here, deliberately -- the staff table is
+          // dense, information-critical content (same category as
+          // Conversations' thread list / Calendar's grid / the Clients
+          // table), not a glass-treatment candidate. It had .card-surface
+          // applied (likely from an earlier broad template pass, not a
+          // deliberate choice) -- removed so it stays fully solid/opaque
+          // under Editorial Gold.
+          <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
             {viewAsError && <p className="mb-3 text-sm text-danger">{viewAsError}</p>}
             {error && <p className="text-sm text-danger">{error}</p>}
 
@@ -980,7 +991,10 @@ export default function Team() {
           )}
 
           {activeTab === 'permissions' && isOwner && (
-          <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-5">
+          // No .card-surface here, deliberately -- the permissions matrix
+          // is dense, information-critical content (a checkbox grid), not
+          // a glass-treatment candidate. Same fix as the staff table above.
+          <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
                 <h2 className="text-lg font-semibold text-fg">Permissions</h2>
@@ -994,7 +1008,11 @@ export default function Team() {
                   type="button"
                   onClick={handleSavePermissions}
                   disabled={permissionsSubmitting}
-                  className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                  className={
+                    isEditorial
+                      ? 'editorial-btn-primary rounded-full bg-accent px-4 py-2 text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                      : 'rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                  }
                 >
                   {permissionsSubmitting ? 'Saving…' : 'Save changes'}
                 </button>
