@@ -889,9 +889,18 @@ router.patch("/:id", requireAuth, requirePermission("inquiries.edit"), async (re
   res.json(updated);
 });
 
-// Staff hands a NEW inquiry off to an artist. Re-assigning only makes sense
-// while it's still NEW — once an artist has responded (or is mid-review),
-// this endpoint won't touch it; DECLINE below is what puts it back to NEW.
+// Staff hands a NEW inquiry off to an artist (bumps status to
+// ARTIST_ASSIGNED), assigns one late to an inquiry/project that reached a
+// later status with none yet (send-estimate deliberately doesn't require
+// one -- see its own comment; the deposit-form gate does), or reassigns an
+// already-assigned inquiry/project to a different artist -- all three go
+// through this one endpoint, distinguished below by the inquiry's current
+// status/assignedArtistId rather than three separate routes. Reassignment
+// only swaps assignedArtistId/assignedAt; it deliberately does not touch
+// any estimate/pricing the previous artist already entered (that's a
+// distinct piece of state, not owned by "who's assigned" alone) or any
+// appointment already booked (Appointment.artistId is independent --
+// scheduling assigns its own artist, not derived from the inquiry's).
 router.patch("/:id/assign", requireAuth, requirePermission("inquiries.assignArtist"), async (req, res) => {
   const id = req.params.id as string;
   const { artistId } = req.body ?? {};
@@ -905,17 +914,6 @@ router.patch("/:id/assign", requireAuth, requirePermission("inquiries.assignArti
     return res.status(404).json({ error: "Inquiry not found" });
   }
 
-  // The normal path (NEW -> ARTIST_ASSIGNED) is the only one that also
-  // moves status. But an inquiry can reach a later status with no artist
-  // ever assigned (send-estimate deliberately doesn't require one -- see
-  // its own comment), and the deposit-form gate now hard-requires one --
-  // without this fallback, such an inquiry would have no way to ever get
-  // one assigned, since the Assignment widget only shows a picker at NEW.
-  // Late assignment leaves status untouched (never rewinds a Project that's
-  // already moved on), and is only possible once, same as the normal path.
-  if (inquiry.status !== InquiryStatus.NEW && inquiry.assignedArtistId) {
-    return res.status(400).json({ error: "An artist is already assigned to this inquiry" });
-  }
   if (!NON_TERMINAL_STATUSES.includes(inquiry.status)) {
     return res.status(400).json({ error: "Can't assign an artist to a closed or cold-lead inquiry" });
   }
@@ -926,6 +924,7 @@ router.patch("/:id/assign", requireAuth, requirePermission("inquiries.assignArti
   }
 
   const isFirstAssignment = inquiry.status === InquiryStatus.NEW;
+  const isReassignment = !isFirstAssignment && !!inquiry.assignedArtistId;
   const updateData = isFirstAssignment
     ? { assignedArtistId: artistId, assignedAt: new Date(), status: InquiryStatus.ARTIST_ASSIGNED }
     : { assignedArtistId: artistId, assignedAt: new Date() };
@@ -941,7 +940,7 @@ router.patch("/:id/assign", requireAuth, requirePermission("inquiries.assignArti
     actorUserId: req.user!.userId,
     entityType: "Inquiry",
     entityId: id,
-    action: isFirstAssignment ? "status_change" : "artist_assigned",
+    action: isFirstAssignment ? "status_change" : isReassignment ? "artist_reassigned" : "artist_assigned",
     changes: diffObjects(
       inquiry,
       updateData,

@@ -600,6 +600,11 @@ export default function InquiryDetail() {
   const [selectedArtistId, setSelectedArtistId] = useState('')
   const [assigning, setAssigning] = useState(false)
   const [assignError, setAssignError] = useState<string | null>(null)
+  // Same on/off editing-toggle pattern as editingEstimate below -- starts
+  // false so an already-assigned inquiry/project shows the plain read-only
+  // display until staff explicitly asks to change it, rather than always
+  // showing a picker once one exists.
+  const [editingArtist, setEditingArtist] = useState(false)
 
   // Starts false and is seeded per-inquiry below (true only when no estimate
   // has ever been sent yet -- otherwise these fields would always be
@@ -1134,6 +1139,13 @@ export default function InquiryDetail() {
     setEditingEstimate(true)
   }
 
+  function openEditArtist() {
+    if (!inquiry) return
+    setSelectedArtistId(inquiry.assignedArtist?.id ?? '')
+    setAssignError(null)
+    setEditingArtist(true)
+  }
+
   async function handleAssign() {
     if (!id || !selectedArtistId) return
 
@@ -1146,6 +1158,7 @@ export default function InquiryDetail() {
         body: JSON.stringify({ artistId: selectedArtistId }),
       })
 
+      setEditingArtist(false)
       invalidateInquiry()
     } catch (err) {
       setAssignError(err instanceof Error ? err.message : 'Failed to assign artist')
@@ -2289,9 +2302,27 @@ export default function InquiryDetail() {
                 </Widget>
               )}
 
-              <Widget key="assignment-section" id="assignment-section" title="Assignment">
-
-                {(inquiry.status === 'NEW' || (!inquiry.assignedArtist && !isTerminal)) && canAssignArtist ? (
+              <Widget
+                key="assignment-section"
+                id="assignment-section"
+                title="Assignment"
+                actions={
+                  inquiry.assignedArtist && inquiry.status !== 'NEW' && canAssignArtist && !isTerminal && !editingArtist ? (
+                    <button
+                      type="button"
+                      onClick={openEditArtist}
+                      aria-label="Edit Assigned Artist"
+                      title="Edit Assigned Artist"
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
+                    >
+                      <PencilIcon className="h-4 w-4" />
+                      <span className="hidden text-sm font-semibold md:inline">Edit</span>
+                    </button>
+                  ) : undefined
+                }
+              >
+                {(inquiry.status === 'NEW' || (!inquiry.assignedArtist && !isTerminal) || editingArtist) &&
+                canAssignArtist ? (
                   <div className="mt-4 flex flex-wrap items-center gap-3">
                     {/* A never-assigned inquiry can reach this state past NEW
                         (send-estimate never requires one) -- a deposit can't
@@ -2299,7 +2330,10 @@ export default function InquiryDetail() {
                         available here too, not just at NEW. Doesn't touch
                         status (see the backend's own isFirstAssignment
                         branch), unlike the original NEW -> ARTIST_ASSIGNED
-                        path. */}
+                        path. editingArtist (opened via the Edit action above)
+                        reuses this exact same picker+button to reassign an
+                        inquiry/project that already has one -- pre-seeded
+                        with the current artist by openEditArtist. */}
                     <ArtistSelect
                       id="assignArtistId"
                       className="w-64 max-w-full"
@@ -2313,8 +2347,20 @@ export default function InquiryDetail() {
                       disabled={!selectedArtistId || assigning}
                       className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                     >
-                      {assigning ? 'Assigning…' : 'Assign Artist'}
+                      {assigning ? 'Saving…' : inquiry.assignedArtist ? 'Save' : 'Assign Artist'}
                     </button>
+                    {editingArtist && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingArtist(false)
+                          setAssignError(null)
+                        }}
+                        className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
+                      >
+                        Cancel
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
