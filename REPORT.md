@@ -4851,3 +4851,41 @@ Real narrow-viewport (375px, iPhone-SE width) Playwright checks against the loca
 ## Cleanup
 
 Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification script and screenshot from the scratch directory.
+
+---
+
+# Inquiries list: Client/Status column toggles, mobile Description truncation
+
+Single-file fix (`Inquiries.tsx`) on `main`. Theme-agnostic -- applies identically under Editorial Gold and Onyx Lime, not gated by preset.
+
+## 1. Client and Status columns are now toggleable
+
+Both were hardcoded permanently visible in the existing "Columns" menu system (Channel/Description/Date/Assigned Artist were already toggleable). Folded them into the same `ColumnKey`/`COLUMN_DEFS`/`DEFAULT_COLUMN_VISIBILITY` machinery, defaulting to visible so no existing user's layout changes until they explicitly hide one. Only the photo/avatar column (no header label, never had a toggle) stays permanently fixed -- a row with every other column hidden would otherwise be a blank clickable strip.
+
+Since Status was previously always the last (and only ever) rightmost column, the header row's rounded right corner and each cell's right padding were hardcoded onto it. Both now follow whichever column actually renders last, computed once via `lastVisibleColumnKey = [...COLUMN_DEFS].reverse().find(c => columnVisibility[c.key])`.
+
+## 2. Description column truncates on mobile instead of never appearing
+
+Before this fix, "shorten it with ellipses on mobile" for the Description column was moot -- it was gated `hidden md:table-cell`, meaning it never rendered on a real phone (max ~428px) regardless of what the user toggled, only ever showing at tablet width and up. Removed that gate: toggling Description on now means "show it, including on mobile."
+
+Replaced the old fixed-60-character JS `truncate()` helper with CSS-based truncation (`overflow-hidden` + `text-overflow: ellipsis` + `whitespace-nowrap`, i.e. Tailwind's `truncate` utility) at a responsive `max-w-*` (70px mobile, 160px at `sm`, 220px at `md`, 320px/`max-w-xs` at `lg`+) -- width-aware regardless of actual rendered character widths, unlike a fixed character count that could still overflow a narrow column or look stingy in a wide one. The now-dead `truncate()` helper (its only remaining caller) was deleted.
+
+## Verification
+
+- **Column toggles**: opened the Columns menu, hid Client and Status via direct checkbox interaction, confirmed the header/row cells update immediately, `localStorage` (`ink-manager:inquiries-columns`) persists the new state, a page reload keeps it hidden, and re-enabling both restores the original 7-column layout in the original order. Confirmed the rounded corner correctly relocated to "Assigned Artist" (the new actual last column) while Client/Status were hidden.
+- **Mobile Description truncation**: seeded a real inquiry via a direct authenticated API call (`POST /inquiries`) with a 240-character description ("A large, highly detailed Japanese-style irezumi sleeve...") -- dev seed data had nothing near that length to test against honestly. At a real 375px viewport with every optional column enabled (the worst-case combination: Client + Channel + Description + Date + Artist + Status all visible on one narrow row): zero horizontal overflow (`document.documentElement.scrollWidth === window.innerWidth`, both 375), the description cell measured `overflow: hidden; text-overflow: ellipsis; white-space: nowrap` computed styles, and the screenshot shows a clean one-line "A large, hig…" -- no squish, no wrap-induced row growth.
+- **Desktop**: same seeded row at 1440px shows "A large, highly detailed Japanese-style irezumi sleeve featuring …" -- a full sentence before truncating, confirming the `lg:max-w-xs` tier is a genuine scale-up from mobile's 70px, not a uniform shrink applied everywhere.
+- **Onyx Lime**: same 375px/seeded-row check under the default theme -- identical clean truncation, zero overflow. This change isn't Editorial-Gold-scoped (no `isEditorial` branching anywhere in the diff), so there was nothing theme-specific to break, but checked directly rather than assumed.
+- Test client/inquiry (`LongDesc TestClient`) left in the dev database, not rolled back -- same convention as prior sessions' dev-DB test data (this is what `DEVELOPMENT.md`'s dev studio is for).
+
+## Typechecks
+
+`npx tsc -b` (web) and `npx tsc --noEmit` (api, untouched) -- both clean before commit.
+
+## Commit
+
+`bd2e91b` on `main`.
+
+## Cleanup
+
+Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification/seed script and screenshot from the scratch directory.
