@@ -12,6 +12,8 @@ import { useViewAs } from '../context/useViewAs'
 import { tasksQueryKey } from '../lib/queryKeys'
 import { PlusIcon, CloseIcon, CheckIcon } from '../components/icons'
 import DatePickerField from '../components/DatePickerField'
+import { useThemePreset } from '../lib/useThemePreset'
+import Eyebrow from '../components/Eyebrow'
 
 interface SystemTask {
   type: string
@@ -87,6 +89,8 @@ const EMPTY_FORM = { title: '', dueAt: '', assigneeUserId: '' }
 
 export default function Tasks() {
   const user = useEffectiveUser()
+  const { shape } = useThemePreset()
+  const isEditorial = shape === 'editorial'
   const { profile } = useUserProfile()
   const { target: viewAsTarget } = useViewAs()
   const queryClient = useQueryClient()
@@ -273,8 +277,17 @@ export default function Tasks() {
 
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl px-6 py-6 sm:px-10 sm:py-8">
-          <h1 className="text-2xl font-bold text-fg sm:text-3xl">Tasks</h1>
-          <p className="mt-1 text-sm text-fg-secondary">Everything needing attention, plus your own to-dos.</p>
+          {isEditorial && <Eyebrow>Everything needing attention, plus your own to-dos.</Eyebrow>}
+          <h1
+            className={
+              isEditorial
+                ? 'mt-1 font-display text-[clamp(28px,3.4vw,38px)] font-normal tracking-[-0.015em] text-fg'
+                : 'text-2xl font-bold text-fg sm:text-3xl'
+            }
+          >
+            Tasks
+          </h1>
+          {!isEditorial && <p className="mt-1 text-sm text-fg-secondary">Everything needing attention, plus your own to-dos.</p>}
 
           {isLoading && <p className="mt-6 text-sm text-fg-secondary">Loading…</p>}
           {error && <p className="mt-6 text-sm text-danger">{error instanceof Error ? error.message : 'Failed to load tasks'}</p>}
@@ -282,8 +295,12 @@ export default function Tasks() {
           {data && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={uiSpringTransition}>
               {user?.role !== 'ARTIST' && (
-              <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
-                <h2 className="text-base font-semibold text-fg">Studio Queue</h2>
+              // No .card-surface here, deliberately -- dense list content
+              // (same category as Conversations' thread list / Calendar's
+              // grid / the Clients & Team tables), not a glass-treatment
+              // candidate. Removed the marker that was here.
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                <h2 className={isEditorial ? 'sc text-[20px]' : 'text-base font-semibold text-fg'}>Studio Queue</h2>
                 <p className="mt-1 text-sm text-fg-secondary">
                   Shared and unassigned -- anyone can act on an item; it disappears once resolved.
                 </p>
@@ -321,7 +338,11 @@ export default function Tasks() {
                             type="button"
                             onClick={() => dismissMutation.mutate(task)}
                             disabled={dismissMutation.isPending || !!viewAsTarget}
-                            className="shrink-0 rounded-full border border-border px-3 py-1 text-xs font-medium text-fg-secondary transition hover:bg-surface hover:text-fg disabled:opacity-60"
+                            className={
+                              isEditorial
+                                ? 'editorial-btn-secondary shrink-0 rounded-full border px-3 py-1 transition disabled:opacity-60'
+                                : 'shrink-0 rounded-full border border-border px-3 py-1 text-xs font-medium text-fg-secondary transition hover:bg-surface hover:text-fg disabled:opacity-60'
+                            }
                           >
                             Dismiss
                           </button>
@@ -334,8 +355,8 @@ export default function Tasks() {
               </div>
               )}
 
-              <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
-                <h2 className="text-base font-semibold text-fg">Assigned to Me</h2>
+              <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                <h2 className={isEditorial ? 'sc text-[20px]' : 'text-base font-semibold text-fg'}>Assigned to Me</h2>
 
                 <form onSubmit={handleAddTask} className="mt-4 flex flex-wrap gap-2">
                   <input
@@ -375,7 +396,11 @@ export default function Tasks() {
                   <button
                     type="submit"
                     disabled={createMutation.isPending || !!viewAsTarget}
-                    className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                    className={
+                      isEditorial
+                        ? 'editorial-btn-primary flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                        : 'flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                    }
                   >
                     <PlusIcon className="h-4 w-4" />
                     Add
@@ -458,8 +483,8 @@ export default function Tasks() {
               </div>
 
               {canAssign && (
-                <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
-                  <h2 className="text-base font-semibold text-fg">Assigned by Me</h2>
+                <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+                  <h2 className={isEditorial ? 'sc text-[20px]' : 'text-base font-semibold text-fg'}>Assigned by Me</h2>
                   <p className="mt-1 text-sm text-fg-secondary">
                     Tasks you've handed to someone else -- only they can mark these complete.
                   </p>
