@@ -4889,3 +4889,46 @@ Replaced the old fixed-60-character JS `truncate()` helper with CSS-based trunca
 ## Cleanup
 
 Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification/seed script and screenshot from the scratch directory.
+
+---
+
+# Editing the assigned artist after initial assignment
+
+Single-session fix touching one API route and one page (`InquiryDetail.tsx`, shared by both the Inquiries and Projects tabs -- same detail page, so one fix location covers both). On `main`.
+
+## What was actually blocking this
+
+Not just a missing UI affordance -- the backend explicitly refused it. `PATCH /inquiries/:id/assign` 400'd with "An artist is already assigned to this inquiry" for any inquiry/project past `NEW` that already had one assigned, a deliberate restriction from when this route was first built (its own comment: "Re-assigning only makes sense while it's still NEW"). The frontend's Assignment widget matched that: a picker only while `status === 'NEW'` or no artist was set yet, otherwise a permanent read-only field.
+
+## API (`inquiries.ts`, `PATCH /:id/assign`)
+
+Removed the reassignment block. The route now distinguishes three cases purely by the inquiry's current status/`assignedArtistId` instead of hard-blocking one of them: first assignment (`NEW` -> `ARTIST_ASSIGNED`, unchanged), late assignment (reached a later status with none ever assigned -- unchanged, this was already the existing fallback for when send-estimate doesn't require one but the deposit-form gate does), and now reassignment (already has one, non-terminal). The terminal-status guard (`CLOSED_LOST`/`COLD_LEAD`) is untouched -- still can't assign or reassign on a dead lead.
+
+Reassignment logs its own `artist_reassigned` audit action (previously only `status_change`/`artist_assigned` existed), distinguishable in the Activity History from the original assignment. **Deliberately scoped narrow**: reassignment only swaps `assignedArtistId`/`assignedAt` -- it does not touch any estimate/pricing the previous artist already entered (that's the artist's own response, not something "who's assigned" alone should silently invalidate), and does not cascade into any already-booked appointment (`Appointment.artistId` is a separate field, set independently at scheduling time, not derived from the inquiry's assignment). Flagging this as a real scope boundary rather than an oversight -- if reassigning mid-flow (e.g. after the old artist already priced it) should also prompt to revisit the estimate, that's a separate, bigger decision than "let staff change who's assigned."
+
+## Web (`InquiryDetail.tsx`, Assignment widget)
+
+Same on/off edit-toggle pattern the Estimate widget already established (`editingEstimate` -> mirrored here as `editingArtist`): an Edit button in the widget header (via `Widget`'s existing `actions` prop, same Pencil-icon styling as "Edit Estimate") appears once an artist is assigned and the inquiry isn't terminal. Clicking it pre-seeds the picker (`openEditArtist`) with the currently assigned artist and reveals the exact same `ArtistSelect` + button the first-assignment flow already used -- the button reads "Save" when reassigning vs. "Assign Artist" when not, and a Cancel button (shown only in edit mode) discards the in-progress selection without calling the API.
+
+## Verification
+
+Real live checks against the local dev stack, not just code review:
+- **Reassignment**: a Project-stage inquiry (status `SCHEDULING`, already assigned to "Dev Artist Two") -- clicked Edit, confirmed the picker opened pre-seeded with the current artist, switched to "Dev Artist One," clicked Save. Confirmed via network trace the `PATCH .../assign` request returned `200`, and (after actually waiting for the invalidate-and-refetch cycle -- an early check with too short a wait falsely looked stuck on "Saving...") the widget correctly settled back to the read-only view showing the new artist and a fresh "Assigned at" timestamp.
+- **Audit trail**: confirmed a distinct "Dev Owner artist reassigned" entry with `Assigned artist: Dev Artist Two -> Dev Artist One` and the `Assigned at` diff, sitting above the original "status change ... New -> Artist Assigned" entry from when it was first assigned -- both preserved, correctly distinguished.
+- **Cancel**: opened Edit, changed the picker's selection, clicked Cancel -- confirmed the widget reverted to showing the previously-saved artist, unchanged, with no API call made.
+- **Regression check**: the original first-assignment flow (a `NEW` inquiry with no artist yet) still shows the picker directly with no Edit button needed, and completing it still bumps status to `ARTIST_ASSIGNED` correctly.
+- **Terminal status**: `isTerminal` (`CLOSED_LOST`/`COLD_LEAD`) gate on the Edit button's visibility is unchanged from the pre-existing check already governing this widget -- not independently re-tested live, since the logic itself wasn't touched.
+- Checked the edit UI under both Editorial Gold and Onyx Lime (screenshot) -- this feature has no theme-specific branching, and both rendered correctly through the `Widget` component's own pre-existing theme-aware chrome.
+- Discovered along the way (not a regression, just a real environment quirk worth noting): the Assignment widget can be independently collapsed via `Widget`'s own persisted layout state (`useWidgetLayout`) -- a prior session's testing had left it collapsed in this dev browser profile, which hid the Edit button entirely until expanded. Not something this session's change affects.
+
+## Typechecks
+
+`npx tsc -b` (web) and `npx tsc --noEmit` (api) -- both clean before commit.
+
+## Commit
+
+`838b685` on `main`.
+
+## Cleanup
+
+Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification script and screenshot from the scratch directory. Test data created during verification (an artist reassignment on inquiry `cms201u9s000e9si2l5zj95em`, and a first assignment on the previously-seeded `LongDesc TestClient` inquiry) left in the dev database, same convention as prior sessions.
