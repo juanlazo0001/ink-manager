@@ -5805,7 +5805,7 @@ A single already-locked session (deposit paid or appointment booked) revising th
 
 ## Commit
 
-`TBD` on `main`.
+`fffac22` on `main`.
 
 ## Cleanup
 
