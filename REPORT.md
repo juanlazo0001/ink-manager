@@ -5337,3 +5337,17 @@ Both typechecks clean.
 **Commit**: `a1bba6c`.
 
 Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification script and screenshot from the scratch directory.
+
+---
+
+# Remove redundant "Needs Scheduling" badge from Inquiries & Projects list
+
+Follow-up: the same double-pill pattern fixed on the Project detail header (`a1bba6c`) was still present in the Inquiries & Projects list view's Status column -- the main StatusPill and a separate "Needs Scheduling" pill rendered side by side there too. Removed the duplicate in `Inquiries.tsx`. The Kanban card was checked and left alone -- it only ever shows the single "Needs Scheduling" badge with no adjacent status pill, so it wasn't a double-pill case. The filter toggle is unaffected (verified: still returns the correct 5 matching rows).
+
+Verified live: with the Needs Scheduling filter applied, every row's Status column now shows exactly one pill.
+
+Both typechecks clean.
+
+**Commit**: `c2e51b1`.
+
+Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification script and screenshot from the scratch directory.
