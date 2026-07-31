@@ -2,6 +2,13 @@ export function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 }
 
+// Date only, no time -- for grouping/section headers (e.g. AuditTrail's
+// per-day activity groups) where the full timestamp already shows
+// per-entry and a repeated day label would be noise.
+export function formatDateOnly(iso: string) {
+  return new Date(iso).toLocaleDateString(undefined, { dateStyle: 'medium' })
+}
+
 // Service lines: a FLAT-pricing service (e.g. Powder Brows) is entered with
 // the SAME value in both priceEstimateLow and priceEstimateHigh (see
 // InquiryDetail.tsx's estimate form) -- reusing the entire existing

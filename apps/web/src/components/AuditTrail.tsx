@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { apiFetch } from '../lib/api'
-import { formatDateTime, formatStatus } from '../lib/format'
+import { formatDateTime, formatDateOnly, formatStatus } from '../lib/format'
+import MultiSelectFilter from './MultiSelectFilter'
 
 interface AuditLogEntry {
   id: string
@@ -46,6 +47,25 @@ const FIELD_LABELS: Record<string, string> = {
   waiverHealthQuestions: 'Waiver health questions',
   waiverClauses: 'Waiver clauses',
   messageTemplates: 'Message templates',
+  // Newly resolved to a name/label by apps/api's audit.ts (see its own
+  // ID_FIELD_CATEGORIES comment) -- "id" dropped from the label the same
+  // way assignedArtistId/appointmentId above already do, since the VALUE
+  // shown is a name, not an id, once resolved.
+  clientId: 'Client',
+  otherClientId: 'Other client',
+  sourceClientId: 'Merged-from client',
+  survivorId: 'Surviving client',
+  referrerClientId: 'Referring client',
+  referredClientId: 'Referred client',
+  giftCardId: 'Gift card',
+  giftCardIds: 'Gift cards',
+  exemptGiftCardIds: 'Exempt gift cards',
+  newGiftCardId: 'New gift card',
+  derivedFromGiftCardId: 'Derived from gift card',
+  satisfiedByExistingGiftCardId: 'Satisfied by gift card',
+  fromAppointmentId: 'From appointment',
+  toAppointmentId: 'To appointment',
+  detachedFromAppointment: 'Detached from appointment',
 }
 
 // Fallback for anything not in the map above -- "someFieldName" -> "Some field name" --
@@ -112,10 +132,61 @@ function joinWithAnd(parts: string[]): string {
   return `${parts.slice(0, -1).join(', ')}, and ${parts[parts.length - 1]}`
 }
 
-// Raw action strings are snake_case identifiers (e.g. "sms_opted_out"),
-// not prose -- space them out so the feed reads as a sentence fragment.
+// Raw action strings mix snake_case ("sms_opted_out") AND kebab-case
+// ("create-by-staff", "text-receipt") across the ~60 distinct actions
+// logged app-wide -- explicit labels for the ones actually visible in
+// real activity feeds today (this list isn't exhaustive; anything not
+// here still gets a genuinely readable result from the fallback below,
+// just not hand-tuned prose).
+const ACTION_LABELS: Record<string, string> = {
+  create: 'created',
+  'create-by-staff': 'created this',
+  'create-from-import': 'imported this',
+  update: 'updated',
+  delete: 'deleted',
+  permanently_deleted: 'permanently deleted',
+  archive: 'archived',
+  unarchive: 'unarchived',
+  status_change: 'changed the status',
+  merge: 'merged a duplicate',
+  'merge-from-import': 'merged during import',
+  dismiss_duplicate: 'dismissed a duplicate match',
+  artist_assigned: 'assigned an artist',
+  artist_reassigned: 'reassigned the artist',
+  estimate_sent: 'sent the estimate',
+  estimate_resent: 'resent the estimate',
+  estimate_opened: 'opened the estimate',
+  estimate_revised: 'revised the estimate',
+  estimate_followup_sent: 'sent an estimate follow-up',
+  waiver_signed: 'signed the waiver',
+  verify: 'verified',
+  void: 'voided',
+  checkout: 'checked out',
+  'complete-consultation': 'completed the consultation',
+  marked_charged_manually: 'marked charged manually',
+  stripe_payment_confirmed: 'confirmed a Stripe payment',
+  reorder: 'reordered',
+  'text-receipt': 'texted a receipt',
+  sms_sent: 'sent a text',
+  sms_received: 'received a text',
+  sms_opted_in: 'opted in to texts',
+  sms_opted_out: 'opted out of texts',
+  email_sent: 'sent an email',
+  email_received: 'received an email',
+  tag_added: 'added a tag',
+  tag_removed: 'removed a tag',
+  photos_added: 'added photos',
+  photo_deleted: 'deleted a photo',
+  reference_image_added: 'added a reference image',
+}
+
+// Fallback for anything not in the map above -- spaces out both
+// underscores AND hyphens (the map above only had underscore-splitting
+// before this fix, so a kebab-case action like "create-by-staff" used to
+// render as a literal raw slug instead of prose).
 function humanizeAction(action: string): string {
-  return action.replace(/_/g, ' ')
+  if (ACTION_LABELS[action]) return ACTION_LABELS[action]
+  return action.replace(/[_-]/g, ' ')
 }
 
 // Merge audit entries store a structural summary (counts per relation type,
@@ -159,9 +230,25 @@ interface AuditTrailProps {
   bare?: boolean
 }
 
+// Sentinel for "no actorUser" (a system/webhook/scheduled-job action, e.g.
+// a client opening an estimate link or a Stripe webhook confirming
+// payment) -- distinct from any real user id, used as both the filter
+// option's value and the lookup key below.
+const SYSTEM_ACTOR_VALUE = '__system__'
+
+function actorLabel(actorUser: AuditLogEntry['actorUser']): string {
+  return actorUser?.name || actorUser?.email || 'System'
+}
+
 export default function AuditTrail({ entityType, entityId, bare = false }: AuditTrailProps) {
   const [logs, setLogs] = useState<AuditLogEntry[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Client-side filtering, same reasoning as every other bounded (never
+  // paginated, never studio-wide) list in this app that filters this way --
+  // one entity's own activity history is never large enough to warrant a
+  // server round trip per filter change.
+  const [actionFilter, setActionFilter] = useState<string[]>([])
+  const [actorFilter, setActorFilter] = useState<string[]>([])
 
   useEffect(() => {
     let ignore = false
@@ -179,6 +266,46 @@ export default function AuditTrail({ entityType, entityId, bare = false }: Audit
     }
   }, [entityType, entityId])
 
+  // Options are built from whatever's actually present in this entity's own
+  // history -- never a studio-wide action/staff list -- so the dropdown
+  // never offers a choice that would always return zero results here.
+  const actionOptions = logs
+    ? [...new Set(logs.map((log) => log.action))]
+        .map((action) => ({ value: action, label: humanizeAction(action) }))
+        .sort((a, b) => a.label.localeCompare(b.label))
+    : []
+
+  const actorOptions = logs
+    ? [
+        ...new Map(
+          logs.map((log) => [
+            log.actorUser?.id ?? SYSTEM_ACTOR_VALUE,
+            { value: log.actorUser?.id ?? SYSTEM_ACTOR_VALUE, label: actorLabel(log.actorUser) },
+          ]),
+        ).values(),
+      ].sort((a, b) => a.label.localeCompare(b.label))
+    : []
+
+  const filteredLogs = (logs ?? []).filter((log) => {
+    if (actionFilter.length > 0 && !actionFilter.includes(log.action)) return false
+    if (actorFilter.length > 0 && !actorFilter.includes(log.actorUser?.id ?? SYSTEM_ACTOR_VALUE)) return false
+    return true
+  })
+
+  // Grouped by calendar day, newest first -- logs already arrive sorted
+  // newest-first from the API, so groups fall out in that same order for
+  // free just by walking the list once.
+  const groupedByDay: { dateLabel: string; entries: AuditLogEntry[] }[] = []
+  for (const log of filteredLogs) {
+    const dateLabel = formatDateOnly(log.createdAt)
+    const currentGroup = groupedByDay[groupedByDay.length - 1]
+    if (currentGroup?.dateLabel === dateLabel) {
+      currentGroup.entries.push(log)
+    } else {
+      groupedByDay.push({ dateLabel, entries: [log] })
+    }
+  }
+
   const content = (
     <>
       {error && <p className="mt-4 text-sm text-danger">{error}</p>}
@@ -190,41 +317,78 @@ export default function AuditTrail({ entityType, entityId, bare = false }: Audit
       )}
 
       {!error && logs !== null && logs.length > 0 && (
-        <ul className="mt-4 space-y-3">
-          {logs.map((log) => (
-            <li key={log.id} className="rounded-lg border border-border p-3 text-sm">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-fg">
-                  <span className="font-medium">{log.actorUser?.name || log.actorUser?.email || 'System'}</span>{' '}
-                  <span className="text-fg-secondary">{humanizeAction(log.action)}</span>
-                </span>
-                <span className="text-xs text-fg-muted">{formatDateTime(log.createdAt)}</span>
-              </div>
+        <>
+          {/* Filters only earn their keep once there's more than a
+              handful of entries to sift through -- below that, they're
+              just two more controls to look at for no real benefit. */}
+          {logs.length > 5 && (
+            <div className="mt-4 flex flex-wrap gap-2">
+              <MultiSelectFilter
+                placeholder="All actions"
+                options={actionOptions}
+                selected={actionFilter}
+                onChange={setActionFilter}
+                className="w-40"
+              />
+              <MultiSelectFilter
+                placeholder="All staff"
+                options={actorOptions}
+                selected={actorFilter}
+                onChange={setActorFilter}
+                className="w-40"
+              />
+            </div>
+          )}
 
-              {log.changes && isMergeChanges(log.action, log.changes) && (
-                <p className="mt-2 text-xs text-fg-secondary">{formatMergeSummary(log.changes)}</p>
-              )}
+          {filteredLogs.length === 0 ? (
+            <p className="mt-4 text-sm text-fg-secondary">No activity matches these filters.</p>
+          ) : (
+            <div className="mt-4 space-y-5">
+              {groupedByDay.map((group) => (
+                <div key={group.dateLabel}>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-fg-muted">
+                    {group.dateLabel}
+                  </p>
+                  <ul className="space-y-3">
+                    {group.entries.map((log) => (
+                      <li key={log.id} className="rounded-lg border border-border p-3 text-sm">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-fg">
+                            <span className="font-medium">{actorLabel(log.actorUser)}</span>{' '}
+                            <span className="text-fg-secondary">{humanizeAction(log.action)}</span>
+                          </span>
+                          <span className="text-xs text-fg-muted">{formatDateTime(log.createdAt)}</span>
+                        </div>
 
-              {log.changes && !isMergeChanges(log.action, log.changes) && Object.keys(log.changes).length > 0 && (
-                <ul className="mt-2 space-y-1 text-xs text-fg-secondary">
-                  {Object.entries(log.changes).map(([field, value]) => (
-                    <li key={field}>
-                      <span className="font-medium text-fg-secondary">{humanizeField(field)}:</span>{' '}
-                      {isFromToShape(value) ? (
-                        <>
-                          {formatValue(field, value.from)} <span className="text-fg-muted">→</span>{' '}
-                          {formatValue(field, value.to)}
-                        </>
-                      ) : (
-                        formatValue(field, value)
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </li>
-          ))}
-        </ul>
+                        {log.changes && isMergeChanges(log.action, log.changes) && (
+                          <p className="mt-2 text-xs text-fg-secondary">{formatMergeSummary(log.changes)}</p>
+                        )}
+
+                        {log.changes && !isMergeChanges(log.action, log.changes) && Object.keys(log.changes).length > 0 && (
+                          <ul className="mt-2 space-y-1 text-xs text-fg-secondary">
+                            {Object.entries(log.changes).map(([field, value]) => (
+                              <li key={field}>
+                                <span className="font-medium text-fg-secondary">{humanizeField(field)}:</span>{' '}
+                                {isFromToShape(value) ? (
+                                  <>
+                                    {formatValue(field, value.from)} <span className="text-fg-muted">→</span>{' '}
+                                    {formatValue(field, value.to)}
+                                  </>
+                                ) : (
+                                  formatValue(field, value)
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
       )}
     </>
   )

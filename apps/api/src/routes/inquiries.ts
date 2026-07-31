@@ -393,7 +393,12 @@ router.post("/", optionalAuth, async (req, res) => {
       entityType: "Inquiry",
       entityId: inquiry.id,
       action: "create-by-staff",
-      changes: { clientId: client.id, channel },
+      // clientId deliberately omitted -- this Inquiry's own Activity
+      // History is only ever viewed already scoped to (and displaying) its
+      // one client, so a raw client cuid here was never anything but
+      // unresolved noise, unlike assignedArtistId (which genuinely
+      // changes over the Inquiry's life and is worth diffing).
+      changes: { channel },
     });
   }
 
