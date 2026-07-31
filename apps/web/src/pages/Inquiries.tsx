@@ -165,6 +165,41 @@ function loadColumnVisibility(): Record<ColumnKey, boolean> {
   }
 }
 
+// Filter/sort/grouping selections, previously reset on every navigation
+// away and back (or a reload) -- persisted the same way column visibility
+// already is right above (plain localStorage, not per-user -- this file's
+// own established precedent, followed here for consistency rather than
+// inventing a separate per-user-keyed convention for a sibling preference
+// on the same page). One JSON blob under one key rather than one key per
+// field, since they're all read/written together.
+interface FilterState {
+  inquiryStatusFilter: string[]
+  projectStatusFilter: string[]
+  artistFilter: string[]
+  needsSchedulingFilter: boolean
+  groupByStatus: boolean
+  sortOption: SortOption
+}
+const DEFAULT_FILTER_STATE: FilterState = {
+  inquiryStatusFilter: [],
+  projectStatusFilter: [],
+  artistFilter: [],
+  needsSchedulingFilter: false,
+  groupByStatus: false,
+  sortOption: 'createdAt_desc',
+}
+const FILTER_STATE_STORAGE_KEY = 'ink-manager:inquiries-filters'
+
+function loadFilterState(): FilterState {
+  try {
+    const raw = localStorage.getItem(FILTER_STATE_STORAGE_KEY)
+    if (!raw) return DEFAULT_FILTER_STATE
+    return { ...DEFAULT_FILTER_STATE, ...JSON.parse(raw) }
+  } catch {
+    return DEFAULT_FILTER_STATE
+  }
+}
+
 export default function Inquiries() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -199,21 +234,21 @@ export default function Inquiries() {
   // shows" (sent to the server as the tab's full status list -- see
   // effectiveStatusFilter below -- rather than as "no filter at all",
   // which would leak the other tab's statuses into the results).
-  const [inquiryStatusFilter, setInquiryStatusFilter] = useState<string[]>([])
-  const [projectStatusFilter, setProjectStatusFilter] = useState<string[]>([])
-  const [groupByStatus, setGroupByStatus] = useState(false)
+  const [inquiryStatusFilter, setInquiryStatusFilter] = useState<string[]>(() => loadFilterState().inquiryStatusFilter)
+  const [projectStatusFilter, setProjectStatusFilter] = useState<string[]>(() => loadFilterState().projectStatusFilter)
+  const [groupByStatus, setGroupByStatus] = useState(() => loadFilterState().groupByStatus)
   // Projects tab only -- "Needs Scheduling" isn't a real InquiryStatus, so
   // this is a client-side post-filter on top of whatever the server already
   // returned for the active tab/status/artist/search filters, same as
   // groupByStatus above is a client-side reshaping rather than a server
   // round-trip.
-  const [needsSchedulingFilter, setNeedsSchedulingFilter] = useState(false)
+  const [needsSchedulingFilter, setNeedsSchedulingFilter] = useState(() => loadFilterState().needsSchedulingFilter)
   const [search, setSearch] = useState('')
   const debouncedSearch = useDebouncedValue(search, 300)
   // 'unassigned' is a synthetic value alongside real artist ids -- the
   // backend's ?artistId= param treats it specially (assignedArtistId: null).
-  const [artistFilter, setArtistFilter] = useState<string[]>([])
-  const [sortOption, setSortOption] = useState<SortOption>('createdAt_desc')
+  const [artistFilter, setArtistFilter] = useState<string[]>(() => loadFilterState().artistFilter)
+  const [sortOption, setSortOption] = useState<SortOption>(() => loadFilterState().sortOption)
   // Not URL-persisted deliberately: setTab below replaces searchParams
   // wholesale on every tab switch, which would otherwise wipe a view=kanban
   // param on every click -- local state survives the tab switch instead.
@@ -222,6 +257,22 @@ export default function Inquiries() {
   const [showColumnMenu, setShowColumnMenu] = useState(false)
   const columnMenuRef = useRef<HTMLDivElement>(null)
   useMarkSectionSeen('inquiries')
+
+  // Persists on every change rather than intercepting each individual
+  // setter (there are a dozen call sites across both tabs) -- one effect
+  // watching all six values stays correct regardless of which UI control
+  // changed one of them.
+  useEffect(() => {
+    const state: FilterState = {
+      inquiryStatusFilter,
+      projectStatusFilter,
+      artistFilter,
+      needsSchedulingFilter,
+      groupByStatus,
+      sortOption,
+    }
+    localStorage.setItem(FILTER_STATE_STORAGE_KEY, JSON.stringify(state))
+  }, [inquiryStatusFilter, projectStatusFilter, artistFilter, needsSchedulingFilter, groupByStatus, sortOption])
 
   useEffect(() => {
     if (!showColumnMenu) return
