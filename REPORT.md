@@ -5405,3 +5405,46 @@ Both typechecks clean.
 **Commit**: `75ad8e7`.
 
 Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification script and the temporary Playwright install from the scratch directory.
+
+---
+
+# Unify gift card issuance: one "Issue Gift Card" flow (Cash, Stripe, or Deposit Exemption)
+
+Single session on `main`. Replaces Client detail's two separate buttons ("Record Cash Payment" / "Issue Deposit Exemption") with one "Issue Gift Card" button that opens a method picker.
+
+## Clarified before building
+
+The one genuinely ambiguous design question -- what should happen when staff picks "Stripe" -- was clarified directly with the user before writing any code: generate a real Stripe Checkout Session (a link staff copies/sends to the client), not a synchronous "just record that Stripe was used" toggle like Cash. This matters because it's the only Stripe capability this app has ever had (the deposit-form flow works the same way) -- there's no "charge a saved card directly" capability, so the gift card can't issue synchronously the way Cash does.
+
+## Schema change
+
+- `GiftCardStatus.PENDING` -- the state a Stripe-checkout-initiated card sits in between link generation and payment confirmation. Never spendable/attachable (`validateGiftCardForAttachment` still only ever accepts `ACTIVE`/`EXEMPT`); exists purely so the webhook has a real row (with its final code) to find once payment completes.
+- `GiftCard.stripeCheckoutSessionId`/`stripePaymentIntentId` -- permanently nullable, same fields/naming convention as `DepositForm`'s own. Null for every card issued any other way.
+
+**Migration tooling note**: `prisma migrate dev` (even with `--create-only`) requires an interactive terminal to confirm its own unique-constraint warning, and this sandbox has no TTY -- both attempts failed with "non-interactive environment... not supported." Hand-authored the migration SQL directly instead (matching Prisma's own generated format, confirmed against this project's own precedent migrations for the exact `ADD VALUE`/`ADD COLUMN`/`CREATE UNIQUE INDEX` syntax), then applied it via `prisma migrate deploy` (which doesn't need interactive confirmation) and ran `prisma generate` for the client types.
+
+## What changed
+
+- **`POST /gift-cards/checkout-session`** (new): creates the `PENDING` `GiftCard` row and a real Stripe Checkout Session together, returns the checkout URL. Same `requirePermission("giftCards.issue")` gate as the existing Cash route -- same capability, different payment method, no new permission key.
+- **Stripe webhook** (`routes/webhooks.ts`): a third `checkout.session.completed` lookup branch, by `stripeCheckoutSessionId` on `GiftCard` this time (alongside the existing `DepositForm` and `Appointment` branches) -- flips `PENDING` to `ACTIVE`, sets `paidAt`/`stripePaymentIntentId`. Idempotent the same way as the other two branches (a retry that finds the card already past `PENDING` is a no-op).
+- **`GiftCardResponse.tsx`** (public `/gift-card/:code` page): a distinct `PENDING` view -- no code/QR shown (misleading before it's actually redeemable), just a "Payment Pending" pill and a status message that adapts based on whether the visit came from Stripe's own success redirect (`?paid=1`).
+- **`ClientDetail.tsx`**: one "Issue Gift Card" button opens a method picker (Cash / Stripe / Deposit Exemption, each gated by the same permissions as before). Cash and Stripe share one amount+expiration form; picking Stripe swaps the submit button to "Generate Payment Link" and, on success, shows a copy-link box (same UI pattern the deposit-form/waiver share-link boxes already use) instead of closing the modal, since staff still needs to send the link. Deposit Exemption's form is unchanged, just reached through the picker instead of its own button.
+
+## Verification
+
+All live against the real dev database and a real, connected Stripe test-mode account (not mocked):
+
+- Generated a real Stripe Checkout Session through the actual UI flow -- confirmed a genuine `checkout.stripe.com` URL was returned and the resulting `GiftCard` row was created `PENDING` with the correct `amountCents`, `paymentMethod: STRIPE`, and `stripeCheckoutSessionId` set.
+- Simulated the webhook rigorously, not just inspected the code: constructed a real `checkout.session.completed` event and signed it with Stripe's own `webhooks.generateTestHeaderString` helper (the standard way to test webhooks without a live forward-to-localhost tunnel), POSTed it to the actual `/webhooks/stripe` route (full signature verification, not bypassed) -- confirmed the card correctly flipped `PENDING` -> `ACTIVE` with `paidAt`/`stripePaymentIntentId` set. Replayed the identical event a second time and confirmed it was a true no-op (identical `paidAt` timestamp), proving the idempotency guard actually works, not just reads like it should.
+- Confirmed the public `/gift-card/:code` page renders correctly both before payment (Payment Pending, no code/QR) and after (normal receipt view, correct amount/code/status) for the same card, just at different points in the flow.
+- Regression-tested Cash and Deposit Exemption through the new picker -- both still issue correctly, confirmed the resulting cards in the Client detail gift-card table (one Exempt, one $25 Cash, one $75 Stripe -- all three payment paths present and correctly labeled in one screenshot).
+
+Both typechecks clean.
+
+## Commit
+
+`86ac065`.
+
+## Cleanup
+
+Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID -- twice had to clear a leftover stale process squatting on port 4093 from an earlier command in this same session before a fresh instance could bind it. Deleted every ad-hoc verification/scratch script (including the webhook-simulation scripts) and the temporary Playwright install from the scratch directory. Test data created during verification (one Cash $25 card, one Stripe $75 card, both on "LongDesc TestClient") left in the dev database, same convention as prior sessions.
