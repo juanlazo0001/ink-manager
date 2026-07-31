@@ -325,8 +325,8 @@ model Location {
 }
 
 model User {
-  id       String  @id @default(cuid())
-  email    String  @unique
+  id        String   @id @default(cuid())
+  email     String   @unique
   // Nullable as of the account-lifecycle work: a freshly-invited user has a
   // real row (so the invite can carry a role/studio/token) but no password
   // yet -- they set one for the first time in POST /invite/accept/:token.
@@ -364,8 +364,8 @@ model User {
   // succeeds, at which point `email` becomes `pendingEmail` and both
   // pending fields clear -- see that route. Never switches over on request,
   // only on confirmed accept, so a typo'd new address can't lock anyone out.
-  pendingEmail             String?
-  emailChangeToken         String?   @unique
+  pendingEmail              String?
+  emailChangeToken          String?   @unique
   emailChangeTokenExpiresAt DateTime?
 
   // Session invalidation. Sifted directly in the JWT auth middleware: a
@@ -383,10 +383,10 @@ model User {
   // middleware also rejects any token for a user with deactivatedAt set,
   // regardless of the token's own age, so deactivation takes effect on the
   // very next request, not just future logins.
-  deactivatedAt   DateTime?
-  deactivatedById String?
-  deactivatedBy   User?   @relation("UserDeactivatedBy", fields: [deactivatedById], references: [id])
-  deactivatedUsers User[] @relation("UserDeactivatedBy")
+  deactivatedAt    DateTime?
+  deactivatedById  String?
+  deactivatedBy    User?     @relation("UserDeactivatedBy", fields: [deactivatedById], references: [id])
+  deactivatedUsers User[]    @relation("UserDeactivatedBy")
 
   studioId String
   studio   Studio @relation(fields: [studioId], references: [id])
@@ -1463,14 +1463,24 @@ model AuditLog {
 // revision that only touched hours) simply has no per-session price yet,
 // same "purely additive" posture as the rest of this model.
 model PlannedSession {
-  id                 String   @id @default(cuid())
-  sessionNumber      Int
-  estimatedHoursMin  Float
-  estimatedHoursMax  Float
-  estimatedPriceLow  Float?
-  estimatedPriceHigh Float?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  id                   String   @id @default(cuid())
+  sessionNumber        Int
+  estimatedHoursMin    Float
+  estimatedHoursMax    Float
+  estimatedPriceLow    Float?
+  estimatedPriceHigh   Float?
+  // Flat-rate pricing: staff can hide this session's hour range from the
+  // client-facing estimate/deposit pages -- always still shown to staff
+  // (InquiryDetail.tsx) and always still used internally for the
+  // scheduling assistant/calendar blocking regardless of this flag; it
+  // only controls what a CLIENT sees. Irrelevant for a range-priced
+  // session, where the hours ARE the estimate itself -- the estimate-entry
+  // UI only ever shows this toggle for a flat-rate row. Defaults true
+  // (shown) so every existing row, and every non-flat session going
+  // forward, keeps behaving exactly as before this field existed.
+  showDurationToClient Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 
   inquiryId String
   inquiry   Inquiry @relation(fields: [inquiryId], references: [id])
@@ -1995,8 +2005,8 @@ model UserWidgetLayout {
 // Week/Day) and the filter/display toggles below are meant to survive
 // navigating away and back.
 model UserCalendarPreference {
-  id   String @id @default(cuid())
-  view String @default("month")
+  id                 String   @id @default(cuid())
+  view               String   @default("month")
   // Array<string> of artist ids, or SQL NULL for "no filter, show every
   // artist" -- the exact same null-means-unfiltered convention
   // Calendar.tsx's own selectedArtistIds state already uses, so this

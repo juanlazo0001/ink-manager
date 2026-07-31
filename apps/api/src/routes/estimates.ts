@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma";
 import { InquiryStatus } from "../../generated/prisma/enums";
 import { logAudit } from "../lib/audit";
 import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
+import { redactedSessionHours } from "../lib/plannedSessions";
 
 const router = Router();
 
@@ -38,7 +39,14 @@ router.get("/verify/:token", async (req, res) => {
       // declared more than one session -- the client-facing page falls
       // back to timeEstimateHoursMin/Max below in that case, unchanged.
       plannedSessions: {
-        select: { sessionNumber: true, estimatedHoursMin: true, estimatedHoursMax: true, estimatedPriceLow: true, estimatedPriceHigh: true },
+        select: {
+          sessionNumber: true,
+          estimatedHoursMin: true,
+          estimatedHoursMax: true,
+          estimatedPriceLow: true,
+          estimatedPriceHigh: true,
+          showDurationToClient: true,
+        },
         orderBy: { sessionNumber: "asc" },
       },
     },
@@ -79,7 +87,12 @@ router.get("/verify/:token", async (req, res) => {
     priceEstimateHigh: inquiry!.priceEstimateHigh,
     timeEstimateHoursMin: inquiry!.timeEstimateHoursMin,
     timeEstimateHoursMax: inquiry!.timeEstimateHoursMax,
-    plannedSessions: inquiry!.plannedSessions,
+    plannedSessions: inquiry!.plannedSessions.map((ps) => ({
+      sessionNumber: ps.sessionNumber,
+      ...redactedSessionHours(ps),
+      estimatedPriceLow: ps.estimatedPriceLow,
+      estimatedPriceHigh: ps.estimatedPriceHigh,
+    })),
     estimateTermsSnapshot: inquiry!.estimateTermsSnapshot,
     collaborativeDesignPolicy: COLLABORATIVE_DESIGN_POLICY,
   });
@@ -163,7 +176,14 @@ router.get("/revision/verify/:token", async (req, res) => {
       // declared more than one session -- the client-facing page falls
       // back to timeEstimateHoursMin/Max below in that case, unchanged.
       plannedSessions: {
-        select: { sessionNumber: true, estimatedHoursMin: true, estimatedHoursMax: true, estimatedPriceLow: true, estimatedPriceHigh: true },
+        select: {
+          sessionNumber: true,
+          estimatedHoursMin: true,
+          estimatedHoursMax: true,
+          estimatedPriceLow: true,
+          estimatedPriceHigh: true,
+          showDurationToClient: true,
+        },
         orderBy: { sessionNumber: "asc" },
       },
     },
@@ -187,7 +207,12 @@ router.get("/revision/verify/:token", async (req, res) => {
     priceEstimateHigh: inquiry!.priceEstimateHigh,
     timeEstimateHoursMin: inquiry!.timeEstimateHoursMin,
     timeEstimateHoursMax: inquiry!.timeEstimateHoursMax,
-    plannedSessions: inquiry!.plannedSessions,
+    plannedSessions: inquiry!.plannedSessions.map((ps) => ({
+      sessionNumber: ps.sessionNumber,
+      ...redactedSessionHours(ps),
+      estimatedPriceLow: ps.estimatedPriceLow,
+      estimatedPriceHigh: ps.estimatedPriceHigh,
+    })),
     reason: inquiry!.estimateRevisionReason,
   });
 });

@@ -174,6 +174,10 @@ interface Inquiry {
     estimatedHoursMax: number
     estimatedPriceLow: number | null
     estimatedPriceHigh: number | null
+    // Flat-rate pricing: whether this session's hour range shows on the
+    // client-facing estimate/deposit pages -- staff always sees it either
+    // way (this page's own summary/pipeline display never reads this).
+    showDurationToClient: boolean
     depositFormId: string | null
     appointmentId: string | null
     depositForm: { id: string; signedAt: string | null; paidAt: string | null; paidManually: boolean } | null
@@ -621,7 +625,7 @@ export default function InquiryDetail() {
   // (and, per-session prices below, the single top-level price fields).
   const [sessionCount, setSessionCount] = useState(1)
   const [sessionHours, setSessionHours] = useState<SessionHoursRow[]>([
-    { min: '', max: '', priceLow: '', priceHigh: '', isFlat: false },
+    { min: '', max: '', priceLow: '', priceHigh: '', isFlat: false, showDurationToClient: true },
   ])
   // Per-estimate flat/range choice -- independent of the Service's own
   // pricingModel (seeded from it as a default, below, but freely
@@ -637,7 +641,7 @@ export default function InquiryDetail() {
     setSessionCount(count)
     setSessionHours((current) => {
       const next = [...current]
-      while (next.length < count) next.push({ min: '', max: '', priceLow: '', priceHigh: '', isFlat: false })
+      while (next.length < count) next.push({ min: '', max: '', priceLow: '', priceHigh: '', isFlat: false, showDurationToClient: true })
       next.length = count
       return next
     })
@@ -671,7 +675,7 @@ export default function InquiryDetail() {
   // already has a session plan should show that plan, not start from 1.
   const [reviseSessionCount, setReviseSessionCount] = useState(1)
   const [reviseSessionHours, setReviseSessionHours] = useState<SessionHoursRow[]>([
-    { min: '', max: '', priceLow: '', priceHigh: '', isFlat: false },
+    { min: '', max: '', priceLow: '', priceHigh: '', isFlat: false, showDurationToClient: true },
   ])
   // Same per-estimate flat/range choice as estimateIsFlat above, keyed to
   // this modal's own state -- seeded in openReviseEstimateModal below.
@@ -681,7 +685,7 @@ export default function InquiryDetail() {
     setReviseSessionCount(count)
     setReviseSessionHours((current) => {
       const next = [...current]
-      while (next.length < count) next.push({ min: '', max: '', priceLow: '', priceHigh: '', isFlat: false })
+      while (next.length < count) next.push({ min: '', max: '', priceLow: '', priceHigh: '', isFlat: false, showDurationToClient: true })
       next.length = count
       return next
     })
@@ -1130,11 +1134,12 @@ export default function InquiryDetail() {
           // Same inference the top-level estimateIsFlat seed uses: a
           // session IS flat when its stored low/high already match.
           isFlat: ps.estimatedPriceLow != null && ps.estimatedPriceLow === ps.estimatedPriceHigh,
+          showDurationToClient: ps.showDurationToClient,
         })),
       )
     } else {
       setSessionCount(1)
-      setSessionHours([{ min: '', max: '', priceLow: '', priceHigh: '', isFlat: false }])
+      setSessionHours([{ min: '', max: '', priceLow: '', priceHigh: '', isFlat: false, showDurationToClient: true }])
     }
     setSendEstimateError(null)
     setEditingEstimate(true)
@@ -1214,6 +1219,7 @@ export default function InquiryDetail() {
                 estimatedHoursMax: Number(row.max),
                 estimatedPriceLow: Number(row.priceLow),
                 estimatedPriceHigh: Number(row.priceHigh),
+                showDurationToClient: row.showDurationToClient,
               }))
             : // Bug fix: collapsing sessionCount back down to 1 needs to
               // actually say so -- omitting `sessions` entirely (as before)
@@ -1262,11 +1268,12 @@ export default function InquiryDetail() {
           priceLow: ps.estimatedPriceLow != null ? ps.estimatedPriceLow.toString() : '',
           priceHigh: ps.estimatedPriceHigh != null ? ps.estimatedPriceHigh.toString() : '',
           isFlat: ps.estimatedPriceLow != null && ps.estimatedPriceLow === ps.estimatedPriceHigh,
+          showDurationToClient: ps.showDurationToClient,
         })),
       )
     } else {
       setReviseSessionCount(1)
-      setReviseSessionHours([{ min: '', max: '', priceLow: '', priceHigh: '', isFlat: false }])
+      setReviseSessionHours([{ min: '', max: '', priceLow: '', priceHigh: '', isFlat: false, showDurationToClient: true }])
     }
     setReviseReasonInput('')
     setReviseEstimateError(null)
@@ -1330,6 +1337,7 @@ export default function InquiryDetail() {
                         estimatedHoursMax: Number(row.max),
                         estimatedPriceLow: Number(row.priceLow),
                         estimatedPriceHigh: Number(row.priceHigh),
+                        showDurationToClient: row.showDurationToClient,
                       }
                 })
             : // Only explicitly collapse the plan back to an empty array when

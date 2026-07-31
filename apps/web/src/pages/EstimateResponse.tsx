@@ -30,8 +30,11 @@ interface VerifyResponse {
   // in that case, exactly as before this feature existed.
   plannedSessions: {
     sessionNumber: number
-    estimatedHoursMin: number
-    estimatedHoursMax: number
+    // Flat-rate pricing: null when staff chose to hide this session's hour
+    // range from the client -- redacted server-side (never sent at all,
+    // not just hidden here), so this is a real absence, not empty input.
+    estimatedHoursMin: number | null
+    estimatedHoursMax: number | null
     estimatedPriceLow: number | null
     estimatedPriceHigh: number | null
   }[]
@@ -194,7 +197,10 @@ export default function EstimateResponse() {
                 <ul className="mt-2 space-y-1">
                   {verifyData.plannedSessions.map((session) => (
                     <li key={session.sessionNumber} className="text-sm text-fg">
-                      Session {session.sessionNumber}: {formatHourRange(session.estimatedHoursMin, session.estimatedHoursMax)}
+                      Session {session.sessionNumber}
+                      {session.estimatedHoursMin != null && session.estimatedHoursMax != null && (
+                        <>: {formatHourRange(session.estimatedHoursMin, session.estimatedHoursMax)}</>
+                      )}
                       {session.estimatedPriceLow != null && session.estimatedPriceHigh != null && (
                         <> — {formatPriceEstimate(session.estimatedPriceLow, session.estimatedPriceHigh)}</>
                       )}

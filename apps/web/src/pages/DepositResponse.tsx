@@ -37,8 +37,10 @@ interface VerifyResponse {
   plannedSession: {
     sessionNumber: number
     totalSessions: number
-    estimatedHoursMin: number
-    estimatedHoursMax: number
+    // Flat-rate pricing: null when staff chose to hide this session's hour
+    // range from the client -- redacted server-side (never sent at all).
+    estimatedHoursMin: number | null
+    estimatedHoursMax: number | null
   } | null
   // Phase 7C: paidVia set means a real payment (Stripe or manual) already
   // happened -- a genuine success state, shown regardless of the token's
@@ -327,10 +329,12 @@ export default function DepositResponse() {
                 <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
                   Session {verifyData.plannedSession.sessionNumber} of {verifyData.plannedSession.totalSessions}
                 </p>
-                <p className="mt-1 text-sm text-fg">
-                  Estimated {verifyData.plannedSession.estimatedHoursMin}-{verifyData.plannedSession.estimatedHoursMax}{' '}
-                  hours
-                </p>
+                {verifyData.plannedSession.estimatedHoursMin != null && verifyData.plannedSession.estimatedHoursMax != null && (
+                  <p className="mt-1 text-sm text-fg">
+                    Estimated {verifyData.plannedSession.estimatedHoursMin}-{verifyData.plannedSession.estimatedHoursMax}{' '}
+                    hours
+                  </p>
+                )}
               </div>
             )}
 

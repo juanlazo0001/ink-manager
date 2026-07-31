@@ -26,6 +26,13 @@ export interface SessionHoursRow {
   // priceLow === priceHigh, inferred back from stored data wherever it's
   // read after being sent.
   isFlat: boolean
+  // Only meaningful (and only shown) when isFlat is true -- min/max are
+  // still always collected and always shown to STAFF either way (still
+  // needed internally for the scheduling assistant/calendar blocking).
+  // This only controls whether the CLIENT-facing estimate/deposit pages
+  // also show the hour range alongside a flat session's price, or just the
+  // price alone. Defaults true (shown), matching the schema default.
+  showDurationToClient: boolean
 }
 
 export interface LockedSession {
@@ -165,6 +172,12 @@ export default function SessionHoursRows({
     onSessionHoursChange(next)
   }
 
+  function toggleRowShowDuration(index: number) {
+    const next = [...sessionHours]
+    next[index] = { ...next[index], showDurationToClient: !next[index].showDurationToClient }
+    onSessionHoursChange(next)
+  }
+
   return (
     <div className="mt-3 space-y-2">
       {sessionHours.slice(0, sessionCount).map((row, index) => {
@@ -290,6 +303,17 @@ export default function SessionHoursRows({
               />
               Flat rate for this session (single price instead of a range)
             </label>
+            {row.isFlat && (
+              <label className="mt-1 flex items-center gap-1.5 text-xs text-fg-muted">
+                <input
+                  type="checkbox"
+                  checked={row.showDurationToClient}
+                  onChange={() => toggleRowShowDuration(index)}
+                  className="h-3.5 w-3.5 rounded border-border bg-surface-inset accent-accent"
+                />
+                Show this session's hour range to the client (staff always sees it either way)
+              </label>
+            )}
           </div>
         )
       })}

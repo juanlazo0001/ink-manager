@@ -9,6 +9,7 @@ import { issueGiftCardForPaidDeposit } from "../lib/deposits";
 import { getChargeableConnectedAccountId } from "../lib/stripeConnect";
 import { createDirectChargeCheckoutSession } from "../lib/stripe";
 import { generateDepositFormPdf } from "../lib/pdf";
+import { redactedSessionHours } from "../lib/plannedSessions";
 
 // Exact SOP wording, in the order the client must agree to each one.
 const TERMS = [
@@ -111,7 +112,9 @@ publicRouter.get("/verify/:token", async (req, res) => {
       // present when this token was generated for a specific
       // PlannedSession, so the page can show "Session 2 of 3 -- estimated
       // 6-8 hours" for context.
-      plannedSession: { select: { sessionNumber: true, estimatedHoursMin: true, estimatedHoursMax: true } },
+      plannedSession: {
+        select: { sessionNumber: true, estimatedHoursMin: true, estimatedHoursMax: true, showDurationToClient: true },
+      },
     },
   });
 
@@ -151,8 +154,7 @@ publicRouter.get("/verify/:token", async (req, res) => {
       ? {
           sessionNumber: depositForm!.plannedSession.sessionNumber,
           totalSessions: inquiry.plannedSessions.length,
-          estimatedHoursMin: depositForm!.plannedSession.estimatedHoursMin,
-          estimatedHoursMax: depositForm!.plannedSession.estimatedHoursMax,
+          ...redactedSessionHours(depositForm!.plannedSession),
         }
       : null,
     // Phase 7C: drives the frontend's state branching -- paidVia set means

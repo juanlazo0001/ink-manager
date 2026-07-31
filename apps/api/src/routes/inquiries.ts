@@ -496,6 +496,10 @@ const INQUIRY_INCLUDE = {
       estimatedHoursMax: true,
       estimatedPriceLow: true,
       estimatedPriceHigh: true,
+      // Flat-rate pricing: so the estimate-entry form can correctly seed
+      // its per-session "hide duration from client" checkbox when
+      // re-opening an existing plan for editing/revision.
+      showDurationToClient: true,
       depositFormId: true,
       appointmentId: true,
       depositForm: { select: { id: true, signedAt: true, paidAt: true, paidManually: true, paidVia: true } },
@@ -1154,7 +1158,13 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
   // range already has) -- the whole-project price below becomes the SUM
   // of every session's own price, not a separately-typed number.
   let plannedSessionInputs:
-    | { estimatedHoursMin: number; estimatedHoursMax: number; estimatedPriceLow: number; estimatedPriceHigh: number }[]
+    | {
+        estimatedHoursMin: number;
+        estimatedHoursMax: number;
+        estimatedPriceLow: number;
+        estimatedPriceHigh: number;
+        showDurationToClient: boolean;
+      }[]
     | null = null;
   if (sessions !== undefined) {
     if (!Array.isArray(sessions)) {
@@ -1187,8 +1197,17 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
           .status(400)
           .json({ error: `Session ${index + 1}'s minimum price must be less than or equal to its maximum` });
       }
+      if (session.showDurationToClient !== undefined && typeof session.showDurationToClient !== "boolean") {
+        return res.status(400).json({ error: `Session ${index + 1}'s showDurationToClient must be a boolean` });
+      }
     }
-    plannedSessionInputs = sessions;
+    // Flat-rate pricing: defaults true (shown) when omitted, same as the
+    // schema's own default -- so a caller that never learned about this
+    // field yet doesn't need to send it to get today's behavior.
+    plannedSessionInputs = sessions.map((session) => ({
+      ...session,
+      showDurationToClient: session.showDurationToClient ?? true,
+    }));
   }
 
   // The actual session count this send/resend ends up with -- a real plan
@@ -1305,6 +1324,7 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
       estimatedHoursMax: number;
       estimatedPriceLow: number;
       estimatedPriceHigh: number;
+      showDurationToClient: boolean;
     }[] = [];
     const toCreate: {
       sessionNumber: number;
@@ -1312,6 +1332,7 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
       estimatedHoursMax: number;
       estimatedPriceLow: number;
       estimatedPriceHigh: number;
+      showDurationToClient: boolean;
     }[] = [];
 
     plannedSessionInputs.forEach((session, index) => {
@@ -1325,6 +1346,7 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
           estimatedHoursMax: session.estimatedHoursMax,
           estimatedPriceLow: session.estimatedPriceLow,
           estimatedPriceHigh: session.estimatedPriceHigh,
+          showDurationToClient: session.showDurationToClient,
         });
       } else {
         toCreate.push({
@@ -1333,6 +1355,7 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
           estimatedHoursMax: session.estimatedHoursMax,
           estimatedPriceLow: session.estimatedPriceLow,
           estimatedPriceHigh: session.estimatedPriceHigh,
+          showDurationToClient: session.showDurationToClient,
         });
       }
     });
@@ -1350,6 +1373,7 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
             estimatedHoursMax: s.estimatedHoursMax,
             estimatedPriceLow: s.estimatedPriceLow,
             estimatedPriceHigh: s.estimatedPriceHigh,
+            showDurationToClient: s.showDurationToClient,
           },
         }),
       ),
@@ -1485,7 +1509,13 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
   // on a project whose plan isn't being touched this time, or one that
   // never had a plan at all).
   let plannedSessionInputs:
-    | { estimatedHoursMin: number; estimatedHoursMax: number; estimatedPriceLow: number; estimatedPriceHigh: number }[]
+    | {
+        estimatedHoursMin: number;
+        estimatedHoursMax: number;
+        estimatedPriceLow: number;
+        estimatedPriceHigh: number;
+        showDurationToClient: boolean;
+      }[]
     | null = null;
   if (sessions !== undefined) {
     if (!Array.isArray(sessions)) {
@@ -1529,8 +1559,14 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
           .status(400)
           .json({ error: `Session ${index + 1}'s minimum price must be less than or equal to its maximum` });
       }
+      if (session.showDurationToClient !== undefined && typeof session.showDurationToClient !== "boolean") {
+        return res.status(400).json({ error: `Session ${index + 1}'s showDurationToClient must be a boolean` });
+      }
     }
-    plannedSessionInputs = sessions;
+    plannedSessionInputs = sessions.map((session) => ({
+      ...session,
+      showDurationToClient: session.showDurationToClient ?? true,
+    }));
   }
 
   // The actual session count this revision ends up with, once any locked
@@ -1641,6 +1677,7 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
       estimatedHoursMax: number;
       estimatedPriceLow: number;
       estimatedPriceHigh: number;
+      showDurationToClient: boolean;
     }[] = [];
     const toCreate: {
       sessionNumber: number;
@@ -1648,6 +1685,7 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
       estimatedHoursMax: number;
       estimatedPriceLow: number;
       estimatedPriceHigh: number;
+      showDurationToClient: boolean;
     }[] = [];
 
     plannedSessionInputs.forEach((session, index) => {
@@ -1661,6 +1699,7 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
           estimatedHoursMax: session.estimatedHoursMax,
           estimatedPriceLow: session.estimatedPriceLow,
           estimatedPriceHigh: session.estimatedPriceHigh,
+          showDurationToClient: session.showDurationToClient,
         });
       } else {
         toCreate.push({
@@ -1669,6 +1708,7 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
           estimatedHoursMax: session.estimatedHoursMax,
           estimatedPriceLow: session.estimatedPriceLow,
           estimatedPriceHigh: session.estimatedPriceHigh,
+          showDurationToClient: session.showDurationToClient,
         });
       }
     });
@@ -1690,6 +1730,7 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
             estimatedHoursMax: s.estimatedHoursMax,
             estimatedPriceLow: s.estimatedPriceLow,
             estimatedPriceHigh: s.estimatedPriceHigh,
+            showDurationToClient: s.showDurationToClient,
           },
         }),
       ),
