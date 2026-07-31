@@ -5448,3 +5448,33 @@ Both typechecks clean.
 ## Cleanup
 
 Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID -- twice had to clear a leftover stale process squatting on port 4093 from an earlier command in this same session before a fresh instance could bind it. Deleted every ad-hoc verification/scratch script (including the webhook-simulation scripts) and the temporary Playwright install from the scratch directory. Test data created during verification (one Cash $25 card, one Stripe $75 card, both on "LongDesc TestClient") left in the dev database, same convention as prior sessions.
+
+---
+
+# Brand deposit-form and waiver PDFs with the studio's logo and accent color
+
+Follow-up requested for the earlier PDF export feature (`254b5c9`): make the generated PDFs look more professional by branding them with each studio's own logo and colors.
+
+## What changed
+
+- **Logo**: `Studio.logoUrl` (a base64 data URL -- same storage convention already used for it elsewhere in the app) embedded at the top of both PDFs, centered, capped to a sensible width. Falls back to the original plain text-only header when a studio has none set.
+- **Accent color**: a colored rule under the header and a colored underline under each section heading, using the studio's chosen theme preset's accent color. New `THEME_PRESET_ACCENT_COLORS` in `apps/api/src/lib/themePresets.ts`, duplicating the five presets' hex values from the web frontend's own `THEME_PRESETS` array -- same cross-boundary duplication convention this file's own `THEME_PRESET_KEYS` already established (no shared package between `apps/api`/`apps/web` anywhere in this codebase).
+- Deliberately **never used the accent as body-text color** -- three of the five presets (lime `#c9f031`, amber `#fb923c`, magenta `#e879f9`) are too light for reliable contrast as printed text on white paper. A rule/underline has no such legibility requirement, so that's as far as the color branding goes.
+
+## A real bug found and fixed during verification
+
+The first generated PDF showed the logo overlapping the title/timestamp text directly below it. Root cause: `doc.image()` doesn't advance pdfkit's own layout cursor (`doc.y`) by the image's rendered height the way `.text()` does -- the subsequent `.text()` calls started drawing from wherever the cursor already was, which was still at the image's own top edge. Fixed by reading the logo's real aspect ratio via `doc.openImage()` (confirmed present at runtime in pdfkit's own source, `pdfkit/js/pdfkit.js`, but missing from `@types/pdfkit`'s declarations entirely -- hence a narrow, documented cast rather than pretending the type exists) and explicitly advancing `doc.y` by the image's actual displayed height before continuing.
+
+## Verification
+
+Generated both PDFs live against the real dev studio (which has a real logo set and the `onyx-lime` theme preset) before AND after the cursor fix -- confirmed the overlap in the first version, confirmed clean vertical stacking (logo, then title, then timestamp, then lime accent rule, no overlap) after. Separately generated a PDF directly through `generateDepositFormPdf()` with `studioLogoUrl: null` and a different accent color (`slate-teal`, `#2dd4bf`) to confirm both branches independently: the no-logo fallback renders the original plain header correctly, and the accent color genuinely drives the rule/underline color per studio rather than being hardcoded.
+
+Both typechecks clean.
+
+## Commit
+
+`3029062`.
+
+## Cleanup
+
+Killed the isolated dev API server instance (port 4093) via PowerShell `Stop-Process` by exact PID -- twice had to clear a leftover stale process on that port from earlier commands in this same session before a fresh instance could bind it. Deleted every ad-hoc verification/scratch script and generated test PDF from the scratch directory.
