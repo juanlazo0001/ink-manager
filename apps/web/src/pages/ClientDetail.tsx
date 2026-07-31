@@ -497,12 +497,21 @@ export default function ClientDetail() {
 
   const projects = client?.inquiries.filter((inquiry) => PROJECT_STATUSES.includes(inquiry.status)) ?? []
 
-  const [showIssueGiftCard, setShowIssueGiftCard] = useState(false)
+  // Single "Issue Gift Card" entry point -- issueMethod null shows the
+  // method picker (Cash / Stripe / Deposit Exemption), then swaps in the
+  // form for whichever was chosen. Cash and Stripe share one amount/
+  // expiresAt form (giftCardForm); Exempt has its own shape (reason, no
+  // amount -- always $0). checkoutUrl is set only once a Stripe checkout
+  // session is actually created, and deliberately keeps the modal open
+  // (staff needs to see/copy the link) instead of closing like the other
+  // two methods do on success.
+  const [showIssueModal, setShowIssueModal] = useState(false)
+  const [issueMethod, setIssueMethod] = useState<'CASH' | 'STRIPE' | 'EXEMPT' | null>(null)
   const [giftCardForm, setGiftCardForm] = useState(EMPTY_GIFT_CARD_FORM)
   const [issuingGiftCard, setIssuingGiftCard] = useState(false)
   const [giftCardError, setGiftCardError] = useState<string | null>(null)
+  const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null)
 
-  const [showIssueExempt, setShowIssueExempt] = useState(false)
   const [exemptForm, setExemptForm] = useState(EMPTY_EXEMPT_FORM)
   const [issuingExempt, setIssuingExempt] = useState(false)
   const [exemptError, setExemptError] = useState<string | null>(null)
@@ -747,6 +756,16 @@ export default function ClientDetail() {
     }
   }
 
+  function closeIssueModal() {
+    setShowIssueModal(false)
+    setIssueMethod(null)
+    setGiftCardForm(EMPTY_GIFT_CARD_FORM)
+    setGiftCardError(null)
+    setCheckoutUrl(null)
+    setExemptForm(EMPTY_EXEMPT_FORM)
+    setExemptError(null)
+  }
+
   async function handleIssueGiftCard(event: FormEvent) {
     event.preventDefault()
     if (!id) return
@@ -756,26 +775,30 @@ export default function ClientDetail() {
 
     try {
       const amountCents = Math.round(Number(giftCardForm.amountDollars) * 100)
+      const expiresAtBody =
+        user?.role === 'OWNER' && giftCardForm.expiresAt
+          ? { expiresAt: new Date(giftCardForm.expiresAt).toISOString() }
+          : {}
 
-      await apiFetch('/gift-cards', {
-        method: 'POST',
-        body: JSON.stringify({
-          clientId: id,
-          amountCents,
-          // This route is now specifically the cash-collection path (see
-          // its own comment in routes/giftCards.ts) -- the server rejects
-          // anything else here, a Stripe-paid card only ever comes through
-          // the deposit checkout/webhook flow.
-          paymentMethod: 'CASH',
-          ...(user?.role === 'OWNER' && giftCardForm.expiresAt
-            ? { expiresAt: new Date(giftCardForm.expiresAt).toISOString() }
-            : {}),
-        }),
-      })
-
-      setShowIssueGiftCard(false)
-      setGiftCardForm(EMPTY_GIFT_CARD_FORM)
-      setRefreshIndex((index) => index + 1)
+      if (issueMethod === 'STRIPE') {
+        // A checkout link, not an immediate issuance -- the gift card sits
+        // PENDING until the client actually pays and Stripe's webhook
+        // confirms it. Deliberately doesn't close the modal on success:
+        // staff still needs to see/copy the link.
+        const result = await apiFetch<{ checkoutUrl: string }>('/gift-cards/checkout-session', {
+          method: 'POST',
+          body: JSON.stringify({ clientId: id, amountCents, ...expiresAtBody }),
+        })
+        setCheckoutUrl(result.checkoutUrl)
+        setRefreshIndex((index) => index + 1)
+      } else {
+        await apiFetch('/gift-cards', {
+          method: 'POST',
+          body: JSON.stringify({ clientId: id, amountCents, paymentMethod: 'CASH', ...expiresAtBody }),
+        })
+        closeIssueModal()
+        setRefreshIndex((index) => index + 1)
+      }
     } catch (err) {
       setGiftCardError(err instanceof Error ? err.message : 'Failed to issue gift card')
     } finally {
@@ -800,8 +823,7 @@ export default function ClientDetail() {
         }),
       })
 
-      setShowIssueExempt(false)
-      setExemptForm(EMPTY_EXEMPT_FORM)
+      closeIssueModal()
       setRefreshIndex((index) => index + 1)
     } catch (err) {
       setExemptError(err instanceof Error ? err.message : 'Failed to issue deposit exemption')
@@ -1927,32 +1949,18 @@ export default function ClientDetail() {
                 id="gift-cards"
                 title="Gift Cards"
                 actions={
-                  <div className="flex items-center gap-2">
-                    {canIssueGiftCards && (
-                      <button
-                        type="button"
-                        onClick={() => setShowIssueGiftCard(true)}
-                        aria-label="Record Cash Payment"
-                        title="Record Cash Payment"
-                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
-                      >
-                        <GiftCardIcon className="h-4 w-4" />
-                        <span className="hidden text-sm font-semibold md:inline">Record Cash Payment</span>
-                      </button>
-                    )}
-                    {isOwner && (
-                      <button
-                        type="button"
-                        onClick={() => setShowIssueExempt(true)}
-                        aria-label="Issue Deposit Exemption"
-                        title="Issue Deposit Exemption"
-                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
-                      >
-                        <CheckIcon className="h-4 w-4" />
-                        <span className="hidden text-sm font-semibold md:inline">Issue Deposit Exemption</span>
-                      </button>
-                    )}
-                  </div>
+                  (canIssueGiftCards || isOwner) && (
+                    <button
+                      type="button"
+                      onClick={() => setShowIssueModal(true)}
+                      aria-label="Issue Gift Card"
+                      title="Issue Gift Card"
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
+                    >
+                      <GiftCardIcon className="h-4 w-4" />
+                      <span className="hidden text-sm font-semibold md:inline">Issue Gift Card</span>
+                    </button>
+                  )
                 }
               >
 
@@ -2404,109 +2412,197 @@ export default function ClientDetail() {
         </div>
       </div>
 
-      {showIssueGiftCard && (
-        <Modal
-          title="Record Cash Payment"
-          onClose={() => {
-            setShowIssueGiftCard(false)
-            setGiftCardForm(EMPTY_GIFT_CARD_FORM)
-            setGiftCardError(null)
-          }}
-        >
-          <form onSubmit={handleIssueGiftCard}>
-            <p className="text-sm text-fg-secondary">
-              For cash collected in person only. Enter the exact amount collected -- a gift card for that amount is
-              issued to the client once confirmed.
-            </p>
+      {showIssueModal && (
+        <Modal title="Issue Gift Card" onClose={closeIssueModal}>
+          {issueMethod === null && (
+            <div className="space-y-2">
+              <p className="mb-1 text-sm text-fg-secondary">How is this gift card being paid for?</p>
 
-            <div className="mt-4">
-              <label className="mb-1 block text-sm font-medium text-fg-secondary">Amount collected ($)</label>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                required
-                value={giftCardForm.amountDollars}
-                onChange={(e) => setGiftCardForm({ ...giftCardForm, amountDollars: e.target.value })}
-                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-              />
+              {canIssueGiftCards && (
+                <button
+                  type="button"
+                  onClick={() => setIssueMethod('CASH')}
+                  className="block w-full rounded-lg border border-border p-3 text-left transition hover:bg-surface"
+                >
+                  <span className="block text-sm font-semibold text-fg">Cash</span>
+                  <span className="block text-xs text-fg-muted">Collected in person -- issued immediately.</span>
+                </button>
+              )}
+
+              {canIssueGiftCards && (
+                <button
+                  type="button"
+                  onClick={() => setIssueMethod('STRIPE')}
+                  className="block w-full rounded-lg border border-border p-3 text-left transition hover:bg-surface"
+                >
+                  <span className="block text-sm font-semibold text-fg">Stripe</span>
+                  <span className="block text-xs text-fg-muted">
+                    Generates a payment link to send the client -- issued once they pay.
+                  </span>
+                </button>
+              )}
+
+              {isOwner && (
+                <button
+                  type="button"
+                  onClick={() => setIssueMethod('EXEMPT')}
+                  className="block w-full rounded-lg border border-border p-3 text-left transition hover:bg-surface"
+                >
+                  <span className="block text-sm font-semibold text-fg">Deposit Exemption</span>
+                  <span className="block text-xs text-fg-muted">
+                    No payment -- waives the deposit requirement for this client.
+                  </span>
+                </button>
+              )}
             </div>
+          )}
 
-            {user?.role === 'OWNER' && (
-              <div className="mt-3">
+          {(issueMethod === 'CASH' || issueMethod === 'STRIPE') && !checkoutUrl && (
+            <form onSubmit={handleIssueGiftCard}>
+              <button
+                type="button"
+                onClick={() => setIssueMethod(null)}
+                className="mb-3 text-xs font-medium text-fg-muted hover:text-fg"
+              >
+                ← Back
+              </button>
+
+              <p className="text-sm text-fg-secondary">
+                {issueMethod === 'CASH'
+                  ? 'For cash collected in person only. Enter the exact amount collected -- a gift card for that amount is issued to the client once confirmed.'
+                  : 'Enter the amount to charge -- a real Stripe payment link is generated for you to share with the client. The gift card issues automatically once they pay.'}
+              </p>
+
+              <div className="mt-4">
                 <label className="mb-1 block text-sm font-medium text-fg-secondary">
-                  Custom expiration (optional, overrides studio default)
+                  {issueMethod === 'CASH' ? 'Amount collected ($)' : 'Amount ($)'}
                 </label>
                 <input
-                  type="date"
-                  value={giftCardForm.expiresAt}
-                  onChange={(e) => setGiftCardForm({ ...giftCardForm, expiresAt: e.target.value })}
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  required
+                  value={giftCardForm.amountDollars}
+                  onChange={(e) => setGiftCardForm({ ...giftCardForm, amountDollars: e.target.value })}
                   className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                 />
               </div>
-            )}
 
-            {giftCardError && <p className="mt-3 text-sm text-danger">{giftCardError}</p>}
+              {user?.role === 'OWNER' && (
+                <div className="mt-3">
+                  <label className="mb-1 block text-sm font-medium text-fg-secondary">
+                    Custom expiration (optional, overrides studio default)
+                  </label>
+                  <input
+                    type="date"
+                    value={giftCardForm.expiresAt}
+                    onChange={(e) => setGiftCardForm({ ...giftCardForm, expiresAt: e.target.value })}
+                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                  />
+                </div>
+              )}
 
-            <button
-              type="submit"
-              disabled={issuingGiftCard}
-              className="mt-5 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
-            >
-              {issuingGiftCard ? 'Recording…' : 'Confirm Cash Payment'}
-            </button>
-          </form>
-        </Modal>
-      )}
+              {giftCardError && <p className="mt-3 text-sm text-danger">{giftCardError}</p>}
 
-      {showIssueExempt && (
-        <Modal
-          title="Issue Deposit Exemption"
-          onClose={() => {
-            setShowIssueExempt(false)
-            setExemptForm(EMPTY_EXEMPT_FORM)
-            setExemptError(null)
-          }}
-        >
-          <form onSubmit={handleIssueExempt}>
-            <p className="text-sm text-fg-secondary">
-              Issues a $0 gift card with status "Deposit Exemption" -- it satisfies the appointment deposit
-              requirement without representing real money.
-            </p>
+              <button
+                type="submit"
+                disabled={issuingGiftCard}
+                className="mt-5 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
+              >
+                {issueMethod === 'CASH'
+                  ? issuingGiftCard
+                    ? 'Recording…'
+                    : 'Confirm Cash Payment'
+                  : issuingGiftCard
+                    ? 'Generating link…'
+                    : 'Generate Payment Link'}
+              </button>
+            </form>
+          )}
 
-            <div className="mt-3">
-              <label className="mb-1 block text-sm font-medium text-fg-secondary">Reason (optional)</label>
-              <input
-                type="text"
-                placeholder="e.g. Sponsor, Comped — prior service issue"
-                value={exemptForm.reason}
-                onChange={(e) => setExemptForm({ ...exemptForm, reason: e.target.value })}
-                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-              />
+          {issueMethod === 'STRIPE' && checkoutUrl && (
+            <div>
+              <p className="text-sm text-fg-secondary">
+                Share this payment link with the client. The gift card is issued automatically once they pay.
+              </p>
+              <div className="mt-4 rounded-lg border border-border p-3">
+                <div className="flex items-center gap-2">
+                  <input
+                    readOnly
+                    value={checkoutUrl}
+                    className="min-w-0 flex-1 rounded-lg border border-border bg-surface-inset px-3 py-2 text-xs text-fg"
+                    onFocus={(e) => e.target.select()}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleCopyLink(checkoutUrl)}
+                    aria-label={copied ? 'Copied' : 'Copy link'}
+                    title={copied ? 'Copied!' : 'Copy link'}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-fg-secondary transition hover:bg-surface-raised hover:text-fg"
+                  >
+                    {copied ? <CheckIcon className="h-4 w-4 text-success" /> : <CopyIcon className="h-4 w-4" />}
+                  </button>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={closeIssueModal}
+                className="mt-5 w-full rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
+              >
+                Done
+              </button>
             </div>
+          )}
 
-            <div className="mt-3">
-              <label className="mb-1 block text-sm font-medium text-fg-secondary">
-                Expiration (optional, default never expires)
-              </label>
-              <input
-                type="date"
-                value={exemptForm.expiresAt}
-                onChange={(e) => setExemptForm({ ...exemptForm, expiresAt: e.target.value })}
-                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-              />
-            </div>
+          {issueMethod === 'EXEMPT' && (
+            <form onSubmit={handleIssueExempt}>
+              <button
+                type="button"
+                onClick={() => setIssueMethod(null)}
+                className="mb-3 text-xs font-medium text-fg-muted hover:text-fg"
+              >
+                ← Back
+              </button>
 
-            {exemptError && <p className="mt-3 text-sm text-danger">{exemptError}</p>}
+              <p className="text-sm text-fg-secondary">
+                Issues a $0 gift card with status "Deposit Exemption" -- it satisfies the appointment deposit
+                requirement without representing real money.
+              </p>
 
-            <button
-              type="submit"
-              disabled={issuingExempt}
-              className="mt-5 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
-            >
-              {issuingExempt ? 'Issuing…' : 'Issue Deposit Exemption'}
-            </button>
-          </form>
+              <div className="mt-3">
+                <label className="mb-1 block text-sm font-medium text-fg-secondary">Reason (optional)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Sponsor, Comped — prior service issue"
+                  value={exemptForm.reason}
+                  onChange={(e) => setExemptForm({ ...exemptForm, reason: e.target.value })}
+                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                />
+              </div>
+
+              <div className="mt-3">
+                <label className="mb-1 block text-sm font-medium text-fg-secondary">
+                  Expiration (optional, default never expires)
+                </label>
+                <input
+                  type="date"
+                  value={exemptForm.expiresAt}
+                  onChange={(e) => setExemptForm({ ...exemptForm, expiresAt: e.target.value })}
+                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                />
+              </div>
+
+              {exemptError && <p className="mt-3 text-sm text-danger">{exemptError}</p>}
+
+              <button
+                type="submit"
+                disabled={issuingExempt}
+                className="mt-5 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
+              >
+                {issuingExempt ? 'Issuing…' : 'Issue Deposit Exemption'}
+              </button>
+            </form>
+          )}
         </Modal>
       )}
 

@@ -56,6 +56,14 @@ enum Channel {
 }
 
 enum GiftCardStatus {
+  // Stripe checkout-link issuance only: the card row (and its real, final
+  // code) exists from the moment staff generates the checkout link, so the
+  // webhook has something to find by stripeCheckoutSessionId once payment
+  // completes -- but it isn't spendable/attachable yet (validateGift
+  // CardForAttachment only ever accepts ACTIVE/EXEMPT). Every other
+  // issuance path (Cash, Exempt, a paid deposit) goes straight to ACTIVE/
+  // EXEMPT, skipping this status entirely -- it's never set anywhere else.
+  PENDING
   ACTIVE
   REDEEMED
   EXPIRED
@@ -1567,6 +1575,15 @@ model GiftCard {
   redeemedAt  DateTime?
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
+
+  // Stripe checkout-link issuance only -- same fields/naming as
+  // DepositForm's own stripeCheckoutSessionId/stripePaymentIntentId, set at
+  // checkout-session creation and payment-intent time respectively.
+  // Permanently nullable: null for every card issued any other way (Cash,
+  // Exempt, or a paid deposit -- that path's own DepositForm carries these
+  // fields instead, not the GiftCard it results in).
+  stripeCheckoutSessionId String? @unique
+  stripePaymentIntentId   String? @unique
 
   // See the enum's own comment for why this stays nullable permanently.
   // Set on every NEW card going forward, across all three real issuance

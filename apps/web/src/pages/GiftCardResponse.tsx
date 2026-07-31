@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useSearchParams } from 'react-router-dom'
 import { apiFetch } from '../lib/api'
 import { formatDateTime } from '../lib/format'
 import QrCode from '../components/QrCode'
@@ -19,6 +19,8 @@ interface GiftCardView {
 
 export default function GiftCardResponse() {
   const { code } = useParams<{ code: string }>()
+  const [searchParams] = useSearchParams()
+  const justPaid = searchParams.get('paid') === '1'
   const [data, setData] = useState<GiftCardView | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -55,7 +57,26 @@ export default function GiftCardResponse() {
 
         {!error && !data && <p className="text-sm text-fg-secondary">Loading…</p>}
 
-        {!error && data && (
+        {!error && data && data.status === 'PENDING' && (
+          <>
+            <p className="text-sm text-fg-secondary">{data.studioName}</p>
+            <h1 className="mt-1 text-3xl font-bold text-fg">${(data.amountCents / 100).toFixed(2)} Gift Card</h1>
+            <div className="mt-4">
+              <StatusPill status="PENDING" label="Payment Pending" />
+            </div>
+            {/* No code/QR shown yet -- this card isn't spendable until
+                payment actually completes (validateGiftCardForAttachment
+                only ever accepts ACTIVE/EXEMPT), so presenting it as
+                redeemable here would be misleading. */}
+            <p className="mt-4 text-sm text-fg-secondary">
+              {justPaid
+                ? "Thanks! We're confirming your payment now -- this usually takes just a moment. Refresh this page to check."
+                : "This gift card hasn't been paid for yet."}
+            </p>
+          </>
+        )}
+
+        {!error && data && data.status !== 'PENDING' && (
           <>
             <p className="text-sm text-fg-secondary">{data.studioName}</p>
             <h1 className="mt-1 text-3xl font-bold text-fg">

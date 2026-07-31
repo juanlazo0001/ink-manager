@@ -10,6 +10,8 @@ import { sendClientSms } from "../lib/clientSms";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { shortenUrl } from "../lib/shortLinks";
 import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
+import { getChargeableConnectedAccountId } from "../lib/stripeConnect";
+import { createDirectChargeCheckoutSession } from "../lib/stripe";
 
 const GIFT_CARD_DETAIL_INCLUDE = {
   // Stackable gift cards: giftCards here is every OTHER card (this one
@@ -148,6 +150,109 @@ router.post("/", requirePermission("giftCards.issue"), async (req, res) => {
   });
 
   res.status(201).json(card);
+});
+
+// Stripe checkout-link path: the third and last real issuance path
+// alongside Cash (above) and Exempt (below) -- a staff-generated payment
+// link for the client to pay themselves, rather than a live in-person
+// collection. The GiftCard row (and its real, final code) is created
+// PENDING immediately -- not spendable/attachable yet (validateGiftCard
+// ForAttachment only ever accepts ACTIVE/EXEMPT) -- so the webhook
+// (routes/webhooks.ts) has something to find by stripeCheckoutSessionId
+// once payment actually completes. Same requirePermission("giftCards.issue")
+// gate as the Cash path -- this is still just "issuing a gift card,"
+// same capability, different payment method.
+router.post("/checkout-session", requirePermission("giftCards.issue"), async (req, res) => {
+  const body = req.body ?? {};
+  const { clientId, amountCents, appointmentId, expiresAt } = body;
+  const studioId = req.user!.studioId;
+
+  if (!clientId || typeof amountCents !== "number" || amountCents <= 0) {
+    return res.status(400).json({ error: "clientId and a positive amountCents are required" });
+  }
+
+  if (expiresAt !== undefined && req.user!.role !== Role.OWNER) {
+    return res.status(403).json({ error: "Only an OWNER can override the default expiration when issuing a card" });
+  }
+
+  const client = await prisma.client.findUnique({ where: { id: clientId } });
+  if (!client || client.studioId !== studioId || client.mergedIntoId) {
+    return res.status(400).json({ error: "clientId must belong to an active client in your studio" });
+  }
+
+  if (appointmentId) {
+    const appointment = await prisma.appointment.findUnique({ where: { id: appointmentId } });
+
+    if (!appointment || appointment.studioId !== studioId || appointment.clientId !== clientId) {
+      return res.status(400).json({ error: "appointmentId must belong to this client in your studio" });
+    }
+  }
+
+  const stripeAccountId = await getChargeableConnectedAccountId(studioId);
+  if (!stripeAccountId) {
+    return res.status(400).json({ error: "Online payment isn't available for this studio right now." });
+  }
+
+  let resolvedExpiresAt: Date | null;
+  if (expiresAt !== undefined) {
+    resolvedExpiresAt = expiresAt === null ? null : new Date(expiresAt);
+    if (resolvedExpiresAt !== null && Number.isNaN(resolvedExpiresAt.getTime())) {
+      return res.status(400).json({ error: "expiresAt must be a valid date or null" });
+    }
+  } else {
+    const settings = await prisma.studioSettings.findUnique({ where: { studioId } });
+    resolvedExpiresAt = computeGiftCardExpiration(settings?.giftCardDefaultExpirationDays ?? null);
+  }
+
+  const code = await generateUniqueGiftCardCode();
+
+  const card = await prisma.giftCard.create({
+    data: {
+      studioId,
+      clientId,
+      code,
+      amountCents,
+      status: GiftCardStatus.PENDING,
+      expiresAt: resolvedExpiresAt,
+      appointmentId: appointmentId || null,
+      issuedById: req.user!.userId,
+      paymentMethod: "STRIPE",
+    },
+  });
+
+  let session;
+  try {
+    session = await createDirectChargeCheckoutSession({
+      connectedAccountId: stripeAccountId,
+      amountCents,
+      productName: "Gift Card",
+      successUrl: `${PUBLIC_APP_URL}/gift-card/${code}?paid=1`,
+      cancelUrl: `${PUBLIC_APP_URL}/gift-card/${code}?canceled=1`,
+      metadata: { giftCardId: card.id },
+    });
+  } catch (err) {
+    // Nothing was ever charged and this card can never become spendable
+    // without a session to pay through -- delete rather than leave an
+    // orphaned PENDING row with no way to ever complete.
+    await prisma.giftCard.delete({ where: { id: card.id } });
+    return res.status(502).json({ error: err instanceof Error ? err.message : "Failed to start Stripe checkout" });
+  }
+
+  const updated = await prisma.giftCard.update({
+    where: { id: card.id },
+    data: { stripeCheckoutSessionId: session.id },
+  });
+
+  await logAudit({
+    studioId,
+    actorUserId: req.user!.userId,
+    entityType: "GiftCard",
+    entityId: card.id,
+    action: "checkout_session_created",
+    changes: { clientId, amountCents, appointmentId: appointmentId ?? null, expiresAt: resolvedExpiresAt, paymentMethod: "STRIPE" },
+  });
+
+  res.status(201).json({ ...updated, checkoutUrl: session.url });
 });
 
 // OWNER-only, permanently -- one of this expansion's fixed safety-floor

@@ -437,6 +437,33 @@ router.post("/stripe", async (req, res) => {
           changes: { stripeCheckoutSessionId: session.id, paymentIntentId },
         });
       }
+
+      // Standalone gift-card checkout link (routes/giftCards.ts's own
+      // POST /checkout-session) -- same session-id lookup a third time, on
+      // GiftCard itself this time. The card row already exists (PENDING,
+      // real code, created the moment staff generated the link); this just
+      // flips it ACTIVE now that payment is actually confirmed. Idempotent
+      // the same way as the two paths above: a retry that finds this card
+      // already past PENDING (paidAt already set) is a no-op.
+      const giftCard = await prisma.giftCard.findFirst({
+        where: { stripeCheckoutSessionId: session.id },
+      });
+
+      if (giftCard && giftCard.status === "PENDING" && !giftCard.paidAt) {
+        const paymentIntentId = typeof session.payment_intent === "string" ? session.payment_intent : null;
+        await prisma.giftCard.update({
+          where: { id: giftCard.id },
+          data: { status: "ACTIVE", paidAt: new Date(), stripePaymentIntentId: paymentIntentId },
+        });
+        await logAudit({
+          studioId,
+          actorUserId: null,
+          entityType: "GiftCard",
+          entityId: giftCard.id,
+          action: "stripe_payment_confirmed",
+          changes: { stripeCheckoutSessionId: session.id, paymentIntentId, status: { from: "PENDING", to: "ACTIVE" } },
+        });
+      }
     }
   }
 
