@@ -35,6 +35,13 @@ const STATUS_TONE: Record<string, Tone> = {
   SCHEDULING: 'success',
   WAITLISTED: 'success',
   CONFIRMED: 'success',
+  // Synthetic key (never a real InquiryStatus) -- a second, complementary
+  // pill shown alongside a Project's real status pill (SCHEDULING etc.)
+  // when it has zero linked Appointments yet, everywhere that status pill
+  // already renders (Inquiries/Projects list+Kanban, Project detail
+  // header, Dashboard). Same action-needed warning tone as
+  // DEPOSIT_PENDING/AWAITING_CLIENT_RESPONSE.
+  NEEDS_SCHEDULING: 'warning',
   // Phase 7A: CLOSED_LOST is a deliberate staff action (or the missing-
   // workflow mark-lost route) and reads as danger/red; COLD_LEAD is the
   // automated sweep's quieter outcome and stays neutral/gray -- consistent

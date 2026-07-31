@@ -13,6 +13,35 @@ export interface KanbanInquiry {
   priceEstimateHigh: number | null
   client: { firstName: string; lastName: string }
   assignedArtist: { id: string; user: { email: string; name: string | null; avatarUrl: string | null } } | null
+  // Optional -- only Inquiries.tsx's own fetch (GET /inquiries) currently
+  // requests these; MyInquiries.tsx's ARTIST-scoped board
+  // (/inquiries/assigned-to-me) doesn't, so its cards simply never show
+  // the Needs Scheduling badge (undefined, not incorrectly false) rather
+  // than requiring every KanbanInquiry consumer to fetch fields it
+  // doesn't otherwise need.
+  appointment?: unknown
+  sessions?: { id: string }[]
+}
+
+// A Project (deposit-paid Inquiry) with zero linked Appointments yet --
+// derived entirely from data the list/detail endpoints already return, no
+// schema change. Checks both the older 1:1 `appointment` link and the
+// newer 1:many `sessions` link, same OR the backend's own
+// GET /reports/dashboard already uses for its "scheduled" count (a few
+// dev-seed fixtures only ever populated one of the two). This is the one
+// canonical definition -- Inquiries.tsx's list rows, its Kanban cards
+// (below), and its own PROJECTS_TAB_STATUSES export all key off the same
+// three statuses; kept as its own literal here (not imported from
+// Inquiries.tsx) purely so this shared component-level helper doesn't
+// import from a page. If PROJECTS_TAB_STATUSES in Inquiries.tsx ever
+// changes, update this list to match.
+const PROJECT_STATUSES: readonly string[] = ['SCHEDULING', 'WAITLISTED', 'CONFIRMED']
+export function projectNeedsScheduling(inquiry: {
+  status: string
+  appointment?: unknown
+  sessions?: { id: string }[]
+}): boolean {
+  return PROJECT_STATUSES.includes(inquiry.status) && !inquiry.appointment && (inquiry.sessions?.length ?? 0) === 0
 }
 
 export interface KanbanColumn {

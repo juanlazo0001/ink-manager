@@ -2,10 +2,10 @@ import { forwardRef } from 'react'
 import { useDraggable } from '@dnd-kit/react'
 import { motion } from 'framer-motion'
 import { ArtistAvatar, artistLabel } from '../ArtistAvatar'
-import { getStatusTone } from '../StatusPill'
+import StatusPill, { getStatusTone } from '../StatusPill'
 import { formatRelativeTime, formatPriceEstimate } from '../../lib/format'
 import { uiSpringTransition } from '../../lib/motion'
-import type { KanbanInquiry } from '../../lib/kanban'
+import { projectNeedsScheduling, type KanbanInquiry } from '../../lib/kanban'
 
 const TONE_BORDER_CLASSES: Record<string, string> = {
   success: 'border-l-success',
@@ -82,6 +82,12 @@ const InquiryKanbanCard = forwardRef<HTMLDivElement, InquiryKanbanCardProps>(fun
           {inquiry.client.firstName} {inquiry.client.lastName}
         </p>
         <p className="mt-1 line-clamp-2 text-xs text-fg-secondary">{truncate(inquiry.description, 90)}</p>
+
+        {projectNeedsScheduling(inquiry) && (
+          <div className="mt-2">
+            <StatusPill status="NEEDS_SCHEDULING" label="Needs Scheduling" />
+          </div>
+        )}
 
         <div className="mt-2.5 flex items-center justify-between gap-2">
           {inquiry.assignedArtist ? (

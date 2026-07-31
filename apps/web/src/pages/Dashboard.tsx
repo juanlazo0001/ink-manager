@@ -13,7 +13,7 @@ import { uiSpringTransition } from '../lib/motion'
 import { reportsDashboardQueryKey } from '../lib/queryKeys'
 import { formatCents } from '../lib/money'
 import { formatStatus } from '../lib/format'
-import { ArtistsIcon, CheckIcon, ClockIcon, DocumentIcon, TagIcon } from '../components/icons'
+import { AppointmentsIcon, ArtistsIcon, CheckIcon, ClockIcon, DocumentIcon, TagIcon } from '../components/icons'
 import { useThemePreset } from '../lib/useThemePreset'
 
 interface FunnelStage {
@@ -34,6 +34,7 @@ interface ReportsDashboard {
     sampleSizeResponse: number
   }
   artistUtilization: { artistId: string; name: string; appointmentCount: number }[]
+  needsSchedulingCount: number
   // Omitted entirely (not sent as null/zeroed) by the API for a role
   // without reports.viewFinancial -- absent, not just empty, so it must be
   // checked before rendering rather than assumed present.
@@ -271,6 +272,19 @@ export default function Dashboard() {
                   }))}
                   emptyMessage="No appointments scheduled in this range."
                 />
+              </CardShell>
+
+              {/* Not gated by canViewFinancial -- an operational scheduling
+                  count, not a dollar figure, same visibility as the funnel/
+                  lostRate/responseTime/artistUtilization cards above. */}
+              <CardShell title="Needs Scheduling" caption="Right now, not affected by the date range above">
+                <div className={isEditorial ? 'flex items-center gap-3' : 'flex items-center gap-2'}>
+                  <AppointmentsIcon className={isEditorial ? 'h-4 w-4 text-warning' : 'h-4 w-4 text-fg-muted'} />
+                  <p className={bigStatClass(isEditorial, 'xl')}>{data.needsSchedulingCount}</p>
+                </div>
+                <p className="mt-1 text-xs text-fg-muted">
+                  Project{data.needsSchedulingCount === 1 ? '' : 's'} with no appointment booked yet
+                </p>
               </CardShell>
 
               {data.depositConversion && (

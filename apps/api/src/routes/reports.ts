@@ -78,6 +78,7 @@ router.get("/dashboard", async (req, res) => {
     artistGroups,
     depositForms,
     giftCardAgg,
+    needsSchedulingCount,
   ] = await Promise.all([
     prisma.inquiry.count({ where: inquiryBaseWhere }),
     prisma.inquiry.count({ where: { ...inquiryBaseWhere, estimateSentAt: { not: null } } }),
@@ -131,6 +132,23 @@ router.get("/dashboard", async (req, res) => {
       },
       _sum: { amountCents: true },
       _count: { _all: true },
+    }),
+    // Needs Scheduling: a Project (deposit-paid Inquiry) with zero linked
+    // Appointments yet -- a right-now snapshot, not date-ranged, same
+    // reasoning as depositConversion/giftCardLiability below (this is a
+    // current-state flag, not a historical event with a "happened at"
+    // timestamp to range over). Same appointmentId/sessions OR as
+    // scheduledCount above, and same frontend-mirrored derivation as
+    // apps/web/src/lib/kanban.ts's projectNeedsScheduling -- keep both in
+    // sync if the set of "Project" statuses ever changes.
+    prisma.inquiry.count({
+      where: {
+        studioId,
+        archivedAt: null,
+        status: { in: [InquiryStatus.SCHEDULING, InquiryStatus.WAITLISTED, InquiryStatus.CONFIRMED] },
+        appointmentId: null,
+        sessions: { none: {} },
+      },
     }),
   ]);
 
@@ -187,6 +205,9 @@ router.get("/dashboard", async (req, res) => {
       sampleSizeResponse: respondedRows.length,
     },
     artistUtilization,
+    // Not gated by reports.viewFinancial -- an operational scheduling
+    // count, not a dollar figure.
+    needsSchedulingCount,
     // Real dollar figures -- omitted entirely (not just zeroed) without
     // reports.viewFinancial, so the frontend can tell "no data" apart from
     // "not allowed to see this" and hide the section rather than show a

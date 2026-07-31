@@ -53,6 +53,7 @@ import { useConversationPanel } from '../context/useConversationPanel'
 import { artistsQueryKey, inquiriesQueryKey, inquiryQueryKey } from '../lib/queryKeys'
 import ImageGrid, { type ImageDetail } from '../components/ImageGrid'
 import DetailField from '../components/DetailField'
+import { projectNeedsScheduling } from '../lib/kanban'
 
 interface Inquiry {
   id: string
@@ -2050,6 +2051,9 @@ export default function InquiryDetail() {
                       </button>
                     )}
                     <StatusPill status={inquiry.status} label={describeInquiryStatus(inquiry)} />
+                    {projectNeedsScheduling(inquiry) && (
+                      <StatusPill status="NEEDS_SCHEDULING" label="Needs Scheduling" />
+                    )}
                     {(canMarkLost || canEditInquiry || isOwner) && (
                       <div className="relative">
                         <button

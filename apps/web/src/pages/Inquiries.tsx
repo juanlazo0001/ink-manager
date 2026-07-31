@@ -10,7 +10,7 @@ import Modal from '../components/Modal'
 import AppointmentForm from '../components/AppointmentForm'
 import InquiryKanbanBoard from '../components/kanban/InquiryKanbanBoard'
 import { PIPELINE_STEPS } from '../components/InquiryPipeline'
-import type { KanbanColumn, KanbanTransition } from '../lib/kanban'
+import { projectNeedsScheduling, type KanbanColumn, type KanbanTransition } from '../lib/kanban'
 import MultiSelectFilter from '../components/MultiSelectFilter'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatStatus, describeInquiryStatus } from '../lib/format'
@@ -38,6 +38,11 @@ interface Inquiry {
   client: { firstName: string; lastName: string }
   assignedArtist: { id: string; user: { email: string; name: string | null; avatarUrl: string | null } } | null
   appointment: { startTime: string } | null
+  // 1:many "sessions under this project" (Appointment.inquiryId), startTime-
+  // ascending from the backend. Used both for projectNeedsScheduling (only
+  // the length matters there) and to fix the Date column below, which
+  // previously checked only the older, usually-null `appointment` link.
+  sessions: { id: string; startTime: string }[]
 }
 
 type PipelineTab = 'inquiries' | 'projects'
@@ -197,6 +202,12 @@ export default function Inquiries() {
   const [inquiryStatusFilter, setInquiryStatusFilter] = useState<string[]>([])
   const [projectStatusFilter, setProjectStatusFilter] = useState<string[]>([])
   const [groupByStatus, setGroupByStatus] = useState(false)
+  // Projects tab only -- "Needs Scheduling" isn't a real InquiryStatus, so
+  // this is a client-side post-filter on top of whatever the server already
+  // returned for the active tab/status/artist/search filters, same as
+  // groupByStatus above is a client-side reshaping rather than a server
+  // round-trip.
+  const [needsSchedulingFilter, setNeedsSchedulingFilter] = useState(false)
   const [search, setSearch] = useState('')
   const debouncedSearch = useDebouncedValue(search, 300)
   // 'unassigned' is a synthetic value alongside real artist ids -- the
@@ -233,6 +244,9 @@ export default function Inquiries() {
 
   function setTab(tab: PipelineTab) {
     setSearchParams(tab === 'inquiries' ? {} : { tab })
+    // Not a real status this tab could ever apply -- avoid a stuck filter
+    // silently hiding every row after switching to Inquiries.
+    if (tab === 'inquiries') setNeedsSchedulingFilter(false)
   }
 
   function handleInquiryCreated(inquiryId: string) {
@@ -366,7 +380,10 @@ export default function Inquiries() {
       : error.message
     : null
 
-  const filteredInquiries = inquiries
+  const filteredInquiries =
+    activeTab === 'projects' && needsSchedulingFilter
+      ? inquiries?.filter((inquiry) => projectNeedsScheduling(inquiry))
+      : inquiries
 
   // Groups follow the same pipeline order as the tab's own status list, so
   // "New" always appears above "Assigned" above "Closed", etc. -- not
@@ -433,8 +450,17 @@ export default function Inquiries() {
         {columnVisibility.date && (
           <td className={`hidden py-3 text-fg-secondary sm:table-cell ${lastVisibleColumnKey === 'date' ? 'pr-3' : ''}`}>
             {activeTab === 'projects'
-              ? inquiry.appointment
-                ? formatDateTime(inquiry.appointment.startTime)
+              ? // Checks the older `appointment` link first, then falls back
+                // to the newer `sessions` array (earliest session, already
+                // startTime-ascending) -- `appointment` alone is usually
+                // null for any project scheduled through the current
+                // multi-session flow, which previously made this column
+                // always read "Not yet scheduled" even for an already-
+                // scheduled project. Real latent bug, fixed here since it's
+                // the same underlying signal this session's own Needs
+                // Scheduling indicator relies on.
+                (inquiry.appointment ?? inquiry.sessions[0])
+                ? formatDateTime((inquiry.appointment ?? inquiry.sessions[0]).startTime)
                 : 'Not yet scheduled'
               : formatDateTime(inquiry.createdAt)}
           </td>
@@ -453,7 +479,12 @@ export default function Inquiries() {
         )}
         {columnVisibility.status && (
           <td className={`py-3 ${lastVisibleColumnKey === 'status' ? 'pr-3' : ''}`}>
-            <StatusPill status={inquiry.status} label={describeInquiryStatus(inquiry)} />
+            <div className="flex flex-wrap items-center gap-1.5">
+              <StatusPill status={inquiry.status} label={describeInquiryStatus(inquiry)} />
+              {projectNeedsScheduling(inquiry) && (
+                <StatusPill status="NEEDS_SCHEDULING" label="Needs Scheduling" />
+              )}
+            </div>
           </td>
         )}
       </tr>
@@ -631,6 +662,27 @@ export default function Inquiries() {
               </button>
             )}
 
+            {/* Not a real status -- a client-side post-filter (see
+                filteredInquiries above), same reason it's a plain toggle
+                like Group by status rather than a MultiSelectFilter option.
+                Projects tab only; a converted-but-unscheduled Project is
+                the only thing this concept applies to. */}
+            {activeTab === 'projects' && (
+              <button
+                type="button"
+                onClick={() => setNeedsSchedulingFilter((v) => !v)}
+                aria-pressed={needsSchedulingFilter}
+                className={[
+                  'shrink-0 rounded-full border px-3 py-2 text-sm font-medium transition',
+                  needsSchedulingFilter
+                    ? 'border-warning/40 bg-warning/15 text-warning'
+                    : 'border-border text-fg-secondary hover:bg-surface hover:text-fg',
+                ].join(' ')}
+              >
+                Needs Scheduling
+              </button>
+            )}
+
             {/* List/Kanban is a rendering-mode toggle only -- it shares the
                 same fetched `inquiries`, the same tab, and the same filters
                 above, so switching modes never changes what's included. */}
@@ -702,7 +754,10 @@ export default function Inquiries() {
                 <p className="text-sm text-fg-secondary">
                   {(() => {
                     const hasExtraFilter =
-                      artistFilter.length > 0 || debouncedSearch.trim().length > 0 || activeStatusFilter.length > 0
+                      artistFilter.length > 0 ||
+                      debouncedSearch.trim().length > 0 ||
+                      activeStatusFilter.length > 0 ||
+                      needsSchedulingFilter
                     if (activeTab === 'projects') {
                       if (hasExtraFilter) return 'No projects match these filters.'
                       return 'No projects yet -- projects appear here once a deposit is paid.'

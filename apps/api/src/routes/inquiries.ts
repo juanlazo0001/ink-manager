@@ -570,6 +570,16 @@ const INQUIRY_LIST_SELECT = {
   client: { select: { firstName: true, lastName: true } },
   assignedArtist: { select: { id: true, user: { select: { id: true, name: true, email: true, avatarUrl: true } } } },
   appointment: { select: { startTime: true } },
+  // Needs Scheduling indicator + the Projects tab's "Scheduled Date" column
+  // fallback: the newer 1:many "sessions under this project" link
+  // (Appointment.inquiryId), which `appointment` above (the older 1:1
+  // link) does NOT reflect for most projects scheduled through the current
+  // multi-session flow -- `appointment` was usually null already, this
+  // select just never had `sessions` to fall back to at all. Only id/
+  // startTime needed here (existence + earliest date), not the full
+  // per-session detail the Project detail page's own INQUIRY_INCLUDE
+  // fetches (artist, waiver status, photos, etc.).
+  sessions: { select: { id: true, startTime: true }, orderBy: { startTime: "asc" } },
   // Service lines: MyInquiries.tsx's artist approve form and the Kanban
   // board both need pricingModel to know whether to collect/display one
   // flat price or a low/high range.
