@@ -77,11 +77,19 @@ export default function AuthLayout() {
 
   return (
     <div className="login-shell relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-12">
+      {/* fixed, not absolute: a genuinely tall page (a long card, or the
+          on-screen keyboard shrinking the visible viewport) makes
+          .login-shell taller than one screenful, and an absolutely-
+          positioned layer only covers ITS OWN container's height -- fixed
+          pins to the true viewport instead, so scrolling to the very
+          bottom never reveals raw, un-tinted background. Same fix already
+          proven for the authenticated app shell's own equivalent layers
+          (.app-bg-photo/.app-bg-wash below, in index.css). */}
       <img
         src={loginBackground}
         alt=""
         aria-hidden="true"
-        className="absolute inset-0 h-full w-full object-cover"
+        className="fixed inset-0 h-full w-full object-cover"
       />
       <div className="hero-shade" aria-hidden="true" />
       {/* Rotate/scale keyed off the same `mode` that drives the card/button

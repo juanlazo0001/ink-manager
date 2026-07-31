@@ -1106,9 +1106,12 @@
    .hero-shade (marketing/index.html) -- darkens the background photo
    more toward the edges/bottom than the flat black overlay this replaced,
    keeping the center (where the card sits) relatively legible instead of
-   crushing the whole photo uniformly. */
+   crushing the whole photo uniformly.
+   fixed, not absolute -- same reasoning as AuthLayout's background <img>
+   right above this in the DOM: pins to the true viewport so a genuinely
+   tall/scrolled page never reveals un-tinted background at the bottom. */
 .hero-shade {
-  position: absolute;
+  position: fixed;
   inset: 0;
   z-index: 1;
   pointer-events: none;
