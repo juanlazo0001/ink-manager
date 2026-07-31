@@ -362,6 +362,8 @@ router.post("/:id/archive", requirePermission("appointments.reschedule"), async 
     changes: { archivedAt: updated.archivedAt },
   });
 
+  emitInvalidation({ type: "appointment.changed", studioId: req.user!.studioId });
+
   res.json(updated);
 });
 
@@ -385,6 +387,8 @@ router.post("/:id/unarchive", requirePermission("appointments.reschedule"), asyn
     action: "unarchive",
     changes: { archivedAt: null },
   });
+
+  emitInvalidation({ type: "appointment.changed", studioId: req.user!.studioId });
 
   res.json(updated);
 });
@@ -476,6 +480,8 @@ router.delete("/:id", requireRole(Role.OWNER), async (req, res) => {
     },
   });
 
+  emitInvalidation({ type: "appointment.changed", studioId: req.user!.studioId });
+
   res.json({ success: true, detachedGiftCards: summary.giftCardsToDetach });
 });
 
@@ -523,6 +529,8 @@ router.post("/:id/waiver", requirePermission("waivers.generate"), async (req, re
       actorUserId: req.user!.userId,
     });
   }
+
+  emitInvalidation({ type: "appointment.changed", studioId });
 
   res.status(201).json({ ...result.waiver, signingUrl: result.signingUrl, waiverSendResult });
 });
@@ -809,6 +817,13 @@ router.post("/:id/checkout", requirePermission("appointments.checkout"), async (
     }
   }
 
+  // Real-time audit (Part 2): checkout is the single biggest silent
+  // mutation found in this file -- it finalizes the appointment (status ->
+  // COMPLETED), redeems/rolls every attached gift card, and can issue a
+  // brand-new overage card, none of which was ever broadcast before this.
+  emitInvalidation({ type: "appointment.changed", studioId });
+  emitInvalidation({ type: "giftcard.changed", studioId, clientId: appointment.clientId });
+
   res.json({ ...updated, stripeCheckoutSessionId, amountDueCents, overageCents, newGiftCard, checkoutUrl });
 });
 
@@ -956,6 +971,8 @@ router.post("/:id/photos", requirePermission("appointments.photos.manage"), asyn
     changes: { count: photos.length, photoIds: photos.map((p) => p.id) },
   });
 
+  emitInvalidation({ type: "appointment.changed", studioId: appointment.studioId });
+
   res.status(201).json(photos);
 });
 
@@ -982,6 +999,8 @@ router.delete("/:id/photos/:photoId", requirePermission("appointments.photos.man
     action: "photo_deleted",
     changes: { photoId, url: photo.url },
   });
+
+  emitInvalidation({ type: "appointment.changed", studioId: req.user!.studioId });
 
   res.json({ success: true });
 });
@@ -1132,6 +1151,8 @@ router.post("/:id/notes", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, 
     changes: { appointmentId: id },
   });
 
+  emitInvalidation({ type: "appointment.changed", studioId: req.user!.studioId });
+
   res.status(201).json(note);
 });
 
@@ -1180,6 +1201,8 @@ router.patch("/:id/notes/:noteId", requireRole(Role.OWNER, Role.FRONT_DESK), asy
     changes: diffObjects(note, { bodyHtml: trimmed }, ["bodyHtml"]),
   });
 
+  emitInvalidation({ type: "appointment.changed", studioId: req.user!.studioId });
+
   res.json(updated);
 });
 
@@ -1206,6 +1229,8 @@ router.delete("/:id/notes/:noteId", requireRole(Role.OWNER, Role.FRONT_DESK), as
     action: "delete",
     changes: { appointmentId: id, deletedBodyHtml: note.bodyHtml },
   });
+
+  emitInvalidation({ type: "appointment.changed", studioId: req.user!.studioId });
 
   res.json({ success: true });
 });

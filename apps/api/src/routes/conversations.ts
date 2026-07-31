@@ -343,6 +343,7 @@ router.post("/", async (req, res) => {
       action: "create",
       changes: { type: "CLIENT", clientId },
     });
+    emitInvalidation({ type: "conversation.updated", studioId, conversationId: created.id });
     return res.status(201).json(created);
   }
 
@@ -522,6 +523,8 @@ router.post("/:id/tags", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, r
     changes: { entityType, entityId, tagId: tag.id },
   });
 
+  emitInvalidation({ type: "conversation.updated", studioId, conversationId: id });
+
   const label = await resolveTagLabel(entityType, entityId);
   res.status(201).json({ id: tag.id, entityType, entityId, ...label });
 });
@@ -551,6 +554,8 @@ router.delete("/:id/tags/:tagId", requireRole(Role.OWNER, Role.FRONT_DESK), asyn
     action: "tag_removed",
     changes: { entityType: tag.entityType, entityId: tag.entityId, tagId },
   });
+
+  emitInvalidation({ type: "conversation.updated", studioId, conversationId: id });
 
   res.status(204).send();
 });
@@ -1066,6 +1071,8 @@ router.post("/:id/attach-image", requireRole(Role.OWNER, Role.FRONT_DESK), async
     action: "reference_image_added",
     changes: { imageUrl, sourceConversationId: id },
   });
+
+  emitInvalidation({ type: "inquiry.updated", studioId });
 
   res.json(updated);
 });

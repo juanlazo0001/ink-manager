@@ -4,6 +4,7 @@ import { decryptSecret } from "./secrets";
 import { sendSms, type TwilioCredentials } from "./twilio";
 import { TWILIO_STATUS_CALLBACK_URL } from "./publicUrl";
 import { logAudit } from "./audit";
+import { emitInvalidation } from "./realtime/registry";
 
 type SendSmsMessageResult =
   | { sent: true; messageId: string; providerSid: string }
@@ -83,6 +84,17 @@ async function sendSmsMessage(params: {
     action: "sms_sent",
     changes: { conversationId, providerSid: result.sid },
   });
+
+  // Real-time audit (Part 2): this is the ONE place every outbound SMS this
+  // app ever sends actually creates its Message row -- the composer's own
+  // POST /:id/messages route emits this itself for its own direct-send
+  // path, but every OTHER caller (deposit-form/waiver/estimate auto-sends,
+  // gift-card text receipts, reminder jobs) previously created this exact
+  // same row with no broadcast at all, so another staff member watching the
+  // same client's thread never saw the message appear live. Emitting here,
+  // in the shared function underlying every one of those callers, closes
+  // all of them at once instead of one at a time.
+  emitInvalidation({ type: "conversation.updated", studioId, conversationId });
 
   return { sent: true, messageId: message.id, providerSid: result.sid };
 }

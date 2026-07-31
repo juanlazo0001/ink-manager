@@ -27,6 +27,7 @@ import {
   composeAddress,
 } from "../lib/importColumnMapping";
 import { matchArtistForImportRow } from "../lib/importArtistMatching";
+import { emitInvalidation } from "../lib/realtime/registry";
 
 const router = Router();
 
@@ -712,6 +713,14 @@ router.post("/import/:batchId/execute", requireRole(Role.OWNER), async (req, res
       giftCardsIssued: results.filter((r) => r.giftCardId).length,
     },
   });
+
+  // Real-time audit (Part 2): a large OWNER-run import creates real,
+  // permanent Client/Inquiry/GiftCard rows, but previously never told any
+  // other connected staff -- the Clients list and Inquiries board have
+  // real, already-live-consumed query keys (["clients"], ["inquiries"])
+  // that this simply never fired into.
+  emitInvalidation({ type: "client.imported", studioId });
+  emitInvalidation({ type: "inquiry.created", studioId });
 
   res.json({ status: ImportBatchStatus.COMPLETED, results });
 });

@@ -10,6 +10,7 @@ import { generateDepositFormPdf } from "../lib/pdf";
 import { redactedSessionHours } from "../lib/plannedSessions";
 import { getOrCreateClientConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
+import { emitInvalidation } from "../lib/realtime/registry";
 
 // Exact SOP wording, in the order the client must agree to each one.
 const TERMS = [
@@ -241,6 +242,12 @@ publicRouter.patch("/sign/:token", async (req, res) => {
   // a studio without Stripe connected gets today's original "thanks, we'll
   // collect it separately" screen, unchanged.
   const stripeAccountId = await getChargeableConnectedAccountId(depositForm!.inquiry.studioId);
+
+  // Real-time audit (Part 2): a client signing is entirely out-of-band from
+  // any staff action -- without this, staff watching the project's Deposit
+  // widget never saw "Signed, awaiting payment" appear live.
+  emitInvalidation({ type: "inquiry.updated", studioId: depositForm!.inquiry.studioId });
+
   res.json({ success: true, stripeConnected: stripeAccountId !== null });
 });
 
@@ -306,6 +313,8 @@ staffRouter.patch("/:id/mark-paid", requireAuth, requirePermission("deposits.mar
   if (!result.ok) {
     return res.status(400).json({ error: result.error });
   }
+
+  emitInvalidation({ type: "inquiry.updated", studioId: depositForm.inquiry.studioId });
 
   const updated = await prisma.depositForm.findUnique({ where: { id } });
   res.json({ ...updated, giftCardId: result.giftCardId });

@@ -4,6 +4,7 @@ import { Role } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { diffObjects, logAudit } from "../lib/audit";
 import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
+import { emitInvalidation } from "../lib/realtime/registry";
 
 // Public: the studio's own /policies page lists every isPublic custom
 // policy, keyed by studio slug -- same unauthenticated, studio-scoped GET
@@ -91,6 +92,8 @@ staffRouter.post("/", requireRole(Role.OWNER), async (req, res) => {
     changes: { title: created.title, isPublic: created.isPublic },
   });
 
+  emitInvalidation({ type: "customPolicy.changed", studioId: req.user!.studioId });
+
   res.status(201).json(created);
 });
 
@@ -137,6 +140,8 @@ staffRouter.patch("/:id", requireRole(Role.OWNER), async (req, res) => {
     changes: diffObjects(existing, data, ["title", "bodyHtml", "isPublic"] as (keyof typeof existing)[]),
   });
 
+  emitInvalidation({ type: "customPolicy.changed", studioId: req.user!.studioId });
+
   res.json(updated);
 });
 
@@ -158,6 +163,8 @@ staffRouter.delete("/:id", requireRole(Role.OWNER), async (req, res) => {
     action: "delete",
     changes: { title: existing.title },
   });
+
+  emitInvalidation({ type: "customPolicy.changed", studioId: req.user!.studioId });
 
   res.status(204).end();
 });
@@ -196,6 +203,8 @@ staffRouter.post("/reorder", requireRole(Role.OWNER), async (req, res) => {
     action: "reorder",
     changes: { orderedIds },
   });
+
+  emitInvalidation({ type: "customPolicy.changed", studioId: req.user!.studioId });
 
   const reordered = await prisma.customPolicy.findMany({
     where: { studioId: req.user!.studioId },

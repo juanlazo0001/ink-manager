@@ -2838,6 +2838,8 @@ router.post("/:id/notes", requireAuth, requirePermission("inquiries.notes.manage
     changes: { inquiryId: id },
   });
 
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+
   res.status(201).json(note);
 });
 
@@ -2887,6 +2889,8 @@ router.patch("/:id/notes/:noteId", requireAuth, requirePermission("inquiries.not
     changes: diffObjects(note, { bodyHtml: trimmed }, ["bodyHtml"]),
   });
 
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+
   res.json(updated);
 });
 
@@ -2913,6 +2917,8 @@ router.delete("/:id/notes/:noteId", requireAuth, requirePermission("inquiries.no
     action: "delete",
     changes: { inquiryId: id, deletedBodyHtml: note.bodyHtml },
   });
+
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
 
   res.json({ success: true });
 });

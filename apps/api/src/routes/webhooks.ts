@@ -20,6 +20,7 @@ import { renderTemplate, type ReminderTemplates } from "../lib/reminderTemplates
 import { getStripe } from "../lib/stripe";
 import { issueGiftCardForPaidDeposit } from "../lib/deposits";
 import { getConnectedAccountStatus } from "../lib/stripeConnect";
+import { emitInvalidation } from "../lib/realtime/registry";
 
 const router = Router();
 
@@ -256,6 +257,13 @@ router.post("/twilio/sms", async (req, res) => {
     changes: { conversationId: conversation.id, providerSid: messageSid },
   });
 
+  // Real-time audit (Part 2): the single most impactful gap found in this
+  // audit -- an inbound client text is entirely out-of-band from any staff
+  // action, so without this, NO connected staff member ever saw a new
+  // client message arrive live, regardless of how well every other route
+  // in the app is wired.
+  emitInvalidation({ type: "conversation.updated", studioId, conversationId: conversation.id });
+
   return twiml(res);
 });
 
@@ -410,6 +418,11 @@ router.post("/stripe", async (req, res) => {
             action: "stripe_payment_confirmed",
             changes: { stripeCheckoutSessionId: session.id, paymentIntentId, alreadyProcessed: result.alreadyProcessed },
           });
+          // Real-time audit (Part 2): a Stripe-confirmed deposit is entirely
+          // out-of-band from any staff action -- without this, "deposit
+          // paid" (explicitly the #1 named stale symptom) never propagated
+          // live to anyone watching the project.
+          emitInvalidation({ type: "inquiry.updated", studioId });
         }
       }
 
@@ -436,6 +449,7 @@ router.post("/stripe", async (req, res) => {
           action: "stripe_payment_confirmed",
           changes: { stripeCheckoutSessionId: session.id, paymentIntentId },
         });
+        emitInvalidation({ type: "appointment.changed", studioId });
       }
 
       // Standalone gift-card checkout link (routes/giftCards.ts's own
@@ -455,6 +469,7 @@ router.post("/stripe", async (req, res) => {
           where: { id: giftCard.id },
           data: { status: "ACTIVE", paidAt: new Date(), stripePaymentIntentId: paymentIntentId },
         });
+        emitInvalidation({ type: "giftcard.changed", studioId, clientId: giftCard.clientId });
         await logAudit({
           studioId,
           actorUserId: null,

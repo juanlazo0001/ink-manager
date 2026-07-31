@@ -102,6 +102,8 @@ router.post("/dismiss", requirePermission("tasks.viewQueue"), async (req, res) =
     changes: { taskType },
   });
 
+  emitInvalidation({ type: "task.changed", studioId });
+
   res.status(201).json(dismissal);
 });
 
@@ -234,7 +236,14 @@ router.patch("/personal/:id", requirePermission("tasks.manageOwn"), async (req, 
       action: data.completedAt ? "complete" : "reopen",
       changes: diffObjects(task, data, ["completedAt"]),
     });
+  }
 
+  // Real-time audit (Part 2): previously only emitted on a completion
+  // change -- a title/notes/dueAt-only edit (e.g. the creator adjusting a
+  // task they assigned to someone else) never propagated live to whoever
+  // else can see this task. Any actual field change should trigger it, not
+  // just completion.
+  if (Object.keys(data).length > 0) {
     emitInvalidation({ type: "task.changed", studioId });
   }
 
@@ -263,6 +272,8 @@ router.delete("/personal/:id", requirePermission("tasks.manageOwn"), async (req,
     action: "delete",
     changes: { title: task.title },
   });
+
+  emitInvalidation({ type: "task.changed", studioId });
 
   res.status(204).send();
 });

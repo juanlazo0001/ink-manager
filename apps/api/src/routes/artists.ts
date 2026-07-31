@@ -6,6 +6,7 @@ import type { Prisma } from "../../generated/prisma/client";
 import { requirePermission } from "../lib/permissions";
 import { diffObjects, logAudit } from "../lib/audit";
 import { isStringArray, isValidDateOrNull, isValidPreferredSchedule } from "../lib/artistValidation";
+import { emitInvalidation } from "../lib/realtime/registry";
 
 const router = Router();
 
@@ -58,6 +59,8 @@ router.post("/", requirePermission("artists.manage"), async (req, res) => {
   const artist = await prisma.artist.create({
     data: { userId, bio, specialties: specialties ?? [], portfolioImages: [] },
   });
+
+  emitInvalidation({ type: "artist.changed", studioId: req.user!.studioId, artistId: artist.id });
 
   res.status(201).json(artist);
 });
@@ -289,6 +292,8 @@ router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
     },
   });
 
+  emitInvalidation({ type: "artist.changed", studioId: req.user!.studioId, artistId: id });
+
   res.json(updated);
 });
 
@@ -334,6 +339,8 @@ router.patch("/:id/preferred-schedule", requirePermission("artistSchedules.manag
     action: "update",
     changes: diffObjects(artist, { preferredSchedule }, ["preferredSchedule"]),
   });
+
+  emitInvalidation({ type: "artist.changed", studioId: req.user!.studioId, artistId: id });
 
   res.json(updated);
 });

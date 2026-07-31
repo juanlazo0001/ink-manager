@@ -4,6 +4,7 @@ import { Role, ServicePricingModel, ServiceDepositModel } from "../../generated/
 import { requireAuth, requireRole } from "../middleware/auth";
 import { diffObjects, logAudit } from "../lib/audit";
 import { generateUniqueServiceSlug } from "../lib/services";
+import { emitInvalidation } from "../lib/realtime/registry";
 
 const router = Router();
 router.use(requireAuth);
@@ -103,6 +104,8 @@ router.post("/", async (req, res) => {
     action: "create",
     changes: { name: service.name, slug: service.slug, pricingModel, depositModel },
   });
+
+  emitInvalidation({ type: "service.changed", studioId });
 
   res.status(201).json(service);
 });
@@ -233,6 +236,8 @@ router.patch("/:id", async (req, res) => {
     ]),
   });
 
+  emitInvalidation({ type: "service.changed", studioId });
+
   res.json(updated);
 });
 
@@ -269,6 +274,8 @@ router.delete("/:id", async (req, res) => {
     action: "delete",
     changes: { name: existing.name, slug: existing.slug },
   });
+
+  emitInvalidation({ type: "service.changed", studioId });
 
   res.json({ success: true });
 });

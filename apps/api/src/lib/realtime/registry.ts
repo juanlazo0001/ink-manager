@@ -18,6 +18,17 @@ import { getIo } from "./io";
 // apps/api and apps/web, so these string literals are a hand-kept contract
 // with apps/web/src/lib/queryKeys.ts and the ad-hoc keys in
 // ConversationsPanel.tsx -- change a key shape on one side, mirror it here.
+//
+// Real-time reliability audit (Part 2): several of these variants are NEW,
+// added to close silent-mutation gaps found across the API -- see
+// REPORT.md's "Part 2" section for the full route-by-route audit. A few
+// (team.changed, locations.changed, service.changed, customPolicy.changed,
+// intakeForm.changed's new field-level key) target frontend query keys that
+// don't exist as real useQuery calls yet -- those pages fetch via a bespoke
+// useEffect+apiFetch today, so invalidateQueries on those prefixes is
+// currently a harmless no-op until Part 3 migrates them. Emitting the event
+// now, even before its consumer exists, means no route needs to be revisited
+// once that migration happens.
 export type InvalidationEvent =
   | { type: "conversation.updated"; studioId: string; conversationId: string }
   | { type: "task.changed"; studioId: string }
@@ -28,7 +39,30 @@ export type InvalidationEvent =
   // ["inquiries"] prefix so cards move live for every viewer, staff and
   // artist alike, without a second query key to keep in sync.
   | { type: "inquiry.updated"; studioId: string }
-  | { type: "appointment.changed"; studioId: string };
+  | { type: "appointment.changed"; studioId: string }
+  // NEW below this line (Part 2 of the real-time audit).
+  | { type: "client.updated"; studioId: string; clientId: string }
+  // Bulk client-import execute: many clients (and their new inquiries) at
+  // once, not one -- studio-wide list invalidation only, no single clientId
+  // to target (client.updated above is for a real one-client mutation).
+  | { type: "client.imported"; studioId: string }
+  // GiftCards have no single studio-wide list view -- every real consumer
+  // (InquiryDetail's Session Plan widget, ClientDetail's own card table)
+  // reads them scoped to one client, so this is client-scoped, not
+  // studio-wide, unlike every other event above.
+  | { type: "giftcard.changed"; studioId: string; clientId: string }
+  | { type: "artist.changed"; studioId: string; artistId: string }
+  | { type: "team.changed"; studioId: string }
+  | { type: "locations.changed"; studioId: string }
+  | { type: "service.changed"; studioId: string }
+  | { type: "customPolicy.changed"; studioId: string }
+  | { type: "intakeForm.changed"; studioId: string }
+  // SMS/EMAIL connect or disconnect -- the one integration status shape
+  // actually live-consumed today (ConversationsPanel's composer, to grey
+  // out/enable sending). Other channels (Stripe, Bird, Google Calendar)
+  // aren't part of that shared read today, so this is deliberately scoped
+  // to the two that are, not every integration mutation in the app.
+  | { type: "integration.changed"; studioId: string };
 
 function keysFor(event: InvalidationEvent): unknown[][] {
   switch (event.type) {
@@ -47,6 +81,30 @@ function keysFor(event: InvalidationEvent): unknown[][] {
       return [["inquiries"], ["nav-counts"]];
     case "appointment.changed":
       return [["appointments"], ["nav-counts"]];
+    case "client.updated":
+      return [["clients"], ["client", event.clientId]];
+    case "client.imported":
+      return [["clients"]];
+    case "giftcard.changed":
+      return [["client-gift-cards", event.clientId]];
+    case "artist.changed":
+      return [["artists"], ["artist", event.artistId]];
+    case "team.changed":
+      return [["team-users"], ["team-invites"]];
+    case "locations.changed":
+      return [["locations"]];
+    case "service.changed":
+      return [["services"]];
+    case "customPolicy.changed":
+      return [["custom-policies"]];
+    case "intakeForm.changed":
+      // ["intake-forms"] is a real, already-live-consumed key
+      // (lib/useIntakeForms.ts, used by ClientDetail.tsx and
+      // ConversationsPanel.tsx's composer) -- this one has a working
+      // consumer today, unlike most of the other new variants above.
+      return [["intake-forms"]];
+    case "integration.changed":
+      return [["sms-integration-status"]];
   }
 }
 

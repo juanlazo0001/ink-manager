@@ -11,6 +11,7 @@ import { DEFAULT_THEME_PRESET, THEME_PRESET_ACCENT_COLORS, isValidThemePreset } 
 import { shortenUrl } from "../lib/shortLinks";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { generateWaiverPdf } from "../lib/pdf";
+import { emitInvalidation } from "../lib/realtime/registry";
 
 function isExpiredOrInvalid(waiver: { signedAt: Date | null; tokenExpiresAt: Date | null } | null) {
   if (!waiver) {
@@ -199,6 +200,15 @@ publicRouter.patch("/sign/:token", async (req, res) => {
     changes: { photoReleaseAccepted: releaseAccepted },
   });
 
+  // Real-time audit (Part 2): client signing is out-of-band from any staff
+  // action -- the project pipeline's "Waiver Verified" stage (embedded in
+  // the Inquiry fetch) and the appointment's own liabilityWaiver.status
+  // both never updated live for anyone watching without this. Same
+  // dual-emit pattern already used by the schedule route right below for
+  // exactly the same reason (one action visibly affects both surfaces).
+  emitInvalidation({ type: "appointment.changed", studioId: waiver!.studioId });
+  emitInvalidation({ type: "inquiry.updated", studioId: waiver!.studioId });
+
   res.json({ success: true });
 });
 
@@ -364,6 +374,9 @@ staffRouter.post("/:id/verify", requirePermission("waivers.verify"), async (req,
     action: "verify",
     changes: { status: { from: waiver.status, to: LiabilityWaiverStatus.VERIFIED } },
   });
+
+  emitInvalidation({ type: "appointment.changed", studioId: req.user!.studioId });
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
 
   res.json(updated);
 });

@@ -12,6 +12,7 @@ import { shortenUrl } from "../lib/shortLinks";
 import { generateUniqueReferralCode } from "../lib/referrals";
 import { clientMatchesPhoneOrEmail, findStudioClientsForMatching } from "../lib/duplicateDetection";
 import { performMerge, validateMergePair } from "../lib/clientMerge";
+import { emitInvalidation } from "../lib/realtime/registry";
 
 const router = Router();
 
@@ -62,6 +63,8 @@ router.post("/", requirePermission("clients.edit"), async (req, res) => {
   const client = await prisma.$transaction((tx) =>
     createClientFromFields(tx, { studioId: req.user!.studioId, firstName, lastName, email, phone, address, referralCode }),
   );
+
+  emitInvalidation({ type: "client.updated", studioId: req.user!.studioId, clientId: client.id });
 
   res.status(201).json(client);
 });
@@ -753,6 +756,8 @@ router.patch("/:id", requirePermission("clients.edit"), async (req, res) => {
     changes: diffObjects(client, data, EDITABLE_CLIENT_FIELDS as unknown as (keyof typeof client)[]),
   });
 
+  emitInvalidation({ type: "client.updated", studioId: req.user!.studioId, clientId: id });
+
   res.json(updated);
 });
 
@@ -811,6 +816,8 @@ router.post("/:id/phones", requirePermission("clients.edit"), async (req, res) =
     changes: { phone: normalized, label: label || null },
   });
 
+  emitInvalidation({ type: "client.updated", studioId: req.user!.studioId, clientId: id });
+
   res.status(201).json(created);
 });
 
@@ -849,6 +856,8 @@ router.delete("/:id/phones/:phoneId", requirePermission("clients.edit"), async (
     changes: { phone: target.phone, wasPrimary: target.isPrimary },
   });
 
+  emitInvalidation({ type: "client.updated", studioId: req.user!.studioId, clientId: id });
+
   res.status(204).end();
 });
 
@@ -879,6 +888,8 @@ router.post("/:id/phones/:phoneId/make-primary", requirePermission("clients.edit
       action: "make_primary_phone",
       changes: { phone: target.phone },
     });
+
+    emitInvalidation({ type: "client.updated", studioId: req.user!.studioId, clientId: id });
   }
 
   const updatedClient = await prisma.client.findUnique({ where: { id } });
@@ -922,6 +933,8 @@ router.post("/:id/emails", requirePermission("clients.edit"), async (req, res) =
     changes: { email: normalized, label: label || null },
   });
 
+  emitInvalidation({ type: "client.updated", studioId: req.user!.studioId, clientId: id });
+
   res.status(201).json(created);
 });
 
@@ -960,6 +973,8 @@ router.delete("/:id/emails/:emailId", requirePermission("clients.edit"), async (
     changes: { email: target.email, wasPrimary: target.isPrimary },
   });
 
+  emitInvalidation({ type: "client.updated", studioId: req.user!.studioId, clientId: id });
+
   res.status(204).end();
 });
 
@@ -990,6 +1005,8 @@ router.post("/:id/emails/:emailId/make-primary", requirePermission("clients.edit
       action: "make_primary_email",
       changes: { email: target.email },
     });
+
+    emitInvalidation({ type: "client.updated", studioId: req.user!.studioId, clientId: id });
   }
 
   const updatedClient = await prisma.client.findUnique({ where: { id } });
@@ -1036,6 +1053,12 @@ router.post("/:id/merge", requirePermission("clients.merge"), async (req, res) =
     },
   });
 
+  // Both records' worth of collaboratively-viewed data change here -- the
+  // survivor gains repointed inquiries/appointments/gift cards, and the
+  // source becomes a merged, no-longer-independently-editable record.
+  emitInvalidation({ type: "client.updated", studioId: req.user!.studioId, clientId: id });
+  emitInvalidation({ type: "client.updated", studioId: req.user!.studioId, clientId: sourceClientId });
+
   const merged = await prisma.client.findUnique({ where: { id } });
   res.json(merged);
 });
@@ -1063,6 +1086,8 @@ router.post("/:id/archive", requirePermission("clients.archive"), async (req, re
     changes: { archivedAt: updated.archivedAt },
   });
 
+  emitInvalidation({ type: "client.updated", studioId: req.user!.studioId, clientId: id });
+
   res.json(updated);
 });
 
@@ -1086,6 +1111,8 @@ router.post("/:id/unarchive", requirePermission("clients.archive"), async (req, 
     action: "unarchive",
     changes: { archivedAt: null },
   });
+
+  emitInvalidation({ type: "client.updated", studioId: req.user!.studioId, clientId: id });
 
   res.json(updated);
 });
@@ -1222,6 +1249,12 @@ router.delete("/:id", requireRole(Role.OWNER), async (req, res) => {
     action: "permanently_deleted",
     changes: { client: { firstName: client.firstName, lastName: client.lastName, email: client.email, phone: client.phone }, ...summary },
   });
+
+  // Deletes every inquiry this client had too (see the transaction above),
+  // so the Inquiries list/Kanban board needs to drop them live as well, not
+  // just the client list.
+  emitInvalidation({ type: "client.updated", studioId: req.user!.studioId, clientId: id });
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
 
   res.json({ success: true });
 });

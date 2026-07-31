@@ -9,6 +9,7 @@ import {
   IntakeFormFieldInput,
 } from "../lib/intakeFormFields";
 import { generateUniqueIntakeFormSlug, setDefaultIntakeForm } from "../lib/intakeForms";
+import { emitInvalidation } from "../lib/realtime/registry";
 
 const router = Router();
 router.use(requireAuth);
@@ -80,6 +81,8 @@ router.post("/", async (req, res) => {
     changes: { name: form.name, slug: form.slug, isDefault: form.isDefault },
   });
 
+  emitInvalidation({ type: "intakeForm.changed", studioId });
+
   res.status(201).json(form);
 });
 
@@ -131,6 +134,8 @@ router.patch("/:id", async (req, res) => {
     changes: diffObjects(existing, { ...data, isDefault: updated!.isDefault }, ["name", "isDefault"]),
   });
 
+  emitInvalidation({ type: "intakeForm.changed", studioId });
+
   res.json(updated);
 });
 
@@ -167,6 +172,8 @@ router.delete("/:id", async (req, res) => {
     action: "delete",
     changes: { name: existing.name, slug: existing.slug, inquiriesDetached: inquiriesUsingForm },
   });
+
+  emitInvalidation({ type: "intakeForm.changed", studioId });
 
   res.json({ success: true });
 });

@@ -13,6 +13,7 @@ import { getOrCreateClientConversation } from "../conversations";
 import { findMatchingClientForImportRow } from "../duplicateDetection";
 import { generateUniqueReferralCode } from "../referrals";
 import { logAudit } from "../audit";
+import { emitInvalidation } from "../realtime/registry";
 
 export const EMAIL_POLL_JOB_NAME = "emailInboxPoll";
 
@@ -162,6 +163,11 @@ async function run(scheduledFor: Date): Promise<JobDetails> {
         action: "email_received",
         changes: { conversationId: conversation.id, gmailMessageId, subject: full.subject },
       });
+
+      // Real-time audit (Part 2): same gap as the inbound-SMS webhook -- a
+      // background job, not a staff action, so nothing else in the app
+      // would ever tell a connected client this message arrived.
+      emitInvalidation({ type: "conversation.updated", studioId: integration.studioId, conversationId: conversation.id });
 
       // Best-effort inbox hygiene, not the correctness mechanism (see
       // lib/gmail.ts's own comment on markMessageRead) -- a failure here

@@ -22,6 +22,7 @@ import {
 import { createOnboardingLink, createStandardConnectedAccount, getConnectedAccountStatus } from "../lib/stripeConnect";
 import { isStripeConfigured } from "../lib/stripe";
 import { isPlatformSmsConfigured, sendPlatformSms } from "../lib/platformSms";
+import { emitInvalidation } from "../lib/realtime/registry";
 
 // Public: Google's redirect after the user grants (or denies) consent hits
 // this directly -- it can't carry this app's own Bearer JWT (a full-page
@@ -139,6 +140,8 @@ publicRouter.get("/email/callback", async (req, res) => {
     action: "integration_connected",
     changes: { channel: "EMAIL", displayName },
   });
+
+  emitInvalidation({ type: "integration.changed", studioId });
 
   return redirectTo({ email: "connected" });
 });
@@ -377,6 +380,8 @@ router.post("/:channel/connect", async (req, res) => {
       changes: { channel: "BIRD_SMS" },
     });
 
+    emitInvalidation({ type: "integration.changed", studioId });
+
     return res.json({ channel: IntegrationChannel.BIRD_SMS, status: IntegrationStatus.CONNECTED, connectedAt });
   }
 
@@ -461,6 +466,8 @@ router.post("/:channel/connect", async (req, res) => {
     changes: { channel: "SMS", displayName },
   });
 
+  emitInvalidation({ type: "integration.changed", studioId });
+
   res.json({ channel: IntegrationChannel.SMS, status: IntegrationStatus.CONNECTED, displayName, connectedAt });
 });
 
@@ -508,6 +515,8 @@ router.post("/:channel/disconnect", async (req, res) => {
     action: "integration_disconnected",
     changes: { channel },
   });
+
+  emitInvalidation({ type: "integration.changed", studioId });
 
   res.json({ channel, status: IntegrationStatus.NOT_CONNECTED });
 });

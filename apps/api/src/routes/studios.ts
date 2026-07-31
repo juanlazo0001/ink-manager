@@ -18,6 +18,7 @@ import { slugify } from "../lib/slug";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { sendPlatformEmail } from "../lib/platformEmail";
 import { renderPlatformEmailHtml } from "../lib/emailTemplate";
+import { emitInvalidation } from "../lib/realtime/registry";
 
 const router = Router();
 
@@ -240,6 +241,8 @@ router.post("/:studioId/users", requireAuth, requirePermission("team.manage"), a
   // transaction it's created in, so the Team and Artists pages never fall
   // out of sync with each other -- and now that profile can arrive fully
   // populated, not just an empty shell waiting on follow-up edits.
+  let createdArtistId: string | null = null;
+
   const user = await prisma.$transaction(async (tx) => {
     const created = await tx.user.create({
       data: {
@@ -255,7 +258,7 @@ router.post("/:studioId/users", requireAuth, requirePermission("team.manage"), a
     });
 
     if (role === Role.ARTIST) {
-      await tx.artist.create({
+      const artist = await tx.artist.create({
         data: {
           userId: created.id,
           bio: bio?.trim() || null,
@@ -269,6 +272,7 @@ router.post("/:studioId/users", requireAuth, requirePermission("team.manage"), a
           guestEndDate: guestEndDate ? new Date(guestEndDate) : null,
         },
       });
+      createdArtistId = artist.id;
     }
 
     return tx.user.findUniqueOrThrow({ where: { id: created.id }, include: USER_INCLUDE_ARTIST });
@@ -282,6 +286,11 @@ router.post("/:studioId/users", requireAuth, requirePermission("team.manage"), a
     action: "create",
     changes: { email, role, name: name || null },
   });
+
+  emitInvalidation({ type: "team.changed", studioId });
+  if (createdArtistId) {
+    emitInvalidation({ type: "artist.changed", studioId, artistId: createdArtistId });
+  }
 
   res.status(201).json(serializeUser(user));
 });
@@ -381,6 +390,8 @@ router.post("/:studioId/invites", requireAuth, requirePermission("team.manage"),
     console.error("Failed to send invite email", { userId: invited.id, err });
   });
 
+  emitInvalidation({ type: "team.changed", studioId });
+
   res.status(201).json(serializeUser(invited));
 });
 
@@ -454,6 +465,8 @@ router.delete("/:studioId/invites/:userId", requireAuth, requirePermission("team
   });
 
   await prisma.user.delete({ where: { id: userId } });
+
+  emitInvalidation({ type: "team.changed", studioId });
 
   res.status(204).send();
 });
@@ -602,11 +615,17 @@ router.patch("/:studioId/users/:userId", requireAuth, requirePermission("team.ma
   // leaves them with an Artist profile, so the Team and Artists pages stay
   // in sync regardless of which page changed the role.
   const becomingArtist = body.role === Role.ARTIST && existing.role !== Role.ARTIST;
+  let affectedArtistId: string | null = null;
   if (becomingArtist) {
     const alreadyHasProfile = await prisma.artist.findUnique({ where: { userId } });
-    if (!alreadyHasProfile) {
-      await prisma.artist.create({ data: { userId, specialties: [], portfolioImages: [] } });
-    }
+    affectedArtistId = alreadyHasProfile
+      ? alreadyHasProfile.id
+      : (await prisma.artist.create({ data: { userId, specialties: [], portfolioImages: [] } })).id;
+  } else if (existing.role === Role.ARTIST || body.role === Role.ARTIST) {
+    // Already an artist (or staying one) -- other fields on this route
+    // (isActive/deactivation, locationId, name/phone) still affect how
+    // that artist shows up on the Artists/Team pages.
+    affectedArtistId = (await prisma.artist.findUnique({ where: { userId }, select: { id: true } }))?.id ?? null;
   }
 
   const updated = await prisma.user.update({ where: { id: userId }, data, include: USER_INCLUDE_ARTIST });
@@ -635,6 +654,11 @@ router.patch("/:studioId/users/:userId", requireAuth, requirePermission("team.ma
       action: "update",
       changes: diffObjects(existing, { locationId: data.locationId }, ["locationId"]),
     });
+  }
+
+  emitInvalidation({ type: "team.changed", studioId });
+  if (affectedArtistId) {
+    emitInvalidation({ type: "artist.changed", studioId, artistId: affectedArtistId });
   }
 
   const { password: _password, ...safeUser } = updated;
@@ -804,6 +828,9 @@ router.delete("/:studioId/users/:userId", requireAuth, requirePermission("team.m
   }
 
   const summary = await gatherStaffDeletionSummary(userId);
+  const deletedArtistId = summary.isArtist
+    ? (await prisma.artist.findUnique({ where: { userId }, select: { id: true } }))?.id ?? null
+    : null;
   if (blockedByArtistHistory(summary)) {
     return res.status(400).json({
       error:
@@ -857,6 +884,11 @@ router.delete("/:studioId/users/:userId", requireAuth, requirePermission("team.m
     action: "permanently_deleted",
     changes: { email: existing.email, name: existing.name, role: existing.role, ...summary },
   });
+
+  emitInvalidation({ type: "team.changed", studioId });
+  if (deletedArtistId) {
+    emitInvalidation({ type: "artist.changed", studioId, artistId: deletedArtistId });
+  }
 
   res.json({ success: true });
 });
@@ -1065,6 +1097,9 @@ router.post("/:studioId/locations", requireAuth, requirePermission("locations.ma
   }
 
   const location = await prisma.location.create({ data });
+
+  emitInvalidation({ type: "locations.changed", studioId });
+
   res.status(201).json(location);
 });
 
@@ -1112,6 +1147,9 @@ router.patch("/:studioId/locations/:locationId", requireAuth, requirePermission(
   }
 
   const location = await prisma.location.update({ where: { id: locationId }, data });
+
+  emitInvalidation({ type: "locations.changed", studioId });
+
   res.json(location);
 });
 
@@ -1129,6 +1167,9 @@ router.delete("/:studioId/locations/:locationId", requireAuth, requirePermission
   }
 
   await prisma.location.delete({ where: { id: locationId } });
+
+  emitInvalidation({ type: "locations.changed", studioId });
+
   res.status(204).send();
 });
 

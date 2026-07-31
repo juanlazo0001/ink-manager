@@ -12,6 +12,7 @@ import { shortenUrl } from "../lib/shortLinks";
 import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 import { getChargeableConnectedAccountId } from "../lib/stripeConnect";
 import { createDirectChargeCheckoutSession } from "../lib/stripe";
+import { emitInvalidation } from "../lib/realtime/registry";
 
 const GIFT_CARD_DETAIL_INCLUDE = {
   // Stackable gift cards: giftCards here is every OTHER card (this one
@@ -149,6 +150,8 @@ router.post("/", requirePermission("giftCards.issue"), async (req, res) => {
     changes: { clientId, amountCents, appointmentId: appointmentId ?? null, expiresAt: resolvedExpiresAt, paymentMethod: "CASH" },
   });
 
+  emitInvalidation({ type: "giftcard.changed", studioId, clientId });
+
   res.status(201).json(card);
 });
 
@@ -252,6 +255,8 @@ router.post("/checkout-session", requirePermission("giftCards.issue"), async (re
     changes: { clientId, amountCents, appointmentId: appointmentId ?? null, expiresAt: resolvedExpiresAt, paymentMethod: "STRIPE" },
   });
 
+  emitInvalidation({ type: "giftcard.changed", studioId, clientId });
+
   res.status(201).json({ ...updated, checkoutUrl: session.url });
 });
 
@@ -318,6 +323,8 @@ router.post("/exempt", requireRole(Role.OWNER), async (req, res) => {
     action: "exempt_gift_card_issued",
     changes: { clientId, exemptionReason: reason, expiresAt: resolvedExpiresAt },
   });
+
+  emitInvalidation({ type: "giftcard.changed", studioId, clientId });
 
   res.status(201).json(card);
 });
@@ -439,6 +446,8 @@ router.patch("/:id/attachment", requirePermission("giftCards.issue"), async (req
     changes: { fromAppointmentId, toAppointmentId: appointmentId ?? null },
   });
 
+  emitInvalidation({ type: "giftcard.changed", studioId: req.user!.studioId, clientId: card.clientId });
+
   res.json({
     ...updated,
     // Detaching leaves that appointment without a deposit -- Phase 4's
@@ -478,6 +487,8 @@ router.post("/:id/void", requirePermission("giftCards.void"), async (req, res) =
     changes: { status: { from: card.status, to: GiftCardStatus.VOID }, detachedFromAppointment: formerAppointmentId },
   });
 
+  emitInvalidation({ type: "giftcard.changed", studioId: req.user!.studioId, clientId: card.clientId });
+
   res.json(updated);
 });
 
@@ -516,6 +527,8 @@ router.patch("/:id", requireRole(Role.OWNER), async (req, res) => {
     action: "update",
     changes: diffObjects(card, data, ["expiresAt"]),
   });
+
+  emitInvalidation({ type: "giftcard.changed", studioId: req.user!.studioId, clientId: card.clientId });
 
   res.json(updated);
 });
