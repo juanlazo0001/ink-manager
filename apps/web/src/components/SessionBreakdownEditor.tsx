@@ -16,6 +16,16 @@ export interface SessionHoursRow {
   max: string
   priceLow: string
   priceHigh: string
+  // Flat-rate pricing, selectable independently per session: decouples
+  // price from duration -- min/max above still describe this session's
+  // duration (needed for calendar-blocking/the scheduling assistant either
+  // way), this only governs whether its price is a single number or a
+  // range. No separate persisted field for it: same convention as the
+  // top-level estimate's own flat/range choice (see InquiryDetail.tsx's
+  // estimateIsFlat comment) -- a flat session IS just one where
+  // priceLow === priceHigh, inferred back from stored data wherever it's
+  // read after being sent.
+  isFlat: boolean
 }
 
 export interface LockedSession {
@@ -39,12 +49,25 @@ export interface ArtistRate {
 // validated against. Hourly rate takes priority (it scales with the
 // session's own hour estimate); flat rate is used verbatim only when no
 // hourly rate is set.
+//
+// isFlat: when a session is in flat-rate mode, an hourly-rate-derived
+// suggestion doesn't apply -- flat pricing is defined by this task as
+// price decoupled from duration, so scaling a suggestion off the session's
+// own hour estimate would contradict that. A flat suggestion only ever
+// comes from the artist's own flat rate, if they have one; otherwise this
+// returns null (no suggestion) rather than falling back to an hourly one.
 export function suggestSessionPrice(
   artist: ArtistRate | null | undefined,
   hoursMin: number,
   hoursMax: number,
+  isFlat: boolean,
 ): { low: string; high: string } | null {
   if (!artist) return null
+  if (isFlat) {
+    if (artist.flatRateCents == null) return null
+    const flat = (artist.flatRateCents / 100).toFixed(2)
+    return { low: flat, high: flat }
+  }
   if (artist.hourlyRateCents != null) {
     const rate = artist.hourlyRateCents / 100
     return { low: (rate * hoursMin).toFixed(2), high: (rate * hoursMax).toFixed(2) }
@@ -98,11 +121,6 @@ interface SessionHoursRowsProps {
   // starting per-session price when hours are entered and no price has
   // been typed yet.
   assignedArtist?: ArtistRate | null
-  // Same per-estimate flat/range choice as the top-level price field --
-  // flat collapses each session's price to one input (which sets both
-  // priceLow and priceHigh to that same value), same relationship the
-  // top-level flat toggle already has with priceEstimateLow/High.
-  isFlat?: boolean
 }
 
 export default function SessionHoursRows({
@@ -111,7 +129,6 @@ export default function SessionHoursRows({
   onSessionHoursChange,
   lockedSessions = [],
   assignedArtist = null,
-  isFlat = false,
 }: SessionHoursRowsProps) {
   if (sessionCount <= 1) return null
 
@@ -124,7 +141,7 @@ export default function SessionHoursRows({
     // Only auto-suggest into fields the user hasn't touched yet -- a
     // pre-fill, never an override of something staff already typed.
     if (assignedArtist && !row.priceLow && !row.priceHigh && row.min && row.max) {
-      const suggestion = suggestSessionPrice(assignedArtist, Number(row.min), Number(row.max))
+      const suggestion = suggestSessionPrice(assignedArtist, Number(row.min), Number(row.max), row.isFlat)
       if (suggestion) {
         row.priceLow = suggestion.low
         row.priceHigh = suggestion.high
@@ -132,6 +149,19 @@ export default function SessionHoursRows({
     }
 
     next[index] = row
+    onSessionHoursChange(next)
+  }
+
+  // Toggling flat ON collapses the range to a single value (priceHigh
+  // follows priceLow, same as the top-level flat toggle's own onChange
+  // does for priceEstimateLow/High) -- toggling back OFF just stops
+  // linking them going forward, the two fields stay independently
+  // editable from whatever value they were left at.
+  function toggleRowFlat(index: number) {
+    const next = [...sessionHours]
+    const row = next[index]
+    const nowFlat = !row.isFlat
+    next[index] = { ...row, isFlat: nowFlat, priceHigh: nowFlat ? row.priceLow : row.priceHigh }
     onSessionHoursChange(next)
   }
 
@@ -168,53 +198,36 @@ export default function SessionHoursRows({
         }
 
         return (
-          <div key={index} className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <p className="col-span-2 self-center text-xs font-medium text-fg-secondary sm:col-span-1">
-              Session {sessionNumber}
-            </p>
-            <select
-              value={row.min}
-              onChange={(e) => updateRow(index, { min: e.target.value })}
-              className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-            >
-              <option value="">Min hours…</option>
-              {HOUR_OPTIONS.map((hours) => (
-                <option key={hours} value={hours}>
-                  {hours} {hours === 1 ? 'hour' : 'hours'}
-                </option>
-              ))}
-            </select>
-            <select
-              value={row.max}
-              onChange={(e) => updateRow(index, { max: e.target.value })}
-              className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-            >
-              <option value="">Max hours…</option>
-              {HOUR_OPTIONS.map((hours) => (
-                <option key={hours} value={hours}>
-                  {hours} {hours === 1 ? 'hour' : 'hours'}
-                </option>
-              ))}
-            </select>
-            {isFlat ? (
-              <div className="col-span-2 sm:col-span-1 sm:col-start-2">
-                <div className="relative">
-                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-fg-muted">
-                    $
-                  </span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={row.priceLow}
-                    onChange={(e) => updateRow(index, { priceLow: e.target.value, priceHigh: e.target.value })}
-                    placeholder="Price"
-                    className="w-full rounded-lg border border-border bg-surface-inset py-2 pl-7 pr-3 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                  />
-                </div>
-              </div>
-            ) : (
-              <>
+          <div key={index}>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              <p className="col-span-2 self-center text-xs font-medium text-fg-secondary sm:col-span-1">
+                Session {sessionNumber}
+              </p>
+              <select
+                value={row.min}
+                onChange={(e) => updateRow(index, { min: e.target.value })}
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+              >
+                <option value="">Min hours…</option>
+                {HOUR_OPTIONS.map((hours) => (
+                  <option key={hours} value={hours}>
+                    {hours} {hours === 1 ? 'hour' : 'hours'}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={row.max}
+                onChange={(e) => updateRow(index, { max: e.target.value })}
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+              >
+                <option value="">Max hours…</option>
+                {HOUR_OPTIONS.map((hours) => (
+                  <option key={hours} value={hours}>
+                    {hours} {hours === 1 ? 'hour' : 'hours'}
+                  </option>
+                ))}
+              </select>
+              {row.isFlat ? (
                 <div className="col-span-2 sm:col-span-1 sm:col-start-2">
                   <div className="relative">
                     <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-fg-muted">
@@ -225,30 +238,58 @@ export default function SessionHoursRows({
                       min="0"
                       step="0.01"
                       value={row.priceLow}
-                      onChange={(e) => updateRow(index, { priceLow: e.target.value })}
-                      placeholder="Price low"
+                      onChange={(e) => updateRow(index, { priceLow: e.target.value, priceHigh: e.target.value })}
+                      placeholder="Price"
                       className="w-full rounded-lg border border-border bg-surface-inset py-2 pl-7 pr-3 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                     />
                   </div>
                 </div>
-                <div className="col-span-2 sm:col-span-1">
-                  <div className="relative">
-                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-fg-muted">
-                      $
-                    </span>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={row.priceHigh}
-                      onChange={(e) => updateRow(index, { priceHigh: e.target.value })}
-                      placeholder="Price high"
-                      className="w-full rounded-lg border border-border bg-surface-inset py-2 pl-7 pr-3 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                    />
+              ) : (
+                <>
+                  <div className="col-span-2 sm:col-span-1 sm:col-start-2">
+                    <div className="relative">
+                      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-fg-muted">
+                        $
+                      </span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={row.priceLow}
+                        onChange={(e) => updateRow(index, { priceLow: e.target.value })}
+                        placeholder="Price low"
+                        className="w-full rounded-lg border border-border bg-surface-inset py-2 pl-7 pr-3 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                      />
+                    </div>
                   </div>
-                </div>
-              </>
-            )}
+                  <div className="col-span-2 sm:col-span-1">
+                    <div className="relative">
+                      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-fg-muted">
+                        $
+                      </span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={row.priceHigh}
+                        onChange={(e) => updateRow(index, { priceHigh: e.target.value })}
+                        placeholder="Price high"
+                        className="w-full rounded-lg border border-border bg-surface-inset py-2 pl-7 pr-3 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+            <label className="mt-1 flex items-center gap-1.5 text-xs text-fg-muted">
+              <input
+                type="checkbox"
+                checked={row.isFlat}
+                onChange={() => toggleRowFlat(index)}
+                className="h-3.5 w-3.5 rounded border-border bg-surface-inset accent-accent"
+              />
+              Flat rate for this session (single price instead of a range)
+            </label>
           </div>
         )
       })}

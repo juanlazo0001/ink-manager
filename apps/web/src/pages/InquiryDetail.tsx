@@ -624,7 +624,7 @@ export default function InquiryDetail() {
   // (and, per-session prices below, the single top-level price fields).
   const [sessionCount, setSessionCount] = useState(1)
   const [sessionHours, setSessionHours] = useState<SessionHoursRow[]>([
-    { min: '', max: '', priceLow: '', priceHigh: '' },
+    { min: '', max: '', priceLow: '', priceHigh: '', isFlat: false },
   ])
   // Per-estimate flat/range choice -- independent of the Service's own
   // pricingModel (seeded from it as a default, below, but freely
@@ -640,7 +640,7 @@ export default function InquiryDetail() {
     setSessionCount(count)
     setSessionHours((current) => {
       const next = [...current]
-      while (next.length < count) next.push({ min: '', max: '', priceLow: '', priceHigh: '' })
+      while (next.length < count) next.push({ min: '', max: '', priceLow: '', priceHigh: '', isFlat: false })
       next.length = count
       return next
     })
@@ -674,7 +674,7 @@ export default function InquiryDetail() {
   // already has a session plan should show that plan, not start from 1.
   const [reviseSessionCount, setReviseSessionCount] = useState(1)
   const [reviseSessionHours, setReviseSessionHours] = useState<SessionHoursRow[]>([
-    { min: '', max: '', priceLow: '', priceHigh: '' },
+    { min: '', max: '', priceLow: '', priceHigh: '', isFlat: false },
   ])
   // Same per-estimate flat/range choice as estimateIsFlat above, keyed to
   // this modal's own state -- seeded in openReviseEstimateModal below.
@@ -684,7 +684,7 @@ export default function InquiryDetail() {
     setReviseSessionCount(count)
     setReviseSessionHours((current) => {
       const next = [...current]
-      while (next.length < count) next.push({ min: '', max: '', priceLow: '', priceHigh: '' })
+      while (next.length < count) next.push({ min: '', max: '', priceLow: '', priceHigh: '', isFlat: false })
       next.length = count
       return next
     })
@@ -1130,11 +1130,14 @@ export default function InquiryDetail() {
           max: ps.estimatedHoursMax.toString(),
           priceLow: ps.estimatedPriceLow != null ? ps.estimatedPriceLow.toString() : '',
           priceHigh: ps.estimatedPriceHigh != null ? ps.estimatedPriceHigh.toString() : '',
+          // Same inference the top-level estimateIsFlat seed uses: a
+          // session IS flat when its stored low/high already match.
+          isFlat: ps.estimatedPriceLow != null && ps.estimatedPriceLow === ps.estimatedPriceHigh,
         })),
       )
     } else {
       setSessionCount(1)
-      setSessionHours([{ min: '', max: '', priceLow: '', priceHigh: '' }])
+      setSessionHours([{ min: '', max: '', priceLow: '', priceHigh: '', isFlat: false }])
     }
     setSendEstimateError(null)
     setEditingEstimate(true)
@@ -1261,11 +1264,12 @@ export default function InquiryDetail() {
           max: ps.estimatedHoursMax.toString(),
           priceLow: ps.estimatedPriceLow != null ? ps.estimatedPriceLow.toString() : '',
           priceHigh: ps.estimatedPriceHigh != null ? ps.estimatedPriceHigh.toString() : '',
+          isFlat: ps.estimatedPriceLow != null && ps.estimatedPriceLow === ps.estimatedPriceHigh,
         })),
       )
     } else {
       setReviseSessionCount(1)
-      setReviseSessionHours([{ min: '', max: '', priceLow: '', priceHigh: '' }])
+      setReviseSessionHours([{ min: '', max: '', priceLow: '', priceHigh: '', isFlat: false }])
     }
     setReviseReasonInput('')
     setReviseEstimateError(null)
@@ -2524,15 +2528,22 @@ export default function InquiryDetail() {
 
                   {!isTerminal && !canReviseEstimate && canSendEstimate && editingEstimate && (
                     <>
-                      <label className="mt-4 flex items-center gap-2 text-xs font-medium text-fg-secondary">
-                        <input
-                          type="checkbox"
-                          checked={estimateIsFlat}
-                          onChange={(e) => setEstimateIsFlat(e.target.checked)}
-                          className="h-4 w-4 rounded border-border bg-surface-inset accent-accent"
-                        />
-                        Flat rate (single price instead of a range)
-                      </label>
+                      {/* Once a session plan exists, flat/range is a
+                          per-session choice (see SessionHoursRows below)
+                          rather than one global toggle -- this checkbox
+                          only still applies to the single top-level price
+                          field used when there's no plan. */}
+                      {!isMultiSession && (
+                        <label className="mt-4 flex items-center gap-2 text-xs font-medium text-fg-secondary">
+                          <input
+                            type="checkbox"
+                            checked={estimateIsFlat}
+                            onChange={(e) => setEstimateIsFlat(e.target.checked)}
+                            className="h-4 w-4 rounded border-border bg-surface-inset accent-accent"
+                          />
+                          Flat rate (single price instead of a range)
+                        </label>
+                      )}
 
                       <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
                         {isMultiSession ? (
@@ -2617,7 +2628,6 @@ export default function InquiryDetail() {
                         sessionHours={sessionHours}
                         onSessionHoursChange={setSessionHours}
                         assignedArtist={inquiry.assignedArtist}
-                        isFlat={estimateIsFlat}
                       />
 
                       {sendEstimateError && <p className="mt-3 text-sm text-danger">{sendEstimateError}</p>}
@@ -3997,15 +4007,20 @@ export default function InquiryDetail() {
                       and requires their approval.
                     </p>
 
-                    <label className="flex items-center gap-2 text-xs font-medium text-fg-secondary">
-                      <input
-                        type="checkbox"
-                        checked={reviseIsFlat}
-                        onChange={(e) => setReviseIsFlat(e.target.checked)}
-                        className="h-4 w-4 rounded border-border bg-surface-inset accent-accent"
-                      />
-                      Flat rate (single price instead of a range)
-                    </label>
+                    {/* Same reasoning as the Generate & Send Estimate flow
+                        above: once a session plan exists, flat/range is
+                        chosen per session instead. */}
+                    {!isReviseMultiSession && (
+                      <label className="flex items-center gap-2 text-xs font-medium text-fg-secondary">
+                        <input
+                          type="checkbox"
+                          checked={reviseIsFlat}
+                          onChange={(e) => setReviseIsFlat(e.target.checked)}
+                          className="h-4 w-4 rounded border-border bg-surface-inset accent-accent"
+                        />
+                        Flat rate (single price instead of a range)
+                      </label>
+                    )}
 
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       {isReviseMultiSession ? (
@@ -4099,7 +4114,6 @@ export default function InquiryDetail() {
                       onSessionHoursChange={setReviseSessionHours}
                       lockedSessions={reviseLockedSessions}
                       assignedArtist={inquiry?.assignedArtist}
-                      isFlat={reviseIsFlat}
                     />
 
                     <div>
