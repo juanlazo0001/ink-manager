@@ -5154,3 +5154,79 @@ Unlike `LiabilityWaiver` (which has genuine per-signing-time immutable snapshots
 ## Cleanup
 
 Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID -- one leftover stale dev server from an earlier session was already squatting on port 4093 and had to be killed first. Deleted every ad-hoc verification/scratch script (`scratch-find-signed.ts`, `scratch-check-sig.ts`, `scratch-find-artist-deposit.ts`) and the temporary Playwright install from the scratch directory. No new test data was created in the dev database -- verification used existing signed records.
+
+---
+
+# Smart contact-field detection (Conversations) + flat rate per session
+
+Single session on `main`. Two independent features, committed separately per the task brief.
+
+## Part 1 -- Smart contact-field detection when creating a new chat
+
+No schema change. Typing into Conversations' "new chat" -> "Add new client" box now auto-detects whether the typed text is an email, a phone number, or a name, and pre-fills the matching field -- previously it always split whatever was typed into firstName/lastName, even a pasted email or phone number.
+
+New `detectContactField()` in `apps/web/src/lib/format.ts`:
+- **Email**: contains `@` with at least one character after it. Kept loose on purpose -- a still-typing address like `jane@gm` lands in the email field (one keystroke from correct) rather than the name field (obviously wrong), satisfying the "email without a full domain yet" edge case.
+- **Phone**: 7+ digits remain after stripping spaces, dashes, parens, and a leading `+`. A genuinely all-numeric "name" (tested with `12345`, 5 digits) correctly falls through to the name branch instead -- too short to be mistaken for a real phone number.
+- **Otherwise**: name, unchanged whitespace-split behavior.
+
+The Add Client modal is unconditionally editable regardless of which field got pre-filled, so a wrong guess is a one-field correction, not a dead end -- satisfies the "no regression to manually selecting a field" requirement without any extra code.
+
+### A real bug found and fixed along the way
+
+`formatPhoneInput()` truncated to the first 10 digits unconditionally, so `+1 555 123 4567` (11 digits) became `1555123456` -> `(155) 512-3456` -- garbled, wrong number. Fixed by stripping a leading `1` on an 11-digit run first, matching `apps/api/src/lib/phone.ts`'s own `normalizePhone` convention exactly. This is a general fix (not scoped to the new detection code), so every existing caller of `formatPhoneInput` benefits.
+
+### Verification
+
+Real browser click-through, all three input types plus the three called-out edge cases:
+
+| Typed | Result |
+|---|---|
+| `jordan.smith@example.com` | email field |
+| `555-123-4567` | phone field, `(555) 123-4567` |
+| `(555) 123-4567` | phone field, unchanged |
+| `+1 555 123 4567` | phone field, `(555) 123-4567` (country code correctly stripped) |
+| `Jordan Smith` | firstName "Jordan", lastName "Smith" |
+| `jane@gm` (partial email) | email field, preserved as-typed |
+| `12345` (all-numeric, too short) | name field (firstName "12345") |
+
+Both typechecks clean.
+
+**Commit**: `297b34a`.
+
+## Part 2 -- Flat rate per session, alongside hour-range estimates
+
+No schema change -- investigated `PlannedSession` and the estimate-entry UI before writing any code, per the task's own instruction, and found the schema change wasn't needed.
+
+### What investigation found
+
+The single-session (no plan) estimate already had a "flat rate" concept with **no persisted flag at all**: `estimateIsFlat` is pure client-side UI state, and a flat estimate is defined purely as `priceEstimateLow === priceEstimateHigh` -- inferred back from stored data everywhere it's read (documented explicitly in `InquiryDetail.tsx`'s own comment on this). Multi-session (`PlannedSession`) estimates already had a flat/range toggle too, via `SessionHoursRows`' `isFlat` prop -- but it was one global boolean applied uniformly to every session in the plan, not selectable per session as the task wanted (create session 1 flat and session 2 as a range in the same plan was impossible).
+
+Since price was already never auto-derived from hours anywhere in this codebase (`estimatedHoursMin/Max` and `estimatedPriceLow/High` are always independently-entered fields, `suggestSessionPrice`'s hourly-rate suggestion is just a pre-fill, not a hard link), "flat-rate pricing decouples price from duration" was already structurally true. The only real gap was the UI only offering one flat/range choice for the whole plan instead of one per row.
+
+### What changed
+
+- **`SessionHoursRow`** (`SessionBreakdownEditor.tsx`) gained an `isFlat: boolean` field -- client-side only, mirroring the existing no-persisted-flag convention (not sent to the API; the backend already infers flatness from `estimatedPriceLow === estimatedPriceHigh` the same way it does for the top-level estimate).
+- **`SessionHoursRows`** dropped its single `isFlat` prop; each row now renders its own "Flat rate for this session" checkbox, independently collapsing that row's price to one input (or not) without touching its hour-range selects, which stay required either way.
+- **`suggestSessionPrice`** gained an `isFlat` parameter: a flat session's suggested price now only ever comes from the artist's own flat rate (`flatRateCents`), never scaled off their hourly rate and the session's hours -- an hourly-derived suggestion would contradict flat pricing's whole point.
+- **`InquiryDetail.tsx`**: both the "Generate & Send Estimate" and "Revise Estimate" flows updated -- seeding (`isFlat` inferred per row from `estimatedPriceLow === estimatedPriceHigh` when reopening an existing plan), the now-redundant top-level "Flat rate" checkbox hidden once a session plan exists (it only ever governed the single top-level price field, which per-session flat pricing has made ambiguous to keep showing), and the `isFlat` prop removed from both `SessionHoursRows` call sites.
+
+### Downstream consumers -- confirmed correct with zero further changes
+
+- **Deposit tier calculation** (`computeDepositTier`/`computeRequiredDepositCents`): operates on `(priceEstimateLow + priceEstimateHigh) / 2` at the whole-inquiry level -- purely numeric, works identically regardless of whether any individual session was flat or ranged.
+- **Scheduling assistant**: derives a session's duration from `(estimatedHoursMin + estimatedHoursMax) / 2` only -- never reads price, so completely unaffected by pricing mode.
+- **Project pipeline display**: already rendered `estimatedPriceLow === estimatedPriceHigh ? "$X" : "$X-$Y"` per session (this exact convention, pre-existing) -- a flat session displays correctly with zero changes needed there.
+
+### Verification
+
+Real browser click-through against a live dev inquiry (`LongDesc TestClient`, Japanese sleeve): set "Number of sessions" to 2, left session 1 as an hour range (4-6 hrs, $400-$600), checked "Flat rate for this session" on session 2 (2-3 hrs, $250) -- confirmed the price inputs visibly collapsed from two fields to one for session 2 only, session 1 unaffected. The computed "Price estimate (sum of every session below)" read `$650-$850` (400+250 to 600+250) before submitting. Submitted for real (`POST /inquiries/:id/send-estimate`) -- "Estimate sent" confirmed.
+
+Verified the persisted data directly against the dev database: session 1 stored as `estimatedPriceLow: 400, estimatedPriceHigh: 600`; session 2 stored as `estimatedPriceLow: 250, estimatedPriceHigh: 250` (flat, inferred correctly) with its own independent `estimatedHoursMin: 2, estimatedHoursMax: 3` -- confirming a flat session's duration is tracked completely separately from its price, per the task's explicit design decision. Reloaded the inquiry page fresh (not just the in-progress form) and confirmed the pipeline display correctly rendered `"Session 1 -- estimated 4-6 hrs ($400-$600)"` and `"Session 2 -- estimated 2-3 hrs ($250)"`.
+
+Both typechecks clean.
+
+**Commit**: `3c9a6f2`.
+
+## Cleanup
+
+Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID -- one leftover stale dev server from an earlier session was squatting on port 4093 at the start of this session and had to be killed first before a fresh instance could bind it. Deleted every ad-hoc verification/scratch script (`scratch-find-inquiry.ts`, `scratch-verify-sessions.ts`) and both temporary Playwright installs from the scratch directory. Test data created during verification (a real 2-session estimate sent on the `LongDesc TestClient` / "Japanese-style irezumi sleeve" dev inquiry) left in the dev database, same convention as prior sessions.
