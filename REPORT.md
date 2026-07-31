@@ -5513,3 +5513,29 @@ Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (
 ## Cleanup
 
 Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification script and the temporary Playwright install from the scratch directory. Test data (the resent estimate on "LongDesc TestClient") left in the dev database, same convention as prior sessions.
+
+---
+
+# Show a resendable Stripe checkout link once a deposit form is signed
+
+Second half of the same task batch as the flat-rate hour-range toggle above. A client who signs a deposit agreement is immediately sent to Stripe's own checkout page (existing behavior) -- but if they navigate away or abandon that page before paying, staff previously had no way to get them back to a payment link at all: the staff-facing deposit list's own `url` field is deliberately null once a form is signed (that field is the *sign* link, not a payment link), and `stripeCheckoutSessionId` was stored but never turned back into a usable URL anywhere staff could see it.
+
+## What changed
+
+- **`apps/api/src/lib/deposits.ts`**: extracted `createDepositCheckoutSession(depositFormId)` -- the one place a Stripe Checkout Session gets created for a deposit now, with the same validation (signed, not yet paid, Stripe connected for the studio) either caller needs. `routes/deposits.ts`'s existing public `POST /:token/checkout-session` (called right after signing, and again if the client returns to retry) was refactored to call this instead of duplicating the Stripe-session-creation block inline.
+- **`apps/api/src/routes/deposits.ts`**: new staff route, `POST /deposit-forms/:id/checkout-link` -- calls the same shared helper, then best-effort auto-texts the link to the client through the identical `sendClientSms` path every other "resend a link" action in this app already uses (deposit-form send/resend, estimate send/resend), so staff gets the same "sent via text" / "no phone on file, share manually" feedback either way. Gated by `requirePermission("inquiries.edit")` -- the same tier of action as generating/resending the deposit form itself, not a new capability.
+- **`apps/web/src/pages/InquiryDetail.tsx`**: the Deposit widget's per-session list now shows a "Get Payment Link" / "Resend Payment Link" box (copyable input, same pattern as every other share-link box in this app) for any deposit form that's `signedAt` and not yet `paidManually`. The whole section is conditionally rendered on that same check, so once staff marks the deposit paid, the section doesn't just hide -- it stops rendering at all, satisfying "the link can then disappear" literally.
+
+## Verification
+
+Live against the real dev database and a real, connected Stripe test-mode account (not mocked): converted the "LongDesc TestClient" inquiry's estimate to DEPOSIT_PENDING, generated a deposit form for session 1, and signed it through the actual public `PATCH /deposits/sign/:token` route (confirmed `stripeConnected: true` in the response). Then, through the real staff UI (Playwright): scrolled to the Deposit widget, confirmed the new payment-link box was present with a "Get Payment Link" button, clicked it, and confirmed a genuine `checkout.stripe.com` URL appeared in a copyable input and the button relabeled to "Resend Payment Link" (screenshot). Clicked "Mark $210 as Paid" and confirmed, in a second screenshot, that the entire payment-link section was gone -- replaced by the existing "Marked paid ... issued gift card" success message, with no trace of "Get/Resend Payment Link" left in the page text.
+
+Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (web) clean.
+
+## Commit
+
+`7a3617b`.
+
+## Cleanup
+
+Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification script and the temporary Playwright install from the scratch directory. Test data (the new session-1 deposit form, now paid, and its issued gift card, on "LongDesc TestClient") left in the dev database, same convention as prior sessions.
