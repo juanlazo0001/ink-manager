@@ -833,6 +833,18 @@ export default function InquiryDetail() {
   const [markingPaidId, setMarkingPaidId] = useState<string | null>(null)
   const [markPaidError, setMarkPaidError] = useState<string | null>(null)
 
+  // Phase 7D: the Stripe payment link for a signed-but-unpaid deposit --
+  // staff generates it (and can regenerate/resend it as many times as
+  // needed) for the case where the client signed, then navigated away
+  // before finishing checkout. Everything's keyed by depositFormId since
+  // several sessions can be in this state at once on the same project;
+  // cleared implicitly once a form is paid (that li stops rendering this
+  // section at all, per-id state or not).
+  const [checkoutLinkLoadingId, setCheckoutLinkLoadingId] = useState<string | null>(null)
+  const [checkoutLinkErrors, setCheckoutLinkErrors] = useState<Record<string, string>>({})
+  const [checkoutLinkNotices, setCheckoutLinkNotices] = useState<Record<string, string>>({})
+  const [checkoutLinkUrls, setCheckoutLinkUrls] = useState<Record<string, string>>({})
+
   // Package D: tentative/informational deposit-form time, via the shared
   // getSuggestedTimes service (apps/api/src/lib/schedulingAssistant.ts).
   // Required before a deposit form can be generated at all (see
@@ -1952,6 +1964,31 @@ export default function InquiryDetail() {
     }
   }
 
+  async function handleGetCheckoutLink(depositFormId: string) {
+    setCheckoutLinkLoadingId(depositFormId)
+    setCheckoutLinkErrors((prev) => ({ ...prev, [depositFormId]: '' }))
+    setCheckoutLinkNotices((prev) => ({ ...prev, [depositFormId]: '' }))
+
+    try {
+      const result = await apiFetch<{ url: string; sendResult: ClientSendResult | null }>(
+        `/deposit-forms/${depositFormId}/checkout-link`,
+        { method: 'POST' },
+      )
+      setCheckoutLinkUrls((prev) => ({ ...prev, [depositFormId]: result.url }))
+      setCheckoutLinkNotices((prev) => ({
+        ...prev,
+        [depositFormId]: describeSendResult('Payment link', result.sendResult) ?? '',
+      }))
+    } catch (err) {
+      setCheckoutLinkErrors((prev) => ({
+        ...prev,
+        [depositFormId]: err instanceof Error ? err.message : 'Failed to generate payment link',
+      }))
+    } finally {
+      setCheckoutLinkLoadingId(null)
+    }
+  }
+
   async function handleCopyLink(url: string) {
     try {
       await navigator.clipboard.writeText(url)
@@ -2866,6 +2903,63 @@ export default function InquiryDetail() {
                                 {markingPaidId === form.id ? 'Saving…' : `Mark $${form.totalCharged} as Paid`}
                               </button>
                             )
+                          )}
+
+                          {/* Phase 7D: only while signed-but-unpaid -- once
+                              paidManually flips true above, this whole
+                              section stops rendering, satisfying "the link
+                              can then disappear" for real (it's not just
+                              hidden, there's nothing left to show). Covers
+                              the client navigating away from Stripe's own
+                              checkout page before finishing. */}
+                          {form.signedAt && !form.paidManually && (
+                            <div className="mt-3 rounded-lg border border-border p-3">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="text-xs text-fg-muted">
+                                  Client's Stripe payment link, in case they navigated away before paying.
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => handleGetCheckoutLink(form.id)}
+                                  disabled={checkoutLinkLoadingId === form.id}
+                                  className="shrink-0 rounded-full border border-border px-3 py-1 text-xs font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                                >
+                                  {checkoutLinkLoadingId === form.id
+                                    ? 'Generating…'
+                                    : checkoutLinkUrls[form.id]
+                                      ? 'Resend Payment Link'
+                                      : 'Get Payment Link'}
+                                </button>
+                              </div>
+
+                              {checkoutLinkErrors[form.id] && (
+                                <p className="mt-2 text-xs text-danger">{checkoutLinkErrors[form.id]}</p>
+                              )}
+                              {checkoutLinkNotices[form.id] && (
+                                <p className="mt-2 text-xs text-fg-secondary">{checkoutLinkNotices[form.id]}</p>
+                              )}
+
+                              {checkoutLinkUrls[form.id] && (
+                                <div className="mt-2 flex items-center gap-2">
+                                  <input
+                                    type="text"
+                                    readOnly
+                                    value={checkoutLinkUrls[form.id]}
+                                    onFocus={(event) => event.target.select()}
+                                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:outline-none"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCopyLink(checkoutLinkUrls[form.id]!)}
+                                    aria-label={copied ? 'Copied' : 'Copy link'}
+                                    title={copied ? 'Copied!' : 'Copy link'}
+                                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-fg-secondary transition hover:bg-surface-raised hover:text-fg"
+                                  >
+                                    {copied ? <CheckIcon className="h-4 w-4 text-success" /> : <CopyIcon className="h-4 w-4" />}
+                                  </button>
+                                </div>
+                              )}
+                            </div>
                           )}
                         </li>
                       ))}

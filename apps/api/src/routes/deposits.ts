@@ -4,12 +4,12 @@ import { requireAuth } from "../middleware/auth";
 import { requirePermission } from "../lib/permissions";
 import { Role } from "../../generated/prisma/enums";
 import { DEFAULT_THEME_PRESET, THEME_PRESET_ACCENT_COLORS, isValidThemePreset } from "../lib/themePresets";
-import { PUBLIC_APP_URL } from "../lib/publicUrl";
-import { issueGiftCardForPaidDeposit } from "../lib/deposits";
+import { issueGiftCardForPaidDeposit, createDepositCheckoutSession } from "../lib/deposits";
 import { getChargeableConnectedAccountId } from "../lib/stripeConnect";
-import { createDirectChargeCheckoutSession } from "../lib/stripe";
 import { generateDepositFormPdf } from "../lib/pdf";
 import { redactedSessionHours } from "../lib/plannedSessions";
+import { getOrCreateClientConversation } from "../lib/conversations";
+import { sendClientSms } from "../lib/clientSms";
 
 // Exact SOP wording, in the order the client must agree to each one.
 const TERMS = [
@@ -255,50 +255,17 @@ publicRouter.patch("/sign/:token", async (req, res) => {
 publicRouter.post("/:token/checkout-session", async (req, res) => {
   const token = req.params.token as string;
 
-  const depositForm = await prisma.depositForm.findUnique({
-    where: { token },
-    include: { inquiry: { select: { studioId: true } } },
-  });
-
+  const depositForm = await prisma.depositForm.findUnique({ where: { token }, select: { id: true } });
   if (!depositForm) {
     return res.status(404).json({ error: "This link is invalid." });
   }
 
-  if (depositForm.paidVia) {
-    return res.status(400).json({ error: "This deposit has already been paid." });
+  const result = await createDepositCheckoutSession(depositForm.id);
+  if (!result.ok) {
+    return res.status(result.status).json({ error: result.error });
   }
 
-  if (!depositForm.signedAt) {
-    return res.status(400).json({ error: "Please sign the deposit agreement first." });
-  }
-
-  const stripeAccountId = await getChargeableConnectedAccountId(depositForm.inquiry.studioId);
-  if (!stripeAccountId) {
-    return res.status(400).json({ error: "Online payment isn't available for this studio right now." });
-  }
-
-  const totalCents = Math.round(depositForm.totalCharged * 100);
-
-  let session;
-  try {
-    session = await createDirectChargeCheckoutSession({
-      connectedAccountId: stripeAccountId,
-      amountCents: totalCents,
-      productName: "Deposit",
-      successUrl: `${PUBLIC_APP_URL}/deposit/${token}?paid=1`,
-      cancelUrl: `${PUBLIC_APP_URL}/deposit/${token}?canceled=1`,
-      metadata: { depositFormId: depositForm.id },
-    });
-  } catch (err) {
-    return res.status(502).json({ error: err instanceof Error ? err.message : "Failed to start Stripe checkout" });
-  }
-
-  await prisma.depositForm.update({
-    where: { id: depositForm.id },
-    data: { stripeCheckoutSessionId: session.id },
-  });
-
-  res.json({ url: session.url });
+  res.json({ url: result.url });
 });
 
 // Staff-facing: marking a deposit paid is a separate, authenticated step
@@ -343,6 +310,60 @@ staffRouter.patch("/:id/mark-paid", requireAuth, requirePermission("deposits.mar
   const updated = await prisma.depositForm.findUnique({ where: { id } });
   res.json({ ...updated, giftCardId: result.giftCardId });
 });
+
+// Phase 7D: lets staff generate (or regenerate) the client's Stripe payment
+// link and text it over again -- for when the client signed the deposit
+// agreement, then navigated away before finishing (or never reaching)
+// Stripe's own checkout page. Same gate as the deposit-form send/resend
+// actions (POST /inquiries/:id/deposit-form) since this is conceptually
+// the same tier of action on the same entity, not a new capability.
+staffRouter.post(
+  "/:id/checkout-link",
+  requireAuth,
+  requirePermission("inquiries.edit"),
+  async (req, res) => {
+    const id = req.params.id as string;
+
+    const depositForm = await prisma.depositForm.findUnique({
+      where: { id },
+      include: { inquiry: { select: { studioId: true, clientId: true, client: { select: { firstName: true } } } } },
+    });
+
+    if (!depositForm || depositForm.inquiry.studioId !== req.user!.studioId) {
+      return res.status(404).json({ error: "Deposit form not found" });
+    }
+
+    const result = await createDepositCheckoutSession(id);
+    if (!result.ok) {
+      return res.status(result.status).json({ error: result.error });
+    }
+
+    // Best-effort, same convention as every other "resend a link" action in
+    // this codebase (POST /inquiries/:id/deposit-form's own depositSendResult)
+    // -- the link is already generated above regardless of whether the text
+    // goes out, so staff still has result.url to share manually if this
+    // skips/fails. autoSend: false lets a future composer "insert into
+    // draft" flow opt out, same as the estimate/deposit-form send routes.
+    let sendResult: Awaited<ReturnType<typeof sendClientSms>> | null = null;
+    if (req.body?.autoSend !== false) {
+      const studio = await prisma.studio.findUnique({ where: { id: req.user!.studioId }, select: { name: true } });
+      const conversation = await getOrCreateClientConversation(
+        req.user!.studioId,
+        depositForm.inquiry.clientId,
+        req.user!.userId,
+      );
+      sendResult = await sendClientSms({
+        studioId: req.user!.studioId,
+        clientId: depositForm.inquiry.clientId,
+        conversationId: conversation.conversation.id,
+        body: `Hi ${depositForm.inquiry.client.firstName}, here's your payment link to complete your deposit for ${studio?.name ?? "our studio"}: ${result.url}`,
+        actorUserId: req.user!.userId,
+      });
+    }
+
+    res.json({ url: result.url, sendResult });
+  },
+);
 
 // PDF export for audit/documentation. Gated the same way this data is
 // already gated everywhere else it's viewed (embedded in GET

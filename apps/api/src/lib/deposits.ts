@@ -7,6 +7,8 @@ import { getOrCreateClientConversation } from "./conversations";
 import { sendClientSms } from "./clientSms";
 import { shortenUrl } from "./shortLinks";
 import { PUBLIC_APP_URL } from "./publicUrl";
+import { getChargeableConnectedAccountId } from "./stripeConnect";
+import { createDirectChargeCheckoutSession } from "./stripe";
 
 export type PaidVia = "STRIPE" | "MANUAL";
 
@@ -243,4 +245,65 @@ export async function issueGiftCardForPaidDeposit(
   }
 
   return { ok: true, giftCardId: giftCard.id, alreadyProcessed: false };
+}
+
+export type CreateDepositCheckoutSessionResult =
+  | { ok: true; url: string }
+  | { ok: false; status: number; error: string };
+
+// Phase 7D: the ONE place a Stripe Checkout Session gets created for a
+// deposit -- called both by the public post-signing flow (routes/deposits.ts
+// publicRouter, right after signing and again if the client abandons
+// Stripe's page and retries) and by staff's own "get/resend payment link"
+// action (same file's staffRouter, for when the client navigated away
+// entirely and needs the link handed back to them another way). Sharing
+// this means both paths get identical validation and session-creation
+// logic, not two near-copies of it. A fresh session is generated every
+// call, never reused -- Checkout Sessions expire on Stripe's own schedule,
+// so there's no stale one worth resurrecting.
+export async function createDepositCheckoutSession(depositFormId: string): Promise<CreateDepositCheckoutSessionResult> {
+  const depositForm = await prisma.depositForm.findUnique({
+    where: { id: depositFormId },
+    include: { inquiry: { select: { studioId: true } } },
+  });
+
+  if (!depositForm) {
+    return { ok: false, status: 404, error: "This deposit form was not found." };
+  }
+
+  if (depositForm.paidVia) {
+    return { ok: false, status: 400, error: "This deposit has already been paid." };
+  }
+
+  if (!depositForm.signedAt) {
+    return { ok: false, status: 400, error: "Please sign the deposit agreement first." };
+  }
+
+  const stripeAccountId = await getChargeableConnectedAccountId(depositForm.inquiry.studioId);
+  if (!stripeAccountId) {
+    return { ok: false, status: 400, error: "Online payment isn't available for this studio right now." };
+  }
+
+  const totalCents = Math.round(depositForm.totalCharged * 100);
+
+  let session;
+  try {
+    session = await createDirectChargeCheckoutSession({
+      connectedAccountId: stripeAccountId,
+      amountCents: totalCents,
+      productName: "Deposit",
+      successUrl: `${PUBLIC_APP_URL}/deposit/${depositForm.token}?paid=1`,
+      cancelUrl: `${PUBLIC_APP_URL}/deposit/${depositForm.token}?canceled=1`,
+      metadata: { depositFormId: depositForm.id },
+    });
+  } catch (err) {
+    return { ok: false, status: 502, error: err instanceof Error ? err.message : "Failed to start Stripe checkout" };
+  }
+
+  await prisma.depositForm.update({
+    where: { id: depositForm.id },
+    data: { stripeCheckoutSessionId: session.id },
+  });
+
+  return { ok: true, url: session.url };
 }
