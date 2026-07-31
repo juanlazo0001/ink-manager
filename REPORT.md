@@ -5230,3 +5230,66 @@ Both typechecks clean.
 ## Cleanup
 
 Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID -- one leftover stale dev server from an earlier session was squatting on port 4093 at the start of this session and had to be killed first before a fresh instance could bind it. Deleted every ad-hoc verification/scratch script (`scratch-find-inquiry.ts`, `scratch-verify-sessions.ts`) and both temporary Playwright installs from the scratch directory. Test data created during verification (a real 2-session estimate sent on the `LongDesc TestClient` / "Japanese-style irezumi sleeve" dev inquiry) left in the dev database, same convention as prior sessions.
+
+---
+
+# Quick fixes batch — background scroll, Tasks filters, list-state persistence
+
+Single session on `main`. No schema changes. Four fixes scoped in the brief; per an explicit mid-session correction, the "revert floating buttons" fix (#2) was dropped -- everything currently floating stays floating.
+
+## 1. Background overlay scrolling with content on mobile — fixed
+
+`AuthLayout.tsx`'s background photo and `.hero-shade` overlay were `position: absolute`, sized to `.login-shell`'s own content height (a `min-h-screen` flex container that can grow taller than one screenful -- a long card, or the on-screen keyboard shrinking the visible viewport). An absolutely-positioned layer only ever covers its own container's height, so a genuinely tall/scrolled page could reveal raw background at the bottom.
+
+Switched both to `position: fixed` -- the exact fix already proven for the authenticated app shell's own equivalent layers (`.app-bg-photo`/`.app-bg-wash`, Editorial Gold only), which pin to the true viewport and were confirmed (via their own `index.css` comments) to have solved this identical class of bug there already.
+
+Verified no ancestor between these layers and `<body>` has a `transform` (checked live via `getComputedStyle` in a real browser -- Framer Motion's page-transition wrapper resolves to `transform: none` at rest), which would otherwise have silently defeated the fix by giving `position: fixed` a containing block other than the true viewport. Reproduced a genuinely scrollable login page (injected extra height, mobile viewport emulation) and confirmed both layers now report `position: fixed` and visibly cover the full scrolled height with no gap.
+
+Typechecks clean.
+
+**Commit**: `e57cc1b`.
+
+## 2. (Dropped per correction) Floating-button audit
+
+Originally scoped as "only Conversations should float." Corrected mid-session: everything currently using floating/sticky positioning should stay that way. No change made.
+
+## 3. Filter/Sort buttons added to the Tasks section
+
+Reused Conversations' own Filter/Sort pattern (`PillMenu`: compact button + dropdown, checkmark on the active option) rather than inventing a new one -- extracted it out of `ConversationsPanel.tsx` into a shared `apps/web/src/components/PillMenu.tsx`, imported by both files now. Re-verified Conversations' own Filter/Sort still work identically post-extraction (a real regression risk, checked directly, not assumed).
+
+Investigated the Tasks data model before adding anything: `PersonalTask` already carries `dueAt`/`completedAt`/`createdBy`, `SystemTask` already carries `type` -- enough for two real additions with no schema change:
+
+- **Studio Queue**: a type filter ("All types" or one specific system-task type) -- the one dimension the section already visually groups by, so this just narrows straight to one group instead of scrolling past the rest.
+- **Assigned to Me**: a filter (All / My tasks / Assigned by others / Overdue -- the first two mirror the section's pre-existing static split; Overdue is new, a real past-due `dueAt` on an incomplete task) and a sort (Recently added / Due soonest / A-Z).
+
+Left "Assigned by Me" untouched -- a smaller, less-trafficked section than the brief's own worked examples ("assigned to me / assigned to others, overdue, by type") already fully cover.
+
+### Verification
+
+Real browser click-through: Conversations' Filter dropdown still shows its options correctly post-extraction. Tasks page shows 2 Filter buttons + 1 Sort button across the two sections. Assigned to Me's Filter dropdown correctly lists All/My tasks/Assigned by others/Overdue; selecting Overdue against dev seed data (which has none) correctly shows "No tasks match this filter" rather than silently showing nothing. Both typechecks clean.
+
+**Commit**: `0743d8c`.
+
+## 4. Inquiries & Projects filter/sort/grouping now persists
+
+Status filters (per tab), artist filter, the Needs Scheduling toggle, Group by status, and sort order all reset on navigation away or reload. Persisted to `localStorage` under `ink-manager:inquiries-filters` as one JSON blob, restored on mount and kept in sync via a single `useEffect` watching all six values -- deliberately not intercepting each of the dozen individual setter call sites spread across both tabs' filter controls.
+
+Plain `localStorage`, not per-user-keyed: investigated the file first and found `Inquiries.tsx` already has an established precedent for exactly this kind of preference -- `COLUMN_VISIBILITY_STORAGE_KEY`, a plain (non-per-user) key for column-visibility persistence. Followed that same convention for consistency with the sibling preference already living in the same file, rather than inventing a separate per-user-keyed pattern for this one.
+
+Search text and view mode (list/kanban) stay session-only, unchanged -- out of scope (the task asked for filter/sort/grouping specifically, not search), and view mode already carried its own deliberate "not persisted" comment for an unrelated reason (URL-param collision on tab switch).
+
+### Verification
+
+Real browser click-through: set sort to "Client name (A-Z)", enabled Group by status, enabled Needs Scheduling (Projects tab) -- confirmed the exact JSON landed in `localStorage`. Reloaded the page fresh: all three restored correctly. Navigated away to Dashboard and back (not just a reload): all three still correctly restored, confirming this isn't just surviving via React state but genuinely persisting.
+
+Both typechecks clean.
+
+**Commit**: `e3f3d36`.
+
+## Typechecks
+
+`npx tsc -b` (web) and `npx tsc --noEmit` (api) -- both clean before every commit.
+
+## Cleanup
+
+Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification script and screenshot from the scratch directory. No test data was created in the dev database -- every fix in this batch was frontend-only, verified against existing dev seed data.
