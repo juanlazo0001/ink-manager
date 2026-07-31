@@ -5055,3 +5055,48 @@ A Project (deposit-paid Inquiry, `PROJECTS_TAB_STATUSES` = SCHEDULING/WAITLISTED
 ## Cleanup
 
 Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification script and screenshot from the scratch directory. Test data created during verification (one real appointment created via API for the "Taylor PMU-Test" project) left in the dev database, same convention as prior sessions.
+
+---
+
+# Cash payment path for gift cards, alongside Stripe and EXEMPT
+
+Single session on `main`. Schema change (nullable `GiftCard.paymentMethod`, `nullable → backfill` -- deliberately not tightened, see below), solo session confirmed via `git status`/`git pull` before starting.
+
+## Investigation before assuming field names
+
+`DepositForm.paidVia` (`STRIPE`/`MANUAL`, a free-text `String?`) already existed for the deposit-triggered issuance path -- so the real gap wasn't a missing payment-tracking concept, it was `POST /gift-cards`, the general/manual issuance route (backing `ClientDetail.tsx`'s "Issue Gift Card" flow), which created a `GiftCard` with **zero** payment tracking of any kind. That's the actual silent path this task's rule ("a gift card cannot be issued without some recorded payment") was about.
+
+## Schema
+
+`GiftCardPaymentMethod` enum (`STRIPE`/`CASH`/`EXEMPT`) + `GiftCard.paymentMethod`, nullable **permanently** -- not the usual nullable-then-tightened pattern. A few pre-existing paths (the bulk client-import gift-card backfill, and checkout's multi-card overage derivation when more than one origin card combines) genuinely have no single knowable payment method, and fabricating one for historical data would be actively wrong, not just incomplete. Documented directly in the enum's own schema comment.
+
+Two migrations: `20260731061921_add_gift_card_payment_method` (schema diff) and a hand-authored `20260731062313_backfill_gift_card_payment_method`, matching this project's own established backfill-migration convention (real committed SQL, idempotent, runs via `prisma migrate deploy` in production -- see `20260725153000_backfill_inquiry_service`'s precedent). Backfilled only what's honestly knowable: `EXEMPT`-status cards → `EXEMPT`; cards linked to a `DepositForm` with `paidVia='STRIPE'` → `STRIPE`; `paidVia='MANUAL'` → `CASH` (the only manual/non-Stripe payment concept this app has ever had). Verified directly against the dev database: 66 total gift cards, only 6 backfilled -- the other 60 predate `paidVia` itself (only 5 of 25 `DepositForm` rows ever had it set) and correctly stay `NULL`, not guessed.
+
+## What changed
+
+- **`routes/giftCards.ts` `POST /`**: now requires `paymentMethod` in the body, locked to exactly `"CASH"` (a Stripe-paid card only ever comes through the deposit checkout/webhook flow, never this route) -- 400s otherwise. This closes the actual gap directly, reusing the existing `giftCards.issue` permission unchanged (no new permission key, per the task's own instruction).
+- **`routes/giftCards.ts` `POST /exempt`**: sets `paymentMethod: "EXEMPT"`, otherwise completely unchanged.
+- **`lib/deposits.ts`'s `issueGiftCardForPaidDeposit`**: the one function both the Stripe webhook and the staff mark-paid route already call -- now derives `paymentMethod` from its existing `paidVia` argument (`STRIPE` stays `STRIPE`, `MANUAL` maps to `CASH`). No new call sites needed; both issuance paths get it automatically.
+- **`routes/appointments.ts`'s checkout overage-derivation**: inherits the origin card's `paymentMethod` only when there's exactly one unambiguous origin (same condition `derivedFromGiftCardId` already uses) -- left unset for the multi-card combine case, not guessed.
+- **`ClientDetail.tsx`**: the issuance modal relabeled "Record Cash Payment" / "Confirm Cash Payment" with explanatory copy ("For cash collected in person only... Front desk/Owner records it after physically collecting payment"), sends `paymentMethod: 'CASH'` automatically -- matches the task's framing that this is a staff-initiated action, never client-facing.
+- **`GiftCardDetail.tsx`**: surfaces the new field in the existing Status/Expires/Issued-by metadata grid.
+
+## Verification
+
+- `POST /gift-cards` with no `paymentMethod` (and separately, with `"STRIPE"`) both correctly 400 -- confirms the previously-silent path is closed.
+- Recorded a real cash payment through the actual browser UI (not just the API): gift card issued correctly, audit trail shows the full diff including `paymentMethod: "CASH"`, `GiftCardDetail` renders "Cash" in the metadata grid.
+- Exercised the *other* issuance path directly: created a real signed test `DepositForm`, called the real `PATCH /deposit-forms/:id/mark-paid` route -- resulting gift card correctly shows `paymentMethod: "CASH"`.
+- Confirmed `EXEMPT` issuance is completely unaffected (`POST /gift-cards/exempt` still works exactly as before) and now also correctly tags `paymentMethod: "EXEMPT"`.
+- Confirmed via the schema/permissions investigation (not re-tested live, since the permission itself is unchanged by this session) that `giftCards.issue` already defaults to FRONT_DESK + OWNER, matching "front desk/Owner records it."
+
+## Typechecks
+
+`npx tsc -b` (web) and `npx tsc --noEmit` (api) -- both clean before commit.
+
+## Commit
+
+`1a6c905` on `main`.
+
+## Cleanup
+
+Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification/scratch script and screenshot. Test data created during verification (a $50 and $42.50 cash-issued gift card, an EXEMPT test card, and one test `DepositForm` + its resulting gift card) left in the dev database, same convention as prior sessions.
