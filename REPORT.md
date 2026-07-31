@@ -5478,3 +5478,38 @@ Both typechecks clean.
 ## Cleanup
 
 Killed the isolated dev API server instance (port 4093) via PowerShell `Stop-Process` by exact PID -- twice had to clear a leftover stale process on that port from earlier commands in this same session before a fresh instance could bind it. Deleted every ad-hoc verification/scratch script and generated test PDF from the scratch directory.
+
+---
+
+# Add staff toggle to hide/show hour range for flat-rate sessions
+
+Follow-up to the flat-rate-per-session feature: staff reported "the flat rate per session update didn't work as intended" -- the actual ask was a way to hide a flat session's hour range from the client-facing estimate/deposit pages while keeping it visible to staff.
+
+## Scope clarified before building
+
+Asked the user directly whether "hide" meant hide from the client only, or hide from everyone including staff. Confirmed: **client-facing only** -- staff must always see the hour range regardless of the toggle. This shaped the whole design: redaction happens only on the three *public* verify routes, never on the staff-facing `INQUIRY_INCLUDE` used by `InquiryDetail.tsx`.
+
+## Schema change
+
+`PlannedSession.showDurationToClient Boolean @default(true)` -- a genuine new persisted field, not inferable from existing data (unlike the flat/range distinction itself, which is purely `estimatedPriceLow === estimatedPriceHigh` with no separate flag). Migration hand-written (`prisma migrate dev` has no TTY in this sandbox, same recurring workaround as prior sessions in this project) and applied via `prisma migrate deploy` + `prisma generate`.
+
+## What changed
+
+- **`apps/api/src/lib/plannedSessions.ts`** (new): `redactedSessionHours()` -- when `showDurationToClient` is false, returns `null` for both hour fields. Used by all three public verify routes (`GET /estimates/verify/:token`, `GET /estimates/revision/verify/:token`, `GET /deposits/verify/:token`) so the hours are never sent over the wire at all, not just hidden client-side.
+- **`apps/api/src/routes/inquiries.ts`**: `POST /:id/send-estimate` and `POST /:id/revise-estimate` both accept/validate/persist `showDurationToClient` per session through the existing locked-session reconciliation logic; staff-facing `INQUIRY_INCLUDE` returns the real hours unconditionally.
+- **`apps/web/src/components/SessionBreakdownEditor.tsx`**: a "Show this session's hour range to the client" checkbox, shown only for flat-rate sessions, defaulting to checked.
+- **`apps/web/src/pages/InquiryDetail.tsx`**, **`EstimateResponse.tsx`**, **`EstimateRevisionResponse.tsx`**, **`DepositResponse.tsx`**: threaded the field through seeding/submission and made the public pages render the hour text conditionally (`estimatedHoursMin/Max` now `number | null`).
+
+## Verification
+
+Live against the dev database (`owner@dev-studio.test`, inquiry with a 2-session plan: session 1 range-priced 4-6 hrs, session 2 flat-priced $250): edited the estimate, confirmed the toggle only appears for the flat session and defaults checked, unchecked it, and submitted (`POST /send-estimate` returned `200` with `showDurationToClient: false` persisted on session 2, `true` on session 1). Visited the resulting public estimate page and confirmed session 1 still reads "4–6 hours — $400–$600" while session 2 reads only "— $250" with the hour text fully absent (not blank/zero -- genuinely not rendered). Confirmed via the same API response that the staff-facing payload still carries session 2's real hours (`estimatedHoursMin: 2, estimatedHoursMax: 3`) unaffected by the toggle.
+
+Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (web) clean.
+
+## Commit
+
+`87e9e61`.
+
+## Cleanup
+
+Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification script and the temporary Playwright install from the scratch directory. Test data (the resent estimate on "LongDesc TestClient") left in the dev database, same convention as prior sessions.
