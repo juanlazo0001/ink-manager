@@ -246,7 +246,7 @@ publicRouter.patch("/sign/:token", async (req, res) => {
   // Real-time audit (Part 2): a client signing is entirely out-of-band from
   // any staff action -- without this, staff watching the project's Deposit
   // widget never saw "Signed, awaiting payment" appear live.
-  emitInvalidation({ type: "inquiry.updated", studioId: depositForm!.inquiry.studioId });
+  emitInvalidation({ type: "inquiry.updated", studioId: depositForm!.inquiry.studioId, inquiryId: depositForm!.inquiryId });
 
   res.json({ success: true, stripeConnected: stripeAccountId !== null });
 });
@@ -314,7 +314,7 @@ staffRouter.patch("/:id/mark-paid", requireAuth, requirePermission("deposits.mar
     return res.status(400).json({ error: result.error });
   }
 
-  emitInvalidation({ type: "inquiry.updated", studioId: depositForm.inquiry.studioId });
+  emitInvalidation({ type: "inquiry.updated", studioId: depositForm.inquiry.studioId, inquiryId: depositForm.inquiryId });
 
   const updated = await prisma.depositForm.findUnique({ where: { id } });
   res.json({ ...updated, giftCardId: result.giftCardId });

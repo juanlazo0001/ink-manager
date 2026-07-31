@@ -1072,7 +1072,7 @@ router.post("/:id/attach-image", requireRole(Role.OWNER, Role.FRONT_DESK), async
     changes: { imageUrl, sourceConversationId: id },
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId });
+  emitInvalidation({ type: "inquiry.updated", studioId, inquiryId });
 
   res.json(updated);
 });

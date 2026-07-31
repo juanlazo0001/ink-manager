@@ -971,7 +971,7 @@ router.patch("/:id/assign", requireAuth, requirePermission("inquiries.assignArti
     ),
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
 
   res.json(updated);
 });
@@ -1029,7 +1029,7 @@ router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), requirePermi
       changes: diffObjects(inquiry, declineData, ["status", "assignedArtistId", "assignedAt", "declineNote"]),
     });
 
-    emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+    emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
 
     return res.json(updated);
   }
@@ -1074,7 +1074,7 @@ router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), requirePermi
     ]),
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
 
   res.json(updated);
 });
@@ -1429,7 +1429,7 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
     actorUserId: req.user!.userId,
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
 
   res.status(201).json({ ...updated, estimateUrl, estimateSendResult });
 });
@@ -1780,7 +1780,7 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
     actorUserId: req.user!.userId,
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
 
   res.status(201).json({ ...updated, revisionUrl, revisionSendResult });
 });
@@ -1885,7 +1885,7 @@ router.post("/:id/schedule", requireAuth, requirePermission("inquiries.edit"), a
   });
 
   emitInvalidation({ type: "appointment.changed", studioId: req.user!.studioId });
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
 
   res.status(201).json({
     ...updated,
@@ -1931,7 +1931,7 @@ router.post("/:id/waitlist", requireAuth, requirePermission("inquiries.edit"), a
     changes: diffObjects(inquiry, waitlistData, ["status", "declineNote"]),
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
 
   res.json(updated);
 });
@@ -1969,7 +1969,7 @@ router.post("/:id/unwaitlist", requireAuth, requirePermission("inquiries.edit"),
     changes: diffObjects(inquiry, unwaitlistData, ["status"]),
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
 
   res.json(updated);
 });
@@ -2013,7 +2013,7 @@ router.post("/:id/mark-lost", requireAuth, requirePermission("inquiries.markLost
     changes: diffObjects(inquiry, lostData, ["status", "lostAt", "lostReason"]),
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
 
   res.json(updated);
 });
@@ -2052,7 +2052,7 @@ router.post("/:id/reopen", requireAuth, requirePermission("inquiries.edit"), asy
     changes: diffObjects(inquiry, reopenData, ["status", "lostAt", "lostReason"]),
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
 
   res.json(updated);
 });
@@ -2092,7 +2092,7 @@ router.post("/:id/mark-good-candidate", requireAuth, requirePermission("inquirie
     changes: diffObjects(inquiry, goodCandidateData, ["status"]),
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
 
   res.json(updated);
 });
@@ -2134,7 +2134,7 @@ router.post("/:id/complete-project", requireAuth, requirePermission("inquiries.e
     changes: diffObjects(inquiry, completeData, ["projectCompletedAt", "projectCompletedById"]),
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
 
   res.json(updated);
 });
@@ -2168,7 +2168,7 @@ router.post("/:id/reopen-project", requireAuth, requirePermission("inquiries.edi
     changes: diffObjects(inquiry, reopenData, ["projectCompletedAt", "projectCompletedById"]),
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
 
   res.json(updated);
 });
@@ -2490,7 +2490,7 @@ router.post("/:id/attach-gift-card", requireAuth, requirePermission("inquiries.e
     },
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
 
   res.json(updated);
 });
@@ -2838,7 +2838,7 @@ router.post("/:id/notes", requireAuth, requirePermission("inquiries.notes.manage
     changes: { inquiryId: id },
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
 
   res.status(201).json(note);
 });
@@ -2889,7 +2889,7 @@ router.patch("/:id/notes/:noteId", requireAuth, requirePermission("inquiries.not
     changes: diffObjects(note, { bodyHtml: trimmed }, ["bodyHtml"]),
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
 
   res.json(updated);
 });
@@ -2918,7 +2918,7 @@ router.delete("/:id/notes/:noteId", requireAuth, requirePermission("inquiries.no
     changes: { inquiryId: id, deletedBodyHtml: note.bodyHtml },
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
 
   res.json({ success: true });
 });

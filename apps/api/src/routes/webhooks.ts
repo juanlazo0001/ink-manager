@@ -422,7 +422,7 @@ router.post("/stripe", async (req, res) => {
           // out-of-band from any staff action -- without this, "deposit
           // paid" (explicitly the #1 named stale symptom) never propagated
           // live to anyone watching the project.
-          emitInvalidation({ type: "inquiry.updated", studioId });
+          emitInvalidation({ type: "inquiry.updated", studioId, inquiryId: depositForm.inquiryId });
         }
       }
 

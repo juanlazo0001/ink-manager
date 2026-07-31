@@ -38,7 +38,19 @@ export type InvalidationEvent =
   // attach-gift-card) -- the Kanban board (Package E) reuses the exact same
   // ["inquiries"] prefix so cards move live for every viewer, staff and
   // artist alike, without a second query key to keep in sync.
-  | { type: "inquiry.updated"; studioId: string }
+  //
+  // Part 3 audit: inquiryId is optional and additive -- when present, it
+  // ALSO invalidates the single-inquiry detail key (InquiryDetail.tsx's own
+  // ['inquiry', id] useQuery, which is NOT prefix-matched by ["inquiries"]
+  // since they're different first segments). This was a real, live-
+  // reproduced bug: reassigning an artist on a project while its detail
+  // page was open never updated it, for any viewer, connected or not --
+  // only the separate Inquiries LIST page ever picked up the change. Most
+  // call sites have a single inquiry id in scope and now pass it; the few
+  // that don't (a bulk client-delete cascading through many inquiries, a
+  // bulk import) correctly omit it and fall back to list-level only, since
+  // there's no single "the" inquiry to target there.
+  | { type: "inquiry.updated"; studioId: string; inquiryId?: string }
   | { type: "appointment.changed"; studioId: string }
   // NEW below this line (Part 2 of the real-time audit).
   | { type: "client.updated"; studioId: string; clientId: string }
@@ -70,6 +82,13 @@ function keysFor(event: InvalidationEvent): unknown[][] {
       return [
         ["conversations"],
         ["conversation-thread", event.conversationId],
+        // Part 3 audit: ConversationsPanel.tsx's own tag/context panel
+        // (['conversation-context', id]) was never in this list -- the
+        // tags POST/DELETE routes emit this same event (see Part 2), but
+        // without this key the panel showing which entities are tagged
+        // never refreshed live even for the SAME staff member's other
+        // open tab, let alone a different one.
+        ["conversation-context", event.conversationId],
         ["nav-counts"],
         // NEW_CONVERSATION system task depends on conversation state too.
         ["tasks"],
@@ -77,8 +96,13 @@ function keysFor(event: InvalidationEvent): unknown[][] {
     case "task.changed":
       return [["tasks"], ["nav-counts"]];
     case "inquiry.created":
-    case "inquiry.updated":
       return [["inquiries"], ["nav-counts"]];
+    case "inquiry.updated":
+      return [
+        ["inquiries"],
+        ["nav-counts"],
+        ...(event.inquiryId ? [["inquiry", event.inquiryId]] : []),
+      ];
     case "appointment.changed":
       return [["appointments"], ["nav-counts"]];
     case "client.updated":

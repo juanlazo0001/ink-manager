@@ -70,7 +70,10 @@ publicRouter.patch("/sign/:token", async (req, res) => {
   const token = req.params.token as string;
   const body = req.body ?? {};
 
-  const waiver = await prisma.liabilityWaiver.findUnique({ where: { token } });
+  const waiver = await prisma.liabilityWaiver.findUnique({
+    where: { token },
+    include: { appointment: { select: { inquiryId: true } } },
+  });
 
   const invalidity = isExpiredOrInvalid(waiver);
   if (invalidity) {
@@ -207,7 +210,7 @@ publicRouter.patch("/sign/:token", async (req, res) => {
   // dual-emit pattern already used by the schedule route right below for
   // exactly the same reason (one action visibly affects both surfaces).
   emitInvalidation({ type: "appointment.changed", studioId: waiver!.studioId });
-  emitInvalidation({ type: "inquiry.updated", studioId: waiver!.studioId });
+  emitInvalidation({ type: "inquiry.updated", studioId: waiver!.studioId, inquiryId: waiver!.appointment.inquiryId });
 
   res.json({ success: true });
 });
@@ -352,7 +355,10 @@ staffRouter.get("/:id/pdf", requirePermission("waivers.viewStatus"), async (req,
 staffRouter.post("/:id/verify", requirePermission("waivers.verify"), async (req, res) => {
   const id = req.params.id as string;
 
-  const waiver = await prisma.liabilityWaiver.findUnique({ where: { id } });
+  const waiver = await prisma.liabilityWaiver.findUnique({
+    where: { id },
+    include: { appointment: { select: { inquiryId: true } } },
+  });
   if (!waiver || waiver.studioId !== req.user!.studioId) {
     return res.status(404).json({ error: "Waiver not found" });
   }
@@ -376,7 +382,7 @@ staffRouter.post("/:id/verify", requirePermission("waivers.verify"), async (req,
   });
 
   emitInvalidation({ type: "appointment.changed", studioId: req.user!.studioId });
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: waiver.appointment.inquiryId });
 
   res.json(updated);
 });
