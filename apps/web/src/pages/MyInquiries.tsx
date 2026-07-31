@@ -37,6 +37,14 @@ interface Inquiry {
   priceEstimateHigh: number | null
   assignedArtist: { id: string; user: { email: string; name: string | null; avatarUrl: string | null } } | null
   service: { id: string; name: string; pricingModel: 'RANGE' | 'FLAT' }
+  // Also already returned by INQUIRY_INCLUDE (this route's include, same
+  // as the Project detail page's own) -- declared here so
+  // InquiryKanbanCard's deriveProjectStage sees real data for an artist's
+  // own Projects instead of silently falling back to "no sessions yet"
+  // for every one of them.
+  appointment: { startTime: string } | null
+  sessions: { id: string; startTime: string; checkedOutAt: string | null; liabilityWaiver: { status: string } | null }[]
+  projectCompletedAt: string | null
 }
 
 type ViewMode = 'list' | 'kanban'

@@ -35,13 +35,21 @@ const STATUS_TONE: Record<string, Tone> = {
   SCHEDULING: 'success',
   WAITLISTED: 'success',
   CONFIRMED: 'success',
-  // Synthetic key (never a real InquiryStatus) -- a second, complementary
-  // pill shown alongside a Project's real status pill (SCHEDULING etc.)
-  // when it has zero linked Appointments yet, everywhere that status pill
-  // already renders (Inquiries/Projects list+Kanban, Project detail
-  // header, Dashboard). Same action-needed warning tone as
-  // DEPOSIT_PENDING/AWAITING_CLIENT_RESPONSE.
+  // Synthetic keys (never real InquiryStatus values) -- the post-conversion
+  // Project pipeline's own 5 stages (see deriveProjectStage in
+  // lib/kanban.ts), shown as a Project's ONLY status pill everywhere one
+  // renders (Inquiries/Projects list+Kanban, Project detail header) --
+  // replacing the raw SCHEDULING/WAITLISTED/CONFIRMED pill, which couldn't
+  // tell those stages apart (all three showed identically as "Scheduling"
+  // regardless of whether the project was actually still waiting to be
+  // booked, fully wrapped up, or anywhere in between). Same "one tone per
+  // stage" rule as the Inquiry pipeline above -- five distinct colors, not
+  // a reused wash.
   NEEDS_SCHEDULING: 'warning',
+  SCHEDULED: 'success',
+  WAIVER_VERIFIED: 'info',
+  SESSION_COMPLETE: 'progress',
+  PROJECT_COMPLETE: 'highlight',
   // Phase 7A: CLOSED_LOST is a deliberate staff action (or the missing-
   // workflow mark-lost route) and reads as danger/red; COLD_LEAD is the
   // automated sweep's quieter outcome and stays neutral/gray -- consistent

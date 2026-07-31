@@ -567,6 +567,11 @@ const INQUIRY_LIST_SELECT = {
   estimateSentAt: true,
   estimateOpenedAt: true,
   referenceImages: true,
+  // Project pipeline stage (the list/Kanban status pill, mirrors
+  // InquiryDetail.tsx's own Pipeline widget -- see deriveProjectStage in
+  // lib/kanban.ts): the one field of the 5-stage derivation that isn't
+  // reachable through a relation.
+  projectCompletedAt: true,
   client: { select: { firstName: true, lastName: true } },
   assignedArtist: { select: { id: true, user: { select: { id: true, name: true, email: true, avatarUrl: true } } } },
   appointment: { select: { startTime: true } },
@@ -575,11 +580,15 @@ const INQUIRY_LIST_SELECT = {
   // (Appointment.inquiryId), which `appointment` above (the older 1:1
   // link) does NOT reflect for most projects scheduled through the current
   // multi-session flow -- `appointment` was usually null already, this
-  // select just never had `sessions` to fall back to at all. Only id/
-  // startTime needed here (existence + earliest date), not the full
-  // per-session detail the Project detail page's own INQUIRY_INCLUDE
-  // fetches (artist, waiver status, photos, etc.).
-  sessions: { select: { id: true, startTime: true }, orderBy: { startTime: "asc" } },
+  // select just never had `sessions` to fall back to at all.
+  // checkedOutAt/liabilityWaiver.status added alongside id/startTime for
+  // the same project-stage derivation above -- previously only existence +
+  // earliest date, not enough to tell Scheduled/Waiver Verified/Session
+  // Complete apart.
+  sessions: {
+    select: { id: true, startTime: true, checkedOutAt: true, liabilityWaiver: { select: { status: true } } },
+    orderBy: { startTime: "asc" },
+  },
   // Service lines: MyInquiries.tsx's artist approve form and the Kanban
   // board both need pricingModel to know whether to collect/display one
   // flat price or a low/high range.

@@ -10,7 +10,7 @@ import Modal from '../components/Modal'
 import AppointmentForm from '../components/AppointmentForm'
 import InquiryKanbanBoard from '../components/kanban/InquiryKanbanBoard'
 import { PIPELINE_STEPS } from '../components/InquiryPipeline'
-import { projectNeedsScheduling, type KanbanColumn, type KanbanTransition } from '../lib/kanban'
+import { projectNeedsScheduling, deriveProjectStage, PROJECT_STAGE_LABELS, type KanbanColumn, type KanbanTransition } from '../lib/kanban'
 import MultiSelectFilter from '../components/MultiSelectFilter'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatStatus, describeInquiryStatus } from '../lib/format'
@@ -39,10 +39,12 @@ interface Inquiry {
   assignedArtist: { id: string; user: { email: string; name: string | null; avatarUrl: string | null } } | null
   appointment: { startTime: string } | null
   // 1:many "sessions under this project" (Appointment.inquiryId), startTime-
-  // ascending from the backend. Used both for projectNeedsScheduling (only
-  // the length matters there) and to fix the Date column below, which
-  // previously checked only the older, usually-null `appointment` link.
-  sessions: { id: string; startTime: string }[]
+  // ascending from the backend. Used for projectNeedsScheduling/
+  // deriveProjectStage and to fix the Date column below, which previously
+  // checked only the older, usually-null `appointment` link.
+  sessions: { id: string; startTime: string; checkedOutAt: string | null; liabilityWaiver: { status: string } | null }[]
+  // Project pipeline stage -- see deriveProjectStage in lib/kanban.ts.
+  projectCompletedAt: string | null
 }
 
 type PipelineTab = 'inquiries' | 'projects'
@@ -531,7 +533,14 @@ export default function Inquiries() {
         {columnVisibility.status && (
           <td className={`py-3 ${lastVisibleColumnKey === 'status' ? 'pr-3' : ''}`}>
             <div className="flex flex-wrap items-center gap-1.5">
-              <StatusPill status={inquiry.status} label={describeInquiryStatus(inquiry)} />
+              {(() => {
+                const stage = deriveProjectStage(inquiry)
+                return stage ? (
+                  <StatusPill status={stage} label={PROJECT_STAGE_LABELS[stage]} />
+                ) : (
+                  <StatusPill status={inquiry.status} label={describeInquiryStatus(inquiry)} />
+                )
+              })()}
             </div>
           </td>
         )}

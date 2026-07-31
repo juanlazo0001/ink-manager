@@ -13,6 +13,7 @@ import ReorderableWidgetList from '../components/ReorderableWidgetList'
 import AppointmentForm from '../components/AppointmentForm'
 import GiftCardStackPicker, { isCardAvailable, type GiftCardOption } from '../components/GiftCardStackPicker'
 import { resolveRequiredDepositCents, resolveDepositTiers, type DepositTier } from '../lib/depositTiers'
+import { deriveProjectStage, PROJECT_STAGE_ORDER, PROJECT_STAGE_LABELS } from '../lib/kanban'
 import CurrencyInput from '../components/CurrencyInput'
 import ImageUploadSection, { type ImageUploadState } from '../components/ImageUploadSection'
 import { ArtistAvatar, artistLabel, type ArtistLike } from '../components/ArtistAvatar'
@@ -227,48 +228,37 @@ function giftCardOptionLabel(card: GiftCardOption): string {
 // InquiryPipeline.tsx alongside PIPELINE_STEPS, since unlike that 5-step
 // list this one has exactly one consumer (this page's own Pipeline
 // widget); the Kanban Projects tab already has its own, appointment-
-// status-driven columns and never needs this shape. "Needs Scheduling" is
-// a real, explicit step now (previously this just left "Scheduled" sitting
-// in its own "current" state pre-appointment, which read as ambiguous --
-// looked identical to "in progress toward being scheduled" rather than
-// clearly flagging nothing is booked yet). "Scheduled" is the
-// already-complete inherited handoff from the Inquiry side's own last
-// step -- see deriveProjectStageIndex below, never shown as "current"
-// itself once isConverted is true and at least one session exists (same
-// as before this step was added, just shifted one index over).
-const PROJECT_STEPS = [
-  { label: 'Needs Scheduling' },
-  { label: 'Scheduled' },
-  { label: 'Waiver Verified' },
-  { label: 'Session Complete' },
-  { label: 'Project Complete' },
-] as const
+// status-driven columns and never needs this shape. Steps/order/labels all
+// derive from lib/kanban.ts's PROJECT_STAGE_ORDER/PROJECT_STAGE_LABELS --
+// the SAME source the list/Kanban card status pill now reads (see
+// deriveProjectStage) -- so the pill and this stepper can never drift back
+// out of sync with each other the way the pill did before this refactor.
+const PROJECT_STEPS = PROJECT_STAGE_ORDER.map((stage) => ({ label: PROJECT_STAGE_LABELS[stage] }))
 
 // The "current" session for Waiver Verified/Session Complete purposes --
 // the earliest not-yet-checked-out appointment. `sessions` is already
 // startTime-ascending from the backend (inquiries.ts's INQUIRY_INCLUDE),
 // so no extra sort is needed. As sessions complete and new ones get
 // booked, this naturally advances to track whichever one is next up,
-// without the timeline itself ever growing a step per session.
+// without the timeline itself ever growing a step per session. (Also used
+// directly by the "Session X of Y" caption below, independent of the
+// stage index itself.)
 function findCurrentSession(sessions: Inquiry['sessions']) {
   return sessions.find((session) => !session.checkedOutAt)
 }
 
-// Three of the five stages are derived live; Project Complete is NOT --
-// it reflects projectCompletedAt directly. If every session is checked
-// out but projectCompletedAt is still null, this sits at "Session
-// Complete" (index 4 = Project Complete shown as the current, actionable
-// step) until staff take the explicit Mark Project Complete action --
-// never auto-inferred from session state alone. Same projectNeedsScheduling
-// condition (lib/kanban.ts) as the list/Kanban/Dashboard badge drives index
-// 0 here -- zero sessions booked yet.
+// Thin wrapper around the shared deriveProjectStage -- converts its stage
+// key into the stepper's numeric activeIndex. PROJECT_COMPLETE is special-
+// cased to PROJECT_STAGE_ORDER.length (one past the last real index): the
+// stepper's `done = index < activeIndex` needs every step checkmarked with
+// none left "current" once the project is genuinely finished, which
+// deriveProjectStage's own last-array-element return value alone wouldn't
+// produce (that would leave "Project Complete" bolded as if still in
+// progress, rather than checked off).
 function deriveProjectStageIndex(inquiry: Inquiry): number {
-  if (inquiry.projectCompletedAt) return PROJECT_STEPS.length
-  if (inquiry.sessions.length === 0) return 0
-  const current = findCurrentSession(inquiry.sessions)
-  if (!current) return 4
-  if (current.liabilityWaiver?.status === 'VERIFIED') return 3
-  return 2
+  const stage = deriveProjectStage(inquiry)
+  if (stage === 'PROJECT_COMPLETE') return PROJECT_STAGE_ORDER.length
+  return stage ? PROJECT_STAGE_ORDER.indexOf(stage) : 0
 }
 
 // Phase 7A: mirrors apps/api/src/routes/inquiries.ts's NON_TERMINAL_STATUSES
@@ -2061,7 +2051,14 @@ export default function InquiryDetail() {
                         <span className="hidden text-sm font-semibold md:inline">Share with Artist</span>
                       </button>
                     )}
-                    <StatusPill status={inquiry.status} label={describeInquiryStatus(inquiry)} />
+                    {(() => {
+                      const stage = deriveProjectStage(inquiry)
+                      return stage ? (
+                        <StatusPill status={stage} label={PROJECT_STAGE_LABELS[stage]} />
+                      ) : (
+                        <StatusPill status={inquiry.status} label={describeInquiryStatus(inquiry)} />
+                      )
+                    })()}
                     {(canMarkLost || canEditInquiry || isOwner) && (
                       <div className="relative">
                         <button

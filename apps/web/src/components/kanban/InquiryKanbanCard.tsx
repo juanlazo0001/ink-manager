@@ -5,7 +5,7 @@ import { ArtistAvatar, artistLabel } from '../ArtistAvatar'
 import StatusPill, { getStatusTone } from '../StatusPill'
 import { formatRelativeTime, formatPriceEstimate } from '../../lib/format'
 import { uiSpringTransition } from '../../lib/motion'
-import { projectNeedsScheduling, type KanbanInquiry } from '../../lib/kanban'
+import { deriveProjectStage, PROJECT_STAGE_LABELS, type KanbanInquiry } from '../../lib/kanban'
 
 const TONE_BORDER_CLASSES: Record<string, string> = {
   success: 'border-l-success',
@@ -49,7 +49,14 @@ const InquiryKanbanCard = forwardRef<HTMLDivElement, InquiryKanbanCardProps>(fun
   })
 
   const estimateRange = formatPriceEstimate(inquiry.priceEstimateLow, inquiry.priceEstimateHigh)
-  const tone = getStatusTone(inquiry.status)
+  // A Project (deriveProjectStage returns non-null) shows its pipeline
+  // stage instead of the raw status -- same reasoning as Inquiries.tsx's
+  // list rows, so a card's border color and pill agree with what its
+  // real status tab/column already implies. Pre-conversion Inquiry cards
+  // are unaffected (deriveProjectStage returns null for them, falling
+  // through to the real InquiryStatus tone).
+  const projectStage = deriveProjectStage(inquiry)
+  const tone = getStatusTone(projectStage ?? inquiry.status)
 
   return (
     // Outer motion.div owns layout (settle animation when this card's
@@ -83,9 +90,9 @@ const InquiryKanbanCard = forwardRef<HTMLDivElement, InquiryKanbanCardProps>(fun
         </p>
         <p className="mt-1 line-clamp-2 text-xs text-fg-secondary">{truncate(inquiry.description, 90)}</p>
 
-        {projectNeedsScheduling(inquiry) && (
+        {projectStage && (
           <div className="mt-2">
-            <StatusPill status="NEEDS_SCHEDULING" label="Needs Scheduling" />
+            <StatusPill status={projectStage} label={PROJECT_STAGE_LABELS[projectStage]} />
           </div>
         )}
 

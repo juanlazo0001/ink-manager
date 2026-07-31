@@ -13,14 +13,15 @@ export interface KanbanInquiry {
   priceEstimateHigh: number | null
   client: { firstName: string; lastName: string }
   assignedArtist: { id: string; user: { email: string; name: string | null; avatarUrl: string | null } } | null
-  // Optional -- only Inquiries.tsx's own fetch (GET /inquiries) currently
-  // requests these; MyInquiries.tsx's ARTIST-scoped board
-  // (/inquiries/assigned-to-me) doesn't, so its cards simply never show
-  // the Needs Scheduling badge (undefined, not incorrectly false) rather
-  // than requiring every KanbanInquiry consumer to fetch fields it
-  // doesn't otherwise need.
+  // Optional so a consumer that genuinely doesn't fetch these (there isn't
+  // one today -- both Inquiries.tsx's GET /inquiries and MyInquiries.tsx's
+  // GET /inquiries/assigned-to-me already include them) degrades to
+  // "derive nothing" (undefined, not incorrectly false/empty) rather than
+  // every KanbanInquiry consumer being forced to declare fields it might
+  // not need.
   appointment?: unknown
-  sessions?: { id: string }[]
+  sessions?: ProjectStageSession[]
+  projectCompletedAt?: string | null
 }
 
 // A Project (deposit-paid Inquiry) with zero linked Appointments yet --
@@ -42,6 +43,67 @@ export function projectNeedsScheduling(inquiry: {
   sessions?: { id: string }[]
 }): boolean {
   return PROJECT_STATUSES.includes(inquiry.status) && !inquiry.appointment && (inquiry.sessions?.length ?? 0) === 0
+}
+
+// The post-conversion Project journey -- one canonical 5-stage list, so the
+// status pill shown on a Project (list row, Kanban card, detail header) and
+// InquiryDetail.tsx's own Pipeline widget can never drift out of sync with
+// each other. Order matters: PROJECT_STAGE_ORDER's index IS the Pipeline
+// widget's step index (see InquiryDetail.tsx's deriveProjectStageIndex).
+export type ProjectStage = 'NEEDS_SCHEDULING' | 'SCHEDULED' | 'WAIVER_VERIFIED' | 'SESSION_COMPLETE' | 'PROJECT_COMPLETE'
+
+export const PROJECT_STAGE_ORDER: readonly ProjectStage[] = [
+  'NEEDS_SCHEDULING',
+  'SCHEDULED',
+  'WAIVER_VERIFIED',
+  'SESSION_COMPLETE',
+  'PROJECT_COMPLETE',
+]
+
+export const PROJECT_STAGE_LABELS: Record<ProjectStage, string> = {
+  NEEDS_SCHEDULING: 'Needs Scheduling',
+  SCHEDULED: 'Scheduled',
+  WAIVER_VERIFIED: 'Waiver Verified',
+  SESSION_COMPLETE: 'Session Complete',
+  PROJECT_COMPLETE: 'Project Complete',
+}
+
+export interface ProjectStageSession {
+  id: string
+  checkedOutAt?: string | null
+  liabilityWaiver?: { status: string } | null
+}
+
+// Returns which of the 5 stages a Project currently sits at -- the LAST
+// completed milestone, not "the stepper's current goal" (those read
+// differently: showing "Waiver Verified" while the waiver isn't actually
+// verified yet would be a false statement on a pill, even though it's the
+// right thing for a stepper to bold as "what we're working toward next").
+// null for anything that isn't a converted Project at all (a real
+// InquiryStatus pill should be shown instead) -- callers already know this
+// from PROJECT_STATUSES-gated context (the Projects tab, a Project detail
+// page), so this never needs to duplicate that check itself... except it
+// does, defensively, since a stale/mixed list is exactly the kind of bug
+// this whole feature exists to prevent.
+export function deriveProjectStage(inquiry: {
+  status: string
+  projectCompletedAt?: string | null
+  sessions?: ProjectStageSession[]
+}): ProjectStage | null {
+  if (!PROJECT_STATUSES.includes(inquiry.status)) return null
+  if (inquiry.projectCompletedAt) return 'PROJECT_COMPLETE'
+
+  const sessions = inquiry.sessions ?? []
+  if (sessions.length === 0) return 'NEEDS_SCHEDULING'
+
+  // Sessions are already startTime-ascending from the backend -- the
+  // earliest not-yet-checked-out one is "the session currently being
+  // worked toward," same convention InquiryDetail.tsx's own
+  // findCurrentSession uses.
+  const current = sessions.find((session) => !session.checkedOutAt)
+  if (!current) return 'SESSION_COMPLETE'
+  if (current.liabilityWaiver?.status === 'VERIFIED') return 'WAIVER_VERIFIED'
+  return 'SCHEDULED'
 }
 
 export interface KanbanColumn {
