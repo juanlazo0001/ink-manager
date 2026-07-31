@@ -2636,7 +2636,7 @@ export default function InquiryDetail() {
                               type="checkbox"
                               checked={estimateIsFlat}
                               onChange={(e) => setEstimateIsFlat(e.target.checked)}
-                              className="h-4 w-4 rounded border-border bg-surface-inset accent-accent"
+                              className="h-3.5 w-3.5 rounded border-border bg-surface-inset accent-accent"
                             />
                             Flat rate (single price instead of a range)
                           </label>
@@ -4183,7 +4183,7 @@ export default function InquiryDetail() {
                             type="checkbox"
                             checked={reviseIsFlat}
                             onChange={(e) => setReviseIsFlat(e.target.checked)}
-                            className="h-4 w-4 rounded border-border bg-surface-inset accent-accent"
+                            className="h-3.5 w-3.5 rounded border-border bg-surface-inset accent-accent"
                           />
                           Flat rate (single price instead of a range)
                         </label>

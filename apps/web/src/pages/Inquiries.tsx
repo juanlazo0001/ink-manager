@@ -11,7 +11,6 @@ import AppointmentForm from '../components/AppointmentForm'
 import InquiryKanbanBoard from '../components/kanban/InquiryKanbanBoard'
 import { PIPELINE_STEPS } from '../components/InquiryPipeline'
 import {
-  projectNeedsScheduling,
   deriveProjectStage,
   PROJECT_STAGE_ORDER,
   PROJECT_STAGE_LABELS,
@@ -46,9 +45,9 @@ interface Inquiry {
   assignedArtist: { id: string; user: { email: string; name: string | null; avatarUrl: string | null } } | null
   appointment: { startTime: string } | null
   // 1:many "sessions under this project" (Appointment.inquiryId), startTime-
-  // ascending from the backend. Used for projectNeedsScheduling/
-  // deriveProjectStage and to fix the Date column below, which previously
-  // checked only the older, usually-null `appointment` link.
+  // ascending from the backend. Used for deriveProjectStage and to fix the
+  // Date column below, which previously checked only the older, usually-
+  // null `appointment` link.
   sessions: { id: string; startTime: string; checkedOutAt: string | null; liabilityWaiver: { status: string } | null }[]
   // Project pipeline stage -- see deriveProjectStage in lib/kanban.ts.
   projectCompletedAt: string | null
@@ -80,14 +79,6 @@ export const INQUIRIES_TAB_STATUSES = [
   'COLD_LEAD',
 ] as const
 export const PROJECTS_TAB_STATUSES = ['SCHEDULING', 'WAITLISTED', 'CONFIRMED'] as const
-
-// Not a real InquiryStatus -- a synthetic value folded into the Projects
-// tab's own Status filter (previously a separate standalone toggle) so
-// staff have one filter to check instead of two. Filtered client-side
-// (see filteredInquiries below) the same way the old toggle already was,
-// since "needs scheduling" depends on session/appointment data a raw
-// status column can't express on its own.
-const NEEDS_SCHEDULING_FILTER_VALUE = 'NEEDS_SCHEDULING'
 
 // Kanban columns (Package E). Inquiries tab reuses InquiryPipeline's own
 // 5-step grouping (its first four steps -- the fifth, 'Scheduled', belongs
@@ -191,8 +182,9 @@ function loadColumnVisibility(): Record<ColumnKey, boolean> {
 // field, since they're all read/written together.
 interface FilterState {
   inquiryStatusFilter: string[]
-  // Projects tab only -- may include NEEDS_SCHEDULING_FILTER_VALUE
-  // alongside real InquiryStatus values (see that constant's own comment).
+  // Projects tab only -- ProjectStage values (see lib/kanban.ts), not raw
+  // InquiryStatus values. Entirely client-side filtering, same reasoning
+  // Group by Status already documents below.
   projectStatusFilter: string[]
   artistFilter: string[]
   groupByStatus: boolean
@@ -394,27 +386,17 @@ export default function Inquiries() {
 
   const tabStatuses: readonly string[] = activeTab === 'projects' ? PROJECTS_TAB_STATUSES : INQUIRIES_TAB_STATUSES
   const activeStatusFilter = activeTab === 'projects' ? projectStatusFilter : inquiryStatusFilter
-  // NEEDS_SCHEDULING_FILTER_VALUE is only ever present in projectStatusFilter
-  // (Projects tab), never inquiryStatusFilter -- but activeStatusFilter is
-  // whichever of the two is active, so this check is tab-agnostic and
-  // simply never matches on the Inquiries tab.
-  const needsSchedulingSelected = activeStatusFilter.includes(NEEDS_SCHEDULING_FILTER_VALUE)
-  const selectedRealStatuses = activeStatusFilter.filter((status) => status !== NEEDS_SCHEDULING_FILTER_VALUE)
   // Empty selection means "everything this tab shows" -- sent explicitly as
   // the tab's full status list rather than omitted, so the server still
   // scopes to this tab (never the other tab's statuses) with nothing
   // checked. See inquiries.ts's GET / for the server-side counterpart.
-  // When Needs Scheduling is selected, the server fetch always uses the
-  // FULL tab status list regardless of which real statuses are also
-  // checked -- a project needing scheduling could carry any of the three
-  // real statuses, so narrowing the server request by only the checked
-  // ones would silently drop some needs-scheduling rows from the OR below
-  // before they ever reached the client to be filtered back in.
-  const effectiveStatusFilter = needsSchedulingSelected
-    ? tabStatuses
-    : selectedRealStatuses.length > 0
-      ? selectedRealStatuses
-      : tabStatuses
+  // Projects tab's own Status filter selects derived pipeline stages, not
+  // real InquiryStatus values (see the filteredInquiries client-side
+  // filter below), so the server fetch for that tab always requests every
+  // real status it shows -- there's no real-status selection left to
+  // narrow it by.
+  const effectiveStatusFilter =
+    activeTab === 'projects' ? tabStatuses : activeStatusFilter.length > 0 ? activeStatusFilter : tabStatuses
 
   // Package H: sort + status/artist filters + search all moved server-side
   // (GET /inquiries now takes status[]/artistId[]/q/sort query params) --
@@ -454,18 +436,13 @@ export default function Inquiries() {
       : error.message
     : null
 
-  // Client-side post-filter, same reasoning the old standalone toggle
-  // already documented: "needs scheduling" isn't a real status column a
-  // server-side ?status= filter can express. OR semantics against any
-  // selected real statuses too, matching how every other multi-select
-  // filter in this app combines its own checked values.
-  const filteredInquiries = !needsSchedulingSelected
-    ? inquiries
-    : selectedRealStatuses.length === 0
-      ? inquiries?.filter((inquiry) => projectNeedsScheduling(inquiry))
-      : inquiries?.filter(
-          (inquiry) => selectedRealStatuses.includes(inquiry.status) || projectNeedsScheduling(inquiry),
-        )
+  // Client-side post-filter -- a derived pipeline stage isn't a real status
+  // column a server-side ?status= filter can express, same reasoning Group
+  // by Status already uses for this same tab.
+  const filteredInquiries =
+    activeTab === 'projects' && activeStatusFilter.length > 0
+      ? inquiries?.filter((inquiry) => activeStatusFilter.includes(deriveProjectStage(inquiry) ?? ''))
+      : inquiries
 
   // Groups follow the same pipeline order as the tab's own status list, so
   // "New" always appears above "Assigned" above "Closed", etc. -- not
@@ -710,10 +687,7 @@ export default function Inquiries() {
               placeholder="All statuses"
               options={
                 activeTab === 'projects'
-                  ? [
-                      ...tabStatuses.map((status) => ({ value: status, label: formatStatus(status) })),
-                      { value: NEEDS_SCHEDULING_FILTER_VALUE, label: 'Needs Scheduling' },
-                    ]
+                  ? PROJECT_STAGE_ORDER.map((stage) => ({ value: stage, label: PROJECT_STAGE_LABELS[stage] }))
                   : tabStatuses.map((status) => ({ value: status, label: formatStatus(status) }))
               }
               selected={activeTab === 'projects' ? projectStatusFilter : inquiryStatusFilter}

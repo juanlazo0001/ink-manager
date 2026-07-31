@@ -249,14 +249,14 @@ export default function Clients() {
             </button>
           </div>
 
-          {/* No .card-surface here, deliberately -- the client table is
-              dense, information-critical content (same category as
-              Conversations' thread list / Calendar's grid), not a glass-
-              treatment candidate. It had .card-surface applied (likely
-              from an earlier broad template pass, not a deliberate
-              choice) -- removed so it stays fully solid/opaque under
-              Editorial Gold. */}
-          <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+          {/* .card-surface (glass treatment under Editorial Gold) restored
+              here by explicit request, to match the Inquiries & Projects
+              table's own background -- overrides the earlier "dense-data
+              table, no glass" reasoning that had removed it (see git
+              history/REPORT.md for that prior pass' rationale, still true
+              for Conversations' thread list / Calendar's grid, just not
+              applied here anymore). */}
+          <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-5">
             {errorMessage && <p className="text-sm text-danger">{errorMessage}</p>}
 
             {!errorMessage && !isLoading && filteredClients?.length === 0 && (

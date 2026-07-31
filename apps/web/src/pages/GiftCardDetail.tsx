@@ -167,9 +167,12 @@ export default function GiftCardDetail() {
 
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl px-6 py-6 sm:px-10 sm:py-8">
-          <Link to="/clients" className="inline-flex items-center gap-2 text-sm text-fg-secondary hover:text-fg">
+          <Link
+            to={card ? `/clients/${card.client.id}` : '/clients'}
+            className="inline-flex items-center gap-2 text-sm text-fg-secondary hover:text-fg"
+          >
             <ArrowLeftIcon className="h-4 w-4" />
-            Back to Clients
+            Back to {card ? `${card.client.firstName} ${card.client.lastName}` : 'Clients'}
           </Link>
 
           {error && (
