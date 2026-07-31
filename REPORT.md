@@ -5539,3 +5539,45 @@ Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (
 ## Cleanup
 
 Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification script and the temporary Playwright install from the scratch directory. Test data (the new session-1 deposit form, now paid, and its issued gift card, on "LongDesc TestClient") left in the dev database, same convention as prior sessions.
+
+---
+
+# HIGHEST PRIORITY — Real-time update reliability audit and fix
+
+Studio owner reported staleness "across almost everything" -- not a couple of isolated spots. Three-part audit of the WebSocket notify-then-refetch architecture: connection reliability, backend notify-event coverage, frontend invalidation wiring. One commit + push per part.
+
+## Architecture recap (for context on all three parts)
+
+`apps/web/src/context/SocketContext.tsx` is the ONE place any query invalidation happens on the frontend: it listens for a single generic `invalidate` socket event carrying `{ keys: unknown[][] }` and calls `queryClient.invalidateQueries({ queryKey })` for each. No component has its own socket listener. The backend's `apps/api/src/lib/realtime/registry.ts` is the ONE place those `keys` arrays get decided: a small `InvalidationEvent` union type, a `keysFor()` switch mapping each event type to an array of React Query key prefixes, and `emitInvalidation()` which broadcasts to the mutating studio's socket room. Mutation routes call `emitInvalidation({ type: ..., studioId })` after their write succeeds.
+
+This single-registry design means Part 2 (does a mutation call `emitInvalidation` at all) and Part 3 (does the event's `keysFor()` entry cover every query key actually affected) are both really edits to the same two files (`registry.ts` + the mutation routes) -- there's no separate per-component frontend listener code to audit.
+
+---
+
+## PART 1 — Connection reliability audit and fix
+
+### Findings
+
+- `io(API_URL, { auth: { token } })` had no explicit reconnection config -- relying entirely on socket.io-client's undocumented-in-this-codebase defaults.
+- **The critical gap**: nothing in this app ever recovers from a connection drop's BLIND SPOT. `apps/web/src/lib/queryClient.ts` sets `refetchOnWindowFocus: false` *by design*, to lean on the WebSocket push architecture instead of double-fetching against it -- but Socket.IO does **not** queue `invalidate` events for a client that's disconnected (no `connectionStateRecovery` configured server-side). So every `invalidate` event broadcast during ANY connection gap -- a brief wifi blip, a backgrounded tab throttled past the server's ping timeout, a laptop sleep/wake -- was silently and **permanently** lost. The client would reconnect, but its cache would just stay stale until some unrelated later event happened to touch the same query key. Given how many hours a staff tab plausibly sits open/backgrounded in a real work day, this is almost certainly the dominant cause of "staleness across almost everything" -- bigger than any single missing notify-emit call site (Part 2), because it silently defeats EVERY notify event emitted during EVERY gap, compounding over the day.
+- No user-visible indicator existed anywhere for connection state -- `useSocket()`'s `onlineUserIds` (presence) was consumed in 3 places, but `socket` itself was never inspected for connected/disconnected state by any component. Staff had no way to know a live connection had dropped, and thus no reason to manually refresh either -- exactly the compounding effect the task brief called out.
+
+### Fixes
+
+- **`apps/web/src/context/SocketContext.tsx`**: explicit `reconnection: true, reconnectionAttempts: Infinity, reconnectionDelay: 1000, reconnectionDelayMax: 10000, randomizationFactor: 0.5`.
+- **The actual fix for the blind spot**: track whether this socket has ever connected before (a closure flag, reset per new socket instance). On every `connect` event AFTER the first one -- i.e. every reconnect -- call a bare `queryClient.invalidateQueries()` (no key filter, invalidates every active query). This is deliberately a full flush, not a targeted one: there's no way to know which specific events were missed during a gap, so the only correct catch-up is "refetch everything that's currently on screen."
+- Proactive reconnect: a `visibilitychange` listener calls `socket.connect()` immediately when a tab becomes visible again and the socket is currently disconnected (browsers can throttle a backgrounded tab's timers well past socket.io's own backoff schedule), and a `window.online` listener does the same for a real network transition. Both just nudge socket.io to retry sooner -- the reconnect logic itself is unchanged.
+- **New**: `apps/web/src/context/socket-context.ts` gained a `ConnectionStatus = 'connecting' | 'connected' | 'disconnected'` field on the shared context value, set from `connect`/`disconnect`/`reconnect_attempt` socket events.
+- **New**: `apps/web/src/components/ConnectionStatusIndicator.tsx` -- renders nothing while connected (the common case stays visually silent), and a small amber "Reconnecting…" pill in `TopBar.tsx`'s icon cluster (visible on every authenticated page) otherwise, with a tooltip explaining live updates are paused.
+
+### Verification (live, not just code review)
+
+Chrome's own network-condition emulation (`context.setOffline` via Playwright/CDP) turned out not to affect already-established `localhost` WebSocket connections in this environment (a known Chrome loopback-bypass quirk, not an app bug) -- so a deterministic alternative was used instead: a tiny local TCP proxy (`browser -> :4094 -> :4093 real API`) that can be killed/restarted instantly, decoupling "is the browser's connection alive" from "is the real API available," which also let a mutation be fired directly at the real API (bypassing the dead proxy) with no race condition.
+
+Live sequence, via Playwright against the real dev stack: opened the "LongDesc TestClient" project detail page (showing "Assigned Artist: Dev Artist One"), killed the proxy -- confirmed the browser's WebSocket connection closed within ~4 seconds and the new "Reconnecting…" pill appeared (screenshot) -- reassigned the project to a different artist via a direct API call to the real backend (200 OK) while the browser's socket was fully down -- restarted the proxy -- confirmed, within ~6 seconds and with **zero manual page interaction**, that a new WebSocket connection formed, the "Reconnecting…" pill disappeared, and the page now showed "Assigned Artist: Dev Artist Two" (screenshot) -- the exact change made while disconnected, recovered purely by the reconnect catch-up invalidate.
+
+Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (web) clean.
+
+### Commit
+
+`8277dc2`
