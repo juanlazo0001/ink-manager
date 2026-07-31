@@ -5662,3 +5662,52 @@ Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) clean.
 ### Commit
 
 `378434f`
+
+---
+
+## PART 3 — Frontend invalidation wiring audit
+
+Given this app's architecture, "does the frontend listen for the right query key" reduces almost entirely to "does `registry.ts`'s `keysFor()` return the right keys" -- there is no separate per-component socket listener anywhere (see the architecture recap at the top of this report). So Part 3's real work was: for every event type, cross-check `keysFor()`'s returned prefixes against the ACTUAL query keys `apps/web/src` uses today, not just the ones a route's own author assumed existed.
+
+### The critical bug this audit was built to catch
+
+`inquiry.updated`/`inquiry.created` only ever invalidated `["inquiries"]` -- the LIST page's own key (`inquiriesQueryKey`, `['inquiries', studioId]`). `InquiryDetail.tsx`'s own single-project fetch uses `inquiryQueryKey(id)` = `['inquiry', id]` -- a **different first array element**, so React Query's prefix-match invalidation never touched it, regardless of which of the ~20 routes emitted the event. **Live-reproduced during Part 1's own reconnect test** (see that section): reassigning a project's artist while its detail page was open never updated it for anyone, connected or not -- only the separate list page ever reflected the change.
+
+**Fix**: `inquiry.updated` gained an optional `inquiryId` field; when present, `keysFor()` also returns `["inquiry", inquiryId]`. Threaded through all ~20 emit call sites across `inquiries.ts` (bulk-replaced, since virtually every route already has the mutated inquiry's `id` in scope from `req.params.id` -- verified safe by a clean `tsc --noEmit` immediately after, which would have failed loudly on any route where `id` wasn't actually in scope), plus `deposits.ts` (via `depositForm.inquiryId`), `waivers.ts` (via `waiver.appointment.inquiryId`, required adding `include: { appointment: { select: { inquiryId: true } } }` to two queries that didn't previously fetch it), `conversations.ts`'s `attach-image` route, and `webhooks.ts`'s Stripe deposit-paid path. Left un-threaded (list-level only, correctly): `clients.ts`'s client-delete route, which cascades through however many inquiries that client had -- there's no single "the" inquiry to target there.
+
+### Second gap found the same way: `conversation-context`
+
+`ConversationsPanel.tsx` has a `['conversation-context', conversationId]` query (the panel showing which entities -- Inquiry/Appointment/GiftCard/DepositForm/Waiver -- are tagged to a thread) that was never in `conversation.updated`'s key list, despite Part 2's own tag-add/remove fixes emitting that exact event. Added.
+
+### What was deliberately NOT done, and why
+
+The two research agents' Part 2 reports (see that section) surfaced a bigger, separate problem: `AppointmentDetail.tsx`, `ClientDetail.tsx`, `ArtistDetail.tsx`, and the relevant parts of `Team.tsx` don't use TanStack Query for their own primary data at all -- they fetch via a bespoke `useEffect` + `apiFetch` + `useState`. **No invalidation mechanism, WebSocket-driven or otherwise, can ever refresh a query that was never registered as a query.** This is a real, load-bearing finding, not an oversight -- migrating four separate, actively-used pages (each 400-700+ lines, each with several of its own local post-mutation `invalidateQueries`/`setState` calls to carefully preserve) to `useQuery` is a substantial, separable body of work with its own real regression risk if rushed. It was scoped out of this session and is flagged here as the clear, concrete next step: convert each page's primary fetch to `useQuery` with a real key (`['appointment', id]`, `['client', id]`, `['artist', id]`, `['team-users', studioId]`, `['team-invites', studioId]` -- names already chosen and reserved in `registry.ts`'s `keysFor()` for `client.updated`/`artist.changed`/`team.changed` specifically so this migration needs zero further backend changes when it happens).
+
+This means `appointment.changed`, `client.updated`'s entity-specific key, `artist.changed`'s entity-specific key, and `team.changed`/`locations.changed`/`service.changed`/`customPolicy.changed` are all backend-correct and already broadcasting today, but currently only effective at the LIST level (`["appointments"]`, `["clients"]`, `["artists"]`, etc.) until that migration lands -- not a silent gap, a documented, deliberate boundary.
+
+### Live verification (two independent, separately-authenticated browser sessions, real dev stack, zero manual reload anywhere)
+
+All four scenarios named explicitly in the task brief, tested with Session A (Owner) and Session B (Front Desk) logged in as genuinely different users in separate Playwright browser contexts:
+
+1. **Reassignment**: both sessions open the same project detail page. Session A reassigns the artist via the real UI (Assignment widget). Session B's page updates to show the new artist within ~2.5s, no reload -- direct proof the `inquiryId`-threading fix works.
+2. **Deposits**: with both sessions still on that same page, the client signs a second session's deposit form via the real public sign route (simulating their phone). Both sessions' Deposit widgets update from "Awaiting signature" to "Signed, awaiting payment" live.
+3. **Task changes**: both sessions open `/tasks`. Owner creates a personal task assigned TO Front Desk. It appears on Front Desk's Tasks page within ~2.5s, no reload.
+4. **Messages**: both sessions deep-link directly into the same staff-to-staff conversation thread (`/conversations/:id`). Owner sends a message through the real composer (actual send button click, not a keyboard shortcut). It appears in Front Desk's already-open thread live, no reload.
+
+Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) clean throughout.
+
+### Commit
+
+`ac1a17c`
+
+---
+
+## Final summary
+
+Three commits (code) + three REPORT.md entries, one per part:
+
+1. **Connection reliability** -- `8277dc2` / `f60d6a8`. Fixed the reconnection blind spot (any connection gap silently and permanently lost every event broadcast during it -- likely the single biggest driver of "stale everywhere," since it defeats every fix in Part 2 during any drop); added explicit reconnection config, proactive reconnect on tab-visible/online, and a subtle "Reconnecting..." indicator.
+2. **Backend notify-event coverage** -- `378434f` / `4c35b4b`. Full route-by-route audit; closed ~70 individual silent-mutation gaps across nearly every domain, headlined by two systemic fixes (the shared SMS-send helper, the inbound SMS/email webhooks) that each closed many call sites at once. New `InvalidationEvent` types for client/gift-card/artist/team/location/service/policy/intake-form/integration changes.
+3. **Frontend invalidation wiring** -- `ac1a17c`. Found and fixed the specific mechanism by which Part 2's own `inquiry.updated` emissions (and everything downstream of them) were failing to reach the single most-used page in the app, `InquiryDetail.tsx` -- a live-reproduced, now-fixed bug. Documented the deeper "four pages aren't wired into React Query at all" finding as the clear next step rather than rushing a risky mass migration.
+
+All three parts verified live against the real dev stack (Playwright, two genuinely separate browser sessions/logins for the final pass), not just by reading code. Every commit passed both typechecks before landing. Dev servers killed by exact PID; every scratch script and Playwright install deleted from the scratch directory after use.
