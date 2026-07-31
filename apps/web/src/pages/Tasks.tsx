@@ -10,10 +10,11 @@ import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useUserProfile } from '../context/useUserProfile'
 import { useViewAs } from '../context/useViewAs'
 import { tasksQueryKey } from '../lib/queryKeys'
-import { PlusIcon, CloseIcon, CheckIcon } from '../components/icons'
+import { PlusIcon, CloseIcon, CheckIcon, FilterIcon, SortIcon } from '../components/icons'
 import DatePickerField from '../components/DatePickerField'
 import { useThemePreset } from '../lib/useThemePreset'
 import Eyebrow from '../components/Eyebrow'
+import PillMenu from '../components/PillMenu'
 
 interface SystemTask {
   type: string
@@ -87,6 +88,52 @@ function groupByType(tasks: SystemTask[]): [string, SystemTask[]][] {
 
 const EMPTY_FORM = { title: '', dueAt: '', assigneeUserId: '' }
 
+// "Assigned to Me" filter/sort dimensions -- derived entirely from data
+// already on PersonalTask (dueAt, completedAt, createdBy), no schema
+// change. "mine"/"others" mirror the section's own existing static
+// My-tasks/Assigned-by-others split; "overdue" is new (a real past-due
+// dueAt, on a task that isn't done yet).
+const ASSIGNED_TO_ME_FILTER_OPTIONS = [
+  { value: 'all', label: 'All' },
+  { value: 'mine', label: 'My tasks' },
+  { value: 'others', label: 'Assigned by others' },
+  { value: 'overdue', label: 'Overdue' },
+] as const
+type AssignedToMeFilter = (typeof ASSIGNED_TO_ME_FILTER_OPTIONS)[number]['value']
+
+const ASSIGNED_TO_ME_SORT_OPTIONS = [
+  { value: 'recent', label: 'Recently added' },
+  { value: 'due-soonest', label: 'Due soonest' },
+  { value: 'name', label: 'A–Z' },
+] as const
+type AssignedToMeSort = (typeof ASSIGNED_TO_ME_SORT_OPTIONS)[number]['value']
+
+function isOverdue(task: { dueAt: string | null; completedAt: string | null }): boolean {
+  return !!task.dueAt && !task.completedAt && new Date(task.dueAt) < new Date()
+}
+
+function sortPersonalTasks<T extends { title: string; dueAt: string | null; createdAt: string }>(
+  tasks: T[],
+  sort: AssignedToMeSort,
+): T[] {
+  const sorted = [...tasks]
+  if (sort === 'name') {
+    sorted.sort((a, b) => a.title.localeCompare(b.title))
+  } else if (sort === 'due-soonest') {
+    // No due date sorts last, not first -- an undated task isn't "due
+    // sooner" than a dated one.
+    sorted.sort((a, b) => {
+      if (!a.dueAt && !b.dueAt) return 0
+      if (!a.dueAt) return 1
+      if (!b.dueAt) return -1
+      return new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime()
+    })
+  } else {
+    sorted.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+  }
+  return sorted
+}
+
 export default function Tasks() {
   const user = useEffectiveUser()
   const { shape } = useThemePreset()
@@ -102,6 +149,12 @@ export default function Tasks() {
 
   const [showCompleted, setShowCompleted] = useState(false)
   const [showCompletedAssignedByMe, setShowCompletedAssignedByMe] = useState(false)
+  // Studio Queue's own filter: by task type, since that's the one
+  // dimension already visually grouped there -- narrows down to a single
+  // type's group instead of scrolling past every other type.
+  const [queueTypeFilter, setQueueTypeFilter] = useState('')
+  const [assignedToMeFilter, setAssignedToMeFilter] = useState<AssignedToMeFilter>('all')
+  const [assignedToMeSort, setAssignedToMeSort] = useState<AssignedToMeSort>('recent')
   const [form, setForm] = useState(EMPTY_FORM)
   const [formError, setFormError] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -259,13 +312,33 @@ export default function Tasks() {
   }
 
   const systemGroups = data ? groupByType(data.system) : []
+  const visibleSystemGroups = queueTypeFilter
+    ? systemGroups.filter(([type]) => type === queueTypeFilter)
+    : systemGroups
+  const queueTypeFilterOptions = [
+    { value: '', label: 'All types' },
+    ...systemGroups.map(([type]) => ({ value: type, label: TASK_TYPE_LABELS[type] ?? type })),
+  ]
+
   const incompletePersonal = data?.personal.filter((t) => !t.completedAt) ?? []
   const completedPersonal = data?.personal.filter((t) => t.completedAt) ?? []
   // "Assigned to Me" groups into what's actually mine to plan vs. what
   // someone else handed me -- same flat list from the API, split client-
-  // side purely on who created each row.
+  // side purely on who created each row. assignedToMeFilter narrows either
+  // group down further (or empties the other one out for "mine"/"others");
+  // assignedToMeSort applies within whichever groups remain visible.
   const myOwnIncomplete = incompletePersonal.filter((t) => t.createdBy?.id === user?.userId)
   const assignedByOthersIncomplete = incompletePersonal.filter((t) => t.createdBy?.id !== user?.userId)
+
+  function applyAssignedToMeFilter(tasks: PersonalTask[]): PersonalTask[] {
+    return assignedToMeFilter === 'overdue' ? tasks.filter(isOverdue) : tasks
+  }
+  const visibleMyOwnIncomplete =
+    assignedToMeFilter === 'others' ? [] : sortPersonalTasks(applyAssignedToMeFilter(myOwnIncomplete), assignedToMeSort)
+  const visibleAssignedByOthersIncomplete =
+    assignedToMeFilter === 'mine' ? [] : sortPersonalTasks(applyAssignedToMeFilter(assignedByOthersIncomplete), assignedToMeSort)
+  const assignedToMeFilterHidAllTasks =
+    incompletePersonal.length > 0 && visibleMyOwnIncomplete.length === 0 && visibleAssignedByOthersIncomplete.length === 0
 
   const assignedByMe = data?.assignedByMe ?? []
   const incompleteAssignedByMe = assignedByMe.filter((t) => !t.completedAt)
@@ -300,16 +373,35 @@ export default function Tasks() {
               // grid / the Clients & Team tables), not a glass-treatment
               // candidate. Removed the marker that was here.
               <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <h2 className={isEditorial ? 'sc text-[20px]' : 'text-base font-semibold text-fg'}>Studio Queue</h2>
-                <p className="mt-1 text-sm text-fg-secondary">
-                  Shared and unassigned -- anyone can act on an item; it disappears once resolved.
-                </p>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h2 className={isEditorial ? 'sc text-[20px]' : 'text-base font-semibold text-fg'}>Studio Queue</h2>
+                    <p className="mt-1 text-sm text-fg-secondary">
+                      Shared and unassigned -- anyone can act on an item; it disappears once resolved.
+                    </p>
+                  </div>
+                  {systemGroups.length > 1 && (
+                    <PillMenu
+                      label="Filter"
+                      icon={<FilterIcon className="h-3.5 w-3.5" />}
+                      value={queueTypeFilter}
+                      options={queueTypeFilterOptions}
+                      onChange={setQueueTypeFilter}
+                      isEditorial={isEditorial}
+                      active={queueTypeFilter !== ''}
+                    />
+                  )}
+                </div>
 
                 {data.system.length === 0 && (
                   <p className="mt-4 text-sm text-fg-secondary">Nothing needs attention right now.</p>
                 )}
 
-                {systemGroups.map(([type, tasks]) => (
+                {data.system.length > 0 && visibleSystemGroups.length === 0 && (
+                  <p className="mt-4 text-sm text-fg-secondary">No tasks match this filter.</p>
+                )}
+
+                {visibleSystemGroups.map(([type, tasks]) => (
                   <div key={type} className="mt-4">
                     <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
                       {TASK_TYPE_LABELS[type] ?? type}
@@ -356,7 +448,30 @@ export default function Tasks() {
               )}
 
               <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-                <h2 className={isEditorial ? 'sc text-[20px]' : 'text-base font-semibold text-fg'}>Assigned to Me</h2>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h2 className={isEditorial ? 'sc text-[20px]' : 'text-base font-semibold text-fg'}>Assigned to Me</h2>
+                  {incompletePersonal.length > 0 && (
+                    <div className="flex items-center gap-1.5">
+                      <PillMenu
+                        label="Filter"
+                        icon={<FilterIcon className="h-3.5 w-3.5" />}
+                        value={assignedToMeFilter}
+                        options={ASSIGNED_TO_ME_FILTER_OPTIONS}
+                        onChange={setAssignedToMeFilter}
+                        isEditorial={isEditorial}
+                        active={assignedToMeFilter !== 'all'}
+                      />
+                      <PillMenu
+                        label="Sort"
+                        icon={<SortIcon className="h-3.5 w-3.5" />}
+                        value={assignedToMeSort}
+                        options={ASSIGNED_TO_ME_SORT_OPTIONS}
+                        onChange={setAssignedToMeSort}
+                        isEditorial={isEditorial}
+                      />
+                    </div>
+                  )}
+                </div>
 
                 <form onSubmit={handleAddTask} className="mt-4 flex flex-wrap gap-2">
                   <input
@@ -412,22 +527,26 @@ export default function Tasks() {
                   <p className="mt-4 text-sm text-fg-secondary">No personal tasks yet — add one above.</p>
                 )}
 
-                {myOwnIncomplete.length > 0 && (
+                {assignedToMeFilterHidAllTasks && (
+                  <p className="mt-4 text-sm text-fg-secondary">No tasks match this filter.</p>
+                )}
+
+                {visibleMyOwnIncomplete.length > 0 && (
                   <div className="mt-4">
-                    {assignedByOthersIncomplete.length > 0 && (
+                    {visibleAssignedByOthersIncomplete.length > 0 && (
                       <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">My tasks</p>
                     )}
-                    <ul className={assignedByOthersIncomplete.length > 0 ? 'mt-2 space-y-2' : 'space-y-2'}>
-                      <AnimatePresence initial={false}>{myOwnIncomplete.map(renderPersonalTaskItem)}</AnimatePresence>
+                    <ul className={visibleAssignedByOthersIncomplete.length > 0 ? 'mt-2 space-y-2' : 'space-y-2'}>
+                      <AnimatePresence initial={false}>{visibleMyOwnIncomplete.map(renderPersonalTaskItem)}</AnimatePresence>
                     </ul>
                   </div>
                 )}
 
-                {assignedByOthersIncomplete.length > 0 && (
+                {visibleAssignedByOthersIncomplete.length > 0 && (
                   <div className="mt-4">
                     <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Assigned by others</p>
                     <ul className="mt-2 space-y-2">
-                      <AnimatePresence initial={false}>{assignedByOthersIncomplete.map(renderPersonalTaskItem)}</AnimatePresence>
+                      <AnimatePresence initial={false}>{visibleAssignedByOthersIncomplete.map(renderPersonalTaskItem)}</AnimatePresence>
                     </ul>
                   </div>
                 )}
