@@ -5810,3 +5810,38 @@ A single already-locked session (deposit paid or appointment booked) revising th
 ## Cleanup
 
 Playwright and Chromium were installed ad hoc into the scratch directory (not a project dependency) and deleted afterward along with every driver script and screenshot. Killed the two scratch dev servers used for this session (api `:4050`, web `:5230`). Left the test data created during verification (the "Range Test" seeded inquiry's estimate now reads $777 flat, `showDurationToClient: true` after the final toggle-back-on test) in the dev database, consistent with this project's standing convention.
+
+---
+
+# Three follow-up fixes: checkbox sizing, gift card back-link, Projects status filter
+
+## 1. Flat rate / Show duration checkbox sizing (session count 1)
+
+The single-session (no plan) "Flat rate" checkbox used `h-4 w-4`; the "Show this session's hour range" checkbox beneath it used `h-3.5 w-3.5`, so the two visibly mismatched. The per-session breakdown editor (`SessionBreakdownEditor.tsx`, used once a real multi-session plan exists) already uses `h-3.5 w-3.5` for both of its own equivalent checkboxes -- the single-session path just hadn't matched that precedent. Changed both `estimateIsFlat`/`reviseIsFlat` checkboxes in `apps/web/src/pages/InquiryDetail.tsx` to `h-3.5 w-3.5`.
+
+## 2. GiftCardDetail back button
+
+Hardcoded `to="/clients"` / "Back to Clients" regardless of how the page was reached -- clicking through from a specific client's own gift card lost that context, forcing a re-search. `GiftCardDetail.tsx` already fetches `card.client.id`/`firstName`/`lastName`; the back link now points at `/clients/${card.client.id}` with the label "Back to {name}" once the card has loaded, falling back to the generic "Back to Clients" while still loading -- same pattern `AppointmentDetail.tsx`'s own back link already uses for "Back to Project" vs "Back to Calendar". Checked for the same bug pattern elsewhere (`grep` for "Back to Clients") -- no other instance; `ClientDetail.tsx`'s own back-to-list link is correct as-is (it IS the list's own direct child), and `ClientImport.tsx` has no client context to preserve.
+
+## 3. Projects tab Status filter: pipeline stages instead of raw status
+
+Follow-up to last session's fix, which folded "Needs Scheduling" into the existing Status filter alongside the three raw `InquiryStatus` values (SCHEDULING/WAITLISTED/CONFIRMED). The user asked for the filter to be the full 5-stage pipeline taxonomy instead (Needs Scheduling/Scheduled/Waiver Verified/Session Complete/Project Complete) -- the same one the status pill and Group by Status already use, so all three (pill, grouping, filter) now share one consistent taxonomy on this tab.
+
+- `apps/web/src/pages/Inquiries.tsx`: Status filter options for the Projects tab now come straight from `PROJECT_STAGE_ORDER`/`PROJECT_STAGE_LABELS` (`lib/kanban.ts`) instead of `PROJECTS_TAB_STATUSES`. Since no derived stage is a real `InquiryStatus` a server-side `?status=` filter can express, filtering is now entirely client-side for this tab (`effectiveStatusFilter` always requests the tab's full real-status set from the server; `filteredInquiries` narrows by `deriveProjectStage(inquiry)` afterward) -- the same approach Group by Status was already using.
+- Removed the now-unnecessary `NEEDS_SCHEDULING_FILTER_VALUE` synthetic-value plumbing (the OR-semantics logic for mixing a synthetic value with real statuses) and the now-unused `projectNeedsScheduling` import, since every filter option is a derived stage now, not a mix.
+- The Kanban board's own columns (`PROJECT_TAB_COLUMNS`, still raw-status-keyed, driving drag-and-drop transitions) are unaffected -- this change is scoped to the List view's Status filter control, not the board's column/transition model, which is a genuinely different concern (a card's real status, not its derived display stage).
+
+Net effect: staff can no longer filter the Projects list specifically by the raw WAITLISTED status through this dropdown (that distinction is now fully absorbed into the derived-stage system, same as the status pill already treats it) -- the Kanban board is still the place to see WAITLISTED specifically, as its own column.
+
+## Verification
+
+Live against the real dev stack:
+- Confirmed the Status filter dropdown on the Projects tab shows exactly the 5 stage labels and nothing else (screenshot).
+- Selected "Needs Scheduling" and confirmed the list narrowed to exactly 6 rows, every one tagged "Needs Scheduling" -- matching the count already shown by Group by Status for the same stage.
+- GiftCardDetail/checkbox fixes reviewed against the exact same established patterns already used elsewhere in the codebase (AppointmentDetail's conditional back-link, SessionBreakdownEditor's checkbox sizing) rather than invented fresh, so no new visual/behavioral pattern was introduced.
+
+Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (web) clean.
+
+## Commit
+
+`db8a8e6`
