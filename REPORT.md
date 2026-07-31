@@ -5389,3 +5389,19 @@ Both typechecks clean.
 ## Cleanup
 
 Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID -- one leftover stale API process was still bound to port 4093 from an earlier session in this same conversation and had to be killed first. Deleted every ad-hoc verification script and screenshot from the scratch directory.
+
+---
+
+# Verify Dashboard Needs Scheduling count still matches (found + fixed a real gap)
+
+Requested verification after the project-stage pill refactor (`2e97c16`): confirmed live that the Dashboard's `needsSchedulingCount`, the Projects list/Kanban filter, and the number of rows whose pill reads "Needs Scheduling" all agree.
+
+Along the way, found a genuine (if currently dormant) inconsistency: `deriveProjectStage`'s NEEDS_SCHEDULING check only looked at `sessions.length === 0`, inherited unchanged from `InquiryDetail.tsx`'s original `deriveProjectStageIndex` -- but `projectNeedsScheduling` (and the Dashboard's own count query) additionally require `appointmentId` to be null, checking both the older 1:1 link and the newer 1:many one. Confirmed directly against the dev database that zero projects currently hit the gap between these two definitions (the real `POST /:id/schedule` route always sets both together), but they were never actually the same definition -- exactly the kind of drift the single-source-of-truth refactor was meant to prevent. Added the same `!appointment` check to `deriveProjectStage`.
+
+Verified live: Dashboard card, filter, and unfiltered-list pill count all now read **5 of 16** -- an exact three-way match.
+
+Both typechecks clean.
+
+**Commit**: `75ad8e7`.
+
+Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification script and the temporary Playwright install from the scratch directory.
