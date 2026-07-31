@@ -3,7 +3,7 @@ import { prisma } from "../lib/prisma";
 import { requireAuth } from "../middleware/auth";
 import { requirePermission } from "../lib/permissions";
 import { Role } from "../../generated/prisma/enums";
-import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
+import { DEFAULT_THEME_PRESET, THEME_PRESET_ACCENT_COLORS, isValidThemePreset } from "../lib/themePresets";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { issueGiftCardForPaidDeposit } from "../lib/deposits";
 import { getChargeableConnectedAccountId } from "../lib/stripeConnect";
@@ -360,7 +360,7 @@ staffRouter.get("/:id/pdf", requireAuth, requirePermission("inquiries.view"), as
       inquiry: {
         include: {
           client: { select: { firstName: true, lastName: true } },
-          studio: { select: { name: true } },
+          studio: { select: { name: true, logoUrl: true, settings: { select: { themePreset: true } } } },
           service: { select: { name: true } },
         },
       },
@@ -383,8 +383,11 @@ staffRouter.get("/:id/pdf", requireAuth, requirePermission("inquiries.view"), as
   }
 
   const { inquiry } = depositForm;
+  const themePreset = inquiry.studio.settings?.themePreset;
   const pdf = await generateDepositFormPdf({
     studioName: inquiry.studio.name,
+    studioLogoUrl: inquiry.studio.logoUrl,
+    accentColor: THEME_PRESET_ACCENT_COLORS[isValidThemePreset(themePreset) ? themePreset : DEFAULT_THEME_PRESET],
     clientName: `${inquiry.client.firstName} ${inquiry.client.lastName}`,
     inquiryTitle: `${inquiry.service.name} — ${inquiry.placement}`,
     sessionNumber: depositForm.sessionNumber,

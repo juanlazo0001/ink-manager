@@ -7,7 +7,7 @@ import { requirePermission } from "../lib/permissions";
 import { logAudit } from "../lib/audit";
 import { isAtLeast18, validateClauseInitials, validateHealthAnswers } from "../lib/waivers";
 import { normalizePhone } from "../lib/phone";
-import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
+import { DEFAULT_THEME_PRESET, THEME_PRESET_ACCENT_COLORS, isValidThemePreset } from "../lib/themePresets";
 import { shortenUrl } from "../lib/shortLinks";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { generateWaiverPdf } from "../lib/pdf";
@@ -292,7 +292,7 @@ staffRouter.get("/:id/pdf", requirePermission("waivers.viewStatus"), async (req,
     include: {
       client: { select: { firstName: true, lastName: true } },
       appointment: { select: { startTime: true } },
-      studio: { select: { name: true } },
+      studio: { select: { name: true, logoUrl: true, settings: { select: { themePreset: true } } } },
       verifiedBy: { select: { name: true } },
     },
   });
@@ -305,8 +305,12 @@ staffRouter.get("/:id/pdf", requirePermission("waivers.viewStatus"), async (req,
     return res.status(400).json({ error: "This waiver has not been signed yet" });
   }
 
+  const waiverThemePreset = waiver.studio.settings?.themePreset;
   const pdf = await generateWaiverPdf({
     studioName: waiver.studio.name,
+    studioLogoUrl: waiver.studio.logoUrl,
+    accentColor:
+      THEME_PRESET_ACCENT_COLORS[isValidThemePreset(waiverThemePreset) ? waiverThemePreset : DEFAULT_THEME_PRESET],
     clientName: `${waiver.client.firstName} ${waiver.client.lastName}`,
     appointmentDate: waiver.appointment.startTime,
     legalName: waiver.legalName,
