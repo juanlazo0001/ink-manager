@@ -88,13 +88,20 @@ export interface ProjectStageSession {
 export function deriveProjectStage(inquiry: {
   status: string
   projectCompletedAt?: string | null
+  appointment?: unknown
   sessions?: ProjectStageSession[]
 }): ProjectStage | null {
   if (!PROJECT_STATUSES.includes(inquiry.status)) return null
   if (inquiry.projectCompletedAt) return 'PROJECT_COMPLETE'
 
   const sessions = inquiry.sessions ?? []
-  if (sessions.length === 0) return 'NEEDS_SCHEDULING'
+  // Same OR as projectNeedsScheduling/the Dashboard's own count query
+  // (GET /reports/dashboard) -- checks both the older 1:1 `appointment`
+  // link and the newer 1:many `sessions` link, so this agrees with every
+  // other "needs scheduling" definition in the app instead of being a
+  // narrower one that only happens to match while no project's data hits
+  // the gap between them.
+  if (sessions.length === 0 && !inquiry.appointment) return 'NEEDS_SCHEDULING'
 
   // Sessions are already startTime-ascending from the backend -- the
   // earliest not-yet-checked-out one is "the session currently being
