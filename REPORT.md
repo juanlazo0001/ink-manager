@@ -5711,3 +5711,55 @@ Three commits (code) + three REPORT.md entries, one per part:
 3. **Frontend invalidation wiring** -- `ac1a17c`. Found and fixed the specific mechanism by which Part 2's own `inquiry.updated` emissions (and everything downstream of them) were failing to reach the single most-used page in the app, `InquiryDetail.tsx` -- a live-reproduced, now-fixed bug. Documented the deeper "four pages aren't wired into React Query at all" finding as the clear next step rather than rushing a risky mass migration.
 
 All three parts verified live against the real dev stack (Playwright, two genuinely separate browser sessions/logins for the final pass), not just by reading code. Every commit passed both typechecks before landing. Dev servers killed by exact PID; every scratch script and Playwright install deleted from the scratch directory after use.
+
+---
+
+# Clients/Projects UI fixes: filtering, columns, spacing, Kanban scroll, search, grouping
+
+Seven-item batch across the Clients and Inquiries/Projects pages, plus the global search bar.
+
+## 1-2. Clients page: activity filtering + Last Modified column
+
+Clarified scope first: Client has no status field the way a Project does (just name/email/phone/archivedAt), and the user's own example ("filter by clients with active appointments") pointed at activity-based filtering, not a status taxonomy.
+
+- **`apps/api/src/routes/clients.ts` `GET /`**: new `?activity=` (repeatable: `upcoming_appointment`, `active_project`, `no_activity`) and `?includeArchived=true` query params. Multi-select OR semantics, matching every other filter in this app -- checking both "Has upcoming appointment" and "Has active project" means either, not both at once. `active_project` reuses the Projects tab's own three statuses (SCHEDULING/WAITLISTED/CONFIRMED, hand-duplicated the same way every other cross-file enum-value list in this codebase already is, since there's no shared package between apps/api and apps/web).
+- **`apps/web/src/pages/Clients.tsx`**: new Activity `MultiSelectFilter` and a "Show archived" toggle (same visual pattern as the Inquiries page's own filters), filter state persisted to localStorage the same way Inquiries.tsx's own filter/sort selections already are. New "Last Modified" column (`client.updatedAt`, hidden below `lg` same as the other secondary columns) -- the field was already returned by the API (no `select` narrowing existed), so this was frontend-only.
+
+## 3 & 7. Group by Status spacing + fixing "Group by Status isn't working" in Projects
+
+These turned out to be the same root cause. The Projects tab's status pill (every row, via `deriveProjectStage`) shows one of 5 derived pipeline stages (Needs Scheduling/Scheduled/Waiver Verified/Session Complete/Project Complete) -- SCHEDULING/WAITLISTED/CONFIRMED all collapse into these, by design, from earlier work this session. "Group by status" was still grouping by the RAW `InquiryStatus` (producing headers like "Scheduling (5)", "Confirmed (12)"), which had nothing to do with the derived-stage pill shown on any row inside those groups -- exactly the "doesn't seem to be working" experience reported.
+
+- **`apps/web/src/pages/Inquiries.tsx`**: Projects tab's grouping now uses `deriveProjectStage`/`PROJECT_STAGE_ORDER`/`PROJECT_STAGE_LABELS` (the same taxonomy the pill already uses) instead of raw status; group headers now genuinely match every row inside them. Inquiries tab's grouping (which has no derived-stage concept) is unchanged.
+- Added visible spacing between groups: each group renders as its own `<tbody>` (unchanged), with a separate spacer `<tbody>` (no border, just a blank row) between them -- avoided giving the header row a stray top border from Tailwind's `divide-y`, which sharing one `<tbody>` with a spacer row would have caused.
+
+## 4. Folded "Needs Scheduling" into the main Status filter (Projects tab)
+
+Previously a separate standalone toggle button, ANDed against whatever the Status filter already selected. Removed it; "Needs Scheduling" is now a selectable option inside the Status `MultiSelectFilter` itself (a synthetic value, `NEEDS_SCHEDULING_FILTER_VALUE` -- not a real `InquiryStatus`, since "needs scheduling" depends on session/appointment data no status column can express alone).
+
+Implemented with real OR semantics against the other selected statuses (matching how every other multi-select in this app combines its own checked values), which needed a bit of care: when "Needs Scheduling" is selected, the server fetch always requests the Projects tab's FULL status list regardless of which real statuses are also checked (a project needing scheduling could carry any of the three), then the client-side post-filter unions the selected real statuses with `projectNeedsScheduling()` -- narrowing the server request to only the checked real statuses would have silently dropped needs-scheduling rows whose actual status wasn't one of them.
+
+## 5. Kanban board horizontal scroll
+
+The board's own container already had `overflow-x-auto` and genuinely could scroll (confirmed: trackpad swipe, shift+wheel, and dragging the native scrollbar all worked already). The real gap: a **plain vertical mouse wheel** (deltaY only, no deltaX -- what most desktop mice actually send, having no horizontal scroll wheel at all) has no vertical overflow on this element to capture it, so it bubbled straight up and scrolled the whole PAGE instead of panning the board -- which reads exactly like "the Kanban doesn't allow scrolling left and right" for anyone without a trackpad.
+
+**`apps/web/src/components/kanban/InquiryKanbanBoard.tsx`**: added an `onWheel` handler on the board's scroll container that redirects a vertical-dominant wheel delta into `scrollLeft`, the same convention most kanban/carousel UIs use. A genuine horizontal gesture (trackpad swipe, shift+wheel) already carries a meaningful `deltaX` and is left completely alone.
+
+## 6. Top search bar: multi-word name search
+
+`apps/api/src/routes/search.ts` matched a client's `firstName`/`lastName` as two independent `contains` checks OR'd together. Typing "John Smith" checked whether `firstName` contains "John Smith" (no) or `lastName` contains "John Smith" (no) -- neither column ever contains the full two-word string, so a first-plus-last search always returned nothing, while a first-name-only search worked fine.
+
+Fixed using the same word-splitting pattern already established in `clients.ts`'s own merge-search route: split the query on whitespace, require EVERY word to match `firstName` OR `lastName` (AND across words, OR within each word across the two fields) -- correctly handles "John Smith", preserves single-word behavior exactly (one word reduces to the original OR-across-both-fields check), and is applied everywhere client-name matching happens in this route (Clients, Inquiries' linked client, Appointments' linked client).
+
+## Verification
+
+Live against the real dev stack (Playwright + direct API calls, not just code review):
+- Clients: applied "Has active project" -- list narrowed correctly to clients with a Projects-tab-status inquiry, confirmed against the same set shown grouped on the Projects tab. Last Modified column renders `updatedAt` correctly.
+- Search: confirmed a client findable by first name alone was now ALSO findable by "First Last" (previously 0 results), and still findable by last name alone.
+- Kanban: dispatched a pure vertical wheel event (`deltaY` only) over the Inquiries tab's 6-column board (which genuinely overflows at 1280px) and confirmed `scrollLeft` moved from 0 to 300 -- the exact gesture that previously did nothing to the board.
+- Projects tab: confirmed the standalone "Needs Scheduling" button is gone, confirmed "Needs Scheduling" appears inside the Status filter dropdown, confirmed Group by Status now shows stage-based headers ("Needs Scheduling (6)", "Scheduled (7)", "Session Complete (4)", ...) instead of raw-status headers, with visible spacing between each group (screenshot).
+
+Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (web) clean.
+
+## Commit
+
+`a256047`
