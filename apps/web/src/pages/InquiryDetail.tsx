@@ -228,11 +228,17 @@ function giftCardOptionLabel(card: GiftCardOption): string {
 // InquiryPipeline.tsx alongside PIPELINE_STEPS, since unlike that 5-step
 // list this one has exactly one consumer (this page's own Pipeline
 // widget); the Kanban Projects tab already has its own, appointment-
-// status-driven columns and never needs this shape. "Scheduled" is the
+// status-driven columns and never needs this shape. "Needs Scheduling" is
+// a real, explicit step now (previously this just left "Scheduled" sitting
+// in its own "current" state pre-appointment, which read as ambiguous --
+// looked identical to "in progress toward being scheduled" rather than
+// clearly flagging nothing is booked yet). "Scheduled" is the
 // already-complete inherited handoff from the Inquiry side's own last
-// step -- see deriveProjectStageIndex below, never index 0's "current"
-// state once isConverted is true and at least one session exists.
+// step -- see deriveProjectStageIndex below, never shown as "current"
+// itself once isConverted is true and at least one session exists (same
+// as before this step was added, just shifted one index over).
 const PROJECT_STEPS = [
+  { label: 'Needs Scheduling' },
   { label: 'Scheduled' },
   { label: 'Waiver Verified' },
   { label: 'Session Complete' },
@@ -249,19 +255,21 @@ function findCurrentSession(sessions: Inquiry['sessions']) {
   return sessions.find((session) => !session.checkedOutAt)
 }
 
-// Three of the four stages are derived live; Project Complete is NOT --
+// Three of the five stages are derived live; Project Complete is NOT --
 // it reflects projectCompletedAt directly. If every session is checked
 // out but projectCompletedAt is still null, this sits at "Session
-// Complete" (index 3 = Project Complete shown as the current, actionable
+// Complete" (index 4 = Project Complete shown as the current, actionable
 // step) until staff take the explicit Mark Project Complete action --
-// never auto-inferred from session state alone.
+// never auto-inferred from session state alone. Same projectNeedsScheduling
+// condition (lib/kanban.ts) as the list/Kanban/Dashboard badge drives index
+// 0 here -- zero sessions booked yet.
 function deriveProjectStageIndex(inquiry: Inquiry): number {
   if (inquiry.projectCompletedAt) return PROJECT_STEPS.length
   if (inquiry.sessions.length === 0) return 0
   const current = findCurrentSession(inquiry.sessions)
-  if (!current) return 3
-  if (current.liabilityWaiver?.status === 'VERIFIED') return 2
-  return 1
+  if (!current) return 4
+  if (current.liabilityWaiver?.status === 'VERIFIED') return 3
+  return 2
 }
 
 // Phase 7A: mirrors apps/api/src/routes/inquiries.ts's NON_TERMINAL_STATUSES
