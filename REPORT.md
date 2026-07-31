@@ -5845,3 +5845,57 @@ Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (
 ## Commit
 
 `db8a8e6`
+
+---
+
+# Activity log — usability audit and improvement
+
+Single session on `main`. No schema changes. Scoped the investigation to the 5 entity types actually rendered via `<AuditTrail>` in the frontend (Inquiry, Appointment, Client, GiftCard, LiabilityWaiver) -- confirmed by grep -- not every `logAudit` call site in the backend (~50+), most of which log to entity types (`InquiryNote`, `PersonalTask`, `Conversation`, etc.) no page ever displays.
+
+## Investigate first — all four hypothesized problems confirmed live, not just in code
+
+Screenshotted a real Inquiry's "Activity History" widget with real dev data before making any change. Confirmed:
+- **Raw action slugs**: `create-by-staff`, `status change` (the existing fallback already replaced `_` but not `-`, so hyphenated actions rendered literally).
+- **Raw ID dumps**: `Client id: cms7f5kh8000658i21erxmien` -- a bare Prisma cuid, unresolved.
+- **No date grouping**: every entry (spanning two days in the seeded data) rendered in one flat list.
+- **No filtering**: no way to narrow by action type or by staff member on an entity with dozens of entries.
+
+## Build — fixed directly
+
+**1. Human-readable actions + fields** (`apps/web/src/components/AuditTrail.tsx`)
+- Added an `ACTION_LABELS` map (~35 entries covering every action string used by the 5 in-scope entity types) and fixed the fallback humanizer's regex (`/_/g` → `/[_-]/g`) so any future/unmapped action still degrades to spaced-out words instead of a raw slug.
+- Extended `FIELD_LABELS` for every field newly resolved to a name/timestamp by the backend change below (`clientId` → "Client", `giftCardId` → "Gift card", `fromAppointmentId` → "From appointment", etc.) so labels read naturally once their values are names, not ids.
+
+**2. Date grouping** (`AuditTrail.tsx`, `apps/web/src/lib/format.ts`)
+- Added `formatDateOnly` and grouped `filteredLogs` into per-day sections with an uppercase date header, so a long history reads as "JUL 31, 2026 / ... / JUL 30, 2026" instead of one undifferentiated list.
+
+**3. Filtering by action type and staff member** (`AuditTrail.tsx`)
+- Reused the app's existing `MultiSelectFilter` component (same one `Inquiries.tsx`/`Clients.tsx` already use for client-side filtering of bounded lists) -- two dropdowns, "All actions" / "All staff", built from the unique values actually present in the fetched logs. Only shown once an entity has more than 5 log entries, so a short history doesn't get filter controls it doesn't need. A distinct "No activity matches these filters." empty state was added, separate from "No activity recorded yet."
+
+**4. Raw foreign-key ids resolved to names** (`apps/api/src/routes/audit.ts`, architectural fix rather than per-route patches)
+
+The route already had an ID-resolution mechanism, but it was narrow in two ways: only two field names (`assignedArtistId`, `appointmentId`), and only handled `{from,to}`-shaped diff values -- a plain value logged at creation time (e.g. a bare `{ clientId: "..." }`) was never touched regardless of field name. Rather than hand-patch the ~25 individual call sites a research pass flagged across `appointments.ts`, `clients.ts`, `giftCards.ts`, `waivers.ts`, `inquiries.ts`, `lib/deposits.ts`, etc. (disproportionate effort for what's really one mechanism), generalized the one existing mechanism instead:
+- Added `client` (`clientId`, `otherClientId`, `sourceClientId`, `survivorId`, `referrerClientId`, `referredClientId`) and `giftCard` (`giftCardId`, `giftCardIds`, `exemptGiftCardIds`, `newGiftCardId`, `derivedFromGiftCardId`, `satisfiedByExistingGiftCardId`) categories alongside the existing `artist`/`appointment` ones; extended `appointment` with `fromAppointmentId`/`toAppointmentId`/`detachedFromAppointment`.
+- Generalized value handling from diff-only to a shared `walkIdValues`/`mapIdValues` pair that handles a bare string, a `{from,to}` pair, or a string array (`giftCardIds`) uniformly -- one code path per category, not three.
+- Unresolvable ids (already-deleted rows, or, as found live, a handful of legacy seed rows that stored a gift card's `code` in the `giftCardId` slot instead of its database id) fall back to displaying the raw value rather than erroring or showing blank -- never worse than the pre-existing behavior.
+- Also removed the raw `clientId` from `inquiries.ts`'s `create-by-staff` log entirely (rather than resolving it) -- this Inquiry's own Activity History is only ever viewed already scoped to its one client, so the id was pure noise there, unlike `assignedArtistId`, which genuinely changes over the inquiry's life.
+
+## Judgment calls made (not user-specified, applying general audit-log UX practice)
+
+- **Inline detail vs. expand-to-view**: kept every changed field inline (no collapse/expand), since the in-scope entities' entries top out around 4-5 changed fields at once -- an expand affordance would add a click for no real payoff at this data density. Worth revisiting only if an entity type starts logging much larger `changes` objects.
+- **Filter visibility threshold**: gated the two filter dropdowns behind `logs.length > 5` rather than always showing them, so a fresh entity with 1-2 log entries doesn't get filter chrome with nothing to filter.
+- **Scope of the raw-id fix**: generalized the shared backend mechanism (client + giftCard categories, extended appointment) rather than touching individual route files. A handful of categories the research pass flagged were deliberately left alone as out of scope for this pass: `artistUserId`/`shared_to_artist`-style fields on entity types not rendered by `<AuditTrail>` at all, `messageId`/`conversationId` in `giftCards.ts`'s `text-receipt` action (internal delivery bookkeeping, not something a viewer needs resolved), and the nested `decisions[].giftCardId` array inside `Appointment`'s `checkout` action changes (an array of objects, not a flat field -- would need a third walker shape for one action). None of these regress from their pre-existing (already-unresolved) state.
+
+## Verification
+
+Playwright against the local dev stack (api `:4093`, web `:5292`), against a real Inquiry with two days of seeded activity:
+- Before: flat list, `create-by-staff`, `Client id: cms7f5kh8000658i21erxmien` raw cuid, "artist reassigned" (partial-humanize), no grouping, no filters (screenshot).
+- After: same entity now grouped under "JUL 31, 2026" / "JUL 30, 2026" headers; `create-by-staff` → "created this", `Client id:` line → "Client: LongDesc TestClient"; "artist reassigned" → "reassigned the artist"; "All actions" / "All staff" filter dropdowns present (screenshot).
+- Filtering: selected "reassigned the artist" in the action filter and confirmed the list narrowed to only those entries, with every other action's rows removed from view; cleared it and confirmed the full list returned.
+- Live-verified the generalized `audit.ts` resolution end-to-end for two of its two new/extended categories via real actions on the running dev stack: `client` (the historical `create-by-staff` entry above resolving a real cuid to "LongDesc TestClient"), and `appointment`'s extended field set (a live gift-card rollover producing a fresh entry whose `fromAppointmentId` resolved to the appointment's real start-time). The `giftCard` category shares the exact same `walkIdValues`/`mapIdValues`/lookup code path (verified by reading, not a separate implementation) but wasn't independently reproduced with a genuinely-unresolved live value in this session -- noting this rather than silently claiming full live coverage.
+
+Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (web) clean.
+
+## Commit
+
+`569b1d2`
