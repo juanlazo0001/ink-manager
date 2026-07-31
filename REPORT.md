@@ -5100,3 +5100,57 @@ Two migrations: `20260731061921_add_gift_card_payment_method` (schema diff) and 
 ## Cleanup
 
 Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification/scratch script and screenshot. Test data created during verification (a $50 and $42.50 cash-issued gift card, an EXEMPT test card, and one test `DepositForm` + its resulting gift card) left in the dev database, same convention as prior sessions.
+
+---
+
+# PDF export for signed deposit forms and waivers
+
+Single session on `main`. No schema changes -- this reads existing stored data (itemized deposit terms, waiver clauses/initials, signature, health screening answers, ID reference), exactly as scoped.
+
+## PDF library decision
+
+Chose `pdfkit` (native, pure-JS, no native bindings) over a headless-browser HTML-to-PDF approach. This project already got burned once by a phantom/unhoisted dependency (`esbuild`) breaking the Railway production build -- a headless-Chrome dependency (Puppeteer/Playwright) would carry the same or worse risk on this same Railway-hosted API (large binary, missing system libs in a minimal Nixpacks image, memory pressure on a small dyno) for a document this structurally simple. Installed as a real, explicit dependency in `apps/api/package.json` (`pdfkit` + `@types/pdfkit`), not a transitive one.
+
+## What was built
+
+- **`apps/api/src/lib/pdf.ts`** (new): shared helpers (header/footer, signature-image rendering, section titles) plus two generator functions, `generateDepositFormPdf()` and `generateWaiverPdf()`, each returning a `Buffer`.
+- **`GET /deposit-forms/:id/pdf`** (new, `deposits.ts` staff router): itemized terms (the shared `TERMS` array -- see caveat below), deposit/fee/total amounts, signature image, signed-at timestamp.
+- **`GET /waivers/:id/pdf`** (new, `waivers.ts` staff router, registered after the router's existing `requireRole(OWNER, FRONT_DESK)` floor gate): every health question + answer from the real per-signing `healthQuestionsSnapshot`/`healthAnswers`, every clause + initials from `clausesSnapshot`/`clauseInitials`, acknowledgment text, signature image, photo/video release (text + its own separate signature when accepted), and ID-verification status.
+- **`ClientDetail.tsx`**: a "Download PDF" icon button (new shared `DownloadIcon`) on each signed row of the Deposit Forms table, and on each signed waiver in the Waivers list -- reusing the existing widgets these records already render in, not a new surface. A new `downloadFile()` helper in `lib/api.ts` handles the authenticated binary download (apiFetch always parses JSON, so this is a small sibling, not an overload).
+
+## Permission gating -- reused, not invented
+
+- **Waiver PDF**: sits behind the router's own pre-existing, explicitly-documented "floor item, permanent" gate (`requireRole(OWNER, FRONT_DESK)`) -- the exact same boundary that already blocks ARTIST from `GET /waivers/:id`'s health data and ID image. No new permission key. Verified directly: `GET /waivers/:id/pdf` as ARTIST -> 403. The download button itself is also hidden client-side for ARTIST (`canDownloadWaiverPdf`), so the 403 is defense-in-depth, not something a real user would hit.
+- **Deposit-form PDF**: no standalone "view a DepositForm" route existed before this -- this data was only ever visible embedded in `GET /inquiries/:id`, gated `inquiries.view`. Reused that same key rather than inventing `deposits.view`. ARTIST has `inquiries.view` by default but scoped to their own assigned projects (same convention as `GET /inquiries/assigned-to-me` and the waiver router's own `/:id/status` route) -- enforced manually in the route handler, since `requirePermission` itself only checks the studio-level toggle, not row ownership. Verified directly: ARTIST requesting a deposit form for an inquiry not assigned to them -> 404 (not 403, consistent with the "don't reveal existence" convention already used elsewhere); the same ARTIST requesting a deposit form for their own assigned inquiry -> 200.
+
+## ID image handling -- deliberately not embedded
+
+Neither PDF embeds the client's raw government-ID photo. A photo of a government ID is a materially more sensitive piece of PII than the rest of this document, embedding it would mean fetching it from Cloudinary at generation time (a new outbound dependency), and a downloadable PDF is easier to forward/leak than the same image viewed in-app behind the normal permission wall. The waiver PDF instead just states whether an ID is on file ("A government ID photo is on file in the app -- see app for the image itself"); staff who need the actual image view it in-app, unchanged from today.
+
+## A real gap found and documented, not silently glossed over
+
+Unlike `LiabilityWaiver` (which has genuine per-signing-time immutable snapshots -- `healthQuestionsSnapshot`, `clausesSnapshot`, `acknowledgmentSnapshot`, `photoReleaseSnapshot`), `DepositForm` has no equivalent snapshot for the 8 terms a client agrees to. Those terms live only in a single shared, studio-wide `TERMS` array hardcoded in `deposits.ts`, described in its own comment as "exact SOP wording." The deposit-form PDF necessarily renders whatever `TERMS` says right now, not what a given client actually saw at signing time. In practice this wording changes rarely and is described as fixed SOP language, so it's an accepted, low-risk gap -- but a real one, flagged here rather than presented as equivalent to the waiver's true historical snapshot.
+
+## Two rendering bugs found and fixed during live verification
+
+- The checkmark character (U+2713) falls outside pdfkit's base-14 fonts' WinAnsi encoding and rendered as a garbled apostrophe glyph in the first real generated PDF. Replaced with a plain hyphen, which is guaranteed correct in every pdfkit standard font.
+- `acknowledgmentSnapshot`/`photoReleaseSnapshot` are rich text from a Settings WYSIWYG editor (rendered as real HTML on the public signing page) -- the first generated waiver PDF printed the literal `<p>...</p>` tags instead of the text. Added a small `stripHtml()` helper (same simple regex approach `gmail.ts` already uses for its own HTML-to-plain-text conversion) to both call sites.
+
+## Verification
+
+- Both new routes hit directly against the local dev API with a real signed `DepositForm` and a real `VERIFIED` `LiabilityWaiver` -- 200, `content-type: application/pdf`, valid `%PDF-1.3` header, and (after the two fixes above) fully readable, correctly formatted content confirmed by reading the actual generated PDF bytes.
+- Browser, real click-through as OWNER on `ClientDetail.tsx`: three "Download PDF" buttons rendered across the Deposit Forms and Waivers widgets; clicking one triggered a real browser download (`deposit-form-session-1.pdf`, 2862 bytes) via Playwright's download event, not just an API call.
+- Browser as ARTIST: `ClientDetail.tsx` itself is already blocked for this role by its own pre-existing `clients.view` gate (unrelated to this change) -- confirmed via screenshot ("You don't have permission to view this client"). Server-side permission boundaries for both new routes verified directly via the API instead (see gating section above), since that's the actual security guarantee, not the incidental UI path.
+- The waiver PDF's signature image renders as a solid black rectangle for this particular dev test record -- traced to the underlying `signatureData` itself being a literal 1x1-pixel test PNG (synthetic seed/test fixture data), not a rendering bug in the new code.
+
+## Typechecks
+
+`npx tsc -b` (web) and `npx tsc --noEmit` (api) -- both clean before commit.
+
+## Commit
+
+`254b5c9` on `main`.
+
+## Cleanup
+
+Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID -- one leftover stale dev server from an earlier session was already squatting on port 4093 and had to be killed first. Deleted every ad-hoc verification/scratch script (`scratch-find-signed.ts`, `scratch-check-sig.ts`, `scratch-find-artist-deposit.ts`) and the temporary Playwright install from the scratch directory. No new test data was created in the dev database -- verification used existing signed records.
