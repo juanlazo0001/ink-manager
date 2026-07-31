@@ -5293,3 +5293,33 @@ Both typechecks clean.
 ## Cleanup
 
 Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification script and screenshot from the scratch directory. No test data was created in the dev database -- every fix in this batch was frontend-only, verified against existing dev seed data.
+
+---
+
+# "Needs Scheduling" as a real Project pipeline step (correction)
+
+Single-fix session on `main`, following up on the earlier "Needs Scheduling" feature (commits `d1cd348`/`3504f6b`). Correction from the user: that work added visibility (badge, Dashboard count, filter) but didn't give the Project pipeline itself a real step for it -- the Project detail page's own Pipeline widget just left "Scheduled" sitting in its own "current" state pre-appointment, which read as ambiguous ("in progress toward being scheduled" rather than clearly "nothing booked yet").
+
+## What changed
+
+`InquiryDetail.tsx`'s `PROJECT_STEPS` (the post-conversion, 4-stage pipeline widget -- distinct from the pre-conversion Inquiry-side `PIPELINE_STEPS` in `InquiryPipeline.tsx`) now has a real, explicit "Needs Scheduling" step before "Scheduled": `['Needs Scheduling', 'Scheduled', 'Waiver Verified', 'Session Complete', 'Project Complete']`.
+
+`deriveProjectStageIndex` shifted its later branches by one index accordingly, but kept the same underlying condition the existing badge/filter already use: zero booked sessions (`inquiry.sessions.length === 0`) puts the timeline at index 0, now correctly labeled "Needs Scheduling" instead of ambiguously highlighting "Scheduled." Everything downstream of that (waiver-verified / session-complete / project-complete branching) is unchanged logic, just shifted.
+
+No schema change, no new data -- `InquiryPipeline.tsx`'s stepper component is already fully generic (`effectiveSteps.map`, `done = index < activeIndex`), so adding a 5th step to an existing caller's array required no component changes at all.
+
+## Verification
+
+Found a real, currently-unscheduled Project in the dev database (`SCHEDULING` status, no linked appointment, zero sessions) and loaded its detail page: Pipeline widget correctly showed 5 steps with "Needs Scheduling" as step 1, highlighted active/current.
+
+Booked a real appointment for it via `POST /inquiries/:id/schedule` (a real gift card attached, matching the deposit already paid) and reloaded the page: "Needs Scheduling" and "Scheduled" both correctly flipped to checkmarked/complete, the timeline correctly advanced to "Waiver Verified" (step 3, since the new session's waiver isn't verified yet) -- confirming the transition works, not just the initial unscheduled display. The separate header badge (from the original feature) independently disappeared at the same time, unaffected by this change, confirming both mechanisms stay in sync since they share the same underlying "zero sessions" condition.
+
+Both typechecks clean.
+
+## Commit
+
+`bd3ece9`.
+
+## Cleanup
+
+Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification script and screenshot from the scratch directory. Test data created during verification (a real appointment booked for the "Unmatched ArtistTest" / "Small script tattoo" project) left in the dev database, same convention as prior sessions.
