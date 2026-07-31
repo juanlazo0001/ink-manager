@@ -6,7 +6,7 @@ import { apiFetch } from '../lib/api'
 import { dropdownVariants, uiSpringTransition } from '../lib/motion'
 import StatusPill, { getStatusTone, type Tone } from './StatusPill'
 import InquiryPipeline from './InquiryPipeline'
-import { formatDateTime, formatRelativeTime, formatPriceEstimate } from '../lib/format'
+import { formatDateTime, formatRelativeTime, formatPriceEstimate, formatPhoneInput, detectContactField } from '../lib/format'
 import { uploadImageToCloudinary } from '../lib/cloudinary'
 import { linkifyText } from '../lib/linkify'
 import { useEffectiveUser } from '../context/useEffectiveUser'
@@ -1216,8 +1216,18 @@ function ConversationListView({
                 <button
                   type="button"
                   onClick={() => {
-                    const [firstName = '', ...rest] = newChatSearch.trim().split(/\s+/)
-                    setNewClientForm({ firstName, lastName: rest.join(' '), email: '', phone: '' })
+                    const typed = newChatSearch.trim()
+                    const fieldGuess = detectContactField(typed)
+
+                    if (fieldGuess === 'email') {
+                      setNewClientForm({ firstName: '', lastName: '', email: typed, phone: '' })
+                    } else if (fieldGuess === 'phone') {
+                      setNewClientForm({ firstName: '', lastName: '', email: '', phone: formatPhoneInput(typed) })
+                    } else {
+                      const [firstName = '', ...rest] = typed.split(/\s+/)
+                      setNewClientForm({ firstName, lastName: rest.join(' '), email: '', phone: '' })
+                    }
+
                     setNewClientError(null)
                     setShowAddClientModal(true)
                   }}

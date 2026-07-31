@@ -139,7 +139,13 @@ export function formatRelativeDateTime(iso: string, timeZone: string): string {
 }
 
 export function formatPhoneInput(value: string): string {
-  const digits = value.replace(/\D/g, '').slice(0, 10)
+  const allDigits = value.replace(/\D/g, '')
+  // A leading "1" on an 11-digit run is a US country code, not part of the
+  // area code -- same convention apps/api/src/lib/phone.ts's normalizePhone
+  // already uses server-side. Without this, "+1 555 123 4567" (11 digits)
+  // silently truncated to its first 10 -- "1555123456" -- producing a
+  // garbled, wrong-looking number instead of the real one.
+  const digits = (allDigits.length === 11 && allDigits.startsWith('1') ? allDigits.slice(1) : allDigits).slice(0, 10)
   const len = digits.length
 
   if (len === 0) return ''
@@ -156,6 +162,36 @@ export function formatPhoneInput(value: string): string {
 // answers "if something was entered, is it complete."
 export function isValidPhoneDigits(digits: string): boolean {
   return digits.length === 0 || digits.length === 10
+}
+
+// Conversations' "new chat" -> "Add new client" flow: staff types once into
+// a single free-text box, and this decides which field it belongs in
+// instead of making them pick a field type manually. Order matters -- email
+// is checked first since a stray "@" is never a plausible phone digit or,
+// realistically, a name.
+export type ContactFieldGuess = 'email' | 'phone' | 'name'
+
+export function detectContactField(raw: string): ContactFieldGuess {
+  const value = raw.trim()
+
+  // "Plausible domain pattern" kept loose on purpose: anything after the
+  // "@" counts, so an email that's still mid-typing (e.g. "jane@gm") lands
+  // in the email field where finishing it is a single keystroke, rather
+  // than in name/phone where it would look obviously wrong. A bare
+  // trailing "@" with nothing after it yet doesn't count -- too little
+  // signal, falls through to the name guess below.
+  if (value.includes('@') && !value.endsWith('@')) return 'email'
+
+  // Common formatting punctuation stripped before judging "predominantly
+  // digits" -- spaces, dashes, parens, and a single leading "+". A
+  // genuinely all-numeric name is vanishingly rare and, per this app's own
+  // 10-digit US convention (isValidPhoneDigits), 7+ remaining digits is
+  // itself already a strong phone signal -- staff can still correct a
+  // wrong guess in the form either way.
+  const digitsOnly = value.replace(/^\+/, '').replace(/[\s().-]/g, '')
+  if (digitsOnly.length >= 7 && /^\d+$/.test(digitsOnly)) return 'phone'
+
+  return 'name'
 }
 
 // Kept in sync with MAX_IMAGE_SOURCE_MB in apps/api/src/lib/images.ts.
