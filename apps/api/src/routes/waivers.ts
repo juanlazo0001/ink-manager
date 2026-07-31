@@ -10,6 +10,7 @@ import { normalizePhone } from "../lib/phone";
 import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 import { shortenUrl } from "../lib/shortLinks";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
+import { generateWaiverPdf } from "../lib/pdf";
 
 function isExpiredOrInvalid(waiver: { signedAt: Date | null; tokenExpiresAt: Date | null } | null) {
   if (!waiver) {
@@ -277,6 +278,61 @@ staffRouter.get("/:id", requirePermission("waivers.viewStatus"), async (req, res
   const signingUrl = active ? await shortenUrl(`${PUBLIC_APP_URL}/waiver/${waiver.token}`) : null;
 
   res.json({ ...waiver, signingUrl });
+});
+
+// PDF export for audit/documentation -- registered after the
+// OWNER/FRONT_DESK-only gate above, same as GET /:id right above it, so
+// ARTIST is blocked from ever reaching it (the health-data/ID-image floor
+// this router already enforces, unchanged by this route's existence).
+staffRouter.get("/:id/pdf", requirePermission("waivers.viewStatus"), async (req, res) => {
+  const id = req.params.id as string;
+
+  const waiver = await prisma.liabilityWaiver.findUnique({
+    where: { id },
+    include: {
+      client: { select: { firstName: true, lastName: true } },
+      appointment: { select: { startTime: true } },
+      studio: { select: { name: true } },
+      verifiedBy: { select: { name: true } },
+    },
+  });
+
+  if (!waiver || waiver.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Waiver not found" });
+  }
+
+  if (!waiver.signedAt) {
+    return res.status(400).json({ error: "This waiver has not been signed yet" });
+  }
+
+  const pdf = await generateWaiverPdf({
+    studioName: waiver.studio.name,
+    clientName: `${waiver.client.firstName} ${waiver.client.lastName}`,
+    appointmentDate: waiver.appointment.startTime,
+    legalName: waiver.legalName,
+    dateOfBirth: waiver.dateOfBirth,
+    emergencyContactName: waiver.emergencyContactName,
+    emergencyContactPhone: waiver.emergencyContactPhone,
+    healthQuestions: waiver.healthQuestionsSnapshot as unknown as { question: string; type: string }[],
+    healthAnswers: (waiver.healthAnswers ?? []) as unknown as { questionIndex: number; answer: string; explanation?: string }[],
+    clauses: waiver.clausesSnapshot as unknown as string[],
+    clauseInitials: (waiver.clauseInitials ?? []) as unknown as { clauseIndex: number; initials: string }[],
+    acknowledgment: waiver.acknowledgmentSnapshot,
+    signatureName: waiver.signatureName,
+    signatureData: waiver.signatureData,
+    signedAt: waiver.signedAt,
+    photoReleaseAccepted: waiver.photoReleaseAccepted,
+    photoReleaseText: waiver.photoReleaseSnapshot,
+    photoReleaseSignatureName: waiver.photoReleaseSignatureName,
+    photoReleaseSignatureData: waiver.photoReleaseSignatureData,
+    idImageOnFile: !!waiver.idImageUrl,
+    verifiedAt: waiver.verifiedAt,
+    verifiedByName: waiver.verifiedBy?.name ?? null,
+  });
+
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="waiver-${id}.pdf"`);
+  res.send(pdf);
 });
 
 staffRouter.post("/:id/verify", requirePermission("waivers.verify"), async (req, res) => {

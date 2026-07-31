@@ -2,11 +2,13 @@ import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { requireAuth } from "../middleware/auth";
 import { requirePermission } from "../lib/permissions";
+import { Role } from "../../generated/prisma/enums";
 import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { issueGiftCardForPaidDeposit } from "../lib/deposits";
 import { getChargeableConnectedAccountId } from "../lib/stripeConnect";
 import { createDirectChargeCheckoutSession } from "../lib/stripe";
+import { generateDepositFormPdf } from "../lib/pdf";
 
 // Exact SOP wording, in the order the client must agree to each one.
 const TERMS = [
@@ -338,6 +340,66 @@ staffRouter.patch("/:id/mark-paid", requireAuth, requirePermission("deposits.mar
 
   const updated = await prisma.depositForm.findUnique({ where: { id } });
   res.json({ ...updated, giftCardId: result.giftCardId });
+});
+
+// PDF export for audit/documentation. Gated the same way this data is
+// already gated everywhere else it's viewed (embedded in GET
+// /inquiries/:id, itself requirePermission("inquiries.view")) rather than
+// inventing a new deposits.view key -- no route to view a DepositForm on
+// its own existed before this. ARTIST gets inquiries.view by default but
+// scoped to their own assigned projects (same convention as
+// GET /inquiries/assigned-to-me and waivers.ts's own /:id/status route),
+// enforced manually below since requirePermission itself only checks the
+// studio-level toggle, not row ownership.
+staffRouter.get("/:id/pdf", requireAuth, requirePermission("inquiries.view"), async (req, res) => {
+  const id = req.params.id as string;
+
+  const depositForm = await prisma.depositForm.findUnique({
+    where: { id },
+    include: {
+      inquiry: {
+        include: {
+          client: { select: { firstName: true, lastName: true } },
+          studio: { select: { name: true } },
+          service: { select: { name: true } },
+        },
+      },
+    },
+  });
+
+  if (!depositForm || depositForm.inquiry.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Deposit form not found" });
+  }
+
+  if (req.user!.role === Role.ARTIST) {
+    const artist = await prisma.artist.findUnique({ where: { userId: req.user!.userId }, select: { id: true } });
+    if (!artist || depositForm.inquiry.assignedArtistId !== artist.id) {
+      return res.status(404).json({ error: "Deposit form not found" });
+    }
+  }
+
+  if (!depositForm.signedAt) {
+    return res.status(400).json({ error: "This deposit form has not been signed yet" });
+  }
+
+  const { inquiry } = depositForm;
+  const pdf = await generateDepositFormPdf({
+    studioName: inquiry.studio.name,
+    clientName: `${inquiry.client.firstName} ${inquiry.client.lastName}`,
+    inquiryTitle: `${inquiry.service.name} — ${inquiry.placement}`,
+    sessionNumber: depositForm.sessionNumber,
+    depositAmount: depositForm.depositAmount,
+    feeAmount: depositForm.feeAmount,
+    totalCharged: depositForm.totalCharged,
+    terms: TERMS,
+    signatureName: depositForm.signatureName,
+    signatureData: depositForm.signatureData,
+    signedAt: depositForm.signedAt,
+  });
+
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="deposit-form-${id}.pdf"`);
+  res.send(pdf);
 });
 
 export { publicRouter, staffRouter };

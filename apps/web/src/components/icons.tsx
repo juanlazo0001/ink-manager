@@ -211,6 +211,15 @@ export function SendIcon({ className }: IconProps) {
   )
 }
 
+export function DownloadIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <path d="M10 3v9.5m0 0 3.5-3.5M10 12.5 6.5 9" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4 14v1.5A1.5 1.5 0 0 0 5.5 17h9a1.5 1.5 0 0 0 1.5-1.5V14" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 export function InfoIcon({ className }: IconProps) {
   return (
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>

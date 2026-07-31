@@ -57,3 +57,36 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
 
   return response.json()
 }
+
+// Authenticated binary download (PDF export etc.) -- apiFetch always parses
+// the response as JSON, which a file response isn't, so this is a separate,
+// small sibling rather than trying to overload apiFetch's return type.
+// Triggers a normal browser "Save As" via a throwaway <a download> element,
+// same technique any static file link would use, just fed a blob: URL
+// instead of a real one since the request needs the Bearer token apiFetch
+// itself attaches.
+export async function downloadFile(path: string, filename: string): Promise<void> {
+  const token = localStorage.getItem(TOKEN_STORAGE_KEY)
+
+  const response = await fetch(`${API_URL}${path}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(viewAsUserId ? { 'X-View-As-User': viewAsUserId } : {}),
+    },
+  })
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => null)
+    throw new ApiError(body?.error ?? `Request failed with status ${response.status}`, response.status)
+  }
+
+  const blob = await response.blob()
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+}

@@ -9,7 +9,7 @@ import PhoneInput from '../components/PhoneInput'
 import ClientComparisonView from '../components/ClientComparisonView'
 import StaffInquiryForm from '../components/StaffInquiryForm'
 import { FlatArtistAvatar } from '../components/ArtistAvatar'
-import { apiFetch, ApiError } from '../lib/api'
+import { apiFetch, ApiError, downloadFile } from '../lib/api'
 import { describeAppointmentStatus, formatDateTime, formatPhoneInput, formatStatus, isValidPhoneDigits } from '../lib/format'
 import { describeSendResult, type ClientSendResult } from '../lib/sendResult'
 import { sanitizeHtml } from '../lib/sanitizeHtml'
@@ -23,6 +23,7 @@ import {
   ArrowLeftIcon,
   CheckIcon,
   CopyIcon,
+  DownloadIcon,
   FacebookIcon,
   GiftCardIcon,
   InstagramIcon,
@@ -357,6 +358,11 @@ export default function ClientDetail() {
   // POST /prefill-drafts is a hardcoded requireRole(OWNER, FRONT_DESK) on
   // the API, not a configurable permission -- matches that directly.
   const canGeneratePrefillLink = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
+  // GET /waivers/:id/pdf is behind the router's own permanent
+  // OWNER/FRONT_DESK-only floor gate (health data/ID reference), same as
+  // GET /waivers/:id itself -- matched client-side so ARTIST never sees a
+  // download button that would just 403.
+  const canDownloadWaiverPdf = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
   const { openPanel } = useConversationPanel()
   const [startingConversation, setStartingConversation] = useState(false)
   const [copyingPrefillLink, setCopyingPrefillLink] = useState(false)
@@ -526,6 +532,25 @@ export default function ClientDetail() {
   const [waiverSendError, setWaiverSendError] = useState<string | null>(null)
   const [waiverSendNotice, setWaiverSendNotice] = useState<string | null>(null)
   const [latestWaiverUrl, setLatestWaiverUrl] = useState<string | null>(null)
+
+  // PDF export: one shared pair of states for both deposit-form and waiver
+  // downloads -- downloadingPdfId disables just the row being downloaded
+  // (ids don't collide across the two record types), pdfDownloadError
+  // surfaces under whichever widget triggered it.
+  const [downloadingPdfId, setDownloadingPdfId] = useState<string | null>(null)
+  const [pdfDownloadError, setPdfDownloadError] = useState<string | null>(null)
+
+  async function handleDownloadPdf(kind: 'deposit-forms' | 'waivers', id: string, filename: string) {
+    setDownloadingPdfId(id)
+    setPdfDownloadError(null)
+    try {
+      await downloadFile(`/${kind}/${id}/pdf`, filename)
+    } catch (err) {
+      setPdfDownloadError(err instanceof ApiError ? err.message : 'Failed to download PDF')
+    } finally {
+      setDownloadingPdfId(null)
+    }
+  }
 
   const [duplicates, setDuplicates] = useState<DuplicateCandidate[] | null>(null)
   const [mergeTarget, setMergeTarget] = useState<DuplicateCandidate | null>(null)
@@ -2067,6 +2092,12 @@ export default function ClientDetail() {
 
                 {depositSendNotice && <p className="mt-3 text-sm text-fg-secondary">{depositSendNotice}</p>}
 
+                {pdfDownloadError && (
+                  <div className="mt-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+                    {pdfDownloadError}
+                  </div>
+                )}
+
                 {latestDepositUrl && (
                   <div className="mt-4 rounded-lg border border-border p-3">
                     <p className="mb-2 text-xs text-fg-muted">Share this link with the client:</p>
@@ -2103,6 +2134,7 @@ export default function ClientDetail() {
                           <th className="hidden pb-3 font-medium md:table-cell">Signed</th>
                           <th className="pb-3 font-medium">Paid</th>
                           <th className="hidden pb-3 font-medium lg:table-cell">Gift Card</th>
+                          <th className="pb-3 font-medium" />
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-border">
@@ -2124,6 +2156,22 @@ export default function ClientDetail() {
                             </td>
                             <td className="hidden py-3 text-fg-secondary lg:table-cell">
                               {form.giftCard ? `${form.giftCard.code.slice(0, 8)}…` : '—'}
+                            </td>
+                            <td className="py-3 text-right">
+                              {form.signedAt && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleDownloadPdf('deposit-forms', form.id, `deposit-form-session-${form.sessionNumber}.pdf`)
+                                  }
+                                  disabled={downloadingPdfId === form.id}
+                                  aria-label="Download PDF"
+                                  title="Download PDF"
+                                  className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-border text-fg-secondary transition hover:bg-surface hover:text-fg disabled:opacity-60"
+                                >
+                                  <DownloadIcon className="h-4 w-4" />
+                                </button>
+                              )}
                             </td>
                           </tr>
                         ))}
@@ -2265,6 +2313,12 @@ export default function ClientDetail() {
 
                 {waiverSendNotice && <p className="mt-3 text-sm text-fg-secondary">{waiverSendNotice}</p>}
 
+                {pdfDownloadError && (
+                  <div className="mt-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+                    {pdfDownloadError}
+                  </div>
+                )}
+
                 {latestWaiverUrl && (
                   <div className="mt-4 rounded-lg border border-border p-3">
                     <p className="mb-2 text-xs text-fg-muted">Share this link with the client:</p>
@@ -2303,7 +2357,24 @@ export default function ClientDetail() {
                         <span className="text-fg-secondary">
                           {waiver.signedAt ? `Signed ${formatDateTime(waiver.signedAt)}` : `Created ${formatDateTime(waiver.createdAt)}`}
                         </span>
-                        <StatusPill status={waiver.status} />
+                        <span className="flex items-center gap-2">
+                          {canDownloadWaiverPdf && waiver.signedAt && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleDownloadPdf('waivers', waiver.id, `waiver-${waiver.id}.pdf`)
+                              }}
+                              disabled={downloadingPdfId === waiver.id}
+                              aria-label="Download PDF"
+                              title="Download PDF"
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-border text-fg-secondary transition hover:bg-surface hover:text-fg disabled:opacity-60"
+                            >
+                              <DownloadIcon className="h-4 w-4" />
+                            </button>
+                          )}
+                          <StatusPill status={waiver.status} />
+                        </span>
                       </li>
                     ))}
                   </ul>
