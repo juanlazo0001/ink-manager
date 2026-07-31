@@ -5013,3 +5013,45 @@ Neither `.md` file is parsed or imported by any code -- deliberately not a bigge
 ## Cleanup
 
 Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification script from the scratch directory.
+
+---
+
+# "Needs Scheduling" indicator for unscheduled Projects
+
+Single session on `main`. **No schema change** -- fully derivable from existing data, confirmed by investigation before writing any code, per the task's own instruction.
+
+## Derivation
+
+A Project (deposit-paid Inquiry, `PROJECTS_TAB_STATUSES` = SCHEDULING/WAITLISTED/CONFIRMED) with zero linked Appointments -- checks both the older 1:1 `appointment` link and the newer 1:many `sessions` link (`Appointment.inquiryId`), the exact same `OR` `GET /reports/dashboard`'s pre-existing `scheduledCount` query already used (a few dev-seed fixtures only populate one of the two). One canonical `projectNeedsScheduling()` helper added to `lib/kanban.ts` (not `Inquiries.tsx`, so a shared component doesn't import from a page) -- the list row, Kanban card, Project detail header, and the backend dashboard count all key off the same definition.
+
+## A real bug found and fixed along the way
+
+`GET /inquiries`'s list-endpoint `SELECT` (`INQUIRY_LIST_SELECT`) never included `sessions` at all -- only the older `appointment` link, which an existing comment elsewhere in the same file already documents as "usually null" for any project scheduled through the current multi-session flow. Concretely: the Projects tab's "Scheduled Date" column has been silently reading "Not yet scheduled" for every already-scheduled project this whole time, and the new Needs Scheduling badge would have been unconditionally wrong (unable to ever detect a real appointment) without this fix. Added `sessions: { id, startTime }` to the list select; both the Date column and the new badge now check `appointment ?? sessions[0]`.
+
+## Where it's surfaced
+
+- **StatusPill**: new `NEEDS_SCHEDULING` synthetic tone (`warning`, matching `DEPOSIT_PENDING`/`AWAITING_CLIENT_RESPONSE`) -- a second pill rendered alongside the real status pill, not a replacement.
+- **Inquiries & Projects list**: badge in the Status column; **Kanban**: badge on the card, below the description.
+- **Project detail page**: badge next to the header's main status pill.
+- **Dashboard**: new "Needs Scheduling" `CardShell` (icon + count + caption), a right-now snapshot like `depositConversion`/`giftCardLiability` -- not date-ranged, and deliberately **not** gated by `reports.viewFinancial` since it's an operational count, not a dollar figure.
+- **Filter**: a "Needs Scheduling" toggle button next to "Group by status," Projects tab only -- not a real `InquiryStatus`, so it's a client-side post-filter (no server round-trip), same pattern the existing "Group by status" toggle already uses.
+
+## Verification
+
+- Found 6 genuinely unscheduled Projects via direct API inspection against the local dev stack (not assumed/guessed) before touching the UI.
+- Confirmed the badge renders on all 6 across the list, Kanban board, and Project detail page, and that the Dashboard's count card and the new filter both independently read exactly 6.
+- **Transition, not just initial display**: created a real appointment via the API for one of the six (Taylor PMU-Test), then re-checked all four surfaces -- the badge disappeared from the list row, the Kanban card, and the detail header; the Date column updated to the real appointment date (Aug 5, 2026); and the Dashboard count + filter both correctly dropped to 5.
+- Onyx Lime confirmed unaffected -- `STATUS_TONE` is shared between both shapes by design (no theme branching added), screenshot-checked directly at the same list view rather than assumed from the shared-code argument alone.
+- Confirmed by inspection that the deposit-paid conversion trigger itself was not touched -- no changes anywhere near `deposits.ts` or any status-transition route.
+
+## Typechecks
+
+`npx tsc -b` (web) and `npx tsc --noEmit` (api) -- both clean before commit.
+
+## Commit
+
+`d1cd348` on `main`.
+
+## Cleanup
+
+Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification script and screenshot from the scratch directory. Test data created during verification (one real appointment created via API for the "Taylor PMU-Test" project) left in the dev database, same convention as prior sessions.
