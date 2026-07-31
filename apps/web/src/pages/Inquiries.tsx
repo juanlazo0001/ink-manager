@@ -532,9 +532,6 @@ export default function Inquiries() {
           <td className={`py-3 ${lastVisibleColumnKey === 'status' ? 'pr-3' : ''}`}>
             <div className="flex flex-wrap items-center gap-1.5">
               <StatusPill status={inquiry.status} label={describeInquiryStatus(inquiry)} />
-              {projectNeedsScheduling(inquiry) && (
-                <StatusPill status="NEEDS_SCHEDULING" label="Needs Scheduling" />
-              )}
             </div>
           </td>
         )}
