@@ -165,17 +165,30 @@ export default function EstimateRevisionResponse() {
                   {formatPriceEstimate(verifyData.priceEstimateLow, verifyData.priceEstimateHigh) ?? 'To be discussed'}
                 </p>
               </div>
-              {verifyData.plannedSessions.length === 0 && (
+              {/* A 1-row plan (flat-rate, staff choosing whether to show
+                  this one session's hours) reads the same as no plan at
+                  all -- the "N-session plan" breakdown box below is only
+                  worth showing once there's an actual multi-session
+                  breakdown to see. */}
+              {verifyData.plannedSessions.length <= 1 && (
                 <div>
                   <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Estimated time</p>
                   <p className="mt-1 text-lg font-semibold text-fg">
-                    {formatHourRange(verifyData.timeEstimateHoursMin, verifyData.timeEstimateHoursMax)}
+                    {/* A present single session's hours win even when
+                        null/redacted -- only fall back to the top-level
+                        fields when there's no session row at all. */}
+                    {verifyData.plannedSessions.length === 1
+                      ? formatHourRange(
+                          verifyData.plannedSessions[0].estimatedHoursMin,
+                          verifyData.plannedSessions[0].estimatedHoursMax,
+                        )
+                      : formatHourRange(verifyData.timeEstimateHoursMin, verifyData.timeEstimateHoursMax)}
                   </p>
                 </div>
               )}
             </div>
 
-            {verifyData.plannedSessions.length > 0 && (
+            {verifyData.plannedSessions.length > 1 && (
               <div className="mt-4 rounded-lg border border-border bg-surface-inset p-3">
                 <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
                   {verifyData.plannedSessions.length}-session plan

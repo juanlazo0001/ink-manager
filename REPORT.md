@@ -5763,3 +5763,50 @@ Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (
 ## Commit
 
 `a256047`
+
+---
+
+# Estimate flat-rate/hide-duration checkboxes missing at session count 1
+
+Single session on `main`. Reported bug: the "Flat rate" and "Show this session's hour range to the client" checkboxes on the Estimate section don't appear when "Number of sessions" is 1. No schema changes -- the underlying feature (`PlannedSession.showDurationToClient`, added in a same-day-earlier migration) already fully supported this; only the frontend's session-count-1 path had never been wired up to use it.
+
+## Root cause
+
+Both checkboxes live in `SessionHoursRows` (`SessionBreakdownEditor.tsx`), which early-returns `null` whenever `sessionCount <= 1` -- by design, session count 1 is treated as "no plan, use the simple top-level price/hours fields" (a deliberate, documented simplification, not itself a bug). The top-level fields already had their own "Flat rate" checkbox for that path, but no "show hour range to client" equivalent existed there at all -- that concept was only ever wired to the per-session `PlannedSession` rows.
+
+Checked the API before assuming a schema gap: `POST /:id/send-estimate` and `POST /:id/revise-estimate` both already explicitly support a `sessions` array of **any length, including 0 or 1** (per their own code comments -- a from-earlier-this-session bug fix for a different problem: collapsing a plan back down without orphaning stale rows). A 1-length array doesn't flip `hasPlan` (`finalSessionCount > 1`), so it doesn't touch the top-level `priceEstimateLow/High`/`timeEstimateHoursMin/Max` fields at all -- it just gives `showDurationToClient` a real `PlannedSession` row to live on. The client-facing verify routes (`estimates.ts`, and revise-estimate's own) already apply `redactedSessionHours` per session regardless of count. The only genuinely missing piece was the frontend never sending that array, and never showing the checkbox, for the count-1 case.
+
+## Fix
+
+**`InquiryDetail.tsx`** (both the original Generate & Send Estimate flow and the Revise Estimate flow, which mirror each other exactly):
+- New `estimateShowDurationToClient`/`reviseShowDurationToClient` state, seeded from an existing 1-row plan's `showDurationToClient` when reopening Edit (defaults to `true`, matching the schema default, for a never-touched estimate).
+- New checkbox rendered directly under "Flat rate," shown only once "Flat rate" is checked -- same conditional-visibility convention `SessionHoursRows`' own per-session pair already uses.
+- `handleSendEstimate`/`handleReviseEstimate` now send a synthetic 1-row `sessions` array (mapping the top-level price/hours fields into it) whenever `estimateIsFlat`/`reviseIsFlat` is true, instead of only ever sending `sessions` for `sessionCount > 1`. Left every ordinary (non-flat) single-session case exactly as it already worked -- no new `PlannedSession` row is created unless staff actually engages the flat-rate checkbox, so a plain range-priced single estimate has zero behavior change.
+
+**`EstimateResponse.tsx` / `EstimateRevisionResponse.tsx`** (the public client-facing pages): the "N-session plan" breakdown box previously appeared for `plannedSessions.length > 0`, which would have made a 1-row plan read as a slightly odd "1-session plan" list instead of the normal simple "Price / Estimated time" layout every other single-session estimate uses. Changed the split to `length > 1` for the breakdown box and `length <= 1` for the simple layout, with the simple layout reading that one session's own (already-redacted) hours when a row exists, rather than always falling back to the top-level (never-redacted) fields.
+
+## A locked-session edge case, checked not fixed
+
+A single already-locked session (deposit paid or appointment booked) revising through the *now-reachable* top-level UI, rather than the multi-session UI's own "locked" badge, doesn't get an explicit "this is locked" indicator in the modal. Checked this is safe, not just cosmetically rough: `POST /:id/revise-estimate`'s reconciliation explicitly ignores whatever's submitted for a locked `sessionNumber` regardless of source (confirmed by reading the route, which skips locked slots in both its validation loop and its update loop) -- so a locked single session's real hours/price can't actually be overwritten this way, just possibly re-displayed as if editable when they're not. Not fixed this session; flagging as a minor known UX gap for a case that couldn't exist at all before today (a locked plan needed 2+ sessions previously).
+
+## Verification (Playwright against a local dev stack, scratch ports)
+
+- **Checkbox appearance**: opened Edit Estimate on a real seeded inquiry at the default session count of 1 -- confirmed "Show this session's hour range to the client" is genuinely absent until "Flat rate" is checked, then appears immediately.
+- **End-to-end persistence**: checked Flat rate, unchecked "show duration," set a price, submitted -- confirmed via a direct API read that the inquiry gained exactly one `PlannedSession` row (`showDurationToClient: false`, correct hours/price) while `priceEstimateLow/High` on the Inquiry itself updated normally.
+- **Public page redaction**: loaded the real `/estimate/:token` page for that inquiry -- "Estimated time" correctly read "To be discussed" (hours never sent to the client at all, not just hidden), no "1-session plan" box, otherwise identical to a normal single-session estimate's layout.
+- **Reconciliation both directions**: reopened Edit Estimate -- confirmed the checkbox correctly re-seeded to unchecked (reading the stored row) -- rechecked it and resubmitted -- confirmed via the API that the same row flipped to `showDurationToClient: true`.
+- **Regression, multi-session unaffected**: bumped "Number of sessions" to 3 on the same inquiry -- confirmed the top-level "Flat rate" checkbox correctly disappears, replaced by 3 independent per-session "Flat rate for this session" checkboxes exactly as before this change.
+- **Revise Estimate flow**: opened Revise Estimate on a genuinely single-session (zero existing `PlannedSession` rows) DEPOSIT_PENDING project -- same checkbox-appears-only-after-Flat-rate behavior confirmed. (Also opened it against a project with an existing real 2-session plan first, as a sanity check, and confirmed that one correctly stays on the per-session UI instead -- picking a single-session-shaped test subject was necessary to see the fix at all.)
+- Zero console errors or failed requests across every step above.
+
+## Typechecks
+
+`npx tsc -b` (web) and `npx tsc --noEmit` (api, untouched -- no backend changes were needed) -- both clean.
+
+## Commit
+
+`TBD` on `main`.
+
+## Cleanup
+
+Playwright and Chromium were installed ad hoc into the scratch directory (not a project dependency) and deleted afterward along with every driver script and screenshot. Killed the two scratch dev servers used for this session (api `:4050`, web `:5230`). Left the test data created during verification (the "Range Test" seeded inquiry's estimate now reads $777 flat, `showDurationToClient: true` after the final toggle-back-on test) in the dev database, consistent with this project's standing convention.

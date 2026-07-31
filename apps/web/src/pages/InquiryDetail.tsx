@@ -633,6 +633,14 @@ export default function InquiryDetail() {
   // when there's no session plan, and every session row's price field(s)
   // once there is one.
   const [estimateIsFlat, setEstimateIsFlat] = useState(false)
+  // Same concept as SessionHoursRow's own showDurationToClient, just for
+  // the no-plan (single top-level price/hours) path -- only meaningful
+  // once estimateIsFlat is checked, same as the per-session version. Sent
+  // as a synthetic 1-row `sessions` array in handleSendEstimate below so
+  // it persists onto a real PlannedSession row (the API already supports
+  // any session-array length, including 1) rather than needing its own
+  // top-level Inquiry column.
+  const [estimateShowDurationToClient, setEstimateShowDurationToClient] = useState(true)
 
   // Resizes sessionHours to match, preserving already-entered rows --
   // dropping the count back down never loses data for the rows still in
@@ -680,6 +688,8 @@ export default function InquiryDetail() {
   // Same per-estimate flat/range choice as estimateIsFlat above, keyed to
   // this modal's own state -- seeded in openReviseEstimateModal below.
   const [reviseIsFlat, setReviseIsFlat] = useState(false)
+  // Same as estimateShowDurationToClient above, keyed to this modal.
+  const [reviseShowDurationToClient, setReviseShowDurationToClient] = useState(true)
 
   function handleReviseSessionCountChange(count: number) {
     setReviseSessionCount(count)
@@ -926,6 +936,9 @@ export default function InquiryDetail() {
         ? inquiry.priceEstimateLow != null && inquiry.priceEstimateLow === inquiry.priceEstimateHigh
         : inquiry.service.pricingModel === 'FLAT',
     )
+    setEstimateShowDurationToClient(
+      inquiry.plannedSessions.length === 1 ? inquiry.plannedSessions[0].showDurationToClient : true,
+    )
     setDetailsForm({
       description: inquiry.description,
       colorOrBlackGrey: inquiry.colorOrBlackGrey,
@@ -1135,6 +1148,9 @@ export default function InquiryDetail() {
         ? inquiry.priceEstimateLow != null && inquiry.priceEstimateLow === inquiry.priceEstimateHigh
         : inquiry.service.pricingModel === 'FLAT',
     )
+    setEstimateShowDurationToClient(
+      inquiry.plannedSessions.length === 1 ? inquiry.plannedSessions[0].showDurationToClient : true,
+    )
     if (inquiry.plannedSessions.length > 0) {
       setSessionCount(inquiry.plannedSessions.length)
       setSessionHours(
@@ -1233,17 +1249,32 @@ export default function InquiryDetail() {
                 estimatedPriceHigh: Number(row.priceHigh),
                 showDurationToClient: row.showDurationToClient,
               }))
-            : // Bug fix: collapsing sessionCount back down to 1 needs to
-              // actually say so -- omitting `sessions` entirely (as before)
-              // left an already-declared plan's rows sitting untouched in
-              // the database forever, even though the top-level price/hours
-              // above had already moved on to the newly-submitted single
-              // values. Only sent when a plan currently exists; an ordinary
-              // single-session inquiry that never had one shouldn't send an
-              // empty array for no reason.
-              (inquiry?.plannedSessions.length ?? 0) > 0
-              ? []
-              : undefined,
+            : estimateIsFlat
+              ? // A flat-rate single-session estimate still needs a real
+                // (1-row) session so showDurationToClient has somewhere to
+                // persist -- the API already reconciles any array length,
+                // including 1, onto a matching PlannedSession row without
+                // touching the top-level price/hours fields sent above.
+                [
+                  {
+                    estimatedHoursMin: Number(estimateForm.timeEstimateHoursMin),
+                    estimatedHoursMax: Number(estimateForm.timeEstimateHoursMax),
+                    estimatedPriceLow: Number(estimateForm.priceEstimateLow),
+                    estimatedPriceHigh: Number(estimateForm.priceEstimateHigh),
+                    showDurationToClient: estimateShowDurationToClient,
+                  },
+                ]
+              : // Bug fix: collapsing sessionCount back down to 1 needs to
+                // actually say so -- omitting `sessions` entirely (as before)
+                // left an already-declared plan's rows sitting untouched in
+                // the database forever, even though the top-level price/hours
+                // above had already moved on to the newly-submitted single
+                // values. Only sent when a plan currently exists; an ordinary
+                // single-session inquiry that never had one shouldn't send an
+                // empty array for no reason.
+                (inquiry?.plannedSessions.length ?? 0) > 0
+                ? []
+                : undefined,
         }),
       })
 
@@ -1268,6 +1299,9 @@ export default function InquiryDetail() {
     // Reflects what's actually currently saved -- same inference
     // estimateIsFlat's own seed effect uses for an already-sent estimate.
     setReviseIsFlat(inquiry.priceEstimateLow != null && inquiry.priceEstimateLow === inquiry.priceEstimateHigh)
+    setReviseShowDurationToClient(
+      inquiry.plannedSessions.length === 1 ? inquiry.plannedSessions[0].showDurationToClient : true,
+    )
     // Prefill from the project's existing session plan, if it has one --
     // a revision on a multi-session project should show that plan ready to
     // edit, not silently reset it back down to 1.
@@ -1352,13 +1386,29 @@ export default function InquiryDetail() {
                         showDurationToClient: row.showDurationToClient,
                       }
                 })
-            : // Only explicitly collapse the plan back to an empty array when
-              // one currently exists (locked sessions, if any, are preserved
-              // server-side regardless) -- an ordinary project that never
-              // had a plan shouldn't send a `sessions` field at all.
-              (inquiry?.plannedSessions.length ?? 0) > 0
-              ? []
-              : undefined,
+            : reviseIsFlat
+              ? // Same reasoning as the Generate & Send Estimate flow's own
+                // synthetic 1-row session -- gives showDurationToClient
+                // somewhere to persist even without a real multi-session
+                // plan. Safe even if this single slot happens to be locked:
+                // the reconciliation above already ignores whatever's
+                // submitted for a locked sessionNumber.
+                [
+                  {
+                    estimatedHoursMin: Number(reviseEstimateForm.timeEstimateHoursMin),
+                    estimatedHoursMax: Number(reviseEstimateForm.timeEstimateHoursMax),
+                    estimatedPriceLow: Number(reviseEstimateForm.priceEstimateLow),
+                    estimatedPriceHigh: Number(reviseEstimateForm.priceEstimateHigh),
+                    showDurationToClient: reviseShowDurationToClient,
+                  },
+                ]
+              : // Only explicitly collapse the plan back to an empty array when
+                // one currently exists (locked sessions, if any, are preserved
+                // server-side regardless) -- an ordinary project that never
+                // had a plan shouldn't send a `sessions` field at all.
+                (inquiry?.plannedSessions.length ?? 0) > 0
+                ? []
+                : undefined,
           reason: reviseReasonInput.trim(),
         }),
       })
@@ -2580,15 +2630,28 @@ export default function InquiryDetail() {
                           only still applies to the single top-level price
                           field used when there's no plan. */}
                       {!isMultiSession && (
-                        <label className="mt-4 flex items-center gap-2 text-xs font-medium text-fg-secondary">
-                          <input
-                            type="checkbox"
-                            checked={estimateIsFlat}
-                            onChange={(e) => setEstimateIsFlat(e.target.checked)}
-                            className="h-4 w-4 rounded border-border bg-surface-inset accent-accent"
-                          />
-                          Flat rate (single price instead of a range)
-                        </label>
+                        <>
+                          <label className="mt-4 flex items-center gap-2 text-xs font-medium text-fg-secondary">
+                            <input
+                              type="checkbox"
+                              checked={estimateIsFlat}
+                              onChange={(e) => setEstimateIsFlat(e.target.checked)}
+                              className="h-4 w-4 rounded border-border bg-surface-inset accent-accent"
+                            />
+                            Flat rate (single price instead of a range)
+                          </label>
+                          {estimateIsFlat && (
+                            <label className="mt-1.5 flex items-center gap-1.5 text-xs text-fg-muted">
+                              <input
+                                type="checkbox"
+                                checked={estimateShowDurationToClient}
+                                onChange={(e) => setEstimateShowDurationToClient(e.target.checked)}
+                                className="h-3.5 w-3.5 rounded border-border bg-surface-inset accent-accent"
+                              />
+                              Show this session's hour range to the client (staff always sees it either way)
+                            </label>
+                          )}
+                        </>
                       )}
 
                       <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -4114,15 +4177,28 @@ export default function InquiryDetail() {
                         above: once a session plan exists, flat/range is
                         chosen per session instead. */}
                     {!isReviseMultiSession && (
-                      <label className="flex items-center gap-2 text-xs font-medium text-fg-secondary">
-                        <input
-                          type="checkbox"
-                          checked={reviseIsFlat}
-                          onChange={(e) => setReviseIsFlat(e.target.checked)}
-                          className="h-4 w-4 rounded border-border bg-surface-inset accent-accent"
-                        />
-                        Flat rate (single price instead of a range)
-                      </label>
+                      <>
+                        <label className="flex items-center gap-2 text-xs font-medium text-fg-secondary">
+                          <input
+                            type="checkbox"
+                            checked={reviseIsFlat}
+                            onChange={(e) => setReviseIsFlat(e.target.checked)}
+                            className="h-4 w-4 rounded border-border bg-surface-inset accent-accent"
+                          />
+                          Flat rate (single price instead of a range)
+                        </label>
+                        {reviseIsFlat && (
+                          <label className="mt-1.5 flex items-center gap-1.5 text-xs text-fg-muted">
+                            <input
+                              type="checkbox"
+                              checked={reviseShowDurationToClient}
+                              onChange={(e) => setReviseShowDurationToClient(e.target.checked)}
+                              className="h-3.5 w-3.5 rounded border-border bg-surface-inset accent-accent"
+                            />
+                            Show this session's hour range to the client (staff always sees it either way)
+                          </label>
+                        )}
+                      </>
                     )}
 
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
