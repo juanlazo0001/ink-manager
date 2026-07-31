@@ -12,6 +12,7 @@ import { formatBubbleCount } from '../lib/useNavCounts'
 import { BellIcon, ChevronDownIcon, LogoutIcon, SearchIcon, SettingsIcon, TasksIcon, ViewIcon } from './icons'
 import ViewAsPicker from './ViewAsPicker'
 import SearchPalette from './SearchPalette'
+import ConnectionStatusIndicator from './ConnectionStatusIndicator'
 import { useThemePreset } from '../lib/useThemePreset'
 import appBgBlurred from '../assets/app-bg-blurred.jpg'
 
@@ -131,6 +132,8 @@ export default function TopBar() {
         </span>
       )}
       <div className={`fixed right-4 z-30 flex items-center gap-2 ${viewAsTarget ? 'top-14' : 'top-4'}`}>
+        <ConnectionStatusIndicator />
+
         {canSearch && (
           <button type="button" onClick={() => setSearchOpen(true)} aria-label="Search" className={iconBtnClass}>
             <SearchIcon className="h-5 w-5" />
