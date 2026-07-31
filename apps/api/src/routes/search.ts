@@ -20,13 +20,29 @@ router.get("/", async (req, res) => {
 
   const contains = { contains: q, mode: "insensitive" as const };
 
+  // A Client (and Appointment/Inquiry's own linked client) has separate
+  // firstName/lastName columns -- searching "John Smith" against each
+  // independently (the old behavior) never matches either one, since
+  // neither column contains the full two-word string. Splitting into
+  // words and requiring EVERY word to match SOME name field (first OR
+  // last) fixes that while leaving single-word queries behaving exactly
+  // as before (one word -> one AND-clause -> the same OR-across-both-
+  // fields check that already existed). Same pattern already established
+  // in clients.ts's own merge-search route.
+  const nameWords = q.split(/\s+/).filter(Boolean);
+  const clientNameMatch = {
+    AND: nameWords.map((word) => ({
+      OR: [{ firstName: { contains: word, mode: "insensitive" as const } }, { lastName: { contains: word, mode: "insensitive" as const } }],
+    })),
+  };
+
   const [clients, inquiries, artists, appointments] = await Promise.all([
     prisma.client.findMany({
       where: {
         studioId,
         mergedIntoId: null,
         archivedAt: null,
-        OR: [{ firstName: contains }, { lastName: contains }, { email: contains }, { phone: contains }],
+        OR: [clientNameMatch, { email: contains }, { phone: contains }],
       },
       select: { id: true, firstName: true, lastName: true, email: true, phone: true },
       orderBy: { createdAt: "desc" },
@@ -35,11 +51,7 @@ router.get("/", async (req, res) => {
     prisma.inquiry.findMany({
       where: {
         studioId,
-        OR: [
-          { description: contains },
-          { placement: contains },
-          { client: { OR: [{ firstName: contains }, { lastName: contains }] } },
-        ],
+        OR: [{ description: contains }, { placement: contains }, { client: clientNameMatch }],
       },
       select: {
         id: true,
@@ -58,11 +70,7 @@ router.get("/", async (req, res) => {
     prisma.appointment.findMany({
       where: {
         studioId,
-        OR: [
-          { notes: contains },
-          { client: { OR: [{ firstName: contains }, { lastName: contains }] } },
-          { artist: { user: { name: contains } } },
-        ],
+        OR: [{ notes: contains }, { client: clientNameMatch }, { artist: { user: { name: contains } } }],
       },
       select: {
         id: true,

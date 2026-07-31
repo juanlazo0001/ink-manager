@@ -4,9 +4,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
 import PhoneInput from '../components/PhoneInput'
+import MultiSelectFilter from '../components/MultiSelectFilter'
 import { SkeletonTableRows } from '../components/Skeleton'
 import { apiFetch, ApiError } from '../lib/api'
-import { formatPhoneInput, isValidPhoneDigits } from '../lib/format'
+import { formatPhoneInput, formatDateTime, isValidPhoneDigits } from '../lib/format'
 import { PlusIcon, SearchIcon } from '../components/icons'
 import { useUserProfile } from '../context/useUserProfile'
 import { useAuth } from '../context/useAuth'
@@ -21,9 +22,36 @@ interface Client {
   lastName: string
   email: string | null
   phone: string | null
+  updatedAt: string
+  archivedAt: string | null
 }
 
 const EMPTY_FORM = { firstName: '', lastName: '', email: '', phone: '' }
+
+const ACTIVITY_FILTER_OPTIONS = [
+  { value: 'upcoming_appointment', label: 'Has upcoming appointment' },
+  { value: 'active_project', label: 'Has active project' },
+  { value: 'no_activity', label: 'No upcoming appointment or active project' },
+]
+
+// Same plain-localStorage, one-JSON-blob persistence convention
+// Inquiries.tsx already established for its own filter/sort selections.
+interface ClientFilterState {
+  activityFilter: string[]
+  showArchived: boolean
+}
+const DEFAULT_CLIENT_FILTER_STATE: ClientFilterState = { activityFilter: [], showArchived: false }
+const CLIENT_FILTER_STORAGE_KEY = 'ink-manager:clients-filters'
+
+function loadClientFilterState(): ClientFilterState {
+  try {
+    const raw = localStorage.getItem(CLIENT_FILTER_STORAGE_KEY)
+    if (!raw) return DEFAULT_CLIENT_FILTER_STATE
+    return { ...DEFAULT_CLIENT_FILTER_STATE, ...JSON.parse(raw) }
+  } catch {
+    return DEFAULT_CLIENT_FILTER_STATE
+  }
+}
 
 export default function Clients() {
   const navigate = useNavigate()
@@ -38,7 +66,14 @@ export default function Clients() {
   const canAddClient = profile?.permissions.includes('clients.edit') ?? false
   const canImportClients = profile?.permissions.includes('clients.import') ?? false
   const [search, setSearch] = useState('')
+  const [activityFilter, setActivityFilter] = useState<string[]>(() => loadClientFilterState().activityFilter)
+  const [showArchived, setShowArchived] = useState(() => loadClientFilterState().showArchived)
   useMarkSectionSeen('clients')
+
+  useEffect(() => {
+    const state: ClientFilterState = { activityFilter, showArchived }
+    localStorage.setItem(CLIENT_FILTER_STORAGE_KEY, JSON.stringify(state))
+  }, [activityFilter, showArchived])
 
   // Set by ClientDetail's permanent-delete flow on redirect -- read once,
   // then cleared from history so a refresh (or back navigation) doesn't
@@ -58,7 +93,8 @@ export default function Clients() {
   const [formError, setFormError] = useState<string | null>(null)
 
   const queryClient = useQueryClient()
-  const queryKey = clientsQueryKey(user!.studioId)
+  const baseQueryKey = clientsQueryKey(user!.studioId)
+  const queryKey = [...baseQueryKey, [...activityFilter].sort(), showArchived]
 
   const {
     data: clients,
@@ -66,7 +102,13 @@ export default function Clients() {
     error,
   } = useQuery({
     queryKey,
-    queryFn: () => apiFetch<Client[]>('/clients'),
+    queryFn: () => {
+      const params = new URLSearchParams()
+      activityFilter.forEach((value) => params.append('activity', value))
+      if (showArchived) params.set('includeArchived', 'true')
+      const qs = params.toString()
+      return apiFetch<Client[]>(`/clients${qs ? `?${qs}` : ''}`)
+    },
   })
 
   const errorMessage = error
@@ -87,7 +129,7 @@ export default function Clients() {
         }),
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey })
+      queryClient.invalidateQueries({ queryKey: baseQueryKey })
       setShowAddModal(false)
       setForm(EMPTY_FORM)
     },
@@ -172,15 +214,39 @@ export default function Clients() {
             )}
           </div>
 
-          <div className="mt-6 flex items-center gap-2 rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg sm:max-w-xs">
-            <SearchIcon className="h-4 w-4 text-fg-muted" />
-            <input
-              type="text"
-              placeholder="Search by name"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              className="w-full bg-transparent placeholder:text-fg-muted focus:outline-none"
+          <div className="mt-6 flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2 rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg sm:w-64">
+              <SearchIcon className="h-4 w-4 shrink-0 text-fg-muted" />
+              <input
+                type="text"
+                placeholder="Search by name"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                className="w-full min-w-0 bg-transparent placeholder:text-fg-muted focus:outline-none"
+              />
+            </div>
+
+            <MultiSelectFilter
+              placeholder="All activity"
+              options={ACTIVITY_FILTER_OPTIONS}
+              selected={activityFilter}
+              onChange={setActivityFilter}
+              className="w-full sm:w-56"
             />
+
+            <button
+              type="button"
+              onClick={() => setShowArchived((v) => !v)}
+              aria-pressed={showArchived}
+              className={[
+                'shrink-0 rounded-full border px-3 py-2 text-sm font-medium transition',
+                showArchived
+                  ? 'border-accent/40 bg-accent/15 text-accent'
+                  : 'border-border text-fg-secondary hover:bg-surface hover:text-fg',
+              ].join(' ')}
+            >
+              Show archived
+            </button>
           </div>
 
           {/* No .card-surface here, deliberately -- the client table is
@@ -195,7 +261,9 @@ export default function Clients() {
 
             {!errorMessage && !isLoading && filteredClients?.length === 0 && (
               <p className="text-sm text-fg-secondary">
-                {search ? 'No clients match your search.' : 'No clients yet. Add your first one to get started.'}
+                {search || activityFilter.length > 0
+                  ? 'No clients match these filters.'
+                  : 'No clients yet. Add your first one to get started.'}
               </p>
             )}
 
@@ -207,13 +275,14 @@ export default function Clients() {
                       <th className="pb-3 font-medium">Name</th>
                       <th className="hidden pb-3 font-medium md:table-cell">Email</th>
                       <th className="hidden pb-3 font-medium sm:table-cell">Phone</th>
+                      <th className="hidden pb-3 font-medium lg:table-cell">Last Modified</th>
                     </tr>
                   </thead>
                   {isLoading ? (
                     <SkeletonTableRows
                       rows={6}
-                      columns={3}
-                      columnClassNames={['', 'hidden md:table-cell', 'hidden sm:table-cell']}
+                      columns={4}
+                      columnClassNames={['', 'hidden md:table-cell', 'hidden sm:table-cell', 'hidden lg:table-cell']}
                     />
                   ) : (
                     <tbody className="divide-y divide-border">
@@ -225,11 +294,17 @@ export default function Clients() {
                         >
                           <td className="py-3 text-fg">
                             {client.firstName} {client.lastName}
+                            {client.archivedAt && (
+                              <span className="ml-2 rounded-full border border-border px-1.5 py-0.5 text-[11px] font-medium text-fg-muted">
+                                Archived
+                              </span>
+                            )}
                           </td>
                           <td className="hidden py-3 text-fg-secondary md:table-cell">{client.email ?? '—'}</td>
                           <td className="hidden py-3 text-fg-secondary sm:table-cell">
                             {client.phone ? formatPhoneInput(client.phone) : '—'}
                           </td>
+                          <td className="hidden py-3 text-fg-secondary lg:table-cell">{formatDateTime(client.updatedAt)}</td>
                         </tr>
                       ))}
                     </tbody>

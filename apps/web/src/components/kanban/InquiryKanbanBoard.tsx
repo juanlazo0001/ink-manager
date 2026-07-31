@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type WheelEvent } from 'react'
 import { DragDropProvider, useDroppable, type DragEndEvent } from '@dnd-kit/react'
 import { AnimatePresence } from 'framer-motion'
 import InquiryKanbanCard from './InquiryKanbanCard'
@@ -119,6 +119,25 @@ export default function InquiryKanbanBoard({
   const effectiveMobileColumnKey = mobileColumnKey ?? columnsWithCards[0]?.key ?? null
   const mobileColumn = columnsWithCards.find((column) => column.key === effectiveMobileColumnKey)
 
+  // Board's own overflow-x-auto already scrolls fine via a trackpad swipe,
+  // shift+wheel, or dragging a visible scrollbar -- but a plain mouse
+  // wheel (the common case; most mice have no horizontal scroll capability
+  // at all) sends a pure vertical delta, which this element has no
+  // vertical overflow of its own to capture, so it just bubbles up and
+  // scrolls the whole PAGE instead of panning the board. Redirecting a
+  // vertical-dominant wheel delta into horizontal scroll here is the same
+  // convention most kanban/carousel UIs use, and is what actually fixes
+  // "I can't scroll the board left and right" for anyone without a
+  // trackpad. A genuine horizontal gesture (trackpad swipe, shift+wheel)
+  // already carries a meaningful deltaX and is left completely alone.
+  function handleWheel(event: WheelEvent<HTMLDivElement>) {
+    const el = event.currentTarget
+    if (el.scrollWidth <= el.clientWidth) return
+    if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return
+    event.preventDefault()
+    el.scrollLeft += event.deltaY
+  }
+
   function toggleExpanded(key: string) {
     setExpandedColumns((prev) => {
       const next = new Set(prev)
@@ -183,7 +202,7 @@ export default function InquiryKanbanBoard({
           one-column-at-a-time picker below rather than just shrinking. */}
       <div className="hidden md:block">
         <DragDropProvider onDragEnd={handleDragEnd}>
-          <div className="flex gap-3 overflow-x-auto pb-2">
+          <div className="flex gap-3 overflow-x-auto pb-2" onWheel={handleWheel}>
             {columnsWithCards.map((column) => (
               <Column
                 key={column.key}

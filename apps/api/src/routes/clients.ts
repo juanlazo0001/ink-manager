@@ -79,9 +79,48 @@ const NOT_MERGED = { mergedIntoId: null } as const;
 // GET /:id -- see Client.archivedAt.
 const NOT_ARCHIVED = { archivedAt: null } as const;
 
+const VALID_ACTIVITY_FILTERS = ["upcoming_appointment", "active_project", "no_activity"] as const;
+type ActivityFilter = (typeof VALID_ACTIVITY_FILTERS)[number];
+
+// Projects tab's own status list (see apps/web/src/pages/Inquiries.tsx's
+// PROJECTS_TAB_STATUSES) -- duplicated here rather than shared since
+// there's no package boundary between apps/api and apps/web, same
+// convention as every other hand-kept enum-value list in this codebase.
+const ACTIVE_PROJECT_STATUSES: InquiryStatus[] = [InquiryStatus.SCHEDULING, InquiryStatus.WAITLISTED, InquiryStatus.CONFIRMED];
+
 router.get("/", requirePermission("clients.view"), async (req, res) => {
+  const includeArchived = req.query.includeArchived === "true";
+  const activity = (Array.isArray(req.query.activity) ? req.query.activity : req.query.activity ? [req.query.activity] : [])
+    .filter((v): v is ActivityFilter => VALID_ACTIVITY_FILTERS.includes(v as ActivityFilter));
+
+  const now = new Date();
+
+  // Multi-select semantics match every other filter in this app (Inquiries'
+  // status/artist filters): several selected values are OR'd together, not
+  // AND'd -- "has an upcoming appointment OR has an active project" is what
+  // a staff member means by checking both boxes, not "has both at once."
+  const activityConditions: Prisma.ClientWhereInput[] = [];
+  if (activity.includes("upcoming_appointment")) {
+    activityConditions.push({ appointments: { some: { startTime: { gte: now }, status: "CONFIRMED" } } });
+  }
+  if (activity.includes("active_project")) {
+    activityConditions.push({ inquiries: { some: { status: { in: ACTIVE_PROJECT_STATUSES } } } });
+  }
+  if (activity.includes("no_activity")) {
+    activityConditions.push({
+      appointments: { none: { startTime: { gte: now }, status: "CONFIRMED" } },
+      inquiries: { none: { status: { in: ACTIVE_PROJECT_STATUSES } } },
+    });
+  }
+
+  const baseWhere: Prisma.ClientWhereInput = {
+    studioId: req.user!.studioId,
+    ...NOT_MERGED,
+    ...(includeArchived ? {} : NOT_ARCHIVED),
+  };
+
   const clients = await prisma.client.findMany({
-    where: { studioId: req.user!.studioId, ...NOT_MERGED, ...NOT_ARCHIVED },
+    where: activityConditions.length > 0 ? { AND: [baseWhere, { OR: activityConditions }] } : baseWhere,
     orderBy: { createdAt: "desc" },
     take: 100,
   });

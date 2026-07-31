@@ -10,7 +10,14 @@ import Modal from '../components/Modal'
 import AppointmentForm from '../components/AppointmentForm'
 import InquiryKanbanBoard from '../components/kanban/InquiryKanbanBoard'
 import { PIPELINE_STEPS } from '../components/InquiryPipeline'
-import { projectNeedsScheduling, deriveProjectStage, PROJECT_STAGE_LABELS, type KanbanColumn, type KanbanTransition } from '../lib/kanban'
+import {
+  projectNeedsScheduling,
+  deriveProjectStage,
+  PROJECT_STAGE_ORDER,
+  PROJECT_STAGE_LABELS,
+  type KanbanColumn,
+  type KanbanTransition,
+} from '../lib/kanban'
 import MultiSelectFilter from '../components/MultiSelectFilter'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime, formatStatus, describeInquiryStatus } from '../lib/format'
@@ -73,6 +80,14 @@ export const INQUIRIES_TAB_STATUSES = [
   'COLD_LEAD',
 ] as const
 export const PROJECTS_TAB_STATUSES = ['SCHEDULING', 'WAITLISTED', 'CONFIRMED'] as const
+
+// Not a real InquiryStatus -- a synthetic value folded into the Projects
+// tab's own Status filter (previously a separate standalone toggle) so
+// staff have one filter to check instead of two. Filtered client-side
+// (see filteredInquiries below) the same way the old toggle already was,
+// since "needs scheduling" depends on session/appointment data a raw
+// status column can't express on its own.
+const NEEDS_SCHEDULING_FILTER_VALUE = 'NEEDS_SCHEDULING'
 
 // Kanban columns (Package E). Inquiries tab reuses InquiryPipeline's own
 // 5-step grouping (its first four steps -- the fifth, 'Scheduled', belongs
@@ -176,9 +191,10 @@ function loadColumnVisibility(): Record<ColumnKey, boolean> {
 // field, since they're all read/written together.
 interface FilterState {
   inquiryStatusFilter: string[]
+  // Projects tab only -- may include NEEDS_SCHEDULING_FILTER_VALUE
+  // alongside real InquiryStatus values (see that constant's own comment).
   projectStatusFilter: string[]
   artistFilter: string[]
-  needsSchedulingFilter: boolean
   groupByStatus: boolean
   sortOption: SortOption
 }
@@ -186,7 +202,6 @@ const DEFAULT_FILTER_STATE: FilterState = {
   inquiryStatusFilter: [],
   projectStatusFilter: [],
   artistFilter: [],
-  needsSchedulingFilter: false,
   groupByStatus: false,
   sortOption: 'createdAt_desc',
 }
@@ -239,12 +254,6 @@ export default function Inquiries() {
   const [inquiryStatusFilter, setInquiryStatusFilter] = useState<string[]>(() => loadFilterState().inquiryStatusFilter)
   const [projectStatusFilter, setProjectStatusFilter] = useState<string[]>(() => loadFilterState().projectStatusFilter)
   const [groupByStatus, setGroupByStatus] = useState(() => loadFilterState().groupByStatus)
-  // Projects tab only -- "Needs Scheduling" isn't a real InquiryStatus, so
-  // this is a client-side post-filter on top of whatever the server already
-  // returned for the active tab/status/artist/search filters, same as
-  // groupByStatus above is a client-side reshaping rather than a server
-  // round-trip.
-  const [needsSchedulingFilter, setNeedsSchedulingFilter] = useState(() => loadFilterState().needsSchedulingFilter)
   const [search, setSearch] = useState('')
   const debouncedSearch = useDebouncedValue(search, 300)
   // 'unassigned' is a synthetic value alongside real artist ids -- the
@@ -269,12 +278,11 @@ export default function Inquiries() {
       inquiryStatusFilter,
       projectStatusFilter,
       artistFilter,
-      needsSchedulingFilter,
       groupByStatus,
       sortOption,
     }
     localStorage.setItem(FILTER_STATE_STORAGE_KEY, JSON.stringify(state))
-  }, [inquiryStatusFilter, projectStatusFilter, artistFilter, needsSchedulingFilter, groupByStatus, sortOption])
+  }, [inquiryStatusFilter, projectStatusFilter, artistFilter, groupByStatus, sortOption])
 
   useEffect(() => {
     if (!showColumnMenu) return
@@ -297,9 +305,6 @@ export default function Inquiries() {
 
   function setTab(tab: PipelineTab) {
     setSearchParams(tab === 'inquiries' ? {} : { tab })
-    // Not a real status this tab could ever apply -- avoid a stuck filter
-    // silently hiding every row after switching to Inquiries.
-    if (tab === 'inquiries') setNeedsSchedulingFilter(false)
   }
 
   function handleInquiryCreated(inquiryId: string) {
@@ -389,11 +394,27 @@ export default function Inquiries() {
 
   const tabStatuses: readonly string[] = activeTab === 'projects' ? PROJECTS_TAB_STATUSES : INQUIRIES_TAB_STATUSES
   const activeStatusFilter = activeTab === 'projects' ? projectStatusFilter : inquiryStatusFilter
+  // NEEDS_SCHEDULING_FILTER_VALUE is only ever present in projectStatusFilter
+  // (Projects tab), never inquiryStatusFilter -- but activeStatusFilter is
+  // whichever of the two is active, so this check is tab-agnostic and
+  // simply never matches on the Inquiries tab.
+  const needsSchedulingSelected = activeStatusFilter.includes(NEEDS_SCHEDULING_FILTER_VALUE)
+  const selectedRealStatuses = activeStatusFilter.filter((status) => status !== NEEDS_SCHEDULING_FILTER_VALUE)
   // Empty selection means "everything this tab shows" -- sent explicitly as
   // the tab's full status list rather than omitted, so the server still
   // scopes to this tab (never the other tab's statuses) with nothing
   // checked. See inquiries.ts's GET / for the server-side counterpart.
-  const effectiveStatusFilter = activeStatusFilter.length > 0 ? activeStatusFilter : tabStatuses
+  // When Needs Scheduling is selected, the server fetch always uses the
+  // FULL tab status list regardless of which real statuses are also
+  // checked -- a project needing scheduling could carry any of the three
+  // real statuses, so narrowing the server request by only the checked
+  // ones would silently drop some needs-scheduling rows from the OR below
+  // before they ever reached the client to be filtered back in.
+  const effectiveStatusFilter = needsSchedulingSelected
+    ? tabStatuses
+    : selectedRealStatuses.length > 0
+      ? selectedRealStatuses
+      : tabStatuses
 
   // Package H: sort + status/artist filters + search all moved server-side
   // (GET /inquiries now takes status[]/artistId[]/q/sort query params) --
@@ -433,21 +454,45 @@ export default function Inquiries() {
       : error.message
     : null
 
-  const filteredInquiries =
-    activeTab === 'projects' && needsSchedulingFilter
+  // Client-side post-filter, same reasoning the old standalone toggle
+  // already documented: "needs scheduling" isn't a real status column a
+  // server-side ?status= filter can express. OR semantics against any
+  // selected real statuses too, matching how every other multi-select
+  // filter in this app combines its own checked values.
+  const filteredInquiries = !needsSchedulingSelected
+    ? inquiries
+    : selectedRealStatuses.length === 0
       ? inquiries?.filter((inquiry) => projectNeedsScheduling(inquiry))
-      : inquiries
+      : inquiries?.filter(
+          (inquiry) => selectedRealStatuses.includes(inquiry.status) || projectNeedsScheduling(inquiry),
+        )
 
   // Groups follow the same pipeline order as the tab's own status list, so
   // "New" always appears above "Assigned" above "Closed", etc. -- not
   // alphabetical, and not insertion order from the API response.
+  //
+  // Projects tab groups by the derived 5-stage project pipeline
+  // (deriveProjectStage) instead of the raw InquiryStatus -- the status
+  // pill shown on every row in this tab already reflects that derived
+  // stage (SCHEDULING/WAITLISTED/CONFIRMED collapse into it, see
+  // deriveProjectStage's own comment), so grouping by the raw status
+  // instead previously produced group headers ("Scheduling", "Confirmed")
+  // that didn't match the pill shown on any row inside them -- the exact
+  // "group by status isn't working" report this fixes.
   const groupedInquiries = groupByStatus
-    ? tabStatuses
-        .map((status) => ({
-          status,
-          items: (filteredInquiries ?? []).filter((inquiry) => inquiry.status === status),
-        }))
-        .filter((group) => group.items.length > 0)
+    ? activeTab === 'projects'
+      ? PROJECT_STAGE_ORDER.map((stage) => ({
+          key: stage as string,
+          label: PROJECT_STAGE_LABELS[stage],
+          items: (filteredInquiries ?? []).filter((inquiry) => deriveProjectStage(inquiry) === stage),
+        })).filter((group) => group.items.length > 0)
+      : tabStatuses
+          .map((status) => ({
+            key: status,
+            label: formatStatus(status),
+            items: (filteredInquiries ?? []).filter((inquiry) => inquiry.status === status),
+          }))
+          .filter((group) => group.items.length > 0)
     : null
 
   function renderRow(inquiry: Inquiry) {
@@ -663,7 +708,14 @@ export default function Inquiries() {
           <div className="mt-6 flex flex-wrap items-center gap-3">
             <MultiSelectFilter
               placeholder="All statuses"
-              options={tabStatuses.map((status) => ({ value: status, label: formatStatus(status) }))}
+              options={
+                activeTab === 'projects'
+                  ? [
+                      ...tabStatuses.map((status) => ({ value: status, label: formatStatus(status) })),
+                      { value: NEEDS_SCHEDULING_FILTER_VALUE, label: 'Needs Scheduling' },
+                    ]
+                  : tabStatuses.map((status) => ({ value: status, label: formatStatus(status) }))
+              }
               selected={activeTab === 'projects' ? projectStatusFilter : inquiryStatusFilter}
               onChange={activeTab === 'projects' ? setProjectStatusFilter : setInquiryStatusFilter}
               className="w-full sm:w-48"
@@ -716,27 +768,6 @@ export default function Inquiries() {
                 ].join(' ')}
               >
                 Group by status
-              </button>
-            )}
-
-            {/* Not a real status -- a client-side post-filter (see
-                filteredInquiries above), same reason it's a plain toggle
-                like Group by status rather than a MultiSelectFilter option.
-                Projects tab only; a converted-but-unscheduled Project is
-                the only thing this concept applies to. */}
-            {activeTab === 'projects' && (
-              <button
-                type="button"
-                onClick={() => setNeedsSchedulingFilter((v) => !v)}
-                aria-pressed={needsSchedulingFilter}
-                className={[
-                  'shrink-0 rounded-full border px-3 py-2 text-sm font-medium transition',
-                  needsSchedulingFilter
-                    ? 'border-warning/40 bg-warning/15 text-warning'
-                    : 'border-border text-fg-secondary hover:bg-surface hover:text-fg',
-                ].join(' ')}
-              >
-                Needs Scheduling
               </button>
             )}
 
@@ -811,10 +842,7 @@ export default function Inquiries() {
                 <p className="text-sm text-fg-secondary">
                   {(() => {
                     const hasExtraFilter =
-                      artistFilter.length > 0 ||
-                      debouncedSearch.trim().length > 0 ||
-                      activeStatusFilter.length > 0 ||
-                      needsSchedulingFilter
+                      artistFilter.length > 0 || debouncedSearch.trim().length > 0 || activeStatusFilter.length > 0
                     if (activeTab === 'projects') {
                       if (hasExtraFilter) return 'No projects match these filters.'
                       return 'No projects yet -- projects appear here once a deposit is paid.'
@@ -900,19 +928,31 @@ export default function Inquiries() {
                       ]}
                     />
                   ) : groupedInquiries ? (
-                    groupedInquiries.map((group) => (
-                      <tbody key={group.status} className="divide-y divide-border">
+                    groupedInquiries.flatMap((group, index) => [
+                      // Spacer between groups, its own tbody so divide-y
+                      // (scoped to each group's own tbody below) never draws
+                      // a border line through it -- just breathing room.
+                      ...(index > 0
+                        ? [
+                            <tbody key={`${group.key}-spacer`} aria-hidden="true">
+                              <tr>
+                                <td colSpan={visibleColumnCount} className="h-4 p-0"></td>
+                              </tr>
+                            </tbody>,
+                          ]
+                        : []),
+                      <tbody key={group.key} className="divide-y divide-border">
                         <tr>
                           <td
                             colSpan={visibleColumnCount}
-                            className="bg-surface-inset px-3 py-2 text-xs font-semibold uppercase tracking-wider text-fg-muted"
+                            className="rounded-lg bg-surface-inset px-3 py-2 text-xs font-semibold uppercase tracking-wider text-fg-muted"
                           >
-                            {formatStatus(group.status)} ({group.items.length})
+                            {group.label} ({group.items.length})
                           </td>
                         </tr>
                         {group.items.map(renderRow)}
-                      </tbody>
-                    ))
+                      </tbody>,
+                    ])
                   ) : (
                     <tbody className="divide-y divide-border">{filteredInquiries!.map(renderRow)}</tbody>
                   )}
