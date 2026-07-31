@@ -67,13 +67,28 @@ publicRouter.get("/view/:code", async (req, res) => {
 const router = Router();
 router.use(requireAuth);
 
+// Cash payment path: this is the ONE general/manual issuance route (not
+// tied to a deposit form, not the EXEMPT override below) -- the only
+// legitimate reason staff call this directly is recording an in-person
+// cash collection (a Stripe-paid card always comes through the deposit
+// checkout/webhook flow instead, never this route). paymentMethod is
+// therefore required and locked to "CASH", not left open to any value --
+// this is what closes the previously-silent gap where a gift card could
+// be issued here with zero record of whether real payment was ever
+// collected. Same requirePermission("giftCards.issue") gate as before;
+// no new permission introduced, per this session's own instruction to
+// reuse whatever already governs this action.
 router.post("/", requirePermission("giftCards.issue"), async (req, res) => {
   const body = req.body ?? {};
-  const { clientId, amountCents, appointmentId, expiresAt } = body;
+  const { clientId, amountCents, appointmentId, expiresAt, paymentMethod } = body;
   const studioId = req.user!.studioId;
 
   if (!clientId || typeof amountCents !== "number" || amountCents <= 0) {
     return res.status(400).json({ error: "clientId and a positive amountCents are required" });
+  }
+
+  if (paymentMethod !== "CASH") {
+    return res.status(400).json({ error: 'paymentMethod must be "CASH" -- use POST /gift-cards/exempt for a no-payment override.' });
   }
 
   if (expiresAt !== undefined && req.user!.role !== Role.OWNER) {
@@ -119,6 +134,7 @@ router.post("/", requirePermission("giftCards.issue"), async (req, res) => {
       expiresAt: resolvedExpiresAt,
       appointmentId: appointmentId || null,
       issuedById: req.user!.userId,
+      paymentMethod: "CASH",
     },
   });
 
@@ -128,7 +144,7 @@ router.post("/", requirePermission("giftCards.issue"), async (req, res) => {
     entityType: "GiftCard",
     entityId: card.id,
     action: "create",
-    changes: { clientId, amountCents, appointmentId: appointmentId ?? null, expiresAt: resolvedExpiresAt },
+    changes: { clientId, amountCents, appointmentId: appointmentId ?? null, expiresAt: resolvedExpiresAt, paymentMethod: "CASH" },
   });
 
   res.status(201).json(card);
@@ -185,6 +201,7 @@ router.post("/exempt", requireRole(Role.OWNER), async (req, res) => {
       exemptionReason: reason,
       expiresAt: resolvedExpiresAt,
       issuedById: req.user!.userId,
+      paymentMethod: "EXEMPT",
     },
   });
 

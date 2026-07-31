@@ -107,6 +107,13 @@ export async function issueGiftCardForPaidDeposit(
         amountCents: dollarsToCents(depositForm.depositAmount),
         expiresAt: computeGiftCardExpiration(studioSettings?.giftCardDefaultExpirationDays ?? null),
         issuedById: actorUserId,
+        // paidVia's own values (STRIPE/MANUAL) predate GiftCardPaymentMethod
+        // and stay as-is on DepositForm (a wider rename isn't this task's
+        // scope) -- MANUAL maps to CASH here since a staff-confirmed
+        // "paid outside Stripe" deposit is exactly what in-person cash
+        // collection means; there's no other manual-payment concept
+        // anywhere in this codebase.
+        paymentMethod: paidVia === "STRIPE" ? "STRIPE" : "CASH",
       },
     });
 
@@ -145,6 +152,11 @@ export async function issueGiftCardForPaidDeposit(
             amountCents: studioSettings?.referralRewardAmountCents ?? 2500,
             expiresAt: computeGiftCardExpiration(studioSettings?.giftCardDefaultExpirationDays ?? null),
             issuedById: actorUserId,
+            // paymentMethod deliberately left unset -- a promotional
+            // referral reward, not a payment of any kind (not Stripe, not
+            // cash collected, not a deposit exemption either). None of
+            // this session's "no silent path" rule applies to a $0-cost
+            // reward the studio is giving away, not collecting on.
           },
         });
 

@@ -27,6 +27,10 @@ interface GiftCard {
   // Null once the staff member who issued it has been deleted from the
   // studio -- the card's own value/status survives regardless.
   issuedBy: { id: string; name: string | null; email: string } | null
+  // Null for cards this session's cash-payment feature can't honestly
+  // backfill (bulk client import, multi-card checkout overage) -- see
+  // GiftCardPaymentMethod's own schema comment. Every NEW card has one.
+  paymentMethod: 'STRIPE' | 'CASH' | 'EXEMPT' | null
   exemptionReason: string | null
   publicUrl: string
   derivedFromGiftCard: { id: string; code: string; amountCents: number } | null
@@ -227,6 +231,18 @@ export default function GiftCardDetail() {
                         <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Issued by</p>
                         <p className="mt-1 text-sm text-fg">
                           {card.issuedBy ? (card.issuedBy.name ?? card.issuedBy.email) : 'Deleted user'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Payment method</p>
+                        <p className="mt-1 text-sm text-fg">
+                          {card.paymentMethod === 'STRIPE'
+                            ? 'Stripe'
+                            : card.paymentMethod === 'CASH'
+                              ? 'Cash'
+                              : card.paymentMethod === 'EXEMPT'
+                                ? 'Exempt (no payment)'
+                                : 'Unknown'}
                         </p>
                       </div>
                       {card.derivedFromGiftCard && (

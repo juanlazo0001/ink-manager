@@ -63,6 +63,25 @@ enum GiftCardStatus {
   EXEMPT
 }
 
+// Cash payment path: how a GiftCard's value was actually recorded as paid
+// -- distinct from GiftCardStatus above (EXEMPT is both a status AND a
+// payment method here, since an exempt card never has real money behind
+// it either way). Nullable permanently, not nullable-then-tightened: a
+// handful of pre-existing paths (the bulk client-import gift-card backfill,
+// and checkout's multi-card overage derivation when more than one origin
+// card combines) genuinely have no single known payment method to record,
+// and fabricating one for historical data would be actively wrong, not
+// just incomplete. The real invariant this session's task cares about --
+// "no NEW gift card issues without one of these three recorded" -- is
+// enforced at the application layer (routes/giftCards.ts, lib/deposits.ts),
+// not via a NOT NULL constraint that would force every historical/derived
+// row to have a value it can't honestly have.
+enum GiftCardPaymentMethod {
+  STRIPE
+  CASH
+  EXEMPT
+}
+
 enum LiabilityWaiverStatus {
   PENDING
   SIGNED
@@ -1548,6 +1567,14 @@ model GiftCard {
   redeemedAt  DateTime?
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
+
+  // See the enum's own comment for why this stays nullable permanently.
+  // Set on every NEW card going forward, across all three real issuance
+  // paths: STRIPE (webhook-confirmed deposit), CASH (staff-recorded
+  // in-person collection -- both the deposit mark-paid flow and the
+  // general POST /gift-cards issuance route), EXEMPT (the OWNER-only
+  // no-payment override, POST /gift-cards/exempt).
+  paymentMethod GiftCardPaymentMethod?
 
   studioId String
   studio   Studio @relation(fields: [studioId], references: [id])

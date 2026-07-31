@@ -664,6 +664,14 @@ router.post("/:id/checkout", requirePermission("appointments.checkout"), async (
           expiresAt: computeGiftCardExpiration(studioSettings?.giftCardDefaultExpirationDays ?? null),
           issuedById: req.user!.userId,
           derivedFromGiftCardId: redeemedCards.length === 1 ? redeemedCards[0].id : null,
+          // Same single-origin-only reasoning as derivedFromGiftCardId
+          // right above -- this leftover value isn't a fresh payment, it's
+          // carried forward from whichever card(s) it came from, so
+          // inherit the origin's own paymentMethod when there's exactly
+          // one unambiguous origin to inherit from. Left unset (not
+          // fabricated) when multiple redeemed cards combine, same as
+          // derivedFromGiftCardId going null in that case.
+          paymentMethod: redeemedCards.length === 1 ? redeemedCards[0].paymentMethod : null,
         },
       });
     }

@@ -737,6 +737,11 @@ export default function ClientDetail() {
         body: JSON.stringify({
           clientId: id,
           amountCents,
+          // This route is now specifically the cash-collection path (see
+          // its own comment in routes/giftCards.ts) -- the server rejects
+          // anything else here, a Stripe-paid card only ever comes through
+          // the deposit checkout/webhook flow.
+          paymentMethod: 'CASH',
           ...(user?.role === 'OWNER' && giftCardForm.expiresAt
             ? { expiresAt: new Date(giftCardForm.expiresAt).toISOString() }
             : {}),
@@ -1902,12 +1907,12 @@ export default function ClientDetail() {
                       <button
                         type="button"
                         onClick={() => setShowIssueGiftCard(true)}
-                        aria-label="Issue Gift Card"
-                        title="Issue Gift Card"
+                        aria-label="Record Cash Payment"
+                        title="Record Cash Payment"
                         className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                       >
                         <GiftCardIcon className="h-4 w-4" />
-                        <span className="hidden text-sm font-semibold md:inline">Issue Gift Card</span>
+                        <span className="hidden text-sm font-semibold md:inline">Record Cash Payment</span>
                       </button>
                     )}
                     {isOwner && (
@@ -2330,7 +2335,7 @@ export default function ClientDetail() {
 
       {showIssueGiftCard && (
         <Modal
-          title="Issue Gift Card"
+          title="Record Cash Payment"
           onClose={() => {
             setShowIssueGiftCard(false)
             setGiftCardForm(EMPTY_GIFT_CARD_FORM)
@@ -2338,8 +2343,13 @@ export default function ClientDetail() {
           }}
         >
           <form onSubmit={handleIssueGiftCard}>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-fg-secondary">Amount ($)</label>
+            <p className="text-sm text-fg-secondary">
+              For cash collected in person only. Enter the exact amount collected -- a gift card for that amount is
+              issued to the client once confirmed.
+            </p>
+
+            <div className="mt-4">
+              <label className="mb-1 block text-sm font-medium text-fg-secondary">Amount collected ($)</label>
               <input
                 type="number"
                 min="0"
@@ -2372,7 +2382,7 @@ export default function ClientDetail() {
               disabled={issuingGiftCard}
               className="mt-5 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
             >
-              {issuingGiftCard ? 'Issuing…' : 'Issue Gift Card'}
+              {issuingGiftCard ? 'Recording…' : 'Confirm Cash Payment'}
             </button>
           </form>
         </Modal>
