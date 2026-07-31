@@ -5581,3 +5581,84 @@ Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (
 ### Commit
 
 `8277dc2`
+
+---
+
+## PART 2 — Notify-event coverage audit across every mutation endpoint
+
+Systematic pass through every route file with a POST/PATCH/PUT/DELETE handler, cross-referenced against `apps/api/src/lib/realtime/registry.ts`'s `emitInvalidation` call sites (grep-verified before and after). Two research agents covered the lower-priority domains (clients/artists/team, services/intake-forms/settings/integrations/misc) in parallel while the explicitly-named priority areas (deposits, gift cards, waivers, messages, appointments, tasks) were read and fixed directly.
+
+### The single biggest finding: shared helpers, not scattered gaps
+
+Two functions sit underneath a large fraction of everything the app does, and neither ever emitted anything:
+
+- **`lib/clientSms.ts`'s `sendSmsMessage`** — the ONE place any outbound SMS creates its `Message` row, called by `sendClientSms`/`sendStaffSms`, in turn called from 9+ files (deposit-form/waiver/estimate auto-sends, gift-card text receipts, reminder jobs, the composer's own direct-send). Only the composer's own `POST /:id/messages` route emitted `conversation.updated` itself; every OTHER caller created a real message with zero broadcast. **Fixed once, in the shared function** — closes every current and future caller in one place.
+- **`routes/webhooks.ts`'s inbound Twilio SMS handler** and **`lib/jobs/emailPoller.ts`'s inbound Gmail handler** — a client texting or emailing the studio is the single most time-sensitive, frequent event in the app, and it was **entirely out-of-band from any staff action**, so nothing ever told a connected staff member it happened. This is very likely the dominant contributor to "new messages" feeling stale.
+- **`routes/webhooks.ts`'s Stripe `checkout.session.completed` handler** — all three payment-confirmation paths (deposit form, appointment balance, standalone gift card) were silent. Same "out-of-band, no staff action" pattern as the inbound-message webhooks -- explains "deposit/payment status changes" feeling randomly stale.
+
+### Full audit table (endpoint — notify status before — fix)
+
+**Messages (the #1 named symptom):**
+
+| Endpoint | Before | Fix |
+|---|---|---|
+| `lib/clientSms.ts` `sendSmsMessage` (underlies `sendClientSms`/`sendStaffSms`, 9+ callers) | Silent | Emits `conversation.updated` |
+| `POST /webhooks/twilio/sms` (inbound client text) | Silent | Emits `conversation.updated` |
+| `lib/jobs/emailPoller.ts` inbound Gmail poll | Silent | Emits `conversation.updated` |
+| `POST /conversations/` (new thread) | Silent | Emits `conversation.updated` |
+| `POST /conversations/:id/tags`, `DELETE .../tags/:tagId` | Silent | Emits `conversation.updated` |
+| `POST /conversations/:id/attach-image` | Silent | Emits `inquiry.updated` (mutates the Inquiry, not the thread) |
+| `POST /conversations/:id/messages`, `PATCH .../messages/:messageId` | Already emitted | No change |
+
+**Deposits / payments (the #2 named symptom):**
+
+| Endpoint | Before | Fix |
+|---|---|---|
+| `PATCH /deposits/sign/:token` (client signs) | Silent | Emits `inquiry.updated` |
+| `PATCH /deposit-forms/:id/mark-paid` (staff manual) | Silent | Emits `inquiry.updated` |
+| Stripe webhook: deposit form paid | Silent | Emits `inquiry.updated` |
+| Stripe webhook: appointment balance paid | Silent | Emits `appointment.changed` |
+| Stripe webhook: standalone gift card paid | Silent | Emits `giftcard.changed` |
+| `giftCards.ts`: `POST /` (cash), `POST /checkout-session`, `POST /exempt`, `PATCH /:id/attachment`, `POST /:id/void`, `PATCH /:id` | Silent (whole file) | All emit `giftcard.changed` |
+| `POST /deposits/:token/checkout-session`, `POST /deposit-forms/:id/checkout-link` | Silent | Left as-is (no new staff-visible persisted state beyond an internal session id) |
+
+**Cross-staff actions (the #3 named symptom) — appointments, waivers, inquiries, clients, team:**
+
+| Endpoint | Before | Fix |
+|---|---|---|
+| `PATCH /waivers/sign/:token`, `POST /waivers/:id/verify` | Silent | Emit `appointment.changed` + `inquiry.updated` |
+| `appointments.ts`: `POST /:id/checkout` (the biggest one -- finalizes status, redeems/rolls gift cards, can issue an overage card) | Silent | Emits `appointment.changed` + `giftcard.changed` |
+| `appointments.ts`: archive, unarchive, DELETE, waiver-generate, photos POST/DELETE, notes POST/PATCH/DELETE | Silent (8 routes) | All emit `appointment.changed` |
+| `inquiries.ts`: notes POST/PATCH/DELETE | Silent | Emit `inquiry.updated` (rest of this file already had strong coverage) |
+| `tasks.ts`: `/dismiss`, `/personal/:id` DELETE | Silent | Emit `task.changed` |
+| `tasks.ts`: `/personal/:id` PATCH | Only emitted on a completion change | Now emits on ANY field change |
+| `clients.ts`: create, PATCH, phones (add/remove/make-primary), emails (add/remove/make-primary), merge, archive, unarchive, DELETE | Silent (whole file, 12 routes) | All emit new `client.updated` |
+| `artists.ts`: create, PATCH, preferred-schedule | Silent (whole file) | All emit new `artist.changed` |
+| `studios.ts`: create staff user, invite, PATCH user (role/active/location), DELETE user, locations create/update/delete | Silent (whole file) | Emit new `team.changed` (+ `artist.changed` when the role touches ARTIST) / `locations.changed` |
+| `studios.ts`: invite resend, permissions matrix PATCH, studio branding PATCH | Silent | Deliberately left as-is -- see "Known limitations" below |
+| `clientImport.ts`: `POST /:batchId/execute` | Silent | Emits new `client.imported` + `inquiry.created` -- reuses the Clients/Inquiries lists' own already-live-consumed keys, the single cleanest win in this audit |
+| `intakeForms.ts`: create/update/delete | Silent | Emit new `intakeForm.changed` -- targets `["intake-forms"]`, a real key already read by `ClientDetail.tsx`/`ConversationsPanel.tsx` |
+| `integrations.ts`: SMS connect, BIRD_SMS connect, EMAIL OAuth callback, disconnect (any channel) | Silent | Emit new `integration.changed` -- targets `["sms-integration-status"]`, a real key the composer already reads to grey out/enable sending |
+| `services.ts`: create/update/delete | Silent | Emit new `service.changed` (no live frontend consumer yet -- see below) |
+| `customPolicies.ts`: create/update/delete/reorder | Silent | Emit new `customPolicy.changed` (no live frontend consumer yet -- see below) |
+
+### Deliberately NOT changed (checked, correct as-is)
+
+- `calendarPreferences.ts`, `widgetLayouts.ts`, `users.ts PATCH /me`, `viewAs.ts` -- genuinely personal/per-user preference or audit-only, explicitly documented in their own code as carrying no cross-staff meaning.
+- `clients.ts POST /:id/dismiss-duplicate`, `studios.ts` invite-resend -- real mutations, but no meaningfully different visible state for anyone other than the actor.
+- `clientImport.ts` mapping/row-review PATCH routes -- marginal (only matters if two staff review the exact same import batch simultaneously, an edge case, not the reported symptom).
+
+### Known limitations carried forward (not silently ignored -- flagged for a deliberate follow-up)
+
+- **`services.ts`, `customPolicies.ts`, `intakeForms.ts PUT /:id/fields`, `studios.ts` permissions/locations/team**: several of the NEW event types added here (`service.changed`, `customPolicy.changed`, `team.changed`, `locations.changed`) target frontend query keys that **don't exist as real `useQuery` calls yet** -- `Settings.tsx`, `ServicesManager.tsx`, `Team.tsx`, `ArtistDetail.tsx`, and `ClientDetail.tsx` all fetch their primary data via a bespoke `useEffect`+`apiFetch`, not React Query. Emitting the event now means no backend route needs a second pass once Part 3 (or a future session) migrates those pages -- but until that migration happens, these specific events are backend-correct and currently inert on the frontend. This is explicitly a Part 3 concern per the task's own framing (is anything listening for the right key), documented here so it isn't mistaken for an oversight.
+- **`studios.ts PATCH /:studioId/permissions`**: intentionally not wired. Even with a live query-key fix, an already-logged-in session's effective permissions are baked into its JWT at login, not re-fetched live anywhere except the Permissions tab itself -- a real fix here needs a broader session-refresh mechanism, not just a query invalidation, and is out of scope for this audit.
+
+### Verification
+
+Live, via a raw `socket.io-client` connected as the real dev studio owner (not the full React app, to isolate the registry/emit mechanism from any frontend wiring): triggered `giftCards.ts POST /` (cash issuance) and confirmed an `invalidate` event arrived with `[["client-gift-cards", "<clientId>"]]`; triggered `clients.ts PATCH /:id` and confirmed `[["clients"], ["client", "<clientId>"]]` arrived. Separately verified the `tasks.ts` fix specifically: dismissed a task (event received), created a personal task (event received), then PATCHed only its title -- confirmed a THIRD event arrived for that title-only edit (previously this exact case emitted nothing, since the route only checked `isCompletionChange`). Confirmed the API boots cleanly with every new `emitInvalidation` import in place (no circular-import issues from `lib/clientSms.ts` and `lib/jobs/emailPoller.ts` now depending on `lib/realtime/registry.ts`).
+
+Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) clean.
+
+### Commit
+
+`378434f`
