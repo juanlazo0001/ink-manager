@@ -5323,3 +5323,17 @@ Both typechecks clean.
 ## Cleanup
 
 Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification script and screenshot from the scratch directory. Test data created during verification (a real appointment booked for the "Unmatched ArtistTest" / "Small script tattoo" project) left in the dev database, same convention as prior sessions.
+
+---
+
+# Remove redundant "Needs Scheduling" badge from Project detail header
+
+Follow-up correction: with the Pipeline widget now showing "Needs Scheduling" as a real step (`bd3ece9`), the header's own separate badge next to the main status pill produced two adjacent pills saying overlapping things ("Scheduling" + "Needs Scheduling"). Removed the header-level badge in `InquiryDetail.tsx` only -- the List view and Kanban card badges (`Inquiries.tsx`, `InquiryKanbanCard.tsx`) stay unchanged, since neither surface shows the pipeline stepper; the badge remains the only signal there.
+
+Verified live on a real currently-unscheduled Project: header now shows a single "Scheduling" pill, Pipeline widget below is the sole place saying "Needs Scheduling."
+
+Both typechecks clean.
+
+**Commit**: `a1bba6c`.
+
+Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification script and screenshot from the scratch directory.
