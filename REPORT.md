@@ -5351,3 +5351,41 @@ Both typechecks clean.
 **Commit**: `c2e51b1`.
 
 Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID. Deleted every ad-hoc verification script and screenshot from the scratch directory.
+
+---
+
+# Show a Project's real pipeline stage as its status pill (not raw status)
+
+Follow-up correction: after removing the redundant "double pill" badges, the remaining single pill on every converted Project just showed the raw `InquiryStatus` (SCHEDULING/WAITLISTED/CONFIRMED), which all display identically as "Scheduling" -- giving zero visual distinction between a project that hasn't been booked yet and one that's fully wrapped up. The user asked for one pill per project reflecting its real stage: Needs Scheduling, Scheduled, Waiver Verified, Session Complete, or Project Complete -- the exact same 5 stages the Pipeline widget already tracks.
+
+## What changed
+
+New `deriveProjectStage()` in `lib/kanban.ts` is the single canonical source for the post-conversion journey (`PROJECT_STAGE_ORDER`/`PROJECT_STAGE_LABELS`), returning the LAST completed milestone (not "what the stepper is bolding as its current goal" -- those read differently; a pill has to state a true fact, e.g. "Scheduled" while a waiver is still pending, not falsely claim "Waiver Verified" before it's actually verified).
+
+Reused everywhere a Project's status renders:
+- **Inquiries & Projects list row** -- Status column shows the derived stage for a Project, the real `InquiryStatus` pill unchanged for a pre-conversion Inquiry.
+- **Kanban card** -- both the pill and the card's left-border tone now key off the derived stage instead of the raw status/a conditional Needs-Scheduling-only badge.
+- **Project detail header** -- same derived-stage pill, replacing the raw status pill (this is the exact spot the earlier "double pill" fix left showing bare "Scheduling").
+- **`InquiryDetail.tsx`'s own Pipeline widget** -- refactored `PROJECT_STEPS`/`deriveProjectStageIndex` to derive from this same shared array instead of an independently-written duplicate, so the pill and the stepper can never drift apart again.
+
+Four new `StatusPill` tones (`SCHEDULED`/`WAIVER_VERIFIED`/`SESSION_COMPLETE`/`PROJECT_COMPLETE`), each visually distinct, following the component's own "one tone per pipeline stage" rule already established for the Inquiry-side statuses.
+
+## Data needed, and what already existed
+
+`GET /inquiries/assigned-to-me` (MyInquiries.tsx, ARTIST) already returns everything needed -- it always used the full `INQUIRY_INCLUDE`, which already carries `sessions.checkedOutAt`/`sessions.liabilityWaiver.status` and (via a plain `include`) `projectCompletedAt`. `MyInquiries.tsx`'s own frontend `Inquiry` type just never declared these fields, so its Kanban cards would have silently derived "no sessions yet" for every project despite the real data already being in the response -- widened that type to match reality.
+
+`GET /inquiries` (`INQUIRY_LIST_SELECT`, used by the OWNER/FRONT_DESK list+Kanban) only had `sessions.id`/`sessions.startTime` and no `projectCompletedAt` at all -- extended the select with the three additional fields needed. No schema change; every field added already existed on the Prisma models, just wasn't being selected by this one narrower query.
+
+## Verification
+
+Real browser check against live dev data: before this fix, every row in the Projects list/Kanban showed "Scheduling" regardless of real progress. After: the same data now shows three genuinely distinct pills across the current dev projects -- "Scheduled" (green), "Session Complete" (violet), "Needs Scheduling" (orange) -- both in the list's Status column and on Kanban cards (card border color also correctly follows the tone). Opened a Project detail page directly (a "Session Complete" one, per its Kanban card) and confirmed the header pill ("Session Complete") and the Pipeline widget below it (step 4, "Session Complete", active) agree exactly -- proving the single-source-of-truth refactor actually keeps them in sync, not just coincidentally matching once.
+
+Both typechecks clean.
+
+## Commit
+
+`2e97c16`.
+
+## Cleanup
+
+Killed the isolated dev API/web server instances (ports 4093/5292) via PowerShell `Stop-Process` by exact PID -- one leftover stale API process was still bound to port 4093 from an earlier session in this same conversation and had to be killed first. Deleted every ad-hoc verification script and screenshot from the scratch directory.
