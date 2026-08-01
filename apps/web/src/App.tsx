@@ -19,6 +19,7 @@ import Settings from './pages/Settings'
 import Profile from './pages/Profile'
 import Team from './pages/Team'
 import FlashGallery from './pages/FlashGallery'
+import FlashPublicGallery from './pages/FlashPublicGallery'
 import IntakeForm from './pages/IntakeForm'
 import Policies from './pages/Policies'
 import PublicPolicyPage from './pages/PublicPolicyPage'
@@ -133,6 +134,7 @@ function AppRoutes() {
         </Route>
         <Route path="/inquiry/:studioSlug" element={<IntakeForm />} />
         <Route path="/inquiry/:studioSlug/:formSlug" element={<IntakeForm />} />
+        <Route path="/flash/:studioSlug/:artistId" element={<FlashPublicGallery />} />
         <Route path="/policies/:studioSlug" element={<Policies />} />
         {/* Platform-level (no studioSlug) -- Ink Manager's own Privacy
             Policy/Terms, distinct from the studio-scoped routes directly

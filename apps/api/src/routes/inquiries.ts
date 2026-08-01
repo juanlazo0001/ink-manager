@@ -1,7 +1,14 @@
 import { Router } from "express";
 import crypto from "node:crypto";
 import { prisma } from "../lib/prisma";
-import { AppointmentStatus, Channel, InquiryStatus, MessageChannel, MessageDirection } from "../../generated/prisma/enums";
+import {
+  AppointmentStatus,
+  Channel,
+  FlashPieceStatus,
+  InquiryStatus,
+  MessageChannel,
+  MessageDirection,
+} from "../../generated/prisma/enums";
 import { Prisma } from "../../generated/prisma/client";
 import { optionalAuth, requireAuth, requireRole } from "../middleware/auth";
 import { Role } from "../../generated/prisma/enums";
@@ -2090,6 +2097,106 @@ router.post("/:id/mark-lost", requireAuth, requirePermission("inquiries.markLost
   });
 
   emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
+
+  res.json(updated);
+});
+
+// Flash gallery: front desk's review of a FLASH_PENDING_APPROVAL inquiry
+// (the placement photo/description + customer info submitted through
+// POST /flash-pieces/:id/request). Approve moves straight to
+// FLASH_PAYMENT_PENDING -- Part 3 builds what happens once that status is
+// reached (a Stripe Checkout link for the piece's full price). Gated by
+// inquiries.edit, the same general "make a staff-side change to an
+// inquiry" key FRONT_DESK already has by default -- flash approval isn't
+// meaningfully a different capability from any other inquiry edit.
+router.post("/:id/flash/approve", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
+  const id = req.params.id as string;
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  if (inquiry.status !== InquiryStatus.FLASH_PENDING_APPROVAL) {
+    return res.status(400).json({ error: "This inquiry isn't awaiting flash approval" });
+  }
+
+  const updated = await prisma.inquiry.update({
+    where: { id },
+    data: { status: InquiryStatus.FLASH_PAYMENT_PENDING },
+    include: INQUIRY_INCLUDE,
+  });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Inquiry",
+    entityId: id,
+    action: "flash_request_approved",
+    changes: diffObjects(inquiry, { status: InquiryStatus.FLASH_PAYMENT_PENDING }, ["status"]),
+  });
+
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
+
+  res.json(updated);
+});
+
+// Decline: closes the inquiry the same way mark-lost does (reuses
+// CLOSED_LOST + closedReason, per the task's own "reuse existing
+// CLOSED_LOST-style handling if it fits" instruction), and -- the part
+// that's genuinely different from a normal decline -- reopens a one-of-one
+// piece back to AVAILABLE so it isn't stuck reserved forever behind a
+// declined request. A repeatable piece was never taken off the gallery in
+// the first place (see POST /flash-pieces/:id/request), so there's
+// nothing to reopen for one.
+router.post("/:id/flash/decline", requireAuth, requirePermission("inquiries.markLost"), async (req, res) => {
+  const id = req.params.id as string;
+  const { reason } = req.body ?? {};
+
+  if (reason !== undefined && reason !== null && typeof reason !== "string") {
+    return res.status(400).json({ error: "reason must be a string" });
+  }
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { id }, include: { flashPiece: true } });
+  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  if (inquiry.status !== InquiryStatus.FLASH_PENDING_APPROVAL) {
+    return res.status(400).json({ error: "This inquiry isn't awaiting flash approval" });
+  }
+
+  const closedData = {
+    status: InquiryStatus.CLOSED_LOST,
+    lostAt: new Date(),
+    lostReason: typeof reason === "string" && reason.trim().length > 0 ? reason.trim() : "Flash request declined.",
+  };
+
+  const [updated] = await prisma.$transaction([
+    prisma.inquiry.update({ where: { id }, data: closedData, include: INQUIRY_INCLUDE }),
+    ...(inquiry.flashPiece?.isOneOfOne
+      ? [
+          prisma.flashPiece.update({
+            where: { id: inquiry.flashPiece.id },
+            data: { status: FlashPieceStatus.AVAILABLE },
+          }),
+        ]
+      : []),
+  ]);
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Inquiry",
+    entityId: id,
+    action: "flash_request_declined",
+    changes: diffObjects(inquiry, closedData, ["status", "lostAt", "lostReason"]),
+  });
+
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
+  if (inquiry.flashPiece?.isOneOfOne) {
+    emitInvalidation({ type: "flash.changed", studioId: req.user!.studioId });
+  }
 
   res.json(updated);
 });

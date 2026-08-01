@@ -391,6 +391,7 @@ function ArtistDetailField({ label, artist, emptyLabel }: { label: string; artis
 const INQUIRY_WIDGET_ORDER = [
   'pipeline',
   'candidacy-review',
+  'flash-approval',
   'assignment-section',
   'estimate-section',
   'deposit',
@@ -879,6 +880,11 @@ export default function InquiryDetail() {
 
   const [markingGoodCandidate, setMarkingGoodCandidate] = useState(false)
   const [goodCandidateError, setGoodCandidateError] = useState<string | null>(null)
+
+  const [approvingFlash, setApprovingFlash] = useState(false)
+  const [flashActionError, setFlashActionError] = useState<string | null>(null)
+  const [decliningFlash, setDecliningFlash] = useState(false)
+  const [flashDeclineReason, setFlashDeclineReason] = useState('')
 
   const [showReopenModal, setShowReopenModal] = useState(false)
   const [reopenStatus, setReopenStatus] = useState('')
@@ -1714,6 +1720,42 @@ export default function InquiryDetail() {
     }
   }
 
+  async function handleApproveFlash() {
+    if (!id) return
+
+    setApprovingFlash(true)
+    setFlashActionError(null)
+
+    try {
+      await apiFetch(`/inquiries/${id}/flash/approve`, { method: 'POST' })
+      invalidateInquiry()
+    } catch (err) {
+      setFlashActionError(err instanceof Error ? err.message : 'Failed to approve this request')
+    } finally {
+      setApprovingFlash(false)
+    }
+  }
+
+  async function handleDeclineFlash() {
+    if (!id) return
+
+    setDecliningFlash(true)
+    setFlashActionError(null)
+
+    try {
+      await apiFetch(`/inquiries/${id}/flash/decline`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: flashDeclineReason.trim() || undefined }),
+      })
+      setFlashDeclineReason('')
+      invalidateInquiry()
+    } catch (err) {
+      setFlashActionError(err instanceof Error ? err.message : 'Failed to decline this request')
+    } finally {
+      setDecliningFlash(false)
+    }
+  }
+
   async function handleReopen() {
     if (!id || !reopenStatus) return
 
@@ -2509,6 +2551,66 @@ export default function InquiryDetail() {
                   )}
 
                   {goodCandidateError && <p className="mt-3 text-sm text-danger">{goodCandidateError}</p>}
+                </Widget>
+              )}
+
+              {inquiry.status === 'FLASH_PENDING_APPROVAL' && (
+                <Widget key="flash-approval" id="flash-approval" title="Flash Booking — Review">
+                  <p className="mt-1 text-sm text-fg-secondary">
+                    Submitted for {inquiry.description}. Review the placement below, then approve to move this
+                    customer to payment, or decline to reopen the piece.
+                  </p>
+
+                  <p className="mt-3 text-sm font-medium text-fg-secondary">Placement</p>
+                  <p className="mt-1 text-sm text-fg">{inquiry.placement}</p>
+
+                  {inquiry.placementImages.length > 0 && (
+                    <div className="mt-3 grid grid-cols-3 gap-3 sm:grid-cols-4">
+                      {inquiry.placementImages.map((url) => (
+                        <a key={url} href={url} target="_blank" rel="noopener noreferrer" className="block overflow-hidden rounded-lg border border-border">
+                          <img src={url} alt="Placement" className="aspect-square w-full object-cover" />
+                        </a>
+                      ))}
+                    </div>
+                  )}
+
+                  {(canEditInquiry || canMarkLost) && (
+                    <div className="mt-4 space-y-3">
+                      {canMarkLost && (
+                        <input
+                          type="text"
+                          value={flashDeclineReason}
+                          onChange={(e) => setFlashDeclineReason(e.target.value)}
+                          placeholder="Decline reason (optional)"
+                          className="w-full max-w-sm rounded-lg border border-border bg-surface-inset px-3 py-1.5 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                        />
+                      )}
+                      <div className="flex flex-wrap gap-3">
+                        {canEditInquiry && (
+                          <button
+                            type="button"
+                            onClick={handleApproveFlash}
+                            disabled={approvingFlash || decliningFlash}
+                            className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                          >
+                            {approvingFlash ? 'Approving…' : 'Approve'}
+                          </button>
+                        )}
+                        {canMarkLost && (
+                          <button
+                            type="button"
+                            onClick={handleDeclineFlash}
+                            disabled={approvingFlash || decliningFlash}
+                            className="rounded-full border border-danger/40 px-4 py-2 text-sm font-medium text-danger transition hover:bg-danger/10 disabled:opacity-60"
+                          >
+                            {decliningFlash ? 'Declining…' : 'Decline'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {flashActionError && <p className="mt-3 text-sm text-danger">{flashActionError}</p>}
                 </Widget>
               )}
 

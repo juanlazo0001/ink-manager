@@ -53,6 +53,12 @@ enum Channel {
   // form reveals a text input for the friend's Client.referralCode, looked
   // up and stored as Client.referredByClientId on the new client.
   REFERRAL
+  // Flash gallery: never selectable on either intake form -- set only by
+  // POST /flash-pieces/:id/request, the lightweight public submission flow
+  // (see Inquiry.flashPieceId's own comment). Complements that FK as a
+  // second, cheap "how did this inquiry originate" signal that plugs into
+  // any existing channel-based reporting with no special-casing needed.
+  FLASH_GALLERY
 }
 
 enum GiftCardStatus {
@@ -230,6 +236,20 @@ enum InquiryStatus {
   CONFIRMED
   CLOSED_LOST
   COLD_LEAD
+  // Flash gallery: the two statuses a flash-sourced inquiry moves through
+  // BEFORE it rejoins the normal pipeline at SCHEDULING (reused as-is once
+  // paid -- Part 3, not yet built). Skips ARTIST_ASSIGNED/
+  // AWAITING_CLIENT_RESPONSE/BUDGET_NEGOTIATION/DEPOSIT_PENDING entirely --
+  // the artist, price, and duration are already fixed by the FlashPiece
+  // itself, so there's no assignment or estimate step to move through.
+  //
+  // Submitted, awaiting front desk's review of the placement photo/
+  // description and customer info (POST /flash-pieces/:id/request).
+  FLASH_PENDING_APPROVAL
+  // Approved by front desk, awaiting the customer's full prepayment
+  // (Part 3's own Stripe Checkout flow, a distinct mechanism from the
+  // deposit-tier gift-card system -- see that part's own comment).
+  FLASH_PAYMENT_PENDING
 }
 
 model Studio {
@@ -547,6 +567,8 @@ model FlashPiece {
 
   artistId String
   artist   Artist @relation(fields: [artistId], references: [id])
+
+  inquiries Inquiry[]
 
   @@index([studioId, artistId])
   @@index([studioId, status])
@@ -1307,11 +1329,23 @@ model Inquiry {
   projectCompletedById String?
   projectCompletedBy   User?     @relation("ProjectCompletedBy", fields: [projectCompletedById], references: [id])
 
+  // Flash gallery: set only by POST /flash-pieces/:id/request, never by
+  // either normal intake form. The clear marker this inquiry is flash-
+  // sourced (paired with Channel.FLASH_GALLERY above) -- artist/price/
+  // duration all came from the piece, not staff assignment/estimation, so
+  // InquiryPipeline.tsx renders a shorter stepper when this is set (see
+  // that component's own comment). Deliberately NOT unique -- a repeatable
+  // (isOneOfOne: false) piece can be the source of many different
+  // inquiries over time, one per customer who requests it.
+  flashPieceId String?
+  flashPiece   FlashPiece? @relation(fields: [flashPieceId], references: [id])
+
   @@index([studioId])
   @@index([studioId, status])
   @@index([clientId])
   @@index([studioId, createdAt])
   @@index([assignedArtistId, createdAt])
+  @@index([flashPieceId])
 }
 
 // Manually-written staff commentary log on an inquiry -- deliberately

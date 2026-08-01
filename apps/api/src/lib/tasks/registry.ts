@@ -12,6 +12,7 @@ import { newConversationSource } from "./newConversation";
 import { remindersNotSentSource } from "./remindersNotSent";
 import { appointmentNeedsCheckoutSource } from "./appointmentNeedsCheckout";
 import { selfScheduledPendingSource } from "./selfScheduledPending";
+import { flashRequestPendingSource } from "./flashRequestPending";
 import type { TaskSource } from "./types";
 
 export const TASK_SOURCE_REGISTRY: TaskSource[] = [
@@ -25,6 +26,7 @@ export const TASK_SOURCE_REGISTRY: TaskSource[] = [
   remindersNotSentSource,
   appointmentNeedsCheckoutSource,
   selfScheduledPendingSource,
+  flashRequestPendingSource,
 ];
 
 export type { SystemTask, TaskSource } from "./types";

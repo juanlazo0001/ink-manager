@@ -1,18 +1,253 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
-import { Role, FlashPieceStatus } from "../../generated/prisma/enums";
+import { Channel, FlashPieceStatus, InquiryStatus, Role } from "../../generated/prisma/enums";
 import { requireAuth } from "../middleware/auth";
 import { requirePermission } from "../lib/permissions";
 import { diffObjects, logAudit } from "../lib/audit";
 import { emitInvalidation } from "../lib/realtime/registry";
+import { normalizePhone } from "../lib/phone";
+import { syncPrimaryEmail, syncPrimaryPhone } from "../lib/clientContacts";
+import { generateUniqueReferralCode } from "../lib/referrals";
+import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 
 const router = Router();
-
-router.use(requireAuth);
 
 const FLASH_PIECE_INCLUDE = {
   artist: { select: { id: true, user: { select: { name: true, email: true, avatarUrl: true } } } },
 } as const;
+
+// Public: one artist's available flash pieces -- studio + artist scoped,
+// same two-segment shape as the existing /inquiry/:studioSlug public
+// convention. Repeatable pieces (isOneOfOne: false) always show while
+// AVAILABLE; a one-of-one piece disappears the instant someone requests it
+// (status moves to PENDING_APPROVAL, see POST /:id/request below) and
+// never reappears once RETIRED or BOOKED -- this query is naturally
+// correct for all of that just by filtering on AVAILABLE, no separate
+// isOneOfOne branching needed.
+router.get("/public", async (req, res) => {
+  const studioSlug = req.query.studioSlug;
+  const artistId = req.query.artistId;
+
+  if (typeof studioSlug !== "string" || !studioSlug || typeof artistId !== "string" || !artistId) {
+    return res.status(400).json({ error: "studioSlug and artistId are required" });
+  }
+
+  const studio = await prisma.studio.findUnique({
+    where: { slug: studioSlug },
+    include: { settings: { select: { themePreset: true } } },
+  });
+  if (!studio) {
+    return res.status(404).json({ error: "Studio not found" });
+  }
+
+  const artist = await prisma.artist.findUnique({ where: { id: artistId }, include: { user: true } });
+  if (!artist || artist.user.studioId !== studio.id) {
+    return res.status(404).json({ error: "Artist not found" });
+  }
+
+  const pieces = await prisma.flashPiece.findMany({
+    where: { studioId: studio.id, artistId, status: FlashPieceStatus.AVAILABLE },
+    select: {
+      id: true,
+      imageUrl: true,
+      title: true,
+      description: true,
+      priceCents: true,
+      estimatedDurationMinutes: true,
+      isOneOfOne: true,
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  res.json({
+    studioName: studio.name,
+    studioSlug: studio.slug,
+    studioLogoUrl: studio.logoUrl,
+    themePreset: studio.settings?.themePreset ?? DEFAULT_THEME_PRESET,
+    artistId: artist.id,
+    artistName: artist.user.name ?? "this artist",
+    artistAvatarUrl: artist.user.avatarUrl,
+    pieces,
+  });
+});
+
+// Public: the lightweight submission form's own client lookup -- reuses
+// the exact same email-then-phone matching POST /inquiries' general
+// intake already does (see that route's own existingClient logic), just
+// exposed as its own two-step-UX-friendly endpoint so the form can show
+// "Welcome back" and skip fields already on file BEFORE the customer
+// fills out the rest, rather than silently deduping only at submission
+// time the way the general intake form does.
+router.get("/lookup-public", async (req, res) => {
+  const studioSlug = req.query.studioSlug;
+  const phone = req.query.phone;
+  const email = req.query.email;
+
+  if (typeof studioSlug !== "string" || !studioSlug) {
+    return res.status(400).json({ error: "studioSlug is required" });
+  }
+  if ((typeof email !== "string" || !email) && (typeof phone !== "string" || !phone)) {
+    return res.status(400).json({ error: "phone or email is required" });
+  }
+
+  const studio = await prisma.studio.findUnique({ where: { slug: studioSlug } });
+  if (!studio) {
+    return res.status(404).json({ error: "Studio not found" });
+  }
+
+  const client =
+    typeof email === "string" && email
+      ? await prisma.client.findFirst({ where: { studioId: studio.id, email } })
+      : await prisma.client.findFirst({ where: { studioId: studio.id, phone: normalizePhone(phone as string) } });
+
+  if (!client) {
+    return res.json({ found: false });
+  }
+
+  res.json({
+    found: true,
+    firstName: client.firstName,
+    lastName: client.lastName,
+    email: client.email,
+    phone: client.phone,
+  });
+});
+
+// Public: the lightweight submission itself -- NOT routed through the
+// general POST /inquiries (that route's configurable-intake-form-field
+// machinery doesn't apply here; flash's form is fixed and much shorter by
+// design). Creates a real Inquiry so the request gets the same pipeline/
+// dashboard visibility as any other, with artist/price/duration already
+// fixed from the piece -- no assignment or estimate step.
+router.post("/:id/request", async (req, res) => {
+  const id = req.params.id as string;
+  const { placementDescription, placementPhotoUrl, firstName, lastName, email, phone } = req.body ?? {};
+
+  if (
+    typeof placementDescription !== "string" ||
+    !placementDescription.trim() ||
+    typeof placementPhotoUrl !== "string" ||
+    !placementPhotoUrl ||
+    typeof firstName !== "string" ||
+    !firstName.trim() ||
+    typeof lastName !== "string" ||
+    !lastName.trim() ||
+    ((typeof email !== "string" || !email.trim()) && (typeof phone !== "string" || !phone.trim()))
+  ) {
+    return res.status(400).json({ error: "Missing required field(s)" });
+  }
+
+  const piece = await prisma.flashPiece.findUnique({ where: { id } });
+  if (!piece || piece.status !== FlashPieceStatus.AVAILABLE) {
+    return res.status(409).json({ error: "This piece is no longer available -- please pick another." });
+  }
+
+  const studioId = piece.studioId;
+
+  // Atomic claim, one-of-one only: the conditional WHERE makes this a
+  // genuine race winner-take-all -- if two people request the same piece
+  // within milliseconds of each other, only the first update actually
+  // matches a row (count 1); the second's WHERE no longer matches (the
+  // status already moved), so it correctly loses rather than both
+  // silently succeeding. A repeatable piece never leaves AVAILABLE here.
+  if (piece.isOneOfOne) {
+    const claimed = await prisma.flashPiece.updateMany({
+      where: { id, status: FlashPieceStatus.AVAILABLE },
+      data: { status: FlashPieceStatus.PENDING_APPROVAL },
+    });
+    if (claimed.count === 0) {
+      return res.status(409).json({ error: "This piece was just requested by someone else -- please pick another." });
+    }
+  }
+
+  const normalizedPhone = typeof phone === "string" && phone.trim() ? normalizePhone(phone) : null;
+  const trimmedEmail = typeof email === "string" && email.trim() ? email.trim() : null;
+
+  const existingClient = trimmedEmail
+    ? await prisma.client.findFirst({ where: { studioId, email: trimmedEmail } })
+    : normalizedPhone
+      ? await prisma.client.findFirst({ where: { studioId, phone: normalizedPhone } })
+      : null;
+
+  let client;
+  if (existingClient) {
+    client = existingClient;
+  } else {
+    const referralCode = await generateUniqueReferralCode();
+    client = await prisma.$transaction(async (tx) => {
+      const created = await tx.client.create({
+        data: {
+          studioId,
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          email: trimmedEmail,
+          phone: normalizedPhone,
+          referralCode,
+        },
+      });
+      await syncPrimaryPhone(tx, created.id, created.phone);
+      await syncPrimaryEmail(tx, created.id, created.email);
+      return created;
+    });
+  }
+
+  // Same "Tattoo" fallback resolveServiceForIntakeForm uses, minus the
+  // intake-form lookup step this flow has no form context for at all.
+  const service = await prisma.service.findFirst({ where: { studioId, slug: "tattoo" } });
+  if (!service) {
+    if (piece.isOneOfOne) {
+      await prisma.flashPiece.update({ where: { id }, data: { status: FlashPieceStatus.AVAILABLE } });
+    }
+    return res.status(500).json({ error: "This studio has no service configured -- contact support" });
+  }
+
+  const priceDollars = piece.priceCents / 100;
+  const durationHours = piece.estimatedDurationMinutes / 60;
+
+  const inquiry = await prisma.inquiry.create({
+    data: {
+      studioId,
+      clientId: client.id,
+      serviceId: service.id,
+      channel: Channel.FLASH_GALLERY,
+      description: `Flash: ${piece.title}`,
+      // Not asked on this lightweight form -- the flash piece's own photo
+      // already shows exactly what this is, unlike a custom-design inquiry
+      // where these fields carry real information.
+      colorOrBlackGrey: "See flash design",
+      estimatedSize: "See flash design",
+      placement: placementDescription.trim(),
+      // Not collected by this form at all -- judgment call, flagged in
+      // REPORT.md rather than silently assumed either way.
+      hasBeenTattooedBefore: false,
+      placementImages: [placementPhotoUrl],
+      status: InquiryStatus.FLASH_PENDING_APPROVAL,
+      priceEstimateLow: priceDollars,
+      priceEstimateHigh: priceDollars,
+      timeEstimateHoursMin: durationHours,
+      timeEstimateHoursMax: durationHours,
+      assignedArtistId: piece.artistId,
+      assignedAt: new Date(),
+      flashPieceId: piece.id,
+    },
+  });
+
+  await logAudit({
+    studioId,
+    actorUserId: null,
+    entityType: "Inquiry",
+    entityId: inquiry.id,
+    action: "flash_request_submitted",
+    changes: { flashPieceId: piece.id, clientId: client.id },
+  });
+
+  emitInvalidation({ type: "inquiry.created", studioId });
+  emitInvalidation({ type: "flash.changed", studioId });
+
+  res.status(201).json({ success: true });
+});
+
+router.use(requireAuth);
 
 // Same "-own" narrowing preferredSchedule/artistSchedules.manage already
 // established: requirePermission confirms the actor has flashGallery.manage

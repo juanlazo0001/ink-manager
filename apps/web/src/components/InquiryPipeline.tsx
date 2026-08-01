@@ -20,10 +20,32 @@ export const PIPELINE_STEPS = [
   { label: 'Scheduled', statuses: ['SCHEDULING', 'WAITLISTED', 'CONFIRMED'] },
 ] as const
 
+// Flash gallery: a flash-sourced inquiry's artist/price/duration are
+// already fixed by the FlashPiece it came from, so it never touches
+// ARTIST_ASSIGNED/AWAITING_CLIENT_RESPONSE/BUDGET_NEGOTIATION/
+// DEPOSIT_PENDING at all -- showing those as perpetually-incomplete steps
+// would be actively misleading, not just unused. A separate, shorter
+// array (same shape as PIPELINE_STEPS, picked automatically below by
+// status membership) rather than trying to map flash's two statuses onto
+// indices within the general array. Rejoins the general "Scheduled" step
+// once paid -- see InquiryDetail.tsx's own isConverted, which already
+// treats SCHEDULING/WAITLISTED/CONFIRMED as "this is a Project now"
+// regardless of how the inquiry originated.
+export const FLASH_PIPELINE_STEPS = [
+  { label: 'Request submitted', statuses: ['FLASH_PENDING_APPROVAL'] },
+  { label: 'Approved — payment pending', statuses: ['FLASH_PAYMENT_PENDING'] },
+] as const
+
+const FLASH_STATUSES = ['FLASH_PENDING_APPROVAL', 'FLASH_PAYMENT_PENDING']
+
 const CLOSED_STATUSES = ['CLOSED_LOST', 'COLD_LEAD']
 
 function currentStepIndex(status: string): number {
   return PIPELINE_STEPS.findIndex((step) => (step.statuses as readonly string[]).includes(status))
+}
+
+function currentFlashStepIndex(status: string): number {
+  return FLASH_PIPELINE_STEPS.findIndex((step) => (step.statuses as readonly string[]).includes(status))
 }
 
 interface PipelineStepLike {
@@ -71,7 +93,8 @@ export default function InquiryPipeline({
 }: InquiryPipelineProps) {
   const { shape } = useThemePreset()
   const isEditorial = shape === 'editorial'
-  const effectiveSteps: readonly PipelineStepLike[] = steps ?? PIPELINE_STEPS
+  const isFlash = !steps && FLASH_STATUSES.includes(status)
+  const effectiveSteps: readonly PipelineStepLike[] = steps ?? (isFlash ? FLASH_PIPELINE_STEPS : PIPELINE_STEPS)
   const isClosed = !steps && CLOSED_STATUSES.includes(status)
   // Service lines: CANDIDACY_REVIEW is deliberately NOT one of PIPELINE_STEPS
   // (that array is shared with every Tattoo/RANGE inquiry's stepper too --
@@ -80,7 +103,7 @@ export default function InquiryPipeline({
   // checkmark for it). Rendered as its own distinct state instead, same
   // pattern as isClosed above.
   const isCandidacyReview = !steps && status === 'CANDIDACY_REVIEW'
-  const activeIndex = steps ? (activeIndexProp ?? -1) : currentStepIndex(status)
+  const activeIndex = steps ? (activeIndexProp ?? -1) : isFlash ? currentFlashStepIndex(status) : currentStepIndex(status)
 
   if (isCandidacyReview) {
     return (
