@@ -6128,3 +6128,27 @@ Live against the local dev stack (api `:4093`, web `:5292`):
 ## Commit
 
 `b55d1e5`
+
+---
+
+# Artist rate suggestions missing on single-session estimates — fixed
+
+Reported: an assigned artist's hourly/flat rate wasn't suggesting a price when entering an estimate.
+
+## Root cause
+
+The suggestion logic (`suggestSessionPrice`, `apps/web/src/components/SessionBreakdownEditor.tsx`) only ever ran inside `SessionHoursRows`' own `updateRow` handler -- and `SessionHoursRows` returns `null` outright when `sessionCount <= 1` (`if (sessionCount <= 1) return null`, the very first line of the component). Since 1 session is the default and by far the most common case, the suggestion feature was effectively only reachable once staff had already bumped "Number of sessions" above 1 -- the single top-level Price low/high fields (and their Revise Estimate equivalents) had their own plain `onChange` handlers that never called `suggestSessionPrice` at all. Confirmed by reading every call site: no other path invoked the suggestion function.
+
+## Fix
+
+`apps/web/src/pages/InquiryDetail.tsx`: added `updateEstimateTimeField`/`updateReviseTimeField`, mirroring `SessionHoursRows`' own `updateRow` exactly (same guard -- only pre-fills into `priceEstimateLow`/`priceEstimateHigh` when both are still empty, i.e. never overrides something staff already typed), wired into the "Time min (hours)"/"Time max (hours)" selects for both the original "Generate & Send Estimate" flow and the "Revise Estimate" flow's single-session path. Imports `suggestSessionPrice` (already exported) rather than duplicating its logic.
+
+## Verification
+
+Live against the local dev stack: assigned "Dev Artist One" ($150/hr, confirmed via `GET /artists`) to a fresh, unassigned test inquiry. Screenshotted before (Price low/high both `$0`, hours unset) and after selecting Time min = 2 hours / Time max = 4 hours: Price low/high auto-filled to `$300`/`$600` (2×150 / 4×150) with zero further interaction -- confirming the suggestion now fires on the single-session path. The "never override a typed value" guard is a verbatim copy of the already-existing, already-proven multi-session guard, not new logic.
+
+`npx tsc -b` (web) and `npm run build` (web) clean. This session touched only the frontend -- no api changes, so `npx tsc --noEmit` (api) wasn't re-run.
+
+## Commit
+
+`5bfa060`
