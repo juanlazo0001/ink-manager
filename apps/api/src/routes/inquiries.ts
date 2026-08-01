@@ -507,7 +507,21 @@ const INQUIRY_INCLUDE = {
       showDurationToClient: true,
       depositFormId: true,
       appointmentId: true,
-      depositForm: { select: { id: true, signedAt: true, paidAt: true, paidManually: true, paidVia: true } },
+      // proposedStartAt/proposedEndAt (Package [scheduling-auto-book]): lets
+      // the frontend tell "genuinely not booked yet" apart from "was paid,
+      // had a tentative time, and auto-booking hit a conflict" -- see
+      // apps/web/src/pages/InquiryDetail.tsx's Session Plan widget.
+      depositForm: {
+        select: {
+          id: true,
+          signedAt: true,
+          paidAt: true,
+          paidManually: true,
+          paidVia: true,
+          proposedStartAt: true,
+          proposedEndAt: true,
+        },
+      },
       appointment: { select: { id: true, startTime: true, endTime: true, status: true, checkedOutAt: true } },
     },
     orderBy: { sessionNumber: "asc" },

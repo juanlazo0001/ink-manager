@@ -1,5 +1,5 @@
 import { prisma } from "./prisma";
-import { InquiryStatus } from "../../generated/prisma/enums";
+import { InquiryStatus, AppointmentStatus, AppointmentType } from "../../generated/prisma/enums";
 import { diffObjects, logAudit } from "./audit";
 import { dollarsToCents } from "./money";
 import { computeGiftCardExpiration, generateUniqueGiftCardCode } from "./giftCards";
@@ -9,6 +9,8 @@ import { shortenUrl } from "./shortLinks";
 import { PUBLIC_APP_URL } from "./publicUrl";
 import { getChargeableConnectedAccountId } from "./stripeConnect";
 import { createDirectChargeCheckoutSession } from "./stripe";
+import { findBufferConflict } from "./schedulingConflict";
+import { emitInvalidation } from "./realtime/registry";
 
 export type PaidVia = "STRIPE" | "MANUAL";
 
@@ -242,6 +244,108 @@ export async function issueGiftCardForPaidDeposit(
       body,
       actorUserId,
     });
+  }
+
+  // Auto-book: the deposit page lets a client pick a tentative time
+  // (proposedStartAt/proposedEndAt, staff-picked from getSuggestedTimes --
+  // see POST /:id/deposit-form) as part of paying, but until now that
+  // tentative pick was purely informational and never became a real
+  // Appointment on its own; staff had to notice the paid deposit and book
+  // it by hand. Re-runs the exact same buffer/conflict check every other
+  // booking route already uses (findBufferConflict) -- time has passed
+  // since the tentative pick, so another appointment could have taken the
+  // slot in the meantime. Independent per deposit form/session: only ever
+  // books or flags THIS one, regardless of what state any other session of
+  // the same project is in.
+  //
+  // No schema change: a conflict is never persisted as its own flag --
+  // "auto-booking failed here" is derived purely from existing columns (a
+  // paid, proposed-time-bearing deposit form with no linked appointment
+  // yet). See lib/tasks/schedulingConflict.ts, the other place that same
+  // derivation happens (the front-desk task/notification for this).
+  if (depositForm.proposedStartAt && depositForm.proposedEndAt) {
+    const [plannedSession, freshInquiry] = await Promise.all([
+      prisma.plannedSession.findUnique({
+        where: { depositFormId },
+        select: { id: true, appointmentId: true },
+      }),
+      prisma.inquiry.findUnique({
+        where: { id: depositForm.inquiryId },
+        select: { appointmentId: true, assignedArtistId: true, clientId: true },
+      }),
+    ]);
+
+    // Already booked -- e.g. staff manually booked this exact session in
+    // the narrow window between the client signing and this payment
+    // confirming. Never double-book on top of that.
+    const alreadyBooked = plannedSession?.appointmentId != null;
+
+    if (freshInquiry?.assignedArtistId && !alreadyBooked) {
+      const conflict = await findBufferConflict(
+        freshInquiry.assignedArtistId,
+        depositForm.proposedStartAt,
+        depositForm.proposedEndAt,
+      );
+
+      if (!conflict) {
+        const appointment = await prisma.$transaction(async (tx) => {
+          const created = await tx.appointment.create({
+            data: {
+              studioId,
+              artistId: freshInquiry.assignedArtistId!,
+              clientId: freshInquiry.clientId,
+              inquiryId: depositForm.inquiryId,
+              startTime: depositForm.proposedStartAt!,
+              endTime: depositForm.proposedEndAt!,
+              status: AppointmentStatus.CONFIRMED,
+              appointmentType: AppointmentType.TATTOO_SESSION,
+            },
+          });
+
+          await tx.giftCard.update({ where: { id: giftCard.id }, data: { appointmentId: created.id } });
+
+          if (plannedSession) {
+            await tx.plannedSession.update({ where: { id: plannedSession.id }, data: { appointmentId: created.id } });
+          }
+
+          // Only the FIRST appointment a project ever gets fills this
+          // singular, legacy 1:1 slot (see POST /inquiries/:id/schedule) --
+          // a later session (planned or not) still shows up correctly via
+          // the Appointment.inquiryId 1:many relation, which
+          // deriveProjectStage/projectNeedsScheduling (apps/web/src/lib/
+          // kanban.ts) already OR in alongside this field, so leaving it
+          // untouched for session 2+ is correct, not a gap.
+          if (!freshInquiry.appointmentId) {
+            await tx.inquiry.update({
+              where: { id: depositForm.inquiryId },
+              data: { appointmentId: created.id, status: InquiryStatus.CONFIRMED },
+            });
+          }
+
+          return created;
+        });
+
+        await logAudit({
+          studioId,
+          actorUserId,
+          entityType: "Inquiry",
+          entityId: depositForm.inquiryId,
+          action: "auto_booked_from_deposit",
+          changes: { startTime: appointment.startTime, endTime: appointment.endTime },
+        });
+
+        emitInvalidation({ type: "appointment.changed", studioId });
+      } else {
+        await logAudit({
+          studioId,
+          actorUserId,
+          entityType: "Inquiry",
+          entityId: depositForm.inquiryId,
+          action: "auto_book_conflict",
+          changes: { proposedStartAt: depositForm.proposedStartAt, proposedEndAt: depositForm.proposedEndAt },
+        });
+      }
+    }
   }
 
   return { ok: true, giftCardId: giftCard.id, alreadyProcessed: false };

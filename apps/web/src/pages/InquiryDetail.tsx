@@ -54,6 +54,12 @@ import { artistsQueryKey, inquiriesQueryKey, inquiryQueryKey } from '../lib/quer
 import ImageGrid, { type ImageDetail } from '../components/ImageGrid'
 import DetailField from '../components/DetailField'
 
+// Auto-book (lib/deposits.ts): kept in sync with the identical constant in
+// apps/api/src/lib/tasks/schedulingConflict.ts -- see that file's own
+// comment for why a paid-before-this-date deposit is never treated as a
+// genuine conflict, just an ordinary not-yet-booked project.
+const AUTO_BOOK_SHIPPED_AT = new Date('2026-08-01T00:00:00.000Z')
+
 interface Inquiry {
   id: string
   channel: string
@@ -179,7 +185,17 @@ interface Inquiry {
     showDurationToClient: boolean
     depositFormId: string | null
     appointmentId: string | null
-    depositForm: { id: string; signedAt: string | null; paidAt: string | null; paidManually: boolean } | null
+    depositForm: {
+      id: string
+      signedAt: string | null
+      paidAt: string | null
+      paidManually: boolean
+      // Auto-book: lets the UI tell "genuinely not booked yet" apart from
+      // "was paid, had a tentative time, and auto-booking hit a conflict"
+      // -- see the depositStatus/appointmentStatus derivation below.
+      proposedStartAt: string | null
+      proposedEndAt: string | null
+    } | null
     appointment: { id: string; startTime: string; endTime: string; status: string; checkedOutAt: string | null } | null
   }[]
   // Service lines: which service this inquiry is for -- drives whether the
@@ -3381,6 +3397,29 @@ export default function InquiryDetail() {
 
                 {inquiry.status === 'SCHEDULING' && !inquiry.appointment && inquiry.plannedSessions.length === 0 && (
                   <>
+                    {/* Auto-book (lib/deposits.ts): the un-planned path's
+                        equivalent of the Session Plan widget's own
+                        "Scheduling conflict" badge -- the latest deposit
+                        form is paid and had a tentative time, but no real
+                        appointment exists, meaning auto-booking hit a
+                        conflict rather than nobody having gotten to it yet. */}
+                    {(() => {
+                      const latestDepositForm = inquiry.depositForms[inquiry.depositForms.length - 1]
+                      if (
+                        !latestDepositForm?.paidAt ||
+                        !latestDepositForm.proposedStartAt ||
+                        new Date(latestDepositForm.paidAt) < AUTO_BOOK_SHIPPED_AT
+                      )
+                        return null
+                      return (
+                        <div className="mt-4 rounded-lg border border-danger/30 bg-danger/10 p-3 text-sm text-danger">
+                          The tentative time ({formatDateTime(latestDepositForm.proposedStartAt)}) was no longer
+                          available when this deposit was paid, so it wasn't booked automatically. Pick a new time
+                          below.
+                        </div>
+                      )
+                    })()}
+
                     {(!inquiry.assignedArtist ||
                       inquiry.timeEstimateHoursMin == null ||
                       inquiry.timeEstimateHoursMax == null) && (
@@ -3556,14 +3595,32 @@ export default function InquiryDetail() {
                         : ps.appointment.checkedOutAt
                           ? 'completed'
                           : 'scheduled'
+                      // Auto-book (lib/deposits.ts): a paid deposit that had
+                      // a tentative time but still has no real appointment
+                      // means auto-booking specifically hit a conflict --
+                      // distinct from the ordinary "not yet booked" case
+                      // (deposit still pending, or no tentative time was
+                      // ever set), which needs a first time picked rather
+                      // than a NEW one.
+                      const hasSchedulingConflict =
+                        appointmentStatus === 'not_booked' &&
+                        depositStatus === 'paid' &&
+                        !!ps.depositForm?.proposedStartAt &&
+                        // Judgment call (see apps/api/src/lib/tasks/schedulingConflict.ts):
+                        // excludes deposits paid before this feature shipped,
+                        // which can only ever be an ordinary "not booked yet"
+                        // project (nothing could have produced a real conflict
+                        // before this code existed), not a genuine conflict.
+                        new Date(ps.depositForm!.paidAt!) >= AUTO_BOOK_SHIPPED_AT
                       const depositBadge =
                         depositStatus === 'paid'
                           ? { label: 'Deposit paid', className: 'border-success/30 bg-success/10 text-success' }
                           : depositStatus === 'pending'
                             ? { label: 'Deposit pending', className: 'border-warning/30 bg-warning/10 text-warning' }
                             : { label: 'Deposit not yet generated', className: 'border-border bg-surface-inset text-fg-muted' }
-                      const appointmentBadge =
-                        appointmentStatus === 'completed'
+                      const appointmentBadge = hasSchedulingConflict
+                        ? { label: 'Scheduling conflict', className: 'border-danger/30 bg-danger/10 text-danger' }
+                        : appointmentStatus === 'completed'
                           ? { label: 'Completed', className: 'border-success/30 bg-success/10 text-success' }
                           : appointmentStatus === 'scheduled'
                             ? { label: 'Scheduled', className: 'border-accent/30 bg-accent/10 text-accent' }
@@ -3594,6 +3651,14 @@ export default function InquiryDetail() {
                               </span>
                             </div>
                           </div>
+
+                          {hasSchedulingConflict && (
+                            <p className="mt-2 rounded-lg border border-danger/30 bg-danger/10 p-2.5 text-xs text-danger">
+                              The tentative time ({formatDateTime(ps.depositForm!.proposedStartAt!)}) was no longer
+                              available when this deposit was paid, so it wasn't booked automatically. Pick a new
+                              time below.
+                            </p>
+                          )}
 
                           {ps.appointment && (
                             <Link

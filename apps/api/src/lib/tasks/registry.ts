@@ -6,6 +6,7 @@ import { inquiryUnansweredSource } from "./inquiryUnanswered";
 import { estimateFollowupSource } from "./estimateFollowup";
 import { depositUnpaidSource } from "./depositUnpaid";
 import { readyToScheduleSource } from "./readyToSchedule";
+import { schedulingConflictSource } from "./schedulingConflict";
 import { waiverToVerifySource } from "./waiverToVerify";
 import { newConversationSource } from "./newConversation";
 import { remindersNotSentSource } from "./remindersNotSent";
@@ -17,6 +18,7 @@ export const TASK_SOURCE_REGISTRY: TaskSource[] = [
   estimateFollowupSource,
   depositUnpaidSource,
   readyToScheduleSource,
+  schedulingConflictSource,
   waiverToVerifySource,
   newConversationSource,
   remindersNotSentSource,

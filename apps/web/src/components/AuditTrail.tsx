@@ -178,6 +178,8 @@ const ACTION_LABELS: Record<string, string> = {
   photos_added: 'added photos',
   photo_deleted: 'deleted a photo',
   reference_image_added: 'added a reference image',
+  auto_booked_from_deposit: 'auto-booked the appointment on deposit payment',
+  auto_book_conflict: 'could not auto-book -- the tentative time was no longer available',
 }
 
 // Fallback for anything not in the map above -- spaces out both
