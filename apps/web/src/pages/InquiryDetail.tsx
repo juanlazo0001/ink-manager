@@ -2727,7 +2727,16 @@ export default function InquiryDetail() {
                       )}
 
                       <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        {isMultiSession ? (
+                        {/* Sessions, then Time, then Price -- Price comes
+                            last for a single-session estimate since entering
+                            Time is what suggests it (see
+                            updateEstimateTimeField above); asking for a
+                            price before the field that fills it in reads
+                            backwards. The multi-session sum stays at the
+                            top regardless -- it's a read-only rollup of the
+                            per-session rows below, not something Time here
+                            feeds into directly. */}
+                        {isMultiSession && (
                           <div className="sm:col-span-2">
                             <p className="mb-1 block text-xs font-medium text-fg-secondary">
                               Price estimate (sum of every session below)
@@ -2736,36 +2745,6 @@ export default function InquiryDetail() {
                               {formatPriceEstimate(sessionPriceSum.low, sessionPriceSum.high) ?? 'Not provided'}
                             </p>
                           </div>
-                        ) : estimateIsFlat ? (
-                          <div className="sm:col-span-2">
-                            <label className="mb-1 block text-xs font-medium text-fg-secondary">Price</label>
-                            <CurrencyInput
-                              value={estimateForm.priceEstimateLow}
-                              onChange={(digits) =>
-                                setEstimateForm({ ...estimateForm, priceEstimateLow: digits, priceEstimateHigh: digits })
-                              }
-                              className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                            />
-                          </div>
-                        ) : (
-                          <>
-                            <div>
-                              <label className="mb-1 block text-xs font-medium text-fg-secondary">Price low</label>
-                              <CurrencyInput
-                                value={estimateForm.priceEstimateLow}
-                                onChange={(digits) => setEstimateForm({ ...estimateForm, priceEstimateLow: digits })}
-                                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                              />
-                            </div>
-                            <div>
-                              <label className="mb-1 block text-xs font-medium text-fg-secondary">Price high</label>
-                              <CurrencyInput
-                                value={estimateForm.priceEstimateHigh}
-                                onChange={(digits) => setEstimateForm({ ...estimateForm, priceEstimateHigh: digits })}
-                                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                              />
-                            </div>
-                          </>
                         )}
                         <SessionCountField sessionCount={sessionCount} onSessionCountChange={handleSessionCountChange} />
                         {!isMultiSession && (
@@ -2800,6 +2779,37 @@ export default function InquiryDetail() {
                                 ))}
                               </select>
                             </div>
+                            {estimateIsFlat ? (
+                              <div className="sm:col-span-2">
+                                <label className="mb-1 block text-xs font-medium text-fg-secondary">Price</label>
+                                <CurrencyInput
+                                  value={estimateForm.priceEstimateLow}
+                                  onChange={(digits) =>
+                                    setEstimateForm({ ...estimateForm, priceEstimateLow: digits, priceEstimateHigh: digits })
+                                  }
+                                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                                />
+                              </div>
+                            ) : (
+                              <>
+                                <div>
+                                  <label className="mb-1 block text-xs font-medium text-fg-secondary">Price low</label>
+                                  <CurrencyInput
+                                    value={estimateForm.priceEstimateLow}
+                                    onChange={(digits) => setEstimateForm({ ...estimateForm, priceEstimateLow: digits })}
+                                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="mb-1 block text-xs font-medium text-fg-secondary">Price high</label>
+                                  <CurrencyInput
+                                    value={estimateForm.priceEstimateHigh}
+                                    onChange={(digits) => setEstimateForm({ ...estimateForm, priceEstimateHigh: digits })}
+                                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                                  />
+                                </div>
+                              </>
+                            )}
                           </>
                         )}
                       </div>
@@ -4323,7 +4333,12 @@ export default function InquiryDetail() {
                     )}
 
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      {isReviseMultiSession ? (
+                      {/* Sessions, then Time, then Price -- same reasoning
+                          as the original estimate flow above (see its own
+                          comment): Time is what suggests Price for a
+                          single-session estimate, so it comes first. The
+                          multi-session sum stays at the top, unchanged. */}
+                      {isReviseMultiSession && (
                         <div className="sm:col-span-2">
                           <p className="mb-1 block text-xs font-medium text-fg-secondary">
                             Price estimate (sum of every session below)
@@ -4332,36 +4347,6 @@ export default function InquiryDetail() {
                             {formatPriceEstimate(reviseSessionPriceSum.low, reviseSessionPriceSum.high) ?? 'Not provided'}
                           </p>
                         </div>
-                      ) : reviseIsFlat ? (
-                        <div className="sm:col-span-2">
-                          <label className="mb-1 block text-xs font-medium text-fg-secondary">Price</label>
-                          <CurrencyInput
-                            value={reviseEstimateForm.priceEstimateLow}
-                            onChange={(digits) =>
-                              setReviseEstimateForm({ ...reviseEstimateForm, priceEstimateLow: digits, priceEstimateHigh: digits })
-                            }
-                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                          />
-                        </div>
-                      ) : (
-                        <>
-                          <div>
-                            <label className="mb-1 block text-xs font-medium text-fg-secondary">Price low</label>
-                            <CurrencyInput
-                              value={reviseEstimateForm.priceEstimateLow}
-                              onChange={(digits) => setReviseEstimateForm({ ...reviseEstimateForm, priceEstimateLow: digits })}
-                              className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                            />
-                          </div>
-                          <div>
-                            <label className="mb-1 block text-xs font-medium text-fg-secondary">Price high</label>
-                            <CurrencyInput
-                              value={reviseEstimateForm.priceEstimateHigh}
-                              onChange={(digits) => setReviseEstimateForm({ ...reviseEstimateForm, priceEstimateHigh: digits })}
-                              className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                            />
-                          </div>
-                        </>
                       )}
                       <SessionCountField
                         sessionCount={reviseSessionCount}
@@ -4400,6 +4385,37 @@ export default function InquiryDetail() {
                               ))}
                             </select>
                           </div>
+                          {reviseIsFlat ? (
+                            <div className="sm:col-span-2">
+                              <label className="mb-1 block text-xs font-medium text-fg-secondary">Price</label>
+                              <CurrencyInput
+                                value={reviseEstimateForm.priceEstimateLow}
+                                onChange={(digits) =>
+                                  setReviseEstimateForm({ ...reviseEstimateForm, priceEstimateLow: digits, priceEstimateHigh: digits })
+                                }
+                                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                              />
+                            </div>
+                          ) : (
+                            <>
+                              <div>
+                                <label className="mb-1 block text-xs font-medium text-fg-secondary">Price low</label>
+                                <CurrencyInput
+                                  value={reviseEstimateForm.priceEstimateLow}
+                                  onChange={(digits) => setReviseEstimateForm({ ...reviseEstimateForm, priceEstimateLow: digits })}
+                                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                                />
+                              </div>
+                              <div>
+                                <label className="mb-1 block text-xs font-medium text-fg-secondary">Price high</label>
+                                <CurrencyInput
+                                  value={reviseEstimateForm.priceEstimateHigh}
+                                  onChange={(digits) => setReviseEstimateForm({ ...reviseEstimateForm, priceEstimateHigh: digits })}
+                                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                                />
+                              </div>
+                            </>
+                          )}
                         </>
                       )}
                     </div>
