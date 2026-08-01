@@ -182,6 +182,24 @@ export default function SelfSchedule() {
                     startMonth={today}
                     endMonth={calendarToDate}
                     disabled={(day) => !availableDateSet.has(toDateString(day))}
+                    // react-day-picker/style.css defines its own light-mode
+                    // --rdp-accent-color: blue (etc.) directly on .rdp-root,
+                    // at the exact same specificity as index.css's own
+                    // gold-accent override of that same selector -- on this
+                    // page specifically, the library's stylesheet ends up
+                    // injected after index.css's, so it wins the cascade
+                    // tie and the calendar renders blue instead of gold.
+                    // Inline styles on the root element (this `style` prop)
+                    // beat any stylesheet rule regardless of injection
+                    // order, so this doesn't depend on import order staying
+                    // lucky the way index.css's own .rdp-root rule does.
+                    style={
+                      {
+                        '--rdp-accent-color': 'var(--color-accent)',
+                        '--rdp-accent-background-color': 'color-mix(in srgb, var(--color-accent) 20%, transparent)',
+                        '--rdp-today-color': 'var(--color-accent)',
+                      } as React.CSSProperties
+                    }
                   />
                 </div>
 
