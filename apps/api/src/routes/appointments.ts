@@ -83,7 +83,6 @@ router.post("/", requirePermission("appointments.create"), async (req, res) => {
   if (!isSameCalendarDay(start, end, studioSettings?.timezone ?? "America/New_York")) {
     return res.status(400).json({ error: "An appointment cannot span more than one day" });
   }
-  const bufferMs = resolveSchedulingBufferMs(studioSettings?.schedulingBufferMinutes);
 
   const [artist, client, inquiry] = await Promise.all([
     prisma.artist.findUnique({ where: { id: artistId }, include: { user: true } }),
@@ -94,6 +93,9 @@ router.post("/", requirePermission("appointments.create"), async (req, res) => {
   if (!artist || artist.user.studioId !== studioId) {
     return res.status(400).json({ error: "artistId must belong to your studio" });
   }
+
+  // Artist's own override (if set) takes precedence over the studio default.
+  const bufferMs = resolveSchedulingBufferMs(artist.schedulingBufferMinutes, studioSettings?.schedulingBufferMinutes);
 
   if (!client || client.studioId !== studioId) {
     return res.status(400).json({ error: "clientId must belong to your studio" });
@@ -1061,14 +1063,23 @@ router.patch("/:id", requirePermission("appointments.reschedule"), async (req, r
         .json({ error: "startTime and endTime must be valid dates, with startTime before endTime" });
     }
 
-    const studioSettingsForDayCheck = await prisma.studioSettings.findUnique({
-      where: { studioId: req.user!.studioId },
-      select: { timezone: true, schedulingBufferMinutes: true },
-    });
+    const [studioSettingsForDayCheck, artistForBuffer] = await Promise.all([
+      prisma.studioSettings.findUnique({
+        where: { studioId: req.user!.studioId },
+        select: { timezone: true, schedulingBufferMinutes: true },
+      }),
+      // artistId is never accepted by this route (see comment below), so
+      // the appointment's existing, unchanged artist is always the right
+      // one to check for an override.
+      prisma.artist.findUnique({ where: { id: appointment.artistId }, select: { schedulingBufferMinutes: true } }),
+    ]);
     if (!isSameCalendarDay(start, end, studioSettingsForDayCheck?.timezone ?? "America/New_York")) {
       return res.status(400).json({ error: "An appointment cannot span more than one day" });
     }
-    bufferMs = resolveSchedulingBufferMs(studioSettingsForDayCheck?.schedulingBufferMinutes);
+    bufferMs = resolveSchedulingBufferMs(
+      artistForBuffer?.schedulingBufferMinutes,
+      studioSettingsForDayCheck?.schedulingBufferMinutes,
+    );
 
     data.startTime = start;
     data.endTime = end;

@@ -91,6 +91,10 @@ const ARTIST_LIST_SELECT = {
   // already fetched from.
   hourlyRateCents: true,
   flatRateCents: true,
+  // Per-artist scheduling buffer override -- null means "use the studio's
+  // own StudioSettings.schedulingBufferMinutes default". Needed wherever
+  // an artist's own bufferWarning might show, not just the detail page.
+  schedulingBufferMinutes: true,
   // Calendar's per-column artist-unavailable grey-shading (Phase: studio
   // hours + calendar shading) needs this in the list view too, not just
   // the detail page.
@@ -168,6 +172,7 @@ router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
     serviceIds,
     hourlyRateCents,
     flatRateCents,
+    schedulingBufferMinutes,
   } = req.body ?? {};
 
   const artist = await prisma.artist.findUnique({
@@ -241,6 +246,14 @@ router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
     return res.status(400).json({ error: "flatRateCents must be a non-negative number or null" });
   }
 
+  if (
+    schedulingBufferMinutes !== undefined &&
+    schedulingBufferMinutes !== null &&
+    (typeof schedulingBufferMinutes !== "number" || schedulingBufferMinutes < 0)
+  ) {
+    return res.status(400).json({ error: "schedulingBufferMinutes must be a non-negative number or null" });
+  }
+
   const data = {
     ...(bio !== undefined ? { bio: bio?.trim() || null } : {}),
     ...(specialties !== undefined ? { specialties } : {}),
@@ -254,6 +267,7 @@ router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
     ...(guestEndDate !== undefined ? { guestEndDate: guestEndDate ? new Date(guestEndDate) : null } : {}),
     ...(hourlyRateCents !== undefined ? { hourlyRateCents } : {}),
     ...(flatRateCents !== undefined ? { flatRateCents } : {}),
+    ...(schedulingBufferMinutes !== undefined ? { schedulingBufferMinutes } : {}),
   };
 
   const nextServiceIds: string[] | undefined = serviceIds !== undefined ? [...new Set(serviceIds as string[])] : undefined;
@@ -287,6 +301,7 @@ router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
         "guestEndDate",
         "hourlyRateCents",
         "flatRateCents",
+        "schedulingBufferMinutes",
       ]),
       ...(nextServiceIds !== undefined ? { serviceIds: { from: previousServiceIds, to: nextServiceIds } } : {}),
     },

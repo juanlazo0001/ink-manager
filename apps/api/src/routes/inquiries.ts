@@ -1841,10 +1841,13 @@ router.post("/:id/schedule", requireAuth, requirePermission("inquiries.edit"), a
     return res.status(400).json({ error: "This inquiry has no assigned artist" });
   }
 
-  const studioSettings = await prisma.studioSettings.findUnique({
-    where: { studioId: req.user!.studioId },
-    select: { depositTiers: true, schedulingBufferMinutes: true },
-  });
+  const [studioSettings, assignedArtist] = await Promise.all([
+    prisma.studioSettings.findUnique({
+      where: { studioId: req.user!.studioId },
+      select: { depositTiers: true, schedulingBufferMinutes: true },
+    }),
+    prisma.artist.findUnique({ where: { id: inquiry.assignedArtistId }, select: { schedulingBufferMinutes: true } }),
+  ]);
   const requiredCents = resolveRequiredDepositCents(
     inquiry.service,
     inquiry.priceEstimateLow,
@@ -1862,7 +1865,10 @@ router.post("/:id/schedule", requireAuth, requirePermission("inquiries.edit"), a
     return res.status(400).json({ error: giftCardResult.error });
   }
 
-  const bufferMs = resolveSchedulingBufferMs(studioSettings?.schedulingBufferMinutes);
+  const bufferMs = resolveSchedulingBufferMs(
+    assignedArtist?.schedulingBufferMinutes,
+    studioSettings?.schedulingBufferMinutes,
+  );
   const conflict = await findBufferConflict(inquiry.assignedArtistId, start, end, undefined, bufferMs);
 
   const appointment = await prisma.$transaction(async (tx) => {

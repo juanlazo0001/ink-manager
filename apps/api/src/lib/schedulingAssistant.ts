@@ -103,7 +103,7 @@ export async function getSuggestedTimes(
     select: { timezone: true, schedulingBufferMinutes: true },
   });
   const timeZone = studioSettings?.timezone ?? DEFAULT_TIMEZONE;
-  const bufferMs = resolveSchedulingBufferMs(studioSettings?.schedulingBufferMinutes);
+  const bufferMs = resolveSchedulingBufferMs(artist.schedulingBufferMinutes, studioSettings?.schedulingBufferMinutes);
 
   const schedule = (artist.preferredSchedule as unknown as ScheduleBlock[] | null) ?? null;
 

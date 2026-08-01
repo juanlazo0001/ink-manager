@@ -281,12 +281,16 @@ export async function issueGiftCardForPaidDeposit(
     const alreadyBooked = plannedSession?.appointmentId != null;
 
     if (freshInquiry?.assignedArtistId && !alreadyBooked) {
+      const assignedArtist = await prisma.artist.findUnique({
+        where: { id: freshInquiry.assignedArtistId },
+        select: { schedulingBufferMinutes: true },
+      });
       const conflict = await findBufferConflict(
         freshInquiry.assignedArtistId,
         depositForm.proposedStartAt,
         depositForm.proposedEndAt,
         undefined,
-        resolveSchedulingBufferMs(studioSettings?.schedulingBufferMinutes),
+        resolveSchedulingBufferMs(assignedArtist?.schedulingBufferMinutes, studioSettings?.schedulingBufferMinutes),
       );
 
       if (!conflict) {

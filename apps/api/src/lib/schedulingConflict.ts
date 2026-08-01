@@ -15,8 +15,17 @@ import { prisma } from "./prisma";
 // never silently changes behavior.
 export const DEFAULT_SCHEDULING_BUFFER_MS = 1.5 * 60 * 60 * 1000;
 
-export function resolveSchedulingBufferMs(schedulingBufferMinutes: number | null | undefined): number {
-  return schedulingBufferMinutes != null ? schedulingBufferMinutes * 60_000 : DEFAULT_SCHEDULING_BUFFER_MS;
+// Per-artist override, then the studio's own default, then the hardcoded
+// fallback -- candidates are checked in the order passed, first non-null
+// wins. Every call site passes (artist.schedulingBufferMinutes,
+// studioSettings.schedulingBufferMinutes) in that order, so an artist's own
+// override (Artist.schedulingBufferMinutes) always takes precedence over
+// the studio-wide default when both are set.
+export function resolveSchedulingBufferMs(...minutesCandidates: (number | null | undefined)[]): number {
+  for (const minutes of minutesCandidates) {
+    if (minutes != null) return minutes * 60_000;
+  }
+  return DEFAULT_SCHEDULING_BUFFER_MS;
 }
 
 export interface ConflictingAppointment {

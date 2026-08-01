@@ -30,6 +30,10 @@ interface Artist {
   guestEndDate: string | null
   hourlyRateCents: number | null
   flatRateCents: number | null
+  // Settings "Defaults" tab audit follow-up: per-artist override of the
+  // studio's StudioSettings.schedulingBufferMinutes default -- null means
+  // "use the studio's own default".
+  schedulingBufferMinutes: number | null
   artistServices: { serviceId: string }[]
   user: { id: string; email: string; name: string | null; phone: string | null; avatarUrl: string | null }
 }
@@ -50,7 +54,17 @@ interface UploadItem {
 // Built-in fallback order for a user who's never customized this page's
 // layout -- same reorder/collapse system already used on the Inquiry,
 // Appointment, and Client detail pages.
-const ARTIST_WIDGET_ORDER = ['guest-artist', 'bio', 'rates', 'social-links', 'specialties', 'services', 'preferred-schedule', 'portfolio']
+const ARTIST_WIDGET_ORDER = [
+  'guest-artist',
+  'bio',
+  'rates',
+  'scheduling-buffer',
+  'social-links',
+  'specialties',
+  'services',
+  'preferred-schedule',
+  'portfolio',
+]
 
 export default function ArtistDetail() {
   const { id } = useParams<{ id: string }>()
@@ -74,6 +88,7 @@ export default function ArtistDetail() {
   const [guestEndDate, setGuestEndDate] = useState('')
   const [hourlyRate, setHourlyRate] = useState('')
   const [flatRate, setFlatRate] = useState('')
+  const [schedulingBufferMinutes, setSchedulingBufferMinutes] = useState('')
   const [uploadingItems, setUploadingItems] = useState<UploadItem[]>([])
 
   const [saving, setSaving] = useState(false)
@@ -155,6 +170,9 @@ export default function ArtistDetail() {
     setGuestEndDate(artist.guestEndDate ? artist.guestEndDate.slice(0, 10) : '')
     setHourlyRate(artist.hourlyRateCents != null ? (artist.hourlyRateCents / 100).toString() : '')
     setFlatRate(artist.flatRateCents != null ? (artist.flatRateCents / 100).toString() : '')
+    setSchedulingBufferMinutes(
+      artist.schedulingBufferMinutes != null ? artist.schedulingBufferMinutes.toString() : '',
+    )
     setScheduleDays(scheduleBlocksToDays(artist.preferredSchedule))
   }
 
@@ -259,6 +277,7 @@ export default function ArtistDetail() {
           guestEndDate: guestEndDate || null,
           hourlyRateCents: hourlyRate ? Math.round(Number(hourlyRate) * 100) : null,
           flatRateCents: flatRate ? Math.round(Number(flatRate) * 100) : null,
+          schedulingBufferMinutes: schedulingBufferMinutes ? Math.round(Number(schedulingBufferMinutes)) : null,
         }),
       })
 
@@ -439,6 +458,32 @@ export default function ArtistDetail() {
                     {artist.flatRateCents != null && <p>${(artist.flatRateCents / 100).toFixed(2)} flat</p>}
                     {artist.hourlyRateCents == null && artist.flatRateCents == null && <p>No rates set.</p>}
                   </div>
+                )}
+              </Widget>
+
+              <Widget key="scheduling-buffer" id="scheduling-buffer" title="Scheduling Buffer">
+                <p className="mt-1 text-xs text-fg-muted">
+                  Minimum gap flagged as a possible conflict when booking this artist. Overrides the studio's own
+                  default (Settings → Defaults) for this artist only -- leave blank to just use that default.
+                </p>
+                {canManage ? (
+                  <div className="mt-3 max-w-[12rem]">
+                    <label className="mb-1 block text-sm font-medium text-fg-secondary">Buffer (minutes)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={schedulingBufferMinutes}
+                      onChange={(e) => setSchedulingBufferMinutes(e.target.value)}
+                      placeholder="Studio default"
+                      className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                    />
+                  </div>
+                ) : (
+                  <p className="mt-3 text-sm text-fg-secondary">
+                    {artist.schedulingBufferMinutes != null
+                      ? `${artist.schedulingBufferMinutes} minutes`
+                      : "Using the studio's default."}
+                  </p>
                 )}
               </Widget>
 

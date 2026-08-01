@@ -461,6 +461,15 @@ model Artist {
   hourlyRateCents Int?
   flatRateCents   Int?
 
+  // Settings "Defaults" tab audit follow-up: per-artist override of
+  // StudioSettings.schedulingBufferMinutes -- null (the default) means
+  // "use the studio's own default", same nullable-means-inherit convention
+  // hourlyRateCents/flatRateCents above already use. An artist who tattoos
+  // in shorter sessions (or wants more breathing room than the studio's
+  // usual default) can set their own without changing it for every other
+  // artist.
+  schedulingBufferMinutes Int?
+
   userId String @unique
   user   User   @relation(fields: [userId], references: [id])
 
