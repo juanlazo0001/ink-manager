@@ -6254,3 +6254,86 @@ Live: read the element's computed `background-color` directly (not just a screen
 ## Commit
 
 `160d822`
+
+---
+
+# Explore: client self-scheduling from artist calendar after estimate acceptance
+
+Branch: `explore/client-self-scheduling`, cut from `main` and pushed to `origin` before any code was written. **Not merged** -- see "Reviewer options" at the end.
+
+Today, appointments are exclusively created by OWNER/FRONT_DESK -- artists never create/reschedule, clients never have any scheduling access. This branch explores letting a client see an artist's real availability and pick a time right after accepting an estimate, for artists who explicitly opt into it.
+
+## The core design decision: a pending hold, not a binding appointment
+
+**A client's time pick creates an `Appointment` with `status: REQUESTED`, never `CONFIRMED`.** Staff still reviews and confirms (or adjusts, or declines) it before it's a real booking. This is the single biggest judgment call in this branch and the part most worth discussing before any merge decision -- everything else here is comparatively mechanical.
+
+`REQUESTED` was already a value in the `AppointmentStatus` enum but **completely unused** by every existing appointment-creation path (`POST /appointments`, `POST /inquiries/:id/schedule`, and this same session's earlier deposit auto-book feature all explicitly create with `status: CONFIRMED`) -- so using it here doesn't repurpose or overload anything, and `StatusPill.tsx` already renders it distinctly (blue "info") from `CONFIRMED` (green "success") with zero new frontend styling.
+
+I looked for an existing "tentative time" concept to reuse before building this, per the task's own instruction -- `DepositForm.proposedStartAt/proposedEndAt` (the deposit flow's tentative time) is explicitly documented in that model as having **no relation to a real Appointment and no buffer-conflict enforcement**; it's client-facing informational text only. Since the brief requires the client's pick to "correctly respect existing buffer-conflict logic," that mechanism was the wrong fit -- a real `Appointment` row (just held at `REQUESTED` instead of `CONFIRMED`) is the only thing that actually gets checked against `findBufferConflict`.
+
+## Schema
+
+```prisma
+// Artist
+allowsClientSelfScheduling Boolean @default(false)
+
+// Inquiry
+selfScheduleToken          String?   @unique
+selfScheduleTokenExpiresAt DateTime?
+```
+
+`allowsClientSelfScheduling` defaults `false` -- every existing artist keeps today's staff-only flow unchanged; studios opt in artist-by-artist, never all at once. `selfScheduleToken`/`Expiry` follow the exact same crypto-random-token + expiry + verify/respond-route pattern as `estimateToken`, `estimateRevisionToken`, and the deposit flow's token (7-day TTL, matching `ESTIMATE_TOKEN_TTL_DAYS`/`REVISION_TOKEN_TTL_DAYS`).
+
+Migration: `prisma migrate dev` refused to run in this non-interactive shell ("Prisma Migrate has detected that the environment is non-interactive"). Worked around with the CI-safe equivalent -- `prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script` to generate the SQL, written into a normally-named timestamped migration folder by hand, then `prisma migrate deploy` (which has no interactivity requirement) to apply it. Same resulting migration file a normal `migrate dev` run would have produced; verified with `prisma migrate status` afterward showing nothing pending.
+
+**Where this toggle lives, and a flagged alternative**: added as a checkbox inside the Artist detail page's existing "Scheduling Buffer" widget (`ArtistDetail.tsx`), gated OWNER-only via the same `artists.manage` permission `hourlyRateCents`/`schedulingBufferMinutes` already use -- per the task's stated default. Putting it inside that existing widget (rather than a new one) was also a deliberate way to avoid a real bug class this same session already hit once: `ReorderableWidgetList`'s `defaultOrder` prop must list every widget id or a widget missing from it gets silently dropped by `useWidgetLayout`. **Flag for discussion**: a real precedent exists for artist self-editing of a scheduling-related setting -- `preferredSchedule` (the "Preferred Schedule" widget) is editable by the artist themselves via `artistSchedules.manage`'s own "-own" self-scoping. Whether `allowsClientSelfScheduling` should eventually follow that same self-service pattern (an artist deciding for themselves whether clients see their calendar) rather than staying OWNER-only is a real, open question -- I defaulted to OWNER-only per the brief's own instruction, not because the alternative is wrong.
+
+## Build
+
+- `apps/api/src/routes/estimates.ts`'s `PATCH /respond/:token` `PROCEED` branch: after the existing (unchanged) transition to `DEPOSIT_PENDING`, checks the assigned artist's `allowsClientSelfScheduling` **and** that the inquiry has a usable single-session time estimate (`timeEstimateHoursMin`/`Max` both non-null). That second check doubles as the multi-session guard for free: `POST /inquiries/:id/send-estimate` already explicitly nulls both fields whenever a multi-session plan was declared (`hasPlan` branch) -- so their presence here already means "exactly one implicit session," which is this branch's whole scope. Multi-session self-scheduling is a deliberate follow-up, not built here. When eligible, a `selfScheduleToken` is generated and returned alongside the existing `{ success: true }` response; when not (artist opted out, or no eligible time estimate), the response is `{ success: true, selfScheduleToken: null }` -- **zero behavior change** for every inquiry that doesn't hit both conditions.
+- New public router `apps/api/src/routes/selfSchedule.ts`, mounted unauthenticated at `/self-schedule` (same pattern as `/estimates`):
+  - `GET /verify/:token` -- resolves the inquiry, computes `durationMinutes` the same midpoint-of-range way `InquiryDetail.tsx` already does for staff, and calls the shared `getSuggestedTimes(artistId, durationMinutes)` directly (the same buffer-aware, real-availability algorithm staff's own "Suggested times" panel uses) -- not a naive open calendar, and not a second implementation of availability logic.
+  - `PATCH /respond/:token` -- re-validates the picked time against `findBufferConflict` (with the same `resolveSchedulingBufferMs(artist.schedulingBufferMinutes, studioSettings.schedulingBufferMinutes)` per-artist-override precedence this session's earlier scheduling-buffer work established), also re-checks the picked duration exactly matches the inquiry's expected session length (guards against a tampered request), then creates the `Appointment` (`status: REQUESTED`, `appointmentType: TATTOO_SESSION`, `notes: "Requested by client via self-scheduling."`, no gift card, no `plannedSessionId`), clears the token, audit-logs `self_scheduled`, and emits `appointment.changed` + `inquiry.updated`.
+  - No gift card is attached, and none is required to create this row -- the "appointment needs a gift card" rule (Phase 3) is enforced only by `POST /appointments`'s own application-level check, not a database constraint, so this is a deliberate, explicit departure: a client can now get a real (if pending) `Appointment` on the calendar before any deposit exists. The `REQUESTED`-not-`CONFIRMED` design is the stated mitigation.
+- New `TaskSource` (`apps/api/src/lib/tasks/selfScheduledPending.ts`, registered in `registry.ts`): surfaces every `status: REQUESTED` appointment as a system task ("Confirm requested time: …", deep-linking to `/appointments/:id`). Since `REQUESTED` is otherwise unused, this can't pick up anything unrelated.
+- `apps/api/src/routes/artists.ts`: `allowsClientSelfScheduling` added to `ARTIST_LIST_SELECT`, PATCH validation/data/audit-diff -- same shape as `schedulingBufferMinutes`.
+- New public page `apps/web/src/pages/SelfSchedule.tsx` at `/schedule/:token`, structurally mirroring `EstimateResponse.tsx`: suggested-time pill buttons (identical visual pattern to `InquiryDetail.tsx`'s own staff-facing suggested-times pills, including the "Close" buffer-conflict badge), a submit action, and a success state. **Scope decision, not in the original brief**: no manual date/time fallback -- the client can only pick from server-suggested, already-conflict-checked candidates, never type in an arbitrary time. This is stricter than the deposit flow's own suggested-times UI (which does offer a manual override) but matches the brief's explicit "not a naive open calendar" instruction more literally for an unauthenticated, self-serve flow with no staff in the loop at pick time.
+- `apps/web/src/pages/EstimateResponse.tsx`: after a `PROCEED` response, if `selfScheduleToken` is present, navigates to `/schedule/:token` instead of showing the static success message. Every other decision, and every artist who hasn't opted in, is completely unaffected.
+
+## What happens if staff never confirms it
+
+**No auto-expiry.** A `REQUESTED` appointment stays surfaced in the new system task indefinitely, the same as every other undismissed system task in this app -- there's no sweep or cron that cancels it. This is a deliberate scope choice for this exploration, not an oversight: an SLA-based auto-cancel (e.g. "un-confirmed after 48h gets cancelled and the client is notified") is a real, sensible follow-up, but adds its own judgment calls (what SLA? does the client get told? does the slot free back up automatically?) that felt like a separate decision from "should this exist at all."
+
+## Interaction with the existing deposit flow -- left independent, not fully resolved
+
+This branch does not touch `Inquiry.status`'s existing `DEPOSIT_PENDING` transition or the deposit-form flow at all -- the self-schedule token is issued *alongside* that unchanged transition, not instead of it. In practice this means a client can end up with a pending scheduling request **and** an outstanding deposit request at the same time, resolvable by staff in either order. I did not build any coupling between the two (e.g. blocking self-scheduling until the deposit is paid, or vice versa) -- flagging this as a genuinely open interaction, not a settled one.
+
+**Related, also flagged**: `InquiryDetail.tsx`'s `deriveProjectStage` logic doesn't distinguish a `REQUESTED` session from a `CONFIRMED` one when deciding pipeline stage -- a project with only a pending self-scheduled hold shows as "Scheduled" on its pipeline, which reads more final than it is. Not changed here (touches shared derivation logic with several other call sites); worth a follow-up look if this branch is adopted.
+
+## Verification
+
+Live, via Playwright against isolated dev servers (api `:4093`, web `:5292`) plus direct API calls for setup/assertions, against the real dev database:
+
+- Enabled `allowsClientSelfScheduling` on a seeded artist via the browser (`ArtistDetail.tsx` checkbox), created a test inquiry, assigned that artist, sent an estimate with a single-session time range.
+- **Browser**: accepted the estimate as a client (`/estimate/:token` -> Proceed) -> redirected to `/schedule/:token` -> 5 real suggested times rendered -> picked one -> "Request this time" -> success message, no confirmed-booking language.
+- Confirmed via staff API the created `Appointment` has `status: REQUESTED` (not `CONFIRMED`).
+- Confirmed the new system task appears in `GET /tasks`'s `system` array (`type: SELF_SCHEDULED_PENDING`, correct deep link).
+- **Browser, staff side**: opened `/appointments/:id`, confirmed the existing status `<select>` shows `REQUESTED`, changed it to `CONFIRMED` via that same existing dropdown -- **zero new staff-facing UI was needed**, confirming the plan to reuse `AppointmentDetail.tsx`'s existing status control and `PATCH /appointments/:id` as-is.
+- Confirmed the self-schedule token is single-use: re-verifying it after a successful pick returns 404/invalid.
+- **Buffer-conflict enforcement**: a second test inquiry/estimate for the same artist, then a direct `PATCH /self-schedule/respond/:token` submitted with the exact start/end of the slot just booked above -- correctly rejected with 409, confirming the server-side re-check (not just the UI's own filtering) actually blocks an already-unavailable slot.
+- **Control case**: a second, never-toggled artist (`allowsClientSelfScheduling: false`, the default) -- accepting an estimate for that artist shows the exact unchanged static "Thanks — let's get you scheduled!" message, no redirect, confirming zero behavior change for artists who haven't opted in.
+- Reset the test artist's `allowsClientSelfScheduling` back to `false` after verification (a shared, per-artist setting, same reset convention as any studio-wide config touched during dev testing); left the additive test inquiries/appointments/client rows in place.
+
+Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (web) clean.
+
+## Commit
+
+`4399a07`
+
+## Reviewer options
+
+Main is unaffected either way until a deliberate merge decision:
+
+- **Review locally**: `git checkout explore/client-self-scheduling`.
+- **Merge to adopt**: standard PR/merge into `main` once the pending-hold design (and the two flagged open questions above -- OWNER-only vs. artist-self-editable, and the deposit-flow interaction) have been discussed.
+- **Delete to discard**: `git branch -D explore/client-self-scheduling` (local) `git push origin --delete explore/client-self-scheduling` (remote) -- nothing on `main` changes either way.
