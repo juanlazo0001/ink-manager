@@ -66,6 +66,136 @@ function minutesToTime(minutes: number): string {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
+// Shared artist-side context every function below needs -- resolved once
+// per call (not per day) since none of it varies by date. Extracted so the
+// client self-scheduling date/time picker (getAvailableDates/
+// getSlotsForDate below) can reuse the exact same artist-availability
+// rules getSuggestedTimes already enforces, rather than a second,
+// potentially-drifting copy of "how do we read this artist's schedule."
+interface AvailabilityContext {
+  artistId: string;
+  timeZone: string;
+  bufferMs: number;
+  schedule: ScheduleBlock[] | null;
+  isGuest: boolean;
+  guestStartDate: Date | null;
+  guestEndDate: Date | null;
+}
+
+async function resolveAvailabilityContext(artistId: string): Promise<AvailabilityContext | null> {
+  const artist = await prisma.artist.findUnique({ where: { id: artistId }, include: { user: true } });
+  if (!artist) return null;
+
+  const studioSettings = await prisma.studioSettings.findUnique({
+    where: { studioId: artist.user.studioId },
+    select: { timezone: true, schedulingBufferMinutes: true },
+  });
+
+  return {
+    artistId,
+    timeZone: studioSettings?.timezone ?? DEFAULT_TIMEZONE,
+    bufferMs: resolveSchedulingBufferMs(artist.schedulingBufferMinutes, studioSettings?.schedulingBufferMinutes),
+    schedule: (artist.preferredSchedule as unknown as ScheduleBlock[] | null) ?? null,
+    isGuest: artist.isGuest,
+    guestStartDate: artist.guestStartDate,
+    guestEndDate: artist.guestEndDate,
+  };
+}
+
+// This day's working window ("HH:MM"-"HH:MM"), or null if the artist is
+// unavailable all day (outside their guest window, or preferredSchedule
+// has no entry for this weekday -- same "no entry = fully unavailable"
+// convention Calendar.tsx's isArtistUnavailable already uses). Duration
+// itself is checked by the caller, since "the window exists but is
+// shorter than the requested session" is a per-duration question, not a
+// per-day one.
+function dayWindow(context: AvailabilityContext, dateKey: string, dayOfWeek: number): { start: string; end: string } | null {
+  if (context.isGuest) {
+    if (context.guestStartDate && dateKey < civilDateKey(context.guestStartDate, "UTC")) return null;
+    if (context.guestEndDate && dateKey > civilDateKey(context.guestEndDate, "UTC")) return null;
+  }
+
+  if (context.schedule && context.schedule.length > 0) {
+    const match = context.schedule.find((b) => b.dayOfWeek === dayOfWeek);
+    return match ? { start: match.startTime, end: match.endTime } : null;
+  }
+
+  return { start: DEFAULT_WINDOW_START, end: DEFAULT_WINDOW_END };
+}
+
+// Every slot-step candidate for one civil day, split clean vs buffer-
+// flagged -- the one place the actual step-through-the-window loop lives,
+// shared by getSuggestedTimes' multi-day search and getSlotsForDate's
+// single-day one. `dayAppointments` is this artist's appointments already
+// filtered to this exact dateKey (by civilDateKey, in the studio's own
+// timezone) -- callers fetch the underlying appointments once for
+// whatever window they need and filter per day, rather than this function
+// querying per day itself.
+function computeDaySlots(
+  context: AvailabilityContext,
+  dateKey: string,
+  dayOfWeek: number,
+  durationMinutes: number,
+  dayAppointments: { startTime: Date; endTime: Date }[],
+  now: Date,
+): { clean: SuggestedTimeCandidate[]; flagged: SuggestedTimeCandidate[] } {
+  const window = dayWindow(context, dateKey, dayOfWeek);
+  if (!window) return { clean: [], flagged: [] };
+
+  const windowStartMin = timeToMinutes(window.start);
+  const windowEndMin = timeToMinutes(window.end);
+  if (windowEndMin - windowStartMin < durationMinutes) return { clean: [], flagged: [] };
+
+  const clean: SuggestedTimeCandidate[] = [];
+  const flagged: SuggestedTimeCandidate[] = [];
+
+  for (
+    let slotStartMin = windowStartMin;
+    slotStartMin + durationMinutes <= windowEndMin;
+    slotStartMin += SLOT_STEP_MINUTES
+  ) {
+    // The real UTC instant "this wall-clock time, in the studio's own
+    // timezone, on this date" corresponds to -- not a server-OS-local
+    // Date.setHours/setMinutes call.
+    const slotStart = zonedTimeToUtc(dateKey, minutesToTime(slotStartMin), context.timeZone);
+    if (slotStart < now) continue;
+
+    const slotEnd = new Date(slotStart.getTime() + durationMinutes * 60_000);
+
+    // Identical predicate to findBufferConflict's own overlap check --
+    // pure absolute-instant math, already timezone-agnostic.
+    const conflict = dayAppointments.find(
+      (appt) =>
+        slotStart.getTime() < appt.endTime.getTime() + context.bufferMs &&
+        appt.startTime.getTime() < slotEnd.getTime() + context.bufferMs,
+    );
+
+    const candidate: SuggestedTimeCandidate = { startTime: slotStart, endTime: slotEnd, hasBufferConflict: !!conflict };
+    (conflict ? flagged : clean).push(candidate);
+  }
+
+  return { clean, flagged };
+}
+
+// Studio-local "today" (or `now`), as a plain YYYY-MM-DD -- then walked
+// forward purely as calendar-date arithmetic (a UTC-midnight anchor used
+// only for adding days and reading the resulting y/m/d back out, same
+// "arithmetic anchor" convention reminderWindow.ts's own
+// daysBetweenCivilDates already uses; the anchor itself is never treated
+// as a real instant).
+function civilCursorAnchor(now: Date, timeZone: string): number {
+  const [y, m, d] = civilDateKey(now, timeZone).split("-").map(Number);
+  return Date.UTC(y, m - 1, d);
+}
+
+function dateKeyForOffset(anchor: number, dayOffset: number): { dateKey: string; dayOfWeek: number } {
+  const cursor = new Date(anchor + dayOffset * 86_400_000);
+  return {
+    dateKey: `${cursor.getUTCFullYear()}-${String(cursor.getUTCMonth() + 1).padStart(2, "0")}-${String(cursor.getUTCDate()).padStart(2, "0")}`,
+    dayOfWeek: cursor.getUTCDay(),
+  };
+}
+
 // The one shared suggestion service behind both Package D consumers: the
 // deposit-form "Suggest a time" action (pre-payment, purely informational)
 // and AppointmentForm.tsx's post-payment "Suggested times" panel. Reads
@@ -95,17 +225,8 @@ export async function getSuggestedTimes(
     excludeAppointmentId,
   } = options;
 
-  const artist = await prisma.artist.findUnique({ where: { id: artistId }, include: { user: true } });
-  if (!artist) return [];
-
-  const studioSettings = await prisma.studioSettings.findUnique({
-    where: { studioId: artist.user.studioId },
-    select: { timezone: true, schedulingBufferMinutes: true },
-  });
-  const timeZone = studioSettings?.timezone ?? DEFAULT_TIMEZONE;
-  const bufferMs = resolveSchedulingBufferMs(artist.schedulingBufferMinutes, studioSettings?.schedulingBufferMinutes);
-
-  const schedule = (artist.preferredSchedule as unknown as ScheduleBlock[] | null) ?? null;
+  const context = await resolveAvailabilityContext(artistId);
+  if (!context) return [];
 
   const searchStart = now;
   const searchEnd = new Date(now.getTime() + searchDays * 86_400_000);
@@ -126,91 +247,135 @@ export async function getSuggestedTimes(
 
   const cleanCandidates: SuggestedTimeCandidate[] = [];
   const flaggedCandidates: SuggestedTimeCandidate[] = [];
-
-  // Studio-local "today," as a plain YYYY-MM-DD -- then walked forward
-  // purely as calendar-date arithmetic (a UTC-midnight anchor used only
-  // for adding days and reading the resulting y/m/d back out, same
-  // "arithmetic anchor" convention reminderWindow.ts's own
-  // daysBetweenCivilDates already uses; the anchor itself is never treated
-  // as a real instant).
-  const [startYear, startMonth, startDay] = civilDateKey(now, timeZone).split("-").map(Number);
-  const civilCursorAnchor = Date.UTC(startYear, startMonth - 1, startDay);
+  const anchor = civilCursorAnchor(now, context.timeZone);
 
   for (let dayOffset = 0; dayOffset < searchDays; dayOffset++) {
     if (cleanCandidates.length >= maxSuggestions) break;
 
-    const cursor = new Date(civilCursorAnchor + dayOffset * 86_400_000);
-    const dateKey = `${cursor.getUTCFullYear()}-${String(cursor.getUTCMonth() + 1).padStart(2, "0")}-${String(cursor.getUTCDate()).padStart(2, "0")}`;
-    const dayOfWeek = cursor.getUTCDay();
-
-    if (artist.isGuest) {
-      // guestStartDate/guestEndDate are stored as UTC-midnight instants
-      // representing a plain calendar date (a date-only picker field, see
-      // ArtistDetail.tsx/ArtistCreate.tsx) -- never timezone-shifted
-      // themselves, unlike an appointment's real startTime/endTime. Reading
-      // them back through the STUDIO's timezone (as this used to do) shifts
-      // them a full civil day earlier for any studio west of UTC, which
-      // could silently exclude the guest's actual last day (or, for a
-      // short window, push the whole thing into the past) -- "UTC" here
-      // extracts the exact calendar date that was stored, no shift.
-      if (artist.guestStartDate && dateKey < civilDateKey(artist.guestStartDate, "UTC")) continue;
-      if (artist.guestEndDate && dateKey > civilDateKey(artist.guestEndDate, "UTC")) continue;
-    }
-
-    let windowStart: string;
-    let windowEnd: string;
-    if (schedule && schedule.length > 0) {
-      // No entry for this weekday = fully unavailable that day, same
-      // convention as Calendar.tsx's isArtistUnavailable.
-      const match = schedule.find((b) => b.dayOfWeek === dayOfWeek);
-      if (!match) continue;
-      windowStart = match.startTime;
-      windowEnd = match.endTime;
-    } else {
-      windowStart = DEFAULT_WINDOW_START;
-      windowEnd = DEFAULT_WINDOW_END;
-    }
-
-    const windowStartMin = timeToMinutes(windowStart);
-    const windowEndMin = timeToMinutes(windowEnd);
-    if (windowEndMin - windowStartMin < durationMinutes) continue;
-
+    const { dateKey, dayOfWeek } = dateKeyForOffset(anchor, dayOffset);
     const dayAppointments = existingAppointments.filter(
-      (appt) => civilDateKey(appt.startTime, timeZone) === dateKey,
+      (appt) => civilDateKey(appt.startTime, context.timeZone) === dateKey,
     );
 
-    for (
-      let slotStartMin = windowStartMin;
-      slotStartMin + durationMinutes <= windowEndMin;
-      slotStartMin += SLOT_STEP_MINUTES
-    ) {
+    const { clean, flagged } = computeDaySlots(context, dateKey, dayOfWeek, durationMinutes, dayAppointments, now);
+    for (const candidate of clean) {
       if (cleanCandidates.length >= maxSuggestions) break;
-
-      // The real UTC instant "this wall-clock time, in the studio's own
-      // timezone, on this date" corresponds to -- not a server-OS-local
-      // Date.setHours/setMinutes call.
-      const slotStart = zonedTimeToUtc(dateKey, minutesToTime(slotStartMin), timeZone);
-      if (slotStart < now) continue;
-
-      const slotEnd = new Date(slotStart.getTime() + durationMinutes * 60_000);
-
-      // Identical predicate to findBufferConflict's own overlap check --
-      // pure absolute-instant math, already timezone-agnostic.
-      const conflict = dayAppointments.find(
-        (appt) =>
-          slotStart.getTime() < appt.endTime.getTime() + bufferMs &&
-          appt.startTime.getTime() < slotEnd.getTime() + bufferMs,
-      );
-
-      const candidate: SuggestedTimeCandidate = { startTime: slotStart, endTime: slotEnd, hasBufferConflict: !!conflict };
-      if (conflict) {
-        flaggedCandidates.push(candidate);
-      } else {
-        cleanCandidates.push(candidate);
-      }
+      cleanCandidates.push(candidate);
     }
+    flaggedCandidates.push(...flagged);
   }
 
   if (cleanCandidates.length >= maxSuggestions) return cleanCandidates.slice(0, maxSuggestions);
   return [...cleanCandidates, ...flaggedCandidates].slice(0, maxSuggestions);
+}
+
+export interface GetAvailableDatesOptions {
+  now?: Date;
+  searchDays?: number;
+  excludeAppointmentId?: string;
+}
+
+// Client self-scheduling date/time picker: which calendar dates (within
+// the search window) have at least one genuinely available -- buffer-
+// clean, not just flagged -- slot for this artist/duration. Drives which
+// days are selectable in the picker's calendar grid; every other date is
+// disabled outright, not just visually greyed (unlike the advisory-only
+// unavailableDaysOfWeek styling DateAndTimeRangeFields uses for staff),
+// since a client's picker must never even offer a date that turns out to
+// have nothing on it.
+export async function getAvailableDates(
+  artistId: string,
+  durationMinutes: number,
+  options: GetAvailableDatesOptions = {},
+): Promise<string[]> {
+  const { now = new Date(), searchDays = DEFAULT_SEARCH_DAYS, excludeAppointmentId } = options;
+
+  const context = await resolveAvailabilityContext(artistId);
+  if (!context) return [];
+
+  const searchEnd = new Date(now.getTime() + searchDays * 86_400_000);
+  // Padded a day behind `now`, not started exactly at it -- an appointment
+  // that already ended minutes ago can still have a buffer window
+  // reaching forward past `now` (e.g. ended 19:30, 90-min buffer reaches
+  // 21:00), and a query starting exactly at `now` would silently drop it,
+  // undercounting the very first day's conflicts. Same "pad, don't compute
+  // exact boundaries" reasoning getSlotsForDate/findBufferConflict already
+  // use for their own windows.
+  const searchStart = new Date(now.getTime() - 86_400_000);
+
+  const existingAppointments = await prisma.appointment.findMany({
+    where: {
+      artistId,
+      startTime: { lt: searchEnd },
+      endTime: { gt: searchStart },
+      ...(excludeAppointmentId ? { id: { not: excludeAppointmentId } } : {}),
+    },
+    select: { startTime: true, endTime: true },
+  });
+
+  const anchor = civilCursorAnchor(now, context.timeZone);
+  const availableDates: string[] = [];
+
+  for (let dayOffset = 0; dayOffset < searchDays; dayOffset++) {
+    const { dateKey, dayOfWeek } = dateKeyForOffset(anchor, dayOffset);
+    const dayAppointments = existingAppointments.filter(
+      (appt) => civilDateKey(appt.startTime, context.timeZone) === dateKey,
+    );
+
+    const { clean } = computeDaySlots(context, dateKey, dayOfWeek, durationMinutes, dayAppointments, now);
+    if (clean.length > 0) availableDates.push(dateKey);
+  }
+
+  return availableDates;
+}
+
+export interface GetSlotsForDateOptions {
+  now?: Date;
+  excludeAppointmentId?: string;
+}
+
+// The time-of-day options for one specific date already confirmed
+// available (via getAvailableDates) -- buffer-clean only, same reasoning
+// as getAvailableDates above: this picker offers exactly what's available,
+// not a "close, with a warning" fallback the way the older suggested-
+// times panel does for staff.
+export async function getSlotsForDate(
+  artistId: string,
+  durationMinutes: number,
+  dateKey: string,
+  options: GetSlotsForDateOptions = {},
+): Promise<SuggestedTimeCandidate[]> {
+  const { now = new Date(), excludeAppointmentId } = options;
+
+  const context = await resolveAvailabilityContext(artistId);
+  if (!context) return [];
+
+  const [year, month, day] = dateKey.split("-").map(Number);
+  if (!year || !month || !day) return [];
+  const dayOfWeek = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+
+  // A day-wide window in the studio's own timezone, padded a day on each
+  // side -- simplest way to be provably wide enough to catch every
+  // appointment that could overlap this civil day in any timezone,
+  // without reasoning about exactly where the day's own UTC boundaries
+  // fall (same "pad, don't compute exact boundaries" approach
+  // findBufferConflict's own window uses).
+  const dayStart = zonedTimeToUtc(dateKey, "00:00", context.timeZone);
+  const searchStart = new Date(dayStart.getTime() - 86_400_000);
+  const searchEnd = new Date(dayStart.getTime() + 2 * 86_400_000);
+
+  const existingAppointments = await prisma.appointment.findMany({
+    where: {
+      artistId,
+      startTime: { lt: searchEnd },
+      endTime: { gt: searchStart },
+      ...(excludeAppointmentId ? { id: { not: excludeAppointmentId } } : {}),
+    },
+    select: { startTime: true, endTime: true },
+  });
+
+  const dayAppointments = existingAppointments.filter((appt) => civilDateKey(appt.startTime, context.timeZone) === dateKey);
+
+  const { clean } = computeDaySlots(context, dateKey, dayOfWeek, durationMinutes, dayAppointments, now);
+  return clean;
 }

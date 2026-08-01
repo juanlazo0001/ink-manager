@@ -4,7 +4,7 @@ import { AppointmentStatus, AppointmentType } from "../../generated/prisma/enums
 import { logAudit } from "../lib/audit";
 import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 import { emitInvalidation } from "../lib/realtime/registry";
-import { getSuggestedTimes } from "../lib/schedulingAssistant";
+import { getAvailableDates, getSlotsForDate } from "../lib/schedulingAssistant";
 import { findBufferConflict, resolveSchedulingBufferMs } from "../lib/schedulingConflict";
 
 const router = Router();
@@ -63,7 +63,15 @@ router.get("/verify/:token", async (req, res) => {
     return res.status(404).json({ error: "This link is invalid." });
   }
 
-  const candidates = await getSuggestedTimes(inquiry!.assignedArtistId, durationMinutes);
+  // Date/time picker: which calendar dates have any genuine availability
+  // at all, so the client's picker can disable every other date outright
+  // rather than letting them pick a date and then discover it's empty.
+  // Actual time-of-day options for whichever date they land on come from
+  // GET /slots/:token below, fetched on demand per date rather than all
+  // up front (a 21-day search window's worth of times, all at once, is
+  // both wasted work for the ~20 dates never clicked and a much bigger
+  // response than this page needs at load time).
+  const availableDates = await getAvailableDates(inquiry!.assignedArtistId, durationMinutes);
 
   res.json({
     clientFirstName: inquiry!.client.firstName,
@@ -74,8 +82,40 @@ router.get("/verify/:token", async (req, res) => {
     artistName: inquiry!.assignedArtist.user.name ?? "your artist",
     artistAvatarUrl: inquiry!.assignedArtist.user.avatarUrl,
     durationMinutes,
-    candidates,
+    availableDates,
   });
+});
+
+const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+// Client self-scheduling date/time picker: the time-of-day options for one
+// specific date the client has already picked from the calendar grid
+// (populated from GET /verify's own availableDates). Fetched per date
+// rather than folded into /verify's response -- see that route's own
+// comment for why.
+router.get("/slots/:token", async (req, res) => {
+  const token = req.params.token as string;
+  const date = req.query.date;
+
+  if (typeof date !== "string" || !DATE_KEY_PATTERN.test(date)) {
+    return res.status(400).json({ error: "date must be a YYYY-MM-DD string" });
+  }
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { selfScheduleToken: token } });
+
+  const invalidity = isExpiredOrInvalid(inquiry);
+  if (invalidity) {
+    const status = invalidity.code === "invalid" ? 404 : 410;
+    return res.status(status).json(invalidity);
+  }
+
+  const durationMinutes = durationMinutesFor(inquiry!);
+  if (!inquiry!.assignedArtistId || durationMinutes == null) {
+    return res.status(404).json({ error: "This link is invalid." });
+  }
+
+  const slots = await getSlotsForDate(inquiry!.assignedArtistId, durationMinutes, date);
+  res.json({ slots });
 });
 
 router.patch("/respond/:token", async (req, res) => {
