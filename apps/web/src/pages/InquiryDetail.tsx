@@ -26,6 +26,7 @@ import DateAndTimeRangeFields, {
 import SessionHoursRows, {
   SessionCountField,
   HOUR_OPTIONS,
+  suggestSessionPrice,
   type LockedSession,
   type SessionHoursRow,
 } from '../components/SessionBreakdownEditor'
@@ -657,6 +658,39 @@ export default function InquiryDetail() {
   // top-level Inquiry column.
   const [estimateShowDurationToClient, setEstimateShowDurationToClient] = useState(true)
 
+  // No-session-plan path's own version of SessionHoursRows' updateRow --
+  // same suggestion (assigned artist's hourly/flat rate), same "only
+  // pre-fill, never override" guard, just against the single top-level
+  // price/hours fields instead of a per-session row. Bug fix: this
+  // suggestion previously only existed inside SessionHoursRows, which
+  // is a no-op for sessionCount <= 1 (the default, single-session case)
+  // -- so an assigned artist's rate never suggested anything unless staff
+  // had already bumped "Number of sessions" above 1.
+  function updateEstimateTimeField(field: 'timeEstimateHoursMin' | 'timeEstimateHoursMax', value: string) {
+    setEstimateForm((current) => {
+      const next = { ...current, [field]: value }
+      if (
+        inquiry?.assignedArtist &&
+        !next.priceEstimateLow &&
+        !next.priceEstimateHigh &&
+        next.timeEstimateHoursMin &&
+        next.timeEstimateHoursMax
+      ) {
+        const suggestion = suggestSessionPrice(
+          inquiry.assignedArtist,
+          Number(next.timeEstimateHoursMin),
+          Number(next.timeEstimateHoursMax),
+          estimateIsFlat,
+        )
+        if (suggestion) {
+          next.priceEstimateLow = suggestion.low
+          next.priceEstimateHigh = suggestion.high
+        }
+      }
+      return next
+    })
+  }
+
   // Resizes sessionHours to match, preserving already-entered rows --
   // dropping the count back down never loses data for the rows still in
   // range, just hides the ones beyond it.
@@ -705,6 +739,33 @@ export default function InquiryDetail() {
   const [reviseIsFlat, setReviseIsFlat] = useState(false)
   // Same as estimateShowDurationToClient above, keyed to this modal.
   const [reviseShowDurationToClient, setReviseShowDurationToClient] = useState(true)
+
+  // Same bug fix and same reasoning as updateEstimateTimeField above,
+  // keyed to this modal's own state.
+  function updateReviseTimeField(field: 'timeEstimateHoursMin' | 'timeEstimateHoursMax', value: string) {
+    setReviseEstimateForm((current) => {
+      const next = { ...current, [field]: value }
+      if (
+        inquiry?.assignedArtist &&
+        !next.priceEstimateLow &&
+        !next.priceEstimateHigh &&
+        next.timeEstimateHoursMin &&
+        next.timeEstimateHoursMax
+      ) {
+        const suggestion = suggestSessionPrice(
+          inquiry.assignedArtist,
+          Number(next.timeEstimateHoursMin),
+          Number(next.timeEstimateHoursMax),
+          reviseIsFlat,
+        )
+        if (suggestion) {
+          next.priceEstimateLow = suggestion.low
+          next.priceEstimateHigh = suggestion.high
+        }
+      }
+      return next
+    })
+  }
 
   function handleReviseSessionCountChange(count: number) {
     setReviseSessionCount(count)
@@ -2713,7 +2774,7 @@ export default function InquiryDetail() {
                               <label className="mb-1 block text-xs font-medium text-fg-secondary">Time min (hours)</label>
                               <select
                                 value={estimateForm.timeEstimateHoursMin}
-                                onChange={(e) => setEstimateForm({ ...estimateForm, timeEstimateHoursMin: e.target.value })}
+                                onChange={(e) => updateEstimateTimeField('timeEstimateHoursMin', e.target.value)}
                                 className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                               >
                                 <option value="">Select…</option>
@@ -2728,7 +2789,7 @@ export default function InquiryDetail() {
                               <label className="mb-1 block text-xs font-medium text-fg-secondary">Time max (hours)</label>
                               <select
                                 value={estimateForm.timeEstimateHoursMax}
-                                onChange={(e) => setEstimateForm({ ...estimateForm, timeEstimateHoursMax: e.target.value })}
+                                onChange={(e) => updateEstimateTimeField('timeEstimateHoursMax', e.target.value)}
                                 className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                               >
                                 <option value="">Select…</option>
@@ -4313,9 +4374,7 @@ export default function InquiryDetail() {
                             <label className="mb-1 block text-xs font-medium text-fg-secondary">Time min (hours)</label>
                             <select
                               value={reviseEstimateForm.timeEstimateHoursMin}
-                              onChange={(e) =>
-                                setReviseEstimateForm({ ...reviseEstimateForm, timeEstimateHoursMin: e.target.value })
-                              }
+                              onChange={(e) => updateReviseTimeField('timeEstimateHoursMin', e.target.value)}
                               className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                             >
                               <option value="">Select…</option>
@@ -4330,9 +4389,7 @@ export default function InquiryDetail() {
                             <label className="mb-1 block text-xs font-medium text-fg-secondary">Time max (hours)</label>
                             <select
                               value={reviseEstimateForm.timeEstimateHoursMax}
-                              onChange={(e) =>
-                                setReviseEstimateForm({ ...reviseEstimateForm, timeEstimateHoursMax: e.target.value })
-                              }
+                              onChange={(e) => updateReviseTimeField('timeEstimateHoursMax', e.target.value)}
                               className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                             >
                               <option value="">Select…</option>
