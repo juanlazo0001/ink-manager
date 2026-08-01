@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
+import { useRef, useState } from 'react'
 import { ArtistAvatar, artistLabel, type ArtistLike } from './ArtistAvatar'
 import { ChevronDownIcon } from './icons'
-import { dropdownVariants, uiSpringTransition } from '../lib/motion'
+import DropdownPortal from './DropdownPortal'
 
 export interface ArtistOption extends ArtistLike {
   id: string
@@ -40,21 +39,13 @@ export default function ArtistSelect({
   disabled = false,
 }: ArtistSelectProps) {
   const [open, setOpen] = useState(false)
-  const containerRef = useRef<HTMLDivElement>(null)
+  const buttonRef = useRef<HTMLButtonElement>(null)
   const selected = artists?.find((artist) => artist.id === value)
 
-  useEffect(() => {
-    if (!open) return
-    function handleClickOutside(event: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [open])
-
   return (
-    <div ref={containerRef} className={`relative ${className}`}>
+    <div className={`relative ${className}`}>
       <button
+        ref={buttonRef}
         type="button"
         id={id}
         aria-haspopup="listbox"
@@ -73,18 +64,15 @@ export default function ArtistSelect({
         )}
         <ChevronDownIcon className="h-4 w-4 shrink-0 text-fg-muted" />
       </button>
-      <AnimatePresence>
-        {open && artists && artists.length > 0 && (
-        <motion.ul
-          role="listbox"
-          aria-labelledby={id}
-          className="absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-lg border border-border bg-surface-inset py-1 shadow-lg"
-          variants={dropdownVariants}
-          initial="initial"
-          animate="animate"
-          exit="exit"
-          transition={uiSpringTransition}
-        >
+      <DropdownPortal
+        open={open && !!artists && artists.length > 0}
+        onClose={() => setOpen(false)}
+        anchorRef={buttonRef}
+        matchWidth
+        maxHeightCap={256}
+        className="rounded-lg border border-border bg-surface-inset py-1 shadow-lg"
+      >
+        <ul role="listbox" aria-labelledby={id}>
           {clearLabel && (
             <li>
               <button
@@ -101,7 +89,7 @@ export default function ArtistSelect({
               </button>
             </li>
           )}
-          {artists.map((artist) => (
+          {artists?.map((artist) => (
             <li key={artist.id}>
               <button
                 type="button"
@@ -118,9 +106,8 @@ export default function ArtistSelect({
               </button>
             </li>
           ))}
-        </motion.ul>
-        )}
-      </AnimatePresence>
+        </ul>
+      </DropdownPortal>
     </div>
   )
 }

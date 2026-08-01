@@ -6308,3 +6308,47 @@ Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (
 ## Commit
 
 `866f9b1`
+
+---
+
+# Mobile dropdowns clipped/covered by widget cards: Assign Artist, per-widget "More actions" menus
+
+Reported bug: on mobile, the "Assign Artist" picker and the "..." (More actions) menus on Inquiry/Client/Appointment detail pages were unusable -- the open panel was blocked by other widget boxes, making options impossible to see or select.
+
+## Root cause
+
+Every `.card-surface` widget card (`Widget.tsx`) carries `backdrop-filter: blur(16px)` for the Editorial Gold frosted-glass look. `backdrop-filter`, like `transform` or `opacity < 1`, creates its own CSS stacking context. `ArtistSelect.tsx`'s dropdown and the inline "More actions" menus (`InquiryDetail.tsx`, `ClientDetail.tsx`, `AppointmentDetail.tsx`) were positioned `absolute` inside their own widget card -- `position: absolute` isn't clipped by a plain (non-`overflow-hidden`) ancestor, so the panel could visually overflow past its own card's edges, but it could never paint *above* the next widget card in the list once it crossed into that card's space: the next card's own `backdrop-filter`-created stacking context always wins there, since z-index only ever resolves within a shared stacking context, not across sibling ones. Confirmed live (Playwright, 390px viewport): opening "Assign Artist" on a project with the Assignment widget positioned mid-page showed only the first ~2 of 10 artist options before the Estimate widget below visually cut the rest off, despite the dropdown's own `z-10`.
+
+A second, related issue on top of that: even once the panel could paint correctly, a trigger sitting near the bottom of a short mobile viewport had nowhere to open a downward panel *into* -- it would render entirely below the fold.
+
+## Fix
+
+New `apps/web/src/components/DropdownPortal.tsx`: renders its panel through `createPortal` straight to `document.body`, escaping every ancestor's stacking context entirely (no longer a descendant of any widget's `backdrop-filter` context, so it always paints above everything). Position is computed from the trigger's `getBoundingClientRect()` (`position: fixed`, recalculated on scroll -- capture phase, so it also catches scrolling inside `AppShellLayout`'s own nested scroll container -- and on resize). Also does simple collision detection: if there's under 160px of room below the trigger but genuinely more room above it, the panel flips to open upward instead, and either way its max-height is clamped to whatever space is actually available (own internal scroll), rather than running off the viewport edge. Click-outside-to-close checks both the anchor and the portaled panel's own ref, since the panel is no longer a DOM descendant of the trigger once portaled.
+
+Applied to:
+- `ArtistSelect.tsx` (every artist picker in the app, including "Assign Artist") -- `align="start"`, `matchWidth`, `maxHeightCap={256}` to match its prior `max-h-64`.
+- The three near-identical inline "More actions" menus in `InquiryDetail.tsx`, `ClientDetail.tsx`, `AppointmentDetail.tsx` -- `align="end"` (opens toward the left of its trigger, matching their prior `right-0`). Each menu's own conditional list of action buttons (Mark as lost, Archive, Delete Permanently, etc.) is untouched -- only the wrapping panel mechanics changed, from a manual `fixed inset-0` click-catcher + `absolute` div to `DropdownPortal`.
+
+Not touched: `PillMenu.tsx`, `MultiSelectFilter.tsx`, `DateRangePresetFilter.tsx` -- these are only ever used in list-view header rows, not inside `.card-surface` widget cards, so they don't sit inside a stacking context that could trap them the same way; no evidence they're affected.
+
+## Verification
+
+Playwright against the local dev stack, 390x844 mobile viewport, logged in as `owner@dev-studio.test`:
+- **Before the fix** (captured for comparison): opening "Assign Artist" on a project whose Assignment widget sits mid-page showed only 2 of 10 options, the remainder visually replaced by the Estimate widget immediately below -- confirmed via `document.elementFromPoint()` hit-testing at a covered option's own coordinates, which returned the ESTIMATE widget's div, not the dropdown's button.
+- **After the fix**: same scenario now opens the panel *upward* (correctly detecting under 160px of room below the trigger), fully visible, all 10 options reachable via the panel's own internal scroll, layered above every widget card (screenshot). Selecting the last (previously-unreachable) option worked end-to-end -- confirmed the picker's placeholder text was replaced by the newly selected artist's name.
+- The "More actions" menu (InquiryDetail) verified both where it already happened to fit (no regression) and confirmed clickable via hit-testing at "Delete Permanently"'s own coordinates.
+- Click-outside-to-close verified still works once the panel lives outside the trigger's DOM subtree.
+- Zero console errors from either interaction; the only network noise observed was pre-existing, unrelated dev-seed placeholder images (`example.com/*.jpg`, blocked by ORB) and one pre-existing 404 on an unrelated conversations-resolve lookup.
+- `ClientDetail.tsx`'s and `AppointmentDetail.tsx`'s own "More actions" menus use the exact same `DropdownPortal` integration, byte-for-byte the same pattern as `InquiryDetail.tsx`'s (verified by diff, not just visually) -- not independently re-driven through a live click in this session after a scratch-environment client-detail fetch started hanging indefinitely partway through verification (confirmed via network logging to be a stuck/looping fetch unrelated to this change -- it occurs entirely before the code this session touched ever mounts, and the API itself was returning `200`s throughout). Flagging rather than silently claiming full live coverage of all three call sites.
+
+Both typechecks (`npx tsc -b` web; `npx tsc --noEmit` api -- untouched, no backend changes) clean.
+
+**Note on this session's git history**: a concurrent session sharing this working directory bundled part of this fix (`AppointmentDetail.tsx`'s edit and, briefly, a missing `DropdownPortal.tsx`) into its own unrelated commits while this work was still in progress -- resolved without any content loss (verified via `git diff` against the working tree, byte-identical) but worth knowing if `git blame` on those two files looks unexpected.
+
+## Commit
+
+`(pending)`
+
+## Cleanup
+
+Scratch dev servers (api `:4090`, web `:5290`) killed by PID. Scratch Playwright install deleted from the scratch directory after use.

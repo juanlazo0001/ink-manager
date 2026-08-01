@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import AuditTrail from '../components/AuditTrail'
@@ -17,6 +17,7 @@ import CurrencyInput from '../components/CurrencyInput'
 import ImageUploadSection, { type ImageUploadState } from '../components/ImageUploadSection'
 import { ArtistAvatar, artistLabel, type ArtistLike } from '../components/ArtistAvatar'
 import ArtistSelect from '../components/ArtistSelect'
+import DropdownPortal from '../components/DropdownPortal'
 import DateAndTimeRangeFields, {
   combineDateAndTime,
   isCompleteTimeRange,
@@ -851,6 +852,7 @@ export default function InquiryDetail() {
   // same permission level as these two actions, so it's reused directly
   // rather than defining a second identical role check.
   const [showMoreMenu, setShowMoreMenu] = useState(false)
+  const moreMenuButtonRef = useRef<HTMLButtonElement>(null)
   // Backs the "..." menu's "Auto-order sections" action -- same pageKey as
   // ReorderableWidgetList's own useWidgetLayout call further down, so both
   // read/write the exact same saved layout (react-query dedupes the
@@ -2251,6 +2253,7 @@ export default function InquiryDetail() {
                     {(canMarkLost || canEditInquiry || isOwner) && (
                       <div className="relative">
                         <button
+                          ref={moreMenuButtonRef}
                           type="button"
                           onClick={() => setShowMoreMenu((v) => !v)}
                           aria-label="More actions"
@@ -2260,70 +2263,67 @@ export default function InquiryDetail() {
                         >
                           <MoreIcon className="h-4 w-4" />
                         </button>
-                        {showMoreMenu && (
-                          <>
-                            <div
-                              className="fixed inset-0 z-10"
-                              onClick={() => setShowMoreMenu(false)}
-                              aria-hidden="true"
-                            />
-                            <div className="absolute right-0 top-9 z-20 w-48 rounded-xl border border-border bg-surface-raised p-1 shadow-xl">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setShowMoreMenu(false)
-                                  widgetLayout.resetToDefault()
-                                }}
-                                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
-                              >
-                                Auto-order sections
-                              </button>
-                              {canMarkLost && !isTerminal && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setShowMoreMenu(false)
-                                    setLostReasonInput('')
-                                    setMarkLostError(null)
-                                    setShowMarkLostModal(true)
-                                  }}
-                                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-danger hover:bg-danger/10"
-                                >
-                                  Mark as lost
-                                </button>
-                              )}
-                              {canEditInquiry && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setShowMoreMenu(false)
-                                    if (inquiry.archivedAt) {
-                                      handleUnarchive()
-                                    } else {
-                                      handleArchive()
-                                    }
-                                  }}
-                                  disabled={archiving}
-                                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface disabled:opacity-60"
-                                >
-                                  {inquiry.archivedAt ? 'Unarchive' : 'Archive'}
-                                </button>
-                              )}
-                              {isOwner && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setShowMoreMenu(false)
-                                    openDeleteModal()
-                                  }}
-                                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-danger hover:bg-danger/10"
-                                >
-                                  Delete Permanently
-                                </button>
-                              )}
-                            </div>
-                          </>
-                        )}
+                        <DropdownPortal
+                          open={showMoreMenu}
+                          onClose={() => setShowMoreMenu(false)}
+                          anchorRef={moreMenuButtonRef}
+                          align="end"
+                          className="w-48 rounded-xl border border-border bg-surface-raised p-1 shadow-xl"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowMoreMenu(false)
+                              widgetLayout.resetToDefault()
+                            }}
+                            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
+                          >
+                            Auto-order sections
+                          </button>
+                          {canMarkLost && !isTerminal && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowMoreMenu(false)
+                                setLostReasonInput('')
+                                setMarkLostError(null)
+                                setShowMarkLostModal(true)
+                              }}
+                              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-danger hover:bg-danger/10"
+                            >
+                              Mark as lost
+                            </button>
+                          )}
+                          {canEditInquiry && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowMoreMenu(false)
+                                if (inquiry.archivedAt) {
+                                  handleUnarchive()
+                                } else {
+                                  handleArchive()
+                                }
+                              }}
+                              disabled={archiving}
+                              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface disabled:opacity-60"
+                            >
+                              {inquiry.archivedAt ? 'Unarchive' : 'Archive'}
+                            </button>
+                          )}
+                          {isOwner && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowMoreMenu(false)
+                                openDeleteModal()
+                              }}
+                              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-danger hover:bg-danger/10"
+                            >
+                              Delete Permanently
+                            </button>
+                          )}
+                        </DropdownPortal>
                       </div>
                     )}
                   </div>

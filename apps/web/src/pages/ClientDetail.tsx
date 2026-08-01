@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import Modal from '../components/Modal'
@@ -15,6 +15,7 @@ import { sanitizeHtml } from '../lib/sanitizeHtml'
 import { AttachmentChip } from '../components/NotesSection'
 import type { NoteAttachment } from '../lib/cloudinary'
 import Widget from '../components/Widget'
+import DropdownPortal from '../components/DropdownPortal'
 import ReorderableWidgetList from '../components/ReorderableWidgetList'
 import IntakeFormPicker from '../components/IntakeFormPicker'
 import { useIntakeForms, type IntakeFormOption } from '../lib/useIntakeForms'
@@ -578,6 +579,7 @@ export default function ClientDetail() {
   const [mergeSearchLoading, setMergeSearchLoading] = useState(false)
 
   const [showMoreMenu, setShowMoreMenu] = useState(false)
+  const moreMenuButtonRef = useRef<HTMLButtonElement>(null)
   const [archiving, setArchiving] = useState(false)
   const [archiveError, setArchiveError] = useState<string | null>(null)
 
@@ -1472,6 +1474,7 @@ export default function ClientDetail() {
                       {(canArchiveClient || isOwner) && (
                         <div className="relative">
                           <button
+                            ref={moreMenuButtonRef}
                             type="button"
                             onClick={() => setShowMoreMenu((v) => !v)}
                             aria-label="More actions"
@@ -1479,32 +1482,33 @@ export default function ClientDetail() {
                           >
                             <MoreIcon className="h-4 w-4" />
                           </button>
-                          {showMoreMenu && (
-                            <>
-                              <div className="fixed inset-0 z-10" onClick={() => setShowMoreMenu(false)} aria-hidden="true" />
-                              <div className="absolute right-0 top-10 z-20 w-56 origin-top-right animate-scale-fade-in rounded-xl border border-border bg-surface-raised p-1 shadow-xl">
-                                {canArchiveClient && (
-                                  <button
-                                    type="button"
-                                    onClick={client.archivedAt ? handleUnarchive : handleArchive}
-                                    disabled={archiving}
-                                    className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface disabled:opacity-60"
-                                  >
-                                    {client.archivedAt ? 'Unarchive' : 'Archive'}
-                                  </button>
-                                )}
-                                {isOwner && (
-                                  <button
-                                    type="button"
-                                    onClick={openDeleteModal}
-                                    className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-danger hover:bg-danger/10"
-                                  >
-                                    Delete Permanently
-                                  </button>
-                                )}
-                              </div>
-                            </>
-                          )}
+                          <DropdownPortal
+                            open={showMoreMenu}
+                            onClose={() => setShowMoreMenu(false)}
+                            anchorRef={moreMenuButtonRef}
+                            align="end"
+                            className="w-56 rounded-xl border border-border bg-surface-raised p-1 shadow-xl"
+                          >
+                            {canArchiveClient && (
+                              <button
+                                type="button"
+                                onClick={client.archivedAt ? handleUnarchive : handleArchive}
+                                disabled={archiving}
+                                className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface disabled:opacity-60"
+                              >
+                                {client.archivedAt ? 'Unarchive' : 'Archive'}
+                              </button>
+                            )}
+                            {isOwner && (
+                              <button
+                                type="button"
+                                onClick={openDeleteModal}
+                                className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-danger hover:bg-danger/10"
+                              >
+                                Delete Permanently
+                              </button>
+                            )}
+                          </DropdownPortal>
                         </div>
                       )}
                     </div>
