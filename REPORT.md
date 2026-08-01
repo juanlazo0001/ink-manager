@@ -6228,3 +6228,29 @@ Both typechecks (`npx tsc --noEmit` api -- unaffected, no backend changes; `npx 
 ## Commit
 
 `e52b951`
+
+---
+
+# Client details panel (chat "(i)" button) — transparent background, fixed
+
+Reported: clicking the info button in a client conversation opens the client-details panel, but its background is transparent.
+
+## Root cause
+
+Confirmed live (Editorial Gold theme, the only preset affected -- every "default"-shape preset was already fine): the panel's own container used `bg-bg`, which `index.css` deliberately makes ~80% opaque under editorial-gold (`color-mix(in srgb, var(--color-bg) 80%, transparent)` on `[data-theme="editorial-gold"] .bg-bg`) so every page's top-level wrapper lets TopBar's blurred photo layer read through behind it -- correct for a full-page shell sitting above that atmospheric layer, wrong for a panel that floats *on top of* real foreground content (whatever page was open behind the chat panel bled straight through it).
+
+First attempt at a fix (just adding the existing `.conversations-panel-bg` opaque-override class, already used successfully elsewhere in this same file) didn't actually work -- confirmed via the browser's own computed `background-color`, not by eyeballing a screenshot, since the visual difference is subtle against this app's generally dark palette. `.bg-bg`'s override rule and `.conversations-panel-bg`'s rule have identical CSS specificity; `.bg-bg`'s is defined later in `index.css`, so it won the cascade tie-break on any element carrying both classes -- the element still had `bg-bg` in its class list, so that rule kept matching and kept winning.
+
+## Fix
+
+`apps/web/src/components/ConversationsPanel.tsx`: swapped the client-details panel's base utility from `bg-bg` to `bg-surface-raised` -- the same base color this panel's own outer container already uses, with no competing opacity override anywhere in `index.css` -- plus the existing `conversations-panel-bg` class for editorial-gold specifically (inert/no-op under every other preset, where neither utility was ever translucent).
+
+## Verification
+
+Live: read the element's computed `background-color` directly (not just a screenshot) before and after -- `color(srgb 0.05 0.04 0.03 / 0.8)` (translucent) before, `rgb(16, 15, 14)` (alpha 1, fully opaque) after, matching `--color-card-glass-opaque` exactly.
+
+`npx tsc -b` (web) and `npm run build` (web) clean. Frontend-only change -- api typecheck unaffected, not re-run.
+
+## Commit
+
+`160d822`
