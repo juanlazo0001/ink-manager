@@ -6254,3 +6254,57 @@ Live: read the element's computed `background-color` directly (not just a screen
 ## Commit
 
 `160d822`
+
+---
+
+# Referral program — self-referral audit, code distribution, repeat-use setting
+
+Single session on `main`. One schema addition (`StudioSettings.referralAllowRepeatRedemption`).
+
+**Pre-flight note**: found the dev database carrying schema drift from an earlier, still-unmerged `explore/client-self-scheduling` branch session (two columns + an index, applied via that branch's own `prisma migrate dev`, never committed to `main`). Confirmed with the user before touching anything, then rolled it back (dropped the two columns/index, removed the migration's row from `_prisma_migrations`) so the dev database exactly matched `main` again before this session's own migration work began -- otherwise a plain schema diff would have silently tried to drop those columns as unrelated "cleanup" alongside this session's real change.
+
+## 1. Self-referral audit
+
+**Before this session**: an exact "same Client record" self-referral was already structurally impossible -- `Client.referredByClientId` (`apps/api/src/routes/inquiries.ts`) is only ever set while creating a brand-new Client row, whose id doesn't exist yet at lookup time and so can never equal the referrer's own id. But the "sophisticated" case the task asked me to specifically test **was real and unguarded**: the referrer lookup matched purely on the code string, with zero cross-check against the submitter's own contact info. Someone with an existing profile (email1/phone1) could submit the public intake form again with a different email (keeping their same phone) or a different phone (keeping their same email), get treated as a brand-new client (the `existingClient` lookup only tries one field, email-first), and redeem their own code against that second profile.
+
+**Fixed**: `POST /inquiries` now cross-checks the referrer's contact info against the submission the moment a code resolves, before any client is created. Checked against BOTH the referrer's current `Client.email`/`phone` scalars (email case-insensitively, matching how it's actually stored -- never lowercased at creation, unlike the alias tables below) AND their full known-contacts history (`ClientEmail`/`ClientPhone` alias tables, `lib/clientContacts.ts`) -- the alias tables catch a referrer's past secondary email/phone from a mass-import merge; the scalar check catches a referrer created via inbound SMS (`webhooks.ts`), which never gets alias rows at all. A match returns `400 "You can't redeem your own referral code."` -- rejected with a clear reason, not silently dropped, matching this route's existing precedent for an unknown code.
+
+## 2. Referral code surfaced at two new moments
+
+Reused the existing code (`Client.referralCode`, generated once at creation, `lib/referrals.ts`) -- no new code system.
+
+- **Deposit payment confirmation**: `GET /deposits/verify/:token` now returns `clientReferralCode`; `DepositResponse.tsx`'s "Thanks — your deposit is paid!" success state shows a callout with the code. No client-facing SMS/email confirmation exists today for a paid deposit (checked both the manual mark-paid route and the Stripe webhook -- neither sends one; the client only ever finds out via this page), so the callout lives on the page only, per the task's own "and/or" framing.
+- **Checkout completion**: added `client.referralCode` to `APPOINTMENT_DETAIL_INCLUDE` (`routes/appointments.ts`); `AppointmentDetail.tsx`'s existing post-checkout summary panel (shown once `checkedOutAt` is set) now includes a "Remind {client} to share their referral code" callout. Checkout is a staff-driven, in-person action with no client-facing page of its own, so this is staff-facing -- the natural surface for staff to read the code aloud right after the session, rather than inventing a new client-facing checkout receipt.
+
+## 3. New setting: allow the same redeemer to reuse a code
+
+`StudioSettings.referralAllowRepeatRedemption Boolean @default(false)`. Default matches the task's own suggested default (one-time use per redeemer) and, not incidentally, matches **exactly what the code already did** before this setting existed -- a specific referred client's relationship with their referrer could only ever earn one reward, on their first-ever paid deposit, enforced by `Client.referralRewardIssuedAt` acting as a permanent once-set guard plus a client-wide "any prior paid deposit" count. No behavior change for any studio that leaves this off.
+
+**Placement**: Settings' "Defaults" tab, inside the existing "Edit Defaults" modal, right next to the referral reward dollar amount -- both gated by the same `settings.manageReferral` permission (distinct from the plain `settings.manageDefaults` most of that modal uses), matching the task's own fallback instruction ("wherever the referral program's existing settings currently live").
+
+**What toggling it on actually changes**: reframed "redemption" in terms this data model already has -- a referred Client's own later, *separate* project (a new Inquiry, not the exact one that earned the first reward) can now earn their referrer another reward on that project's own first paid deposit, instead of the referred client being capped to exactly one reward-triggering deposit for their entire history. Concretely, `lib/deposits.ts`'s `priorPaidCount` check narrows from "has this client paid ANY deposit before, ever" to "has this specific inquiry paid a deposit before," and `referralRewardIssuedAt` stops acting as a hard block. This setting has **no effect at all** on how many different people can redeem the same code -- that was always unlimited and stays unlimited either way; it only governs the *same* redeemer's own reuse, per the task's explicit scoping.
+
+One real bug caught during verification: my first pass only gated the check *inside* `issueGiftCardForPaidDeposit`'s transaction, missing an earlier, unconditional pre-transaction short-circuit (`referrerCandidate = ... && !referredClient.referralRewardIssuedAt ? ... : null`) that skipped the whole reward path before the transaction-level gate ever ran -- meaning repeat redemption silently did nothing once a client's first reward had already fired. Caught by testing three sequential projects for the same referred client (not just two), not assumed from reading the code. Fixed by making that pre-check respect the same setting.
+
+`referralRewardIssuedAt`/`referralRewardGiftCardId` now track the *most recent* reward for a given referred-client relationship rather than "the one and only ever" (updated the schema comment accordingly) -- when repeat redemption fires a second time, these two scalar fields point at the newest reward, not the first. Every occurrence (not just the latest) stays permanently recoverable via `AuditLog`'s `referral_reward_issued` action regardless -- neither field is displayed anywhere in the frontend today, so nothing user-facing was relying on "first-ever" semantics.
+
+## Verification
+
+Live, via direct API calls (login as owner, full create → assign → send-estimate → accept → deposit-form → sign → mark-paid pipeline) plus Playwright for the two new UI callouts and the Settings toggle, against the real dev database:
+
+- Same-phone-different-email and same-email-different-phone self-referral attempts both correctly rejected with `400`.
+- A genuine referral between two different people succeeded end to end; referrer received exactly one reward gift card.
+- Deposit-paid confirmation page shows the referral-code callout; checkout-complete panel shows it too (verified in-browser, both as a logged-out client and as staff).
+- Repeat-use OFF (default): a second, separate project for the same already-referred client did **not** issue a second reward.
+- Repeat-use ON (toggled through the real Settings UI, not just the API): a third, separate project for that same client **did** issue a second reward.
+- Toggled the setting back OFF through the same UI afterward, confirming the read-only summary tile reflects both states correctly.
+- Different people redeeming the same code was never gated by this setting in the first place (each is a structurally independent Client relationship) -- not separately re-tested as a false-positive risk.
+- Setting reset to its default (`false`) at the end of verification; test clients/inquiries/gift cards left in place, per this session's own additive-test-data convention.
+
+Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (web) clean.
+
+**Pre-existing, unrelated working-tree changes present throughout this session and left untouched**: `apps/public/branding/logo-black-512.png`/`logo-white-512.png`, `public/desktop/screenshots/ink-manager-portal-restyle-v3.html`, and (newly observed this session, not authored here) `apps/web/src/components/ArtistSelect.tsx`, `apps/web/src/pages/ClientDetail.tsx`, `apps/web/src/pages/InquiryDetail.tsx`, and a new `apps/web/src/components/DropdownPortal.tsx` -- none overlap with any file this session touched.
+
+## Commit
+
+`866f9b1`
