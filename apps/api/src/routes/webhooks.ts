@@ -1,9 +1,11 @@
 import { Router } from "express";
+import crypto from "node:crypto";
 import { prisma } from "../lib/prisma";
 import {
   ConversationType,
   IntegrationChannel,
   IntegrationStatus,
+  InquiryStatus,
   MessageChannel,
   MessageDirection,
 } from "../../generated/prisma/enums";
@@ -30,6 +32,12 @@ function twiml(res: import("express").Response) {
   res.set("Content-Type", "text/xml");
   res.status(200).send(EMPTY_TWIML);
 }
+
+// Mirrors estimates.ts's own SELF_SCHEDULE_TOKEN_TTL_DAYS -- not exported
+// from that file (a route-local constant), so duplicated here rather than
+// reaching across route modules for one number. Same value, same meaning:
+// how long a freshly-issued self-schedule token stays valid.
+const SELF_SCHEDULE_TOKEN_TTL_DAYS = 7;
 
 const STOP_KEYWORDS = new Set(["STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"]);
 const START_KEYWORDS = new Set(["START", "UNSTOP", "YES"]);
@@ -478,6 +486,50 @@ router.post("/stripe", async (req, res) => {
           action: "stripe_payment_confirmed",
           changes: { stripeCheckoutSessionId: session.id, paymentIntentId, status: { from: "PENDING", to: "ACTIVE" } },
         });
+      }
+
+      // Flash gallery, Part 3 -- full prepayment on Inquiry itself (its own
+      // stripeCheckoutSessionId copy, see that field's schema comment), a
+      // fourth session-id lookup alongside the three above. On success:
+      // records the payment, advances status straight to SCHEDULING (the
+      // EXISTING status the general pipeline already understands -- no new
+      // post-payment status needed), and issues a self-schedule token the
+      // SAME way estimates.ts's own PROCEED branch does for a normal
+      // inquiry -- deliberately WITHOUT that branch's own
+      // Artist.allowsClientSelfScheduling gate, since a flash piece is
+      // inherently self-bookable by its own nature, independent of whether
+      // that artist has opted their general estimate flow into self-
+      // scheduling. Idempotent the same way as the three paths above: a
+      // retry that finds flashPaidAt already set is a no-op.
+      const flashInquiry = await prisma.inquiry.findFirst({
+        where: { stripeCheckoutSessionId: session.id },
+      });
+
+      if (flashInquiry && flashInquiry.status === InquiryStatus.FLASH_PAYMENT_PENDING && !flashInquiry.flashPaidAt) {
+        const paymentIntentId = typeof session.payment_intent === "string" ? session.payment_intent : null;
+        const selfScheduleToken = crypto.randomBytes(32).toString("hex");
+
+        await prisma.inquiry.update({
+          where: { id: flashInquiry.id },
+          data: {
+            flashPaidAt: new Date(),
+            stripePaymentIntentId: paymentIntentId,
+            status: InquiryStatus.SCHEDULING,
+            selfScheduleToken,
+            selfScheduleTokenExpiresAt: new Date(Date.now() + SELF_SCHEDULE_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000),
+          },
+        });
+
+        await logAudit({
+          studioId,
+          actorUserId: null,
+          entityType: "Inquiry",
+          entityId: flashInquiry.id,
+          action: "flash_payment_confirmed",
+          changes: { stripeCheckoutSessionId: session.id, paymentIntentId, status: { from: "FLASH_PAYMENT_PENDING", to: "SCHEDULING" } },
+        });
+
+        emitInvalidation({ type: "inquiry.updated", studioId, inquiryId: flashInquiry.id });
       }
     }
   }

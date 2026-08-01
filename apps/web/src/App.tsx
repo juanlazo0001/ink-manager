@@ -20,6 +20,7 @@ import Profile from './pages/Profile'
 import Team from './pages/Team'
 import FlashGallery from './pages/FlashGallery'
 import FlashPublicGallery from './pages/FlashPublicGallery'
+import FlashPaymentResponse from './pages/FlashPaymentResponse'
 import IntakeForm from './pages/IntakeForm'
 import Policies from './pages/Policies'
 import PublicPolicyPage from './pages/PublicPolicyPage'
@@ -172,6 +173,7 @@ function AppRoutes() {
         <Route path="/estimate/:token" element={<EstimateResponse />} />
         <Route path="/estimate-revision/:token" element={<EstimateRevisionResponse />} />
         <Route path="/deposit/:token" element={<DepositResponse />} />
+        <Route path="/flash-payment/:token" element={<FlashPaymentResponse />} />
         <Route path="/schedule/:token" element={<SelfSchedule />} />
         <Route path="/appointments/pay-complete" element={<AppointmentPaymentComplete />} />
         <Route path="/gift-card/:code" element={<GiftCardResponse />} />

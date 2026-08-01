@@ -36,6 +36,12 @@ const router = Router();
 
 const ESTIMATE_TOKEN_TTL_DAYS = 7;
 const DEPOSIT_TOKEN_TTL_HOURS = 48;
+// Flash gallery, Part 3: longer than the deposit link's 48h -- a flash
+// booking's reservation (PENDING_APPROVAL, for a one-of-one piece) is
+// already staked out by the time this token goes out, so there's less
+// urgency pressure than an unsigned deposit form, and a bigger-ticket full
+// payment is more likely to need a client a few days to actually pay.
+const FLASH_PAYMENT_TOKEN_TTL_HOURS = 72;
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
@@ -2104,15 +2110,19 @@ router.post("/:id/mark-lost", requireAuth, requirePermission("inquiries.markLost
 // Flash gallery: front desk's review of a FLASH_PENDING_APPROVAL inquiry
 // (the placement photo/description + customer info submitted through
 // POST /flash-pieces/:id/request). Approve moves straight to
-// FLASH_PAYMENT_PENDING -- Part 3 builds what happens once that status is
-// reached (a Stripe Checkout link for the piece's full price). Gated by
-// inquiries.edit, the same general "make a staff-side change to an
-// inquiry" key FRONT_DESK already has by default -- flash approval isn't
-// meaningfully a different capability from any other inquiry edit.
+// FLASH_PAYMENT_PENDING and generates the Part 3 payment link (same
+// crypto-token pattern as the deposit-form send flow above), auto-texting
+// it to the client the same best-effort way. Gated by inquiries.edit, the
+// same general "make a staff-side change to an inquiry" key FRONT_DESK
+// already has by default -- flash approval isn't meaningfully a different
+// capability from any other inquiry edit.
 router.post("/:id/flash/approve", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
   const id = req.params.id as string;
 
-  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  const inquiry = await prisma.inquiry.findUnique({
+    where: { id },
+    include: { client: true, flashPiece: true },
+  });
   if (!inquiry || inquiry.studioId !== req.user!.studioId) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
@@ -2121,9 +2131,12 @@ router.post("/:id/flash/approve", requireAuth, requirePermission("inquiries.edit
     return res.status(400).json({ error: "This inquiry isn't awaiting flash approval" });
   }
 
+  const flashPaymentToken = crypto.randomBytes(32).toString("hex");
+  const flashPaymentTokenExpiresAt = new Date(Date.now() + FLASH_PAYMENT_TOKEN_TTL_HOURS * 60 * 60 * 1000);
+
   const updated = await prisma.inquiry.update({
     where: { id },
-    data: { status: InquiryStatus.FLASH_PAYMENT_PENDING },
+    data: { status: InquiryStatus.FLASH_PAYMENT_PENDING, flashPaymentToken, flashPaymentTokenExpiresAt },
     include: INQUIRY_INCLUDE,
   });
 
@@ -2138,7 +2151,25 @@ router.post("/:id/flash/approve", requireAuth, requirePermission("inquiries.edit
 
   emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
 
-  res.json(updated);
+  // Best-effort, same convention as the deposit-form/checkout-link sends
+  // above -- the token/link is already saved regardless of whether the
+  // text goes out, so staff still has paymentUrl to share manually if this
+  // skips or fails.
+  const paymentUrl = await shortenUrl(`${PUBLIC_APP_URL}/flash-payment/${flashPaymentToken}`);
+  let flashPaymentSendResult: Awaited<ReturnType<typeof sendClientSms>> | null = null;
+  if (req.body?.autoSend !== false) {
+    const studio = await prisma.studio.findUnique({ where: { id: req.user!.studioId }, select: { name: true } });
+    const conversation = await getOrCreateClientConversation(req.user!.studioId, inquiry.clientId, req.user!.userId);
+    flashPaymentSendResult = await sendClientSms({
+      studioId: req.user!.studioId,
+      clientId: inquiry.clientId,
+      conversationId: conversation.conversation.id,
+      body: `Hi ${inquiry.client.firstName}, your flash request "${inquiry.flashPiece?.title ?? "your design"}" is approved! Complete payment here to lock in your booking: ${paymentUrl} (expires in ${FLASH_PAYMENT_TOKEN_TTL_HOURS / 24} days)`,
+      actorUserId: req.user!.userId,
+    });
+  }
+
+  res.json({ ...updated, paymentUrl, flashPaymentSendResult });
 });
 
 // Decline: closes the inquiry the same way mark-lost does (reuses
@@ -2149,6 +2180,14 @@ router.post("/:id/flash/approve", requireAuth, requirePermission("inquiries.edit
 // declined request. A repeatable piece was never taken off the gallery in
 // the first place (see POST /flash-pieces/:id/request), so there's
 // nothing to reopen for one.
+//
+// Reachable from FLASH_PAYMENT_PENDING as well as FLASH_PENDING_APPROVAL
+// (Part 3): a stalled payment -- the client never pays, or never returns to
+// finish self-scheduling after paying -- deliberately has no automatic
+// expiry (same judgment call the self-scheduling branch itself already
+// made for its own token: see REPORT.md), so this is the manual escape
+// hatch staff needs for a one-of-one piece stuck reserved behind a booking
+// that's genuinely never going to complete.
 router.post("/:id/flash/decline", requireAuth, requirePermission("inquiries.markLost"), async (req, res) => {
   const id = req.params.id as string;
   const { reason } = req.body ?? {};
@@ -2162,14 +2201,20 @@ router.post("/:id/flash/decline", requireAuth, requirePermission("inquiries.mark
     return res.status(404).json({ error: "Inquiry not found" });
   }
 
-  if (inquiry.status !== InquiryStatus.FLASH_PENDING_APPROVAL) {
-    return res.status(400).json({ error: "This inquiry isn't awaiting flash approval" });
+  if (inquiry.status !== InquiryStatus.FLASH_PENDING_APPROVAL && inquiry.status !== InquiryStatus.FLASH_PAYMENT_PENDING) {
+    return res.status(400).json({ error: "This inquiry isn't awaiting flash approval or payment" });
+  }
+
+  if (inquiry.flashPaidAt) {
+    return res.status(400).json({ error: "This flash booking has already been paid -- it can no longer be declined this way." });
   }
 
   const closedData = {
     status: InquiryStatus.CLOSED_LOST,
     lostAt: new Date(),
     lostReason: typeof reason === "string" && reason.trim().length > 0 ? reason.trim() : "Flash request declined.",
+    flashPaymentToken: null,
+    flashPaymentTokenExpiresAt: null,
   };
 
   const [updated] = await prisma.$transaction([

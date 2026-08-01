@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
-import { AppointmentStatus, AppointmentType } from "../../generated/prisma/enums";
+import { AppointmentStatus, AppointmentType, FlashPieceStatus } from "../../generated/prisma/enums";
 import { logAudit } from "../lib/audit";
 import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 import { emitInvalidation } from "../lib/realtime/registry";
@@ -149,7 +149,7 @@ router.patch("/respond/:token", async (req, res) => {
 
   const inquiry = await prisma.inquiry.findUnique({
     where: { selfScheduleToken: token },
-    include: { assignedArtist: true },
+    include: { assignedArtist: true, flashPiece: true },
   });
 
   const invalidity = isExpiredOrInvalid(inquiry);
@@ -216,6 +216,22 @@ router.patch("/respond/:token", async (req, res) => {
     where: { id: inquiry!.id },
     data: { selfScheduleToken: null, selfScheduleTokenExpiresAt: null },
   });
+
+  // Flash gallery, Part 3: this is the actual moment a one-of-one flash
+  // piece becomes BOOKED -- deliberately not at approval or at payment,
+  // both of which leave it PENDING_APPROVAL. A real Appointment existing is
+  // the genuine "retired forever" outcome isOneOfOne's own contract
+  // describes; payment alone doesn't guarantee the client ever comes back
+  // to actually pick a time (see the "stalled reservation" judgment call in
+  // REPORT.md). A repeatable piece was never reserved in the first place,
+  // so there's nothing to transition here for one.
+  if (inquiry!.flashPiece?.isOneOfOne) {
+    await prisma.flashPiece.update({
+      where: { id: inquiry!.flashPiece.id },
+      data: { status: FlashPieceStatus.BOOKED },
+    });
+    emitInvalidation({ type: "flash.changed", studioId: inquiry!.studioId });
+  }
 
   await logAudit({
     studioId: inquiry!.studioId,
