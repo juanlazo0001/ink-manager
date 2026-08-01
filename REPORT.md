@@ -6577,3 +6577,45 @@ Both typechecks (`npx tsc --noEmit` api -- untouched, no backend changes; `npx t
 ## Commit
 
 `5e83a2d`
+
+---
+
+# Flash gallery — Part 1: schema + artist/staff management UI
+
+Three-part feature (schema in Part 1, public gallery + intake + approval in Part 2, prepayment + self-scheduling integration in Part 3), one commit+push per part. This entry covers Part 1 only.
+
+## Schema
+
+New `FlashPiece` model + `FlashPieceStatus` enum (`AVAILABLE` / `PENDING_APPROVAL` / `BOOKED` / `RETIRED`, modeled as four genuinely distinct states, not a boolean-plus-flag): artist + studio relations (standard tenant scoping), `imageUrl`, `title`/`description`, `priceCents`, `estimatedDurationMinutes` (feeds directly into `getSuggestedTimes` in Part 3, same role `timeEstimateHoursMin/Max`'s midpoint already plays for a normal estimate), `isOneOfOne`. `BOOKED` is reserved for a one-of-one piece's own completed-booking outcome; `RETIRED` is a separate, manual staff/artist action, reachable from `AVAILABLE` regardless of `isOneOfOne` -- kept distinct per the task's own instruction, since Part 2's reservation logic needs `PENDING_APPROVAL` to mean something specific (hidden from the gallery, not double-requestable) that neither of the other two states capture.
+
+## A corrected premise, flagged rather than silently followed
+
+The task named `schedulingBufferMinutes`/the self-scheduling toggle as the established "self-scoped-or-staff-managed permission pattern" to reuse. Checked before building: those two are actually gated `artists.manage`, OWNER-only, with no artist self-edit path at all. The real precedent for genuine artist self-editing in this codebase is `artistSchedules.manage`/`preferredSchedule` (`PATCH /artists/:id/preferred-schedule`) -- `requirePermission` confirms the actor has the key at all, then an inline `isSelf` check (`artist.userId === req.user.userId`) scopes an ARTIST actor to their own record only, with OWNER/FRONT_DESK unrestricted. Built flash-piece management on that real mechanism (new `flashGallery.manage` key, same inline "-own" narrowing), not the cited-but-inaccurate one -- noted here rather than silently substituted.
+
+## Management UI
+
+New `apps/api/src/routes/flashPieces.ts`: `GET /` (ARTIST forced to their own `artistId` regardless of query params; OWNER/FRONT_DESK see the whole studio, optionally filtered), `POST /` (ARTIST's own `artistId` is auto-resolved server-side from their JWT `userId` -- never required in the request body at all, so the frontend never needs to know its own artist id just to create; OWNER/FRONT_DESK must pass one explicitly), `PATCH /:id` and `POST /:id/retire` (both re-check the same self-vs-staff ownership against the EXISTING piece's artist, not just at creation time). Retire is a dedicated action route (same convention as mark-lost/reopen elsewhere in this codebase) rather than a raw status field in the generic `PATCH`, reachable only from `AVAILABLE`.
+
+New `apps/web/src/pages/FlashGallery.tsx` at `/flash`, reusing `ImageUploadSection`'s underlying Cloudinary signed-upload pattern (new `uploads.ts` signature route + `flashGallery.manage`-gated, same split-responsibility convention as every other upload folder in this app), `ArtistSelect` for staff picking which artist a piece belongs to (hidden entirely for an ARTIST actor, who never sees or sends an artistId), and a plain grid of piece cards with inline Edit/Retire. New Sidebar nav item ("Flash Gallery"), permission-gated (not role-gated) so it respects a studio's own Settings → Permissions customization like the existing Clients link does.
+
+## A real bug caught during verification, not assumed away
+
+First browser pass: an ARTIST creating their own piece hit `400 Missing required field(s): artistId` -- the frontend correctly omits `artistId` for a self-creating artist (per the design above), but the backend's original required-field check still demanded it unconditionally before the auto-resolve logic ran. Fixed by resolving an ARTIST actor's own `artistId` from their JWT *before* the required-field check runs, so it's simply never missing for that role in the first place. Caught live, not assumed correct from reading the code -- exactly the kind of gap a live browser pass catches that a code read alone wouldn't.
+
+## Verification
+
+Live, via direct API calls plus Playwright against the real dev database:
+
+- API: artist1 creates a piece for themselves (succeeds), artist1 attempts to create one for artist2 (`403`), OWNER creates one for artist2 (succeeds), artist1's own list only shows their pieces, OWNER's list shows every artist's pieces, artist1 retires their own piece (succeeds).
+- **Browser**: artist1 logs in, opens Flash Gallery from the sidebar, sees no artist picker in the create form (nothing to pick -- it's implicitly their own), uploads a real image, fills the form, submits, and the new piece appears in the gallery immediately.
+- **Browser, staff side**: OWNER opens the create form, sees the artist picker, explicitly picks a different artist, uploads an image, submits -- the piece appears attributed to that artist, not the OWNER's own (non-existent) artist profile.
+- Screenshot confirms the gallery grid renders correctly: status pills (green Available / grey Retired), price/duration/one-of-one badges, artist attribution, and Edit/Retire actions correctly shown or hidden per piece status.
+- One test-methodology dead end during this pass: an early screenshot showed the Flash Gallery nav item missing and the page stuck on "Loading…" -- turned out to be a too-short `waitForTimeout` in the screenshot script, not a real bug (a longer wait showed everything rendering correctly, confirmed by reading the actual page text, not just re-guessing).
+
+Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (web) clean.
+
+**Pre-existing, unrelated concurrent-session changes present during this part and left untouched**: `apps/api/src/routes/selfSchedule.ts` and `apps/web/src/pages/SelfSchedule.tsx` (a widened self-scheduling search window, unrelated to flash), plus the usual `apps/public/branding/logo-*.png` and `public/desktop/screenshots/...` from earlier in this session.
+
+## Commit
+
+`e1f6692`
