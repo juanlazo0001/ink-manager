@@ -6152,3 +6152,21 @@ Live against the local dev stack: assigned "Dev Artist One" ($150/hr, confirmed 
 ## Commit
 
 `5bfa060`
+
+---
+
+# Estimate form field order: Sessions, Time, then Price
+
+Follow-up to the artist-rate suggestion fix above: since entering Time is now what triggers a price suggestion for a single-session estimate, having Price appear first in the form read backwards. Reordered to Sessions → Time → Price for both the original "Generate & Send Estimate" flow and Revise Estimate's single-session path -- the multi-session "Price estimate (sum of every session below)" readout stays at the top in both, unchanged, since it's a read-only rollup of the per-session rows below rather than something Time here feeds into.
+
+Pure JSX reordering in `apps/web/src/pages/InquiryDetail.tsx` -- no field, handler, or validation logic changed.
+
+## Verification
+
+Live: screenshotted the single-session Estimate form (Sessions → Time min → Time max → Price low → Price high, top to bottom) and confirmed switching "Number of sessions" to 2 keeps the price sum at the top, above Number of sessions.
+
+`npx tsc -b` (web) and `npm run build` (web) clean.
+
+## Commit
+
+`d669140`
