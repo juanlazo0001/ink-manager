@@ -5944,3 +5944,16 @@ Both typechecks (`npx tsc --noEmit` api -- untouched this session, no backend ch
 ## Cleanup
 
 Scratch dev servers (api `:4070`, web `:5250`) killed by PID. Scratch Playwright install and the stack-based div-matching analysis script (used to disambiguate wrapper-div nesting across several large page files where visual inspection kept proving unreliable) deleted from the scratch directory after use.
+
+## Follow-up: page transition felt choppy, simplified to a plain fade
+
+`PageFade.tsx`'s `y: 8` / `y: -8` slide, combined with `pageTransition`'s spring (`lib/motion.ts`), was fine for small isolated UI elements but read as choppy once real page content -- tables, grids, forms, all reflowing as they mount -- was doing so underneath a spring's continuous, physics-driven position updates at the same time; the two fighting for the same frames is what read as jank, not a performance problem to profile away.
+
+- `lib/motion.ts`: `pageTransition` changed from a `type: 'spring'` (bounce 0.25, visualDuration 0.5) to a plain `type: 'tween'`, `duration: 0.15`, `ease: 'easeOut'`.
+- `PageFade.tsx`: dropped the `y` offset from `initial`/`animate`/`exit` entirely -- opacity only now. `pageTransition` is only ever consumed here, so no other call site was affected.
+
+Verified via `npx tsc -b` and `npm run build` (both web, clean) -- no functional/live re-verification beyond that, since this is a pure animation-easing tweak to code just verified live moments earlier.
+
+## Commit (follow-up)
+
+`(pending)`

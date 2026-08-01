@@ -43,18 +43,17 @@ export const uiSpringTransition: Transition = {
   visualDuration: 0.22,
 }
 
-// Same spring feel again (type/bounce identical), scaled up specifically
-// for the iris route transition (App.tsx) -- uiSpringTransition's 0.22s
-// is tuned for everyday chrome that fires on every click (dropdowns,
-// list items, panel open/close) and reads as too quick/abrupt for a
-// once-per-navigation circular reveal, which benefits from actually
-// being watchable rather than just registering as a flicker. Kept as its
-// own named constant rather than just bumping uiSpringTransition itself,
-// since that one still needs to stay fast everywhere else it's used.
+// Route/page-content transition (PageFade, App.tsx + AppShellLayout). A
+// plain opacity tween, not a spring -- a spring's continuous, physics-
+// driven position updates read as choppy once real page content (tables,
+// grids, forms) is reflowing underneath it at the same time, unlike the
+// small, isolated UI elements the spring presets above are built for.
+// Kept as its own constant since it's tuned specifically for "once per
+// navigation," not everyday chrome.
 export const pageTransition: Transition = {
-  type: 'spring',
-  bounce: 0.25,
-  visualDuration: 0.5,
+  type: 'tween',
+  duration: 0.15,
+  ease: 'easeOut',
 }
 
 // Dropdown/menu open -- scale + fade from just above the trigger button,
