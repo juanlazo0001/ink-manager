@@ -5956,4 +5956,4 @@ Verified via `npx tsc -b` and `npm run build` (both web, clean) -- no functional
 
 ## Commit (follow-up)
 
-`(pending)`
+`2ca9b88`
