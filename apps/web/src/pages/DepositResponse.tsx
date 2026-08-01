@@ -20,6 +20,7 @@ interface Term {
 interface VerifyResponse {
   clientFirstName: string
   clientReferralCode: string
+  referralProgramEnabled: boolean
   studioName: string
   studioSlug: string
   artistName: string | null
@@ -217,15 +218,17 @@ export default function DepositResponse() {
                 : 'The studio has recorded your payment and confirmed your appointment.'}
             </p>
 
-            <div className="mt-5 rounded-lg border border-accent/30 bg-accent/5 p-4 text-left">
-              <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Know someone else who'd love this?</p>
-              <p className="mt-1 text-sm text-fg-secondary">
-                Share your referral code — when a friend you refer pays their own deposit, you'll earn a reward.
-              </p>
-              <p className="mt-2 text-center font-mono text-lg font-semibold tracking-widest text-fg">
-                {verifyData.clientReferralCode}
-              </p>
-            </div>
+            {verifyData.referralProgramEnabled && (
+              <div className="mt-5 rounded-lg border border-accent/30 bg-accent/5 p-4 text-left">
+                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Know someone else who'd love this?</p>
+                <p className="mt-1 text-sm text-fg-secondary">
+                  Share your referral code — when a friend you refer pays their own deposit, you'll earn a reward.
+                </p>
+                <p className="mt-2 text-center font-mono text-lg font-semibold tracking-widest text-fg">
+                  {verifyData.clientReferralCode}
+                </p>
+              </div>
+            )}
           </div>
         )}
 

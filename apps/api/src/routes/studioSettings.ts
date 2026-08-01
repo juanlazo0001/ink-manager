@@ -56,6 +56,10 @@ publicRouter.get("/public", async (req, res) => {
     depositPolicy: settings?.depositPolicy ?? null,
     reschedulePolicy: settings?.reschedulePolicy ?? null,
     communicationPolicy: settings?.communicationPolicy ?? null,
+    // Drives whether the public intake form even offers "A friend referred
+    // me" as a channel option -- default true matches every studio's
+    // always-on behavior before this flag existed.
+    referralProgramEnabled: settings?.referralProgramEnabled ?? true,
     intakeFormFields: allFields.filter((f) => f.enabled),
   });
 });
@@ -256,7 +260,11 @@ function presentSettingsPermissionGroups(body: Record<string, unknown>): Set<Per
     groups.add("settings.manageDefaults");
   }
 
-  if (body.referralRewardAmountCents !== undefined || body.referralAllowRepeatRedemption !== undefined) {
+  if (
+    body.referralRewardAmountCents !== undefined ||
+    body.referralAllowRepeatRedemption !== undefined ||
+    body.referralProgramEnabled !== undefined
+  ) {
     groups.add("settings.manageReferral");
   }
   if (body.messageTemplates !== undefined) groups.add("conversations.manageTemplates");
@@ -307,6 +315,13 @@ staffRouter.patch("/", async (req, res) => {
       return res.status(400).json({ error: "referralRewardAmountCents must be a non-negative number" });
     }
     data.referralRewardAmountCents = body.referralRewardAmountCents;
+  }
+
+  if (body.referralProgramEnabled !== undefined) {
+    if (typeof body.referralProgramEnabled !== "boolean") {
+      return res.status(400).json({ error: "referralProgramEnabled must be a boolean" });
+    }
+    data.referralProgramEnabled = body.referralProgramEnabled;
   }
 
   if (body.referralAllowRepeatRedemption !== undefined) {
@@ -462,6 +477,7 @@ staffRouter.patch("/", async (req, res) => {
       "reminderWeekBeforeDays",
       "reminderNightBeforeDays",
       "referralAllowRepeatRedemption",
+      "referralProgramEnabled",
     ] as (keyof typeof existing)[]),
   });
 

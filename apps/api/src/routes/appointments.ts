@@ -330,6 +330,14 @@ router.get("/:id", requirePermission("appointments.view"), async (req, res) => {
     return res.status(404).json({ error: "Appointment not found" });
   }
 
+  // Gates the checkout-complete panel's "share your referral code" callout
+  // -- default true (StudioSettings.referralProgramEnabled) matches every
+  // studio's always-on behavior before this flag existed.
+  const studioSettings = await prisma.studioSettings.findUnique({
+    where: { studioId: req.user!.studioId },
+    select: { referralProgramEnabled: true },
+  });
+
   const { inquiryProject, plannedSession, ...rest } = appointment;
   const { plannedSessions: projectPlannedSessions, ...inquiryProjectRest } = inquiryProject ?? {};
   const inquiry = inquiryProject && {
@@ -340,6 +348,7 @@ router.get("/:id", requirePermission("appointments.view"), async (req, res) => {
   res.json({
     ...rest,
     inquiry,
+    referralProgramEnabled: studioSettings?.referralProgramEnabled ?? true,
     plannedSession: plannedSession
       ? {
           sessionNumber: plannedSession.sessionNumber,

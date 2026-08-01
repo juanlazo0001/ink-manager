@@ -150,6 +150,9 @@ interface StudioSettingsData {
   // reward at most once, ever. true: a later, separate project from that
   // same referred client can earn another reward on its own first deposit.
   referralAllowRepeatRedemption: boolean
+  // Master on/off for the whole referral program -- default true (matches
+  // every studio's always-on behavior before this flag existed).
+  referralProgramEnabled: boolean
 }
 
 // Phase 7B-2: the SMS reminder cadence's own editable templates/times --
@@ -304,6 +307,7 @@ const EMPTY_DEFAULTS_FORM = {
   schedulingBufferMinutes: '90',
   depositFeeDollars: '10',
   referralAllowRepeatRedemption: false,
+  referralProgramEnabled: true,
 }
 
 // Phase 7A jobs are documented here in plain language; extend this
@@ -1022,6 +1026,7 @@ export default function Settings() {
       schedulingBufferMinutes: String(policies.schedulingBufferMinutes),
       depositFeeDollars: centsToDollarsInput(policies.depositFeeCents),
       referralAllowRepeatRedemption: policies.referralAllowRepeatRedemption,
+      referralProgramEnabled: policies.referralProgramEnabled,
     })
     setDefaultsError(null)
     setShowDefaultsModal(true)
@@ -1048,6 +1053,7 @@ export default function Settings() {
             ? {
                 referralRewardAmountCents: dollarsToCents(Number(defaultsForm.referralRewardDollars) || 0),
                 referralAllowRepeatRedemption: defaultsForm.referralAllowRepeatRedemption,
+                referralProgramEnabled: defaultsForm.referralProgramEnabled,
               }
             : {}),
           coldLeadDays: Number(defaultsForm.coldLeadDays) || 90,
@@ -1858,11 +1864,17 @@ export default function Settings() {
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Referral reward</p>
-                  <p className="mt-1 text-sm text-fg-secondary">
-                    ${(policies.referralRewardAmountCents / 100).toFixed(2)}
-                  </p>
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Referral program</p>
+                  <p className="mt-1 text-sm text-fg-secondary">{policies.referralProgramEnabled ? 'On' : 'Off'}</p>
                 </div>
+                {policies.referralProgramEnabled && (
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Referral reward</p>
+                    <p className="mt-1 text-sm text-fg-secondary">
+                      ${(policies.referralRewardAmountCents / 100).toFixed(2)}
+                    </p>
+                  </div>
+                )}
                 <div>
                   <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Cold lead after</p>
                   <p className="mt-1 text-sm text-fg-secondary">{policies.coldLeadDays} days of no activity</p>
@@ -1885,12 +1897,14 @@ export default function Settings() {
                   <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Deposit processing fee</p>
                   <p className="mt-1 text-sm text-fg-secondary">${(policies.depositFeeCents / 100).toFixed(2)}</p>
                 </div>
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Referral code reuse</p>
-                  <p className="mt-1 text-sm text-fg-secondary">
-                    {policies.referralAllowRepeatRedemption ? 'Same client can earn repeat rewards' : 'One reward per referred client'}
-                  </p>
-                </div>
+                {policies.referralProgramEnabled && (
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Referral code reuse</p>
+                    <p className="mt-1 text-sm text-fg-secondary">
+                      {policies.referralAllowRepeatRedemption ? 'Same client can earn repeat rewards' : 'One reward per referred client'}
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -2787,35 +2801,57 @@ export default function Settings() {
                 {canManageReferral && (
                   <>
                     <div>
-                      <label className="mb-1 block text-sm font-medium text-fg-secondary">Referral reward ($)</label>
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={defaultsForm.referralRewardDollars}
-                        onChange={(e) => setDefaultsForm({ ...defaultsForm, referralRewardDollars: e.target.value })}
-                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                      />
-                    </div>
-                    <div>
                       <label className="flex items-start gap-2 text-sm text-fg">
                         <input
                           type="checkbox"
-                          checked={defaultsForm.referralAllowRepeatRedemption}
-                          onChange={(e) =>
-                            setDefaultsForm({ ...defaultsForm, referralAllowRepeatRedemption: e.target.checked })
-                          }
+                          checked={defaultsForm.referralProgramEnabled}
+                          onChange={(e) => setDefaultsForm({ ...defaultsForm, referralProgramEnabled: e.target.checked })}
                           className="mt-0.5 h-4 w-4 shrink-0 rounded border-border bg-surface-inset accent-accent"
                         />
                         <span>
-                          Let the same referred client earn their referrer another reward on a later, separate visit
+                          Run a referral program for this studio
                           <span className="block text-xs text-fg-muted">
-                            Off (default): a specific referred client can earn their referrer a reward at most once,
-                            ever. This never limits how many different people can use the same code.
+                            On (default): "A friend referred them" stays available as an intake option, and clients see
+                            their own code after paying a deposit or finishing a session. Off: that option disappears,
+                            no new rewards are issued, and the two settings below stop applying.
                           </span>
                         </span>
                       </label>
                     </div>
+                    {defaultsForm.referralProgramEnabled && (
+                      <>
+                        <div>
+                          <label className="mb-1 block text-sm font-medium text-fg-secondary">Referral reward ($)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={defaultsForm.referralRewardDollars}
+                            onChange={(e) => setDefaultsForm({ ...defaultsForm, referralRewardDollars: e.target.value })}
+                            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                          />
+                        </div>
+                        <div>
+                          <label className="flex items-start gap-2 text-sm text-fg">
+                            <input
+                              type="checkbox"
+                              checked={defaultsForm.referralAllowRepeatRedemption}
+                              onChange={(e) =>
+                                setDefaultsForm({ ...defaultsForm, referralAllowRepeatRedemption: e.target.checked })
+                              }
+                              className="mt-0.5 h-4 w-4 shrink-0 rounded border-border bg-surface-inset accent-accent"
+                            />
+                            <span>
+                              Let the same referred client earn their referrer another reward on a later, separate visit
+                              <span className="block text-xs text-fg-muted">
+                                Off (default): a specific referred client can earn their referrer a reward at most once,
+                                ever. This never limits how many different people can use the same code.
+                              </span>
+                            </span>
+                          </label>
+                        </div>
+                      </>
+                    )}
                   </>
                 )}
                 {canManageDefaults && (

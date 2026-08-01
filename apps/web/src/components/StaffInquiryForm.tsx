@@ -100,6 +100,9 @@ export default function StaffInquiryForm({
   const [preferredArtistId, setPreferredArtistId] = useState(initialPreferredArtistId ?? '')
 
   const [artists, setArtists] = useState<StaffArtist[]>([])
+  // Default true -- matches every studio's always-on behavior before this
+  // flag existed, so a slow/failed fetch never wrongly hides the option.
+  const [referralProgramEnabled, setReferralProgramEnabled] = useState(true)
   const [referenceImages, setReferenceImages] = useState<ImageUploadState>({ urls: [], uploading: false })
   const [placementImages, setPlacementImages] = useState<ImageUploadState>({ urls: [], uploading: false })
 
@@ -115,6 +118,15 @@ export default function StaffInquiryForm({
       })
       .catch(() => {
         // Preferred-artist dropdown is a nice-to-have; leave it empty on failure.
+      })
+
+    apiFetch<{ referralProgramEnabled: boolean }>('/studio-settings')
+      .then((data) => {
+        if (!ignore) setReferralProgramEnabled(data.referralProgramEnabled)
+      })
+      .catch(() => {
+        // Leave the default (true) on failure -- same fail-open treatment
+        // as the artists fetch above.
       })
 
     return () => {
@@ -373,9 +385,9 @@ export default function StaffInquiryForm({
             <option value="EMAIL">Email</option>
             <option value="INSTAGRAM">Instagram</option>
             <option value="FACEBOOK">Facebook</option>
-            <option value="REFERRAL">A friend referred them</option>
+            {referralProgramEnabled && <option value="REFERRAL">A friend referred them</option>}
           </select>
-          {channel === 'REFERRAL' && (
+          {channel === 'REFERRAL' && referralProgramEnabled && (
             <div className="mt-2">
               <label className={LABEL_CLASS}>Friend's referral code *</label>
               <input

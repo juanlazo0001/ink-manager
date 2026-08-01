@@ -98,7 +98,7 @@ publicRouter.get("/verify/:token", async (req, res) => {
       inquiry: {
         include: {
           client: true,
-          studio: { include: { settings: { select: { themePreset: true } } } },
+          studio: { include: { settings: { select: { themePreset: true, referralProgramEnabled: true } } } },
           assignedArtist: { include: { user: true } },
           appointment: true,
           service: { select: { depositBreakdownNote: true } },
@@ -132,10 +132,13 @@ publicRouter.get("/verify/:token", async (req, res) => {
 
   res.json({
     clientFirstName: inquiry.client.firstName,
-    // Surfaced on the "your deposit is paid" success state -- reuses the
-    // code already generated at this client's own creation, not a new code
-    // system (see referrals.ts).
+    // Surfaced on the "your deposit is paid" success state, only when the
+    // studio's referral program is actually on -- reuses the code already
+    // generated at this client's own creation, not a new code system (see
+    // referrals.ts). Default true (StudioSettings.referralProgramEnabled)
+    // matches every studio's always-on behavior before this flag existed.
     clientReferralCode: inquiry.client.referralCode,
+    referralProgramEnabled: inquiry.studio.settings?.referralProgramEnabled ?? true,
     studioName: inquiry.studio.name,
     studioSlug: inquiry.studio.slug,
     themePreset: inquiry.studio.settings?.themePreset ?? DEFAULT_THEME_PRESET,

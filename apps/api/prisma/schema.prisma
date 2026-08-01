@@ -1423,6 +1423,21 @@ model StudioSettings {
   // referred pays their first deposit. $25 default matches the task's own
   // spec; OWNER-editable like every other numeric default on this model.
   referralRewardAmountCents     Int      @default(2500)
+  // Master on/off for the whole referral program -- defaults true, since
+  // every studio already has this running today (referral codes are
+  // already generated for every client, "A friend referred them" is
+  // already a channel option); this flag is what lets a studio that
+  // doesn't want to run one turn it off, rather than a behavior change
+  // landing silently for everyone. Off: the REFERRAL channel option is
+  // rejected outright on intake (POST /inquiries), no new reward is ever
+  // issued (lib/deposits.ts) even for a referredByClientId relationship
+  // that already existed before this was turned off, and the client-
+  // facing "share your code" callouts (deposit-paid page, checkout-
+  // complete panel) stay hidden. Referral CODE GENERATION itself is left
+  // unconditional either way (see referrals.ts) -- it's free, and turning
+  // the program back on later means every client can immediately share
+  // the code they already have, with nothing to backfill.
+  referralProgramEnabled        Boolean  @default(true)
   // Redeemer-per-code reuse: false (default, the standard referral-program
   // norm) matches today's exact pre-existing behavior -- a specific
   // referred client's own relationship with their referrer can earn a

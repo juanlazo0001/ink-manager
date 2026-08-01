@@ -77,6 +77,13 @@ export async function issueGiftCardForPaidDeposit(
   // for an inquiry actually converts it.
   const isFirstConversion = depositForm.inquiry.status === InquiryStatus.DEPOSIT_PENDING;
 
+  // Master on/off for the whole referral program -- default true (matches
+  // today's always-on behavior). Off means no NEW reward is ever issued,
+  // even for a referredByClientId relationship that already existed
+  // before the studio turned this off -- checked first, before any of the
+  // eligibility lookups below even run.
+  const referralProgramEnabled = studioSettings?.referralProgramEnabled ?? true;
+
   // Package O: a referral reward is a one-time event tied to THIS client's
   // first-ever paid deposit -- eligibility re-checked fresh inside the
   // transaction below, right before writing. This is just a cheap early
@@ -86,10 +93,12 @@ export async function issueGiftCardForPaidDeposit(
   // repeat redemption ON would incorrectly short-circuit here every time
   // after the first-ever reward, before the transaction's gate ever got a
   // chance to allow a later project's own reward through.
-  const referredClient = await prisma.client.findUnique({
-    where: { id: clientId },
-    select: { id: true, firstName: true, referredByClientId: true, referralRewardIssuedAt: true },
-  });
+  const referredClient = referralProgramEnabled
+    ? await prisma.client.findUnique({
+        where: { id: clientId },
+        select: { id: true, firstName: true, referredByClientId: true, referralRewardIssuedAt: true },
+      })
+    : null;
   const repeatRedemptionAllowed = studioSettings?.referralAllowRepeatRedemption ?? false;
   const referrerCandidate =
     referredClient?.referredByClientId && (repeatRedemptionAllowed || !referredClient.referralRewardIssuedAt)

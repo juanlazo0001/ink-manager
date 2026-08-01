@@ -93,6 +93,9 @@ export default function IntakeForm() {
   const [studioName, setStudioName] = useState('')
   const [artists, setArtists] = useState<PublicArtist[]>([])
   const [fields, setFields] = useState<IntakeFormFieldPublic[]>([])
+  // Default true -- matches every studio's always-on behavior before this
+  // flag existed, so a slow/failed fetch never wrongly hides the option.
+  const [referralProgramEnabled, setReferralProgramEnabled] = useState(true)
   const [customAnswers, setCustomAnswers] = useState<Record<string, CustomAnswerValue>>({})
   const [customImageUploading, setCustomImageUploading] = useState<Record<string, boolean>>({})
   const [referenceImages, setReferenceImages] = useState<ImageUploadState>({ urls: [], uploading: false })
@@ -157,11 +160,14 @@ export default function IntakeForm() {
     const query = new URLSearchParams({ studioSlug })
     if (formSlug) query.set("formSlug", formSlug)
 
-    apiFetch<{ studioName: string; intakeFormFields: IntakeFormFieldPublic[] }>(`/studio-settings/public?${query}`)
+    apiFetch<{ studioName: string; intakeFormFields: IntakeFormFieldPublic[]; referralProgramEnabled: boolean }>(
+      `/studio-settings/public?${query}`,
+    )
       .then((data) => {
         if (ignore) return
         setStudioName(data.studioName)
         setFields((data.intakeFormFields ?? []).slice().sort((a, b) => a.order - b.order))
+        setReferralProgramEnabled(data.referralProgramEnabled)
       })
       .catch((err) => {
         // A named formSlug that doesn't resolve to a real form is a broken/
@@ -423,9 +429,9 @@ export default function IntakeForm() {
               <option value="EMAIL">Email</option>
               <option value="INSTAGRAM">Instagram</option>
               <option value="FACEBOOK">Facebook</option>
-              <option value="REFERRAL">A friend referred me</option>
+              {referralProgramEnabled && <option value="REFERRAL">A friend referred me</option>}
             </select>
-            {channel === 'REFERRAL' && (
+            {channel === 'REFERRAL' && referralProgramEnabled && (
               <div className="mt-2">
                 <label className={LABEL_CLASS}>Friend's referral code *</label>
                 <input

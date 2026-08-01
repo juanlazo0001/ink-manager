@@ -76,6 +76,10 @@ interface Appointment {
   checkedOutBy: { id: string; name: string | null; email: string } | null
   paidVia: 'STRIPE' | 'MANUAL' | null
   client: { id: string; firstName: string; lastName: string; referralCode: string }
+  // Default true elsewhere -- matches every studio's always-on behavior
+  // before this flag existed. Not defaulted here since `appointment` is
+  // always a live fetch result, never a hand-built placeholder.
+  referralProgramEnabled: boolean
   artist: { id: string; user: { email: string; name: string | null; avatarUrl: string | null } }
   inquiry: {
     id: string
@@ -1359,18 +1363,20 @@ export default function AppointmentDetail() {
                         </div>
                       </div>
 
-                      <div className="rounded-lg border border-accent/30 bg-accent/5 p-3">
-                        <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
-                          Remind {appointment.client.firstName} to share their referral code
-                        </p>
-                        <p className="mt-1 font-mono text-base font-semibold tracking-wider text-fg">
-                          {appointment.client.referralCode}
-                        </p>
-                        <p className="mt-1 text-xs text-fg-secondary">
-                          A friend they refer gets this code entered at intake; {appointment.client.firstName} earns a
-                          referral reward once that friend's own deposit is paid.
-                        </p>
-                      </div>
+                      {appointment.referralProgramEnabled && (
+                        <div className="rounded-lg border border-accent/30 bg-accent/5 p-3">
+                          <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
+                            Remind {appointment.client.firstName} to share their referral code
+                          </p>
+                          <p className="mt-1 font-mono text-base font-semibold tracking-wider text-fg">
+                            {appointment.client.referralCode}
+                          </p>
+                          <p className="mt-1 text-xs text-fg-secondary">
+                            A friend they refer gets this code entered at intake; {appointment.client.firstName} earns a
+                            referral reward once that friend's own deposit is paid.
+                          </p>
+                        </div>
+                      )}
 
                       {checkoutAmountDue !== null && checkoutAmountDue > 0 && (
                         <div className="rounded-lg border border-border p-3">

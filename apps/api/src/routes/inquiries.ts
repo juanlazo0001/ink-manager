@@ -233,6 +233,16 @@ router.post("/", optionalAuth, async (req, res) => {
   // like an unknown one, never leaking whether it exists elsewhere.
   let referrer: { id: string } | null = null;
   if (channel === Channel.REFERRAL) {
+    // Referral program master toggle (StudioSettings.referralProgramEnabled,
+    // default true) -- a studio that's turned the whole program off
+    // shouldn't have this channel option honored even if a stale client
+    // bundle (or a direct API call) still submits it. The frontend forms
+    // (IntakeForm.tsx, StaffInquiryForm.tsx) already drop "A friend
+    // referred them" from the channel picker entirely when this is off;
+    // this is the backend's own defense-in-depth copy of that same rule.
+    if (studio.settings?.referralProgramEnabled === false) {
+      return res.status(400).json({ error: "This studio's referral program is not currently active." });
+    }
     if (typeof referralCode !== "string" || referralCode.trim().length === 0) {
       return res.status(400).json({ error: "A friend's referral code is required for this option" });
     }
