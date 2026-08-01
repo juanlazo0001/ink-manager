@@ -3,6 +3,7 @@ import { apiFetch, ApiError } from '../lib/api'
 import { uploadFlashPieceImage } from '../lib/cloudinary'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useUserProfile } from '../context/useUserProfile'
+import { useThemePreset } from '../lib/useThemePreset'
 import ArtistSelect, { type ArtistOption } from '../components/ArtistSelect'
 import Modal from '../components/Modal'
 import { PlusIcon } from '../components/icons'
@@ -46,6 +47,8 @@ const EMPTY_FORM = {
 export default function FlashGallery() {
   const user = useEffectiveUser()
   const { profile } = useUserProfile()
+  const { shape } = useThemePreset()
+  const isEditorial = shape === 'editorial'
   const canManageOthers = profile?.permissions.includes('flashGallery.manage') && user?.role !== 'ARTIST'
 
   const [pieces, setPieces] = useState<FlashPiece[] | null>(null)
@@ -181,7 +184,11 @@ export default function FlashGallery() {
         <button
           type="button"
           onClick={openCreate}
-          className="flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover"
+          className={
+            isEditorial
+              ? 'editorial-btn-primary flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-bg transition hover:bg-accent-hover'
+              : 'flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover'
+          }
         >
           <PlusIcon className="h-4 w-4" />
           New Flash Piece
