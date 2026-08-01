@@ -9,6 +9,15 @@ import { findBufferConflict, resolveSchedulingBufferMs } from "../lib/scheduling
 
 const router = Router();
 
+// Deliberately wider than getSuggestedTimes' own DEFAULT_SEARCH_DAYS
+// (21 -- "2-4 weeks" per that feature's own spec, for staff picking a
+// near-term slot to suggest). A client browsing their own calendar here
+// has no reason to be capped at 3 weeks out -- widened to comfortably
+// cover a few months. Kept as its own constant, not a shared one, since
+// the staff-facing suggestion tool's near-term framing is intentional
+// and shouldn't drift just because this picker's needs changed.
+const SELF_SCHEDULE_SEARCH_DAYS = 90;
+
 // Client self-scheduling exploration: public, unauthenticated -- same
 // crypto-token + verify/respond pattern as estimates.ts/deposits.ts/
 // waivers.ts. Only reachable for an Inquiry whose assigned artist opted in
@@ -68,10 +77,12 @@ router.get("/verify/:token", async (req, res) => {
   // rather than letting them pick a date and then discover it's empty.
   // Actual time-of-day options for whichever date they land on come from
   // GET /slots/:token below, fetched on demand per date rather than all
-  // up front (a 21-day search window's worth of times, all at once, is
-  // both wasted work for the ~20 dates never clicked and a much bigger
-  // response than this page needs at load time).
-  const availableDates = await getAvailableDates(inquiry!.assignedArtistId, durationMinutes);
+  // up front (a SELF_SCHEDULE_SEARCH_DAYS-day search window's worth of
+  // times, all at once, is both wasted work for the ~90 dates never
+  // clicked and a much bigger response than this page needs at load time).
+  const availableDates = await getAvailableDates(inquiry!.assignedArtistId, durationMinutes, {
+    searchDays: SELF_SCHEDULE_SEARCH_DAYS,
+  });
 
   res.json({
     clientFirstName: inquiry!.client.firstName,

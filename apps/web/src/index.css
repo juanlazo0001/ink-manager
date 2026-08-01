@@ -736,6 +736,20 @@
   color: var(--color-accent-fg);
   background-color: var(--color-accent);
 }
+/* .rdp-day_button:hover:not([disabled]) above is MORE specific (0,3,0)
+   than .rdp-selected .rdp-day_button (0,2,0), so it was winning whenever
+   a selected day was also :hover'd -- the dark hover background replaced
+   the gold selected one while the text stayed the dark color meant to
+   sit on gold, making the date number unreadable. On mobile this isn't a
+   brief passing-the-mouse-over moment like on desktop -- tapping a day
+   "sticks" :hover on most mobile browsers until the next scroll or tap
+   elsewhere, so the broken low-contrast state persisted indefinitely
+   instead of clearing instantly, exactly matching "can't see the number
+   unless I scroll". Explicit same-specificity (0,3,0) override, placed
+   after the plain hover rule, wins the tie by source order. */
+.rdp-selected .rdp-day_button:hover:not([disabled]) {
+  background-color: var(--color-accent);
+}
 
 /* Phase UI-5: react-big-calendar ships a light-mode-only stylesheet with
    hardcoded colors (no theming hook like react-day-picker's --rdp-*

@@ -35,11 +35,12 @@ function formatTimeOnly(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
 }
 
-// How far out the calendar lets someone navigate -- every date beyond
-// this is disabled anyway (the backend's own search window is narrower
-// still), this just keeps the picker from scrolling into months that can
-// never have anything in them.
-const CALENDAR_MONTHS_AHEAD = 2
+// How far out the calendar lets someone navigate -- kept a bit past the
+// backend's own SELF_SCHEDULE_SEARCH_DAYS window (90 days -- see
+// selfSchedule.ts) so every date the backend could ever mark available
+// is actually reachable by navigating forward, with a little headroom
+// rather than an exact day-for-day match.
+const CALENDAR_MONTHS_AHEAD = 4
 
 export default function SelfSchedule() {
   const { token } = useParams<{ token: string }>()

@@ -6620,6 +6620,46 @@ Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (
 
 `e1f6692`
 
+---
+
+# Self-scheduling picker: 3-week booking cap, and selected date unreadable on mobile
+
+Reported bugs, both on the client-facing self-scheduling date/time picker (`/schedule/:token`, `SelfSchedule.tsx`): 1) customers could only book within ~2-3 weeks, never "months out"; 2) after selecting a date, its number became unreadable on mobile unless the page was scrolled.
+
+## 1. Booking window capped at 3 weeks
+
+`GET /self-schedule/verify/:token` (`apps/api/src/routes/selfSchedule.ts`) called `getAvailableDates(artistId, durationMinutes)` with no `searchDays` override, so it inherited `schedulingAssistant.ts`'s `DEFAULT_SEARCH_DAYS = 21` -- a constant deliberately scoped to a *different* feature (`getSuggestedTimes`, the staff-facing "suggest a time" tool, "2-4 weeks per spec"). The calendar's own client-side month navigation (`CALENDAR_MONTHS_AHEAD = 2`) already allowed browsing 2 months out, but every date past day 21 was disabled regardless, since the backend never even considered it.
+
+Added a new, separate `SELF_SCHEDULE_SEARCH_DAYS = 90` constant in `selfSchedule.ts` (left `DEFAULT_SEARCH_DAYS` alone -- didn't want to change the staff suggestion tool's spec'd near-term framing as a side effect) and passed `{ searchDays: SELF_SCHEDULE_SEARCH_DAYS }` into `getAvailableDates`. Bumped `SelfSchedule.tsx`'s `CALENDAR_MONTHS_AHEAD` from 2 to 4 so navigation comfortably covers the wider window with headroom. Confirmed `dayWindow()` (the underlying per-day availability check) already correctly excludes days past a guest artist's `guestEndDate`, so widening the search doesn't risk showing bogus availability for a guest whose window has actually ended.
+
+## 2. Selected date number unreadable, "fixed" by scrolling
+
+Root cause, found via live inspection (not visible from reading the CSS in isolation -- needed a real click/tap to reproduce): `.rdp-day_button:hover:not([disabled])` (specificity 0,3,0) is *more specific* than `.rdp-selected .rdp-day_button` (0,2,0) in `index.css`'s own react-day-picker theming block. Whenever a selected day was also `:hover`'d, the hover rule's `background-color: var(--color-surface)` (dark) won over the selected rule's `background-color: var(--color-accent)` (gold) -- while the selected rule's `color: var(--color-accent-fg)` (dark, meant to sit on the gold background) had no competing hover rule, so it stayed dark. Dark text on a dark background is why the number vanished.
+
+On desktop this is barely noticeable (the mouse only hovers the clicked day for an instant before moving away). On mobile it's the whole bug: most mobile browsers "stick" a tapped element's `:hover` state until the next scroll or tap elsewhere, since there's no real hover device -- so the broken low-contrast state persisted indefinitely instead of clearing in an instant, exactly matching "can't be seen unless I scroll."
+
+Fixed with an explicit `.rdp-selected .rdp-day_button:hover:not([disabled])` rule (same 0,3,0 specificity as the plain hover rule, placed after it, so it wins the tie by source order) re-asserting the gold background for that specific state combination.
+
+## Verification
+
+Live, Playwright against the local dev stack (api `:4110`, web `:5310`), 390x844 mobile viewport with `isMobile`/`hasTouch`, using a real minted `selfScheduleToken` (scratch script, deleted after use) on a seeded inquiry:
+- **Before fix #1**: `GET /verify/:token` returned exactly the dates a 21-day window would produce; confirmed via the raw API response.
+- **After fix #1**: same endpoint now returns 89 available dates spanning today through late October (~3 months out); calendar navigation reaches and correctly enables dates in October (61+ days out), confirmed by tapping "1" in the October 2026 view and getting real time slots back.
+- **Before fix #2**: computed style on `.rdp-selected .rdp-day_button` immediately after a click/tap showed `color: rgb(23,18,8)` against `backgroundColor: rgb(23,19,16)` -- two nearly-identical near-black values, confirmed against `--color-accent`'s real value (`#c99a5b`, gold) to show the background had silently fallen back to the hover rule instead.
+- **After fix #2**: same computed check now shows `backgroundColor: rgb(201,154,91)` (`#c99a5b`, matching `--color-accent` exactly) with the same dark text -- correct, strong contrast, matching the "Request this time" button's own known-good gold/dark-text combo. Screenshot confirms a legible dark "1" on a solid gold circle, tapped via `.tap()` (not `.click()`, to genuinely exercise the touch/mobile code path) on a date in October.
+
+Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (web) clean.
+
+**Pre-existing, unrelated concurrent-session changes present during this part and left untouched**: `apps/public/branding/logo-*.png`, `public/desktop/screenshots/ink-manager-portal-restyle-v3.html`.
+
+## Commit
+
+`(pending)`
+
+## Cleanup
+
+Scratch dev servers (api `:4110`, web `:5310`) killed by PID. Scratch Playwright install and the scratch token-minting script (`apps/api/scratch-mint-token.ts`) deleted after use. The minted test token/inquiry itself left in the dev database, per this project's standing convention for verification-generated test data.
+
 # Flash gallery — Part 2: public gallery, lightweight intake, front-desk approval
 
 ## Public gallery + submission flow
