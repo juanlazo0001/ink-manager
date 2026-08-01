@@ -6694,3 +6694,49 @@ Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (
 ## Commit
 
 `a48e253`
+
+# Flash gallery — Part 3: full prepayment via Stripe + self-scheduling integration
+
+## Prepayment, a distinct mechanism from the deposit-tier system
+
+New `Inquiry` fields (`flashPaymentToken`/`flashPaymentTokenExpiresAt`, `stripeCheckoutSessionId`, `stripePaymentIntentId`, `flashPaidAt`) -- Inquiry's own copies of the same fields DepositForm/Appointment/GiftCard each independently carry, chosen specifically so `webhooks.ts`'s existing sequential `stripeCheckoutSessionId` lookup could gain a fourth branch with no shared-table refactor. `POST /inquiries/:id/flash/approve` now also generates the payment token and auto-texts a shortened payment link to the client, reusing the exact same `sendClientSms`/`getOrCreateClientConversation`/`shortenUrl` best-effort pattern the deposit-form send flow already uses. New `lib/flashPayments.ts` (`createFlashPaymentCheckoutSession`, mirroring `lib/deposits.ts`'s `createDepositCheckoutSession`) + `routes/flashPayments.ts` (public `GET /verify/:token`, `POST /checkout/:token`) create a real Stripe Checkout Session for the piece's exact `priceCents` -- no gift card, no partial amount, full price only, since flash skips Estimate/Deposit entirely per the task's own instruction.
+
+## Webhook: a fourth `checkout.session.completed` branch
+
+`webhooks.ts` gains an `Inquiry`-keyed lookup alongside the existing DepositForm/Appointment/GiftCard ones. On success: records `flashPaidAt`/`stripePaymentIntentId`, advances `status` straight to the **existing** `SCHEDULING` status (no new post-payment status needed -- the general pipeline, `InquiryDetail.tsx`'s `isConverted` boundary, and the Project-stage stepper all already understand it), and issues a `selfScheduleToken` the same way `estimates.ts`'s own `PROCEED` branch does for a normal inquiry -- **deliberately without** that branch's `Artist.allowsClientSelfScheduling` gate. A flash piece is inherently self-bookable by its own nature (the customer already chose and paid for a fixed, pre-drawn design), independent of whether that artist has separately opted their general custom-estimate flow into client self-scheduling. Idempotent the same way as the other three branches: a retry that finds `flashPaidAt` already set is a no-op.
+
+## Self-scheduling: reused entirely unchanged, plus one addition
+
+The client lands in the **existing** `/self-schedule/verify/:token` and `/self-schedule/respond/:token` routes and the existing `SelfSchedule.tsx` frontend page -- zero changes to either, exactly as instructed. The one addition: `selfSchedule.ts`'s respond route now also flips a linked one-of-one `FlashPiece` to `BOOKED` at the moment a real `Appointment` is actually created -- deliberately not at approval or at payment, both of which leave it `PENDING_APPROVAL`. This is the genuine "retired forever" moment `isOneOfOne`'s own contract (Part 1) describes; payment alone doesn't guarantee the client ever comes back to pick a time.
+
+## Judgment call: a stalled one-of-one reservation, flagged per the task's own instruction
+
+**What happens if payment fails, or the client never returns to self-schedule after paying?** No automatic expiry, deliberately -- same precedent the self-scheduling branch itself already set for its own token (see that work's own "no auto-expiry" call). The piece stays `PENDING_APPROVAL` indefinitely on its own. What Part 3 adds is a **manual escape hatch**: `POST /inquiries/:id/flash/decline` (already built in Part 2 for the pre-payment case) now also accepts `FLASH_PAYMENT_PENDING`, not just `FLASH_PENDING_APPROVAL` -- staff can close out a booking that's genuinely never going to complete and reopen the piece, but nothing does this automatically. It explicitly refuses once `flashPaidAt` is set (`"already been paid -- it can no longer be declined this way"`), so a real payment can never be silently discarded this way. This mirrors the general self-scheduling flow's own behavior for a stalled `DEPOSIT_PENDING` inquiry -- no special handling exists there either, and none was added here beyond the one flash-specific addition above.
+
+## Verification, live end to end
+
+Real Stripe test-mode payment (dev studio's already-connected `STRIPE` integration, confirmed connected before starting), no Stripe CLI available in this sandboxed environment -- used the same substitute as the earlier Stripe Connect session (see that entry's own note): paid a real Checkout Session with a Playwright-driven browser and the standard `4242 4242 4242 4242` test card, then fetched the genuine resulting event via the Stripe API and re-delivered it to the local webhook with a signature computed the same way `stripe listen` does (HMAC-SHA256 over `{timestamp}.{payload}` using the real `STRIPE_WEBHOOK_SECRET`).
+
+Full pipeline, one real one-of-one piece ($5.00 test price): gallery → submit → front-desk approve (payment link generated + real SMS sent) → public payment page (correct piece/price shown) → real Stripe Checkout → paid with the test card → webhook delivered → `Inquiry.status: SCHEDULING`, `flashPaidAt` set, `selfScheduleToken` issued → revisiting the payment page auto-redirected into `/schedule/:token` → picked a real available slot for the correct artist (60-minute duration, matching the piece's own `estimatedDurationMinutes` exactly) → "Request sent!" → confirmed a real `Appointment` (`status: REQUESTED`, correct `artistId`/`inquiryId`/duration) → confirmed the `FlashPiece` moved to `BOOKED` only at this final step, not earlier.
+
+Separately verified the decline escape hatch: a second one-of-one piece approved into `FLASH_PAYMENT_PENDING`, then declined with a reason before ever paying -- inquiry closed `CLOSED_LOST` with that reason, piece reopened to `AVAILABLE`. Confirmed decline correctly rejects an already-paid inquiry (caught by the earlier status-gate, since a paid inquiry has already moved to `SCHEDULING`).
+
+**A real dev-environment snag, not a product bug**: the API dev server (`tsx watch`) crashed on an `EADDRINUSE` restart race after a source edit and left a stale, pre-edit process still holding the port -- the very first scheduling attempt against it produced a real `Appointment` but silently skipped the new `FlashPiece → BOOKED` code (running old code). Caught by directly re-checking the piece's status after the fact rather than assuming success from the "Request sent!" screen alone; fixed by force-killing the stale process, starting a completely clean server, and re-running that specific step (re-issuing a fresh `selfScheduleToken` on the same paid inquiry) to confirm the fix against genuinely current code.
+
+Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (web) clean. All ad-hoc Playwright scripts and one-off `scratch-*.ts` files (used for direct Stripe API/webhook-forwarding checks, never committed) removed after use. Test data (several flash pieces, inquiries, one real paid `Appointment`) left in the dev database, consistent with this session's standing convention.
+
+## Commit
+
+`956354b`
+
+# Flash gallery — final summary (all three parts)
+
+**Commits**: Part 1 `e1f6692` (+ REPORT.md `dcedef5`), Part 2 `a48e253` (+ REPORT.md `b4b4317`), Part 3 `956354b` (+ this entry).
+
+**Public gallery URL pattern**: `/flash/:studioSlug/:artistId` -- studio-slug + artist-id scoped, matching the existing `/inquiry/:studioSlug` public-page convention's two-segment shape, backed by `GET /flash-pieces/public?studioSlug=&artistId=`.
+
+**Existing client lookup, reused not rebuilt**: the lightweight submission form's contact step calls a new but structurally identical `GET /flash-pieces/lookup-public` (email-then-phone match, exactly `POST /inquiries`' own `existingClient` logic), and `POST /flash-pieces/:id/request` reuses that same dedup query plus the same `Client`-creation transaction (`syncPrimaryPhone`/`syncPrimaryEmail`/`generateUniqueReferralCode`) every other client-creation path in this codebase already uses -- no new lookup logic, no new dedup rule.
+
+**The stalled one-of-one reservation judgment call** (asked for explicitly, not silently decided): no automatic expiry at any stage -- not the payment token, not the self-schedule token issued after payment -- matching the self-scheduling branch's own original precedent. The only new safeguard is a manual one: `POST /inquiries/:id/flash/decline` now also accepts a booking stuck at `FLASH_PAYMENT_PENDING` (Part 3), giving staff a way to close out and reopen a piece that's genuinely never going to complete, while explicitly refusing once real payment (`flashPaidAt`) has landed.
+
+**Full live end-to-end test, confirmed**: a real customer-submitted flash request → front-desk approval → a genuine Stripe test-mode payment → automatic redirect into the existing self-scheduling flow → a real `REQUESTED` `Appointment` with the correct artist and duration → the one-of-one piece correctly landing on `BOOKED` only at that final moment, not earlier. Both typechecks and `npm run build` clean before every one of the three commits. All background dev servers and ad-hoc scratch/Playwright files were cleaned up after each part.
