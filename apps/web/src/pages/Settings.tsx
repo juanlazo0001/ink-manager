@@ -140,6 +140,12 @@ interface StudioSettingsData {
   reminderSendTimes: ReminderSendTimesData | null
   depositTiers: DepositTierData[]
   themePreset: string
+  // Settings "Defaults" tab audit (REPORT.md Part 1 proposal): previously
+  // hardcoded constants, now studio-level defaults.
+  schedulingBufferMinutes: number
+  depositFeeCents: number
+  reminderWeekBeforeDays: number
+  reminderNightBeforeDays: number
 }
 
 // Phase 7B-2: the SMS reminder cadence's own editable templates/times --
@@ -288,6 +294,11 @@ const EMPTY_DEFAULTS_FORM = {
   coldLeadDays: '90',
   timezone: 'America/New_York',
   showSidebarBadges: false,
+  // Settings "Defaults" tab audit (REPORT.md Part 1 proposal): previously
+  // hardcoded constants -- '90' minutes = 1.5h, '10' dollars = $10, matching
+  // the prior hardcoded behavior exactly.
+  schedulingBufferMinutes: '90',
+  depositFeeDollars: '10',
 }
 
 // Phase 7A jobs are documented here in plain language; extend this
@@ -450,11 +461,22 @@ export default function Settings() {
   const SETTINGS_TABS = [
     { key: 'general' as const, label: 'General', visible: true },
     { key: 'policies' as const, label: 'Policies & Templates', visible: canViewPolicies },
+    // Settings "Defaults" tab audit (REPORT.md's Part 1 proposal): the
+    // numeric/operational defaults (estimate follow-up, gift card
+    // expiration, referral reward, cold lead window, deposit tiers,
+    // reminder cadence, scheduling buffer, deposit fee) moved here out of
+    // Policies & Templates, which now holds only actual policy TEXT and
+    // templates (WYSIWYG policy fields, waiver questions/clauses, message
+    // templates, intake forms). Same visibility as Policies & Templates --
+    // this is a relocation of already-gated content, not a new capability.
+    { key: 'defaults' as const, label: 'Defaults', visible: canViewPolicies },
     { key: 'services' as const, label: 'Services', visible: canViewServices },
     { key: 'integrations' as const, label: 'Integrations', visible: canViewIntegrations },
     { key: 'system' as const, label: 'System', visible: canViewSystem },
   ]
-  const [activeTab, setActiveTab] = useState<'general' | 'policies' | 'services' | 'integrations' | 'system'>('general')
+  const [activeTab, setActiveTab] = useState<
+    'general' | 'policies' | 'defaults' | 'services' | 'integrations' | 'system'
+  >('general')
   const [searchParams, setSearchParams] = useSearchParams()
 
   const [integrations, setIntegrations] = useState<IntegrationInfo[] | null>(null)
@@ -739,6 +761,13 @@ export default function Settings() {
   // Business Hours above.
   const [reminderSendTimes, setReminderSendTimes] = useState<ReminderSendTimesData>(DEFAULT_REMINDER_SEND_TIMES)
   const [editingSendTimes, setEditingSendTimes] = useState(false)
+  // Settings "Defaults" tab audit (REPORT.md Part 1 proposal): which DAY
+  // each reminder fires, previously hardcoded -- edited alongside Send
+  // Times (the reminder cadence's TIME of day) since they're the same
+  // "when does this reminder go out" concept, just saved as their own
+  // top-level StudioSettings fields rather than part of the
+  // reminderSendTimes JSON blob.
+  const [reminderCadenceDays, setReminderCadenceDays] = useState({ weekBeforeDays: '7', nightBeforeDays: '1' })
   const [sendTimesSaving, setSendTimesSaving] = useState(false)
   const [sendTimesError, setSendTimesError] = useState<string | null>(null)
 
@@ -796,6 +825,10 @@ export default function Settings() {
         setWaiverClauses(data.waiverClauses ?? [])
         setMessageTemplates(data.messageTemplates ?? [])
         setReminderSendTimes(data.reminderSendTimes ?? DEFAULT_REMINDER_SEND_TIMES)
+        setReminderCadenceDays({
+          weekBeforeDays: String(data.reminderWeekBeforeDays),
+          nightBeforeDays: String(data.reminderNightBeforeDays),
+        })
       })
       .catch(() => {
         // Section just stays empty if this fails; not critical page content.
@@ -981,6 +1014,8 @@ export default function Settings() {
       coldLeadDays: String(policies.coldLeadDays),
       timezone: policies.timezone,
       showSidebarBadges: policies.showSidebarBadges,
+      schedulingBufferMinutes: String(policies.schedulingBufferMinutes),
+      depositFeeDollars: centsToDollarsInput(policies.depositFeeCents),
     })
     setDefaultsError(null)
     setShowDefaultsModal(true)
@@ -1009,6 +1044,8 @@ export default function Settings() {
           coldLeadDays: Number(defaultsForm.coldLeadDays) || 90,
           timezone: defaultsForm.timezone,
           showSidebarBadges: defaultsForm.showSidebarBadges,
+          schedulingBufferMinutes: Number(defaultsForm.schedulingBufferMinutes) || 0,
+          depositFeeCents: dollarsToCents(Number(defaultsForm.depositFeeDollars) || 0),
         }),
       })
       setPolicies(updated)
@@ -1140,10 +1177,18 @@ export default function Settings() {
     try {
       const updated = await apiFetch<StudioSettingsData>('/studio-settings', {
         method: 'PATCH',
-        body: JSON.stringify({ reminderSendTimes }),
+        body: JSON.stringify({
+          reminderSendTimes,
+          reminderWeekBeforeDays: Number(reminderCadenceDays.weekBeforeDays) || 7,
+          reminderNightBeforeDays: Number(reminderCadenceDays.nightBeforeDays) || 1,
+        }),
       })
       setPolicies(updated)
       setReminderSendTimes(updated.reminderSendTimes ?? DEFAULT_REMINDER_SEND_TIMES)
+      setReminderCadenceDays({
+        weekBeforeDays: String(updated.reminderWeekBeforeDays),
+        nightBeforeDays: String(updated.reminderNightBeforeDays),
+      })
       setEditingSendTimes(false)
     } catch (err) {
       setSendTimesError(err instanceof Error ? err.message : 'Failed to save')
@@ -1769,13 +1814,13 @@ export default function Settings() {
             </div>
           )}
 
-          {activeTab === 'policies' && canViewPolicies && policies && (
+          {activeTab === 'defaults' && canViewPolicies && policies && (
             <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
               <div className="flex items-center justify-between gap-4">
                 <div>
                   <h2 className={isEditorial ? 'sc text-[22px]' : 'text-lg font-semibold text-fg'}>Defaults</h2>
                   <p className="mt-1 text-sm text-fg-secondary">
-                    Studio-wide defaults for estimates, gift cards, referrals, and lead handling.
+                    Studio-wide defaults for estimates, gift cards, referrals, lead handling, and scheduling.
                   </p>
                 </div>
                 {(canManageDefaults || canManageReferral) && (
@@ -1820,6 +1865,16 @@ export default function Settings() {
                 <div>
                   <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Sidebar badges</p>
                   <p className="mt-1 text-sm text-fg-secondary">{policies.showSidebarBadges ? 'On' : 'Off'}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Scheduling buffer</p>
+                  <p className="mt-1 text-sm text-fg-secondary">
+                    {policies.schedulingBufferMinutes} minutes between appointments
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Deposit processing fee</p>
+                  <p className="mt-1 text-sm text-fg-secondary">${(policies.depositFeeCents / 100).toFixed(2)}</p>
                 </div>
               </div>
             </div>
@@ -2100,7 +2155,7 @@ export default function Settings() {
               </div>
           )}
 
-          {activeTab === 'policies' && canViewPolicies && policies && (
+          {activeTab === 'defaults' && canViewPolicies && policies && (
             <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
               <div>
                 <h2 className={isEditorial ? 'sc text-[22px]' : 'text-lg font-semibold text-fg'}>Reminder Templates &amp; Send Times</h2>
@@ -2182,6 +2237,49 @@ export default function Settings() {
                   minutes.
                 </p>
 
+                <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-border pt-4 sm:w-1/2">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
+                      "1 week before" is actually
+                    </p>
+                    {editingSendTimes ? (
+                      <input
+                        type="number"
+                        min="1"
+                        value={reminderCadenceDays.weekBeforeDays}
+                        onChange={(e) =>
+                          setReminderCadenceDays((current) => ({ ...current, weekBeforeDays: e.target.value }))
+                        }
+                        className="mt-1 w-20 rounded-lg border border-border bg-surface-inset px-2 py-1 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                      />
+                    ) : (
+                      <p className="mt-1 text-sm text-fg-secondary">{policies.reminderWeekBeforeDays} days before</p>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
+                      "Night before" is actually
+                    </p>
+                    {editingSendTimes ? (
+                      <input
+                        type="number"
+                        min="1"
+                        value={reminderCadenceDays.nightBeforeDays}
+                        onChange={(e) =>
+                          setReminderCadenceDays((current) => ({ ...current, nightBeforeDays: e.target.value }))
+                        }
+                        className="mt-1 w-20 rounded-lg border border-border bg-surface-inset px-2 py-1 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                      />
+                    ) : (
+                      <p className="mt-1 text-sm text-fg-secondary">{policies.reminderNightBeforeDays} days before</p>
+                    )}
+                  </div>
+                </div>
+                <p className="mt-2 text-xs text-fg-muted">
+                  "Morning of" always fires the same day -- not editable, since changing it would stop meaning
+                  "morning of."
+                </p>
+
                 {sendTimesError && <p className="mt-3 text-sm text-danger">{sendTimesError}</p>}
 
                 {editingSendTimes && (
@@ -2204,6 +2302,10 @@ export default function Settings() {
                         setEditingSendTimes(false)
                         setSendTimesError(null)
                         setReminderSendTimes(policies.reminderSendTimes ?? DEFAULT_REMINDER_SEND_TIMES)
+                        setReminderCadenceDays({
+                          weekBeforeDays: String(policies.reminderWeekBeforeDays),
+                          nightBeforeDays: String(policies.reminderNightBeforeDays),
+                        })
                       }}
                       disabled={sendTimesSaving}
                       className={
@@ -2336,7 +2438,7 @@ export default function Settings() {
             </div>
           )}
 
-          {activeTab === 'policies' && canViewPolicies && policies && (
+          {activeTab === 'defaults' && canViewPolicies && policies && (
             <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
               <div className="flex items-center justify-between gap-3">
                 <div>
@@ -2722,6 +2824,38 @@ export default function Settings() {
                         Off by default. Doesn't affect the conversations unread badge or the Tasks icon's count, both
                         of which always show.
                       </p>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-fg-secondary">
+                        Scheduling buffer (minutes)
+                      </label>
+                      <p className="mb-1 text-xs text-fg-muted">
+                        Appointments for the same artist within this window of each other are flagged as a possible
+                        conflict (a heads-up, not a hard block).
+                      </p>
+                      <input
+                        type="number"
+                        min="0"
+                        value={defaultsForm.schedulingBufferMinutes}
+                        onChange={(e) => setDefaultsForm({ ...defaultsForm, schedulingBufferMinutes: e.target.value })}
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-fg-secondary">
+                        Deposit processing fee ($)
+                      </label>
+                      <p className="mb-1 text-xs text-fg-muted">
+                        Flat fee added on top of the deposit amount from the tiers below.
+                      </p>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={defaultsForm.depositFeeDollars}
+                        onChange={(e) => setDefaultsForm({ ...defaultsForm, depositFeeDollars: e.target.value })}
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                      />
                     </div>
                   </>
                 )}

@@ -8,7 +8,12 @@ import { diffObjects, logAudit } from "../lib/audit";
 import { validateGiftCardsForAttachment, generateUniqueGiftCardCode, computeGiftCardExpiration } from "../lib/giftCards";
 import { resolveRequiredDepositCents, resolveDepositTiers } from "../lib/depositTiers";
 import { isSameCalendarDay } from "../lib/dateRange";
-import { findBufferConflict, formatBufferWarning } from "../lib/schedulingConflict";
+import {
+  findBufferConflict,
+  formatBufferWarning,
+  resolveSchedulingBufferMs,
+  DEFAULT_SCHEDULING_BUFFER_MS,
+} from "../lib/schedulingConflict";
 import { ensureLiabilityWaiver } from "../lib/waivers";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { getOrCreateClientConversation } from "../lib/conversations";
@@ -73,11 +78,12 @@ router.post("/", requirePermission("appointments.create"), async (req, res) => {
 
   const studioSettings = await prisma.studioSettings.findUnique({
     where: { studioId },
-    select: { timezone: true, depositTiers: true },
+    select: { timezone: true, depositTiers: true, schedulingBufferMinutes: true },
   });
   if (!isSameCalendarDay(start, end, studioSettings?.timezone ?? "America/New_York")) {
     return res.status(400).json({ error: "An appointment cannot span more than one day" });
   }
+  const bufferMs = resolveSchedulingBufferMs(studioSettings?.schedulingBufferMinutes);
 
   const [artist, client, inquiry] = await Promise.all([
     prisma.artist.findUnique({ where: { id: artistId }, include: { user: true } }),
@@ -185,11 +191,11 @@ router.post("/", requirePermission("appointments.create"), async (req, res) => {
     },
   });
 
-  const conflict = await findBufferConflict(artistId, start, end, appointment.id);
+  const conflict = await findBufferConflict(artistId, start, end, appointment.id, bufferMs);
 
   emitInvalidation({ type: "appointment.changed", studioId });
 
-  res.status(201).json({ ...appointment, bufferWarning: formatBufferWarning(conflict) });
+  res.status(201).json({ ...appointment, bufferWarning: formatBufferWarning(conflict, bufferMs) });
 });
 
 // Optional ?start=&end= (ISO) scopes to a visible calendar range (Phase
@@ -1035,6 +1041,7 @@ router.patch("/:id", requirePermission("appointments.reschedule"), async (req, r
   }
 
   const data: { status?: AppointmentStatus; startTime?: Date; endTime?: Date } = {};
+  let bufferMs = DEFAULT_SCHEDULING_BUFFER_MS;
 
   if (status !== undefined) {
     data.status = status;
@@ -1056,11 +1063,12 @@ router.patch("/:id", requirePermission("appointments.reschedule"), async (req, r
 
     const studioSettingsForDayCheck = await prisma.studioSettings.findUnique({
       where: { studioId: req.user!.studioId },
-      select: { timezone: true },
+      select: { timezone: true, schedulingBufferMinutes: true },
     });
     if (!isSameCalendarDay(start, end, studioSettingsForDayCheck?.timezone ?? "America/New_York")) {
       return res.status(400).json({ error: "An appointment cannot span more than one day" });
     }
+    bufferMs = resolveSchedulingBufferMs(studioSettingsForDayCheck?.schedulingBufferMinutes);
 
     data.startTime = start;
     data.endTime = end;
@@ -1082,12 +1090,12 @@ router.patch("/:id", requirePermission("appointments.reschedule"), async (req, r
   // always reflects the appointment's existing, unchanged artist.
   const conflict =
     data.startTime && data.endTime
-      ? await findBufferConflict(updated.artistId, data.startTime, data.endTime, id)
+      ? await findBufferConflict(updated.artistId, data.startTime, data.endTime, id, bufferMs)
       : null;
 
   emitInvalidation({ type: "appointment.changed", studioId: req.user!.studioId });
 
-  res.json({ ...updated, bufferWarning: formatBufferWarning(conflict) });
+  res.json({ ...updated, bufferWarning: formatBufferWarning(conflict, bufferMs) });
 });
 
 // Manually-written commentary log scoped to this one session -- same

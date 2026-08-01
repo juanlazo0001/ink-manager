@@ -1,5 +1,5 @@
 import { prisma } from "./prisma";
-import { SCHEDULING_BUFFER_MS } from "./schedulingConflict";
+import { resolveSchedulingBufferMs } from "./schedulingConflict";
 import { civilDateKey, zonedTimeToUtc } from "./studioTime";
 
 // Same shape family as Calendar.tsx's ScheduleBlock / AppointmentForm.tsx's
@@ -20,10 +20,10 @@ export interface SuggestedTimeCandidate {
   startTime: Date;
   endTime: Date;
   // "Flag, don't block" (matches findBufferConflict's own philosophy) --
-  // true means this slot is within SCHEDULING_BUFFER_MS of another of this
-  // artist's appointments the same day. Buffer-clean candidates always
-  // rank first; a flagged one is only returned if nothing clean was found
-  // anywhere in the search window.
+  // true means this slot is within the studio's configured scheduling
+  // buffer of another of this artist's appointments the same day.
+  // Buffer-clean candidates always rank first; a flagged one is only
+  // returned if nothing clean was found anywhere in the search window.
   hasBufferConflict: boolean;
 }
 
@@ -72,8 +72,8 @@ function minutesToTime(minutes: number): string {
 // Artist.preferredSchedule + guest window (both advisory-only, same as
 // everywhere else they're read) and this artist's own appointments in the
 // search window, then flags rather than omits a buffer conflict --
-// mirrors findBufferConflict's exact SCHEDULING_BUFFER_MS predicate
-// against appointments already fetched here, rather than re-querying per
+// mirrors findBufferConflict's exact buffer-window predicate against
+// appointments already fetched here, rather than re-querying per
 // candidate (findBufferConflict itself remains the actual enforcement
 // point at scheduling time; this only ranks suggestions).
 //
@@ -100,9 +100,10 @@ export async function getSuggestedTimes(
 
   const studioSettings = await prisma.studioSettings.findUnique({
     where: { studioId: artist.user.studioId },
-    select: { timezone: true },
+    select: { timezone: true, schedulingBufferMinutes: true },
   });
   const timeZone = studioSettings?.timezone ?? DEFAULT_TIMEZONE;
+  const bufferMs = resolveSchedulingBufferMs(studioSettings?.schedulingBufferMinutes);
 
   const schedule = (artist.preferredSchedule as unknown as ScheduleBlock[] | null) ?? null;
 
@@ -197,8 +198,8 @@ export async function getSuggestedTimes(
       // pure absolute-instant math, already timezone-agnostic.
       const conflict = dayAppointments.find(
         (appt) =>
-          slotStart.getTime() < appt.endTime.getTime() + SCHEDULING_BUFFER_MS &&
-          appt.startTime.getTime() < slotEnd.getTime() + SCHEDULING_BUFFER_MS,
+          slotStart.getTime() < appt.endTime.getTime() + bufferMs &&
+          appt.startTime.getTime() < slotEnd.getTime() + bufferMs,
       );
 
       const candidate: SuggestedTimeCandidate = { startTime: slotStart, endTime: slotEnd, hasBufferConflict: !!conflict };

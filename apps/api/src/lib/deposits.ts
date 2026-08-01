@@ -9,7 +9,7 @@ import { shortenUrl } from "./shortLinks";
 import { PUBLIC_APP_URL } from "./publicUrl";
 import { getChargeableConnectedAccountId } from "./stripeConnect";
 import { createDirectChargeCheckoutSession } from "./stripe";
-import { findBufferConflict } from "./schedulingConflict";
+import { findBufferConflict, resolveSchedulingBufferMs } from "./schedulingConflict";
 import { emitInvalidation } from "./realtime/registry";
 
 export type PaidVia = "STRIPE" | "MANUAL";
@@ -285,6 +285,8 @@ export async function issueGiftCardForPaidDeposit(
         freshInquiry.assignedArtistId,
         depositForm.proposedStartAt,
         depositForm.proposedEndAt,
+        undefined,
+        resolveSchedulingBufferMs(studioSettings?.schedulingBufferMinutes),
       );
 
       if (!conflict) {

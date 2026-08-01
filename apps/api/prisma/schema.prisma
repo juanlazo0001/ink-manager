@@ -1386,6 +1386,26 @@ model StudioSettings {
   // referred pays their first deposit. $25 default matches the task's own
   // spec; OWNER-editable like every other numeric default on this model.
   referralRewardAmountCents     Int      @default(2500)
+  // Settings "Defaults" tab audit: three more values that were previously
+  // hardcoded constants (see REPORT.md's Part 1 proposal), now studio-level
+  // defaults on the same model, same pattern as every field above --
+  // defaults exactly match the prior hardcoded behavior so no existing
+  // studio's behavior changes until an OWNER edits one.
+  //
+  // Was SCHEDULING_BUFFER_MS (lib/schedulingConflict.ts), a flat 1.5h --
+  // now 90 minutes, the same value in a friendlier unit for a numeric input.
+  schedulingBufferMinutes       Int      @default(90)
+  // Was DEPOSIT_FEE_CENTS (lib/depositTiers.ts), a flat $10 stacked on top
+  // of every tier-based deposit regardless of the (already-configurable)
+  // tier amounts themselves.
+  depositFeeCents               Int      @default(1000)
+  // Was a hardcoded `daysOut: 7` / `1` at each sendClientReminders(...)
+  // call site in lib/jobs/reminderTicker.ts -- the reminder cadence's send
+  // TIME (reminderSendTimes above) and message TEXT (reminderTemplates)
+  // were already configurable, which day wasn't. "Morning of" stays fixed
+  // at 0 days -- see REPORT.md for why that one wasn't made configurable.
+  reminderWeekBeforeDays        Int      @default(7)
+  reminderNightBeforeDays       Int      @default(1)
   createdAt                     DateTime @default(now())
   updatedAt                     DateTime @updatedAt
 

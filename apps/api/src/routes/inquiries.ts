@@ -13,7 +13,7 @@ import { sendClientSms } from "../lib/clientSms";
 import { shortenUrl } from "../lib/shortLinks";
 import { normalizePhone } from "../lib/phone";
 import { syncPrimaryEmail, syncPrimaryPhone } from "../lib/clientContacts";
-import { findBufferConflict, formatBufferWarning } from "../lib/schedulingConflict";
+import { findBufferConflict, formatBufferWarning, resolveSchedulingBufferMs } from "../lib/schedulingConflict";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { resolveDepositAmounts, resolveRequiredDepositCents, resolveDepositTiers } from "../lib/depositTiers";
@@ -1843,7 +1843,7 @@ router.post("/:id/schedule", requireAuth, requirePermission("inquiries.edit"), a
 
   const studioSettings = await prisma.studioSettings.findUnique({
     where: { studioId: req.user!.studioId },
-    select: { depositTiers: true },
+    select: { depositTiers: true, schedulingBufferMinutes: true },
   });
   const requiredCents = resolveRequiredDepositCents(
     inquiry.service,
@@ -1862,7 +1862,8 @@ router.post("/:id/schedule", requireAuth, requirePermission("inquiries.edit"), a
     return res.status(400).json({ error: giftCardResult.error });
   }
 
-  const conflict = await findBufferConflict(inquiry.assignedArtistId, start, end);
+  const bufferMs = resolveSchedulingBufferMs(studioSettings?.schedulingBufferMinutes);
+  const conflict = await findBufferConflict(inquiry.assignedArtistId, start, end, undefined, bufferMs);
 
   const appointment = await prisma.$transaction(async (tx) => {
     const created = await tx.appointment.create({
@@ -1908,7 +1909,7 @@ router.post("/:id/schedule", requireAuth, requirePermission("inquiries.edit"), a
 
   res.status(201).json({
     ...updated,
-    bufferWarning: formatBufferWarning(conflict),
+    bufferWarning: formatBufferWarning(conflict, bufferMs),
   });
 });
 
@@ -2307,7 +2308,12 @@ router.post("/:id/deposit-form", requireAuth, requirePermission("inquiries.edit"
   const tiers = resolveDepositTiers(settings?.depositTiers);
 
   const average = (inquiry.priceEstimateLow + inquiry.priceEstimateHigh) / 2;
-  const { depositAmount, totalCharged } = resolveDepositAmounts(inquiry.service, average, tiers);
+  const { depositAmount, totalCharged } = resolveDepositAmounts(
+    inquiry.service,
+    average,
+    tiers,
+    settings?.depositFeeCents,
+  );
   const feeAmount = totalCharged - depositAmount;
 
   const token = crypto.randomBytes(32).toString("hex");

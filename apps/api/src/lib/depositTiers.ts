@@ -17,10 +17,14 @@ export const DEFAULT_DEPOSIT_TIERS: DepositTier[] = [
   { minAmountCents: 59901, maxAmountCents: null, depositAmountCents: 20000 },
 ];
 
-// Flat fee added on top of the deposit in every tier -- unchanged by
-// configurable tiers, since only the deposit breakpoints themselves are
-// made configurable here, not the fee.
-export const DEPOSIT_FEE_CENTS = 1000;
+// Flat fee added on top of the deposit in every tier. Was a hardcoded
+// constant, unchanged by configurable tiers, since only the deposit
+// breakpoints themselves were made configurable here, not the fee --
+// now StudioSettings.depositFeeCents (see REPORT.md's "Defaults" tab audit
+// Part 1 proposal), same as the tiers next to it. This constant is now
+// only the fallback for the rare case a studio's settings row is somehow
+// missing, matching the prior hardcoded value exactly.
+export const DEFAULT_DEPOSIT_FEE_CENTS = 1000;
 
 // Returns an error message if invalid, null if valid. Enforces: every tier
 // well-formed, exactly one tier has maxAmountCents: null (the top,
@@ -83,6 +87,7 @@ export function resolveDepositTiers(depositTiers: unknown): DepositTier[] {
 export function computeDepositTier(
   averageEstimate: number,
   tiers: DepositTier[] = DEFAULT_DEPOSIT_TIERS,
+  feeCents: number = DEFAULT_DEPOSIT_FEE_CENTS,
 ): { depositAmount: number; totalCharged: number } {
   const averageCents = Math.round(averageEstimate * 100);
   const matched =
@@ -91,16 +96,16 @@ export function computeDepositTier(
     ) ?? tiers[tiers.length - 1];
 
   const depositAmount = matched.depositAmountCents / 100;
-  const feeAmount = DEPOSIT_FEE_CENTS / 100;
+  const feeAmount = feeCents / 100;
   return { depositAmount, totalCharged: depositAmount + feeAmount };
 }
 
 // Gift-card stacking: the amount a stack of attached cards must meet or
 // exceed. This is computeDepositTier's own depositAmount -- NOT
 // totalCharged, which additionally bakes in the flat processing fee a
-// client pays through a deposit form's card-payment flow (DEPOSIT_FEE_CENTS
-// on top). A gift card's face value is never issued at that inflated
-// amount (see routes/deposits.ts's own `amountCents: dollarsToCents(
+// client pays through a deposit form's card-payment flow (the studio's
+// configured depositFeeCents on top). A gift card's face value is never
+// issued at that inflated amount (see routes/deposits.ts's own `amountCents: dollarsToCents(
 // depositForm.depositAmount)`), so sufficiency has to be checked against
 // the same, non-fee-inflated number a card can actually be worth.
 // null/missing price-estimate bounds (an inquiry that hasn't been quoted
@@ -148,10 +153,11 @@ export function resolveDepositAmounts(
   service: { depositModel: ServiceDepositModel; flatDepositCents: number | null },
   average: number,
   tiers: DepositTier[] = DEFAULT_DEPOSIT_TIERS,
+  feeCents: number = DEFAULT_DEPOSIT_FEE_CENTS,
 ): { depositAmount: number; totalCharged: number } {
   if (service.depositModel === ServiceDepositModel.FLAT) {
     const amount = (service.flatDepositCents ?? 0) / 100;
     return { depositAmount: amount, totalCharged: amount };
   }
-  return computeDepositTier(average, tiers);
+  return computeDepositTier(average, tiers, feeCents);
 }

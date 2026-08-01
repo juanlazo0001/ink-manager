@@ -247,7 +247,11 @@ function presentSettingsPermissionGroups(body: Record<string, unknown>): Set<Per
     body.showSidebarBadges !== undefined ||
     body.businessHours !== undefined ||
     body.reminderTemplates !== undefined ||
-    body.reminderSendTimes !== undefined
+    body.reminderSendTimes !== undefined ||
+    body.schedulingBufferMinutes !== undefined ||
+    body.depositFeeCents !== undefined ||
+    body.reminderWeekBeforeDays !== undefined ||
+    body.reminderNightBeforeDays !== undefined
   ) {
     groups.add("settings.manageDefaults");
   }
@@ -308,6 +312,37 @@ staffRouter.patch("/", async (req, res) => {
       return res.status(400).json({ error: "coldLeadDays must be a positive number" });
     }
     data.coldLeadDays = body.coldLeadDays;
+  }
+
+  // Settings "Defaults" tab audit (REPORT.md Part 1 proposal): three
+  // previously-hardcoded constants, now studio-level numeric defaults --
+  // same validation shape as estimateFollowUpHours/coldLeadDays above.
+  if (body.schedulingBufferMinutes !== undefined) {
+    if (typeof body.schedulingBufferMinutes !== "number" || body.schedulingBufferMinutes < 0) {
+      return res.status(400).json({ error: "schedulingBufferMinutes must be a non-negative number" });
+    }
+    data.schedulingBufferMinutes = body.schedulingBufferMinutes;
+  }
+
+  if (body.depositFeeCents !== undefined) {
+    if (typeof body.depositFeeCents !== "number" || body.depositFeeCents < 0) {
+      return res.status(400).json({ error: "depositFeeCents must be a non-negative number" });
+    }
+    data.depositFeeCents = body.depositFeeCents;
+  }
+
+  if (body.reminderWeekBeforeDays !== undefined) {
+    if (typeof body.reminderWeekBeforeDays !== "number" || body.reminderWeekBeforeDays <= 0) {
+      return res.status(400).json({ error: "reminderWeekBeforeDays must be a positive number" });
+    }
+    data.reminderWeekBeforeDays = body.reminderWeekBeforeDays;
+  }
+
+  if (body.reminderNightBeforeDays !== undefined) {
+    if (typeof body.reminderNightBeforeDays !== "number" || body.reminderNightBeforeDays <= 0) {
+      return res.status(400).json({ error: "reminderNightBeforeDays must be a positive number" });
+    }
+    data.reminderNightBeforeDays = body.reminderNightBeforeDays;
   }
 
   if (body.timezone !== undefined) {
@@ -413,6 +448,10 @@ staffRouter.patch("/", async (req, res) => {
       "reminderSendTimes",
       "depositTiers",
       "themePreset",
+      "schedulingBufferMinutes",
+      "depositFeeCents",
+      "reminderWeekBeforeDays",
+      "reminderNightBeforeDays",
     ] as (keyof typeof existing)[]),
   });
 
