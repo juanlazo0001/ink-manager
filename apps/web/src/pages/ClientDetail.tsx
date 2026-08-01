@@ -1,7 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
 import AuditTrail from '../components/AuditTrail'
 import StatusPill from '../components/StatusPill'
@@ -1165,10 +1164,7 @@ export default function ClientDetail() {
   )
 
   return (
-    <div className="flex min-h-screen bg-bg text-fg">
-      <Sidebar />
-
-      <div className="min-w-0 flex-1 overflow-y-auto">
+    <>
         <div className="mx-auto max-w-5xl px-6 py-6 sm:px-10 sm:py-8">
           <Link to="/clients" className="inline-flex items-center gap-2 text-sm text-fg-secondary hover:text-fg">
             <ArrowLeftIcon className="h-4 w-4" />
@@ -2410,7 +2406,6 @@ export default function ClientDetail() {
             </>
           )}
         </div>
-      </div>
 
       {showIssueModal && (
         <Modal title="Issue Gift Card" onClose={closeIssueModal}>
@@ -2816,6 +2811,6 @@ export default function ClientDetail() {
           onSelect={(form: IntakeFormOption) => generateAndCopyPrefillLink(form.slug)}
         />
       )}
-    </div>
+    </>
   )
 }

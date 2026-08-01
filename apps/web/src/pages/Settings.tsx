@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
 import RichTextEditor from '../components/RichTextEditor'
 import PhoneInput from '../components/PhoneInput'
@@ -1408,11 +1407,7 @@ export default function Settings() {
   }
 
   return (
-    <div className="flex min-h-screen bg-bg text-fg">
-      <Sidebar />
-
-      <div className="min-w-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-2xl px-6 py-6 sm:px-10 sm:py-8">
+    <div className="mx-auto max-w-2xl px-6 py-6 sm:px-10 sm:py-8">
           {isEditorial && <Eyebrow>Manage your studio, its policies, and how it connects.</Eyebrow>}
           <h1
             className={
@@ -3339,8 +3334,6 @@ export default function Settings() {
             </div>
           )}
         </div>
-      </div>
-    </div>
   )
 }
 

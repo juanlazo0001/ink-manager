@@ -1,7 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
 import PhoneInput from '../components/PhoneInput'
 import MultiSelectFilter from '../components/MultiSelectFilter'
@@ -153,10 +152,7 @@ export default function Clients() {
   )
 
   return (
-    <div className="flex min-h-screen bg-bg text-fg">
-      <Sidebar />
-
-      <div className="min-w-0 flex-1 overflow-y-auto">
+    <>
         <div className="mx-auto max-w-7xl px-6 py-6 sm:px-10 sm:py-8">
           {flash && (
             <div className="mb-6 flex items-center justify-between gap-3 rounded-2xl border border-success/30 bg-success/10 p-4 text-sm text-success">
@@ -272,10 +268,10 @@ export default function Clients() {
                 <table className="w-full text-left text-sm">
                   <thead>
                     <tr className="bg-surface-inset text-xs text-fg-muted">
-                      <th className="pb-3 font-medium">Name</th>
-                      <th className="hidden pb-3 font-medium md:table-cell">Email</th>
-                      <th className="hidden pb-3 font-medium sm:table-cell">Phone</th>
-                      <th className="hidden pb-3 font-medium lg:table-cell">Last Modified</th>
+                      <th className="py-2 font-medium">Name</th>
+                      <th className="hidden py-2 font-medium md:table-cell">Email</th>
+                      <th className="hidden py-2 font-medium sm:table-cell">Phone</th>
+                      <th className="hidden py-2 font-medium lg:table-cell">Last Modified</th>
                     </tr>
                   </thead>
                   {isLoading ? (
@@ -314,7 +310,6 @@ export default function Clients() {
             )}
           </div>
         </div>
-      </div>
 
       {showAddModal && (
         <Modal title="Add Client" onClose={() => setShowAddModal(false)}>
@@ -390,6 +385,6 @@ export default function Clients() {
           </form>
         </Modal>
       )}
-    </div>
+    </>
   )
 }

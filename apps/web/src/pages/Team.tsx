@@ -1,7 +1,6 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import Sidebar from '../components/Sidebar'
 import Eyebrow from '../components/Eyebrow'
 import Modal from '../components/Modal'
 import PhoneInput from '../components/PhoneInput'
@@ -544,10 +543,7 @@ export default function Team() {
   }
 
   return (
-    <div className="flex min-h-screen bg-bg text-fg">
-      <Sidebar />
-
-      <div className="min-w-0 flex-1 overflow-y-auto">
+    <>
         <div className="mx-auto max-w-7xl px-6 py-6 sm:px-10 sm:py-8">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
@@ -699,14 +695,13 @@ export default function Team() {
           )}
 
           {activeTab === 'staff' && isOwner && (
-          // No .card-surface here, deliberately -- the staff table is
-          // dense, information-critical content (same category as
-          // Conversations' thread list / Calendar's grid / the Clients
-          // table), not a glass-treatment candidate. It had .card-surface
-          // applied (likely from an earlier broad template pass, not a
-          // deliberate choice) -- removed so it stays fully solid/opaque
-          // under Editorial Gold.
-          <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+          // .card-surface (glass treatment under Editorial Gold) restored
+          // here by explicit request, matching Clients' table -- overrides
+          // the earlier "dense-data table, no glass" reasoning that had
+          // removed it (still true for Conversations' thread list /
+          // Calendar's grid / the permissions matrix below, just not
+          // applied here anymore).
+          <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-5">
             {viewAsError && <p className="mb-3 text-sm text-danger">{viewAsError}</p>}
             {error && <p className="text-sm text-danger">{error}</p>}
 
@@ -717,11 +712,11 @@ export default function Team() {
                 <table className="w-full text-left text-sm">
                   <thead>
                     <tr className="bg-surface-inset text-xs text-fg-muted">
-                      <th className="pb-3 font-medium">Name</th>
-                      <th className="hidden pb-3 font-medium md:table-cell">Email</th>
-                      <th className="hidden pb-3 font-medium sm:table-cell">Role</th>
-                      <th className="pb-3 font-medium">Status</th>
-                      <th className="pb-3 font-medium"></th>
+                      <th className="py-2 font-medium">Name</th>
+                      <th className="hidden py-2 font-medium md:table-cell">Email</th>
+                      <th className="hidden py-2 font-medium sm:table-cell">Role</th>
+                      <th className="py-2 font-medium">Status</th>
+                      <th className="py-2 font-medium"></th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -1106,7 +1101,6 @@ export default function Team() {
           </div>
           )}
         </div>
-      </div>
 
       {showAddModal && (
         <Modal title="Add team member" onClose={() => setShowAddModal(false)}>
@@ -1606,6 +1600,6 @@ export default function Team() {
           )}
         </Modal>
       )}
-    </div>
+    </>
   )
 }

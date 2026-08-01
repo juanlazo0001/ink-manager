@@ -1,7 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Navigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
 import InquiryKanbanBoard from '../components/kanban/InquiryKanbanBoard'
 import { INQUIRY_TAB_COLUMNS, PROJECT_TAB_COLUMNS } from './Inquiries'
@@ -237,10 +236,7 @@ export default function MyInquiries() {
   }
 
   return (
-    <div className="flex min-h-screen bg-bg text-fg">
-      <Sidebar />
-
-      <div className="min-w-0 flex-1 overflow-y-auto">
+    <>
         <div className="mx-auto max-w-5xl px-6 py-6 sm:px-10 sm:py-8">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -395,7 +391,6 @@ export default function MyInquiries() {
             </div>
           )}
         </div>
-      </div>
 
       {approvingInquiry && (
         <Modal
@@ -541,6 +536,6 @@ export default function MyInquiries() {
           </form>
         </Modal>
       )}
-    </div>
+    </>
   )
 }

@@ -19,7 +19,6 @@ import dragAndDropModule, { type EventInteractionArgs } from 'react-big-calendar
 import dayjs from 'dayjs'
 import 'react-big-calendar/lib/css/react-big-calendar.css'
 import 'react-big-calendar/lib/addons/dragAndDrop/styles.css'
-import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
 import AppointmentForm from '../components/AppointmentForm'
 import StatusPill from '../components/StatusPill'
@@ -827,10 +826,7 @@ export default function Calendar() {
   }
 
   return (
-    <div className="flex min-h-screen bg-bg text-fg">
-      <Sidebar />
-
-      <div className="min-w-0 flex-1 overflow-y-auto">
+    <>
         <div className="mx-auto max-w-7xl px-6 py-6 sm:px-10 sm:py-8">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
@@ -1011,7 +1007,6 @@ export default function Calendar() {
             </div>
           </div>
         </div>
-      </div>
 
       {createSlot && (
         <Modal title="New Appointment" onClose={() => setCreateSlot(null)}>
@@ -1074,6 +1069,6 @@ export default function Calendar() {
           </div>
         </Modal>
       )}
-    </div>
+    </>
   )
 }

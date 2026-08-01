@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import Sidebar from '../components/Sidebar'
 import Eyebrow from '../components/Eyebrow'
 import { SkeletonTableRows } from '../components/Skeleton'
 import StatusPill from '../components/StatusPill'
@@ -580,11 +579,7 @@ export default function Inquiries() {
   const lastVisibleColumnKey = [...COLUMN_DEFS].reverse().find((c) => columnVisibility[c.key])?.key ?? null
 
   return (
-    <div className="flex min-h-screen bg-bg text-fg">
-      <Sidebar />
-
-      <div className="min-w-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-7xl px-6 py-6 sm:px-10 sm:py-8">
+    <div className="mx-auto max-w-7xl px-6 py-6 sm:px-10 sm:py-8">
           {flash && (
             <div className="mb-6 flex items-center justify-between gap-3 rounded-2xl border border-success/30 bg-success/10 p-4 text-sm text-success">
               <span>{flash}</span>
@@ -934,8 +929,6 @@ export default function Inquiries() {
               </div>
             )}
           </div>
-        </div>
-      </div>
     </div>
   )
 }

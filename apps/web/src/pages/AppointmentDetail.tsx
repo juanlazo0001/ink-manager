@@ -1,7 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import Sidebar from '../components/Sidebar'
 import AuditTrail from '../components/AuditTrail'
 import Modal from '../components/Modal'
 import StatusPill from '../components/StatusPill'
@@ -670,11 +669,7 @@ export default function AppointmentDetail() {
     appointment?.finalCostCents != null ? Math.max(0, checkoutRedeemedTotalCents - appointment.finalCostCents) : 0
 
   return (
-    <div className="flex min-h-screen bg-bg text-fg">
-      <Sidebar />
-
-      <div className="min-w-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-3xl px-6 py-6 sm:px-10 sm:py-8">
+    <div className="mx-auto max-w-3xl px-6 py-6 sm:px-10 sm:py-8">
           <Link
             to={appointment ? `/inquiries/${appointment.inquiry.id}` : '/calendar'}
             className="inline-flex items-center gap-2 text-sm text-fg-secondary hover:text-fg"
@@ -1638,8 +1633,6 @@ export default function AppointmentDetail() {
               )}
             </>
           )}
-        </div>
-      </div>
     </div>
   )
 }

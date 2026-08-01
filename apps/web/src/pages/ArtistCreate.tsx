@@ -1,7 +1,6 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import Sidebar from '../components/Sidebar'
 import PhoneInput from '../components/PhoneInput'
 import SpecialtiesInput from '../components/SpecialtiesInput'
 import DatePickerField from '../components/DatePickerField'
@@ -203,11 +202,7 @@ export default function ArtistCreate() {
   }
 
   return (
-    <div className="flex min-h-screen bg-bg text-fg">
-      <Sidebar />
-
-      <div className="min-w-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-4xl px-6 py-6 sm:px-10 sm:py-8">
+    <div className="mx-auto max-w-4xl px-6 py-6 sm:px-10 sm:py-8">
           <button
             type="button"
             onClick={() => navigate('/team?tab=artists')}
@@ -495,8 +490,6 @@ export default function ArtistCreate() {
               </button>
             </div>
           </form>
-        </div>
-      </div>
     </div>
   )
 }

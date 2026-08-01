@@ -3,7 +3,6 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useUserProfile } from '../context/useUserProfile'
-import Sidebar from '../components/Sidebar'
 import DateRangePresetFilter, { presetRange, type DateRange } from '../components/DateRangePresetFilter'
 import Eyebrow from '../components/Eyebrow'
 import HorizontalBarList from '../components/HorizontalBarList'
@@ -115,10 +114,6 @@ export default function Dashboard() {
   const welcomeName = profile?.name?.trim().split(' ')[0] || (user ? formatStatus(user.role) : '')
 
   return (
-    <div className="flex min-h-screen bg-bg text-fg">
-      <Sidebar />
-
-      <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-7xl px-6 py-6 sm:px-10 sm:py-8">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -318,7 +313,5 @@ export default function Dashboard() {
           ) : null}
           </AnimatePresence>
         </div>
-      </div>
-    </div>
   )
 }

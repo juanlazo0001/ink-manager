@@ -1,8 +1,8 @@
-import { forwardRef, type ReactNode } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
-import { AnimatePresence, motion } from 'framer-motion'
-import { pageTransition } from './lib/motion'
+import { AnimatePresence } from 'framer-motion'
+import PageFade from './components/PageFade'
 import ProtectedRoute from './components/ProtectedRoute'
+import AppShellLayout from './components/AppShellLayout'
 import AuthLayout from './components/AuthLayout'
 import ResetPassword from './pages/ResetPassword'
 import InviteAccept from './pages/InviteAccept'
@@ -41,32 +41,47 @@ import TopBar from './components/TopBar'
 import ViewAsBanner from './components/ViewAsBanner'
 import ErrorBoundary from './components/ErrorBoundary'
 
-// Brief fade+settle between routes -- reverted from an earlier circular
-// "iris" clip-path reveal (owner feedback: too distracting), back to the
-// original crossfade this app-wide Motion rollout first shipped with,
-// just slower now -- pageTransition (lib/motion.ts), not the faster
-// uiSpringTransition used for everyday chrome (dropdowns, list items,
-// panel open/close), which still needs to stay quick.
-const PageFade = forwardRef<HTMLDivElement, { children: ReactNode }>(function PageFade({ children }, ref) {
-  return (
-    <motion.div
-      ref={ref}
-      className="relative z-10"
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -8 }}
-      transition={pageTransition}
-    >
-      {children}
-    </motion.div>
-  )
-})
+// The authenticated app shell (AppShellLayout: persistent Sidebar +
+// every protected page) is ONE first-path-segment set -- keying the
+// outer PageFade off the bare pathname (as this used to) meant every
+// single in-shell navigation (Dashboard -> Clients -> Team, ...) still
+// counted as "a new route" up here, forcing AnimatePresence to fully
+// exit+enter the whole subtree, Sidebar included, on every click. Same
+// underlying issue AuthLayout's own persistence claim turned out not to
+// actually hold (verified via DOM node identity -- its background image
+// is a fresh element after every /login <-> /forgot-password nav, despite
+// that file's own comment) -- not fixed here, out of scope for this pass,
+// but the same root cause. Any pathname whose first segment matches an
+// app-shell route collapses to one shared key so the shell itself never
+// re-enters; AppShellLayout's own inner AnimatePresence (keyed on the
+// real pathname) still fades the routed page content on every navigation
+// within it -- just without carrying Sidebar along for the ride.
+const APP_SHELL_SEGMENTS = new Set([
+  'dashboard',
+  'clients',
+  'calendar',
+  'appointments',
+  'artists',
+  'inquiries',
+  'my-inquiries',
+  'settings',
+  'profile',
+  'team',
+  'tasks',
+  'conversations',
+  'gift-cards',
+])
 
-// mode="popLayout" + a location-keyed <Routes> (rather than keying
-// individual page elements) is the standard React Router + Framer Motion
-// recipe: <Routes> itself becomes the thing that exits/enters as a whole
-// on every pathname change, so no per-page file needs to know about this
-// at all. PageFade is a direct AnimatePresence child (forwardRef, same
+function getPageFadeKey(pathname: string): string {
+  const firstSegment = pathname.split('/')[1] ?? ''
+  return APP_SHELL_SEGMENTS.has(firstSegment) ? 'app-shell' : pathname
+}
+
+// mode="popLayout" + a keyed <Routes> (rather than keying individual page
+// elements) is the standard React Router + Framer Motion recipe:
+// <Routes> itself becomes the thing that exits/enters as a whole when the
+// key changes, so no per-page file needs to know about this at all.
+// PageFade is a direct AnimatePresence child (forwardRef, same
 // requirement as AuthLayout's own AuthCard) since it's a custom component,
 // not a plain motion.div. Scoped to just the routed content -- TopBar/
 // ConversationsPanel/ViewAsBanner are persistent chrome mounted outside
@@ -90,7 +105,7 @@ function AppRoutes() {
           grid in a screenshot -- .arc-decor's own rings never exposed
           this same latent issue only because they have no opaque fill to
           reveal it. */}
-      <PageFade key={location.pathname}>
+      <PageFade key={getPageFadeKey(location.pathname)}>
         <Routes location={location}>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
         {/* Persistent-layout auth pages: AuthLayout renders the background/
@@ -156,151 +171,45 @@ function AppRoutes() {
         <Route path="/gift-card/:code" element={<GiftCardResponse />} />
         <Route path="/waiver/:token" element={<WaiverSign />} />
         <Route path="/s/:code" element={<ShortLinkRedirect />} />
-        <Route
-          path="/gift-cards/:id"
-          element={
-            <ProtectedRoute>
-              <GiftCardDetail />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/dashboard"
-          element={
-            <ProtectedRoute>
-              <Dashboard />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/clients"
-          element={
-            <ProtectedRoute>
-              <Clients />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/clients/import"
-          element={
-            <ProtectedRoute>
-              <ClientImport />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/clients/:id"
-          element={
-            <ProtectedRoute>
-              <ErrorBoundary label="ClientDetail">
-                <ClientDetail />
-              </ErrorBoundary>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/calendar"
-          element={
-            <ProtectedRoute>
-              <Calendar />
-            </ProtectedRoute>
-          }
-        />
         {/* UI-1: Appointments was renamed Calendar (sidebar consolidation) --
             redirect so old bookmarks/links survive. */}
         <Route path="/appointments" element={<Navigate to="/calendar" replace />} />
-        <Route
-          path="/appointments/:id"
-          element={
-            <ProtectedRoute>
-              <AppointmentDetail />
-            </ProtectedRoute>
-          }
-        />
         {/* UI-1: the standalone Artists list page folded into Team's Artists
             tab -- redirect so old bookmarks/links survive. Per-artist detail
             (below) is unaffected. */}
         <Route path="/artists" element={<Navigate to="/team?tab=artists" replace />} />
-        <Route
-          path="/artists/new"
-          element={
-            <ProtectedRoute>
-              <ArtistCreate />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/artists/:id"
-          element={
-            <ProtectedRoute>
-              <ArtistDetail />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/inquiries"
-          element={
-            <ProtectedRoute>
-              <Inquiries />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/inquiries/:id"
-          element={
-            <ProtectedRoute>
-              <InquiryDetail />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/my-inquiries"
-          element={
-            <ProtectedRoute>
-              <MyInquiries />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/settings"
-          element={
-            <ProtectedRoute>
-              <Settings />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/profile"
-          element={
-            <ProtectedRoute>
-              <Profile />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/team"
-          element={
-            <ProtectedRoute>
-              <Team />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/tasks"
-          element={
-            <ProtectedRoute>
-              <Tasks />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/conversations/:id"
-          element={
-            <ProtectedRoute>
-              <ConversationDeepLink />
-            </ProtectedRoute>
-          }
-        />
+        {/* Every authenticated app page shares this one persistent shell
+            (Sidebar + page-content fade, see AppShellLayout) -- auth is
+            checked once here rather than per-page, and Sidebar mounts once
+            regardless of which of these routes is active (see
+            getPageFadeKey above for why that's actually true and not just
+            intended). */}
+        <Route element={<ProtectedRoute><AppShellLayout /></ProtectedRoute>}>
+          <Route path="/gift-cards/:id" element={<GiftCardDetail />} />
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/clients" element={<Clients />} />
+          <Route path="/clients/import" element={<ClientImport />} />
+          <Route
+            path="/clients/:id"
+            element={
+              <ErrorBoundary label="ClientDetail">
+                <ClientDetail />
+              </ErrorBoundary>
+            }
+          />
+          <Route path="/calendar" element={<Calendar />} />
+          <Route path="/appointments/:id" element={<AppointmentDetail />} />
+          <Route path="/artists/new" element={<ArtistCreate />} />
+          <Route path="/artists/:id" element={<ArtistDetail />} />
+          <Route path="/inquiries" element={<Inquiries />} />
+          <Route path="/inquiries/:id" element={<InquiryDetail />} />
+          <Route path="/my-inquiries" element={<MyInquiries />} />
+          <Route path="/settings" element={<Settings />} />
+          <Route path="/profile" element={<Profile />} />
+          <Route path="/team" element={<Team />} />
+          <Route path="/tasks" element={<Tasks />} />
+          <Route path="/conversations/:id" element={<ConversationDeepLink />} />
+        </Route>
         </Routes>
       </PageFade>
     </AnimatePresence>

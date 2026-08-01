@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import Sidebar from '../components/Sidebar'
 import AuditTrail from '../components/AuditTrail'
 import NotesSection from '../components/NotesSection'
 import InquiryDetailsSection from '../components/InquiryDetailsSection'
@@ -2060,11 +2059,7 @@ export default function InquiryDetail() {
   const depositUrl = latestDepositForm && !latestDepositForm.signedAt ? latestDepositForm.url : null
 
   return (
-    <div className="flex min-h-screen bg-bg text-fg">
-      <Sidebar />
-
-      <div className="min-w-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-5xl px-6 py-6 sm:px-10 sm:py-8">
+    <div className="mx-auto max-w-5xl px-6 py-6 sm:px-10 sm:py-8">
           <Link
             to={isConverted ? '/inquiries?tab=projects' : '/inquiries'}
             className="inline-flex items-center gap-2 text-sm text-fg-secondary hover:text-fg"
@@ -4545,8 +4540,6 @@ export default function InquiryDetail() {
               )}
             </>
           )}
-        </div>
-      </div>
     </div>
   )
 }

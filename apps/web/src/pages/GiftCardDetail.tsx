@@ -5,7 +5,6 @@ import { formatDateTime } from '../lib/format'
 import { ArrowLeftIcon } from '../components/icons'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useUserProfile } from '../context/useUserProfile'
-import Sidebar from '../components/Sidebar'
 import QrCode from '../components/QrCode'
 import AuditTrail from '../components/AuditTrail'
 import StatusPill from '../components/StatusPill'
@@ -162,11 +161,7 @@ export default function GiftCardDetail() {
   }
 
   return (
-    <div className="flex min-h-screen bg-bg text-fg">
-      <Sidebar />
-
-      <div className="min-w-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-3xl px-6 py-6 sm:px-10 sm:py-8">
+    <div className="mx-auto max-w-3xl px-6 py-6 sm:px-10 sm:py-8">
           <Link
             to={card ? `/clients/${card.client.id}` : '/clients'}
             className="inline-flex items-center gap-2 text-sm text-fg-secondary hover:text-fg"
@@ -340,7 +335,5 @@ export default function GiftCardDetail() {
             </>
           )}
         </div>
-      </div>
-    </div>
   )
 }

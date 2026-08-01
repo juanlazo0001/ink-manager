@@ -1,5 +1,4 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
-import Sidebar from '../components/Sidebar'
 import PhoneInput from '../components/PhoneInput'
 import { apiFetch } from '../lib/api'
 import { formatPhoneInput, isValidPhoneDigits, readFileAsDataUrl, MAX_IMAGE_FILE_BYTES } from '../lib/format'
@@ -214,11 +213,7 @@ export default function Profile() {
   }
 
   return (
-    <div className="flex min-h-screen bg-bg text-fg">
-      <Sidebar />
-
-      <div className="min-w-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-2xl px-6 py-6 sm:px-10 sm:py-8">
+    <div className="mx-auto max-w-2xl px-6 py-6 sm:px-10 sm:py-8">
           <h1 className="text-2xl font-bold text-fg sm:text-3xl">My profile</h1>
           <p className="mt-1 text-sm text-fg-secondary">Manage your account details and login.</p>
 
@@ -580,7 +575,5 @@ export default function Profile() {
             </div>
           )}
         </div>
-      </div>
-    </div>
   )
 }

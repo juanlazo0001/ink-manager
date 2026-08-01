@@ -2,7 +2,6 @@ import { useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import Sidebar from '../components/Sidebar'
 import { apiFetch } from '../lib/api'
 import { formatDateTime } from '../lib/format'
 import { uiSpringTransition } from '../lib/motion'
@@ -345,11 +344,7 @@ export default function Tasks() {
   const completedAssignedByMe = assignedByMe.filter((t) => t.completedAt)
 
   return (
-    <div className="flex min-h-screen bg-bg text-fg">
-      <Sidebar />
-
-      <div className="min-w-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-3xl px-6 py-6 sm:px-10 sm:py-8">
+    <div className="mx-auto max-w-3xl px-6 py-6 sm:px-10 sm:py-8">
           {isEditorial && <Eyebrow>Everything needing attention, plus your own to-dos.</Eyebrow>}
           <h1
             className={
@@ -702,7 +697,5 @@ export default function Tasks() {
             </motion.div>
           )}
         </div>
-      </div>
-    </div>
   )
 }

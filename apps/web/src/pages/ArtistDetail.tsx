@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import Sidebar from '../components/Sidebar'
 import SpecialtiesInput from '../components/SpecialtiesInput'
 import { apiFetch, ApiError } from '../lib/api'
 import { uploadPortfolioImage } from '../lib/cloudinary'
@@ -275,11 +274,7 @@ export default function ArtistDetail() {
   const isUploading = uploadingItems.some((i) => i.status === 'uploading')
 
   return (
-    <div className="flex min-h-screen bg-bg text-fg">
-      <Sidebar />
-
-      <div className="min-w-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-4xl px-6 py-6 sm:px-10 sm:py-8">
+    <div className="mx-auto max-w-4xl px-6 py-6 sm:px-10 sm:py-8">
           <Link
             to="/team?tab=artists"
             className="inline-flex items-center gap-2 text-sm text-fg-secondary hover:text-fg"
@@ -679,8 +674,6 @@ export default function ArtistDetail() {
               )}
             </>
           )}
-        </div>
-      </div>
     </div>
   )
 }

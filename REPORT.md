@@ -5899,3 +5899,48 @@ Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (
 ## Commit
 
 `569b1d2`
+
+---
+
+# Team staff table glass treatment, header alignment, and persistent Sidebar across page transitions
+
+Three-part session on `main`. No schema changes, no backend changes -- purely `apps/web` frontend.
+
+## 1. Staff table glass treatment (Team page)
+
+Restored `.card-surface` to the Staff tab's main roster table wrapper in `Team.tsx`, matching the same fix already applied to `Clients.tsx`'s table in an earlier session. The table had `.card-surface` removed at some point with an explicit "dense-data, no glass" rationale left in a code comment -- overridden here by direct request; the comment now documents the override rather than the original reasoning. Left untouched (still no glass, same original rationale, since neither was part of the request): the Pending Invites sub-table beneath the roster, and the Permissions matrix table below that.
+
+## 2. Header row vertical alignment (Team's Staff table)
+
+Its `<th>` cells used bottom-only padding (`pb-3`), which put the header text near the top of the shaded `bg-surface-inset` header row instead of centered -- visibly different from Inquiries.tsx's table (`py-2`, symmetric) and from Clients.tsx's own table, already fixed to match `py-2` in an earlier session. Changed all 5 `<th>` cells in the Staff table (Name/Email/Role/Status/action column) from `pb-3` to `py-2`, bringing all three of this app's dense-data tables onto the same convention.
+
+## 3. Sidebar remounting on every page transition (architectural fix)
+
+**Root cause**: every one of the 16 authenticated app pages rendered its own `<Sidebar />` inline, inside its own copy of the same three-div wrapper (`flex min-h-screen` > `min-w-0 flex-1 overflow-y-auto` > `mx-auto max-w-*`) -- 16 separate copies of the same markup, not a shared layout. `App.tsx`'s top-level page-transition mechanism (`AnimatePresence` + a `<PageFade key={location.pathname}>` wrapping the entire routed `<Routes>` tree) forces React to fully unmount and remount that whole subtree -- Sidebar included -- on every single navigation, since a key change is what tells `AnimatePresence` "this is a new element, exit the old one and mount a new one." React Router's own nested-route/`<Outlet>` mechanism wasn't in play at all -- there was no shared parent route for any of these 16 pages to begin with.
+
+**Fix**: extracted a persistent shell.
+- New `apps/web/src/components/AppShellLayout.tsx`: renders `<Sidebar />` once, plus its own inner `<AnimatePresence>` keyed on `location.pathname` wrapping only `<Outlet />` -- so page *content* still fades on every navigation, just without carrying Sidebar along for the ride.
+- New `apps/web/src/components/PageFade.tsx`: the fade/settle animation itself, pulled out of `App.tsx` into a shared, `forwardRef`-wrapping component (`AnimatePresence`'s `popLayout` mode needs a real DOM node to measure/position while exiting) -- used by both `App.tsx`'s outer transition and `AppShellLayout`'s inner one, so the two can't drift into two different-feeling animations.
+- `App.tsx`: all 16 authenticated routes now nest under one `<Route element={<ProtectedRoute><AppShellLayout /></ProtectedRoute>}>`, replacing 16 individual `<ProtectedRoute>`-wrapped `<Route>` entries. Auth is now checked once per navigation within the shell instead of once per page.
+- Nesting under a shared `<Outlet>` alone wasn't sufficient, though: the OUTER `PageFade`'s key was still the full `location.pathname`, so `App.tsx`'s own `AnimatePresence` would still treat `/dashboard` -> `/clients` as "a new route" and remount everything below it, `AppShellLayout` included. Added `getPageFadeKey()`: any pathname whose first path segment is one of the 13 app-shell route segments collapses to one shared key (`'app-shell'`), so navigating *within* the shell no longer changes the outer key at all -- only entering/leaving the shell (e.g. to `/login`) does.
+- Removed each page's own inline `<Sidebar />` + 3-div wrapper individually across all 16 files (Dashboard, Clients, ClientImport, ClientDetail, Calendar, AppointmentDetail, ArtistDetail, ArtistCreate, Inquiries, InquiryDetail, MyInquiries, Settings, Profile, Team, Tasks, GiftCardDetail), each now returning just its own `<div className="mx-auto max-w-*">...` content directly. 5 of the 16 (ClientImport, ClientDetail, Calendar, MyInquiries, Team) needed a `<>...</>` fragment instead of a single root div, since a Modal (or several) rendered as a sibling of the `mx-auto` div, not a descendant of it -- verified div-by-div with a small stack-matching script rather than by eye, after visual inspection alone repeatedly produced wrong guesses on the more deeply-nested files.
+
+**A separate, pre-existing bug found (not fixed, out of scope)**: `AuthLayout.tsx`'s own code comment claims its background/chrome persists across `/login` <-> `/forgot-password` navigation "and never unmounts." Playwright DOM-node-identity testing (`elementHandle.evaluate(el => el.isConnected)`) during this investigation disproved that -- the same root-cause pattern (the outer pathname-keyed `AnimatePresence`) breaks its persistence claim too, just for a different subtree. Flagging since it surfaced during this work, not fixing it since it wasn't part of the request.
+
+## Verification
+
+Playwright against the local dev stack (scratch ports, api `:4070` / web `:5250`), logged in as `owner@dev-studio.test`:
+- Grabbed a handle to Sidebar's own `<aside>` element right after login, then clicked through Dashboard -> Clients -> Team -> Calendar -> Dashboard via the real sidebar nav links (not `page.goto`, which would trivially "pass" by forcing a hard reload every time) -- confirmed `isConnected` stayed `true` after every single hop, i.e. the same DOM node survived all four navigations.
+- Zero console errors across the run.
+- Confirmed a hard reload on a nested app-shell route (`/team`) still resolves correctly (single `<aside>`, correct URL) -- the new nested-route structure didn't break direct/refreshed loads.
+- Screenshotted Clients and Team: header text is vertically centered in both header rows; Team's Staff table shows the frosted-glass `.card-surface` treatment matching Clients'.
+
+Both typechecks (`npx tsc --noEmit` api -- untouched this session, no backend changes; `npx tsc -b` web) and `npm run build` (web) clean.
+
+## Commit
+
+(pending)
+
+## Cleanup
+
+Scratch dev servers (api `:4070`, web `:5250`) killed by PID. Scratch Playwright install and the stack-based div-matching analysis script (used to disambiguate wrapper-div nesting across several large page files where visual inspection kept proving unreliable) deleted from the scratch directory after use.

@@ -1,6 +1,5 @@
 import { useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import Sidebar from '../components/Sidebar'
 import Modal from '../components/Modal'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatCents } from '../lib/money'
@@ -310,10 +309,7 @@ export default function ClientImport() {
     reviewBatch.rows.every((r) => !r.depositFlaggedAsOutlier || r.depositDecision !== null)
 
   return (
-    <div className="flex min-h-screen bg-bg text-fg">
-      <Sidebar />
-
-      <div className="min-w-0 flex-1 overflow-y-auto">
+    <>
         <div className="mx-auto max-w-7xl px-6 py-6 sm:px-10 sm:py-8">
           <Link to="/clients" className="text-sm text-fg-secondary hover:text-fg">
             ← Back to Clients
@@ -662,7 +658,6 @@ export default function ClientImport() {
             </div>
           )}
         </div>
-      </div>
 
       {showConfirmModal && (
         <Modal title="Confirm Import" onClose={() => setShowConfirmModal(false)}>
@@ -707,6 +702,6 @@ export default function ClientImport() {
           )}
         </Modal>
       )}
-    </div>
+    </>
   )
 }
