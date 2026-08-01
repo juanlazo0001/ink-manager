@@ -6200,3 +6200,31 @@ Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (
 ## Commit
 
 `7c7dab4`
+
+---
+
+# Inquiry/Project detail: "Auto-order sections" + clickable Pipeline steps
+
+Two requested additions to the Inquiry/Project detail page's widget layout system.
+
+## Auto-order sections
+
+The existing `INQUIRY_WIDGET_ORDER` array (`apps/web/src/pages/InquiryDetail.tsx`) already *is* the pipeline-following order every new user starts with -- `pipeline → assignment-section → estimate-section → deposit → session-plan → appointments → photos → ... → notes → activity-history` -- so "auto-order to match the pipeline" turned out to mean exactly "reset back to this page's own built-in default," not a new ordering scheme to design.
+
+`useWidgetLayout` (`apps/web/src/lib/useWidgetLayout.ts`) gained `resetToDefault()`, which persists an empty saved order. Its own `computeOrder` already falls through to "every present widget, in `defaultOrder`'s relative order" whenever nothing's saved -- clearing the save is enough, no explicit order needs computing or passing in. Collapse state is untouched (this is about order only). Wired into a new "Auto-order sections" entry at the top of the existing "..." menu, calling a second `useWidgetLayout('inquiry-detail', ...)` instance in the page component itself (same `pageKey` as `ReorderableWidgetList`'s own internal call -- react-query dedupes the shared cache entry, so both read/write the identical saved layout with no extra fetch).
+
+## Clickable Pipeline steps
+
+`InquiryPipeline.tsx` gained an optional `onStepClick?: (index: number) => void` prop, applied to both the vertical and horizontal render paths as `role="button"` + `tabIndex`/`onKeyDown` on the *existing* step element (not a new nested `<button>`) -- zero className/layout changes, so the two other callers (Conversations context panel, Kanban board) that don't pass it render byte-for-byte as before. InquiryDetail.tsx passes a step-index → widget-id lookup and reuses the exact `document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'center' })` call the page's own `?openFlow=` deep-link already used for the same purpose.
+
+Mapping is coarser than 5 steps in a couple of places, deliberately: this page has no separate widget for waiver status or session-complete (both show inline per-appointment inside the one "Appointments" widget), so Waiver Verified/Session Complete both point at `appointments` rather than a widget that doesn't exist -- same reasoning "Project Complete" points at `pipeline` itself, since that's genuinely where the "Mark Project Complete" button already lives.
+
+## Verification
+
+Live against the local dev stack: seeded a scrambled widget order via `PUT /widget-layouts/inquiry-detail`, confirmed the page rendered it scrambled, opened the "..." menu, clicked "Auto-order sections", and confirmed the rendered `<h2>` order matched `INQUIRY_WIDGET_ORDER` exactly (filtered to this inquiry's actually-present widgets). Separately, clicked the "Estimate sent" pipeline step and confirmed (via `boundingBox()`, not just visually) the Estimate widget scrolled into view -- screenshotted both.
+
+Both typechecks (`npx tsc --noEmit` api -- unaffected, no backend changes; `npx tsc -b` web) and `npm run build` (web) clean.
+
+## Commit
+
+`e52b951`
