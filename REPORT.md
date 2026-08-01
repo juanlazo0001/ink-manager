@@ -6619,3 +6619,38 @@ Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (
 ## Commit
 
 `e1f6692`
+
+# Flash gallery — Part 2: public gallery, lightweight intake, front-desk approval
+
+## Public gallery + submission flow
+
+New public, unauthenticated route `/flash/:studioSlug/:artistId` (`apps/web/src/pages/FlashPublicGallery.tsx`) -- studio-slug + artist-id scoped, the same two-segment shape as the existing `/inquiry/:studioSlug` public convention, backed by `GET /flash-pieces/public`. Repeatable pieces always show while `AVAILABLE`; a one-of-one piece disappears the instant it's requested (moves to `PENDING_APPROVAL`), simply by the query filtering on `AVAILABLE` -- no separate `isOneOfOne` branching needed on the read side.
+
+Submission is a fixed three-field form (placement description, one placement photo via `ImageUploadSection`, contact info) -- NOT the configurable intake form. Contact capture is two-step: phone first (`PhoneInput`), then `GET /flash-pieces/lookup-public` (new, public, built for this) -- found shows "Welcome back, {firstName}!" and skips the name/email fields entirely; not-found reveals them. This mirrors, but is friendlier than, `POST /inquiries`' own silent-dedup-at-submit-time behavior -- the customer sees the skip happen before filling anything else in.
+
+## Front-desk approval UI
+
+Added an "Flash Booking — Review" widget to `InquiryDetail.tsx`, shown only when `inquiry.status === 'FLASH_PENDING_APPROVAL'`: renders the submitted placement description/photo, then Approve (`inquiries.edit`) and Decline (`inquiries.markLost`) buttons calling the Part 2 backend's `POST /inquiries/:id/flash/approve` and `.../flash/decline` routes (already built, untested through a UI until now). Decline takes an optional free-text reason, defaulting server-side to "Flash request declined." if left blank.
+
+## A real bug caught during verification, not assumed away
+
+The new widget rendered nothing at all in the browser, despite the JSX being correct and the condition evaluating true. Cause: `InquiryDetail.tsx`'s widgets aren't rendered directly -- they pass through `ReorderableWidgetList`, which computes visible order by intersecting each widget's `id` against a fixed `INQUIRY_WIDGET_ORDER` allowlist (per-user saved layout falls back to this list for anything not yet saved). A widget id absent from that list is silently dropped even though it's a real, present child -- there's no error, it just never appears. Fixed by adding `'flash-approval'` to `INQUIRY_WIDGET_ORDER`, right after `'candidacy-review'`. Caught by an actual browser pass, not assumed correct from the code alone -- a static read of `InquiryDetail.tsx` alone would not have surfaced this, since the widget's own JSX and gating condition were both already right.
+
+## Verification
+
+Live, via Playwright against the real dev database (two real flash pieces created for Dev Artist One: one repeatable, one one-of-one):
+
+- **New customer**: opened the one-of-one piece's public page, entered an unrecognized phone number, got the full name/email form, filled placement + photo, submitted -- a real `Inquiry` (`FLASH_PENDING_APPROVAL`, `channel: FLASH_GALLERY`, `flashPieceId` set) was created, and the piece atomically moved to `PENDING_APPROVAL`.
+- **One-of-one race lock**: a second, independent browser session loaded the same gallery immediately after -- the one-of-one piece was already gone from the grid; the repeatable piece was still there.
+- **Returning customer**: same phone number, different (repeatable) piece -- lookup found the client, "Welcome back, Jamie!" shown, name/email fields never appeared, submission succeeded and reused the existing `Client` record rather than creating a duplicate.
+- **Front desk, decline**: logged in as OWNER, opened the one-of-one piece's pending inquiry, entered a decline reason, clicked Decline -- inquiry moved to `CLOSED_LOST` with the entered `lostReason`, and the one-of-one piece reopened to `AVAILABLE` (confirmed via direct API reads, not just the UI).
+- **Front desk, approve**: opened the repeatable piece's pending inquiry, clicked Approve -- inquiry moved to `FLASH_PAYMENT_PENDING`; `InquiryPipeline`'s flash-specific stepper correctly showed "Approved — payment pending" as the active step.
+- Test flash pieces retired afterward (no delete route exists, matching the rest of this model's lifecycle); the test inquiries themselves were left as real records, same as other dev-database verification artifacts from earlier parts.
+
+Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (web) clean.
+
+**Pre-existing, unrelated concurrent-session changes present during this part and left untouched**: `apps/api/src/routes/selfSchedule.ts` and `apps/web/src/pages/SelfSchedule.tsx` (the same widened self-scheduling search window noted in Part 1), plus `apps/web/src/index.css`'s uncommitted react-day-picker hover-contrast fix, `apps/public/branding/logo-*.png`, and `public/desktop/screenshots/...`.
+
+## Commit
+
+`a48e253`
