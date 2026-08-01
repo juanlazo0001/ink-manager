@@ -2538,7 +2538,25 @@ function ThreadView({
           // in the DOM, sm:static drops it out of the overlay positioning.
           // The slide-over itself grows wider (see onContextOpenChange) so
           // this column adds new space rather than squeezing the thread.
-          <div className="absolute inset-0 z-20 flex min-h-0 flex-col bg-bg sm:static sm:z-auto sm:order-last sm:w-72 sm:shrink-0 sm:border-l sm:border-border">
+          //
+          // Bug fix: this used to be bg-bg, which index.css deliberately
+          // makes ~80% opaque under editorial-gold (color-mix(...80%...) on
+          // .bg-bg, see that rule's own comment) so every page's top-level
+          // wrapper lets TopBar's blurred photo layer read through behind
+          // it -- correct for a full-page shell, wrong for a panel that
+          // floats ON TOP of real foreground content (e.g. the Dashboard
+          // behind it): the page bled through here too. bg-surface-raised
+          // has no such override anywhere -- same base utility this panel's
+          // own outer container already uses (see the motion.div above),
+          // plus the same conversations-panel-bg opaque swap for
+          // editorial-gold specifically (inert/no-op under every other
+          // preset, where bg-surface-raised was never translucent).
+          <div
+            className={[
+              'absolute inset-0 z-20 flex min-h-0 flex-col bg-surface-raised sm:static sm:z-auto sm:order-last sm:w-72 sm:shrink-0 sm:border-l sm:border-border',
+              isEditorial ? 'conversations-panel-bg' : '',
+            ].join(' ')}
+          >
             {!context && <p className="p-4 text-sm text-fg-secondary">Loading…</p>}
             {context && (
               <>
