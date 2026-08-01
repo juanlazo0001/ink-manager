@@ -267,6 +267,7 @@ model Studio {
   intakeFormFields        IntakeFormField[]
   intakeForms             IntakeForm[]
   services                Service[]
+  flashPieces             FlashPiece[]
 }
 
 // Self-serve provider connections -- a studio owner connects their OWN
@@ -494,6 +495,61 @@ model Artist {
   // own fields" convention as Client.matchedImportRows below.
   matchedImportRows  ImportRow[]
   artistServices     ArtistService[]
+  flashPieces        FlashPiece[]
+}
+
+enum FlashPieceStatus {
+  // Visible in the public gallery, requestable. A repeatable
+  // (isOneOfOne: false) piece stays here permanently -- being requested,
+  // even booked, by one client never removes it from the gallery for the
+  // next one. A one-of-one piece is only ever here until its first
+  // request comes in.
+  AVAILABLE
+  // One-of-one only: a request just came in and front desk hasn't
+  // reviewed it yet -- hidden from the gallery and not requestable by
+  // anyone else in the meantime (Part 2's reservation logic), so the same
+  // design can't be double-requested while under review.
+  PENDING_APPROVAL
+  // One-of-one only: approved, paid, and scheduled -- permanently done,
+  // per isOneOfOne's own "retired forever once booked" contract. Distinct
+  // from RETIRED below (a booking outcome vs. a manual staff action).
+  BOOKED
+  // Manually pulled from the gallery by staff/the artist -- e.g. the
+  // artist no longer wants to offer this design. Reachable from AVAILABLE
+  // regardless of isOneOfOne; never automatically reachable from a
+  // booking outcome (that's BOOKED, above).
+  RETIRED
+}
+
+// Pre-drawn, artist-uploaded art a client can browse and self-book
+// directly (skipping the estimate step entirely -- price/duration are
+// already fixed by the artist at upload time, not negotiated per client).
+model FlashPiece {
+  id          String @id @default(cuid())
+  imageUrl    String
+  title       String
+  description String?
+  priceCents  Int
+  // Set by the artist at upload -- feeds directly into the self-scheduling
+  // engine's duration target (getSuggestedTimes), same role
+  // timeEstimateHoursMin/Max's midpoint plays for a normal estimate.
+  estimatedDurationMinutes Int
+  // true: once booked, this exact piece is retired forever (status ->
+  // BOOKED, never re-offered). false: stays repeatedly bookable by
+  // different clients indefinitely -- a booking never changes its status.
+  isOneOfOne Boolean          @default(false)
+  status     FlashPieceStatus @default(AVAILABLE)
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  artistId String
+  artist   Artist @relation(fields: [artistId], references: [id])
+
+  @@index([studioId, artistId])
+  @@index([studioId, status])
 }
 
 model Client {

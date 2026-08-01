@@ -74,7 +74,12 @@ export type InvalidationEvent =
   // out/enable sending). Other channels (Stripe, Bird, Google Calendar)
   // aren't part of that shared read today, so this is deliberately scoped
   // to the two that are, not every integration mutation in the app.
-  | { type: "integration.changed"; studioId: string };
+  | { type: "integration.changed"; studioId: string }
+  // Flash gallery: any create/edit/retire/status-transition on a
+  // FlashPiece -- studio-wide, no single-piece detail view exists yet to
+  // target individually (the management page is a flat list, same
+  // "no single-item view" shape as team.changed/locations.changed above).
+  | { type: "flash.changed"; studioId: string };
 
 function keysFor(event: InvalidationEvent): unknown[][] {
   switch (event.type) {
@@ -129,6 +134,8 @@ function keysFor(event: InvalidationEvent): unknown[][] {
       return [["intake-forms"]];
     case "integration.changed":
       return [["sms-integration-status"]];
+    case "flash.changed":
+      return [["flash-pieces"]];
   }
 }
 

@@ -18,6 +18,7 @@ import ArtistCreate from './pages/ArtistCreate'
 import Settings from './pages/Settings'
 import Profile from './pages/Profile'
 import Team from './pages/Team'
+import FlashGallery from './pages/FlashGallery'
 import IntakeForm from './pages/IntakeForm'
 import Policies from './pages/Policies'
 import PublicPolicyPage from './pages/PublicPolicyPage'
@@ -71,6 +72,7 @@ const APP_SHELL_SEGMENTS = new Set([
   'tasks',
   'conversations',
   'gift-cards',
+  'flash',
 ])
 
 function getPageFadeKey(pathname: string): string {
@@ -209,6 +211,7 @@ function AppRoutes() {
           <Route path="/settings" element={<Settings />} />
           <Route path="/profile" element={<Profile />} />
           <Route path="/team" element={<Team />} />
+          <Route path="/flash" element={<FlashGallery />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/conversations/:id" element={<ConversationDeepLink />} />
         </Route>

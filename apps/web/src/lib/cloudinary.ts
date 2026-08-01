@@ -27,6 +27,10 @@ async function getNoteAttachmentUploadSignature(): Promise<UploadSignature> {
   return apiFetch<UploadSignature>('/uploads/note-attachment-signature')
 }
 
+async function getFlashPieceUploadSignature(): Promise<UploadSignature> {
+  return apiFetch<UploadSignature>('/uploads/flash-piece-signature')
+}
+
 async function uploadWithSignature(file: File, signature: UploadSignature): Promise<string> {
   const formData = new FormData()
   formData.append('file', file)
@@ -59,6 +63,10 @@ export async function uploadPortfolioImage(file: File): Promise<string> {
 
 export async function uploadAppointmentPhoto(file: File): Promise<string> {
   return uploadWithSignature(file, await getAppointmentPhotoUploadSignature())
+}
+
+export async function uploadFlashPieceImage(file: File): Promise<string> {
+  return uploadWithSignature(file, await getFlashPieceUploadSignature())
 }
 
 export interface NoteAttachment {

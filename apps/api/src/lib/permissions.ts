@@ -99,6 +99,16 @@ export const PERMISSION_KEYS = [
   // not silently pretended-implemented).
   "kanban.reorder",
   "bulkActions.use",
+
+  // Flash gallery: genuine self-scoped-or-staff-managed, same shape as
+  // artistSchedules.manage/preferredSchedule (an artist manages their OWN
+  // flash pieces, checked via an inline "-own" narrowing in the route
+  // itself; OWNER/FRONT_DESK manage any artist's). Not the same mechanism
+  // schedulingBufferMinutes/allowsClientSelfScheduling actually use --
+  // those two are OWNER-only via artists.manage, despite reading like a
+  // similar "per-artist setting" at a glance; artistSchedules.manage is
+  // the real precedent for genuine artist self-editing in this codebase.
+  "flashGallery.manage",
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_KEYS)[number];
@@ -178,6 +188,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<(typeof CONFIGURABLE_ROLES)[number
 
     "kanban.reorder",
     "bulkActions.use",
+    "flashGallery.manage",
   ]),
   [Role.ARTIST]: new Set<PermissionKey>([
     "artists.view",
@@ -230,6 +241,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<(typeof CONFIGURABLE_ROLES)[number
     // figures behind their own key and defaulting artists OFF is this
     // task's explicit, deliberate design, called out in REPORT.md as a
     // real behavior change on deploy, not a same-as-today default.
+
+    "flashGallery.manage",
   ]),
   [Role.CUSTOMER]: new Set<PermissionKey>(["artists.view"]),
 };

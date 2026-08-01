@@ -14,6 +14,7 @@ const INQUIRY_UPLOAD_FOLDER = "ink-manager/inquiries";
 const PORTFOLIO_UPLOAD_FOLDER = "ink-manager/portfolios";
 const APPOINTMENT_PHOTO_UPLOAD_FOLDER = "ink-manager/appointment-photos";
 const NOTE_ATTACHMENT_UPLOAD_FOLDER = "ink-manager/note-attachments";
+const FLASH_PIECE_UPLOAD_FOLDER = "ink-manager/flash-pieces";
 
 function signFolder(folder: string) {
   const timestamp = Math.round(Date.now() / 1000);
@@ -54,6 +55,15 @@ router.get("/appointment-photo-signature", requireAuth, requireRole(Role.OWNER, 
 // timestamp are ever signed params.
 router.get("/note-attachment-signature", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), (_req, res) => {
   res.json(signFolder(NOTE_ATTACHMENT_UPLOAD_FOLDER));
+});
+
+// Same flashGallery.manage gate as the flash-pieces routes themselves --
+// this only grants a signature scoped to this folder; POST/PATCH
+// /flash-pieces re-checks self-vs-staff ownership when the resulting URL
+// is actually saved, same "signature isn't the ownership check" split as
+// every other signature route above.
+router.get("/flash-piece-signature", requireAuth, requirePermission("flashGallery.manage"), (_req, res) => {
+  res.json(signFolder(FLASH_PIECE_UPLOAD_FOLDER));
 });
 
 export default router;

@@ -122,6 +122,12 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { key: 'bulkActions.use', label: 'Use bulk actions', description: 'Select multiple records and act on them at once.' },
     ],
   },
+  {
+    label: 'Flash Gallery',
+    keys: [
+      { key: 'flashGallery.manage', label: 'Manage flash pieces', description: 'Upload, edit, and retire flash pieces -- an artist can always manage their own regardless of this setting; this governs managing OTHER artists’ pieces too.' },
+    ],
+  },
 ]
 
 export const CONFIGURABLE_ROLES = ['FRONT_DESK', 'ARTIST', 'CUSTOMER'] as const

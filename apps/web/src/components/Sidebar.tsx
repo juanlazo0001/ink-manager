@@ -1,7 +1,7 @@
 import { useState, type ComponentType } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { AppointmentsIcon, ClientsIcon, DashboardIcon, DocumentIcon, MenuIcon, TeamIcon } from './icons'
+import { AppointmentsIcon, ClientsIcon, DashboardIcon, DocumentIcon, MenuIcon, PhotoIcon, TeamIcon } from './icons'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useViewAs } from '../context/useViewAs'
 import { useUserProfile } from '../context/useUserProfile'
@@ -43,6 +43,12 @@ const NAV_ITEMS: NavItem[] = [
   // Permissions customization, e.g. an OWNER granting ARTIST clients.view.
   { label: 'Clients', to: '/clients', icon: ClientsIcon, permission: 'clients.view', section: 'clients' },
   { label: 'Team', to: '/team', icon: TeamIcon, roles: ['OWNER'] },
+  // Permission-gated, not roles -- an ARTIST always manages their OWN
+  // pieces regardless of this key (flashGallery.manage's own "-own"
+  // scoping, see permissions.ts), and this key defaults true for both
+  // ARTIST and FRONT_DESK, so this link shows for every role by default,
+  // same visibility pattern as Clients above.
+  { label: 'Flash Gallery', to: '/flash', icon: PhotoIcon, permission: 'flashGallery.manage' },
 ]
 
 export default function Sidebar() {
