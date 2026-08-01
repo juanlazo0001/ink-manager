@@ -6501,3 +6501,45 @@ Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (
 ## Commit
 
 `e920d5a`
+
+---
+
+# Client self-scheduling: real date & time picker, replacing the 5-suggestion pill list
+
+User feedback: the client self-scheduling flow (merged earlier this session) only offered 5 suggested-time pills. Requested instead: a genuine date/time picker where only the artist's actually-available dates and times can be selected.
+
+## Backend: two new functions alongside (not replacing) `getSuggestedTimes`
+
+`getSuggestedTimes` (`lib/schedulingAssistant.ts`) stays untouched -- it's still the staff-facing "top 5 suggestions" service (deposit form, `AppointmentForm.tsx`) and this session's own earlier self-scheduling work read from it too. Refactored its internals into shared pieces (`resolveAvailabilityContext`, `dayWindow`, `computeDaySlots`) first, verified byte-for-byte behavioral equivalence by hand (both return branches produce identical output to before), then built two new functions on top of those same shared pieces:
+
+- **`getAvailableDates(artistId, durationMinutes)`** -- every date in the search window with at least one buffer-clean slot. Drives which dates the calendar grid allows picking at all.
+- **`getSlotsForDate(artistId, durationMinutes, dateKey)`** -- every buffer-clean time-of-day option for one specific already-confirmed-available date.
+
+Both are clean-only (no buffer-flagged "Close" fallback, unlike `getSuggestedTimes`) -- the brief asked for "what the artist has available," not "available, or close enough with a warning." A date with only flagged slots simply isn't offered at all.
+
+`apps/api/src/routes/selfSchedule.ts`: `GET /verify/:token` now returns `availableDates` instead of `candidates`; new `GET /slots/:token?date=YYYY-MM-DD` returns that date's options on demand (not all 21 days' worth of times up front -- wasted work and payload for the ~20 dates a client never clicks). `PATCH /respond/:token` is unchanged -- still independently re-validates via `findBufferConflict` regardless of what the picker offered.
+
+## A real bug caught during verification, not assumed away
+
+`getAvailableDates`' appointment-fetch window (copied from `getSuggestedTimes`' own existing `endTime > now` filter) silently drops an appointment that already ended by the time `now` was read, even when its buffer window still reaches forward past `now`. Caught live: a leftover test appointment ending at 19:30 (90-min buffer reaching 21:00) meant a 20:00 slot should've been flagged, and `getAvailableDates` should NOT have offered that day at all -- but it did, because by the time `now` was captured, that appointment's `endTime` had already slipped behind it and the query excluded it entirely. `getSlotsForDate`'s own (already-correct, padded-window) appointment query didn't have this gap, which is exactly how the inconsistency surfaced -- the two disagreed on the same date/artist/`now`.
+
+This is a **pre-existing** narrow-window bug in `getSuggestedTimes` too (same query pattern), not something introduced here -- not fixed there in this pass (out of scope, and multiple other callers depend on that function's exact current behavior). Fixed only in the new `getAvailableDates`, by padding `searchStart` a day behind `now` instead of starting exactly at it (same "pad, don't compute exact boundaries" reasoning `findBufferConflict`/`getSlotsForDate` already use). Flagging `getSuggestedTimes`' own version of this gap as a real, separate follow-up worth a look.
+
+## Frontend: `react-day-picker` calendar + per-date time buttons
+
+`SelfSchedule.tsx`: replaced the pill list with the app's existing calendar-grid component (`react-day-picker`, the same one `DatePickerField`/`DateAndTimeRangeFields` already use elsewhere) via its `disabled` prop -- every date not in `availableDates` is genuinely disabled (not just visually greyed, unlike `DateAndTimeRangeFields`' own advisory-only `unavailableDaysOfWeek` styling for staff), since this is an unauthenticated client-facing picker where a "greyed but technically clickable" date would be a real bug, not just a cosmetic one. Picking a date fetches that date's own slots on demand and renders them as time-of-day buttons; picking a time and submitting is otherwise unchanged from before (same `PATCH /respond/:token` call, same pending-`REQUESTED`-appointment outcome).
+
+## Verification
+
+Live, via Playwright + direct API calls against isolated dev servers and the real dev database:
+
+- Confirmed a date the API listed as available renders without the calendar's own `rdp-disabled` class, and a date NOT in `availableDates` (found by diffing all visible calendar cells against the API's list) does carry it.
+- Clicked a real available date in the browser, confirmed its time-of-day buttons render (13 options for that date), picked one, submitted -- confirmed server-side the resulting `Appointment` is `REQUESTED` (not `CONFIRMED`) on the exact date/time picked.
+- Buffer-conflict re-validation still works: a second client attempting to book the exact slot the first client just took gets `409`, and that date's own `GET /slots` response no longer offers it either.
+- One test-script dead end during this pass, unrelated to the product: the first verification attempt showed zero time buttons for a correctly-available date -- turned out to be the test script checking the button count before the async fetch had resolved (no wait for the loading state to clear), not a real bug. Confirmed by watching the actual rendered page text directly, which showed the slots present.
+
+Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (web) clean.
+
+## Commit
+
+`601d7f7`
