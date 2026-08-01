@@ -6543,3 +6543,37 @@ Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (
 ## Commit
 
 `601d7f7`
+
+---
+
+# Self-scheduling date picker — match Editorial Gold theme
+
+Branch check per the task's own instruction: `explore/client-self-scheduling` no longer exists (merged into `main` and deleted earlier this session -- see that entry's own "Merge decision"). This work landed directly on `main`.
+
+## What was actually responsible for the blue
+
+`react-day-picker` (the same calendar-grid library `DatePickerField.tsx`/`DateAndTimeRangeFields.tsx` already use elsewhere) -- not a native `<input type="date">`, not a custom component. `index.css` already has a theming override for it (`.rdp-root { --rdp-accent-color: var(--color-accent); ... }`, added back in UI-4), which correctly makes the calendar gold everywhere else in the app. `SelfSchedule.tsx` still imports `react-day-picker/style.css` directly (the library's own default stylesheet, `--rdp-accent-color: blue` among other light-mode defaults) -- on this specific page, that stylesheet ends up injected into the document *after* `index.css`'s own `<style>` tag. Both rules target the exact same `.rdp-root` selector at the exact same specificity, so the one injected later wins the cascade tie -- the library's blue, not the app's gold. Confirmed directly, not assumed: dumped every stylesheet rule matching `.rdp-root` via `document.styleSheets` and printed them in document order -- the app's gold rule was genuinely present, just first, with the library's blue rule appearing after it.
+
+This is the exact same bug *class* as the `ConversationsPanel` transparency fix earlier this session (`160d822`) -- a later-loaded, same-specificity rule silently winning the cascade -- just a different component and a different property.
+
+## Fix
+
+`SelfSchedule.tsx`: added a `style` prop directly on the `<DayPicker>` element, setting `--rdp-accent-color`/`--rdp-accent-background-color`/`--rdp-today-color` to `var(--color-accent)` (and its 20%-mix for the background). `DayPicker`'s `style` prop applies as an **inline style** on the rendered `.rdp-root` element -- inline styles always beat any stylesheet rule regardless of injection order, so this doesn't depend on import ordering staying lucky the way `index.css`'s own global override does on this page. Scoped to this one page/component, matching the task's own scope -- `index.css`'s existing override is left as-is, and it's worth noting (not fixed here) that the same injection-order risk could in principle affect any other page where `react-day-picker/style.css` happens to load after `index.css`, though the two other existing consumers (`DatePickerField.tsx`/`DateAndTimeRangeFields.tsx`, both only ever rendered on already-authenticated pages) weren't showing the bug when spot-checked.
+
+No changes to `index.css`'s own `.rdp-root` rule, month-navigation logic, date-selection logic, or the available-times fetch -- purely additive inline styling.
+
+## Verification
+
+Live, via Playwright at a real-phone viewport (390x844) against the isolated dev stack:
+
+- Confirmed `--rdp-accent-color` computes to `#c99a5b` (the app's real gold token) on `.rdp-root`, not the library's `blue` default.
+- Confirmed the month-navigation chevrons render in that same gold (`fill: rgb(201, 154, 91)`).
+- Confirmed a selected date's fill is gold (`background-color: rgb(201, 154, 91)`) -- one dead end here first: an initial check right after `.click()` showed a dark, non-gold background, which looked like a second bug. Traced it to Playwright's own mouse cursor remaining over the just-clicked button, triggering a genuine `:hover:not([disabled])` rule (higher specificity than `.rdp-selected`, unrelated to this fix) that briefly wins regardless of theme. Moving the mouse away confirmed the real (non-hover) selected-state fill is correctly gold -- not a real bug, a test-methodology artifact, run down rather than assumed.
+- Confirmed month navigation still functions (clicking next-month changed the caption from "August 2026" to "September 2026") and date selection still loads real time-of-day options for the picked date -- this was a visual-only change, verified not to have regressed the functional picker built in the previous session.
+- Confirmed the rest of the page (background, avatar, "Request this time" button styling, disclaimer text) renders unchanged -- screenshot taken for visual confirmation alongside the programmatic checks.
+
+Both typechecks (`npx tsc --noEmit` api -- untouched, no backend changes; `npx tsc -b` web) and `npm run build` (web) clean.
+
+## Commit
+
+`5e83a2d`
