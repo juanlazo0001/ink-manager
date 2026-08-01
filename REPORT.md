@@ -6340,7 +6340,7 @@ Main is unaffected either way until a deliberate merge decision:
 
 ## Merge decision
 
-Merged into `main` by explicit user instruction in a later session, without further changes to the code in this branch. See the merge commit hash in that session's own `git log` -- not filled in here since this entry predates the merge itself.
+Merged into `main` by explicit user instruction in a later session, without further changes to the code in this branch (`git merge --no-ff explore/client-self-scheduling`, merge commit `72a1cfc`). The two branches' schema additions (this branch's `Artist.allowsClientSelfScheduling`/`Inquiry.selfScheduleToken` and `main`'s own `StudioSettings.referralAllowRepeatRedemption`, added on `main` after this branch was cut) touched different models and auto-merged cleanly; the only real conflict was this file (two independently-appended entries), resolved by keeping both. This branch's own migration (`20260801131440_self_scheduling`) had to be re-applied to the dev database after the merge -- it had been deliberately rolled back from the shared dev database in the intervening referral-program session specifically because this branch wasn't merged yet at that time (see that entry's own pre-flight note).
 
 ---
 
@@ -6439,3 +6439,65 @@ Both typechecks (`npx tsc -b` web; `npx tsc --noEmit` api -- untouched, no backe
 ## Cleanup
 
 Scratch dev servers (api `:4090`, web `:5290`) killed by PID. Scratch Playwright install deleted from the scratch directory after use.
+
+---
+
+# Production build broken: DropdownPortal.tsx referenced but never committed
+
+Reported urgent: `npm run build` failing everywhere with `Cannot find module '../components/DropdownPortal'`, blocking every deploy.
+
+## Root cause
+
+The mobile-dropdowns fix above (`7c849d7`) was committed from a working tree shared with a concurrent, still-in-progress session -- `AppointmentDetail.tsx`'s own edit (importing `DropdownPortal`) got swept into an unrelated commit on `main` while `DropdownPortal.tsx` itself was still sitting locally untracked, not yet ready to commit from that other session's perspective. Net effect: `main`'s git history had a component IMPORTING a file that was never actually added to git -- invisible on the machine that authored it (the file exists locally either way), but fatal on any fresh checkout (a deploy, a teammate's clone, CI).
+
+Confirmed via `git status` (the file showed up as untracked, exactly as predicted) and by diffing `git show HEAD:...` for the three other files that also reference it (`ArtistSelect.tsx`, `ClientDetail.tsx`, `InquiryDetail.tsx`) -- none of those were actually committed yet, so only `AppointmentDetail.tsx`'s copy of the problem was live on `main`.
+
+## Fix
+
+`git add`ed and committed `apps/web/src/components/DropdownPortal.tsx` as-is -- it was a complete, correctly-integrated component (verified by reading it in full and its one live consumer's usage), not a WIP fragment. No logic changes.
+
+## Verification
+
+Cloned the repo fresh into an isolated directory (not a local `npm install`, which can mask exactly this class of gap) and ran `npm ci && npm run build` (web) and `npx tsc --noEmit` (api) from that clean clone -- both completed with zero errors. Grepped the whole repo for `DropdownPortal` and for any other untracked file (`git status --porcelain --untracked-files=all`) to confirm this was the only such gap -- it was.
+
+## Commit
+
+`cbb7cf4`
+
+---
+
+# Referral program: studio-level master on/off toggle
+
+User feedback after the prior referral-program session: studios should be able to decide whether to run a referral program at all, not just tune its reward amount and repeat-use policy. One schema addition (`StudioSettings.referralProgramEnabled`).
+
+## What it gates
+
+`referralProgramEnabled Boolean @default(true)` -- defaults **on**, since every studio already runs this today (referral codes are already generated for every client, "A friend referred them" is already a channel option); the flag exists so a studio that *doesn't* want it can turn it off, not to silently change behavior for everyone. Off:
+
+- `POST /inquiries` rejects `channel: REFERRAL` outright (`400`, "This studio's referral program is not currently active") -- defense in depth behind the frontend change below, in case a stale client bundle or a direct API call still sends it.
+- `lib/deposits.ts`'s reward-issuing logic short-circuits before even looking up a referrer -- no new reward is ever issued, including for a `referredByClientId` relationship that already existed before the studio turned this off. That's a deliberate judgment call: "the studio doesn't want this anymore" reads more naturally as "stop paying out" than "honor what's already in flight, just block new signups" -- flagging it as a call, not an obviously-only-correct answer.
+- Both public-facing forms (`IntakeForm.tsx`, `StaffInquiryForm.tsx`) drop "A friend referred them"/"A friend referred me" from the channel dropdown entirely, fetched fresh from `/studio-settings/public` (public form) and `/studio-settings` (staff form) -- so staff and clients never even see the option for a studio that's opted out, not just a silent rejection on submit.
+- The two client-facing "share your code" callouts added in the prior session (deposit-paid confirmation page, checkout-complete panel) both stay hidden -- `referralProgramEnabled` added to `GET /deposits/verify/:token` and `GET /appointments/:id`'s responses specifically to drive this.
+
+Referral code **generation** itself is left unconditional either way (`referrals.ts`, unchanged) -- it's free, and turning the program back on later means every client can immediately share the code they already have, nothing to backfill.
+
+## Where it lives
+
+Settings' "Defaults" tab, same "Edit Defaults" modal as the reward amount and repeat-use setting, gated by the same `settings.manageReferral` permission -- placed as the first field in that group, with the reward-amount and repeat-use fields only rendered (in both the edit modal and the read-only summary) while the master toggle is on, so an OWNER isn't shown settings that don't currently apply.
+
+## Verification
+
+Live, via direct API calls plus Playwright, against the real dev database:
+
+- Confirmed default state is `true` (both the staff and public settings endpoints).
+- Referral-channel inquiry creation succeeds while on.
+- Toggled off via the API -- referral-channel inquiry creation now rejected with `400`; public endpoint reflects `false`.
+- Toggled back on -- referral-channel inquiry creation succeeds again.
+- **Browser**: toggled the master checkbox off through the real Settings UI, confirmed the reward-amount/repeat-use fields disappear from the edit modal the moment it's unchecked (before even saving) and the read-only tile reads "Off" after saving; confirmed the New Inquiry form's channel dropdown genuinely drops "A friend referred them" while off (four options, not five); reset back to on afterward.
+- One dead end during this pass: an early combined Playwright script showed the channel option still present after toggling off, despite the network response confirming the setting was already `false` -- turned out to be the test script's own `select` locator matching an unrelated dropdown elsewhere on the page (not scoped to the modal), not a real product bug. Confirmed by an isolated, minimal repro against the same backend state, which correctly showed the option hidden. Flagging the false alarm here rather than silently omitting it, since it looked like a real regression before being run down.
+
+Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (web) clean.
+
+## Commit
+
+`e920d5a`
