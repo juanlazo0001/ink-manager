@@ -13,6 +13,7 @@ import clientImportRouter from "./routes/clientImport";
 import appointmentsRouter from "./routes/appointments";
 import inquiriesRouter from "./routes/inquiries";
 import estimatesRouter from "./routes/estimates";
+import selfScheduleRouter from "./routes/selfSchedule";
 import { publicRouter as depositsRouter, staffRouter as depositFormsRouter } from "./routes/deposits";
 import uploadsRouter from "./routes/uploads";
 import auditRouter from "./routes/audit";
@@ -92,6 +93,9 @@ app.use("/clients", clientImportRouter);
 app.use("/appointments", appointmentsRouter);
 app.use("/inquiries", inquiriesRouter);
 app.use("/estimates", estimatesRouter);
+// Public: client self-scheduling exploration, same unauthenticated
+// crypto-token pattern as /estimates above.
+app.use("/self-schedule", selfScheduleRouter);
 app.use("/deposits", depositsRouter);
 app.use("/deposit-forms", depositFormsRouter);
 app.use("/uploads", uploadsRouter);

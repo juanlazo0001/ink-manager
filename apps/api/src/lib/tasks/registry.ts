@@ -11,6 +11,7 @@ import { waiverToVerifySource } from "./waiverToVerify";
 import { newConversationSource } from "./newConversation";
 import { remindersNotSentSource } from "./remindersNotSent";
 import { appointmentNeedsCheckoutSource } from "./appointmentNeedsCheckout";
+import { selfScheduledPendingSource } from "./selfScheduledPending";
 import type { TaskSource } from "./types";
 
 export const TASK_SOURCE_REGISTRY: TaskSource[] = [
@@ -23,6 +24,7 @@ export const TASK_SOURCE_REGISTRY: TaskSource[] = [
   newConversationSource,
   remindersNotSentSource,
   appointmentNeedsCheckoutSource,
+  selfScheduledPendingSource,
 ];
 
 export type { SystemTask, TaskSource } from "./types";

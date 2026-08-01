@@ -470,6 +470,17 @@ model Artist {
   // artist.
   schedulingBufferMinutes Int?
 
+  // Client self-scheduling exploration: off by default, preserving today's
+  // staff-only booking flow for every existing artist. When true, an
+  // estimate PROCEED response for this artist issues a self-schedule token
+  // instead of the normal DEPOSIT_PENDING-only flow, letting the client
+  // pick from this artist's real suggested availability. Their pick still
+  // only creates a REQUESTED (pending) Appointment, never CONFIRMED --
+  // staff reviews and confirms it, same as any other booking. Per-artist,
+  // not a studio-wide switch, since some artists may not want clients
+  // seeing their calendar at all.
+  allowsClientSelfScheduling Boolean @default(false)
+
   userId String @unique
   user   User   @relation(fields: [userId], references: [id])
 
@@ -1159,6 +1170,17 @@ model Inquiry {
   // flagged/objected (staff follow-up needed -- nothing auto-cancels the
   // deposit/schedule).
   estimateRevisionApproved       Boolean?
+
+  // Client self-scheduling exploration: same crypto-random-token +
+  // expiry + verify/respond-route pattern as estimateToken/
+  // estimateRevisionToken above, issued alongside (never instead of)
+  // the normal PROCEED -> DEPOSIT_PENDING transition, only when the
+  // assigned artist has opted in (see Artist.allowsClientSelfScheduling)
+  // and this inquiry has a usable single-session time estimate. Cleared
+  // the moment the client either picks a time or the token expires --
+  // never left dangling once acted on.
+  selfScheduleToken          String?   @unique
+  selfScheduleTokenExpiresAt DateTime?
 
   // Soft, reversible hide -- same pattern as Client.archivedAt.
   archivedAt DateTime?
