@@ -5957,3 +5957,32 @@ Verified via `npx tsc -b` and `npm run build` (both web, clean) -- no functional
 ## Commit (follow-up)
 
 `2ca9b88`
+
+---
+
+# Estimate response: missing realtime invalidation — fixed
+
+Reported: after a client responds to an estimate (specifically noticed on a revised-estimate approval), `InquiryDetail.tsx`'s "Awaiting client approval..." banner stays stuck on the old state until a manual refresh, unlike the rest of the app's realtime updates.
+
+## Root cause
+
+`apps/api/src/routes/estimates.ts` -- the public, unauthenticated router the client's browser hits directly from the estimate link (no staff session, no socket registered under that connection) -- never called `emitInvalidation` anywhere in the file. Every other mutation route in the app follows the convention documented in `lib/realtime/registry.ts` (call `emitInvalidation` right after the mutation succeeds); this file was the one place that pattern was skipped entirely, across all three of its mutations:
+- `GET /verify/:token` -- sets `estimateOpenedAt` on first open.
+- `PATCH /respond/:token` -- the original estimate's PROCEED/BUDGET_TOO_HIGH/DECLINE decision.
+- `PATCH /revision/respond/:token` -- the revised-estimate APPROVE/FLAG decision (the one directly reported).
+
+Because none of these emit `inquiry.updated`, a staff member with `InquiryDetail.tsx` open never gets pushed the change -- the page's `['inquiry', id]` query only ever refetches on a manual reload, since `SocketContext.tsx`'s `refetchOnWindowFocus: false` is deliberate (the app leans entirely on server-pushed invalidation instead of polling).
+
+## Fix
+
+Added `emitInvalidation({ type: "inquiry.updated", studioId, inquiryId })` after each of the three mutations above, matching the exact call shape every other inquiry-mutating route already uses (`inquiries.ts`, `deposits.ts`, `waivers.ts`, etc.). `inquiry.updated`'s existing key set already covers both the Inquiries list (`["inquiries"]`) and the single-inquiry detail page (`["inquiry", inquiryId]`), so no registry changes were needed -- just the three missing call sites.
+
+## Verification
+
+Live, no code-reading-only claim: seeded a real revision on inquiry `LongDesc TestClient` (`POST /inquiries/:id/revise-estimate`), opened its `InquiryDetail.tsx` page in a browser (Playwright) and left it sitting on the "Awaiting client approval of a revised estimate" banner -- then, in a second, independent request (simulating the client's own browser, no shared session), called `PATCH /estimates/revision/respond/:token` with `{ decision: "APPROVE" }`. Without reloading or touching the open page at all, the banner flipped live from amber "AWAITING CLIENT APPROVAL OF A REVISED ESTIMATE" to green "CLIENT APPROVED THE REVISED ESTIMATE ON Jul 31, 2026, 8:30 PM" within ~2.5s (screenshots: before/after). The other two fixed call sites (`estimate_opened`, the original PROCEED/BUDGET_TOO_HIGH/DECLINE response) share the identical one-line fix and weren't separately live-reproduced, since they're the same code shape as the one that was.
+
+`npx tsc --noEmit` (api) clean.
+
+## Commit
+
+`54e038d`
