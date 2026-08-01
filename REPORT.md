@@ -6032,3 +6032,99 @@ Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (
 ## Commit
 
 `a1272c9`
+
+---
+
+# Settings — new "Defaults" tab, audit existing hardcoded processes for configurability
+
+Single session on `main`. Investigate-and-propose first (this section), then build only the low-risk items from the proposal (see "Part 2" below).
+
+## Part 1 — Proposal: audit of hardcoded business processes
+
+**Starting point, to avoid re-proposing what already exists**: this app already has a *lot* of studio-level configurability on `StudioSettings` -- deposit tiers, reminder message text and send times, gift card expiration, referral reward amount, cold-lead sweep window, timezone, business hours, waiver questions/clauses, several free-text policy fields. Read every one of these end to end before auditing further, specifically so this proposal doesn't re-suggest something that's already a setting.
+
+What follows is what's still genuinely hardcoded -- one fixed value or fixed text, identical for every studio, with no override.
+
+### Safe, additive -- proposed for Part 2 (implemented this session)
+
+**1. Scheduling buffer time** (`SCHEDULING_BUFFER_MS = 1.5 hours`, `apps/api/src/lib/schedulingConflict.ts`)
+A flat 1.5-hour buffer used everywhere an artist's double-booking risk is flagged: manual scheduling (`POST /inquiries/:id/schedule`), the general appointment-booking route, calendar drag-reschedule, the scheduling assistant's suggested times, and this session's own recent auto-book feature. "Flag, not block" by its own design -- a studio that tattoos in shorter sessions (or wants more breathing room) has no way to adjust this today.
+*Proposal*: `StudioSettings.schedulingBufferMinutes`, default 90 (= today's 1.5h, so every existing studio's behavior is unchanged until an OWNER edits it). One shared function (`findBufferConflict`) and one suggestion service (`getSuggestedTimes`) both already centralize this -- no logic to duplicate, just where the number comes from.
+*Risk*: **Low.** A single number, read in a handful of places, purely a warning threshold (never a hard block) -- widening or narrowing it can't corrupt data or silently double-book anyone.
+
+**2. Deposit processing fee** (`DEPOSIT_FEE_CENTS = $10`, `apps/api/src/lib/depositTiers.ts`)
+A flat fee added on top of every tier-based deposit -- the tiers themselves are already configurable (Package C1), but the fee stacked on top of them, explicitly, is not (see that file's own comment: "unchanged by configurable tiers"). Every studio pays the exact same $10 processing fee regardless of what they'd actually want to charge (or whether they want to pass a fee through at all).
+*Proposal*: `StudioSettings.depositFeeCents`, default 1000 (= today's $10).
+*Risk*: **Low.** One number, consumed in exactly one computation (`computeDepositTier`/`resolveDepositAmounts`), already proven safe to vary by the fact the tiers next to it already do.
+
+**3. Reminder cadence day-offsets** (`daysOut: 7` / `1` / `0`, hardcoded at each `sendClientReminders(...)` call site in `apps/api/src/lib/jobs/reminderTicker.ts`)
+The reminder cadence's *time of day* (`reminderSendTimes`) and *message wording* (`reminderTemplates`) are already fully studio-configurable -- but *which day* each of the three reminders fires (a week before, the night before, the morning of) is three literal numbers baked into the ticker's own call sites, identical for every studio.
+*Proposal*: `StudioSettings.reminderWeekBeforeDays` (default 7) and `reminderNightBeforeDays` (default 1). Deliberately **not** making "morning of" configurable -- changing it away from 0 stops meaning "morning of" at all, and the reminder's own template wording (and its dedicated `reminderMorningOfSentAt` dedup column) assume same-day. Renaming/generalizing that one is a bigger, differently-shaped change than the other two.
+*Risk*: **Low.** The exact same `sendClientReminders` function already runs today with a hardcoded number; making it configurable doesn't introduce a new code path, just a different source for the number. Worth noting for the record: two offsets *could* be configured to collide (e.g. both set to the same day), which would just mean a client gets two reminder texts the same day instead of one -- a minor UX duplication, not a data-integrity or safety issue, so not worth blocking on.
+
+### Safe in principle, but deferred -- more plumbing than this session's batch
+
+**4. Checkout-overdue threshold** (`hoursSinceEnd > 24`, `apps/web/src/lib/format.ts`'s `describeAppointmentStatus`)
+Purely a *display* threshold -- how many hours past an appointment's end time before its status pill flips from amber "Checkout Pending" to red "Checkout Overdue." Hardcoded at 24h, no studio override.
+*Why deferred, not built*: unlike items 1-3, this one has no already-fetched `StudioSettings` sitting in scope at any of its three call sites (`AppointmentDetail.tsx`, `Calendar.tsx`, `ClientDetail.tsx`) -- confirmed by checking: the frontend has no shared studio-settings context/hook today (`useStudio()` only carries name/logo/website), so wiring this in means either a new shared hook or three separate ad hoc fetches, not just "read one more field off data already in hand." Genuinely safe to expose (a pure display derivation, no data risk either way), just more implementation surface than the other three -- better scoped as its own small follow-up than folded into this batch under time pressure.
+*Risk*: **Low** (once built). Flagging the *effort*, not the *risk*, as the reason to defer.
+
+### Reviewed, found to be genuinely hardcoded, but too complex/risky for this session
+
+**5. Deposit agreement legal terms** (`TERMS`, 8 fixed clauses in `apps/api/src/routes/deposits.ts`)
+The single most "pigeon-holed to one studio's specific setup" thing found in this audit. Every client who pays a deposit, at every studio, must check off the exact same 8 English sentences verbatim:
+- "A deposit is required to set an appointment. Deposits are non-refundable and are applied to the final price of the tattoo."
+- "Artists reserve the right to reschedule the appointment if the client is more than 15 minutes late without notification."
+- "A no-call/no-show forfeits the deposit. A 48-hour notice is required to change a scheduled appointment."
+- "After a no-call/no-show, a new deposit is required to set up another appointment."
+- "Appointments may be rescheduled up to 3 times; the deposit is forfeited on the 3rd reschedule."
+- "Deposits expire one year after the date they were created."
+- "Client must bring a government-issued ID and the Deposit Voucher (issued after payment) on the day of the appointment."
+- "Client reconfirms they are at least 18 years of age."
+
+Confirmed via a full read of `appointments.ts`: **none of this is code-enforced beyond the checkbox itself** -- there's no automatic gift-card-forfeiture-on-NO_SHOW logic, no reschedule counter anywhere in the codebase. It's pure legal copy the client agrees to, not a hidden state machine -- which actually makes the *text* itself lower-risk to genericize than I initially assumed. What makes it risky is everything else:
+- It's a legal agreement a client is asked to affirmatively sign off on, not ordinary UI copy -- getting the editing UX wrong (e.g. letting a studio delete "client reconfirms age 18" without realizing what that removes) has real liability implications a config-UI PR shouldn't quietly decide alone.
+- The app *already* has a separate, already-configurable `reschedulePolicy` rich-text field (shown on a public `/reschedule-policy/:studioSlug` page) that has **zero relationship** to this hardcoded list -- a studio could already be editing a "reschedule policy" that says one thing while this checklist, which the client actually has to agree to before paying, says something else entirely. Fixing that overlap is a real product-design question (one field or two? does editing one need to touch the other?), not something to resolve as a side effect of a "make it configurable" PR.
+*Proposal, not built*: a dedicated future session, scoped around one specific design decision -- most likely turning `TERMS` into an ordered, studio-editable list (reusing the same WYSIWYG/array-editor pattern `CustomPolicy`/`waiverClauses` already use), *plus* explicitly deciding what happens to `reschedulePolicy` in the process, ideally with a legal/product sign-off on the default text before any studio can touch it.
+*Risk*: **High** (implementation risk is actually low; product/legal risk is real).
+
+### Reviewed at the task's explicit request -- no hardcoded-assumption finding
+
+**6. Estimate response options** (`PROCEED` / `BUDGET_TOO_HIGH` / `DECLINE`, `apps/api/src/routes/estimates.ts`)
+Each of the three is a structurally distinct code path -- a different `InquiryStatus` transition, different downstream UI, different follow-up behavior -- not a parameterizable default. Adding a 4th option (or removing one) would be a genuine new feature (new status, new UI branch, new task-source logic), not loosening an existing hardcoded value. No proposal here.
+
+**7. Waitlist behavior** (`WAITLISTED` status, `apps/api/src/routes/inquiries.ts`)
+It's a single status flag plus an optional staff note -- no automatic slot-reoffer, no notification-on-cancellation, no matching logic exists anywhere to genericize. If a studio wants smarter waitlist handling (auto-notify when a slot frees up, say), that's a new feature to scope on its own, not a hardcoded default this session's mandate covers.
+
+### Noted, not compelling enough to propose
+
+**8. Token TTLs** (deposit link 48h, estimate link 7 days, revision link 7 days, waiver link 24h, password reset 1h, invite link 7 days -- scattered across `routes/inquiries.ts`, `routes/deposits.ts`, `lib/waivers.ts`, `routes/auth.ts`, `routes/studios.ts`)
+These are internal security/session windows, not a business process in the sense the task's own examples point at (deposit tiers, reminder cadence, buffer rules, cancellation policy). Misconfiguring one has little upside and a real downside (a token TTL too short breaks a legitimate client mid-flow; too long is a minor security loosening) for a return that doesn't map to any actual studio request seen in this codebase's history. Noted for completeness, not proposed.
+
+## Part 2 — Build
+
+Implemented exactly the three "Low risk" items above (#1-3). Everything else stays as documented in Part 1: #4 deferred (more frontend plumbing, no safety concern), #5 flagged for a dedicated future session (legal/product risk, not implementation risk), #6-8 reviewed with no action needed.
+
+**Schema**: 5 new `StudioSettings` columns (`schedulingBufferMinutes`, `depositFeeCents`, `reminderWeekBeforeDays`, `reminderNightBeforeDays` for items #1-3, plus none extra), all with defaults exactly matching the prior hardcoded values -- no existing studio's behavior changes until an OWNER edits one. One migration (`20260801014804_settings_defaults_tab_buffer_fee_reminder_days`).
+
+**Backend wiring**: `findBufferConflict`/`formatBufferWarning` (`lib/schedulingConflict.ts`) now take an optional `bufferMs`, threaded through all 4 call sites (`POST /appointments`, `PATCH /appointments/:id`, `POST /inquiries/:id/schedule`, the auto-book step in `lib/deposits.ts`) and `getSuggestedTimes` (`lib/schedulingAssistant.ts`) -- every one of them already had `StudioSettings` fetched nearby for something else, so this was extending an existing `select`, not adding a new query anywhere. `computeDepositTier`/`resolveDepositAmounts` (`lib/depositTiers.ts`) take an optional `feeCents`, wired at its one real call site (`POST /inquiries/:id/deposit-form`). `reminderTicker.ts`'s week-before/night-before `sendClientReminders(...)` calls now read `reminderWeekBeforeDays`/`reminderNightBeforeDays` off the studio row `loadStudiosWithSettings()` already fetches in full; morning-of stays the literal `0`.
+
+**`PATCH /studio-settings`**: the 3 new fields validated and added to the existing `settings.manageDefaults` permission group (no new permission key needed) and the audit-diff field list, matching every other numeric default on this route.
+
+**Frontend**: new "Defaults" tab (same OWNER/FRONT_DESK visibility as Policies & Templates). Rather than adding a second, competing "defaults" concept next to the app's existing one, moved the existing Defaults summary card (+ its edit modal, unaffected since it was already rendered independent of `activeTab`), the "Reminder Templates & Send Times" card, and the "Deposit Tiers" card out of Policies & Templates into the new tab -- Policies & Templates now holds only actual policy text/templates (WYSIWYG fields, waiver questions/clauses, message templates, intake forms), which is what its own label already said it was. Added inputs for all 3 new fields into their natural existing homes: scheduling buffer + deposit fee into the Defaults card/modal, the two reminder day-offsets into the Send Times card (with "morning of" shown as a fixed, non-editable "same day" note explaining why).
+
+## Verification
+
+Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (web) clean.
+
+Live against the local dev stack (api `:4093`, web `:5292`):
+- Screenshotted the new Defaults tab: Defaults card (with the two new fields), Reminder Templates & Send Times (with the two new day fields and the "morning of" explanation), Deposit Tiers -- all present and correctly moved.
+- Screenshotted Policies & Templates afterward: confirmed the moved cards are gone, only Policies/Waiver Questions & Clauses/Intake Forms/Message Templates remain.
+- Edited scheduling buffer (90 → 45 min) and deposit fee ($10 → $5) through the actual UI modal, saved, confirmed the new values render immediately.
+- Confirmed the change is real, not just cosmetic, via the API: regenerated a deposit form and got back `feeAmount: 5` (not the old hardcoded 10); booked two appointments 60 minutes apart for the same artist and got `bufferWarning: null` (would have flagged under the old hardcoded 90-minute buffer); booked a third 20 minutes after that and got back `"Less than 0.75 hours..."` -- confirming both the new 45-minute threshold and that the warning text itself (not just the underlying number) now reflects the configured value instead of a hardcoded "1.5 hours".
+- Confirmed `reminderWeekBeforeDays`/`reminderNightBeforeDays` round-trip correctly through `PATCH /studio-settings` (5/2 saved and read back correctly).
+- Reset all values back to their defaults (90 min / $10 / 7 days / 1 day) afterward, since these are studio-wide settings shared across this dev database's other test data, unlike the additive per-record test data (deposit form, gift card, appointments) left in place per this session's established convention.
+
+## Commit
+
+`b55d1e5`
