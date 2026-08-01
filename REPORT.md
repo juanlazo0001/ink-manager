@@ -5986,3 +5986,49 @@ Live, no code-reading-only claim: seeded a real revision on inquiry `LongDesc Te
 ## Commit
 
 `54e038d`
+
+---
+
+# Auto-book appointment on deposit payment, with conflict fallback
+
+Single session on `main`. No schema changes -- every new signal (auto-booked, conflicted) is derived from existing columns, not a new one.
+
+## What the tentative-time mechanism looked like before this session
+
+The deposit page already let staff pick a tentative time (`DepositForm.proposedStartAt`/`proposedEndAt`, staff-picked from `getSuggestedTimes`, required on every fresh deposit form -- see `POST /inquiries/:id/deposit-form`) and showed it to the client as "tentatively scheduled for...". Its own schema comment was explicit about the gap: "purely informational... Deliberately has NO relation to Appointment... real scheduling still only happens via `POST /inquiries/:id/schedule` after the deposit is paid." Confirmed by reading every write site: nothing ever turned a paid deposit's tentative pick into a real `Appointment` on its own -- staff had to notice the payment and book it by hand, every time, for every session.
+
+## Root mechanism found and reused
+
+`apps/api/src/lib/deposits.ts`'s `issueGiftCardForPaidDeposit` is already the **one** place both payment paths (Stripe webhook, staff manual mark-paid) converge, by design (its own comment: "the ONE place this happens"). Auto-booking hooks in right there, once, rather than duplicating logic into both the webhook handler and the manual route.
+
+Also discovered mid-investigation: the newer multi-session booking route (`POST /appointments`, with an optional `plannedSessionId`) never touches `Inquiry.appointmentId`/`status` -- only the older, single-session `POST /inquiries/:id/schedule` does that. `deriveProjectStage`/`projectNeedsScheduling` (`apps/web/src/lib/kanban.ts`) already OR in the `Appointment.inquiryId` 1:many relation alongside that singular field, so a later session showing up correctly was never actually dependent on the singular field being touched -- only the very first appointment a project ever gets needs to fill it (for the client-facing deposit page, which only reads that one field). This let the auto-book logic use one unified code path for both planned (multi-session) and un-planned projects, rather than two.
+
+## Build
+
+`apps/api/src/lib/deposits.ts` -- after the gift card is issued (deposit genuinely paid), if the deposit form has a tentative time:
+- Re-runs `findBufferConflict` (the exact same buffer/conflict check `POST /appointments`, `POST /inquiries/:id/schedule`, and the scheduling assistant's suggested-times all already use) against the studio's current `assignedArtistId` for this project, fetched fresh (not the pre-payment snapshot).
+- **Free**: creates a real `Appointment` (CONFIRMED, TATTOO_SESSION), attaches the freshly-issued gift card, links `PlannedSession.appointmentId` if this deposit form belongs to one, and -- only if this is genuinely the project's first-ever appointment -- also sets the legacy singular `Inquiry.appointmentId`/`status: CONFIRMED`. Logs `auto_booked_from_deposit`; emits `appointment.changed` (the payment-confirmation routes already emit `inquiry.updated`).
+- **Conflicted**: does nothing to the schedule -- logs `auto_book_conflict` with the proposed times that didn't make it. Guarded against double-booking a session a staff member raced to book by hand in the same narrow window (`plannedSession.appointmentId` already set → skipped).
+- Independent per deposit form: each session's own payment re-checks and books (or flags) only its own tentative slot, regardless of what state any other session of the same project is in.
+
+**New system task** (`apps/api/src/lib/tasks/schedulingConflict.ts`, registered in `TASK_SOURCE_REGISTRY`): surfaces "Scheduling conflict: ..." in the existing task feed, derived the same pure-function-of-current-data way every other source in that registry already works -- a paid, proposed-time-bearing deposit form (or planned session) with no linked appointment. Distinct from the existing `READY_TO_SCHEDULE` source (an ordinary "nobody's booked this yet" project where no attempt was ever made).
+
+**Frontend** (`InquiryDetail.tsx`): the Session Plan widget's per-session appointment badge now shows a distinct red "Scheduling conflict" (was going to otherwise read identically to the routine gray "Not yet booked") plus an explanatory banner with the missed tentative time, right above the same existing "Book Appointment" button -- which already doubles as the resolution action, no new UI needed there. The un-planned path's own "Scheduling" section (nested in the Appointments widget) gets the equivalent banner, derived from the inquiry's latest deposit form. `AuditTrail.tsx` gets two new `ACTION_LABELS` entries so both outcomes read as plain English in Activity History instead of raw action slugs.
+
+## Judgment call: excluding pre-existing data from the conflict signal
+
+Caught live, not hypothesized: without a cutoff, the "conflict" derivation (paid + had a tentative time + no appointment) also matches a lot of **pre-existing dev-seed data** -- every already-paid deposit from before this feature existed that staff simply hadn't gotten around to booking by hand yet. Those are ordinary, unremarkable "needs scheduling" projects, not conflicts; surfacing them all as "Scheduling conflict" tasks on rollout would be actively misleading (confirmed by hitting `GET /tasks` against the real dev database and seeing ~10 false positives before the fix). Since a *real* conflict can only ever be produced by this feature's own code, both the task source and the frontend badges gate on `paidAt >= AUTO_BOOK_SHIPPED_AT` (a literal ship-date constant, kept in sync in both `apps/api/src/lib/tasks/schedulingConflict.ts` and `apps/web/src/pages/InquiryDetail.tsx` -- no schema change, no new column, just a code constant). Re-verified after adding it: the flood of false positives disappeared, the one genuine conflict from this session's own test data still showed correctly.
+
+## Verification -- happy path and conflict path both tested with real conflicting data
+
+Live against the local dev stack (api `:4093`, web `:5292`), driving the real routes end-to-end (sign → mark-paid), not a script that bypasses them:
+
+- **Un-planned happy path** (Bailey Testperson): paid a deposit with a genuinely free tentative time. Confirmed via `GET /inquiries/:id`: `status` → `CONFIRMED`, `appointmentId` set, the real appointment's `startTime`/`endTime` exactly match the tentative pick. Audit log shows `auto_booked_from_deposit`.
+- **Un-planned conflict path** (Emily Rodriguez): set a tentative time, then deliberately pre-booked a real conflicting `CONSULTATION` appointment for the same artist directly overlapping it (consultations block calendar time exactly like a tattoo session -- confirmed via `findBufferConflict`'s own existing behavior), then paid the deposit. Confirmed: `status` stayed `SCHEDULING`, `appointmentId` stayed `null`, no duplicate/second appointment was created. Audit log shows `auto_book_conflict` with the correct proposed times. `GET /tasks` surfaced a `SCHEDULING_CONFLICT` task. Screenshotted the live page: red "The tentative time (Aug 10, 2026, 11:00 AM) was no longer available when this deposit was paid, so it wasn't booked automatically. Pick a new time below." banner, with the existing manual scheduler (still fully functional) right below it.
+- **Multi-session, independently per session** (Desmond Okafor, a real 2-planned-session project) -- the task's own explicit ask: booked session 1's deposit with a free tentative time (auto-booked successfully) and, separately, pre-booked a conflicting consultation for session 2's tentative slot before paying session 2's deposit. Confirmed via `GET /inquiries/:id`: session 1's `plannedSession.appointmentId` is set (real appointment, matching times), session 2's stayed `null` -- one session's conflict had zero effect on the other's booking. Screenshotted the Session Plan widget: session 1 shows green "Scheduled", session 2 shows red "Scheduling conflict" with its own banner and "Book Appointment" resolution button, side by side. Activity History shows both `auto-booked the appointment on deposit payment` and `could not auto-book -- the tentative time was no longer available` entries in plain English.
+
+Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (web) clean.
+
+## Commit
+
+`a1272c9`
