@@ -4,6 +4,7 @@ import { InquiryStatus } from "../../generated/prisma/enums";
 import { logAudit } from "../lib/audit";
 import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 import { redactedSessionHours } from "../lib/plannedSessions";
+import { emitInvalidation } from "../lib/realtime/registry";
 
 const router = Router();
 
@@ -73,6 +74,7 @@ router.get("/verify/:token", async (req, res) => {
       entityId: inquiry!.id,
       action: "estimate_opened",
     });
+    emitInvalidation({ type: "inquiry.updated", studioId: inquiry!.studioId, inquiryId: inquiry!.id });
   }
 
   res.json({
@@ -142,6 +144,8 @@ router.patch("/respond/:token", async (req, res) => {
       data: { ...clearToken, status: InquiryStatus.CLOSED_LOST, closedReason: "Client declined the estimate." },
     });
   }
+
+  emitInvalidation({ type: "inquiry.updated", studioId: inquiry!.studioId, inquiryId: inquiry!.id });
 
   res.json({ success: true });
 });
@@ -261,6 +265,8 @@ router.patch("/revision/respond/:token", async (req, res) => {
     entityId: inquiry!.id,
     action: decision === "APPROVE" ? "estimate_revision_approved" : "estimate_revision_flagged",
   });
+
+  emitInvalidation({ type: "inquiry.updated", studioId: inquiry!.studioId, inquiryId: inquiry!.id });
 
   res.json({ success: true });
 });
