@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { apiFetch, ApiError } from '../lib/api'
 import { sanitizeHtml } from '../lib/sanitizeHtml'
 import { formatPriceEstimate } from '../lib/format'
@@ -49,6 +49,7 @@ function formatHourRange(min: number | null, max: number | null): string {
 
 export default function EstimateResponse() {
   const { token } = useParams<{ token: string }>()
+  const navigate = useNavigate()
   const [state, setState] = useState<PageState>('loading')
   const [invalidMessage, setInvalidMessage] = useState('This link is invalid or has expired.')
   const [verifyData, setVerifyData] = useState<VerifyResponse | null>(null)
@@ -96,13 +97,26 @@ export default function EstimateResponse() {
     setPendingDecision(decision)
 
     try {
-      await apiFetch(`/estimates/respond/${token}`, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          decision,
-          statedBudget: decision === 'BUDGET_TOO_HIGH' ? statedBudget.trim() : undefined,
-        }),
-      })
+      const result = await apiFetch<{ success: true; selfScheduleToken: string | null }>(
+        `/estimates/respond/${token}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({
+            decision,
+            statedBudget: decision === 'BUDGET_TOO_HIGH' ? statedBudget.trim() : undefined,
+          }),
+        },
+      )
+
+      // Client self-scheduling exploration: only ever present on a PROCEED
+      // response, and only when the assigned artist opted in (see
+      // estimates.ts's PROCEED branch) -- every other decision, and every
+      // artist who hasn't opted in, leaves this null and falls through to
+      // the static success message below exactly as before.
+      if (result.selfScheduleToken) {
+        navigate(`/schedule/${result.selfScheduleToken}`, { replace: true })
+        return
+      }
 
       setRespondedAs(decision)
       setState('success')

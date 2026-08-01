@@ -95,6 +95,9 @@ const ARTIST_LIST_SELECT = {
   // own StudioSettings.schedulingBufferMinutes default". Needed wherever
   // an artist's own bufferWarning might show, not just the detail page.
   schedulingBufferMinutes: true,
+  // Client self-scheduling exploration: same "needed in the list view too,
+  // not just the detail page" reasoning as schedulingBufferMinutes above.
+  allowsClientSelfScheduling: true,
   // Calendar's per-column artist-unavailable grey-shading (Phase: studio
   // hours + calendar shading) needs this in the list view too, not just
   // the detail page.
@@ -173,6 +176,7 @@ router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
     hourlyRateCents,
     flatRateCents,
     schedulingBufferMinutes,
+    allowsClientSelfScheduling,
   } = req.body ?? {};
 
   const artist = await prisma.artist.findUnique({
@@ -254,6 +258,10 @@ router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
     return res.status(400).json({ error: "schedulingBufferMinutes must be a non-negative number or null" });
   }
 
+  if (allowsClientSelfScheduling !== undefined && typeof allowsClientSelfScheduling !== "boolean") {
+    return res.status(400).json({ error: "allowsClientSelfScheduling must be a boolean" });
+  }
+
   const data = {
     ...(bio !== undefined ? { bio: bio?.trim() || null } : {}),
     ...(specialties !== undefined ? { specialties } : {}),
@@ -268,6 +276,7 @@ router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
     ...(hourlyRateCents !== undefined ? { hourlyRateCents } : {}),
     ...(flatRateCents !== undefined ? { flatRateCents } : {}),
     ...(schedulingBufferMinutes !== undefined ? { schedulingBufferMinutes } : {}),
+    ...(allowsClientSelfScheduling !== undefined ? { allowsClientSelfScheduling } : {}),
   };
 
   const nextServiceIds: string[] | undefined = serviceIds !== undefined ? [...new Set(serviceIds as string[])] : undefined;
@@ -302,6 +311,7 @@ router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
         "hourlyRateCents",
         "flatRateCents",
         "schedulingBufferMinutes",
+        "allowsClientSelfScheduling",
       ]),
       ...(nextServiceIds !== undefined ? { serviceIds: { from: previousServiceIds, to: nextServiceIds } } : {}),
     },

@@ -34,6 +34,9 @@ interface Artist {
   // studio's StudioSettings.schedulingBufferMinutes default -- null means
   // "use the studio's own default".
   schedulingBufferMinutes: number | null
+  // Client self-scheduling exploration: off by default -- see the schema
+  // field's own comment on Artist for what turning it on does.
+  allowsClientSelfScheduling: boolean
   artistServices: { serviceId: string }[]
   user: { id: string; email: string; name: string | null; phone: string | null; avatarUrl: string | null }
 }
@@ -89,6 +92,7 @@ export default function ArtistDetail() {
   const [hourlyRate, setHourlyRate] = useState('')
   const [flatRate, setFlatRate] = useState('')
   const [schedulingBufferMinutes, setSchedulingBufferMinutes] = useState('')
+  const [allowsClientSelfScheduling, setAllowsClientSelfScheduling] = useState(false)
   const [uploadingItems, setUploadingItems] = useState<UploadItem[]>([])
 
   const [saving, setSaving] = useState(false)
@@ -173,6 +177,7 @@ export default function ArtistDetail() {
     setSchedulingBufferMinutes(
       artist.schedulingBufferMinutes != null ? artist.schedulingBufferMinutes.toString() : '',
     )
+    setAllowsClientSelfScheduling(artist.allowsClientSelfScheduling)
     setScheduleDays(scheduleBlocksToDays(artist.preferredSchedule))
   }
 
@@ -278,6 +283,7 @@ export default function ArtistDetail() {
           hourlyRateCents: hourlyRate ? Math.round(Number(hourlyRate) * 100) : null,
           flatRateCents: flatRate ? Math.round(Number(flatRate) * 100) : null,
           schedulingBufferMinutes: schedulingBufferMinutes ? Math.round(Number(schedulingBufferMinutes)) : null,
+          allowsClientSelfScheduling,
         }),
       })
 
@@ -485,6 +491,33 @@ export default function ArtistDetail() {
                       : "Using the studio's default."}
                   </p>
                 )}
+
+                {/* Client self-scheduling exploration: lives in this same
+                    widget (rather than a new one) so it doesn't need its
+                    own entry in ARTIST_WIDGET_ORDER -- see that array's own
+                    comment on what happens to a widget id left out of it. */}
+                <div className="mt-4 border-t border-border pt-4">
+                  <p className="text-xs text-fg-muted">
+                    When a client accepts this artist's estimate, let them pick from the artist's real suggested
+                    availability instead of waiting for staff to schedule them. Their pick only creates a pending
+                    request -- staff still confirms it before it's a real appointment.
+                  </p>
+                  {canManage ? (
+                    <label className="mt-3 flex items-center gap-2 text-sm text-fg">
+                      <input
+                        type="checkbox"
+                        checked={allowsClientSelfScheduling}
+                        onChange={(e) => setAllowsClientSelfScheduling(e.target.checked)}
+                        className="h-4 w-4 rounded border-border text-accent focus:ring-accent"
+                      />
+                      Allow clients to self-schedule with this artist
+                    </label>
+                  ) : (
+                    <p className="mt-3 text-sm text-fg-secondary">
+                      Client self-scheduling is {artist.allowsClientSelfScheduling ? 'on' : 'off'} for this artist.
+                    </p>
+                  )}
+                </div>
               </Widget>
 
               <Widget key="social-links" id="social-links" title="Social Links">

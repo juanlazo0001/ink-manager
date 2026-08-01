@@ -1,4 +1,5 @@
 import { Router } from "express";
+import crypto from "node:crypto";
 import { prisma } from "../lib/prisma";
 import { InquiryStatus } from "../../generated/prisma/enums";
 import { logAudit } from "../lib/audit";
@@ -12,6 +13,10 @@ const router = Router();
 // every estimate — adjust here if the studio's actual policy text changes.
 const COLLABORATIVE_DESIGN_POLICY =
   "No design is drawn in advance — it is created together with the client on the day of the appointment.";
+
+// Client self-scheduling exploration: same 7-day convention as
+// ESTIMATE_TOKEN_TTL_DAYS/REVISION_TOKEN_TTL_DAYS in inquiries.ts.
+const SELF_SCHEDULE_TOKEN_TTL_DAYS = 7;
 
 function isExpiredOrInvalid(inquiry: { estimateTokenExpiresAt: Date | null } | null) {
   if (!inquiry) {
@@ -114,7 +119,10 @@ router.patch("/respond/:token", async (req, res) => {
     return res.status(400).json({ error: "statedBudget is required when the budget is too high" });
   }
 
-  const inquiry = await prisma.inquiry.findUnique({ where: { estimateToken: token } });
+  const inquiry = await prisma.inquiry.findUnique({
+    where: { estimateToken: token },
+    include: { assignedArtist: { select: { allowsClientSelfScheduling: true } } },
+  });
 
   const invalidity = isExpiredOrInvalid(inquiry);
   if (invalidity) {
@@ -124,14 +132,48 @@ router.patch("/respond/:token", async (req, res) => {
 
   const clearToken = { estimateToken: null, estimateTokenExpiresAt: null, estimateRespondedAt: new Date() };
 
+  let selfScheduleToken: string | null = null;
+
   if (decision === "PROCEED") {
+    // Client self-scheduling exploration: opt-in, per artist (see
+    // Artist.allowsClientSelfScheduling's own comment) -- an artist who
+    // hasn't opted in falls through to exactly today's behavior below,
+    // no change at all. Eligibility also requires a usable single-session
+    // time estimate: timeEstimateHoursMin/Max are explicitly nulled by
+    // POST /inquiries/:id/send-estimate whenever a multi-session plan
+    // was declared (see that route's `hasPlan` branch), so their
+    // presence here doubles as "this inquiry has one implicit session,"
+    // exactly the scope this exploration covers -- multi-session
+    // self-scheduling is a deliberate follow-up, not built here.
+    const selfScheduleEligible =
+      inquiry!.assignedArtist?.allowsClientSelfScheduling === true &&
+      inquiry!.timeEstimateHoursMin != null &&
+      inquiry!.timeEstimateHoursMax != null;
+
+    if (selfScheduleEligible) {
+      selfScheduleToken = crypto.randomBytes(32).toString("hex");
+    }
+
     // Deposit collection now happens before scheduling (Phase 3: an
     // appointment can't be created without an attached gift card, and a
     // gift card only exists once a deposit's been paid) -- so PROCEED
-    // lands here instead of directly in SCHEDULING.
+    // lands here instead of directly in SCHEDULING. The self-schedule
+    // token (when issued) rides alongside this unchanged transition --
+    // it doesn't replace or delay the deposit step, just lets the client
+    // also pick a pending time up front, independent of it (see
+    // REPORT.md for this flow's write-up).
     await prisma.inquiry.update({
       where: { id: inquiry!.id },
-      data: { ...clearToken, status: InquiryStatus.DEPOSIT_PENDING },
+      data: {
+        ...clearToken,
+        status: InquiryStatus.DEPOSIT_PENDING,
+        ...(selfScheduleToken
+          ? {
+              selfScheduleToken,
+              selfScheduleTokenExpiresAt: new Date(Date.now() + SELF_SCHEDULE_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000),
+            }
+          : {}),
+      },
     });
   } else if (decision === "BUDGET_TOO_HIGH") {
     await prisma.inquiry.update({
@@ -147,7 +189,7 @@ router.patch("/respond/:token", async (req, res) => {
 
   emitInvalidation({ type: "inquiry.updated", studioId: inquiry!.studioId, inquiryId: inquiry!.id });
 
-  res.json({ success: true });
+  res.json({ success: true, selfScheduleToken });
 });
 
 // Distinct token/fields (estimateRevisionToken/estimateRevisionTokenExpiresAt)

@@ -29,6 +29,7 @@ import MyInquiries from './pages/MyInquiries'
 import EstimateResponse from './pages/EstimateResponse'
 import EstimateRevisionResponse from './pages/EstimateRevisionResponse'
 import DepositResponse from './pages/DepositResponse'
+import SelfSchedule from './pages/SelfSchedule'
 import AppointmentPaymentComplete from './pages/AppointmentPaymentComplete'
 import GiftCardResponse from './pages/GiftCardResponse'
 import GiftCardDetail from './pages/GiftCardDetail'
@@ -167,6 +168,7 @@ function AppRoutes() {
         <Route path="/estimate/:token" element={<EstimateResponse />} />
         <Route path="/estimate-revision/:token" element={<EstimateRevisionResponse />} />
         <Route path="/deposit/:token" element={<DepositResponse />} />
+        <Route path="/schedule/:token" element={<SelfSchedule />} />
         <Route path="/appointments/pay-complete" element={<AppointmentPaymentComplete />} />
         <Route path="/gift-card/:code" element={<GiftCardResponse />} />
         <Route path="/waiver/:token" element={<WaiverSign />} />
