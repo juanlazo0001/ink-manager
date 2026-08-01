@@ -1,3 +1,4 @@
+import type { KeyboardEvent } from 'react'
 import { CheckIcon } from './icons'
 import { useThemePreset } from '../lib/useThemePreset'
 
@@ -50,6 +51,12 @@ interface InquiryPipelineProps {
   // fallback) as the Inquiry-side timeline, just fed a different list.
   steps?: readonly PipelineStepLike[]
   activeIndex?: number
+  // Optional: makes each step clickable, e.g. to scroll the page to that
+  // step's corresponding section. Only InquiryDetail.tsx's own two callers
+  // pass this today -- the Conversations context panel and the Kanban
+  // board have no per-step section to jump to, so they simply omit it and
+  // every step renders exactly as before (a plain span, not a button).
+  onStepClick?: (index: number) => void
 }
 
 export default function InquiryPipeline({
@@ -60,6 +67,7 @@ export default function InquiryPipeline({
   hideLabel = false,
   steps,
   activeIndex: activeIndexProp,
+  onStepClick,
 }: InquiryPipelineProps) {
   const { shape } = useThemePreset()
   const isEditorial = shape === 'editorial'
@@ -112,7 +120,23 @@ export default function InquiryPipeline({
           const current = index === activeIndex
           const isLast = index === effectiveSteps.length - 1
           return (
-            <li key={step.label} className="relative flex gap-3 pb-5 last:pb-0">
+            <li
+              key={step.label}
+              className={`relative flex gap-3 pb-5 last:pb-0 ${onStepClick ? 'cursor-pointer' : ''}`}
+              {...(onStepClick
+                ? {
+                    role: 'button',
+                    tabIndex: 0,
+                    onClick: () => onStepClick(index),
+                    onKeyDown: (e: KeyboardEvent<HTMLLIElement>) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        onStepClick(index)
+                      }
+                    },
+                  }
+                : {})}
+            >
               {!isLast && (
                 <span
                   className={`absolute left-[9px] top-5 h-full w-0.5 transition-colors duration-base ${done ? 'bg-accent' : 'bg-border'}`}
@@ -189,7 +213,23 @@ export default function InquiryPipeline({
             const current = index === activeIndex
             const isLast = index === effectiveSteps.length - 1
             return (
-              <div key={step.label} className="relative flex flex-col items-center">
+              <div
+                key={step.label}
+                className={`relative flex flex-col items-center ${onStepClick ? 'cursor-pointer' : ''}`}
+                {...(onStepClick
+                  ? {
+                      role: 'button',
+                      tabIndex: 0,
+                      onClick: () => onStepClick(index),
+                      onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          onStepClick(index)
+                        }
+                      },
+                    }
+                  : {})}
+              >
                 {!isLast && (
                   <div
                     className={`absolute left-1/2 top-3 h-0.5 w-full transition-colors duration-base ${done ? 'bg-accent' : 'bg-border'}`}

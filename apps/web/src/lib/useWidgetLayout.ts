@@ -73,10 +73,22 @@ export function useWidgetLayout(pageKey: string, defaultOrder: string[]) {
     persist(getOrder(presentIds), nextCollapsed)
   }
 
+  // "Auto-order" (Inquiry/Project detail's "..." menu): clears the saved
+  // order entirely rather than writing defaultOrder verbatim -- an empty
+  // savedOrder makes computeOrder fall straight through to its own
+  // "missingFromSaved" branch, which already does the right filtering (only
+  // currently-present widget ids, in defaultOrder's relative order) without
+  // this function needing to know presentIds itself. Collapse state is
+  // untouched -- this is about order only, not which sections are open.
+  function resetToDefault() {
+    persist([], collapsedWidgetIds)
+  }
+
   return {
     getOrder,
     isCollapsed: (id: string) => collapsedWidgetIds.includes(id),
     toggleCollapsed,
     reorder,
+    resetToDefault,
   }
 }

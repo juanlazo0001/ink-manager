@@ -52,6 +52,7 @@ import { useUserProfile } from '../context/useUserProfile'
 import { useViewAs } from '../context/useViewAs'
 import { useConversationPanel } from '../context/useConversationPanel'
 import { artistsQueryKey, inquiriesQueryKey, inquiryQueryKey } from '../lib/queryKeys'
+import { useWidgetLayout } from '../lib/useWidgetLayout'
 import ImageGrid, { type ImageDetail } from '../components/ImageGrid'
 import DetailField from '../components/DetailField'
 
@@ -254,6 +255,22 @@ function giftCardOptionLabel(card: GiftCardOption): string {
 // deriveProjectStage) -- so the pill and this stepper can never drift back
 // out of sync with each other the way the pill did before this refactor.
 const PROJECT_STEPS = PROJECT_STAGE_ORDER.map((stage) => ({ label: PROJECT_STAGE_LABELS[stage] }))
+
+// Clicking a Pipeline step scrolls to its corresponding widget -- same
+// document.getElementById(...).scrollIntoView pattern the ?openFlow= deep
+// link below already uses (Widget sets its `id` prop as the real HTML id).
+// Deliberately coarser than the 5 steps in a few places: this page has no
+// separate widget for "artist assigned" is fine (assignment-section), but
+// Waiver Verified/Session Complete have no widget of their own at all
+// (waiver/checkout status shows inline per-appointment) -- both point at
+// "appointments", the one widget that's always present for a converted
+// project regardless of stage, rather than a widget that doesn't exist.
+const INQUIRY_STEP_WIDGET_IDS = ['pipeline', 'assignment-section', 'estimate-section', 'deposit', 'appointments']
+const PROJECT_STEP_WIDGET_IDS = ['appointments', 'appointments', 'appointments', 'appointments', 'pipeline']
+
+function scrollToWidget(id: string) {
+  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}
 
 // The "current" session for Waiver Verified/Session Complete purposes --
 // the earliest not-yet-checked-out appointment. `sessions` is already
@@ -834,6 +851,11 @@ export default function InquiryDetail() {
   // same permission level as these two actions, so it's reused directly
   // rather than defining a second identical role check.
   const [showMoreMenu, setShowMoreMenu] = useState(false)
+  // Backs the "..." menu's "Auto-order sections" action -- same pageKey as
+  // ReorderableWidgetList's own useWidgetLayout call further down, so both
+  // read/write the exact same saved layout (react-query dedupes the
+  // underlying query, no duplicate fetch).
+  const widgetLayout = useWidgetLayout('inquiry-detail', INQUIRY_WIDGET_ORDER)
   const [copied, setCopied] = useState(false)
   // InquiryDetailsSection decides its own visibility asynchronously (it
   // fetches this studio's live intake fields before it knows whether
@@ -2246,6 +2268,16 @@ export default function InquiryDetail() {
                               aria-hidden="true"
                             />
                             <div className="absolute right-0 top-9 z-20 w-48 rounded-xl border border-border bg-surface-raised p-1 shadow-xl">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setShowMoreMenu(false)
+                                  widgetLayout.resetToDefault()
+                                }}
+                                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
+                              >
+                                Auto-order sections
+                              </button>
                               {canMarkLost && !isTerminal && (
                                 <button
                                   type="button"
@@ -2377,6 +2409,7 @@ export default function InquiryDetail() {
                       hideLabel
                       steps={PROJECT_STEPS}
                       activeIndex={deriveProjectStageIndex(inquiry)}
+                      onStepClick={(index) => scrollToWidget(PROJECT_STEP_WIDGET_IDS[index])}
                     />
                     {inquiry.sessions.length > 1 && (
                       <p className="mt-2 text-center text-xs text-fg-muted md:text-left">
@@ -2430,6 +2463,7 @@ export default function InquiryDetail() {
                     closedReason={inquiry.closedReason}
                     orientation="horizontal"
                     hideLabel
+                    onStepClick={(index) => scrollToWidget(INQUIRY_STEP_WIDGET_IDS[index])}
                   />
                 )}
               </Widget>
