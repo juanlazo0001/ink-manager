@@ -6170,3 +6170,33 @@ Live: screenshotted the single-session Estimate form (Sessions → Time min → 
 ## Commit
 
 `d669140`
+
+---
+
+# Per-artist scheduling buffer override
+
+Requested: the studio-wide scheduling buffer default (Settings → Defaults) should be overridable per artist from their own profile.
+
+## Build
+
+**Schema**: `Artist.schedulingBufferMinutes Int?` -- nullable, same "null means inherit the studio default" convention `hourlyRateCents`/`flatRateCents` already use on this same model. One migration.
+
+**Resolution** (`apps/api/src/lib/schedulingConflict.ts`): `resolveSchedulingBufferMs` now takes any number of candidates (rest params) and returns the first non-null one, converted to ms -- every call site passes `(artist.schedulingBufferMinutes, studioSettings.schedulingBufferMinutes)` in that order, so the artist's own override always wins when set. Rewired all 5 places a buffer gets resolved: `POST /appointments`, `PATCH /appointments/:id`, `POST /inquiries/:id/schedule`, the deposit-payment auto-book step (`lib/deposits.ts`), and the scheduling assistant's suggested times (`lib/schedulingAssistant.ts`) -- each now fetches (or, for the scheduling assistant, already had in scope) the relevant artist's own `schedulingBufferMinutes` alongside the studio's.
+
+**`PATCH /artists/:id`**: added the same validation/data/audit-diff treatment as `hourlyRateCents`, gated by the same `artists.manage` permission the whole route already requires -- no new permission key.
+
+**Frontend** (`apps/web/src/pages/ArtistDetail.tsx`): new "Scheduling Buffer" widget (a plain minutes input, blank = use the studio's default), saved through the same page-level "Save changes" as Bio/Rates/etc.
+
+## A real bug caught during verification
+
+The new widget didn't render at all on first pass -- `ReorderableWidgetList`'s `defaultOrder` array (`ARTIST_WIDGET_ORDER`) has to list every widget id a page can ever show; an id present in JSX but absent from both `defaultOrder` and any user's already-saved layout gets silently dropped by `useWidgetLayout`'s `computeOrder` (neither "saved and present" nor "in defaultOrder and present" matches it). Fixed by adding `'scheduling-buffer'` to `ARTIST_WIDGET_ORDER`. Confirmed by reading `ReorderableWidgetList`'s own doc comment, which says the opposite should be true ("never to restrict which widgets can appear") -- true in general, but only once an id is registered in `defaultOrder` at least once.
+
+## Verification
+
+Live against the local dev stack: confirmed the studio default was 90 minutes, then set "Dev Artist One" to a 20-minute override via `PATCH /artists/:id`. Booked two real appointments for that artist 30 minutes apart -- `bufferWarning: null` (would have flagged under the studio's 90-minute default, since 30 < 90, but correctly didn't under the artist's own 20-minute override, since 30 > 20). Booked a third only 10 minutes after that and got back `"Less than 0.33 hours..."` (≈ 20 minutes), confirming the artist's exact override value is what's actually being used, not just a disabled check. Screenshotted the new widget on the Artist Detail page showing "Buffer (minutes): 20". Reset the artist's override back to `null` afterward (shared dev data, same convention as the Defaults-tab session's studio-settings reset).
+
+Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (web) clean.
+
+## Commit
+
+`7c7dab4`
