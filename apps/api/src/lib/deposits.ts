@@ -79,13 +79,20 @@ export async function issueGiftCardForPaidDeposit(
 
   // Package O: a referral reward is a one-time event tied to THIS client's
   // first-ever paid deposit -- eligibility re-checked fresh inside the
-  // transaction below, right before writing.
+  // transaction below, right before writing. This is just a cheap early
+  // out (skip generating a referrer/reward code at all when obviously not
+  // eligible); it must apply the exact same referralAllowRepeatRedemption-
+  // aware rule the transaction's own gate does below, or a studio with
+  // repeat redemption ON would incorrectly short-circuit here every time
+  // after the first-ever reward, before the transaction's gate ever got a
+  // chance to allow a later project's own reward through.
   const referredClient = await prisma.client.findUnique({
     where: { id: clientId },
     select: { id: true, firstName: true, referredByClientId: true, referralRewardIssuedAt: true },
   });
+  const repeatRedemptionAllowed = studioSettings?.referralAllowRepeatRedemption ?? false;
   const referrerCandidate =
-    referredClient?.referredByClientId && !referredClient.referralRewardIssuedAt
+    referredClient?.referredByClientId && (repeatRedemptionAllowed || !referredClient.referralRewardIssuedAt)
       ? await prisma.client.findUnique({
           where: { id: referredClient.referredByClientId },
           select: { id: true, firstName: true, studioId: true },
@@ -143,11 +150,35 @@ export async function issueGiftCardForPaidDeposit(
         where: { id: clientId },
         select: { referralRewardIssuedAt: true },
       });
+
+      // Settings "repeat redemption" toggle (default false, matching this
+      // gate's original one-time-ever behavior exactly; repeatRedemptionAllowed
+      // computed once, above, from the same studioSettings this whole
+      // function already fetched -- also gates the referrerCandidate
+      // short-circuit above, which must agree with this gate or a repeat
+      // reward could never reach this code at all). Off: scope stays
+      // studio-wide across every one of this client's inquiries, and
+      // referralRewardIssuedAt is a permanent once-set guard -- a specific
+      // referred client's relationship with their referrer earns a reward
+      // at most once, ever. On: referralRewardIssuedAt no longer blocks by
+      // itself, and priorPaidCount narrows to THIS inquiry only -- so a
+      // later, separate project (a new Inquiry) from the same referred
+      // client can earn their referrer another reward on that project's
+      // own first paid deposit, without capping the referred client to a
+      // single reward-triggering deposit for their entire history. Either
+      // way, this only governs the SAME redeemer's own reuse -- how many
+      // different people can use one code is unrelated and always unlimited.
       const priorPaidCount = await tx.depositForm.count({
-        where: { inquiry: { clientId }, paidManually: true, NOT: { id: depositFormId } },
+        where: {
+          inquiry: { clientId, ...(repeatRedemptionAllowed ? { id: depositForm.inquiryId } : {}) },
+          paidManually: true,
+          NOT: { id: depositFormId },
+        },
       });
 
-      if (freshClient && !freshClient.referralRewardIssuedAt && priorPaidCount === 0) {
+      const blockedByPriorReward = !repeatRedemptionAllowed && Boolean(freshClient?.referralRewardIssuedAt);
+
+      if (freshClient && !blockedByPriorReward && priorPaidCount === 0) {
         const rewardGiftCard = await tx.giftCard.create({
           data: {
             studioId,

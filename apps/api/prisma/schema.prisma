@@ -537,12 +537,18 @@ model Client {
   referredBy         Client?  @relation("ClientReferral", fields: [referredByClientId], references: [id])
   referredClients    Client[] @relation("ClientReferral")
 
-  // The permanent guard against double-issuing this client's OWN referral
-  // reward to whoever referred them -- checked (must be null) immediately
-  // before issuing a reward at this client's first paid deposit, and set
-  // atomically alongside it in the same transaction. Once set, never
-  // cleared or reused, even if referralRewardGiftCardId's card is later
-  // voided/redeemed/expired -- the reward EVENT already happened.
+  // Tracks the MOST RECENT referral reward issued to whoever referred this
+  // client -- set atomically alongside the gift card, in the same
+  // transaction, at a qualifying paid deposit (see lib/deposits.ts).
+  // Whether "qualifying" means only this client's very first paid deposit
+  // ever, or the first paid deposit of each separate later project too,
+  // depends on the studio's own referralAllowRepeatRedemption setting
+  // (StudioSettings) -- false (default) makes this a permanent one-time
+  // guard, exactly as it always was before that setting existed; true
+  // lets a later project's own qualifying deposit overwrite both fields to
+  // point at ITS reward instead. Every occurrence (not just the latest) is
+  // permanently recoverable via AuditLog's referral_reward_issued action
+  // regardless of which mode is active.
   referralRewardIssuedAt   DateTime?
   referralRewardGiftCardId String?   @unique
   referralRewardGiftCard   GiftCard? @relation("ReferralRewardGiftCard", fields: [referralRewardGiftCardId], references: [id])
@@ -1395,6 +1401,16 @@ model StudioSettings {
   // referred pays their first deposit. $25 default matches the task's own
   // spec; OWNER-editable like every other numeric default on this model.
   referralRewardAmountCents     Int      @default(2500)
+  // Redeemer-per-code reuse: false (default, the standard referral-program
+  // norm) matches today's exact pre-existing behavior -- a specific
+  // referred client's own relationship with their referrer can earn a
+  // reward at most once, ever (see lib/deposits.ts's referralRewardIssuedAt
+  // gate). true relaxes that to "once per separate project" -- a later,
+  // unrelated visit (a new Inquiry) from that same referred client can earn
+  // their referrer another reward on THAT project's own first paid
+  // deposit. Governs reuse by the SAME redeemer only -- a code being used
+  // by many different people is already unlimited regardless of this flag.
+  referralAllowRepeatRedemption Boolean  @default(false)
   // Settings "Defaults" tab audit: three more values that were previously
   // hardcoded constants (see REPORT.md's Part 1 proposal), now studio-level
   // defaults on the same model, same pattern as every field above --

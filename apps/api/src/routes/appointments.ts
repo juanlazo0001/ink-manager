@@ -270,7 +270,11 @@ router.get("/", requirePermission("appointments.view"), async (req, res) => {
 
 const APPOINTMENT_DETAIL_INCLUDE = {
   artist: { select: { id: true, user: { select: { email: true, name: true, avatarUrl: true } } } },
-  client: { select: { id: true, firstName: true, lastName: true } },
+  // referralCode: surfaced in the checkout-complete panel so staff can
+  // remind the client to share their own code right after the session --
+  // reuses the code already generated at this client's own creation, not a
+  // new code system (see referrals.ts).
+  client: { select: { id: true, firstName: true, lastName: true, referralCode: true } },
   // The project this session belongs to -- via inquiryId/inquiryProject, not
   // the older 1:1 `inquiry` back-relation (Inquiry.appointmentId), which is
   // a different, usually-null link left over from the original scheduling flow.

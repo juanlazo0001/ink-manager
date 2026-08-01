@@ -132,6 +132,10 @@ publicRouter.get("/verify/:token", async (req, res) => {
 
   res.json({
     clientFirstName: inquiry.client.firstName,
+    // Surfaced on the "your deposit is paid" success state -- reuses the
+    // code already generated at this client's own creation, not a new code
+    // system (see referrals.ts).
+    clientReferralCode: inquiry.client.referralCode,
     studioName: inquiry.studio.name,
     studioSlug: inquiry.studio.slug,
     themePreset: inquiry.studio.settings?.themePreset ?? DEFAULT_THEME_PRESET,

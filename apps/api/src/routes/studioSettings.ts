@@ -256,7 +256,9 @@ function presentSettingsPermissionGroups(body: Record<string, unknown>): Set<Per
     groups.add("settings.manageDefaults");
   }
 
-  if (body.referralRewardAmountCents !== undefined) groups.add("settings.manageReferral");
+  if (body.referralRewardAmountCents !== undefined || body.referralAllowRepeatRedemption !== undefined) {
+    groups.add("settings.manageReferral");
+  }
   if (body.messageTemplates !== undefined) groups.add("conversations.manageTemplates");
   if (body.depositTiers !== undefined) groups.add("depositTiers.manage");
   if (body.themePreset !== undefined) groups.add("settings.manageTheme");
@@ -305,6 +307,13 @@ staffRouter.patch("/", async (req, res) => {
       return res.status(400).json({ error: "referralRewardAmountCents must be a non-negative number" });
     }
     data.referralRewardAmountCents = body.referralRewardAmountCents;
+  }
+
+  if (body.referralAllowRepeatRedemption !== undefined) {
+    if (typeof body.referralAllowRepeatRedemption !== "boolean") {
+      return res.status(400).json({ error: "referralAllowRepeatRedemption must be a boolean" });
+    }
+    data.referralAllowRepeatRedemption = body.referralAllowRepeatRedemption;
   }
 
   if (body.coldLeadDays !== undefined) {
@@ -452,6 +461,7 @@ staffRouter.patch("/", async (req, res) => {
       "depositFeeCents",
       "reminderWeekBeforeDays",
       "reminderNightBeforeDays",
+      "referralAllowRepeatRedemption",
     ] as (keyof typeof existing)[]),
   });
 

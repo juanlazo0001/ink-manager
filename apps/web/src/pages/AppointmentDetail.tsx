@@ -1,8 +1,9 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import AuditTrail from '../components/AuditTrail'
 import Modal from '../components/Modal'
+import DropdownPortal from '../components/DropdownPortal'
 import StatusPill from '../components/StatusPill'
 import DateAndTimeRangeFields, {
   combineDateAndTime,
@@ -74,7 +75,7 @@ interface Appointment {
   checkedOutAt: string | null
   checkedOutBy: { id: string; name: string | null; email: string } | null
   paidVia: 'STRIPE' | 'MANUAL' | null
-  client: { id: string; firstName: string; lastName: string }
+  client: { id: string; firstName: string; lastName: string; referralCode: string }
   artist: { id: string; user: { email: string; name: string | null; avatarUrl: string | null } }
   inquiry: {
     id: string
@@ -225,6 +226,7 @@ export default function AppointmentDetail() {
   const [statusError, setStatusError] = useState<string | null>(null)
 
   const [showMoreMenu, setShowMoreMenu] = useState(false)
+  const moreMenuButtonRef = useRef<HTMLButtonElement>(null)
 
   const [showRescheduleModal, setShowRescheduleModal] = useState(false)
   const [rescheduleRange, setRescheduleRange] = useState<DateAndTimeRangeValue>({
@@ -763,6 +765,7 @@ export default function AppointmentDetail() {
                     {(canReschedule || user?.role === 'OWNER') && (
                       <div className="relative flex self-stretch">
                         <button
+                          ref={moreMenuButtonRef}
                           type="button"
                           onClick={() => setShowMoreMenu((v) => !v)}
                           aria-label="More actions"
@@ -772,58 +775,55 @@ export default function AppointmentDetail() {
                         >
                           <MoreIcon className="h-4 w-4" />
                         </button>
-                        {showMoreMenu && (
-                          <>
-                            <div
-                              className="fixed inset-0 z-10"
-                              onClick={() => setShowMoreMenu(false)}
-                              aria-hidden="true"
-                            />
-                            <div className="absolute right-0 top-9 z-20 w-48 rounded-xl border border-border bg-surface-raised p-1 shadow-xl">
-                              {canReschedule && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setShowMoreMenu(false)
-                                    openRescheduleModal()
-                                  }}
-                                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
-                                >
-                                  Reschedule
-                                </button>
-                              )}
-                              {canReschedule && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setShowMoreMenu(false)
-                                    if (appointment.archivedAt) {
-                                      handleUnarchive()
-                                    } else {
-                                      handleArchive()
-                                    }
-                                  }}
-                                  disabled={archiving}
-                                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface disabled:opacity-60"
-                                >
-                                  {appointment.archivedAt ? 'Unarchive' : 'Archive'}
-                                </button>
-                              )}
-                              {user?.role === 'OWNER' && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setShowMoreMenu(false)
-                                    openDeleteModal()
-                                  }}
-                                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-danger hover:bg-danger/10"
-                                >
-                                  Delete Permanently
-                                </button>
-                              )}
-                            </div>
-                          </>
-                        )}
+                        <DropdownPortal
+                          open={showMoreMenu}
+                          onClose={() => setShowMoreMenu(false)}
+                          anchorRef={moreMenuButtonRef}
+                          align="end"
+                          className="w-48 rounded-xl border border-border bg-surface-raised p-1 shadow-xl"
+                        >
+                          {canReschedule && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowMoreMenu(false)
+                                openRescheduleModal()
+                              }}
+                              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
+                            >
+                              Reschedule
+                            </button>
+                          )}
+                          {canReschedule && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowMoreMenu(false)
+                                if (appointment.archivedAt) {
+                                  handleUnarchive()
+                                } else {
+                                  handleArchive()
+                                }
+                              }}
+                              disabled={archiving}
+                              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface disabled:opacity-60"
+                            >
+                              {appointment.archivedAt ? 'Unarchive' : 'Archive'}
+                            </button>
+                          )}
+                          {user?.role === 'OWNER' && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowMoreMenu(false)
+                                openDeleteModal()
+                              }}
+                              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-danger hover:bg-danger/10"
+                            >
+                              Delete Permanently
+                            </button>
+                          )}
+                        </DropdownPortal>
                       </div>
                     )}
                   </div>
@@ -1357,6 +1357,19 @@ export default function AppointmentDetail() {
                             {appointment.checkedOutBy?.name ?? appointment.checkedOutBy?.email ?? '—'}
                           </p>
                         </div>
+                      </div>
+
+                      <div className="rounded-lg border border-accent/30 bg-accent/5 p-3">
+                        <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
+                          Remind {appointment.client.firstName} to share their referral code
+                        </p>
+                        <p className="mt-1 font-mono text-base font-semibold tracking-wider text-fg">
+                          {appointment.client.referralCode}
+                        </p>
+                        <p className="mt-1 text-xs text-fg-secondary">
+                          A friend they refer gets this code entered at intake; {appointment.client.firstName} earns a
+                          referral reward once that friend's own deposit is paid.
+                        </p>
                       </div>
 
                       {checkoutAmountDue !== null && checkoutAmountDue > 0 && (

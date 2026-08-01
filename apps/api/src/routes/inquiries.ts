@@ -243,6 +243,46 @@ router.post("/", optionalAuth, async (req, res) => {
     if (!referrer) {
       return res.status(400).json({ error: "We couldn't find that referral code" });
     }
+
+    // Self-referral guard. An exact "same Client record" self-referral is
+    // already structurally impossible here -- referredByClientId (below)
+    // is only ever set while creating a brand-new Client row, whose id
+    // doesn't exist yet and so can never equal referrer.id. The real gap
+    // is the "second profile" case: the same person submits again with a
+    // DIFFERENT email (or phone) than their existing record, so the
+    // existingClient lookup below (email-then-phone, first match wins)
+    // fails to match them to their own record, they get a second Client
+    // row, and use their own code against it. Checked against BOTH the
+    // referrer's current Client.email/phone scalars (email case-
+    // insensitively, matching how it's stored -- unlike ClientEmail rows
+    // below, the raw scalar is never lowercased at creation) AND their
+    // full known-contacts history (ClientEmail/ClientPhone alias tables,
+    // see clientContacts.ts) -- a referrer created via inbound SMS
+    // (webhooks.ts) has no alias rows at all, so the scalar check alone
+    // covers them, while a referrer with a past secondary email/phone
+    // from a mass-import merge is only caught by the alias check.
+    const normalizedEmail = email ? email.toLowerCase() : null;
+    const normalizedPhone = phone ? normalizePhone(phone) : null;
+    if (normalizedEmail || normalizedPhone) {
+      const selfReferralMatch = await prisma.client.findFirst({
+        where: {
+          id: referrer.id,
+          OR: [
+            ...(normalizedEmail
+              ? [
+                  { email: { equals: normalizedEmail, mode: Prisma.QueryMode.insensitive } },
+                  { emails: { some: { email: normalizedEmail } } },
+                ]
+              : []),
+            ...(normalizedPhone ? [{ phone: normalizedPhone }, { phones: { some: { phone: normalizedPhone } } }] : []),
+          ],
+        },
+        select: { id: true },
+      });
+      if (selfReferralMatch) {
+        return res.status(400).json({ error: "You can't redeem your own referral code." });
+      }
+    }
   }
 
   // Package Q (revised): re-validated against THIS studio's own current
