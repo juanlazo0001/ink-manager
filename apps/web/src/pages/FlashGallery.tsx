@@ -310,11 +310,13 @@ export default function FlashGallery() {
 
         {filteredPieces !== null && filteredPieces.length > 0 && (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-            {filteredPieces.map((piece) => (
+            {filteredPieces.map((piece, pieceIndex) => (
               <div key={piece.id} className="overflow-hidden rounded-xl border border-border bg-surface">
                 <button
                   type="button"
-                  onClick={() => setLightbox({ images: [piece.imageUrl], index: 0 })}
+                  onClick={() =>
+                    setLightbox({ images: filteredPieces.map((p) => p.imageUrl), index: pieceIndex })
+                  }
                   aria-label={`View ${piece.title} full size`}
                   className="group relative aspect-square w-full overflow-hidden bg-surface-inset"
                 >

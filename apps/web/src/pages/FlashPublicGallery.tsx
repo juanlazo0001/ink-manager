@@ -9,7 +9,7 @@ import PublicPageFooter from '../components/PublicPageFooter'
 import PhoneInput from '../components/PhoneInput'
 import ImageUploadSection, { type ImageUploadState } from '../components/ImageUploadSection'
 import ImageLightbox from '../components/ImageLightbox'
-import { ViewIcon } from '../components/icons'
+import { ViewIcon, SparkleIcon } from '../components/icons'
 import { isValidPhoneDigits } from '../lib/format'
 
 type PageState = 'loading' | 'invalid' | 'gallery' | 'request' | 'success'
@@ -208,14 +208,16 @@ export default function FlashPublicGallery() {
               <p className="mt-6 text-sm text-fg-secondary">No flash pieces are available right now.</p>
             ) : (
               <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3">
-                {gallery.pieces.map((piece) => (
+                {gallery.pieces.map((piece, pieceIndex) => (
                   <div
                     key={piece.id}
                     className="overflow-hidden rounded-xl border border-border bg-surface-inset transition hover:border-accent"
                   >
                     <button
                       type="button"
-                      onClick={() => setLightbox({ images: [piece.imageUrl], index: 0 })}
+                      onClick={() =>
+                        setLightbox({ images: gallery.pieces.map((p) => p.imageUrl), index: pieceIndex })
+                      }
                       aria-label={`View ${piece.title} full size`}
                       className="group relative block aspect-square w-full overflow-hidden bg-surface"
                     >
@@ -223,6 +225,12 @@ export default function FlashPublicGallery() {
                       <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition group-hover:bg-black/30 group-hover:opacity-100">
                         <ViewIcon className="h-6 w-6 text-white" />
                       </div>
+                      {piece.isOneOfOne && (
+                        <span className="absolute left-2 top-2 flex items-center gap-1 rounded-full bg-fg/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-bg backdrop-blur-sm">
+                          <SparkleIcon className="h-3 w-3" />
+                          One of one
+                        </span>
+                      )}
                     </button>
                     <button type="button" onClick={() => selectPiece(piece)} className="block w-full p-2.5 text-left">
                       <p className="truncate text-sm font-medium text-fg">{piece.title}</p>
