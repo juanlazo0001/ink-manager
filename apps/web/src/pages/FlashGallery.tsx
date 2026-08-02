@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { apiFetch, ApiError } from '../lib/api'
 import { uploadFlashPieceImage } from '../lib/cloudinary'
 import { useEffectiveUser } from '../context/useEffectiveUser'
@@ -6,8 +6,10 @@ import { useUserProfile } from '../context/useUserProfile'
 import { useThemePreset } from '../lib/useThemePreset'
 import Eyebrow from '../components/Eyebrow'
 import ArtistSelect, { type ArtistOption } from '../components/ArtistSelect'
+import { artistLabel } from '../components/ArtistAvatar'
+import MultiSelectFilter from '../components/MultiSelectFilter'
 import Modal from '../components/Modal'
-import { PlusIcon } from '../components/icons'
+import { PlusIcon, SparkleIcon, CopyIcon } from '../components/icons'
 
 interface FlashPiece {
   id: string
@@ -35,6 +37,11 @@ const STATUS_TONE: Record<FlashPiece['status'], string> = {
   RETIRED: 'bg-fg-muted/10 text-fg-muted',
 }
 
+const STATUS_FILTER_OPTIONS = (Object.keys(STATUS_LABEL) as FlashPiece['status'][]).map((status) => ({
+  value: status,
+  label: STATUS_LABEL[status],
+}))
+
 const EMPTY_FORM = {
   artistId: '',
   imageUrl: '',
@@ -55,6 +62,11 @@ export default function FlashGallery() {
   const [pieces, setPieces] = useState<FlashPiece[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [artists, setArtists] = useState<ArtistOption[]>([])
+  const [studioSlug, setStudioSlug] = useState<string | null>(null)
+
+  const [statusFilter, setStatusFilter] = useState<string[]>([])
+  const [artistFilter, setArtistFilter] = useState<string[]>([])
+  const [copiedLink, setCopiedLink] = useState(false)
 
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -82,6 +94,48 @@ export default function FlashGallery() {
         // behalf; leave it empty on failure rather than blocking the page.
       })
   }, [canManageOthers])
+
+  // Only needed to build the shareable public gallery link below -- the
+  // studio object itself (useStudio()) doesn't carry the slug, so this is
+  // its own small fetch rather than widening that shared context for one
+  // page's need.
+  useEffect(() => {
+    if (!user) return
+    apiFetch<{ slug: string }>(`/studios/${user.studioId}`)
+      .then((studio) => setStudioSlug(studio.slug))
+      .catch(() => {
+        // Non-critical -- the copy-link affordance just stays hidden.
+      })
+  }, [user])
+
+  const filteredPieces = useMemo(() => {
+    if (!pieces) return null
+    return pieces.filter(
+      (piece) =>
+        (statusFilter.length === 0 || statusFilter.includes(piece.status)) &&
+        (!canManageOthers || artistFilter.length === 0 || artistFilter.includes(piece.artist.id)),
+    )
+  }, [pieces, statusFilter, artistFilter, canManageOthers])
+
+  // Whose public gallery link to offer copying, right now: an ARTIST always
+  // has exactly one (their own); staff only has an unambiguous one to offer
+  // once they've filtered down to a single artist -- the link is inherently
+  // per-artist (see FlashPublicGallery.tsx's own /flash/:studioSlug/:artistId
+  // route), so "every artist's pieces" has no single link to give.
+  const linkArtistId =
+    user?.role === 'ARTIST' ? (profile?.artist?.id ?? null) : artistFilter.length === 1 ? artistFilter[0] : null
+  const publicGalleryUrl = studioSlug && linkArtistId ? `${window.location.origin}/flash/${studioSlug}/${linkArtistId}` : null
+
+  async function handleCopyLink() {
+    if (!publicGalleryUrl) return
+    try {
+      await navigator.clipboard.writeText(publicGalleryUrl)
+      setCopiedLink(true)
+      setTimeout(() => setCopiedLink(false), 2000)
+    } catch {
+      // Non-critical -- the URL can still be shared by other means.
+    }
+  }
 
   function openCreate() {
     setEditingId(null)
@@ -178,7 +232,15 @@ export default function FlashGallery() {
       <div className="flex items-center justify-between gap-4">
         <div>
           {isEditorial && <Eyebrow>The Showcase</Eyebrow>}
-          <h1 className="text-xl font-semibold text-fg">Flash Gallery</h1>
+          <h1
+            className={
+              isEditorial
+                ? 'mt-1 font-display text-[clamp(28px,3.4vw,38px)] font-normal tracking-[-0.015em] text-fg'
+                : 'text-2xl font-bold text-fg sm:text-3xl'
+            }
+          >
+            Flash Gallery
+          </h1>
           <p className="mt-1 text-sm text-fg-secondary">
             Pre-drawn, self-bookable art. {canManageOthers ? 'Every artist’s pieces.' : 'Your own pieces.'}
           </p>
@@ -199,6 +261,39 @@ export default function FlashGallery() {
 
       {error && <p className="mt-4 text-sm text-danger">{error}</p>}
 
+      <div className="mt-6 flex flex-wrap items-center gap-3">
+        <MultiSelectFilter
+          placeholder="All statuses"
+          options={STATUS_FILTER_OPTIONS}
+          selected={statusFilter}
+          onChange={setStatusFilter}
+        />
+
+        {canManageOthers && (
+          <MultiSelectFilter
+            placeholder="All artists"
+            options={artists.map((artist) => ({ value: artist.id, label: artistLabel(artist) }))}
+            selected={artistFilter}
+            onChange={setArtistFilter}
+          />
+        )}
+
+        {publicGalleryUrl ? (
+          <button
+            type="button"
+            onClick={handleCopyLink}
+            className="ml-auto flex items-center gap-2 rounded-full border border-border px-3 py-2 text-xs font-medium text-fg transition hover:bg-surface"
+          >
+            <CopyIcon className="h-3.5 w-3.5" />
+            {copiedLink ? 'Link copied!' : 'Copy public gallery link'}
+          </button>
+        ) : (
+          canManageOthers && (
+            <p className="ml-auto text-xs text-fg-muted">Filter to one artist to get their public gallery link.</p>
+          )
+        )}
+      </div>
+
       <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-5">
         {pieces === null && !error && <p className="text-sm text-fg-secondary">Loading…</p>}
 
@@ -206,12 +301,22 @@ export default function FlashGallery() {
           <p className="text-sm text-fg-secondary">No flash pieces yet -- create the first one.</p>
         )}
 
-        {pieces !== null && pieces.length > 0 && (
+        {pieces !== null && pieces.length > 0 && filteredPieces !== null && filteredPieces.length === 0 && (
+          <p className="text-sm text-fg-secondary">No flash pieces match these filters.</p>
+        )}
+
+        {filteredPieces !== null && filteredPieces.length > 0 && (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-            {pieces.map((piece) => (
+            {filteredPieces.map((piece) => (
               <div key={piece.id} className="overflow-hidden rounded-xl border border-border bg-surface">
-                <div className="aspect-square w-full overflow-hidden bg-surface-inset">
+                <div className="relative aspect-square w-full overflow-hidden bg-surface-inset">
                   <img src={piece.imageUrl} alt={piece.title} className="h-full w-full object-cover" />
+                  {piece.isOneOfOne && (
+                    <span className="absolute left-2 top-2 flex items-center gap-1 rounded-full bg-fg/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-bg backdrop-blur-sm">
+                      <SparkleIcon className="h-3 w-3" />
+                      One of one
+                    </span>
+                  )}
                 </div>
                 <div className="p-3">
                   <div className="flex items-start justify-between gap-2">
@@ -222,7 +327,6 @@ export default function FlashGallery() {
                   </div>
                   <p className="mt-0.5 text-xs text-fg-secondary">
                     ${(piece.priceCents / 100).toFixed(2)} &middot; {piece.estimatedDurationMinutes} min
-                    {piece.isOneOfOne && <> &middot; One of one</>}
                   </p>
                   {canManageOthers && (
                     <p className="mt-0.5 truncate text-xs text-fg-muted">{piece.artist.user.name ?? piece.artist.user.email}</p>

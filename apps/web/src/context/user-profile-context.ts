@@ -10,7 +10,7 @@ export interface UserProfile {
   studioId: string
   createdAt: string
   pendingEmail: string | null
-  artist?: { bio: string | null; specialties: string[] }
+  artist?: { id: string; bio: string | null; specialties: string[] }
   permissions: string[]
 }
 

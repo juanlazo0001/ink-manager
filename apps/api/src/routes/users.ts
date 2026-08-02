@@ -36,7 +36,7 @@ export function serializeUser(user: {
   deactivatedAt: Date | null;
   deactivatedById: string | null;
   pendingEmail: string | null;
-  artist: { bio: string | null; specialties: string[] } | null;
+  artist: { id: string; bio: string | null; specialties: string[] } | null;
 }) {
   return {
     id: user.id,
@@ -70,7 +70,7 @@ export function serializeUser(user: {
 router.get("/me", async (req, res) => {
   const user = await prisma.user.findUnique({
     where: { id: req.user!.userId },
-    include: { artist: { select: { bio: true, specialties: true } } },
+    include: { artist: { select: { id: true, bio: true, specialties: true } } },
   });
 
   if (!user) {
@@ -157,7 +157,7 @@ router.patch("/me", async (req, res) => {
   const updated = await prisma.user.update({
     where: { id: req.user!.userId },
     data,
-    include: { artist: { select: { bio: true, specialties: true } } },
+    include: { artist: { select: { id: true, bio: true, specialties: true } } },
   });
 
   const { password: _password, ...safeUser } = updated;

@@ -471,7 +471,7 @@ router.delete("/:studioId/invites/:userId", requireAuth, requirePermission("team
   res.status(204).send();
 });
 
-const USER_INCLUDE_ARTIST = { artist: { select: { bio: true, specialties: true } } } as const;
+const USER_INCLUDE_ARTIST = { artist: { select: { id: true, bio: true, specialties: true } } } as const;
 type UserWithArtist = Prisma.UserGetPayload<{ include: typeof USER_INCLUDE_ARTIST }>;
 
 // Admin-only staff directory. Unlike studio/location info (readable by any
