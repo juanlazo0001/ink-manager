@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
+import { AnimatePresence } from 'framer-motion'
 import { apiFetch, ApiError } from '../lib/api'
 import { uploadImageToCloudinary } from '../lib/cloudinary'
 import { applyThemePreset } from '../lib/themePresets'
@@ -7,6 +8,8 @@ import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import PublicPageFooter from '../components/PublicPageFooter'
 import PhoneInput from '../components/PhoneInput'
 import ImageUploadSection, { type ImageUploadState } from '../components/ImageUploadSection'
+import ImageLightbox from '../components/ImageLightbox'
+import { ViewIcon } from '../components/icons'
 import { isValidPhoneDigits } from '../lib/format'
 
 type PageState = 'loading' | 'invalid' | 'gallery' | 'request' | 'success'
@@ -48,6 +51,7 @@ export default function FlashPublicGallery() {
   const [invalidMessage, setInvalidMessage] = useState('This gallery is unavailable.')
   const [gallery, setGallery] = useState<GalleryResponse | null>(null)
   const [selectedPiece, setSelectedPiece] = useState<FlashPieceSummary | null>(null)
+  const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null)
 
   // Contact lookup step -- phone is asked first (this app is SMS-centric),
   // then only the fields NOT already on file get shown, per the task's own
@@ -205,20 +209,26 @@ export default function FlashPublicGallery() {
             ) : (
               <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3">
                 {gallery.pieces.map((piece) => (
-                  <button
+                  <div
                     key={piece.id}
-                    type="button"
-                    onClick={() => selectPiece(piece)}
-                    className="overflow-hidden rounded-xl border border-border bg-surface-inset text-left transition hover:border-accent"
+                    className="overflow-hidden rounded-xl border border-border bg-surface-inset transition hover:border-accent"
                   >
-                    <div className="aspect-square w-full overflow-hidden bg-surface">
+                    <button
+                      type="button"
+                      onClick={() => setLightbox({ images: [piece.imageUrl], index: 0 })}
+                      aria-label={`View ${piece.title} full size`}
+                      className="group relative block aspect-square w-full overflow-hidden bg-surface"
+                    >
                       <img src={piece.imageUrl} alt={piece.title} className="h-full w-full object-cover" />
-                    </div>
-                    <div className="p-2.5">
+                      <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition group-hover:bg-black/30 group-hover:opacity-100">
+                        <ViewIcon className="h-6 w-6 text-white" />
+                      </div>
+                    </button>
+                    <button type="button" onClick={() => selectPiece(piece)} className="block w-full p-2.5 text-left">
                       <p className="truncate text-sm font-medium text-fg">{piece.title}</p>
                       <p className="mt-0.5 text-xs text-fg-secondary">${(piece.priceCents / 100).toFixed(2)}</p>
-                    </div>
-                  </button>
+                    </button>
+                  </div>
                 ))}
               </div>
             )}
@@ -312,6 +322,17 @@ export default function FlashPublicGallery() {
 
         <PublicPageFooter studioSlug={gallery?.studioSlug} />
       </div>
+
+      <AnimatePresence>
+        {lightbox && (
+          <ImageLightbox
+            images={lightbox.images}
+            index={lightbox.index}
+            onIndexChange={(index) => setLightbox({ images: lightbox.images, index })}
+            onClose={() => setLightbox(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   )
 }
