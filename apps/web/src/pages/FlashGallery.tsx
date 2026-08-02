@@ -191,7 +191,7 @@ export default function FlashGallery() {
           }
         >
           <PlusIcon className="h-4 w-4" />
-          New Flash Piece
+          New Flash
         </button>
       </div>
 
