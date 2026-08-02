@@ -4,6 +4,7 @@ import { uploadFlashPieceImage } from '../lib/cloudinary'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useUserProfile } from '../context/useUserProfile'
 import { useThemePreset } from '../lib/useThemePreset'
+import Eyebrow from '../components/Eyebrow'
 import ArtistSelect, { type ArtistOption } from '../components/ArtistSelect'
 import Modal from '../components/Modal'
 import { PlusIcon } from '../components/icons'
@@ -176,6 +177,7 @@ export default function FlashGallery() {
     <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 lg:px-8">
       <div className="flex items-center justify-between gap-4">
         <div>
+          {isEditorial && <Eyebrow>The Showcase</Eyebrow>}
           <h1 className="text-xl font-semibold text-fg">Flash Gallery</h1>
           <p className="mt-1 text-sm text-fg-secondary">
             Pre-drawn, self-bookable art. {canManageOthers ? 'Every artist’s pieces.' : 'Your own pieces.'}
@@ -197,57 +199,59 @@ export default function FlashGallery() {
 
       {error && <p className="mt-4 text-sm text-danger">{error}</p>}
 
-      {pieces === null && !error && <p className="mt-6 text-sm text-fg-secondary">Loading…</p>}
+      <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-5">
+        {pieces === null && !error && <p className="text-sm text-fg-secondary">Loading…</p>}
 
-      {pieces !== null && pieces.length === 0 && (
-        <p className="mt-6 text-sm text-fg-secondary">No flash pieces yet -- create the first one.</p>
-      )}
+        {pieces !== null && pieces.length === 0 && (
+          <p className="text-sm text-fg-secondary">No flash pieces yet -- create the first one.</p>
+        )}
 
-      {pieces !== null && pieces.length > 0 && (
-        <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-          {pieces.map((piece) => (
-            <div key={piece.id} className="overflow-hidden rounded-xl border border-border bg-surface">
-              <div className="aspect-square w-full overflow-hidden bg-surface-inset">
-                <img src={piece.imageUrl} alt={piece.title} className="h-full w-full object-cover" />
-              </div>
-              <div className="p-3">
-                <div className="flex items-start justify-between gap-2">
-                  <p className="min-w-0 truncate text-sm font-medium text-fg">{piece.title}</p>
-                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${STATUS_TONE[piece.status]}`}>
-                    {STATUS_LABEL[piece.status]}
-                  </span>
+        {pieces !== null && pieces.length > 0 && (
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+            {pieces.map((piece) => (
+              <div key={piece.id} className="overflow-hidden rounded-xl border border-border bg-surface">
+                <div className="aspect-square w-full overflow-hidden bg-surface-inset">
+                  <img src={piece.imageUrl} alt={piece.title} className="h-full w-full object-cover" />
                 </div>
-                <p className="mt-0.5 text-xs text-fg-secondary">
-                  ${(piece.priceCents / 100).toFixed(2)} &middot; {piece.estimatedDurationMinutes} min
-                  {piece.isOneOfOne && <> &middot; One of one</>}
-                </p>
-                {canManageOthers && (
-                  <p className="mt-0.5 truncate text-xs text-fg-muted">{piece.artist.user.name ?? piece.artist.user.email}</p>
-                )}
-                <div className="mt-2 flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => openEdit(piece)}
-                    className="flex-1 rounded-full border border-border px-2 py-1 text-xs font-medium text-fg transition hover:bg-surface-inset"
-                  >
-                    Edit
-                  </button>
-                  {piece.status === 'AVAILABLE' && (
+                <div className="p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="min-w-0 truncate text-sm font-medium text-fg">{piece.title}</p>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${STATUS_TONE[piece.status]}`}>
+                      {STATUS_LABEL[piece.status]}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 text-xs text-fg-secondary">
+                    ${(piece.priceCents / 100).toFixed(2)} &middot; {piece.estimatedDurationMinutes} min
+                    {piece.isOneOfOne && <> &middot; One of one</>}
+                  </p>
+                  {canManageOthers && (
+                    <p className="mt-0.5 truncate text-xs text-fg-muted">{piece.artist.user.name ?? piece.artist.user.email}</p>
+                  )}
+                  <div className="mt-2 flex gap-2">
                     <button
                       type="button"
-                      onClick={() => handleRetire(piece.id)}
-                      disabled={retiringId === piece.id}
-                      className="flex-1 rounded-full border border-border px-2 py-1 text-xs font-medium text-fg-secondary transition hover:bg-surface-inset disabled:opacity-60"
+                      onClick={() => openEdit(piece)}
+                      className="flex-1 rounded-full border border-border px-2 py-1 text-xs font-medium text-fg transition hover:bg-surface-inset"
                     >
-                      {retiringId === piece.id ? 'Retiring…' : 'Retire'}
+                      Edit
                     </button>
-                  )}
+                    {piece.status === 'AVAILABLE' && (
+                      <button
+                        type="button"
+                        onClick={() => handleRetire(piece.id)}
+                        disabled={retiringId === piece.id}
+                        className="flex-1 rounded-full border border-border px-2 py-1 text-xs font-medium text-fg-secondary transition hover:bg-surface-inset disabled:opacity-60"
+                      >
+                        {retiringId === piece.id ? 'Retiring…' : 'Retire'}
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
-        </div>
-      )}
+            ))}
+          </div>
+        )}
+      </div>
 
       {showForm && (
         <Modal title={editingId ? 'Edit Flash Piece' : 'New Flash Piece'} onClose={() => setShowForm(false)}>
