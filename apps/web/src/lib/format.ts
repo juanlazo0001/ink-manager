@@ -96,6 +96,18 @@ export function formatDuration(fromIso: string, toIso: string): string {
   return `${mins}m`
 }
 
+// Flash gallery duration, shown/entered in hours everywhere (FlashGallery.tsx,
+// FlashPublicGallery.tsx) even though FlashPiece.estimatedDurationMinutes is
+// still stored in minutes -- that's what the self-scheduling duration math
+// elsewhere in the app (getSuggestedTimes, selfSchedule.ts's durationMinutesFor)
+// actually consumes, so the underlying unit is unchanged, only the unit
+// staff sees/enters. Trims a whole-number hour to "2 hrs" rather than "2.00 hrs".
+export function formatDurationHours(minutes: number): string {
+  const hours = minutes / 60
+  const label = Number.isInteger(hours) ? String(hours) : String(Math.round(hours * 100) / 100)
+  return `${label} hr${hours === 1 ? '' : 's'}`
+}
+
 // Short relative time for conversation list rows, e.g. "3m", "5h", "2d".
 export function formatRelativeTime(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime()

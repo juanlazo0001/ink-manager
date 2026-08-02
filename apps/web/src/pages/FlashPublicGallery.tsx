@@ -10,7 +10,7 @@ import PhoneInput from '../components/PhoneInput'
 import ImageUploadSection, { type ImageUploadState } from '../components/ImageUploadSection'
 import ImageLightbox from '../components/ImageLightbox'
 import { ViewIcon, SparkleIcon } from '../components/icons'
-import { isValidPhoneDigits } from '../lib/format'
+import { isValidPhoneDigits, formatDurationHours } from '../lib/format'
 
 type PageState = 'loading' | 'invalid' | 'gallery' | 'request' | 'success'
 
@@ -250,7 +250,7 @@ export default function FlashPublicGallery() {
             </button>
             <h1 className="mt-2 text-xl font-semibold text-fg">Request "{selectedPiece.title}"</h1>
             <p className="mt-1 text-sm text-fg-secondary">
-              ${(selectedPiece.priceCents / 100).toFixed(2)} &middot; ~{selectedPiece.estimatedDurationMinutes} minutes
+              ${(selectedPiece.priceCents / 100).toFixed(2)} &middot; ~{formatDurationHours(selectedPiece.estimatedDurationMinutes)}
               {selectedPiece.isOneOfOne && ' · One of one -- first request wins'}
             </p>
 

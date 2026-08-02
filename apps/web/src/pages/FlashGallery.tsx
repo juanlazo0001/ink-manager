@@ -12,6 +12,7 @@ import MultiSelectFilter from '../components/MultiSelectFilter'
 import Modal from '../components/Modal'
 import ImageLightbox from '../components/ImageLightbox'
 import { PlusIcon, SparkleIcon, CopyIcon, ViewIcon } from '../components/icons'
+import { formatDurationHours } from '../lib/format'
 
 interface FlashPiece {
   id: string
@@ -50,7 +51,7 @@ const EMPTY_FORM = {
   title: '',
   description: '',
   priceDollars: '',
-  estimatedDurationMinutes: '',
+  estimatedDurationHours: '',
   isOneOfOne: false,
 }
 
@@ -156,7 +157,7 @@ export default function FlashGallery() {
       title: piece.title,
       description: piece.description ?? '',
       priceDollars: (piece.priceCents / 100).toString(),
-      estimatedDurationMinutes: piece.estimatedDurationMinutes.toString(),
+      estimatedDurationHours: (Math.round((piece.estimatedDurationMinutes / 60) * 100) / 100).toString(),
       isOneOfOne: piece.isOneOfOne,
     })
     setUploadError(null)
@@ -182,7 +183,7 @@ export default function FlashGallery() {
     e.preventDefault()
     setSaveError(null)
 
-    if (!form.imageUrl || !form.title || !form.priceDollars || !form.estimatedDurationMinutes) {
+    if (!form.imageUrl || !form.title || !form.priceDollars || !form.estimatedDurationHours) {
       setSaveError('Please fill out all required fields.')
       return
     }
@@ -199,7 +200,7 @@ export default function FlashGallery() {
         title: form.title,
         description: form.description || null,
         priceCents: Math.round(Number(form.priceDollars) * 100),
-        estimatedDurationMinutes: Math.round(Number(form.estimatedDurationMinutes)),
+        estimatedDurationMinutes: Math.round(Number(form.estimatedDurationHours) * 60),
         isOneOfOne: form.isOneOfOne,
       }
 
@@ -339,7 +340,7 @@ export default function FlashGallery() {
                     </span>
                   </div>
                   <p className="mt-0.5 text-xs text-fg-secondary">
-                    ${(piece.priceCents / 100).toFixed(2)} &middot; {piece.estimatedDurationMinutes} min
+                    ${(piece.priceCents / 100).toFixed(2)} &middot; {formatDurationHours(piece.estimatedDurationMinutes)}
                   </p>
                   {canManageOthers && (
                     <p className="mt-0.5 truncate text-xs text-fg-muted">{piece.artist.user.name ?? piece.artist.user.email}</p>
@@ -433,12 +434,13 @@ export default function FlashGallery() {
                 />
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium text-fg-secondary">Duration (min) *</label>
+                <label className="mb-1 block text-sm font-medium text-fg-secondary">Duration (hours) *</label>
                 <input
                   type="number"
-                  min="1"
-                  value={form.estimatedDurationMinutes}
-                  onChange={(e) => setForm({ ...form, estimatedDurationMinutes: e.target.value })}
+                  min="0.25"
+                  step="0.25"
+                  value={form.estimatedDurationHours}
+                  onChange={(e) => setForm({ ...form, estimatedDurationHours: e.target.value })}
                   className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                 />
               </div>
