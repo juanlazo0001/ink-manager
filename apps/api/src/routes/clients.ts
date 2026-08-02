@@ -2,7 +2,7 @@ import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import type { Prisma } from "../../generated/prisma/client";
 import { requireAuth, requireRole } from "../middleware/auth";
-import { Role, InquiryStatus } from "../../generated/prisma/enums";
+import { Role, InquiryStatus, FlashPieceStatus } from "../../generated/prisma/enums";
 import { requirePermission } from "../lib/permissions";
 import { diffObjects, logAudit } from "../lib/audit";
 import { normalizePhone } from "../lib/phone";
@@ -592,6 +592,26 @@ router.get("/:id/shareable-links", requirePermission("clients.view"), async (req
   const allPoliciesUrl =
     publicPolicies.length > 0 ? await shortenUrl(`${PUBLIC_APP_URL}/policies/${client.studio.slug}`) : null;
 
+  // Flash gallery: studio-wide, not client- or inquiry-specific (unlike
+  // estimate/deposit/waiver links above) -- same reasoning as policyLinks,
+  // one row per artist who currently has anything to show, so staff can
+  // just pick and send rather than needing to already be on that artist's
+  // Flash Gallery page. Only artists with at least one AVAILABLE piece are
+  // offered; an artist with none (or only pending/booked/retired ones) has
+  // nothing worth sending a link to right now.
+  const artistsWithFlash = await prisma.artist.findMany({
+    where: { user: { studioId: client.studioId }, flashPieces: { some: { status: FlashPieceStatus.AVAILABLE } } },
+    select: { id: true, user: { select: { name: true, email: true } } },
+  });
+
+  const flashGalleryLinks = await Promise.all(
+    artistsWithFlash.map(async (artist) => ({
+      artistId: artist.id,
+      label: `Flash Gallery — ${artist.user.name ?? artist.user.email}`,
+      url: await shortenUrl(`${PUBLIC_APP_URL}/flash/${client.studio.slug}/${artist.id}`),
+    })),
+  );
+
   const privacyPolicyUrl = client.studio.settings?.privacyPolicy
     ? await shortenUrl(`${PUBLIC_APP_URL}/privacy/${client.studio.slug}`)
     : null;
@@ -624,6 +644,7 @@ router.get("/:id/shareable-links", requirePermission("clients.view"), async (req
     waiverOptions,
     waiverLinks,
     giftCardLinks,
+    flashGalleryLinks,
     allPoliciesUrl,
     policyLinks,
     privacyPolicyUrl,

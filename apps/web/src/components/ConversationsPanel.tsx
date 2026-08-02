@@ -282,6 +282,10 @@ interface ShareableLinksResponse {
   waiverOptions: { appointmentId: string; label: string }[]
   waiverLinks: (ShareableLink & { appointmentId: string })[]
   giftCardLinks: (ShareableLink & { giftCardId: string })[]
+  // Studio-wide, one per artist with at least one AVAILABLE flash piece --
+  // not tied to this client's own inquiries/appointments the way
+  // estimateLinks/depositLinks/waiverLinks are.
+  flashGalleryLinks: { artistId: string; label: string; url: string }[]
   // Studio-authored custom policies (aftercare, cancellation, etc. -- Package
   // C1) plus the two fixed policy pages. allPoliciesUrl/privacyPolicyUrl/
   // termsUrl are null when there's nothing published to link to (no public
@@ -3018,6 +3022,7 @@ function ThreadView({
               ...(linksData?.estimateLinks ?? []),
               ...(linksData?.depositLinks ?? []),
               ...(linksData?.waiverLinks ?? []),
+              ...(linksData?.flashGalleryLinks ?? []).map((link) => ({ ...link, hint: null as string | null })),
             ].map((link, i) => (
               <button
                 key={i}

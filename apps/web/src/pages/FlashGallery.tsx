@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { AnimatePresence } from 'framer-motion'
 import { apiFetch, ApiError } from '../lib/api'
 import { uploadFlashPieceImage } from '../lib/cloudinary'
 import { useEffectiveUser } from '../context/useEffectiveUser'
@@ -9,7 +10,8 @@ import ArtistSelect, { type ArtistOption } from '../components/ArtistSelect'
 import { artistLabel } from '../components/ArtistAvatar'
 import MultiSelectFilter from '../components/MultiSelectFilter'
 import Modal from '../components/Modal'
-import { PlusIcon, SparkleIcon, CopyIcon } from '../components/icons'
+import ImageLightbox from '../components/ImageLightbox'
+import { PlusIcon, SparkleIcon, CopyIcon, ViewIcon } from '../components/icons'
 
 interface FlashPiece {
   id: string
@@ -67,6 +69,7 @@ export default function FlashGallery() {
   const [statusFilter, setStatusFilter] = useState<string[]>([])
   const [artistFilter, setArtistFilter] = useState<string[]>([])
   const [copiedLink, setCopiedLink] = useState(false)
+  const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null)
 
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -309,15 +312,23 @@ export default function FlashGallery() {
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
             {filteredPieces.map((piece) => (
               <div key={piece.id} className="overflow-hidden rounded-xl border border-border bg-surface">
-                <div className="relative aspect-square w-full overflow-hidden bg-surface-inset">
+                <button
+                  type="button"
+                  onClick={() => setLightbox({ images: [piece.imageUrl], index: 0 })}
+                  aria-label={`View ${piece.title} full size`}
+                  className="group relative aspect-square w-full overflow-hidden bg-surface-inset"
+                >
                   <img src={piece.imageUrl} alt={piece.title} className="h-full w-full object-cover" />
+                  <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition group-hover:bg-black/30 group-hover:opacity-100">
+                    <ViewIcon className="h-6 w-6 text-white" />
+                  </div>
                   {piece.isOneOfOne && (
                     <span className="absolute left-2 top-2 flex items-center gap-1 rounded-full bg-fg/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-bg backdrop-blur-sm">
                       <SparkleIcon className="h-3 w-3" />
                       One of one
                     </span>
                   )}
-                </div>
+                </button>
                 <div className="p-3">
                   <div className="flex items-start justify-between gap-2">
                     <p className="min-w-0 truncate text-sm font-medium text-fg">{piece.title}</p>
@@ -459,6 +470,17 @@ export default function FlashGallery() {
           </form>
         </Modal>
       )}
+
+      <AnimatePresence>
+        {lightbox && (
+          <ImageLightbox
+            images={lightbox.images}
+            index={lightbox.index}
+            onIndexChange={(index) => setLightbox({ images: lightbox.images, index })}
+            onClose={() => setLightbox(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   )
 }
