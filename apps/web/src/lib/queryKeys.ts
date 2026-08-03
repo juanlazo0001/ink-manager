@@ -13,6 +13,7 @@ export const appointmentsQueryKey = (studioId: string) => ['appointments', studi
 export const appointmentsRangeQueryKey = (studioId: string, startIso: string, endIso: string) =>
   ['appointments', studioId, 'range', startIso, endIso] as const
 export const artistsQueryKey = (studioId: string) => ['artists', studioId] as const
+export const artistInvitesQueryKey = (studioId: string) => ['artist-invites', studioId] as const
 export const inquiryQueryKey = (id: string) => ['inquiry', id] as const
 export const tasksQueryKey = (userId: string) => ['tasks', userId] as const
 export const navCountsQueryKey = (userId: string) => ['nav-counts', userId] as const

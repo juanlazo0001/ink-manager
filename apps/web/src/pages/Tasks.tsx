@@ -144,7 +144,18 @@ export default function Tasks() {
   // Matches POST /tasks/personal's own tasks.assignToOthers check (only
   // enforced when assigneeUserId differs from the actor -- everyone with
   // tasks.manageOwn can always assign to themselves regardless).
-  const canAssign = profile?.permissions.includes('tasks.assignToOthers') ?? false
+  // UI simplification pass: also false for a solo studio -- there's no one
+  // else to ever assign a task to, so the picker and the "Assigned by Me"
+  // section below are hidden entirely rather than showing a permanently
+  // single-option dropdown and a permanently-empty section.
+  const canAssign = (profile?.permissions.includes('tasks.assignToOthers') ?? false) && !(profile?.isSoloStudio ?? false)
+  // UI simplification pass: "Assigned by others" can never have any real
+  // content for a solo studio -- there is no one else who could ever
+  // assign a task to you -- so the filter option itself is dropped rather
+  // than left selectable and permanently empty.
+  const assignedToMeFilterOptions = profile?.isSoloStudio
+    ? ASSIGNED_TO_ME_FILTER_OPTIONS.filter((option) => option.value !== 'others')
+    : ASSIGNED_TO_ME_FILTER_OPTIONS
 
   const [showCompleted, setShowCompleted] = useState(false)
   const [showCompletedAssignedByMe, setShowCompletedAssignedByMe] = useState(false)
@@ -370,9 +381,18 @@ export default function Tasks() {
               <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <h2 className={isEditorial ? 'sc text-[20px]' : 'text-base font-semibold text-fg'}>Studio Queue</h2>
+                    {/* UI simplification pass: "Studio" reads as a separate
+                        entity for a solo artist -- the content underneath
+                        (unanswered inquiries, unpaid deposits, etc.) is
+                        still fully theirs to handle either way, just
+                        relabeled. */}
+                    <h2 className={isEditorial ? 'sc text-[20px]' : 'text-base font-semibold text-fg'}>
+                      {profile?.isSoloStudio ? 'Queue' : 'Studio Queue'}
+                    </h2>
                     <p className="mt-1 text-sm text-fg-secondary">
-                      Shared and unassigned -- anyone can act on an item; it disappears once resolved.
+                      {profile?.isSoloStudio
+                        ? 'Needs your attention; it disappears once resolved.'
+                        : "Shared and unassigned -- anyone can act on an item; it disappears once resolved."}
                     </p>
                   </div>
                   {systemGroups.length > 1 && (
@@ -451,7 +471,7 @@ export default function Tasks() {
                         label="Filter"
                         icon={<FilterIcon className="h-3.5 w-3.5" />}
                         value={assignedToMeFilter}
-                        options={ASSIGNED_TO_ME_FILTER_OPTIONS}
+                        options={assignedToMeFilterOptions}
                         onChange={setAssignedToMeFilter}
                         isEditorial={isEditorial}
                         active={assignedToMeFilter !== 'all'}

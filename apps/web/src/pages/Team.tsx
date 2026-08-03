@@ -9,7 +9,7 @@ import StatusPill from '../components/StatusPill'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatStatus, isValidPhoneDigits, readFileAsDataUrl, MAX_IMAGE_FILE_BYTES } from '../lib/format'
 import { PERMISSION_GROUPS, DISPLAYED_ROLES } from '../lib/permissions'
-import { artistsQueryKey } from '../lib/queryKeys'
+import { artistsQueryKey, artistInvitesQueryKey } from '../lib/queryKeys'
 import { useAuth } from '../context/useAuth'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useUserProfile } from '../context/useUserProfile'
@@ -39,6 +39,13 @@ interface ArtistCard {
   // flag, unrelated to StudioMembership) -- both can be true independently.
   memberships: { type: 'HOME' | 'GUEST'; allowsStudioProfileEdits: boolean }[]
   user: { id: string; email: string; name: string | null; avatarUrl: string | null }
+}
+
+interface ArtistInvite {
+  id: string
+  email: string
+  membershipType: 'HOME' | 'GUEST'
+  tokenExpiresAt: string
 }
 
 interface PermissionsResponse {
@@ -177,6 +184,17 @@ export default function Team() {
       : artistsError.message
     : null
 
+  // Artist mobility, Part 2's own gap: ArtistMembershipInvite was invisible
+  // to staff once sent (decoupled from User -- see that model's own schema
+  // comment -- so it never showed up in the regular pending-invites list
+  // above, which only ever queries User rows). Owner-only, same as the
+  // regular invite list.
+  const { data: artistInvites } = useQuery({
+    queryKey: artistInvitesQueryKey(user!.studioId),
+    queryFn: () => apiFetch<ArtistInvite[]>(`/studios/${user!.studioId}/artist-invites`),
+    enabled: isOwner,
+  })
+
   const [users, setUsers] = useState<TeamUser[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [refreshIndex, setRefreshIndex] = useState(0)
@@ -237,10 +255,48 @@ export default function Team() {
       })
       setShowInviteArtistModal(false)
       queryClient.invalidateQueries({ queryKey: artistsQueryKey(user.studioId) })
+      queryClient.invalidateQueries({ queryKey: artistInvitesQueryKey(user.studioId) })
     } catch (err) {
       setInviteArtistFormError(err instanceof Error ? err.message : 'Failed to send invite')
     } finally {
       setInviteArtistSubmitting(false)
+    }
+  }
+
+  const [resendingArtistInviteId, setResendingArtistInviteId] = useState<string | null>(null)
+  const [resendArtistInviteError, setResendArtistInviteError] = useState<string | null>(null)
+  const [resendArtistInviteSuccessId, setResendArtistInviteSuccessId] = useState<string | null>(null)
+  const [cancellingArtistInvite, setCancellingArtistInvite] = useState<ArtistInvite | null>(null)
+  const [cancelArtistInviteError, setCancelArtistInviteError] = useState<string | null>(null)
+  const [cancelArtistInviteSubmitting, setCancelArtistInviteSubmitting] = useState(false)
+
+  async function handleResendArtistInvite(invite: ArtistInvite) {
+    if (!user?.studioId) return
+    setResendArtistInviteError(null)
+    setResendArtistInviteSuccessId(null)
+    setResendingArtistInviteId(invite.id)
+    try {
+      await apiFetch(`/studios/${user.studioId}/artist-invites/${invite.id}/resend`, { method: 'POST' })
+      setResendArtistInviteSuccessId(invite.id)
+    } catch (err) {
+      setResendArtistInviteError(err instanceof Error ? err.message : 'Failed to resend invite')
+    } finally {
+      setResendingArtistInviteId(null)
+    }
+  }
+
+  async function handleConfirmCancelArtistInvite() {
+    if (!user?.studioId || !cancellingArtistInvite) return
+    setCancelArtistInviteSubmitting(true)
+    setCancelArtistInviteError(null)
+    try {
+      await apiFetch(`/studios/${user.studioId}/artist-invites/${cancellingArtistInvite.id}`, { method: 'DELETE' })
+      setCancellingArtistInvite(null)
+      queryClient.invalidateQueries({ queryKey: artistInvitesQueryKey(user.studioId) })
+    } catch (err) {
+      setCancelArtistInviteError(err instanceof Error ? err.message : 'Failed to cancel invite')
+    } finally {
+      setCancelArtistInviteSubmitting(false)
     }
   }
 
@@ -867,6 +923,71 @@ export default function Team() {
           </div>
           )}
 
+          {activeTab === 'artists' && isOwner && artistInvites && artistInvites.length > 0 && (
+            <div className="mt-6 rounded-2xl border border-warning/30 bg-warning/5 p-5">
+              <h2 className="text-sm font-semibold text-fg">Pending invites</h2>
+              <p className="mt-1 text-xs text-fg-secondary">
+                Sent, but not yet accepted. An invite link expires 7 days after it's sent or last resent.
+              </p>
+              {resendArtistInviteError && <p className="mt-3 text-sm text-danger">{resendArtistInviteError}</p>}
+
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="text-xs text-fg-muted">
+                      <th className="pb-2 font-medium">Email</th>
+                      <th className="hidden pb-2 font-medium sm:table-cell">Membership</th>
+                      <th className="pb-2 font-medium">Status</th>
+                      <th className="pb-2 font-medium"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-warning/20">
+                    {artistInvites.map((invite) => {
+                      const expired = new Date(invite.tokenExpiresAt) < new Date()
+                      return (
+                        <tr key={invite.id}>
+                          <td className="py-2.5 text-fg">{invite.email}</td>
+                          <td className="hidden py-2.5 text-fg-secondary sm:table-cell">
+                            {invite.membershipType === 'HOME' ? 'Home' : 'Guest'}
+                          </td>
+                          <td className="py-2.5">
+                            <StatusPill status="PENDING" label={expired ? 'Expired' : 'Pending'} />
+                          </td>
+                          <td className="py-2.5 text-right">
+                            <div className="flex justify-end gap-1.5 sm:gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleResendArtistInvite(invite)}
+                                disabled={resendingArtistInviteId === invite.id}
+                                className="rounded-full border border-border px-2 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40 sm:px-3"
+                              >
+                                {resendingArtistInviteId === invite.id
+                                  ? 'Resending…'
+                                  : resendArtistInviteSuccessId === invite.id
+                                    ? 'Sent!'
+                                    : 'Resend'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setCancellingArtistInvite(invite)
+                                  setCancelArtistInviteError(null)
+                                }}
+                                className="rounded-full border border-danger/40 px-2 py-1.5 text-xs font-medium text-danger transition hover:bg-danger/10 sm:px-3"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           {activeTab === 'artists' && (
             <div className="mt-6">
               {artistsErrorMessage && (
@@ -1469,6 +1590,35 @@ export default function Team() {
               className="rounded-full bg-danger px-4 py-2 text-sm font-medium text-bg transition hover:bg-danger/90 disabled:opacity-60"
             >
               {cancelSubmitting ? 'Cancelling…' : 'Cancel invite'}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {cancellingArtistInvite && (
+        <Modal title="Cancel invite" onClose={() => setCancellingArtistInvite(null)}>
+          <p className="text-sm text-fg-secondary">
+            Cancel the pending invite for <span className="font-semibold">{cancellingArtistInvite.email}</span>?
+            Their invite link will stop working and they won't be able to accept unless invited again.
+          </p>
+
+          {cancelArtistInviteError && <p className="mt-3 text-sm text-danger">{cancelArtistInviteError}</p>}
+
+          <div className="mt-5 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setCancellingArtistInvite(null)}
+              className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
+            >
+              Keep invite
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmCancelArtistInvite}
+              disabled={cancelArtistInviteSubmitting}
+              className="rounded-full bg-danger px-4 py-2 text-sm font-medium text-bg transition hover:bg-danger/90 disabled:opacity-60"
+            >
+              {cancelArtistInviteSubmitting ? 'Cancelling…' : 'Cancel invite'}
             </button>
           </div>
         </Modal>

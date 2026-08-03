@@ -19,7 +19,7 @@ import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { sendPlatformEmail } from "../lib/platformEmail";
 import { renderPlatformEmailHtml } from "../lib/emailTemplate";
 import { emitInvalidation } from "../lib/realtime/registry";
-import { createArtistMembershipInvite } from "../lib/artistMembershipInvites";
+import { createArtistMembershipInvite, resendArtistMembershipInvite } from "../lib/artistMembershipInvites";
 
 const router = Router();
 
@@ -509,6 +509,89 @@ router.delete("/:studioId/invites/:userId", requireAuth, requirePermission("team
   res.status(204).send();
 });
 
+// Artist mobility, Part 2 left this genuinely invisible to staff once
+// sent: ArtistMembershipInvite is deliberately decoupled from User (see
+// that model's own schema comment), so it never showed up in the regular
+// invite list above, which only ever queried pending User rows. Same
+// three actions (list/resend/cancel) as the regular team-invite flow,
+// just against the separate table.
+router.get("/:studioId/artist-invites", requireAuth, requirePermission("team.manage"), async (req, res) => {
+  const studioId = req.params.studioId as string;
+
+  if (studioId !== req.user!.studioId) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const invites = await prisma.artistMembershipInvite.findMany({
+    where: { studioId },
+    orderBy: { createdAt: "asc" },
+  });
+
+  res.json(invites);
+});
+
+router.post("/:studioId/artist-invites/:inviteId/resend", requireAuth, requirePermission("team.manage"), async (req, res) => {
+  const studioId = req.params.studioId as string;
+  const inviteId = req.params.inviteId as string;
+
+  if (studioId !== req.user!.studioId) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const existing = await prisma.artistMembershipInvite.findUnique({ where: { id: inviteId } });
+  if (!existing || existing.studioId !== studioId) {
+    return res.status(404).json({ error: "No pending invite found." });
+  }
+
+  const studio = await prisma.studio.findUniqueOrThrow({ where: { id: studioId }, select: { name: true } });
+  await resendArtistMembershipInvite({
+    inviteId,
+    email: existing.email,
+    studioName: studio.name,
+    membershipType: existing.membershipType,
+  });
+
+  await logAudit({
+    studioId,
+    actorUserId: req.user!.userId,
+    entityType: "ArtistMembershipInvite",
+    entityId: inviteId,
+    action: "invite_resent",
+    changes: { email: existing.email },
+  });
+
+  res.json({ message: "Invite resent." });
+});
+
+router.delete("/:studioId/artist-invites/:inviteId", requireAuth, requirePermission("team.manage"), async (req, res) => {
+  const studioId = req.params.studioId as string;
+  const inviteId = req.params.inviteId as string;
+
+  if (studioId !== req.user!.studioId) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const existing = await prisma.artistMembershipInvite.findUnique({ where: { id: inviteId } });
+  if (!existing || existing.studioId !== studioId) {
+    return res.status(404).json({ error: "No pending invite found." });
+  }
+
+  await logAudit({
+    studioId,
+    actorUserId: req.user!.userId,
+    entityType: "ArtistMembershipInvite",
+    entityId: inviteId,
+    action: "invite_cancelled",
+    changes: { email: existing.email },
+  });
+
+  await prisma.artistMembershipInvite.delete({ where: { id: inviteId } });
+
+  emitInvalidation({ type: "team.changed", studioId });
+
+  res.status(204).send();
+});
+
 const USER_INCLUDE_ARTIST = {
   artist: {
     select: {
@@ -516,7 +599,11 @@ const USER_INCLUDE_ARTIST = {
       bio: true,
       specialties: true,
       allowsClientSelfScheduling: true,
-      memberships: { where: { type: "HOME" }, select: { allowsStudioProfileEdits: true } },
+      // Artist mobility, Part 2's own bug fix (GET /me, artists.ts) missed
+      // this call site -- filtered to the CURRENT active HOME row, not
+      // just type: HOME, for the same reason: an artist with more than one
+      // HOME over their history would otherwise return an arbitrary one.
+      memberships: { where: { type: "HOME", endedAt: null }, select: { allowsStudioProfileEdits: true } },
     },
   },
 } as const;

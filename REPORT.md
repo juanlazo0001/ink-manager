@@ -7225,3 +7225,53 @@ Both isolated dev servers killed (`netstat` + `taskkill` by PID). All scratch ve
 
 `8f1efef` on `main`.
 
+---
+
+# Pending artist invites visibility + further solo-studio simplification (Tasks)
+
+Single session on `main`, direct follow-up to the previous solo-artist UI pass. No schema changes. Two requests: studios couldn't see artist invites after sending them, and a broader scrub for studio-only terms/features turned up Tasks.tsx specifically (Studio Queue naming, task assignment for a team of one).
+
+## 1. Studios can now see, resend, and cancel pending artist invites
+
+Real, live gap: `ArtistMembershipInvite` (artist mobility Part 2) is deliberately decoupled from `User` (see that model's own schema comment -- it has to support inviting an email that already belongs to a real account, which a pending-`User`-row model can't represent). That decoupling meant it never showed up in Team's existing "Pending invites" list, which only ever queried pending `User` rows -- an artist invite was sent, then invisible, forever, from the studio's side. No list route, no resend, no cancel existed for it at all.
+
+Added the same three actions the regular team-invite flow already has, against the separate table:
+- `GET /studios/:studioId/artist-invites` (list, `team.manage`).
+- `POST /studios/:studioId/artist-invites/:inviteId/resend` (regenerates the token, same "overwritten outright, stale token just stops matching anything" invalidation shape as the regular resend).
+- `DELETE /studios/:studioId/artist-invites/:inviteId` (cancel).
+
+`lib/artistMembershipInvites.ts` refactored to share one `sendArtistInviteEmail` helper between create and resend, rather than duplicating the email-building code. `Team.tsx`'s Artists tab gets its own "Pending invites" section (visually identical to Staff's), with matching Resend/Cancel UI and a confirm modal. Registered `["artist-invites"]` in the backend's `team.changed` invalidation-key list so other connected viewers pick up sends/cancels live, same as everything else that event already covers.
+
+**Related bug found and fixed while in this code**: `routes/studios.ts`'s `USER_INCLUDE_ARTIST` (used by the Staff-tab listing route) still filtered an artist's membership by `type: "HOME"` alone, with no `endedAt: null` -- the exact same latent bug artist-mobility Part 2 found and fixed in `GET /me` and `artists.ts`'s own include, just missed in this one remaining call site. Fixed identically.
+
+## 2. Tasks.tsx: task assignment removed for solo studios, "Studio Queue" renamed
+
+- `canAssign` (`tasks.assignToOthers` permission) now also requires `!isSoloStudio`. This one flag already drove both the "Assign to" dropdown in the add-task form and the entire "Assigned by Me" section -- for a solo studio both were previously always present but functionally inert (a dropdown with only "Assign to myself" ever selectable, a section permanently reading "You haven't assigned any tasks to teammates yet."). Both now fully absent rather than shown-but-pointless.
+- The "Assigned by others" option in the "Assigned to Me" filter dropdown is dropped for a solo studio -- there is no one else who could ever assign a task to a studio of one, so the filter can never have real content, not just usually-empty content.
+- "Studio Queue" (the shared, auto-generated task list -- unanswered inquiries, unpaid deposits, etc.) relabeled to "Queue" for a solo studio, with its description adjusted from "Shared and unassigned -- anyone can act on an item" to "Needs your attention." The underlying content stays exactly as useful for a solo artist as for a team -- only the "shared among staff" framing was wrong, not the feature itself.
+
+## Broader audit: checked, left as-is
+
+- **Artist-assignment pickers** (`ArtistSelect`, used across Inquiries/Calendar/AppointmentForm/InquiryDetail for "which artist works this"): a fundamentally different category from task assignment -- a required field that always needs some value, not an optional delegation to a colleague. A solo studio's picker degenerately has one valid option, same as a required field with only one possible answer anywhere else in the app; not a "feature that shouldn't exist." Left unchanged -- touching every one of these call sites for a cosmetic single-item-dropdown simplification felt like a much larger, riskier undertaking than what was asked, and none of them are actually broken or confusing the way Task assignment or the old Team page were.
+- **"Studio" in public/client-facing copy** (`Clients.tsx` "your studio", `Dashboard.tsx` "how the studio is doing", `Calendar.tsx` "the studio's own schedule", every client-facing response page's `{studioName}`): this is "studio" used as the business's own name/brand, not as a separate-entity-with-staff concept -- still accurate and non-confusing for a solo artist referring to their own business. Left unchanged, a different category from the genuinely fixed items (Locations, Studio Profile Access, Team).
+- **Dashboard's "Artist Utilization" chart**: a single bar for a solo studio, but still real, meaningful data (their own appointment count over the period) -- not empty or broken, just the natural one-person case of a comparison chart. Left as-is.
+- **View As, task-assignee picker's own graceful degradation**: re-confirmed from the previous pass's audit, nothing new to add.
+
+## Verification -- real accounts, live dev API/web (isolated `:4093`/`:5292`)
+
+- **Pending artist invites**: sent a real HOME invite from `dev-studio`'s Artists tab -- confirmed the "Pending invites" section appears immediately with the correct email and "Home" label (absent before sending). Resend: `200`, UI shows "Sent!". Cancel: `204`, confirm modal, row disappears from the list. All three against the real dev database, not mocked.
+- **Tasks, solo studio** ("QA Solo Studio", real existing solo account): `/tasks` shows "Queue" (not "Studio Queue"), no "Assigned by Me" section, no "Assign to myself" dropdown anywhere on the page. Screenshotted.
+- **Tasks, multi-person studio** (`dev-studio`): "Studio Queue" and "Assigned by Me" both still present, completely unaffected.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npm run build` (web) -- both clean, re-run after every remaining change.
+
+## Cleanup
+
+Both isolated dev servers killed (`netstat` + `taskkill` by PID). All scratch verification scripts deleted, none committed. Real test data left in the dev database (a cancelled test artist invite at `dev-studio` leaves no trace -- the row was actually deleted, matching cancel's real semantics).
+
+## Commit
+
+`<pending>` on `main`.
+

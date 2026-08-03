@@ -119,7 +119,7 @@ function keysFor(event: InvalidationEvent): unknown[][] {
     case "artist.changed":
       return [["artists"], ["artist", event.artistId]];
     case "team.changed":
-      return [["team-users"], ["team-invites"]];
+      return [["team-users"], ["team-invites"], ["artist-invites"]];
     case "locations.changed":
       return [["locations"]];
     case "service.changed":
