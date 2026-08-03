@@ -1,6 +1,8 @@
 import { Router } from "express";
+import jwt from "jsonwebtoken";
 import { prisma } from "../lib/prisma";
 import { requireAuth } from "../middleware/auth";
+import type { AuthPayload } from "../middleware/auth";
 import { Role } from "../../generated/prisma/enums";
 import type { Prisma } from "../../generated/prisma/client";
 import { hasPermission, requirePermission } from "../lib/permissions";
@@ -8,6 +10,8 @@ import { diffObjects, logAudit } from "../lib/audit";
 import { isStringArray, isValidDateOrNull, isValidPreferredSchedule } from "../lib/artistValidation";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { isSoloStudioArtist } from "../lib/soloStudio";
+import { generateUniqueSlug } from "./studios";
+import { JWT_SECRET } from "../lib/jwt";
 
 const router = Router();
 
@@ -497,11 +501,21 @@ router.patch("/:id/profile-delegation", requireAuth, async (req, res) => {
     return res.status(403).json({ error: "Forbidden" });
   }
 
-  const membership = await prisma.studioMembership.upsert({
-    where: { studioId_artistId: { studioId: req.user!.studioId, artistId: id } },
-    update: { allowsStudioProfileEdits },
-    create: { studioId: req.user!.studioId, artistId: id, type: "HOME", allowsStudioProfileEdits },
+  // No compound-unique on (studioId, artistId) anymore now that a
+  // membership can end and a new one begin (see schema.prisma's own
+  // comment on StudioMembership) -- "the" membership here means the
+  // active one, found by hand rather than via `upsert`'s where clause.
+  const existingMembership = await prisma.studioMembership.findFirst({
+    where: { studioId: req.user!.studioId, artistId: id, endedAt: null },
   });
+  const membership = existingMembership
+    ? await prisma.studioMembership.update({
+        where: { id: existingMembership.id },
+        data: { allowsStudioProfileEdits },
+      })
+    : await prisma.studioMembership.create({
+        data: { studioId: req.user!.studioId, artistId: id, type: "HOME", allowsStudioProfileEdits },
+      });
 
   await logAudit({
     studioId: req.user!.studioId,
@@ -515,6 +529,94 @@ router.patch("/:id/profile-delegation", requireAuth, async (req, res) => {
   emitInvalidation({ type: "artist.changed", studioId: req.user!.studioId, artistId: id });
 
   res.json({ allowsStudioProfileEdits: membership.allowsStudioProfileEdits });
+});
+
+// Artist mobility, Part 1 -- "Go Solo": self-service only, no staff bypass
+// (same shape as profile-delegation above -- nobody can make this decision
+// FOR an artist). Spins up a brand new studio-of-one around the artist's
+// EXISTING User + Artist identity: no invite, no new account, no password
+// -- they're already signed in as themselves. Reuses generateUniqueSlug
+// from routes/studios.ts (the same slug logic create-studio.ts's platform-
+// operator script and /studios/bootstrap already both use) rather than
+// re-deriving it a third time.
+//
+// bio/specialties/portfolioImages/rates/flash gallery etc. all live on the
+// Artist row itself, never on User or Studio -- moving User.studioId is
+// the entire transition; nothing artist-level needs copying.
+//
+// The caller's existing JWT still carries the OLD studioId/role after this
+// (requireAuth only re-validates isActive/deactivatedAt/passwordChangedAt
+// live, not studioId/role -- see that file's own comment), so a fresh
+// token is minted and returned, same as invite-accept/password-reset do
+// after their own account-shape changes.
+router.post("/:id/go-solo", requireAuth, async (req, res) => {
+  const id = req.params.id as string;
+  const { studioName } = req.body ?? {};
+
+  if (typeof studioName !== "string" || !studioName.trim()) {
+    return res.status(400).json({ error: "studioName is required" });
+  }
+
+  const artist = await prisma.artist.findUnique({ where: { id }, include: { user: true } });
+  if (!artist || artist.user.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Artist not found" });
+  }
+
+  if (artist.userId !== req.user!.userId) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const oldStudioId = artist.user.studioId;
+  const slug = await generateUniqueSlug(studioName.trim());
+
+  const { studio, membership } = await prisma.$transaction(async (tx) => {
+    const studio = await tx.studio.create({ data: { name: studioName.trim(), slug } });
+
+    await tx.user.update({ where: { id: artist.userId }, data: { studioId: studio.id, role: Role.OWNER } });
+
+    // Ends whatever active HOME membership this artist had (there is
+    // always exactly one, per the DB's own partial unique index) --
+    // updateMany rather than a fetched id, since only the WHERE shape
+    // matters here, not a specific row reference.
+    await tx.studioMembership.updateMany({
+      where: { artistId: id, type: "HOME", endedAt: null },
+      data: { endedAt: new Date() },
+    });
+
+    const membership = await tx.studioMembership.create({
+      data: { studioId: studio.id, artistId: id, type: "HOME", allowsStudioProfileEdits: true },
+    });
+
+    return { studio, membership };
+  });
+
+  await logAudit({
+    studioId: oldStudioId,
+    actorUserId: artist.userId,
+    entityType: "StudioMembership",
+    entityId: membership.id,
+    action: "go_solo_departed",
+    changes: { newStudioId: studio.id, newStudioName: studio.name },
+  });
+
+  await logAudit({
+    studioId: studio.id,
+    actorUserId: artist.userId,
+    entityType: "Studio",
+    entityId: studio.id,
+    action: "go_solo_created",
+    changes: { fromStudioId: oldStudioId },
+  });
+
+  emitInvalidation({ type: "team.changed", studioId: oldStudioId });
+  emitInvalidation({ type: "artist.changed", studioId: oldStudioId, artistId: id });
+  emitInvalidation({ type: "team.changed", studioId: studio.id });
+  emitInvalidation({ type: "artist.changed", studioId: studio.id, artistId: id });
+
+  const payload: AuthPayload = { userId: artist.userId, studioId: studio.id, role: Role.OWNER };
+  const token = jwt.sign(payload, JWT_SECRET, { expiresIn: "7d" });
+
+  res.status(201).json({ studio, token });
 });
 
 export default router;

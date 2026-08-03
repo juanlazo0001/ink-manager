@@ -549,6 +549,11 @@ model StudioMembership {
 
   type StudioMembershipType @default(HOME)
 
+  // Null while the membership is active. Set once, never cleared -- see
+  // the comment below this model for the full "why" and the two partial
+  // unique indexes that depend on it.
+  endedAt DateTime?
+
   // Artist-controlled delegation: whether THIS studio's staff (including
   // OWNER -- the whole point is protecting the artist's own data FROM
   // studio control, so OWNER is not exempt) may edit this artist's shared
@@ -567,17 +572,26 @@ model StudioMembership {
 
   createdAt DateTime @default(now())
 
-  // An artist can't join the same studio twice -- deliberately NOT unique
-  // on artistId alone, since Phase 2 adds a second (GUEST) row for an
-  // artist already HOME elsewhere, and this constraint must already allow
-  // that without a further migration. "Exactly one HOME per artist" is an
-  // application-level invariant (maintained by Part 2's migration and by
-  // whatever creates new solo-studio artists going forward), not a DB
-  // constraint -- a partial unique index (WHERE type = 'HOME') isn't
-  // expressible in Prisma's schema DSL without a hand-edited raw-SQL
-  // migration, and isn't needed yet since Phase 1 only ever creates HOME
-  // rows.
-  @@unique([studioId, artistId])
+  // Artist mobility: a membership is never deleted when an artist leaves
+  // (goes solo, or moves their HOME elsewhere) -- endedAt is set instead,
+  // same "preserve history, only change access" principle as User's own
+  // isActive/deactivatedAt. Every access-control read filters on
+  // endedAt: null; every historical read (past appointments, audit trail
+  // at the departed studio) is completely untouched by this, since nothing
+  // about those records points at StudioMembership at all.
+  //
+  // Two partial unique indexes exist at the DB level, both hand-authored
+  // in migration SQL -- not representable as `@@unique` in Prisma's schema
+  // DSL, which has no WHERE clause:
+  //   - (studioId, artistId) WHERE endedAt IS NULL: an artist can't hold
+  //     two simultaneous ACTIVE memberships at the same studio, but CAN
+  //     rejoin a studio they'd previously left (a new row, old one stays
+  //     ended -- preserves the full history of separate stints).
+  //   - (artistId) WHERE type = 'HOME' AND endedAt IS NULL: an artist can
+  //     never have more than one active HOME at a time -- the actual
+  //     invariant every "go solo" / "change home" transition depends on,
+  //     now enforced by the database itself rather than left purely
+  //     application-level as Phase 1 originally deferred it.
   @@index([artistId])
   @@index([studioId])
 }

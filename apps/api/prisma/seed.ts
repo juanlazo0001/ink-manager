@@ -426,11 +426,14 @@ async function main() {
   // the migration backfill's own grandfathering (see that migration's
   // comment) -- this dev studio's own artists have "always" had it.
   for (const artist of [artist1, artist2]) {
-    await prisma.studioMembership.upsert({
-      where: { studioId_artistId: { studioId: studio.id, artistId: artist.id } },
-      update: {},
-      create: { studioId: studio.id, artistId: artist.id, type: "HOME", allowsStudioProfileEdits: true },
+    const existingMembership = await prisma.studioMembership.findFirst({
+      where: { studioId: studio.id, artistId: artist.id, endedAt: null },
     });
+    if (!existingMembership) {
+      await prisma.studioMembership.create({
+        data: { studioId: studio.id, artistId: artist.id, type: "HOME", allowsStudioProfileEdits: true },
+      });
+    }
   }
 
   // Every artist offers Tattoo, same as the migration backfill's own

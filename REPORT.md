@@ -6975,3 +6975,57 @@ All scratch verification scripts (`scratch-cleanup-qa.ts`, `scratch-verify-studi
 
 `89ea45c` on `main`.
 
+---
+
+# Artist mobility — Part 1: "Go Solo" self-service action
+
+Three-part task, single session on `main`. Part 1: an existing artist can leave their current studio and spin up a studio-of-one around their own account, self-service, no staff involved.
+
+## Schema: `StudioMembership.endedAt` + two hand-authored partial unique indexes
+
+Migration `20260803210832_studio_membership_ended_at`. A membership is never deleted when an artist leaves -- `endedAt` is set instead, same "preserve history, only change access" principle as `User.isActive`/`deactivatedAt`. The old `@@unique([studioId, artistId])` (Phase 1) is dropped and replaced with two partial unique indexes, hand-authored in the migration's raw SQL since Prisma's schema DSL has no `WHERE` clause (same limitation Phase 1's own comment already flagged and deferred):
+
+- `(studioId, artistId) WHERE endedAt IS NULL` -- at most one active membership per (studio, artist) pair, but rejoining a studio after leaving is allowed (new row; the old one stays as history).
+- `(artistId) WHERE type = 'HOME' AND endedAt IS NULL` -- at most one active HOME per artist, across every studio. This is the actual invariant every "go solo" / "change home" transition depends on -- Phase 1 explicitly left it application-level only ("isn't needed yet"); it's needed now, so it's a real DB constraint as of this migration.
+
+Fallout from dropping the plain `@@unique`: Prisma Client no longer generates a `studioId_artistId` compound-unique input, which broke two existing `upsert` call sites (`PATCH /artists/:id/profile-delegation`, `prisma/seed.ts`'s membership backfill) -- both fixed to `findFirst({ where: { studioId, artistId, endedAt: null } })` then explicit `create`/`update`, found immediately by `tsc --noEmit`, not by surprise later.
+
+## `POST /artists/:id/go-solo`
+
+Self-only (`artist.userId === req.user.userId`), no staff bypass -- same shape as the profile-delegation route, since nobody can make this decision for an artist but the artist. Reuses `generateUniqueSlug` from `routes/studios.ts` (the same slug logic `create-studio.ts` and `/studios/bootstrap` already both use). In one transaction:
+
+1. Creates the new `Studio`.
+2. Updates the artist's *existing* `User` row: `studioId` -> new studio, `role` -> `OWNER` (not a new account -- they're already signed in as themselves; no invite, no password).
+3. Ends their current active HOME membership (`updateMany` on `{ artistId, type: HOME, endedAt: null }`).
+4. Creates a new HOME membership at the new studio, `allowsStudioProfileEdits: true` (same reasoning as `create-studio.ts`'s `--solo-artist` flag: they *are* the studio now).
+
+Two `AuditLog` entries, one at each studio (`go_solo_departed` at the old one, `go_solo_created` at the new one) -- both with the artist's own real `actorUserId`, unlike the platform script's `null` "system action" actor, since this is a real self-initiated action.
+
+**Stale-JWT handling**: `requireAuth` only live-revalidates `isActive`/`deactivatedAt`/`passwordChangedAt` against the DB -- `studioId`/`role` are trusted straight from the token (see that file's own comment). Since go-solo changes both, the caller's existing JWT would silently keep working against the OLD studio/role otherwise. The route mints and returns a fresh token (same `jwt.sign(...)` shape `POST /invite/accept/:token` already uses after its own account-shape change), and `Profile.tsx`'s handler calls `setSession(token)` (not a raw `localStorage` write -- `AuthContext`'s own comment on why that specifically breaks) before refreshing.
+
+**Known edge case, not blocked**: an artist who is *already* solo can go solo again, which would leave their current studio-of-one with zero active users (fully orphaned, no login). Nothing in this task's brief asks for a guard here, and blocking it wasn't obviously the right call either (maybe they want to rename/restart), so it's left unblocked and flagged here rather than silently guessed either way.
+
+## Frontend: `Profile.tsx`, new "Go solo" card
+
+Self-only action button -> inline form (studio name) -> `POST /artists/:id/go-solo` -> `setSession` + `refresh()`. Gated on `isArtist` (already fixed to mean "has an Artist profile," not "role === ARTIST," in the previous task -- so this also correctly appears for an `OWNER`-role solo artist, not just plain `ARTIST`-role ones).
+
+## Verification -- real artist, live dev API/web (isolated `:4093`/`:5292`)
+
+Used `artist1@dev-studio.test` (a real, pre-existing, non-throwaway seeded artist -- "Black Hive" doesn't exist in the dev database, per the previous task's own investigation; `DEVELOPMENT.md`'s standing rule that dev/test never points at production `DATABASE_URL` rules out literally using production's real Black Hive Ink and Arts for a test). Captured full before-state first (direct DB read): `dev-studio`, 1 active HOME membership, 12 real appointments referencing artist1, 1341 audit log rows at `dev-studio`.
+
+- **Browser**: logged in as artist1, `/profile` showed the new "Go solo" card, submitted "Artist One Solo Studio". `POST /artists/:id/go-solo` returned `201` with the new studio and a fresh token. Header chrome updated live to "Dev Artist One / Owner" and the full `OWNER` sidebar nav (Team, etc.) -- confirming the swapped JWT actually took effect without a page reload.
+- **After-state, direct DB read**: `User.studioId`/`role` updated correctly; exactly 2 `StudioMembership` rows for this artist now exist -- the original at `dev-studio` with `endedAt` set, a new one at the new studio with `endedAt: null`, both `allowsStudioProfileEdits: true`. All 12 appointments still reference `dev-studio`, byte-for-byte unchanged. `dev-studio`'s audit log grew by exactly 1 row (the departure entry); the new studio has exactly 1 row (the creation entry). `dev-studio`'s own artist list (the same query `GET /artists` uses) no longer includes artist1 -- confirmed by re-running it directly, not assumed.
+- **Self-scheduling autonomy (Phase 3)**: after going solo, `/profile` rendered the "Client self-scheduling" section with the toggle's `disabled` attribute absent (the exact condition gating it is `disabled={!profile.isSoloStudioArtist || ...}` -- an absent `disabled` attribute is direct proof `isSoloStudioArtist` computed `true` for this now-`OWNER`-role artist, live, not assumed from the code alone).
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npm run build` (web) -- both clean.
+
+## Cleanup
+
+Both isolated dev servers killed (`netstat` + `taskkill` by PID) before writing this entry. Scratch verification scripts (`scratch-before-go-solo.ts`, `scratch-after-go-solo.ts`) deleted, none committed. Real test data left in the dev database per this session's standing convention: `artist1@dev-studio.test` is now the `OWNER` of a real second dev studio, "Artist One Solo Studio" (`artist-one-solo-studio`), and `dev-studio` correctly no longer counts them as a member.
+
+## Commit
+
+`<pending>` on `main`.
+

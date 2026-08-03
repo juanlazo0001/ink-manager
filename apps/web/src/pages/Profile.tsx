@@ -1,4 +1,5 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useNavigate } from 'react-router-dom'
 import PhoneInput from '../components/PhoneInput'
 import { apiFetch } from '../lib/api'
 import { formatPhoneInput, isValidPhoneDigits, readFileAsDataUrl, MAX_IMAGE_FILE_BYTES } from '../lib/format'
@@ -9,7 +10,8 @@ const EMPTY_FORM = { name: '', phone: '', bio: '', specialties: '' }
 
 export default function Profile() {
   const { profile, loading, refresh } = useUserProfile()
-  const { logout } = useAuth()
+  const { logout, setSession } = useAuth()
+  const navigate = useNavigate()
   // Not role === 'ARTIST' -- a solo studio's OWNER can also hold an Artist
   // profile (see soloStudio.ts), and that user's own artist details/
   // self-scheduling widgets below need to render for them too.
@@ -58,6 +60,16 @@ export default function Profile() {
   // edit their shared profile fields on their behalf.
   const [profileDelegationSubmitting, setProfileDelegationSubmitting] = useState(false)
   const [profileDelegationError, setProfileDelegationError] = useState<string | null>(null)
+
+  // Artist mobility, Part 1: hits POST /artists/:id/go-solo, self-only, no
+  // staff bypass -- same shape as profile-delegation above. Success returns
+  // a fresh JWT (studioId/role changed, so the old one is stale -- see that
+  // route's own comment) that must go through setSession, not a raw write,
+  // for the same reason InviteAccept.tsx already does this.
+  const [goingSolo, setGoingSolo] = useState(false)
+  const [goSoloStudioName, setGoSoloStudioName] = useState('')
+  const [goSoloError, setGoSoloError] = useState<string | null>(null)
+  const [goSoloSubmitting, setGoSoloSubmitting] = useState(false)
 
   useEffect(() => {
     if (profile) {
@@ -195,6 +207,28 @@ export default function Profile() {
       setProfileDelegationError(err instanceof Error ? err.message : 'Failed to update')
     } finally {
       setProfileDelegationSubmitting(false)
+    }
+  }
+
+  async function handleGoSoloSubmit(event: FormEvent) {
+    event.preventDefault()
+    if (!profile?.artist) return
+    setGoSoloError(null)
+    setGoSoloSubmitting(true)
+    try {
+      const result = await apiFetch<{ token: string }>(`/artists/${profile.artist.id}/go-solo`, {
+        method: 'POST',
+        body: JSON.stringify({ studioName: goSoloStudioName.trim() }),
+      })
+      setSession(result.token)
+      await refresh()
+      setGoingSolo(false)
+      setGoSoloStudioName('')
+      navigate('/profile')
+    } catch (err) {
+      setGoSoloError(err instanceof Error ? err.message : 'Failed to go solo')
+    } finally {
+      setGoSoloSubmitting(false)
     }
   }
 
@@ -526,6 +560,72 @@ export default function Profile() {
                   />
                 </button>
               </div>
+            </div>
+          )}
+
+          {profile && isArtist && profile.artist && (
+            <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-6">
+              <p className="text-xs font-semibold uppercase tracking-wider text-fg-muted">Go solo</p>
+
+              <div className="mt-4 flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-fg">Start your own studio-of-one</p>
+                  <p className="mt-1 text-xs text-fg-secondary">
+                    Creates a brand new studio with you as its owner and artist. Your bio, portfolio, rates, and
+                    flash gallery all come with you. You'll leave your current studio — its past appointments,
+                    clients, and history stay exactly as they are, untouched.
+                  </p>
+                  {goSoloError && <p className="mt-2 text-xs text-danger">{goSoloError}</p>}
+                </div>
+                {!goingSolo && (
+                  <button
+                    type="button"
+                    onClick={() => setGoingSolo(true)}
+                    className="shrink-0 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
+                  >
+                    Go solo
+                  </button>
+                )}
+              </div>
+
+              {goingSolo && (
+                <form onSubmit={handleGoSoloSubmit} className="mt-4 border-t border-border pt-4">
+                  <div className="mb-3">
+                    <label htmlFor="goSoloStudioName" className="mb-1 block text-sm font-medium text-fg-secondary">
+                      New studio name
+                    </label>
+                    <input
+                      id="goSoloStudioName"
+                      type="text"
+                      required
+                      value={goSoloStudioName}
+                      onChange={(event) => setGoSoloStudioName(event.target.value)}
+                      className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                    />
+                  </div>
+
+                  <div className="flex gap-3">
+                    <button
+                      type="submit"
+                      disabled={goSoloSubmitting || !goSoloStudioName.trim()}
+                      className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                    >
+                      {goSoloSubmitting ? 'Creating…' : 'Confirm — go solo'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setGoingSolo(false)
+                        setGoSoloError(null)
+                      }}
+                      disabled={goSoloSubmitting}
+                      className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              )}
             </div>
           )}
 
