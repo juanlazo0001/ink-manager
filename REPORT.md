@@ -6740,3 +6740,75 @@ Both typechecks (`npx tsc --noEmit` api, `npx tsc -b` web) and `npm run build` (
 **The stalled one-of-one reservation judgment call** (asked for explicitly, not silently decided): no automatic expiry at any stage -- not the payment token, not the self-schedule token issued after payment -- matching the self-scheduling branch's own original precedent. The only new safeguard is a manual one: `POST /inquiries/:id/flash/decline` now also accepts a booking stuck at `FLASH_PAYMENT_PENDING` (Part 3), giving staff a way to close out and reopen a piece that's genuinely never going to complete, while explicitly refusing once real payment (`flashPaidAt`) has landed.
 
 **Full live end-to-end test, confirmed**: a real customer-submitted flash request → front-desk approval → a genuine Stripe test-mode payment → automatic redirect into the existing self-scheduling flow → a real `REQUESTED` `Appointment` with the correct artist and duration → the one-of-one piece correctly landing on `BOOKED` only at that final moment, not earlier. Both typechecks and `npm run build` clean before every one of the three commits. All background dev servers and ad-hoc scratch/Playwright files were cleaned up after each part.
+# Solo artist architecture — Phase 1: artist/studio membership model
+
+Four parts, one session, commit+push per part. Foundational work — extra investigation before touching schema, per the task's own instruction.
+
+## Part 1 — Investigation
+
+**Schema confirmation**: `Artist` (schema.prisma:447) has no `studioId` of its own — only `userId String @unique` / `user User @relation(...)`. `User.studioId` (schema.prisma:412) is a required, non-nullable, single-value FK. The *only* path from an Artist to a Studio today is `Artist.user.studioId`, and `Artist.userId @unique` means exactly one Artist row can exist per User. Every single-studio assumption in the codebase ultimately traces back to these two facts.
+
+### What already does NOT need to change
+
+`bio`, `specialties`, `portfolioImages`, `instagramHandle`, `facebookProfileUrl`, `hourlyRateCents`, `flatRateCents` are **already columns on `Artist` directly** — not duplicated per studio, not studio-scoped. The task's phrasing ("portfolio, bio, rates... move to live on Artist itself") reads as if this needs to happen; investigation confirms it's already true. Similarly, `FlashPiece` already carries its own independent `studioId` *and* `artistId` (schema.prisma:565-573, `@@index([studioId, artistId])`) — it's the existing precedent for "belongs to both a studio and an artist, independently," not something needing correction. What's actually missing is the **Artist's own affiliation model** — there's no real join recording "this artist belongs to this studio," only the indirect, single-valued `Artist.user.studioId` chain.
+
+### Every place that assumes one-artist-one-studio (audit)
+
+**JWT / auth**: `AuthPayload` (api `middleware/auth.ts`) and `AuthUser` (web `context/auth-context.ts`) both bake a single scalar `studioId` into the token, minted at login (`routes/auth.ts:73`) and invite-accept (`routes/invites.ts:80`). View As collapses to the same single-scalar shape (`middleware/auth.ts:105`, `context/useEffectiveUser.ts:11-19`). This is the root every other assumption traces back to — **left unchanged this phase**, since actual multi-studio login/session-switching is Phase 2+ scope, not Phase 1.
+
+**Permissions**: `hasPermission`/`getEffectivePermissions`/`requirePermission` (`lib/permissions.ts:253-294`) take `(studioId, role)` only — correct today because a JWT's studioId is unambiguous, but implicitly assumes it always will be.
+
+**~40+ call sites resolve "my own Artist row" via unscoped `prisma.artist.findUnique({ where: { userId } })`** with no studio disambiguation, relying on `Artist.userId @unique`: `appointments.ts:224`, `deposits.ts:414`, `flashPieces.ts:257` (`resolveOwnArtistId`), `inquiries.ts:806,1076,2806`, `navCounts.ts:36,49`, `studios.ts:620,628,691,832`, `users.ts:134`, `waivers.ts:253`. Every "self-scoped-or-staff-managed" pattern in the codebase (`artistSchedules.manage`/preferredSchedule, `flashGallery.manage`, waiver self-status, nav-count badges, task-queue self-scoping) is built on this same assumption: `artist.userId === req.user!.userId` is treated as sufficient to identify "the" scope, with no studio disambiguation.
+
+**Studio-scoped artist queries** (`where: { user: { studioId } }` or equivalent post-fetch check `artist.user.studioId !== studioId`): `routes/artists.ts` (list, detail, PATCH, preferred-schedule — 5+ sites), `routes/appointments.ts:93` (create), `routes/flashPieces.ts:44,314`, `routes/search.ts:66`, `routes/clientImport.ts:229,328-330`, `lib/importArtistMatching.ts:9-10`.
+
+**Genuine latent bug, found during this audit, not previously known**: `lib/schedulingAssistant.ts`'s `resolveAvailabilityContext`/`getSuggestedTimes`/`getAvailableDates`/`getSlotsForDate` and `lib/schedulingConflict.ts`'s `findBufferConflict` all query `prisma.appointment.findMany({ where: { artistId, ... } })` with **no `studioId` filter at all** (`schedulingAssistant.ts:238-246,306-314,367-375`; `schedulingConflict.ts:61-67`). Harmless today (one artist can only ever have appointments in one studio), but the instant an artist has appointments across two studios (Phase 2), an appointment booked at Studio A would incorrectly block/appear-as-conflict when computing availability for Studio B. **Flagged for Phase 2, not fixed now** — fixing it requires deciding how membership threads through the scheduling-assistant call chain, which is exactly the kind of change Phase 2's own migration should own, not something to bolt on speculatively here. Contrast: `POST /appointments`' own create-time validation (`appointments.ts:93,157`) IS already correctly double-scoped (artistId AND studioId both validated, both stored on the row) — only the *read/conflict-check* paths have the gap.
+
+**Frontend**: `AuthUser`/`UserProfile` (`context/auth-context.ts`, `context/user-profile-context.ts`) both model `studioId`/`artist` as single scalars, not arrays. Zero studio-switcher UI exists anywhere (`Dashboard.tsx`, `FlashGallery.tsx`, `Profile.tsx`, `ArtistDetail.tsx` all fetch/display against the one `user.studioId`).
+
+**Studio bootstrap** (`routes/studios.ts:54-81`, `POST /studios/bootstrap`): creates exactly one Studio + one `role: OWNER` User, always. A solo artist's account is this same flow — the artist's own User row has `role: OWNER` (so they get full studio permissions) and, separately, an `Artist` profile also gets linked to that *same* User row (nothing in the schema prevents a User from being both OWNER-role and having an Artist profile; only convention usually pairs `role: ARTIST` with an Artist row via `ensureArtistProfiles`). This is what makes Part 3's detection rule ("no FRONT_DESK/OWNER other than the artist themselves") coherent: a solo artist's own account can legitimately BE the studio's OWNER.
+
+**Corrected premise, flagged rather than silently followed**: the task describes scheduling/self-booking settings (`schedulingBufferMinutes`, `allowsClientSelfScheduling`) as things that "stay artist-only regardless of this [delegation] toggle" — investigation shows these are actually **OWNER-only today** (gated by `artists.manage` via the generic `PATCH /artists/:id`, with no artist self-edit path at all, confirmed via `lib/permissions.ts`'s own comment: "those two are OWNER-only via artists.manage, despite reading like a similar per-artist setting"). The *intent* is unambiguous regardless (the new delegation toggle must never extend to these fields), so Part 4 implements it that way — this note just documents that "artist-only" doesn't match current reality, "staff/OWNER-only, untouched by the new toggle" does.
+
+**Bio/portfolio editing today is already split across two independent paths**: `PATCH /users/me` (`routes/users.ts:133-134`) already lets an ARTIST edit their OWN `bio`/`specialties` — a genuine, pre-existing self-service path, reached via the artist's own Profile.tsx page. The STAFF-facing `PATCH /artists/:id` (gated `artists.manage`, OWNER-only by default) is a completely separate route, reached via the Team → Artists → ArtistDetail.tsx staff management page, and is what actually needs the new delegation gate — the artist's own self-edit path is unaffected either way.
+
+## Schema design
+
+```prisma
+enum StudioMembershipType {
+  HOME
+  GUEST
+}
+
+model StudioMembership {
+  id       String @id @default(cuid())
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+  artistId String
+  artist   Artist @relation(fields: [artistId], references: [id])
+
+  type StudioMembershipType @default(HOME)
+
+  allowsStudioProfileEdits Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@unique([studioId, artistId])
+  @@index([artistId])
+  @@index([studioId])
+}
+```
+
+Plus back-relations: `Artist.memberships StudioMembership[]`, `Studio.artistMemberships StudioMembership[]`.
+
+**Design decisions, explicit:**
+
+- **`Artist.userId` stays `@unique`** — one artist = one login identity = one shared professional profile (bio/portfolio/rates), reused across every studio they're a member of. This is what makes Phase 2's guest-linking make sense at all: a guest artist's existing bio/portfolio just becomes visible at the second studio too, rather than needing to be re-entered.
+- **`@@unique([studioId, artistId])`, deliberately NOT `@@unique([artistId])`** — an artist can't join the same studio twice, but nothing blocks a second membership row (a different studioId) for the same artist. This is the specific thing that lets Phase 2 add guest linking with zero further schema change — exactly the task's own stated goal.
+- **"Exactly one HOME per artist" is an application-level invariant, not a DB constraint** — a partial unique index (`WHERE type = 'HOME'`) isn't expressible in Prisma's schema DSL without a hand-edited raw-SQL migration, and since Phase 1 only ever creates HOME rows, enforcing it at the DB level buys nothing yet. Revisit in Phase 2 if it turns out to matter.
+- **`allowsStudioProfileEdits` lives on `StudioMembership` generally, not HOME-only in the schema** — the task's own spec scopes it to HOME for now, but a GUEST membership in Phase 2 will plausibly want the identical per-relationship consent control (a guest studio shouldn't default to editing a visiting artist's shared bio any more than a home studio should). Putting it on the general model now avoids yet another Phase 2 schema change; Part 4's enforcement code only ever reads it off the HOME row this phase, so behavior is identical to a HOME-only field for now.
+- **`FlashPiece` and `Appointment` are unchanged** — both already model "belongs to a studio AND an artist, independently," which is the correct shape; membership governs *affiliation*, not re-parenting of existing studio-scoped business records.
+- **`User.studioId` is unchanged** — Phase 1 doesn't touch login/session/JWT architecture at all. An artist's "current studio context" for auth purposes stays exactly as today; membership is a new, additional layer describing affiliation, not a replacement for how sessions work. This is a deliberate scope boundary, not an oversight — rewiring auth to support genuine multi-studio sessions is real, separate work that Phase 2 (or later) should own once guest-linking is an actual live feature, not speculative infrastructure built ahead of need.
+
+**What Part 1 deliberately does NOT touch**: none of the ~40+ call sites cataloged above are rewired to read through `StudioMembership` instead of `Artist.user.studioId`. Nothing about Phase 1's *observable* behavior requires an artist to have more than one studio — that's explicitly Phase 2. Part 1 builds the model and Part 2 populates it; Parts 3-4's new capabilities are the only things that actually read the new table this phase.
+

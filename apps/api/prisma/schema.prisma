@@ -288,6 +288,7 @@ model Studio {
   intakeForms             IntakeForm[]
   services                Service[]
   flashPieces             FlashPiece[]
+  artistMemberships       StudioMembership[]
 }
 
 // Self-serve provider connections -- a studio owner connects their OWN
@@ -516,6 +517,69 @@ model Artist {
   matchedImportRows  ImportRow[]
   artistServices     ArtistService[]
   flashPieces        FlashPiece[]
+
+  // Solo artist architecture, Phase 1: the real Studio<->Artist affiliation
+  // model, replacing the implicit single-valued Artist.user.studioId chain
+  // as the source of truth for "which studio(s) is this artist part of."
+  // Deliberately NOT a replacement for auth/session studioId (User.studioId
+  // is untouched this phase) -- this is an additional layer describing
+  // affiliation, not a rewrite of login/JWT architecture. See REPORT.md
+  // ("Solo artist architecture -- Phase 1") for the full investigation this
+  // was built from.
+  memberships StudioMembership[]
+}
+
+// HOME: the artist's normal, primary studio membership -- every existing
+// Artist gets exactly one of these (Part 2's migration). GUEST: Phase 2's
+// not-yet-built second-studio linking; the field exists now so that phase
+// doesn't require another foundational migration, per this task's own
+// explicit instruction.
+enum StudioMembershipType {
+  HOME
+  GUEST
+}
+
+model StudioMembership {
+  id String @id @default(cuid())
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+  artistId String
+  artist   Artist @relation(fields: [artistId], references: [id])
+
+  type StudioMembershipType @default(HOME)
+
+  // Artist-controlled delegation: whether THIS studio's staff (including
+  // OWNER -- the whole point is protecting the artist's own data FROM
+  // studio control, so OWNER is not exempt) may edit this artist's shared
+  // portfolio photos / flash gallery pieces / bio on their behalf. Default
+  // OFF -- must be explicitly granted by the artist, never assumed. Scoped
+  // precisely to those fields (enforced in Part 4); never login credentials,
+  // never the artist's own scheduling/self-booking settings
+  // (schedulingBufferMinutes, allowsClientSelfScheduling, Artist.userId/
+  // login) -- those stay gated by the existing artists.manage permission
+  // (or, for a solo artist per Part 3, the artist's own direct control)
+  // regardless of this toggle. Lives on the general membership model (not
+  // HOME-only) so Phase 2's GUEST rows get the identical mechanism for
+  // free -- Part 4's enforcement only ever reads this off a HOME row this
+  // phase, so behavior is unchanged from a HOME-only field for now.
+  allowsStudioProfileEdits Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  // An artist can't join the same studio twice -- deliberately NOT unique
+  // on artistId alone, since Phase 2 adds a second (GUEST) row for an
+  // artist already HOME elsewhere, and this constraint must already allow
+  // that without a further migration. "Exactly one HOME per artist" is an
+  // application-level invariant (maintained by Part 2's migration and by
+  // whatever creates new solo-studio artists going forward), not a DB
+  // constraint -- a partial unique index (WHERE type = 'HOME') isn't
+  // expressible in Prisma's schema DSL without a hand-edited raw-SQL
+  // migration, and isn't needed yet since Phase 1 only ever creates HOME
+  // rows.
+  @@unique([studioId, artistId])
+  @@index([artistId])
+  @@index([studioId])
 }
 
 enum FlashPieceStatus {
