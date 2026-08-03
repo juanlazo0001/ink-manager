@@ -25,6 +25,11 @@ interface NavItem {
   // cleanly onto a single existing permission key.
   permission?: string
   section?: NavCountSection
+  // UI simplification pass: hidden entirely (not shown-but-empty) when
+  // profile.isSoloStudio -- a team of one has no team roster, artist
+  // roster, or permissions matrix to show. Nothing else about the item's
+  // own gating (roles/permission) changes; this is an additional filter.
+  hideForSoloStudio?: boolean
 }
 
 // UI-1: consolidated to four items. Artists moved into Team's Artists tab;
@@ -42,7 +47,7 @@ const NAV_ITEMS: NavItem[] = [
   // hardcoded roles list) so it also follows a studio's own Settings ->
   // Permissions customization, e.g. an OWNER granting ARTIST clients.view.
   { label: 'Clients', to: '/clients', icon: ClientsIcon, permission: 'clients.view', section: 'clients' },
-  { label: 'Team', to: '/team', icon: TeamIcon, roles: ['OWNER'] },
+  { label: 'Team', to: '/team', icon: TeamIcon, roles: ['OWNER'], hideForSoloStudio: true },
   // Permission-gated, not roles -- an ARTIST always manages their OWN
   // pieces regardless of this key (flashGallery.manage's own "-own"
   // scoping, see permissions.ts), and this key defaults true for both
@@ -174,7 +179,8 @@ export default function Sidebar() {
           {NAV_ITEMS.filter(
             (item) =>
               (!item.roles || (user?.role && item.roles.includes(user.role))) &&
-              (!item.permission || (profile?.permissions.includes(item.permission) ?? false)),
+              (!item.permission || (profile?.permissions.includes(item.permission) ?? false)) &&
+              (!item.hideForSoloStudio || !(profile?.isSoloStudio ?? false)),
           ).map(
             ({ label, to, icon: Icon, section }) => {
               const isActive = to != null && (location.pathname === to || location.pathname.startsWith(`${to}/`))

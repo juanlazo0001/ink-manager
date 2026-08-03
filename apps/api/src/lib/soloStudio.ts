@@ -26,3 +26,17 @@ export async function isSoloStudioArtist(studioId: string, artistUserId: string)
   });
   return otherStaffCount === 0;
 }
+
+// UI simplification pass: a genuinely different, stricter question from
+// isSoloStudioArtist above -- that one ignores other ARTIST colleagues on
+// purpose (it's about whether an appointment-review gatekeeper exists,
+// nothing else). This is "does this studio have exactly one active person
+// in it, full stop, any role" -- the actual condition for hiding
+// team-oriented UI (Team page, Conversations' Team tab, the studio-
+// delegation toggle, etc.) that would otherwise be empty or nonsensical
+// for a literal team of one. Deliberately role-agnostic and NOT scoped to
+// a specific user -- it's a property of the studio, not of who's asking.
+export async function isSoloStudio(studioId: string): Promise<boolean> {
+  const activeUserCount = await prisma.user.count({ where: { studioId, isActive: true } });
+  return activeUserCount === 1;
+}

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import PhoneInput from '../components/PhoneInput'
 import { apiFetch } from '../lib/api'
 import { formatPhoneInput, isValidPhoneDigits, readFileAsDataUrl, MAX_IMAGE_FILE_BYTES } from '../lib/format'
@@ -525,7 +525,11 @@ export default function Profile() {
             </div>
           )}
 
-          {profile && isArtist && profile.artist && (
+          {/* UI simplification pass: delegating profile access to "your
+              studio" is nonsensical for a solo artist -- they and the
+              studio are the same entity, so there's no separate staff to
+              delegate to. Hidden entirely, not shown-disabled. */}
+          {profile && isArtist && profile.artist && !profile.isSoloStudio && (
             <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-6">
               <p className="text-xs font-semibold uppercase tracking-wider text-fg-muted">Studio profile access</p>
 
@@ -559,6 +563,29 @@ export default function Profile() {
                     ].join(' ')}
                   />
                 </button>
+              </div>
+            </div>
+          )}
+
+          {/* UI simplification pass: rates/scheduling buffer/guest window/
+              services normally live on ArtistDetail.tsx, only ever reached
+              via Team -> Artists (studio staff managing an artist). A solo
+              artist IS that staff, but Team is gone for them -- this is
+              their only remaining path to those fields, closing the gap
+              Team's removal would otherwise leave. */}
+          {profile && isArtist && profile.artist && profile.isSoloStudio && (
+            <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-6">
+              <p className="text-xs font-semibold uppercase tracking-wider text-fg-muted">Rates, schedule &amp; services</p>
+              <div className="mt-4 flex items-start justify-between gap-4">
+                <p className="text-sm text-fg-secondary">
+                  Set your rates, scheduling buffer, guest-artist window, and which services you offer.
+                </p>
+                <Link
+                  to={`/artists/${profile.artist.id}`}
+                  className="shrink-0 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
+                >
+                  Manage
+                </Link>
               </div>
             </div>
           )}

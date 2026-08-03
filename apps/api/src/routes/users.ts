@@ -5,7 +5,7 @@ import { Role } from "../../generated/prisma/enums";
 import { getEffectivePermissions } from "../lib/permissions";
 import { validateImageDataUrl } from "../lib/images";
 import { normalizePhone } from "../lib/phone";
-import { isSoloStudioArtist as isSoloStudioArtistCheck } from "../lib/soloStudio";
+import { isSoloStudioArtist as isSoloStudioArtistCheck, isSoloStudio as isSoloStudioCheck } from "../lib/soloStudio";
 
 const router = Router();
 
@@ -109,7 +109,12 @@ router.get("/me", async (req, res) => {
   // commonly OWNER with an Artist profile attached (see soloStudio.ts), and
   // that account needs this exactly as much as a role: ARTIST one does.
   const isSoloStudioArtist = user.artist ? await isSoloStudioArtistCheck(user.studioId, user.id) : false;
-  res.json({ ...serializeUser(safeUser), permissions, isSoloStudioArtist });
+  // UI simplification pass: role-agnostic, studio-level (see
+  // lib/soloStudio.ts's own comment on why this is a different question
+  // from isSoloStudioArtist above) -- drives hiding Team/Conversations'
+  // Team tab/the profile-delegation toggle for every role, not just artists.
+  const isSoloStudio = await isSoloStudioCheck(user.studioId);
+  res.json({ ...serializeUser(safeUser), permissions, isSoloStudioArtist, isSoloStudio });
 });
 
 const OPTIONAL_TEXT_FIELDS = ["name", "phone"] as const;

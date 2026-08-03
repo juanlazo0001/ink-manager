@@ -1263,6 +1263,40 @@ export default function Settings() {
   const [locationSubmitting, setLocationSubmitting] = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
+  // UI simplification pass: a solo studio has no Team page to invite from
+  // (removed entirely -- see Sidebar/Team.tsx's own comments), but still
+  // needs exactly one way to grow past one person. A minimal, deliberately
+  // narrow entry point here, not a rebuild of Team's own invite UI --
+  // hits the same POST /studios/:studioId/invites every other invite path
+  // already uses. Once accepted, the studio stops being solo and Team
+  // reappears on its own with full pending-invite management, resend,
+  // cancel, etc. -- this form never needs any of that.
+  const [growForm, setGrowForm] = useState({ name: '', email: '', role: 'ARTIST', membershipType: 'HOME' })
+  const [growError, setGrowError] = useState<string | null>(null)
+  const [growSuccess, setGrowSuccess] = useState(false)
+  const [growSubmitting, setGrowSubmitting] = useState(false)
+
+  async function handleGrowSubmit(event: FormEvent) {
+    event.preventDefault()
+    if (!studio) return
+
+    setGrowError(null)
+    setGrowSubmitting(true)
+
+    try {
+      await apiFetch(`/studios/${studio.id}/invites`, {
+        method: 'POST',
+        body: JSON.stringify(growForm),
+      })
+      setGrowForm({ name: '', email: '', role: 'ARTIST', membershipType: 'HOME' })
+      setGrowSuccess(true)
+    } catch (err) {
+      setGrowError(err instanceof Error ? err.message : 'Failed to send invite')
+    } finally {
+      setGrowSubmitting(false)
+    }
+  }
+
   useEffect(() => {
     if (studio) {
       setForm({ name: studio.name, website: studio.website ?? '' })
@@ -1508,9 +1542,20 @@ export default function Settings() {
 
           {activeTab === 'general' && (
           <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
-            <h2 className={isEditorial ? 'sc text-[22px]' : 'text-lg font-semibold text-fg'}>Studio Profile</h2>
+            {/* UI simplification pass: this still edits real Studio-model
+                fields (name/logo/website) a solo artist genuinely needs to
+                set -- not removed, just relabeled so it reads as their own
+                profile rather than a separate "studio" entity they and the
+                business both happen to be. */}
+            <h2 className={isEditorial ? 'sc text-[22px]' : 'text-lg font-semibold text-fg'}>
+              {profile?.isSoloStudio ? 'Profile' : 'Studio Profile'}
+            </h2>
             <p className="mt-1 text-sm text-fg-secondary">
-              {canManageStudio ? 'Manage your studio profile and branding.' : 'Your studio profile.'}
+              {profile?.isSoloStudio
+                ? 'Manage your name, logo, and branding.'
+                : canManageStudio
+                  ? 'Manage your studio profile and branding.'
+                  : 'Your studio profile.'}
             </p>
             <div className="mt-4">
             {loading && !studio && <p className="text-sm text-fg-secondary">Loading studio…</p>}
@@ -1709,7 +1754,108 @@ export default function Settings() {
             </div>
           )}
 
-          {activeTab === 'general' && studio && (
+          {activeTab === 'general' && studio && profile?.isSoloStudio && isOwner && (
+            <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
+              <h2 className={isEditorial ? 'sc text-[22px]' : 'text-lg font-semibold text-fg'}>Grow your team</h2>
+              <p className="mt-1 text-sm text-fg-secondary">
+                Invite someone to join you. Once they accept, your Team page appears automatically with full staff
+                and permissions management.
+              </p>
+
+              {growSuccess && !growError && (
+                <div className="mt-4 rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-sm text-success">
+                  Invite sent.
+                </div>
+              )}
+
+              <form onSubmit={handleGrowSubmit} className="mt-4">
+                {growError && (
+                  <div className="mb-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+                    {growError}
+                  </div>
+                )}
+
+                <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <label htmlFor="growName" className="mb-1 block text-sm font-medium text-fg-secondary">
+                      Name
+                    </label>
+                    <input
+                      id="growName"
+                      type="text"
+                      value={growForm.name}
+                      onChange={(event) => setGrowForm({ ...growForm, name: event.target.value })}
+                      className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="growEmail" className="mb-1 block text-sm font-medium text-fg-secondary">
+                      Email
+                    </label>
+                    <input
+                      id="growEmail"
+                      type="email"
+                      required
+                      value={growForm.email}
+                      onChange={(event) => setGrowForm({ ...growForm, email: event.target.value })}
+                      className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                    />
+                  </div>
+                </div>
+
+                <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <label htmlFor="growRole" className="mb-1 block text-sm font-medium text-fg-secondary">
+                      Role
+                    </label>
+                    <select
+                      id="growRole"
+                      value={growForm.role}
+                      onChange={(event) => setGrowForm({ ...growForm, role: event.target.value })}
+                      className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                    >
+                      <option value="ARTIST">Artist</option>
+                      <option value="FRONT_DESK">Front Desk</option>
+                      <option value="OWNER">Owner</option>
+                    </select>
+                  </div>
+                  {growForm.role === 'ARTIST' && (
+                    <div>
+                      <label htmlFor="growMembershipType" className="mb-1 block text-sm font-medium text-fg-secondary">
+                        Membership
+                      </label>
+                      <select
+                        id="growMembershipType"
+                        value={growForm.membershipType}
+                        onChange={(event) => setGrowForm({ ...growForm, membershipType: event.target.value })}
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                      >
+                        <option value="HOME">Home</option>
+                        <option value="GUEST">Guest</option>
+                      </select>
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={growSubmitting}
+                  className={
+                    isEditorial
+                      ? 'editorial-btn-primary flex items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                      : 'flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                  }
+                >
+                  {growSubmitting ? 'Sending…' : 'Send invite'}
+                </button>
+              </form>
+            </div>
+          )}
+
+          {/* UI simplification pass: multi-location management is
+              meaningless for a literal team of one -- hidden entirely,
+              not shown empty. */}
+          {activeTab === 'general' && studio && !profile?.isSoloStudio && (
             <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
               <div className="flex items-center justify-between gap-4">
                 <div>

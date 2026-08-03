@@ -601,6 +601,7 @@ const FOCUSABLE_SELECTOR =
 
 export default function ConversationsPanel() {
   const user = useEffectiveUser()
+  const { profile } = useUserProfile()
   const queryClient = useQueryClient()
   const { isOpen, activeConversationId, openPanel, closePanel } = useConversationPanel()
   const panelRef = useRef<HTMLDivElement>(null)
@@ -832,7 +833,7 @@ export default function ConversationsPanel() {
               tab={tab}
               isOpen={isOpen}
               onTabChange={setTab}
-              showTabs={!isArtist}
+              showTabs={!isArtist && !(profile?.isSoloStudio ?? false)}
               onSelect={(id) => setSelectedId(id)}
               onClose={closePanel}
             />

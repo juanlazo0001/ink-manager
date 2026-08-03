@@ -27,6 +27,12 @@ export interface UserProfile {
   // read-only "managed by your studio" note. Always false for any other
   // role.
   isSoloStudioArtist: boolean
+  // UI simplification pass: true whenever the studio has exactly one
+  // active-or-pending user, any role -- distinct from isSoloStudioArtist
+  // above (which ignores other artists and only cares about OWNER/
+  // FRONT_DESK gatekeepers). Drives hiding Team, Conversations' Team tab,
+  // and the studio-delegation toggle for every role, not just artists.
+  isSoloStudio: boolean
 }
 
 export interface UserProfileContextValue {

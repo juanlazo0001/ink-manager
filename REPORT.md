@@ -7167,3 +7167,61 @@ Both isolated dev servers killed (`netstat` + `taskkill` by PID). All scratch ve
 
 Every background dev server started during this task was killed after use (confirmed via `netstat` before each restart and after each part's verification).
 
+---
+
+# Solo-artist UI simplification + Team/Artists button consistency
+
+Single session on `main`. No schema changes.
+
+## Design decision: automatic detection, studio-level, not artist-level
+
+The brief's own definition ("exactly one user, period") is a different, stricter question than anything that already existed. `lib/soloStudio.ts` already had `isSoloStudioArtist(studioId, artistUserId)` from the solo-artist-architecture work -- but that one deliberately ignores other ARTIST colleagues (it's about whether an appointment-review gatekeeper exists, nothing else), so a studio with two artists and no OWNER/FRONT_DESK reads as "solo" under that check even though it's plainly a two-person team. Built a new, separate, role-agnostic `isSoloStudio(studioId)`: `User.count({ studioId, isActive: true }) === 1`. Exposed on `GET /me` as `isSoloStudio`, alongside (not replacing) the existing `isSoloStudioArtist`.
+
+**Judgment call, worth flagging explicitly**: `isSoloStudio` counts a *pending, unaccepted* invite as a second person (an invited-but-not-yet-active `User` row still has `isActive: true` -- only `deactivatedAt` sets it `false`), so the full multi-person UI reappears the moment an invite is **sent**, not when it's **accepted**. Considered flipping only on acceptance instead, but that would leave a real gap: the minimal solo-only invite card (below) would need its own resend/cancel/pending-list handling, duplicating what Team's already-built "Pending invites" section does correctly. Flipping at send-time means a solo owner who just invited someone gets immediate access to that existing, correct machinery instead. Verified live (see below) that this doesn't produce a broken half-state -- Team reappears fully functional, not partially.
+
+## Named fixes
+
+- **Team page fully absent for a solo studio.** `Sidebar.tsx`'s nav-item filter gained a `hideForSoloStudio` flag (Team only); `Team.tsx` itself redirects to `/profile` (`<Navigate replace>`, same pattern `ArtistCreate.tsx` already used for its own permission guard) if reached directly by URL -- not a dead link, not an empty stub, genuinely unreachable.
+- **Conversations' Team tab removed for a solo studio.** `ConversationsPanel.tsx`'s `showTabs` prop already excluded a plain `ARTIST`-role user (`!isArtist`) but not a solo `OWNER`+`Artist` (role `OWNER`, so `isArtist` was false) -- extended to `!isArtist && !isSoloStudio`. Tab defaults to CLIENT either way (unchanged), since a solo artist handles their own client conversations directly.
+- **`Profile.tsx`'s "Studio profile access" (the `allowsStudioProfileEdits` delegation toggle) hidden entirely for a solo studio.** Delegating profile access to "your studio" when you and the studio are the same entity is nonsensical -- exactly as the brief named it.
+- **Settings "Locations" hidden for a solo studio.** Multi-location management is meaningless for one person.
+- **Settings "Studio Profile" relabeled to "Profile" for a solo studio**, copy adjusted to "Manage your name, logo, and branding" -- not removed (it still edits real, needed `Studio.name`/`logoUrl`/`website` fields), just no longer reads as a separate entity from the person using it.
+
+## Real gap found and closed: removing Team broke the only path to an artist's own rates/schedule/services
+
+`ArtistDetail.tsx` (rates, scheduling buffer, guest-artist window, services offered) was, before this task, only ever reached via Team -> Artists' own artist cards. For a solo `OWNER`+`Artist`, `canManage` there is already true (`OWNER` has `artists.manage` by default) and `isSelf` is true -- they always had full rights to their own record, they just had no way to *get* to the page once Team disappears. Added a "Rates, schedule & services" card to `Profile.tsx` (solo-only), linking directly to `/artists/:id` with their own artist id. Also fixed `ArtistDetail.tsx`'s two remaining links back to a now-absent Team ("Back to Artists" breadcrumb, "Profile picture is managed from Team" note) to point at `/profile` instead when `isSoloStudio`, with matching copy.
+
+## Real gap found and closed (asked first, since it changes the deliverable): no way to invite a first teammate at all
+
+Flagged before building: if Team is genuinely gone, there was no UI path left to send the very invite the brief's own verification step depends on ("confirm inviting and having a real second team member accept..."). Asked whether to add a minimal entry point elsewhere or verify via direct API call only -- chose to add one. A "Grow your team" card on `Settings.tsx`'s General tab, visible only when `isSoloStudio && isOwner`: name/email/role, plus a Home/Guest selector when role is Artist. Hits the exact same `POST /studios/:studioId/invites` every other invite path already uses -- no new backend route, no duplicated invite logic. Deliberately narrow: no pending-invite list, no resend, no cancel -- once any invite exists, the studio is no longer solo (see the judgment call above) and the full Team page's own, already-correct handling of all of that takes over immediately.
+
+## Team/Artists button consistency
+
+Artists tab's two buttons had styling and semantics backwards relative to Staff's own pair: "+ Add Artist" was primary/filled with a plus icon (Staff's "Add directly" is secondary/bordered, no icon), and "+ Invite Artist" was secondary/bordered (Staff's "Invite team member" is primary/filled with a plus icon). Swapped both to match exactly, including the `editorial` preset's own padding/class differences. Renamed "+ Add Artist" -> "Add directly" (matching Staff's actual on-screen text, lowercase "d" -- the brief's own prose said "Add Directly," but literal visual/textual consistency with the real Staff button was the stated goal, so the real button's exact casing wins over the brief's prose styling). "+ Invite Artist" keeps its own label as instructed, now styled as primary/filled with the plus icon.
+
+## Broader audit: found fine as-is, not changed
+
+- **View As ("View portal as...")**: reachable from the account menu regardless of studio size, but `ViewAsPicker.tsx` already filters the roster to exclude the acting user and shows "No other staff members yet." when the list is empty -- a solo studio hits exactly this, and it's an honest, non-broken state, not a dead end. Left alone.
+- **Task "Assign to" picker**: defaults to "Assign to myself" with no other names to pick from for a solo studio -- clear about what it does, not confusing. Left alone.
+- **Permissions tab**: lives entirely inside `Team.tsx` (`staff`/`artists`/`permissions` tabs) -- covered automatically by Team's full removal, no separate fix needed.
+- **`/artists/new` (direct artist creation)**: still reachable by URL for a solo studio (not linked from anywhere in the solo UI, so not a live dead-end problem) -- deliberately left as-is rather than also gating it, since the new "Grow your team" invite card is meant to be *a* path to growing the team, not *the only* path a determined owner can reach.
+
+## Verification -- real accounts, live dev API/web (isolated `:4093`/`:5292`)
+
+- **Solo studio** (fresh, via `create-studio.ts --solo-artist`, activated through a real invite-accept): confirmed live -- no "Team" in the sidebar; direct navigation to `/team` redirects to `/profile`; Profile has no "Studio profile access" section but does have the new "Rates, schedule & services" link; Settings shows "Profile" (not "Studio Profile"), no "Locations," and the new "Grow your team" card; Conversations panel opens straight to CLIENT with no Team tab visible. Screenshotted at each step.
+- **Automatic transition, real invite + real accept**: sent an invite from the "Grow your team" card (`FRONT_DESK`) -- confirmed the owner's own session already sees Team reappear (with the pending invite listed) the moment the invite is sent, before acceptance, matching the judgment call above. The invited person then activated their account for real -- lands correctly with no Team nav (their role, `FRONT_DESK`, never gets Team regardless of studio size, unrelated to this task). Re-checked the owner's session afterward: Settings now reads "Studio Profile" again, "Locations" is back, "Grow your team" is gone -- full, automatic reversion confirmed, zero manual conversion step anywhere.
+- **Multi-person studio unaffected**: `dev-studio` (real seeded multi-person studio, stand-in for production Black Hive per this session's standing dev/prod separation) -- Team page loads normally with all three tabs, Settings shows "Studio Profile"/"Locations" exactly as before, Profile shows no artist-management link for the `OWNER` (correct, they aren't an artist). Nothing regressed.
+- **Button consistency**: screenshotted Staff and Artists tabs side by side -- "Add directly" (secondary/bordered, no icon) and "+ Invite Artist" / "+ Invite Team Member" (primary/filled, plus icon) now visually identical in treatment across both tabs.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npm run build` (web) -- both clean, re-run after every remaining change.
+
+## Cleanup
+
+Both isolated dev servers killed (`netstat` + `taskkill` by PID). All scratch verification scripts deleted, none committed. Real test data left in the dev database: "Fourth Solo Studio" (now a real two-person studio, `juan.lazo0001+solo4@gmail.com` OWNER + `juan.lazo0001+solo4-second@gmail.com` FRONT_DESK).
+
+## Commit
+
+`<pending>` on `main`.
+

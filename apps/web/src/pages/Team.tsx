@@ -1,5 +1,5 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import Eyebrow from '../components/Eyebrow'
 import Modal from '../components/Modal'
@@ -12,6 +12,7 @@ import { PERMISSION_GROUPS, DISPLAYED_ROLES } from '../lib/permissions'
 import { artistsQueryKey } from '../lib/queryKeys'
 import { useAuth } from '../context/useAuth'
 import { useEffectiveUser } from '../context/useEffectiveUser'
+import { useUserProfile } from '../context/useUserProfile'
 import { useViewAs } from '../context/useViewAs'
 import { useSocket } from '../context/useSocket'
 import PresenceDot from '../components/PresenceDot'
@@ -134,6 +135,7 @@ function emptyEditForm(teamUser: TeamUser) {
 export default function Team() {
   const { user: realUser } = useAuth()
   const user = useEffectiveUser()
+  const { profile } = useUserProfile()
   const { onlineUserIds } = useSocket()
   const queryClient = useQueryClient()
   const isOwner = user?.role === 'OWNER'
@@ -587,6 +589,16 @@ export default function Team() {
     }
   }
 
+  // UI simplification pass: Team must not exist at all for a solo studio --
+  // not simplified, not an empty stub. Direct navigation here (bookmark,
+  // typed URL) redirects away rather than rendering, same pattern
+  // ArtistCreate.tsx already uses for its own permission guard. Placed
+  // after every hook above so hook call order never depends on
+  // profile.isSoloStudio.
+  if (profile?.isSoloStudio) {
+    return <Navigate to="/profile" replace />
+  }
+
   return (
     <>
         <div className="mx-auto max-w-7xl px-6 py-6 sm:px-10 sm:py-8">
@@ -639,19 +651,23 @@ export default function Team() {
                 <button
                   type="button"
                   onClick={() => navigate('/artists/new')}
+                  title="Create an artist account directly with a password, without sending an invite email"
                   className={
                     isEditorial
-                      ? 'editorial-btn-primary flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-bg transition hover:bg-accent-hover'
-                      : 'flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover'
+                      ? 'editorial-btn-secondary flex items-center gap-2 rounded-full border px-4 py-2.5 transition'
+                      : 'flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface'
                   }
                 >
-                  <PlusIcon className="h-4 w-4" />
-                  Add Artist
+                  Add directly
                 </button>
                 <button
                   type="button"
                   onClick={openInviteArtist}
-                  className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
+                  className={
+                    isEditorial
+                      ? 'editorial-btn-primary flex items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-bg transition hover:bg-accent-hover'
+                      : 'flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover'
+                  }
                 >
                   <PlusIcon className="h-4 w-4" />
                   Invite Artist

@@ -317,11 +317,11 @@ export default function ArtistDetail() {
   return (
     <div className="mx-auto max-w-4xl px-6 py-6 sm:px-10 sm:py-8">
           <Link
-            to="/team?tab=artists"
+            to={profile?.isSoloStudio ? '/profile' : '/team?tab=artists'}
             className="inline-flex items-center gap-2 text-sm text-fg-secondary hover:text-fg"
           >
             <ArrowLeftIcon className="h-4 w-4" />
-            Back to Artists
+            {profile?.isSoloStudio ? 'Back to Profile' : 'Back to Artists'}
           </Link>
 
           {error && (
@@ -377,8 +377,8 @@ export default function ArtistDetail() {
                 {canManage && (
                   <p className="mt-3 text-xs text-fg-muted">
                     Profile picture is managed from{' '}
-                    <Link to="/team" className="underline hover:text-fg-secondary">
-                      Team
+                    <Link to={profile?.isSoloStudio ? '/profile' : '/team'} className="underline hover:text-fg-secondary">
+                      {profile?.isSoloStudio ? 'your profile' : 'Team'}
                     </Link>
                     .
                   </p>
