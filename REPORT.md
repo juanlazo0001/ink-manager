@@ -7148,7 +7148,7 @@ Both isolated dev servers killed (`netstat` + `taskkill` by PID). All scratch ve
 
 ## Commit
 
-`<pending>` on `main`.
+`f5c6caa` on `main`.
 
 ---
 
@@ -7159,7 +7159,7 @@ Both isolated dev servers killed (`netstat` + `taskkill` by PID). All scratch ve
 **Commits**:
 - Part 1 ("Go Solo" self-service action): `8afb005`
 - Part 2 (studio-initiated artist invite, HOME/GUEST, existing identities): `b204266`
-- Part 3 (regression pass, this entry): `<pending>`
+- Part 3 (regression pass, this entry): `f5c6caa`
 
 **Every scenario in Part 2 and Part 3's own verification sections above was tested live** against the real dev database and a real browser -- not simulated, not assumed from reading the code: two brand-new identities (HOME and GUEST) and two existing identities (HOME and GUEST) invited and accepted; a solo artist independently retaining both their own studio and a new guest placement; a twice-relocated artist's historical records at their very first studio remaining fully correct and viewable; a database-wide sweep confirming zero duplicate accounts and zero membership-invariant violations anywhere, not just among the identities this session created.
 
