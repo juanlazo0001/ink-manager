@@ -36,7 +36,7 @@ const STAFF_ROLES = [Role.OWNER, Role.FRONT_DESK, Role.ARTIST] as const;
 // Generates a unique, stable public slug for a new studio's intake-form URL
 // (/inquiry/:studioSlug). Appends -2, -3, ... on collision; never reused
 // once assigned, since studio links get shared publicly.
-async function generateUniqueSlug(name: string): Promise<string> {
+export async function generateUniqueSlug(name: string): Promise<string> {
   const base = slugify(name) || "studio";
   let candidate = base;
   let suffix = 2;
@@ -295,9 +295,9 @@ router.post("/:studioId/users", requireAuth, requirePermission("team.manage"), a
   res.status(201).json(serializeUser(user));
 });
 
-const INVITE_TOKEN_TTL_DAYS = 7;
+export const INVITE_TOKEN_TTL_DAYS = 7;
 
-function inviteEmailContent(studioName: string, inviteUrl: string) {
+export function inviteEmailContent(studioName: string, inviteUrl: string) {
   return {
     subject: `You've been invited to join ${studioName} on Ink Manager`,
     text: `You've been invited to join ${studioName} on Ink Manager. Set up your account here: ${inviteUrl}\n\nThis link expires in ${INVITE_TOKEN_TTL_DAYS} days.`,

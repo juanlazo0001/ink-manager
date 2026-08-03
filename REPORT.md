@@ -6909,3 +6909,69 @@ Both typechecks clean.
 
 All background dev servers killed after every part's verification (confirmed via `netstat`, force-killed by PID when `tsx watch`'s own restart-on-save left a stale process holding the port — the same known quirk from earlier work this session, not a regression introduced here). All ad-hoc scratch scripts (`scratch-solo-setup*.ts`, `scratch-solo-inquiry.ts`, direct-Prisma verification scripts) deleted after use; none committed. Test data left in the dev database per this session's standing convention: the "Solo Ink Test" studio and its converted-to-`ARTIST` account, a handful of test appointments/clients/inquiries, and `artist1`'s edited bio/scheduling-buffer values from verification.
 
+---
+
+# Internal studio-creation mechanism (including solo-artist studios-of-one)
+
+Single session on `main`. Scope, explicit: internal/platform-operator mechanism only — not public self-serve signup, which stays exactly as it was (never built, never planned by this task).
+
+## Investigated first: how was Black Hive originally created?
+
+No seed file, migration, or script anywhere in git history creates a Studio named "Black Hive" — confirmed by searching every commit's diff (`git log -S` for `studio.create`, `/bootstrap`, `signup`, `register`) and reading `prisma/seed.ts` (whose own comments explicitly say "No real studio in this dev database is actually named 'Black Hive' — that's the real production studio... dev/test never points at the production database"). REPORT.md's own history confirms production has exactly one real studio, originally named `"Black Hive Ink"` (later renamed `"Black Hive Ink and Arts"` in an earlier session).
+
+`POST /studios/bootstrap` (`routes/studios.ts`) has existed, verbatim, since the very first "Ready for first deploy" commit (`404dc5e`) — it is the only studio-creation mechanism that has ever existed in this codebase. The very next relevant commit's own message (`88fb9af`, "Separate dev/production databases...") states plainly: "Every dev session and migration up to now ran directly against the live production Postgres — this was the only DATABASE_URL that existed." Put together: Black Hive was created by calling `POST /studios/bootstrap` directly (with the `X-Bootstrap-Secret` header) against what was, at the time, the only database in existence — production — during initial development, before `.env`/`.env.production` were ever split apart. Not a separate seed file, not direct SQL. This was never documented as a repeatable process, and until this task, calling `/studios/bootstrap` again was the only way to repeat it — and that route hard-codes a directly-set password (never an invite), exactly what this task was asked not to keep doing.
+
+## Build: `apps/api/src/scripts/create-studio.ts`
+
+A script, not a new HTTP route. Run directly:
+
+```
+cd apps/api
+npx tsx src/scripts/create-studio.ts --name "Some Studio" --owner-email owner@example.com [--owner-name "Jane Doe"] [--owner-phone 555-1234] [--solo-artist]
+```
+
+- Creates the `Studio`, then its first `User` (`role: OWNER`, `password: null`, a real `inviteToken`/`inviteTokenExpiresAt`) — the exact same shape `POST /:studioId/invites` already uses for a teammate invite, just for a studio that doesn't exist yet (so it can't call that route directly — there's no authenticated `team.manage` holder for a brand-new studio). Exported `generateUniqueSlug`, `inviteEmailContent`, and `INVITE_TOKEN_TTL_DAYS` from `routes/studios.ts` so the script reuses the same slug-collision logic and email copy rather than re-deriving either.
+- Sends the real invite email via the existing `sendPlatformEmail`/Bird pipeline, fire-and-forget, printing the invite URL as a fallback either way (matches the existing invite route's own resilience — see "Team account lifecycle" entry).
+- `--solo-artist`: additionally creates an `Artist` row on that same `OWNER` user and a `HOME` `StudioMembership` (`allowsStudioProfileEdits: true`), at creation time, not deferred to invite acceptance — confirmed safe by reading `POST /invite/accept/:token`, which only ever touches `password`/`inviteToken`/`isActive`, never `Artist`/`StudioMembership`. `allowsStudioProfileEdits: true` because a solo artist editing their own studio's profile fields isn't "delegated" access from someone else — they are the studio (same grandfathering reasoning the Phase 1 backfill migration already used).
+- No `RolePermission` rows created — confirmed unnecessary: `hasPermission` already falls back to `DEFAULT_ROLE_PERMISSIONS` when a studio has none, the same behavior `/studios/bootstrap` has always relied on.
+- Logs a real `AuditLog` row (`action: "platform_studio_created"`, `actorUserId: null` — the schema's own comment on that column says a null actor means "a system action," which is exactly what this is).
+
+## Gating — decision and the flagged role gap
+
+No new role invented. Deliberately built as a script, not a gated route, specifically so the "no platform-operator role" gap wouldn't need solving at all for this to work correctly: its authorization boundary is direct filesystem + `DATABASE_URL` access — the exact same boundary `prisma migrate deploy` and `prisma db seed` already rely on (see `DEVELOPMENT.md`), and the same one Black Hive's own creation implicitly relied on before dev/prod databases were even split. It works against dev today and could be pointed at `.env.production` for a real second production studio, as a deliberate one-off, the same way `migrate status` already is.
+
+Considered and rejected: extending `POST /studios/bootstrap` (or adding a sibling route) gated by `BOOTSTRAP_SECRET`. Rejected because it would add new HTTP-reachable attack surface for no benefit over a script here, and `BOOTSTRAP_SECRET` is itself already a workaround for the same missing-role problem, not a real identity — reusing it would just be gating one workaround with another.
+
+Flagging, not deciding: if a future need arises for someone without direct DB/filesystem access (e.g. a support teammate) to create studios, that genuinely requires a real platform-operator identity distinct from studio-scoped `OWNER` — today nothing in the `Role` enum (`OWNER | FRONT_DESK | ARTIST | CUSTOMER`) or anywhere else models that. Not built here, on purpose, per the task's own instruction not to quietly invent one.
+
+## Real gap found and fixed during verification: Profile.tsx and `GET /me` assumed a solo artist is always `role: ARTIST`
+
+Creating a real solo-artist studio via the new script (role stays `OWNER`, per this task's own requirement and `soloStudio.ts`'s own comment: "A solo artist's own account is commonly itself role: OWNER... nothing in the schema prevents that same User row from also having an Artist profile") surfaced a real bug Phase 1-4 never hit: earlier solo-artist testing manually converted the test account's role to `ARTIST` via a scratch script specifically to get around this, which silently hid it.
+
+- `users.ts`'s `GET /me` computed `isSoloStudioArtist` only `if (user.role === Role.ARTIST)` — `false` for an `OWNER` with an `Artist` profile.
+- `Profile.tsx`'s `isArtist = profile?.role === 'ARTIST'` gated the entire "Artist details" and "Client self-scheduling" sections off the same assumption.
+
+Both are correctness bugs independent of this task (any future `OWNER`-role artist would hit them), but this task's own mechanism is what finally produced a real account in that shape, and its own verification step ("solo artist has self-scheduling autonomy per Phase 3") is what catches it. Fixed both to key off "does this user have an `Artist` profile" instead of "is their role literally `ARTIST`" — `user.artist` (already unconditionally included in `GET /me`'s query, so no backend query shape change needed) and `Boolean(profile?.artist)` respectively. No regression risk: behavior is identical for every existing account (none of which have `Artist` + non-`ARTIST` role today outside this task's own new test data).
+
+## Verification — real accounts, live dev API/web (isolated `:4093`/`:5292`)
+
+- `create-studio.ts --name "QA Regular Studio" --owner-email juan.lazo0001+qa-regular@gmail.com`: `Studio`/`User` created correctly (`role: OWNER`, `password: null`, real `inviteToken`), no `Artist` row (correct, no `--solo-artist`).
+- `create-studio.ts --name "QA Solo Studio" --owner-email juan.lazo0001+qa-solo@gmail.com --solo-artist`: `Studio`/`User`/`Artist`/`HOME StudioMembership` all created correctly, `allowsStudioProfileEdits: true` — confirmed via a direct DB read, not just console output.
+- **Invite email**: Bird's real API rejected both sends — first `RecipientDomainNotAllowed` (caught: `@dev-studio.test` isn't a real deliverable domain, my own test-input mistake), then, after switching to a real Gmail address, `DomainNotVerified` ("The from address uses a domain that is not verified in this workspace"). This is a pre-existing dev-environment gap, not a defect in this task's work: the "Team account lifecycle" entry's own verification notes state invite tokens were "read directly from the dev DB in place of an inbox (documented as a standing pattern)" — real dev-environment email delivery was never actually confirmed working before this task either, for the identical underlying `sendPlatformEmail` call every invite path shares. `mail.inkmanager.app` is evidently verified in whichever Bird workspace production's key belongs to, but not in dev's — fixing that is a Bird-dashboard action outside this task's scope. The mechanism itself is proven correct: a real HTTP call was made, with the exact right subject/body/recipient, using the same helper every other platform email already goes through; it degrades to "the link exists, share it manually" by design (fire-and-forget, same as every other call site).
+- **Invite acceptance, real browser**: both invite URLs opened at `/invite/:token`, correct studio name + "Owner" role shown, password set, both landed signed-in on `/profile` automatically (same as the existing invite-accept route already does for team invites).
+- **Regular studio owner**: no "Artist details" or "Client self-scheduling" section on `/profile` (correct — not an artist).
+- **Solo studio owner, before the fix above**: same as regular — the bug. After the fix: both sections render; the self-scheduling switch is enabled (not disabled/read-only), and clicking it round-trips a real `PATCH /artists/:id/self-scheduling` (`200`) and flips state (`false -> true`) — confirmed live, solo-artist self-scheduling autonomy actually works for this account, not just theoretically per the schema.
+- All background dev servers killed after verification (`netstat` + `taskkill` by PID, including two stale `EADDRINUSE` holdovers from `tsx watch` restarts — same known quirk noted in earlier entries, not a regression here).
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npm run build` (web) — both clean, re-run after the Profile.tsx/`users.ts` fix.
+
+## Cleanup
+
+All scratch verification scripts (`scratch-cleanup-qa.ts`, `scratch-verify-studios.ts`) deleted after use, none committed. Test data deliberately left in the dev database per this session's standing convention: "QA Regular Studio" (`qa-regular-studio`) and "QA Solo Studio" (`qa-solo-studio`), each with one activated `OWNER` account (passwords set to `password123` during verification); the solo studio's owner also has a live `Artist` profile with self-scheduling now toggled on from the verification click above.
+
+## Commit
+
+`<pending>` on `main`.
+

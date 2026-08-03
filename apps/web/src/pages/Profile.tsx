@@ -10,7 +10,10 @@ const EMPTY_FORM = { name: '', phone: '', bio: '', specialties: '' }
 export default function Profile() {
   const { profile, loading, refresh } = useUserProfile()
   const { logout } = useAuth()
-  const isArtist = profile?.role === 'ARTIST'
+  // Not role === 'ARTIST' -- a solo studio's OWNER can also hold an Artist
+  // profile (see soloStudio.ts), and that user's own artist details/
+  // self-scheduling widgets below need to render for them too.
+  const isArtist = Boolean(profile?.artist)
 
   const [editing, setEditing] = useState(false)
   const [form, setForm] = useState(EMPTY_FORM)

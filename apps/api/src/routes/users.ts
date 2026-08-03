@@ -89,10 +89,11 @@ router.get("/me", async (req, res) => {
   // Solo artist architecture, Phase 3: lets Profile.tsx show the
   // self-scheduling toggle only where it's actually reachable (a solo
   // artist toggling it directly) vs. a plain read-only "ask your studio"
-  // note for a multi-person studio's artist. Computed only for ARTIST --
-  // meaningless for any other role.
-  const isSoloStudioArtist =
-    user.role === Role.ARTIST ? await isSoloStudioArtistCheck(user.studioId, user.id) : false;
+  // note for a multi-person studio's artist. Keyed on having an Artist
+  // profile at all, not on role === ARTIST -- a solo studio's first user is
+  // commonly OWNER with an Artist profile attached (see soloStudio.ts), and
+  // that account needs this exactly as much as a role: ARTIST one does.
+  const isSoloStudioArtist = user.artist ? await isSoloStudioArtistCheck(user.studioId, user.id) : false;
   res.json({ ...serializeUser(safeUser), permissions, isSoloStudioArtist });
 });
 
