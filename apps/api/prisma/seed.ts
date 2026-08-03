@@ -418,6 +418,21 @@ async function main() {
     },
   });
 
+  // Solo artist architecture, Phase 1: every artist needs a real HOME
+  // StudioMembership row now -- a freshly-seeded database (not just the
+  // already-migrated one) must have this too, or Part 3/4's new
+  // capabilities (solo-detection, delegation enforcement) see these seeded
+  // artists as members of nothing. allowsStudioProfileEdits: true matches
+  // the migration backfill's own grandfathering (see that migration's
+  // comment) -- this dev studio's own artists have "always" had it.
+  for (const artist of [artist1, artist2]) {
+    await prisma.studioMembership.upsert({
+      where: { studioId_artistId: { studioId: studio.id, artistId: artist.id } },
+      update: {},
+      create: { studioId: studio.id, artistId: artist.id, type: "HOME", allowsStudioProfileEdits: true },
+    });
+  }
+
   // Every artist offers Tattoo, same as the migration backfill's own
   // reasoning -- that's all any artist could offer before this feature
   // existed. Deliberately NOT tagging either seeded artist as offering

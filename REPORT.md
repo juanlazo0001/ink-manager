@@ -6812,3 +6812,29 @@ Plus back-relations: `Artist.memberships StudioMembership[]`, `Studio.artistMemb
 
 **What Part 1 deliberately does NOT touch**: none of the ~40+ call sites cataloged above are rewired to read through `StudioMembership` instead of `Artist.user.studioId`. Nothing about Phase 1's *observable* behavior requires an artist to have more than one studio — that's explicitly Phase 2. Part 1 builds the model and Part 2 populates it; Parts 3-4's new capabilities are the only things that actually read the new table this phase.
 
+## Part 2 — Migration + regression pass
+
+### Backfill
+
+New hand-authored migration `20260803182844_backfill_studio_membership` (not schema-diff-generated — same discipline as `20260725153000_backfill_inquiry_service` and every backfill since the referral-migration production outage: committed real SQL that runs via `prisma migrate deploy`, not a throwaway script run only against dev). Creates one HOME `StudioMembership` per existing `Artist`, joined through `Artist.userId -> User.studioId` (identical join to the Tattoo-service backfill, for the identical reason — Artist has no direct studioId column). Idempotent (`WHERE NOT EXISTS`), ends with a loud `RAISE EXCEPTION` if any Artist is still unbackfilled rather than silently leaving a gap for Part 3/4 to trip over.
+
+**Judgment call, flagged explicitly**: every backfilled row gets `allowsStudioProfileEdits = true`, not the schema's own `@default(false)`. Studio staff have always been able to edit their artists' portfolio/bio/flash gallery — there was no consent concept before this phase — so backfilling to `false` would silently revoke a capability every existing studio relies on the moment Part 4's enforcement ships, with nobody having done anything to cause it. Grandfathering to `true` preserves today's exact behavior; the schema default still governs every *new* membership row (a fresh solo-studio artist, a future Phase 2 GUEST row), matching the task's "off by default, must be granted" instruction for anything genuinely new. Applied to dev: 12/12 existing artists backfilled, 0 orphans, verified via direct query (not just migration exit code) before proceeding.
+
+**Seed script updated too** (`prisma/seed.ts`): a freshly-seeded database (not just the already-migrated dev one) now also gets a HOME membership per seeded artist, upserted the same idempotent way every other seed row is — otherwise a new contributor's fresh `npx prisma db seed` would silently produce artists with no membership at all, and Part 3/4's new capabilities would see them as members of nothing. Re-ran the seed command after this change to confirm the upsert is genuinely idempotent (no duplicate-row error on a second run).
+
+### Regression pass — real evidence, not "looks fine"
+
+Live against the migrated dev database (real API responses + Playwright screenshots), covering every area Part 1's audit named:
+
+- **Artists list/detail**: `GET /artists` (11 results) and `GET /artists/:id` for `artist1@dev-studio.test` — bio, specialties, and `allowsClientSelfScheduling` all read back correctly, unchanged from pre-migration shape.
+- **Permissions**: `GET /studios/:id/permissions` → 200, matrix loads.
+- **Flash gallery**: `GET /flash-pieces` as OWNER (8 pieces, full studio) vs. as `artist1` (6 pieces, `every(p => p.artist === artist1)` true) — staff-vs-self scoping both correct.
+- **Scheduling**: `GET /scheduling/suggested-times` → 200; Calendar page screenshot shows every artist's appointments rendering correctly across the full month grid.
+- **Dashboard**: `GET /reports/dashboard` → 200; screenshot confirms the "Artist Utilization" widget (per-artist appointment counts, a query that reads through the Artist relation) renders correct real numbers.
+- **Nav counts / self-profile**: `GET /nav-counts` → 200 as `artist1`; `GET /users/me` now also returns `artist.id` (the Part-3/4-enabling field added earlier this session) alongside the unchanged `bio`/`specialties`.
+- **Visual**: Team → Artists tab screenshot shows every seeded artist's bio/specialties rendering identically to before migration; Flash Gallery screenshot shows all 8 pieces (one-of-one badges, hours display, filters) rendering correctly.
+
+No regressions found. Expected, given Part 1's own conclusion — the migration is purely additive (a new table, zero existing-table changes) and nothing yet reads it outside the backfill/seed script itself — but verified live rather than assumed, per the task's own instruction.
+
+Both typechecks clean.
+
