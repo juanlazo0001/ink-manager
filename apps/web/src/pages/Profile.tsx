@@ -41,6 +41,13 @@ export default function Profile() {
   const [passwordError, setPasswordError] = useState<string | null>(null)
   const [passwordSubmitting, setPasswordSubmitting] = useState(false)
 
+  // Solo artist architecture, Phase 3: toggling this hits the new
+  // dedicated PATCH /artists/:id/self-scheduling (self+solo scoped),
+  // never the generic artists.manage-gated PATCH /artists/:id -- an
+  // artist here is never editing anything BUT their own record.
+  const [selfSchedulingSubmitting, setSelfSchedulingSubmitting] = useState(false)
+  const [selfSchedulingError, setSelfSchedulingError] = useState<string | null>(null)
+
   useEffect(() => {
     if (profile) {
       setForm({
@@ -142,6 +149,23 @@ export default function Profile() {
       setError(err instanceof Error ? err.message : 'Failed to update profile')
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  async function handleToggleSelfScheduling() {
+    if (!profile?.artist) return
+    setSelfSchedulingError(null)
+    setSelfSchedulingSubmitting(true)
+    try {
+      await apiFetch(`/artists/${profile.artist.id}/self-scheduling`, {
+        method: 'PATCH',
+        body: JSON.stringify({ allowsClientSelfScheduling: !profile.artist.allowsClientSelfScheduling }),
+      })
+      await refresh()
+    } catch (err) {
+      setSelfSchedulingError(err instanceof Error ? err.message : 'Failed to update self-scheduling')
+    } finally {
+      setSelfSchedulingSubmitting(false)
     }
   }
 
@@ -393,6 +417,50 @@ export default function Profile() {
               </form>
             )}
           </div>
+
+          {profile && isArtist && profile.artist && (
+            <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-6">
+              <p className="text-xs font-semibold uppercase tracking-wider text-fg-muted">Client self-scheduling</p>
+
+              <div className="mt-4 flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm font-medium text-fg">
+                    Let clients pick their own appointment time
+                  </p>
+                  <p className="mt-1 text-xs text-fg-secondary">
+                    When on, a client who accepts your estimate can pick a time from your real availability
+                    themselves, instead of waiting for you or the studio to schedule it. Their pick is always a
+                    pending request — you still review and confirm it, same as any other booking.
+                  </p>
+                  {!profile.isSoloStudioArtist && (
+                    <p className="mt-2 text-xs text-fg-muted">
+                      This is managed by your studio — ask an owner to enable it for you in Team → Artists.
+                    </p>
+                  )}
+                  {selfSchedulingError && <p className="mt-2 text-xs text-danger">{selfSchedulingError}</p>}
+                </div>
+
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={profile.artist.allowsClientSelfScheduling}
+                  disabled={!profile.isSoloStudioArtist || selfSchedulingSubmitting}
+                  onClick={handleToggleSelfScheduling}
+                  className={[
+                    'relative h-6 w-11 shrink-0 rounded-full transition disabled:opacity-40',
+                    profile.artist.allowsClientSelfScheduling ? 'bg-accent' : 'bg-surface-inset border border-border',
+                  ].join(' ')}
+                >
+                  <span
+                    className={[
+                      'absolute top-0.5 h-5 w-5 rounded-full bg-bg transition',
+                      profile.artist.allowsClientSelfScheduling ? 'left-[22px]' : 'left-0.5',
+                    ].join(' ')}
+                  />
+                </button>
+              </div>
+            </div>
+          )}
 
           {profile && (
             <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-6">

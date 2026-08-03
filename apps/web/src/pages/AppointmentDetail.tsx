@@ -171,7 +171,10 @@ export default function AppointmentDetail() {
   // than folded into canManage above -- e.g. an ARTIST granted
   // appointments.checkout should see the checkout widget even though
   // canManage (OWNER/FRONT_DESK) would otherwise exclude them.
-  const canReschedule = profile?.permissions.includes('appointments.reschedule') ?? false
+  // Solo artist architecture, Phase 3: see Calendar.tsx's own comment --
+  // the solo bypass never appears in profile.permissions, so it has to be
+  // OR'd in here directly.
+  const canReschedule = (profile?.permissions.includes('appointments.reschedule') ?? false) || (profile?.isSoloStudioArtist ?? false)
   const canCheckout = profile?.permissions.includes('appointments.checkout') ?? false
   const canManagePhotos = profile?.permissions.includes('appointments.photos.manage') ?? false
   const canGenerateWaiver = profile?.permissions.includes('waivers.generate') ?? false

@@ -29,6 +29,13 @@ declare global {
       // REALLY making the request (there's currently no such consumer,
       // but it's here so one never has to reach into the JWT again).
       realUser?: AuthPayload;
+      // Solo artist architecture, Phase 3: set by
+      // requirePermissionOrSoloArtist (lib/permissions.ts) only when the
+      // request was allowed via the solo-studio bypass, not a real
+      // permission grant -- lets the route handler add the extra "only
+      // your own appointments" restriction that bypass specifically needs,
+      // without the route re-deriving solo status itself.
+      viaSoloArtistBypass?: boolean;
     }
   }
 }

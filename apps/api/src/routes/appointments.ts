@@ -3,7 +3,7 @@ import { prisma } from "../lib/prisma";
 import { Prisma } from "../../generated/prisma/client";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { Role, AppointmentStatus, AppointmentType, GiftCardStatus } from "../../generated/prisma/enums";
-import { requirePermission } from "../lib/permissions";
+import { requirePermission, requirePermissionOrSoloArtist } from "../lib/permissions";
 import { diffObjects, logAudit } from "../lib/audit";
 import { validateGiftCardsForAttachment, generateUniqueGiftCardCode, computeGiftCardExpiration } from "../lib/giftCards";
 import { resolveRequiredDepositCents, resolveDepositTiers } from "../lib/depositTiers";
@@ -42,7 +42,7 @@ const NOT_ARCHIVED = { archivedAt: null } as const;
 // session. A client with no available card (or not enough of one) can't
 // get a TATTOO_SESSION booked here; the error says so explicitly rather
 // than a generic 400.
-router.post("/", requirePermission("appointments.create"), async (req, res) => {
+router.post("/", requirePermissionOrSoloArtist("appointments.create"), async (req, res) => {
   const body = req.body ?? {};
 
   const missing = ["artistId", "clientId", "startTime", "endTime", "inquiryId"].filter((field) => !body[field]);
@@ -92,6 +92,18 @@ router.post("/", requirePermission("appointments.create"), async (req, res) => {
 
   if (!artist || artist.user.studioId !== studioId) {
     return res.status(400).json({ error: "artistId must belong to your studio" });
+  }
+
+  // Solo artist architecture, Phase 3: the bypass grants "manage YOUR OWN
+  // appointments," not blanket appointments.create -- matters only in the
+  // edge case of a solo-by-definition studio (no OWNER/FRONT_DESK) that
+  // still has more than one ARTIST-role user, where it stops one solo
+  // artist from booking onto a different artist's calendar. A studio that
+  // explicitly granted ARTIST role this permission via the real Settings
+  // matrix (req.viaSoloArtistBypass false in that case) is unaffected --
+  // this only tightens the bypass path itself.
+  if (req.viaSoloArtistBypass && artist.userId !== req.user!.userId) {
+    return res.status(403).json({ error: "As a solo artist, you can only create your own appointments" });
   }
 
   // Artist's own override (if set) takes precedence over the studio default.
@@ -362,11 +374,17 @@ router.get("/:id", requirePermission("appointments.view"), async (req, res) => {
 
 // Archive: soft, reversible hide -- same treatment as Client.archivedAt /
 // Inquiry.archivedAt.
-router.post("/:id/archive", requirePermission("appointments.reschedule"), async (req, res) => {
+router.post("/:id/archive", requirePermissionOrSoloArtist("appointments.reschedule"), async (req, res) => {
   const id = req.params.id as string;
   const appointment = await prisma.appointment.findUnique({ where: { id } });
   if (!appointment || appointment.studioId !== req.user!.studioId) {
     return res.status(404).json({ error: "Appointment not found" });
+  }
+  if (req.viaSoloArtistBypass) {
+    const ownArtist = await prisma.artist.findUnique({ where: { userId: req.user!.userId }, select: { id: true } });
+    if (!ownArtist || appointment.artistId !== ownArtist.id) {
+      return res.status(403).json({ error: "As a solo artist, you can only manage your own appointments" });
+    }
   }
   if (appointment.archivedAt) {
     return res.json(appointment);
@@ -388,11 +406,17 @@ router.post("/:id/archive", requirePermission("appointments.reschedule"), async 
   res.json(updated);
 });
 
-router.post("/:id/unarchive", requirePermission("appointments.reschedule"), async (req, res) => {
+router.post("/:id/unarchive", requirePermissionOrSoloArtist("appointments.reschedule"), async (req, res) => {
   const id = req.params.id as string;
   const appointment = await prisma.appointment.findUnique({ where: { id } });
   if (!appointment || appointment.studioId !== req.user!.studioId) {
     return res.status(404).json({ error: "Appointment not found" });
+  }
+  if (req.viaSoloArtistBypass) {
+    const ownArtist = await prisma.artist.findUnique({ where: { userId: req.user!.userId }, select: { id: true } });
+    if (!ownArtist || appointment.artistId !== ownArtist.id) {
+      return res.status(403).json({ error: "As a solo artist, you can only manage your own appointments" });
+    }
   }
   if (!appointment.archivedAt) {
     return res.json(appointment);
@@ -1037,7 +1061,7 @@ router.delete("/:id/photos/:photoId", requirePermission("appointments.photos.man
 // exact same key before this expansion, so folding them into one new key
 // keeps their access identical rather than inventing a key the task's own
 // list didn't ask for.
-router.patch("/:id", requirePermission("appointments.reschedule"), async (req, res) => {
+router.patch("/:id", requirePermissionOrSoloArtist("appointments.reschedule"), async (req, res) => {
   const id = req.params.id as string;
   const { status, startTime, endTime } = req.body ?? {};
 
@@ -1053,6 +1077,13 @@ router.patch("/:id", requirePermission("appointments.reschedule"), async (req, r
 
   if (!appointment || appointment.studioId !== req.user!.studioId) {
     return res.status(404).json({ error: "Appointment not found" });
+  }
+
+  if (req.viaSoloArtistBypass) {
+    const ownArtist = await prisma.artist.findUnique({ where: { userId: req.user!.userId }, select: { id: true } });
+    if (!ownArtist || appointment.artistId !== ownArtist.id) {
+      return res.status(403).json({ error: "As a solo artist, you can only manage your own appointments" });
+    }
   }
 
   const data: { status?: AppointmentStatus; startTime?: Date; endTime?: Date } = {};

@@ -5,6 +5,7 @@ import { Role } from "../../generated/prisma/enums";
 import { getEffectivePermissions } from "../lib/permissions";
 import { validateImageDataUrl } from "../lib/images";
 import { normalizePhone } from "../lib/phone";
+import { isSoloStudioArtist as isSoloStudioArtistCheck } from "../lib/soloStudio";
 
 const router = Router();
 
@@ -36,7 +37,7 @@ export function serializeUser(user: {
   deactivatedAt: Date | null;
   deactivatedById: string | null;
   pendingEmail: string | null;
-  artist: { id: string; bio: string | null; specialties: string[] } | null;
+  artist: { id: string; bio: string | null; specialties: string[]; allowsClientSelfScheduling: boolean } | null;
 }) {
   return {
     id: user.id,
@@ -70,7 +71,7 @@ export function serializeUser(user: {
 router.get("/me", async (req, res) => {
   const user = await prisma.user.findUnique({
     where: { id: req.user!.userId },
-    include: { artist: { select: { id: true, bio: true, specialties: true } } },
+    include: { artist: { select: { id: true, bio: true, specialties: true, allowsClientSelfScheduling: true } } },
   });
 
   if (!user) {
@@ -79,7 +80,14 @@ router.get("/me", async (req, res) => {
 
   const { password: _password, ...safeUser } = user;
   const permissions = await getEffectivePermissions(user.studioId, user.role);
-  res.json({ ...serializeUser(safeUser), permissions });
+  // Solo artist architecture, Phase 3: lets Profile.tsx show the
+  // self-scheduling toggle only where it's actually reachable (a solo
+  // artist toggling it directly) vs. a plain read-only "ask your studio"
+  // note for a multi-person studio's artist. Computed only for ARTIST --
+  // meaningless for any other role.
+  const isSoloStudioArtist =
+    user.role === Role.ARTIST ? await isSoloStudioArtistCheck(user.studioId, user.id) : false;
+  res.json({ ...serializeUser(safeUser), permissions, isSoloStudioArtist });
 });
 
 const OPTIONAL_TEXT_FIELDS = ["name", "phone"] as const;
@@ -157,7 +165,7 @@ router.patch("/me", async (req, res) => {
   const updated = await prisma.user.update({
     where: { id: req.user!.userId },
     data,
-    include: { artist: { select: { id: true, bio: true, specialties: true } } },
+    include: { artist: { select: { id: true, bio: true, specialties: true, allowsClientSelfScheduling: true } } },
   });
 
   const { password: _password, ...safeUser } = updated;

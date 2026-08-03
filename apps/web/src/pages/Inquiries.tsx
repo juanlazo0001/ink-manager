@@ -213,7 +213,10 @@ export default function Inquiries() {
   const location = useLocation()
   const { user } = useAuth()
   const { profile } = useUserProfile()
-  const canCreateAppointment = profile?.permissions.includes('appointments.create') ?? false
+  // Solo artist architecture, Phase 3: see Calendar.tsx's own comment --
+  // the solo bypass never appears in profile.permissions, so it has to be
+  // OR'd in here directly.
+  const canCreateAppointment = (profile?.permissions.includes('appointments.create') ?? false) || (profile?.isSoloStudioArtist ?? false)
   // Same permission ClientDetail.tsx's own canCreateInquiry already checks
   // -- POST /inquiries is requirePermission("inquiries.create"), not a
   // hardcoded role gate.

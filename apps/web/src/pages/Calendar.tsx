@@ -347,8 +347,15 @@ export default function Calendar() {
   const effectiveUser = useEffectiveUser()
   const { profile } = useUserProfile()
   const isArtist = effectiveUser?.role === 'ARTIST'
-  const canCreateAppointment = profile?.permissions.includes('appointments.create') ?? false
-  const canRescheduleAppointment = profile?.permissions.includes('appointments.reschedule') ?? false
+  // Solo artist architecture, Phase 3: a solo artist (no OWNER/FRONT_DESK
+  // besides themselves) gets an additional, backend-granted allow-path for
+  // these two keys that never shows up in profile.permissions (that list
+  // stays a pure role-level computation -- see lib/permissions.ts's own
+  // comment on requirePermissionOrSoloArtist) -- so the frontend gate has
+  // to OR in profile.isSoloStudioArtist directly, or the button would
+  // never render even though the backend would accept the request.
+  const canCreateAppointment = (profile?.permissions.includes('appointments.create') ?? false) || (profile?.isSoloStudioArtist ?? false)
+  const canRescheduleAppointment = (profile?.permissions.includes('appointments.reschedule') ?? false) || (profile?.isSoloStudioArtist ?? false)
   // Picks which calendar variant renders (full drag-and-drop vs read-only)
   // -- the interactive one is worth showing if either underlying action is
   // actually available; handleSelectSlot/applyAppointmentTimeChange below

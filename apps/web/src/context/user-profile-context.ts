@@ -10,8 +10,14 @@ export interface UserProfile {
   studioId: string
   createdAt: string
   pendingEmail: string | null
-  artist?: { id: string; bio: string | null; specialties: string[] }
+  artist?: { id: string; bio: string | null; specialties: string[]; allowsClientSelfScheduling: boolean }
   permissions: string[]
+  // Solo artist architecture, Phase 3: true only for an ARTIST-role user
+  // with no other OWNER/FRONT_DESK at their studio -- lets Profile.tsx
+  // show a real, self-service self-scheduling toggle instead of a
+  // read-only "managed by your studio" note. Always false for any other
+  // role.
+  isSoloStudioArtist: boolean
 }
 
 export interface UserProfileContextValue {

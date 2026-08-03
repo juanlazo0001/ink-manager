@@ -6838,3 +6838,31 @@ No regressions found. Expected, given Part 1's own conclusion — the migration 
 
 Both typechecks clean.
 
+## Part 3 — Solo-artist self-scheduling autonomy
+
+### Solo-studio detection
+
+New `lib/soloStudio.ts`: `isSoloStudioArtist(studioId, artistUserId)` — true when there is no *other* active `OWNER`/`FRONT_DESK` user at the studio (`id: { not: artistUserId }`). Deliberately checks `OWNER`/`FRONT_DESK` only, never other `ARTIST`-role colleagues: the "artists never create/reschedule their own appointments" rule exists so a staff gatekeeper reviews artist-created bookings — if no such gatekeeper exists at all, the rule has nothing left to protect, regardless of how many other artists happen to share the studio. The `artistUserId` exclusion is what makes the common real case — a solo artist's own account IS the studio's `OWNER` (bootstrap always creates the first user as `OWNER`; nothing in the schema stops that same row from also having an `Artist` profile) — correctly read as solo rather than blocked by the artist's own `OWNER` row.
+
+### Two new capabilities, both additive
+
+**Appointment creation/reschedule**: `DEFAULT_ROLE_PERMISSIONS` is untouched — `appointments.create`/`appointments.reschedule` are still `OWNER`/`FRONT_DESK`-only by default, and an explicit `RolePermission` override (if a studio ever sets one) still wins, identical precedence to every other key. New `requirePermissionOrSoloArtist(key)` wraps `requirePermission`: falls through to the normal permission check first, and only for `ARTIST` role with no other studio staff, allows the request anyway. Deliberately **not** folded into `hasPermission`/`getEffectivePermissions` (both stay reusable, role-level computations with no per-user concept) — so Settings → Permissions keeps showing `ARTIST`'s true role-level default even for a solo studio, not a solo-specific value that would misleadingly look staff-granted. Applied to all four `appointments.create`/`appointments.reschedule` route gates (`POST /`, `PATCH /:id`, `POST /:id/archive`, `POST /:id/unarchive`). A second, narrower check rides along: when the grant came from the solo bypass specifically (flagged via `req.viaSoloArtistBypass`, not a real permission), the route additionally requires the target appointment's `artistId` to be the caller's own — the bypass grants "manage YOUR OWN appointments," not blanket `appointments.create`, which only matters in the edge case of a studio with no `OWNER`/`FRONT_DESK` but more than one `ARTIST` (a co-op, still "solo" by the letter of the detection rule) — a studio that explicitly granted the permission via the real Settings matrix is unaffected, since that path never sets `viaSoloArtistBypass`.
+
+**Client self-scheduling toggle**: new `PATCH /artists/:id/self-scheduling`, distinct from the generic `PATCH /:id` (`artists.manage`, `OWNER`-only by default) that already governs `allowsClientSelfScheduling` for every multi-person studio — that route is completely unchanged, so an `OWNER` can still toggle any of their artists' self-scheduling exactly as before (re-verified live). The new route adds a second allow path: a solo artist can toggle their *own* directly, without `artists.manage` granted at all.
+
+### Frontend gap caught during verification, not assumed away
+
+Building the backend capability wasn't sufficient — `Calendar.tsx`, `AppointmentDetail.tsx`, `Inquiries.tsx`, and `InquiryDetail.tsx` all gate their own "can create/reschedule an appointment" UI purely on `profile.permissions.includes('appointments.create'/'appointments.reschedule')`, which comes from `getEffectivePermissions` — a role-level computation Part 3 deliberately never touches (see above). A solo artist would have passed every backend check yet seen **no way to reach the feature at all** — no button, no click-to-book slot. Caught by an actual click-through, not assumed from the API alone: `GET /users/me` now also returns `isSoloStudioArtist` (computed the same way `requirePermissionOrSoloArtist` does), and all four frontend gates now read `(profile.permissions.includes(key) ?? false) || (profile.isSoloStudioArtist ?? false)`.
+
+New `Profile.tsx` widget ("Client self-scheduling"): a real, clickable toggle for a solo artist; for a multi-person studio's artist, the identical section renders read-only/disabled with "This is managed by your studio — ask an owner to enable it for you in Team → Artists." `GET /users/me`'s `artist` sub-object gained `allowsClientSelfScheduling` (previously only `id`/`bio`/`specialties`) to drive this.
+
+### Live verification
+
+Real test setup, not simulated: bootstrapped a genuine second studio ("Solo Ink Test") via `POST /studios/bootstrap`, converted its `OWNER` row to `ARTIST` role (test setup only — self-serve signup is out of scope per this task's own scope boundary, so there's no product flow to drive this through; a real solo artist's account would be set up by whoever already sets up any studio today), created their `Artist` profile + `HOME` membership directly, and gave them a real client/inquiry to schedule against.
+
+- **Solo artist** (`GET /users/me` → `isSoloStudioArtist: true`): `POST /appointments` for their own `artistId` → `201`, a real `Appointment` row. Browser: Profile page shows the live toggle (not the read-only note); clicked it, confirmed the `PATCH` round-trip and the switch's visual state actually flip (`false → true` and back). Calendar page: clicked an empty Week-view slot → the real "New Appointment" modal opened (screenshotted) — the full product flow, not just a raw API call.
+- **Multi-person studio artist** (`artist1@dev-studio.test`, `isSoloStudioArtist: false`): `POST /appointments` → `403`; `PATCH /artists/:id/self-scheduling` for their own record → `403` ("Self-scheduling is managed by your studio…"); Profile page shows the toggle disabled with the read-only explanation; Calendar click does not open a create modal.
+- **Regression**: `OWNER` at the multi-person studio still successfully toggled `artist1`'s `allowsClientSelfScheduling` via the new route's staff path (`200`), confirming the existing capability is additive-only, not replaced.
+
+Both typechecks clean.
+

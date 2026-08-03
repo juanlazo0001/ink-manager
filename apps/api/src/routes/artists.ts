@@ -3,10 +3,11 @@ import { prisma } from "../lib/prisma";
 import { requireAuth } from "../middleware/auth";
 import { Role } from "../../generated/prisma/enums";
 import type { Prisma } from "../../generated/prisma/client";
-import { requirePermission } from "../lib/permissions";
+import { hasPermission, requirePermission } from "../lib/permissions";
 import { diffObjects, logAudit } from "../lib/audit";
 import { isStringArray, isValidDateOrNull, isValidPreferredSchedule } from "../lib/artistValidation";
 import { emitInvalidation } from "../lib/realtime/registry";
+import { isSoloStudioArtist } from "../lib/soloStudio";
 
 const router = Router();
 
@@ -363,6 +364,67 @@ router.patch("/:id/preferred-schedule", requirePermission("artistSchedules.manag
     entityId: id,
     action: "update",
     changes: diffObjects(artist, { preferredSchedule }, ["preferredSchedule"]),
+  });
+
+  emitInvalidation({ type: "artist.changed", studioId: req.user!.studioId, artistId: id });
+
+  res.json(updated);
+});
+
+// Solo artist architecture, Phase 3: a dedicated, narrow write path for
+// Artist.allowsClientSelfScheduling, distinct from the generic
+// PATCH /:id (artists.manage, OWNER-only by default) that already governs
+// this field for every multi-person studio -- that route is completely
+// unchanged, so an OWNER can still toggle any of their artists' self-
+// scheduling exactly as before. What THIS route adds is a second allow
+// path: a solo artist (no OWNER/FRONT_DESK other than themselves -- see
+// lib/soloStudio.ts) can toggle their OWN self-scheduling directly,
+// without needing artists.manage granted at all. Deliberately its own
+// route rather than folded into preferred-schedule (a different field,
+// same self-only shape but no reason to conflate two independent
+// settings) or into the generic PATCH /:id (whose gate is unconditionally
+// artists.manage -- a solo artist without that permission could never
+// reach it).
+router.patch("/:id/self-scheduling", requireAuth, async (req, res) => {
+  const id = req.params.id as string;
+  const { allowsClientSelfScheduling } = req.body ?? {};
+
+  if (typeof allowsClientSelfScheduling !== "boolean") {
+    return res.status(400).json({ error: "allowsClientSelfScheduling must be a boolean" });
+  }
+
+  const artist = await prisma.artist.findUnique({ where: { id }, include: { user: true } });
+  if (!artist || artist.user.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Artist not found" });
+  }
+
+  const isSelf = artist.userId === req.user!.userId;
+  const staffAllowed = await hasPermission(req.user!.studioId, req.user!.role, "artists.manage");
+
+  if (!staffAllowed) {
+    if (req.user!.role !== Role.ARTIST || !isSelf) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    if (!(await isSoloStudioArtist(req.user!.studioId, req.user!.userId))) {
+      return res
+        .status(403)
+        .json({ error: "Self-scheduling is managed by your studio -- ask an owner to enable it for you." });
+    }
+  }
+
+  const updated = await prisma.artist.update({
+    where: { id },
+    data: { allowsClientSelfScheduling },
+    include: ARTIST_INCLUDE,
+  });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Artist",
+    entityId: id,
+    action: "update",
+    changes: diffObjects(artist, { allowsClientSelfScheduling }, ["allowsClientSelfScheduling"]),
   });
 
   emitInvalidation({ type: "artist.changed", studioId: req.user!.studioId, artistId: id });

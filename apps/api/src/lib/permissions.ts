@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 import { prisma } from "./prisma";
 import { Role } from "../../generated/prisma/enums";
 import type { RolePermission } from "../../generated/prisma/client";
+import { isSoloStudioArtist } from "./soloStudio";
 
 // One key per capability that used to be a hardcoded requireRole check (or,
 // as of this expansion, a capability that was previously bundled into a
@@ -290,5 +291,40 @@ export function requirePermission(key: PermissionKey) {
     }
 
     next();
+  };
+}
+
+// Solo artist architecture, Phase 3: appointments.create/appointments.
+// reschedule stay OWNER/FRONT_DESK-only by DEFAULT (DEFAULT_ROLE_PERMISSIONS
+// itself is untouched -- an explicit RolePermission override, if a studio
+// ever sets one, still wins either way, identical precedence to every
+// other key), but a solo studio's own artist gets an ADDITIONAL, narrow
+// allow-path on top: no other OWNER/FRONT_DESK exists to gate their
+// bookings, so the rule protecting nothing left to protect for them
+// specifically. Deliberately NOT folded into hasPermission/
+// getEffectivePermissions -- both stay reusable, role-level computations
+// with no per-user concept, so Settings -> Permissions (which reads
+// getEffectivePermissions) keeps showing ARTIST's TRUE role-level default
+// for a solo studio too, not a solo-specific value that would misleadingly
+// look staff-granted. This wrapper is used only at the exact route gates
+// that need the bypass; every multi-person studio's artists see identical
+// behavior to before this phase, since isSoloStudioArtist is false for them.
+export function requirePermissionOrSoloArtist(key: PermissionKey) {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const allowed = await hasPermission(req.user.studioId, req.user.role, key);
+    if (allowed) {
+      return next();
+    }
+
+    if (req.user.role === Role.ARTIST && (await isSoloStudioArtist(req.user.studioId, req.user.userId))) {
+      req.viaSoloArtistBypass = true;
+      return next();
+    }
+
+    return res.status(403).json({ error: "Forbidden" });
   };
 }

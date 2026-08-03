@@ -433,7 +433,10 @@ export default function InquiryDetail() {
   const canAssignArtist = profile?.permissions.includes('inquiries.assignArtist') ?? false
   const canSendEstimate = profile?.permissions.includes('inquiries.sendEstimate') ?? false
   const canEnterEstimate = profile?.permissions.includes('inquiries.enterEstimate') ?? false
-  const canCreateAppointment = profile?.permissions.includes('appointments.create') ?? false
+  // Solo artist architecture, Phase 3: see Calendar.tsx's own comment --
+  // the solo bypass never appears in profile.permissions, so it has to be
+  // OR'd in here directly.
+  const canCreateAppointment = (profile?.permissions.includes('appointments.create') ?? false) || (profile?.isSoloStudioArtist ?? false)
   const [startingConversation, setStartingConversation] = useState(false)
 
   async function handleMessage() {
