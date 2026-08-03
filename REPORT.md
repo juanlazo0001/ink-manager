@@ -6897,7 +6897,7 @@ Both typechecks clean.
 
 ## Final report
 
-**Commits**: Part 1 `6169a61`, Part 2 `197f686`, Part 3 `db5def7`, Part 4 (this entry's own commit, hash filled in below).
+**Commits**: Part 1 `6169a61`, Part 2 `197f686`, Part 3 `db5def7`, Part 4 `9ac5d02`.
 
 **Part 1 investigation, summarized**: `Artist` has no direct `studioId` — every single-studio assumption traces back to the single-valued `Artist.user.studioId` chain, ~40+ call sites deep, plus a genuine latent scheduling-conflict bug found along the way (flagged for Phase 2, not fixed now — see that section). New `StudioMembership` (`type: HOME | GUEST`, `allowsStudioProfileEdits`) is the real Studio↔Artist affiliation model going forward; none of the ~40+ existing call sites were rewired this phase, since nothing about Phase 1-4's *observable* behavior requires an artist to belong to more than one studio — that stays Phase 2's job, and the schema is now shaped so Phase 2 doesn't need a second foundational migration to add it.
 
