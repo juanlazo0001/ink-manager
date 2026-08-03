@@ -7089,3 +7089,81 @@ Both isolated dev servers killed (`netstat` + `taskkill` by PID) before writing 
 
 `b204266` on `main`.
 
+---
+
+# Artist mobility — Part 3: regression pass across transition paths
+
+Single session, continuing directly from Parts 1-2 on `main`. No code changes -- purely a dedicated verification pass, run against the real dev database, specifically hunting for the two failure classes the task named: duplicate accounts, and broken permission/history state during identity-linking.
+
+## Scenario A: an artist who has gone solo, then separately accepted a GUEST invite elsewhere, retains correct access to both
+
+Fresh identity, not reused from Parts 1-2, so this tests the combination cleanly: created "Third Solo Studio" via `create-studio.ts --solo-artist`, activated it (real password-setup accept, `juan.lazo0001+solo3@gmail.com`) -- `OWNER` + `Artist`, one active HOME membership there. "QA Solo Studio" (a different, unrelated studio) then invited this same email as **GUEST**. Verify page correctly showed "log in to accept" (existing identity, not a password form). Logged in as solo3, accepted.
+
+**After, checked directly against the DB**:
+- `User.studioId`/`role` for solo3: **unchanged** -- still `OWNER` at Third Solo Studio.
+- Their Third Solo Studio HOME membership: **unchanged**, still active, `endedAt: null`.
+- A new GUEST membership at QA Solo Studio: created, active.
+- `/profile` (real browser, still signed in the whole time -- GUEST acceptance returns no new token, confirmed) still renders the "Go solo" section, meaning the account is still recognized as an artist with their own studio -- not silently downgraded or confused by the second studio relationship.
+- QA Solo Studio's own artist roster (`GET /artists`, the real staff-facing query) now lists **both** its own owner-artist and solo3, tagged as a guest.
+
+Both relationships hold simultaneously, correctly, with nothing about the first weakened by adding the second.
+
+## Scenario B: an artist who changed homes retains correct historical access to the studio they left
+
+Used artist1's real transition from Part 1/2 (`dev-studio` -> "Artist One Solo Studio" -> "QA Regular Studio" -- two home changes, not one). As `owner@dev-studio.test` (dev-studio's own OWNER, who no longer shares any active studio with artist1 at all):
+
+- `GET /appointments/:id` for two real appointments originally assigned to artist1 at dev-studio: both still `200`, both still return the correct artist name/email (`Dev Artist One` / `artist1@dev-studio.test`) -- confirmed this isn't accidental: `routes/appointments.ts` includes artist/user data via its own direct Prisma relation join on `Appointment.artistId`, completely independent of the `artists.ts` router's own access-control (which now DOES require an active membership, and dev-studio has none left with artist1) -- so historical appointment data was never at risk from Part 2's stricter artist-access checks, but this was confirmed live, not just reasoned about.
+- Real browser, same account: `/appointments/:id` for one of those appointments renders fully (no crash, no "not found"), correctly showing "Dev Artist One" as the assigned artist.
+- Dev-studio's own Calendar page loads normally; its artist-filter chips correctly **no longer include** artist1 (they hold zero active membership at dev-studio now, home or guest) while correctly **including** the two brand-new artists from Part 2's dev-studio invites -- the filter list tracks live membership state in both directions, not just growing.
+
+Historical records are untouched and fully viewable; only forward-looking artist-affiliation state (who currently shows up as assignable) changed, exactly as intended.
+
+## No scenario produces two `User` rows for the same person
+
+A `groupBy` sweep across **every** `User` row in the dev database (not just the identities this session touched) for any email appearing more than once: **empty result set.**
+
+Full membership history dumped for every identity involved in Parts 1-3, confirming each is coherent as a single continuous timeline under one `User` id:
+
+| Identity | Role/studio now | Full membership history |
+|---|---|---|
+| `artist1@dev-studio.test` | `ARTIST` @ QA Regular Studio | Dev Studio (HOME, ended) -> Artist One Solo Studio (HOME, ended) -> QA Regular Studio (HOME, active) |
+| `artist2@dev-studio.test` | `ARTIST` @ Dev Studio | Dev Studio (HOME, active, never touched) + QA Regular Studio (GUEST, active) |
+| `...+new-home@gmail.com` | `ARTIST` @ Dev Studio | Dev Studio (HOME, active) |
+| `...+new-guest@gmail.com` | `ARTIST` @ Dev Studio | Dev Studio (GUEST, active) |
+| `...+solo3@gmail.com` | `OWNER` @ Third Solo Studio | Third Solo Studio (HOME, active) + QA Solo Studio (GUEST, active) |
+
+Two further DB-level invariant sweeps, both empty (zero violations, checked across every `StudioMembership` row that exists, not sampled):
+- No artist has more than one simultaneously-active HOME membership.
+- No `(studio, artist)` pair has more than one simultaneously-active membership of any type.
+
+These aren't just "looked fine in the app" -- they're the exact two partial unique indexes added in Part 1's migration, independently re-verified here by querying the actual row data rather than trusting that the constraint alone would have caught something the application code got wrong upstream.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npm run build` (web) -- both clean (no code changed this part; re-confirmed anyway per the standing rule).
+
+## Cleanup
+
+Both isolated dev servers killed (`netstat` + `taskkill` by PID). All scratch verification scripts deleted, none committed. Real test data left in the dev database: "Third Solo Studio" (new, solo3's own studio, now also a guest at QA Solo Studio).
+
+## Commit
+
+`<pending>` on `main`.
+
+---
+
+## Final report — Artist mobility (Parts 1-3)
+
+**Schema approach for resolving memberships without losing history**: `StudioMembership.endedAt` (nullable, set once, never cleared or deleted) -- exactly the same principle as `User.isActive`/`deactivatedAt`. Two hand-authored partial unique indexes (not expressible via Prisma's schema DSL, which has no `WHERE` clause) enforce the real invariants at the database level rather than leaving them purely application-trusted: at most one active membership per `(studio, artist)` pair (rejoining after leaving is allowed -- a fresh row, old one stays as history), and at most one active HOME per artist across every studio they've ever touched. Every transition (go solo, accept a HOME invite, accept a GUEST invite) ends the old row and creates a new one in the same transaction; nothing is ever deleted or overwritten in place.
+
+**Commits**:
+- Part 1 ("Go Solo" self-service action): `8afb005`
+- Part 2 (studio-initiated artist invite, HOME/GUEST, existing identities): `b204266`
+- Part 3 (regression pass, this entry): `<pending>`
+
+**Every scenario in Part 2 and Part 3's own verification sections above was tested live** against the real dev database and a real browser -- not simulated, not assumed from reading the code: two brand-new identities (HOME and GUEST) and two existing identities (HOME and GUEST) invited and accepted; a solo artist independently retaining both their own studio and a new guest placement; a twice-relocated artist's historical records at their very first studio remaining fully correct and viewable; a database-wide sweep confirming zero duplicate accounts and zero membership-invariant violations anywhere, not just among the identities this session created.
+
+**Known, deliberately flagged gaps** (none block the task's own stated scope, all noted rather than silently left for someone to discover later): an "existing identity" invite target who is themselves still a pending, unaccepted invite has no way to log in and accept (edge case, not hit in verification, not guarded against); a GUEST studio's staff can still attempt to edit rate/scheduling-buffer/guest-window/self-scheduling/service fields on `ArtistDetail.tsx` for a hosted guest and the save will silently no-op (backend correctly drops those fields; frontend doesn't yet show the matching read-only state); an artist cannot yet toggle `allowsStudioProfileEdits` for a GUEST studio specifically, only their HOME (safe default -- guest studios simply can't get delegation yet, not a security gap).
+
+Every background dev server started during this task was killed after use (confirmed via `netstat` before each restart and after each part's verification).
+
