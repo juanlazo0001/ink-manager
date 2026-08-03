@@ -10,6 +10,7 @@ import { diffObjects, logAudit } from "../lib/audit";
 import { isStringArray, isValidDateOrNull, isValidPreferredSchedule } from "../lib/artistValidation";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { isSoloStudioArtist } from "../lib/soloStudio";
+import { studioHasActiveMembership } from "../lib/artistAccess";
 import { generateUniqueSlug } from "./studios";
 import { JWT_SECRET } from "../lib/jwt";
 
@@ -70,59 +71,73 @@ router.post("/", requirePermission("artists.manage"), async (req, res) => {
   res.status(201).json(artist);
 });
 
-// Solo artist architecture, Phase 4: the HOME membership row is where
-// allowsStudioProfileEdits lives -- an array (Prisma's shape for a
-// filtered to-many include), same convention artistServices below already
-// uses, even though exactly one HOME row exists per artist in practice.
-const HOME_MEMBERSHIP_INCLUDE = {
-  memberships: { where: { type: "HOME" as const }, select: { allowsStudioProfileEdits: true } },
-} as const;
+// Artist mobility, Part 2: the membership relevant to a request is
+// whichever active row (HOME or GUEST, never an ended one) connects THIS
+// artist to the VIEWING studio -- not a blanket "their HOME everywhere"
+// lookup, which would (a) surface a stale/ended row once an artist has
+// more than one HOME over their history, a real possibility as of Part 1,
+// and (b) never reflect a GUEST studio's own delegation grant, which is
+// exactly as real and independent as a HOME studio's. Parameterized
+// (rather than a module-level const, as this was through Phase 1-4)
+// because "the viewing studio" is only known per-request.
+function membershipInclude(viewerStudioId: string) {
+  return {
+    memberships: {
+      where: { studioId: viewerStudioId, endedAt: null },
+      select: { allowsStudioProfileEdits: true, type: true },
+    },
+  } as const;
+}
 
-const ARTIST_INCLUDE = {
-  user: { select: { id: true, email: true, role: true, name: true, phone: true, avatarUrl: true, studioId: true } },
-  // Service lines: which services this artist is tagged as offering (see
-  // ArtistService) -- the detail page's checkboxes read this to know
-  // what's currently checked.
-  artistServices: { select: { serviceId: true } },
-  ...HOME_MEMBERSHIP_INCLUDE,
-} as const;
+function artistInclude(viewerStudioId: string) {
+  return {
+    user: { select: { id: true, email: true, role: true, name: true, phone: true, avatarUrl: true, studioId: true } },
+    // Service lines: which services this artist is tagged as offering (see
+    // ArtistService) -- the detail page's checkboxes read this to know
+    // what's currently checked.
+    artistServices: { select: { serviceId: true } },
+    ...membershipInclude(viewerStudioId),
+  } as const;
+}
 
 // List view only renders id/bio/specialties/portfolioImages plus a handful
 // of user fields -- role/phone/studioId are detail-page-only.
-const ARTIST_LIST_SELECT = {
-  id: true,
-  bio: true,
-  specialties: true,
-  portfolioImages: true,
-  instagramHandle: true,
-  facebookProfileUrl: true,
-  isGuest: true,
-  guestStartDate: true,
-  guestEndDate: true,
-  // Reference rate(s) -- needed in the list view (not just the detail
-  // page) since the estimate form's per-session price auto-suggestion
-  // reads whichever artist is assigned from wherever that artist list was
-  // already fetched from.
-  hourlyRateCents: true,
-  flatRateCents: true,
-  // Per-artist scheduling buffer override -- null means "use the studio's
-  // own StudioSettings.schedulingBufferMinutes default". Needed wherever
-  // an artist's own bufferWarning might show, not just the detail page.
-  schedulingBufferMinutes: true,
-  // Client self-scheduling exploration: same "needed in the list view too,
-  // not just the detail page" reasoning as schedulingBufferMinutes above.
-  allowsClientSelfScheduling: true,
-  // Calendar's per-column artist-unavailable grey-shading (Phase: studio
-  // hours + calendar shading) needs this in the list view too, not just
-  // the detail page.
-  preferredSchedule: true,
-  // Service lines: InquiryDetail.tsx's practitioner picker filters to only
-  // artists tagged as offering the inquiry's own service -- needs this in
-  // the list view too, not just the detail page.
-  artistServices: { select: { serviceId: true } },
-  user: { select: { id: true, email: true, name: true, avatarUrl: true } },
-  ...HOME_MEMBERSHIP_INCLUDE,
-} as const;
+function artistListSelect(viewerStudioId: string) {
+  return {
+    id: true,
+    bio: true,
+    specialties: true,
+    portfolioImages: true,
+    instagramHandle: true,
+    facebookProfileUrl: true,
+    isGuest: true,
+    guestStartDate: true,
+    guestEndDate: true,
+    // Reference rate(s) -- needed in the list view (not just the detail
+    // page) since the estimate form's per-session price auto-suggestion
+    // reads whichever artist is assigned from wherever that artist list was
+    // already fetched from.
+    hourlyRateCents: true,
+    flatRateCents: true,
+    // Per-artist scheduling buffer override -- null means "use the studio's
+    // own StudioSettings.schedulingBufferMinutes default". Needed wherever
+    // an artist's own bufferWarning might show, not just the detail page.
+    schedulingBufferMinutes: true,
+    // Client self-scheduling exploration: same "needed in the list view too,
+    // not just the detail page" reasoning as schedulingBufferMinutes above.
+    allowsClientSelfScheduling: true,
+    // Calendar's per-column artist-unavailable grey-shading (Phase: studio
+    // hours + calendar shading) needs this in the list view too, not just
+    // the detail page.
+    preferredSchedule: true,
+    // Service lines: InquiryDetail.tsx's practitioner picker filters to only
+    // artists tagged as offering the inquiry's own service -- needs this in
+    // the list view too, not just the detail page.
+    artistServices: { select: { serviceId: true } },
+    user: { select: { id: true, email: true, name: true, avatarUrl: true } },
+    ...membershipInclude(viewerStudioId),
+  } as const;
+}
 
 // Self-heals any ARTIST-role user in the studio who doesn't have an Artist
 // profile yet -- e.g. one created before this existed, or via some other
@@ -154,9 +169,19 @@ async function ensureArtistProfiles(studioId: string) {
 router.get("/", requirePermission("artists.view"), async (req, res) => {
   await ensureArtistProfiles(req.user!.studioId);
 
+  // Artist mobility, Part 2: includes GUEST-affiliated artists alongside
+  // this studio's own HOME roster -- the `user.studioId` clause is kept
+  // too (not replaced by the membership check alone) as a defensive
+  // fallback for any HOME artist whose membership row is somehow missing,
+  // so this list can never lose someone it already showed.
   const artists = await prisma.artist.findMany({
-    where: { user: { studioId: req.user!.studioId } },
-    select: ARTIST_LIST_SELECT,
+    where: {
+      OR: [
+        { user: { studioId: req.user!.studioId } },
+        { memberships: { some: { studioId: req.user!.studioId, endedAt: null } } },
+      ],
+    },
+    select: artistListSelect(req.user!.studioId),
     orderBy: { user: { name: "asc" } },
     take: 100,
   });
@@ -167,9 +192,11 @@ router.get("/", requirePermission("artists.view"), async (req, res) => {
 router.get("/:id", requirePermission("artists.view"), async (req, res) => {
   const id = req.params.id as string;
 
-  const artist = await prisma.artist.findUnique({ where: { id }, include: ARTIST_INCLUDE });
+  const artist = await prisma.artist.findUnique({ where: { id }, include: artistInclude(req.user!.studioId) });
 
-  if (!artist || artist.user.studioId !== req.user!.studioId) {
+  const isHome = artist?.user.studioId === req.user!.studioId;
+  const isGuestHere = !isHome && artist && (await studioHasActiveMembership(req.user!.studioId, id));
+  if (!artist || (!isHome && !isGuestHere)) {
     return res.status(404).json({ error: "Artist not found" });
   }
 
@@ -185,7 +212,7 @@ router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
     instagramHandle,
     facebookProfileUrl,
   } = req.body ?? {};
-  const {
+  let {
     isGuest,
     guestStartDate,
     guestEndDate,
@@ -198,24 +225,45 @@ router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
 
   const artist = await prisma.artist.findUnique({
     where: { id },
-    include: { user: true, artistServices: { select: { serviceId: true } }, ...HOME_MEMBERSHIP_INCLUDE },
+    include: { user: true, artistServices: { select: { serviceId: true } }, ...membershipInclude(req.user!.studioId) },
   });
-  if (!artist || artist.user.studioId !== req.user!.studioId) {
+  const isHome = artist?.user.studioId === req.user!.studioId;
+  const isGuestHere = !isHome && artist && (await studioHasActiveMembership(req.user!.studioId, id));
+  if (!artist || (!isHome && !isGuestHere)) {
     return res.status(404).json({ error: "Artist not found" });
   }
 
-  // Solo artist architecture, Phase 4: bio/specialties/portfolioImages/
-  // instagramHandle/facebookProfileUrl are the artist's own shared
-  // profile data (see StudioMembership.allowsStudioProfileEdits' own
-  // schema comment for the exact scope) -- editable by staff only when
-  // this artist has explicitly delegated that, or when staff IS the
-  // artist (requirePermission above already confirmed artists.manage, so
-  // an ARTIST reaching this route at all means a studio explicitly
-  // granted them that broad permission -- rare, but self-edits still
-  // shouldn't need delegation from themselves). Every OTHER field
-  // (rates, scheduling buffer, guest status, self-scheduling, service
-  // tags) is untouched by this check -- staff with artists.manage can
-  // always edit those, exactly as before. Silently dropped rather than
+  // Artist mobility, Part 2: rates, scheduling buffer, guest-window flags,
+  // self-scheduling, and service tags are single Artist-level fields, not
+  // per-studio ones -- there's nowhere for a GUEST studio's own version of
+  // "this artist's hourly rate" to live, and letting one studio silently
+  // overwrite a value the artist's HOME studio also depends on would be a
+  // real correctness bug, not just a permissions gap. So these stay
+  // HOME-only regardless of delegation, silently stripped (not rejected)
+  // for a GUEST-studio caller -- same "drop what you can't touch, keep the
+  // rest of the save" shape as the profile-fields check just below.
+  if (!isHome) {
+    isGuest = undefined;
+    guestStartDate = undefined;
+    guestEndDate = undefined;
+    serviceIds = undefined;
+    hourlyRateCents = undefined;
+    flatRateCents = undefined;
+    schedulingBufferMinutes = undefined;
+    allowsClientSelfScheduling = undefined;
+  }
+
+  // Solo artist architecture, Phase 4 (extended in Part 2 to cover a GUEST
+  // studio's own delegation grant, not just HOME's): bio/specialties/
+  // portfolioImages/instagramHandle/facebookProfileUrl are the artist's
+  // own shared profile data (see StudioMembership.allowsStudioProfileEdits'
+  // own schema comment for the exact scope) -- editable by staff only when
+  // THIS studio's membership with the artist (HOME or GUEST, whichever
+  // applies) has delegation on, or when staff IS the artist
+  // (requirePermission above already confirmed artists.manage, so an
+  // ARTIST reaching this route at all means a studio explicitly granted
+  // them that broad permission -- rare, but self-edits still shouldn't
+  // need delegation from themselves). Silently dropped rather than
   // rejecting the whole request, so a staff member without delegation can
   // still save changes to the fields they DO have access to in the same
   // request the UI already sends as one combined save.
@@ -325,7 +373,7 @@ router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
   const previousServiceIds = artist.artistServices.map((s) => s.serviceId);
 
   const [updated] = await prisma.$transaction([
-    prisma.artist.update({ where: { id }, data, include: ARTIST_INCLUDE }),
+    prisma.artist.update({ where: { id }, data, include: artistInclude(req.user!.studioId) }),
     ...(nextServiceIds !== undefined
       ? [
           prisma.artistService.deleteMany({ where: { artistId: id } }),
@@ -395,7 +443,7 @@ router.patch("/:id/preferred-schedule", requirePermission("artistSchedules.manag
   const updated = await prisma.artist.update({
     where: { id },
     data: { preferredSchedule },
-    include: ARTIST_INCLUDE,
+    include: artistInclude(req.user!.studioId),
   });
 
   await logAudit({
@@ -456,7 +504,7 @@ router.patch("/:id/self-scheduling", requireAuth, async (req, res) => {
   const updated = await prisma.artist.update({
     where: { id },
     data: { allowsClientSelfScheduling },
-    include: ARTIST_INCLUDE,
+    include: artistInclude(req.user!.studioId),
   });
 
   await logAudit({

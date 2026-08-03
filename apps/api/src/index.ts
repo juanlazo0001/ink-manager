@@ -6,6 +6,7 @@ import compression from "compression";
 import studiosRouter from "./routes/studios";
 import authRouter from "./routes/auth";
 import invitesRouter from "./routes/invites";
+import artistInvitesRouter from "./routes/artistInvites";
 import usersRouter from "./routes/users";
 import artistsRouter from "./routes/artists";
 import flashPiecesRouter from "./routes/flashPieces";
@@ -88,6 +89,7 @@ app.get("/health", (_req, res) => {
 app.use("/studios", studiosRouter);
 app.use(authRouter);
 app.use(invitesRouter);
+app.use(artistInvitesRouter);
 app.use("/users", usersRouter);
 app.use("/artists", artistsRouter);
 app.use("/flash-pieces", flashPiecesRouter);

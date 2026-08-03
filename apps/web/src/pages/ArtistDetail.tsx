@@ -38,11 +38,13 @@ interface Artist {
   // field's own comment on Artist for what turning it on does.
   allowsClientSelfScheduling: boolean
   artistServices: { serviceId: string }[]
-  user: { id: string; email: string; name: string | null; phone: string | null; avatarUrl: string | null }
-  // Solo artist architecture, Phase 4: the artist's own HOME membership --
-  // an array (same shape the backend's Prisma include returns), even
-  // though exactly one HOME row exists per artist in practice.
-  memberships: { allowsStudioProfileEdits: boolean }[]
+  user: { id: string; email: string; name: string | null; phone: string | null; avatarUrl: string | null; studioId: string }
+  // Solo artist architecture, Phase 4, extended in artist mobility Part 2:
+  // the ACTIVE membership connecting this artist to the VIEWING studio --
+  // HOME if this is their home studio, GUEST if the viewer is hosting them
+  // as a guest. An array (same shape the backend's Prisma include
+  // returns), even though exactly one such row can ever be active here.
+  memberships: { allowsStudioProfileEdits: boolean; type: 'HOME' | 'GUEST' }[]
 }
 
 interface ServiceOption {
@@ -348,6 +350,11 @@ export default function ArtistDetail() {
                   <div>
                     <h1 className="flex flex-wrap items-center gap-2 text-xl font-bold text-fg">
                       {artist.user.name || artist.user.email}
+                      {artist.memberships[0]?.type === 'GUEST' && (
+                        <span className="rounded-full bg-accent/10 px-2.5 py-0.5 text-xs font-medium text-accent">
+                          Guest artist
+                        </span>
+                      )}
                       {artist.isGuest && (
                         <span
                           className={[
@@ -374,6 +381,13 @@ export default function ArtistDetail() {
                       Team
                     </Link>
                     .
+                  </p>
+                )}
+                {artist.memberships[0]?.type === 'GUEST' && (
+                  <p className="mt-3 text-xs text-fg-muted">
+                    This artist's home studio is elsewhere. Rates, scheduling buffer, guest window, self-scheduling,
+                    and services stay under their home studio's control from here -- only changes to fields they've
+                    delegated to you (if any) will be saved.
                   </p>
                 )}
               </div>

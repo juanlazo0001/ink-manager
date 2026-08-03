@@ -31,6 +31,12 @@ interface ArtistCard {
   isGuest: boolean
   guestStartDate: string | null
   guestEndDate: string | null
+  // Artist mobility, Part 2: the ACTIVE membership connecting this artist
+  // to the studio the list was fetched for -- HOME for this studio's own
+  // roster, GUEST for an artist visiting from elsewhere. Distinct from
+  // isGuest above (an older, single-studio "temporarily visiting" display
+  // flag, unrelated to StudioMembership) -- both can be true independently.
+  memberships: { type: 'HOME' | 'GUEST'; allowsStudioProfileEdits: boolean }[]
   user: { id: string; email: string; name: string | null; avatarUrl: string | null }
 }
 
@@ -195,6 +201,45 @@ export default function Team() {
     setInviteForm(EMPTY_INVITE_FORM)
     setInviteFormError(null)
     setShowInviteModal(true)
+  }
+
+  // Artist mobility, Part 2: a separate modal from the Staff tab's invite
+  // above -- STAFF_ROLE_OPTIONS deliberately never offers ARTIST there
+  // (see its own comment: artist creation lives on this Artists tab
+  // instead). This is the first artist flow that's an actual invite
+  // (email + accept link) rather than "Add Artist"'s direct, password-set
+  // creation -- so it gets its own small entry point rather than being
+  // bolted onto either existing one.
+  const [showInviteArtistModal, setShowInviteArtistModal] = useState(false)
+  const [inviteArtistForm, setInviteArtistForm] = useState({ email: '', name: '', membershipType: 'HOME' })
+  const [inviteArtistFormError, setInviteArtistFormError] = useState<string | null>(null)
+  const [inviteArtistSubmitting, setInviteArtistSubmitting] = useState(false)
+
+  function openInviteArtist() {
+    setInviteArtistForm({ email: '', name: '', membershipType: 'HOME' })
+    setInviteArtistFormError(null)
+    setShowInviteArtistModal(true)
+  }
+
+  async function handleInviteArtistSubmit(event: FormEvent) {
+    event.preventDefault()
+    if (!user?.studioId) return
+
+    setInviteArtistFormError(null)
+    setInviteArtistSubmitting(true)
+
+    try {
+      await apiFetch(`/studios/${user.studioId}/invites`, {
+        method: 'POST',
+        body: JSON.stringify({ ...inviteArtistForm, role: 'ARTIST' }),
+      })
+      setShowInviteArtistModal(false)
+      queryClient.invalidateQueries({ queryKey: artistsQueryKey(user.studioId) })
+    } catch (err) {
+      setInviteArtistFormError(err instanceof Error ? err.message : 'Failed to send invite')
+    } finally {
+      setInviteArtistSubmitting(false)
+    }
   }
 
   const [resendingInviteId, setResendingInviteId] = useState<string | null>(null)
@@ -590,18 +635,28 @@ export default function Team() {
             )}
 
             {isOwner && activeTab === 'artists' && (
-              <button
-                type="button"
-                onClick={() => navigate('/artists/new')}
-                className={
-                  isEditorial
-                    ? 'editorial-btn-primary flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-bg transition hover:bg-accent-hover'
-                    : 'flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover'
-                }
-              >
-                <PlusIcon className="h-4 w-4" />
-                Add Artist
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => navigate('/artists/new')}
+                  className={
+                    isEditorial
+                      ? 'editorial-btn-primary flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-bg transition hover:bg-accent-hover'
+                      : 'flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover'
+                  }
+                >
+                  <PlusIcon className="h-4 w-4" />
+                  Add Artist
+                </button>
+                <button
+                  type="button"
+                  onClick={openInviteArtist}
+                  className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
+                >
+                  <PlusIcon className="h-4 w-4" />
+                  Invite Artist
+                </button>
+              </div>
             )}
           </div>
 
@@ -852,6 +907,11 @@ export default function Team() {
                         <div className="min-w-0">
                           <p className="flex items-center gap-1.5 truncate text-sm font-semibold text-fg">
                             <span className="truncate">{artist.user.name || artist.user.email}</span>
+                            {artist.memberships[0]?.type === 'GUEST' && (
+                              <span className="shrink-0 rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent">
+                                Guest artist
+                              </span>
+                            )}
                             {artist.isGuest &&
                               (() => {
                                 const ended = !!artist.guestEndDate && new Date(artist.guestEndDate) < new Date()
@@ -1297,6 +1357,73 @@ export default function Team() {
               className="mt-5 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
             >
               {inviteSubmitting ? 'Sending…' : 'Send invite'}
+            </button>
+          </form>
+        </Modal>
+      )}
+
+      {showInviteArtistModal && (
+        <Modal title="Invite Artist" onClose={() => setShowInviteArtistModal(false)}>
+          <form onSubmit={handleInviteArtistSubmit}>
+            <p className="mb-4 text-sm text-fg-secondary">
+              They'll get an email to accept. If they're new to Ink Manager, they'll set a password; if they already
+              have an account elsewhere, they'll just log in to accept.
+            </p>
+
+            {inviteArtistFormError && (
+              <div className="mb-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+                {inviteArtistFormError}
+              </div>
+            )}
+
+            <div className="mb-3">
+              <label htmlFor="inviteArtistName" className="mb-1 block text-sm font-medium text-fg-secondary">
+                Name
+              </label>
+              <input
+                id="inviteArtistName"
+                type="text"
+                value={inviteArtistForm.name}
+                onChange={(event) => setInviteArtistForm({ ...inviteArtistForm, name: event.target.value })}
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+            </div>
+
+            <div className="mb-3">
+              <label htmlFor="inviteArtistEmail" className="mb-1 block text-sm font-medium text-fg-secondary">
+                Email
+              </label>
+              <input
+                id="inviteArtistEmail"
+                type="email"
+                required
+                value={inviteArtistForm.email}
+                onChange={(event) => setInviteArtistForm({ ...inviteArtistForm, email: event.target.value })}
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="inviteArtistMembershipType" className="mb-1 block text-sm font-medium text-fg-secondary">
+                Membership
+              </label>
+              <select
+                id="inviteArtistMembershipType"
+                value={inviteArtistForm.membershipType}
+                onChange={(event) => setInviteArtistForm({ ...inviteArtistForm, membershipType: event.target.value })}
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+              >
+                <option value="HOME">Home — this becomes their primary studio</option>
+                <option value="GUEST">Guest — purely additive, their existing home is untouched</option>
+              </select>
+            </div>
+
+            <button
+              type="submit"
+              disabled={inviteArtistSubmitting}
+              className="mt-5 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
+            >
+              {inviteArtistSubmitting ? 'Sending…' : 'Send invite'}
             </button>
           </form>
         </Modal>

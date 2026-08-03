@@ -289,6 +289,7 @@ model Studio {
   services                Service[]
   flashPieces             FlashPiece[]
   artistMemberships       StudioMembership[]
+  artistMembershipInvites ArtistMembershipInvite[]
 }
 
 // Self-serve provider connections -- a studio owner connects their OWN
@@ -594,6 +595,35 @@ model StudioMembership {
   //     application-level as Phase 1 originally deferred it.
   @@index([artistId])
   @@index([studioId])
+}
+
+// Artist mobility, Part 2: a studio-initiated invite specifically for an
+// Artist membership (HOME or GUEST), deliberately NOT modeled as a pending
+// User row the way team.ts's existing OWNER/FRONT_DESK/(legacy)ARTIST
+// invites are. That model can't represent inviting someone whose email
+// already belongs to a real account (User.email is unique -- there's no
+// "pending" second row to create), so this is decoupled from User
+// entirely: every account/membership decision (new identity vs existing,
+// HOME vs GUEST resolution) happens once, together, at accept time --
+// never split across invite-creation and accept like the old flow, which
+// keeps the identity-linking logic in exactly one place. See
+// routes/artistInvites.ts.
+model ArtistMembershipInvite {
+  id String @id @default(cuid())
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  email          String
+  membershipType StudioMembershipType
+
+  token          String    @unique
+  tokenExpiresAt DateTime
+
+  createdAt DateTime @default(now())
+
+  @@index([studioId])
+  @@index([email])
 }
 
 enum FlashPieceStatus {

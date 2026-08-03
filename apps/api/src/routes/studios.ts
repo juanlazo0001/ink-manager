@@ -19,6 +19,7 @@ import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { sendPlatformEmail } from "../lib/platformEmail";
 import { renderPlatformEmailHtml } from "../lib/emailTemplate";
 import { emitInvalidation } from "../lib/realtime/registry";
+import { createArtistMembershipInvite } from "../lib/artistMembershipInvites";
 
 const router = Router();
 
@@ -329,7 +330,7 @@ router.post("/:studioId/invites", requireAuth, requirePermission("team.manage"),
   }
 
   const body = req.body ?? {};
-  const { email, role, name, phone } = body;
+  const { email, role, name, phone, membershipType } = body;
 
   if (!email || typeof email !== "string") {
     return res.status(400).json({ error: "email is required" });
@@ -342,6 +343,47 @@ router.post("/:studioId/invites", requireAuth, requirePermission("team.manage"),
   }
 
   const trimmedEmail = email.trim();
+
+  // Artist mobility, Part 2: an Artist invite is a completely separate
+  // mechanism from here down -- see lib/artistMembershipInvites.ts's own
+  // comment for why (it needs to support inviting an email that already
+  // belongs to a real account, which this route's User-pending-row
+  // approach below fundamentally can't: User.email is unique, so there's
+  // no second row to create). The studio picks HOME or GUEST; the
+  // new-identity-vs-existing-identity resolution happens once, at accept,
+  // never here.
+  if (role === Role.ARTIST) {
+    if (membershipType !== "HOME" && membershipType !== "GUEST") {
+      return res.status(400).json({ error: "membershipType must be HOME or GUEST when inviting an Artist" });
+    }
+
+    const studioForInvite = await prisma.studio.findUniqueOrThrow({ where: { id: studioId }, select: { name: true } });
+    const invite = await createArtistMembershipInvite({
+      studioId,
+      studioName: studioForInvite.name,
+      email: trimmedEmail,
+      membershipType,
+    });
+
+    await logAudit({
+      studioId,
+      actorUserId: req.user!.userId,
+      entityType: "ArtistMembershipInvite",
+      entityId: invite.id,
+      action: "invite_sent",
+      changes: { email: trimmedEmail, membershipType },
+    });
+
+    emitInvalidation({ type: "team.changed", studioId });
+
+    return res.status(201).json({
+      id: invite.id,
+      email: invite.email,
+      membershipType: invite.membershipType,
+      tokenExpiresAt: invite.tokenExpiresAt,
+    });
+  }
+
   const existing = await prisma.user.findUnique({ where: { email: trimmedEmail } });
   if (existing) {
     return res.status(409).json({ error: "A user with that email already exists." });
@@ -351,10 +393,10 @@ router.post("/:studioId/invites", requireAuth, requirePermission("team.manage"),
   const inviteToken = crypto.randomBytes(32).toString("hex");
   const inviteTokenExpiresAt = new Date(Date.now() + INVITE_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000);
 
-  // Same invariant POST /:studioId/users above already keeps for a
-  // directly-created ARTIST-role user: an Artist profile always exists
-  // alongside the User row, so the Team/Artists pages never fall out of
-  // sync regardless of which of the two creation paths made this account.
+  // role is OWNER or FRONT_DESK here -- ARTIST already returned above via
+  // the separate ArtistMembershipInvite path, so this never needs its own
+  // Artist-profile-creation branch the way POST /:studioId/users still
+  // does for a directly-created ARTIST-role user.
   const invited = await prisma.$transaction(async (tx) => {
     const created = await tx.user.create({
       data: {
@@ -368,10 +410,6 @@ router.post("/:studioId/invites", requireAuth, requirePermission("team.manage"),
         inviteTokenExpiresAt,
       },
     });
-
-    if (role === Role.ARTIST) {
-      await tx.artist.create({ data: { userId: created.id, specialties: [], portfolioImages: [] } });
-    }
 
     return tx.user.findUniqueOrThrow({ where: { id: created.id }, include: USER_INCLUDE_ARTIST });
   });

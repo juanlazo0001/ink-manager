@@ -77,7 +77,22 @@ export function serializeUser(user: {
 router.get("/me", async (req, res) => {
   const user = await prisma.user.findUnique({
     where: { id: req.user!.userId },
-    include: { artist: { select: { id: true, bio: true, specialties: true, allowsClientSelfScheduling: true, memberships: { where: { type: "HOME" }, select: { allowsStudioProfileEdits: true } } } } },
+    // Artist mobility, Part 2: filtered to the CURRENT active HOME row
+    // (studioId + endedAt: null), not just type: HOME -- an artist can now
+    // have more than one HOME row over their history (Part 1), and an
+    // unfiltered lookup could return a stale, ended one from a studio
+    // they've since left, picked arbitrarily depending on array order.
+    include: {
+      artist: {
+        select: {
+          id: true,
+          bio: true,
+          specialties: true,
+          allowsClientSelfScheduling: true,
+          memberships: { where: { type: "HOME", endedAt: null }, select: { allowsStudioProfileEdits: true } },
+        },
+      },
+    },
   });
 
   if (!user) {

@@ -6,6 +6,7 @@ import AppShellLayout from './components/AppShellLayout'
 import AuthLayout from './components/AuthLayout'
 import ResetPassword from './pages/ResetPassword'
 import InviteAccept from './pages/InviteAccept'
+import ArtistInviteAccept from './pages/ArtistInviteAccept'
 import ConfirmEmailChange from './pages/ConfirmEmailChange'
 import Dashboard from './pages/Dashboard'
 import Clients from './pages/Clients'
@@ -131,6 +132,7 @@ function AppRoutes() {
           <Route path="/forgot-password" element={null} />
           <Route path="/reset-password/:token" element={<ResetPassword />} />
           <Route path="/invite/:token" element={<InviteAccept />} />
+          <Route path="/artist-invite/:token" element={<ArtistInviteAccept />} />
           <Route path="/confirm-email-change/:token" element={<ConfirmEmailChange />} />
         </Route>
         <Route path="/inquiry/:studioSlug" element={<IntakeForm />} />

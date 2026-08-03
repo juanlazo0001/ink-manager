@@ -57,7 +57,7 @@ type AuthMode = 'sign-in' | 'forgot-password' | 'reset-password' | 'accept-invit
 function getAuthMode(pathname: string): AuthMode {
   if (pathname.startsWith('/forgot-password')) return 'forgot-password'
   if (pathname.startsWith('/reset-password')) return 'reset-password'
-  if (pathname.startsWith('/invite')) return 'accept-invite'
+  if (pathname.startsWith('/invite') || pathname.startsWith('/artist-invite')) return 'accept-invite'
   if (pathname.startsWith('/confirm-email-change')) return 'confirm-email-change'
   return 'sign-in'
 }

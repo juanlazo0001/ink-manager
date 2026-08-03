@@ -15,6 +15,7 @@ import {
   DEFAULT_SCHEDULING_BUFFER_MS,
 } from "../lib/schedulingConflict";
 import { ensureLiabilityWaiver } from "../lib/waivers";
+import { studioHasActiveMembership } from "../lib/artistAccess";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { getOrCreateClientConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
@@ -90,7 +91,12 @@ router.post("/", requirePermissionOrSoloArtist("appointments.create"), async (re
     prisma.inquiry.findUnique({ where: { id: inquiryId }, include: { service: true } }),
   ]);
 
-  if (!artist || artist.user.studioId !== studioId) {
+  // Artist mobility, Part 2: a studio can also book its own active GUEST
+  // artists, not just HOME ones -- the whole point of inviting a guest is
+  // being able to actually assign them appointments here.
+  const artistBelongsToStudio =
+    artist != null && (artist.user.studioId === studioId || (await studioHasActiveMembership(studioId, artist.id)));
+  if (!artistBelongsToStudio) {
     return res.status(400).json({ error: "artistId must belong to your studio" });
   }
 
