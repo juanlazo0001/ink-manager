@@ -48,6 +48,14 @@ export default function Profile() {
   const [selfSchedulingSubmitting, setSelfSchedulingSubmitting] = useState(false)
   const [selfSchedulingError, setSelfSchedulingError] = useState<string | null>(null)
 
+  // Solo artist architecture, Phase 4: artist-controlled, full stop -- no
+  // staff bypass exists on the backend route this hits (PATCH /artists/
+  // :id/profile-delegation), unlike self-scheduling above. Universal, not
+  // solo-gated -- any artist, in any studio, controls whether staff can
+  // edit their shared profile fields on their behalf.
+  const [profileDelegationSubmitting, setProfileDelegationSubmitting] = useState(false)
+  const [profileDelegationError, setProfileDelegationError] = useState<string | null>(null)
+
   useEffect(() => {
     if (profile) {
       setForm({
@@ -166,6 +174,24 @@ export default function Profile() {
       setSelfSchedulingError(err instanceof Error ? err.message : 'Failed to update self-scheduling')
     } finally {
       setSelfSchedulingSubmitting(false)
+    }
+  }
+
+  async function handleToggleProfileDelegation() {
+    if (!profile?.artist) return
+    const current = profile.artist.memberships[0]?.allowsStudioProfileEdits ?? false
+    setProfileDelegationError(null)
+    setProfileDelegationSubmitting(true)
+    try {
+      await apiFetch(`/artists/${profile.artist.id}/profile-delegation`, {
+        method: 'PATCH',
+        body: JSON.stringify({ allowsStudioProfileEdits: !current }),
+      })
+      await refresh()
+    } catch (err) {
+      setProfileDelegationError(err instanceof Error ? err.message : 'Failed to update')
+    } finally {
+      setProfileDelegationSubmitting(false)
     }
   }
 
@@ -455,6 +481,44 @@ export default function Profile() {
                     className={[
                       'absolute top-0.5 h-5 w-5 rounded-full bg-bg transition',
                       profile.artist.allowsClientSelfScheduling ? 'left-[22px]' : 'left-0.5',
+                    ].join(' ')}
+                  />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {profile && isArtist && profile.artist && (
+            <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-6">
+              <p className="text-xs font-semibold uppercase tracking-wider text-fg-muted">Studio profile access</p>
+
+              <div className="mt-4 flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm font-medium text-fg">Let studio staff edit my profile</p>
+                  <p className="mt-1 text-xs text-fg-secondary">
+                    When on, studio staff can edit your portfolio photos, flash gallery pieces, and bio on your
+                    behalf. When off, those stay yours to edit alone — staff sees them, but can't change them. This
+                    never grants access to your login, password, or your own scheduling settings (like client
+                    self-scheduling above) — those are always yours only, regardless of this toggle.
+                  </p>
+                  {profileDelegationError && <p className="mt-2 text-xs text-danger">{profileDelegationError}</p>}
+                </div>
+
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={profile.artist.memberships[0]?.allowsStudioProfileEdits ?? false}
+                  disabled={profileDelegationSubmitting}
+                  onClick={handleToggleProfileDelegation}
+                  className={[
+                    'relative h-6 w-11 shrink-0 rounded-full transition disabled:opacity-40',
+                    profile.artist.memberships[0]?.allowsStudioProfileEdits ? 'bg-accent' : 'bg-surface-inset border border-border',
+                  ].join(' ')}
+                >
+                  <span
+                    className={[
+                      'absolute top-0.5 h-5 w-5 rounded-full bg-bg transition',
+                      profile.artist.memberships[0]?.allowsStudioProfileEdits ? 'left-[22px]' : 'left-0.5',
                     ].join(' ')}
                   />
                 </button>

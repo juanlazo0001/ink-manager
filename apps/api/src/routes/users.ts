@@ -37,7 +37,13 @@ export function serializeUser(user: {
   deactivatedAt: Date | null;
   deactivatedById: string | null;
   pendingEmail: string | null;
-  artist: { id: string; bio: string | null; specialties: string[]; allowsClientSelfScheduling: boolean } | null;
+  artist: {
+    id: string;
+    bio: string | null;
+    specialties: string[];
+    allowsClientSelfScheduling: boolean;
+    memberships: { allowsStudioProfileEdits: boolean }[];
+  } | null;
 }) {
   return {
     id: user.id,
@@ -71,7 +77,7 @@ export function serializeUser(user: {
 router.get("/me", async (req, res) => {
   const user = await prisma.user.findUnique({
     where: { id: req.user!.userId },
-    include: { artist: { select: { id: true, bio: true, specialties: true, allowsClientSelfScheduling: true } } },
+    include: { artist: { select: { id: true, bio: true, specialties: true, allowsClientSelfScheduling: true, memberships: { where: { type: "HOME" }, select: { allowsStudioProfileEdits: true } } } } },
   });
 
   if (!user) {
@@ -165,7 +171,7 @@ router.patch("/me", async (req, res) => {
   const updated = await prisma.user.update({
     where: { id: req.user!.userId },
     data,
-    include: { artist: { select: { id: true, bio: true, specialties: true, allowsClientSelfScheduling: true } } },
+    include: { artist: { select: { id: true, bio: true, specialties: true, allowsClientSelfScheduling: true, memberships: { where: { type: "HOME" }, select: { allowsStudioProfileEdits: true } } } } },
   });
 
   const { password: _password, ...safeUser } = updated;

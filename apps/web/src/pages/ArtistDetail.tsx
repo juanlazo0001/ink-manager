@@ -39,6 +39,10 @@ interface Artist {
   allowsClientSelfScheduling: boolean
   artistServices: { serviceId: string }[]
   user: { id: string; email: string; name: string | null; phone: string | null; avatarUrl: string | null }
+  // Solo artist architecture, Phase 4: the artist's own HOME membership --
+  // an array (same shape the backend's Prisma include returns), even
+  // though exactly one HOME row exists per artist in practice.
+  memberships: { allowsStudioProfileEdits: boolean }[]
 }
 
 interface ServiceOption {
@@ -189,6 +193,16 @@ export default function ArtistDetail() {
     !!artist &&
     (profile?.permissions.includes('artistSchedules.manage') ?? false) &&
     (user?.role !== 'ARTIST' || artist.user.id === user?.userId)
+
+  // Solo artist architecture, Phase 4: canManage alone (artists.manage)
+  // is no longer sufficient for bio/specialties/portfolio/social links --
+  // this artist's own HOME membership must also have delegated profile
+  // edits, UNLESS the viewer is editing their own record. Every other
+  // widget (rates, scheduling buffer, guest status, self-scheduling,
+  // services) stays gated on canManage alone, matching the backend's own
+  // PATCH /:id enforcement exactly (see that route's own comment).
+  const isSelf = !!artist && artist.user.id === user?.userId
+  const canEditProfileFields = canManage && (isSelf || (artist?.memberships[0]?.allowsStudioProfileEdits ?? false))
 
   const isEndedGuest =
     !!artist?.isGuest && !!artist.guestEndDate && new Date(artist.guestEndDate) < new Date()
@@ -399,7 +413,12 @@ export default function ArtistDetail() {
               )}
 
               <Widget key="bio" id="bio" title="Bio">
-                {canManage ? (
+                {canManage && !canEditProfileFields && (
+                  <p className="mt-1 text-xs text-fg-muted">
+                    This artist hasn't given studio staff permission to edit their profile.
+                  </p>
+                )}
+                {canEditProfileFields ? (
                   <textarea
                     rows={4}
                     value={bio}
@@ -521,7 +540,12 @@ export default function ArtistDetail() {
               </Widget>
 
               <Widget key="social-links" id="social-links" title="Social Links">
-                {canManage ? (
+                {canManage && !canEditProfileFields && (
+                  <p className="mt-1 text-xs text-fg-muted">
+                    This artist hasn't given studio staff permission to edit their profile.
+                  </p>
+                )}
+                {canEditProfileFields ? (
                   <div className="mt-3 space-y-3">
                     <div>
                       <label className="mb-1 block text-sm font-medium text-fg-secondary">Instagram handle</label>
@@ -583,8 +607,13 @@ export default function ArtistDetail() {
               </Widget>
 
               <Widget key="specialties" id="specialties" title="Specialties">
+                {canManage && !canEditProfileFields && (
+                  <p className="mt-1 text-xs text-fg-muted">
+                    This artist hasn't given studio staff permission to edit their profile.
+                  </p>
+                )}
                 <div className="mt-3">
-                  {canManage ? (
+                  {canEditProfileFields ? (
                     <SpecialtiesInput value={specialties} onChange={setSpecialties} />
                   ) : specialties.length > 0 ? (
                     <div className="flex flex-wrap gap-1.5">
@@ -675,7 +704,12 @@ export default function ArtistDetail() {
               </Widget>
 
               <Widget key="portfolio" id="portfolio" title="Portfolio">
-                {canManage && (
+                {canManage && !canEditProfileFields && (
+                  <p className="mt-1 text-xs text-fg-muted">
+                    This artist hasn't given studio staff permission to edit their profile.
+                  </p>
+                )}
+                {canEditProfileFields && (
                   <input
                     type="file"
                     accept="image/*"
@@ -697,7 +731,7 @@ export default function ArtistDetail() {
                     {portfolioImages.map((url) => (
                       <div key={url} className="group relative aspect-square overflow-hidden rounded-lg border border-border">
                         <img src={url} alt="" className="h-full w-full object-cover" />
-                        {canManage && (
+                        {canEditProfileFields && (
                           <button
                             type="button"
                             onClick={() => removePortfolioImage(url)}

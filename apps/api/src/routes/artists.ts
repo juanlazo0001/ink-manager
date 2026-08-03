@@ -66,12 +66,21 @@ router.post("/", requirePermission("artists.manage"), async (req, res) => {
   res.status(201).json(artist);
 });
 
+// Solo artist architecture, Phase 4: the HOME membership row is where
+// allowsStudioProfileEdits lives -- an array (Prisma's shape for a
+// filtered to-many include), same convention artistServices below already
+// uses, even though exactly one HOME row exists per artist in practice.
+const HOME_MEMBERSHIP_INCLUDE = {
+  memberships: { where: { type: "HOME" as const }, select: { allowsStudioProfileEdits: true } },
+} as const;
+
 const ARTIST_INCLUDE = {
   user: { select: { id: true, email: true, role: true, name: true, phone: true, avatarUrl: true, studioId: true } },
   // Service lines: which services this artist is tagged as offering (see
   // ArtistService) -- the detail page's checkboxes read this to know
   // what's currently checked.
   artistServices: { select: { serviceId: true } },
+  ...HOME_MEMBERSHIP_INCLUDE,
 } as const;
 
 // List view only renders id/bio/specialties/portfolioImages plus a handful
@@ -108,6 +117,7 @@ const ARTIST_LIST_SELECT = {
   // the list view too, not just the detail page.
   artistServices: { select: { serviceId: true } },
   user: { select: { id: true, email: true, name: true, avatarUrl: true } },
+  ...HOME_MEMBERSHIP_INCLUDE,
 } as const;
 
 // Self-heals any ARTIST-role user in the studio who doesn't have an Artist
@@ -164,12 +174,14 @@ router.get("/:id", requirePermission("artists.view"), async (req, res) => {
 
 router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
   const id = req.params.id as string;
-  const {
+  let {
     bio,
     specialties,
     portfolioImages,
     instagramHandle,
     facebookProfileUrl,
+  } = req.body ?? {};
+  const {
     isGuest,
     guestStartDate,
     guestEndDate,
@@ -182,10 +194,35 @@ router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
 
   const artist = await prisma.artist.findUnique({
     where: { id },
-    include: { user: true, artistServices: { select: { serviceId: true } } },
+    include: { user: true, artistServices: { select: { serviceId: true } }, ...HOME_MEMBERSHIP_INCLUDE },
   });
   if (!artist || artist.user.studioId !== req.user!.studioId) {
     return res.status(404).json({ error: "Artist not found" });
+  }
+
+  // Solo artist architecture, Phase 4: bio/specialties/portfolioImages/
+  // instagramHandle/facebookProfileUrl are the artist's own shared
+  // profile data (see StudioMembership.allowsStudioProfileEdits' own
+  // schema comment for the exact scope) -- editable by staff only when
+  // this artist has explicitly delegated that, or when staff IS the
+  // artist (requirePermission above already confirmed artists.manage, so
+  // an ARTIST reaching this route at all means a studio explicitly
+  // granted them that broad permission -- rare, but self-edits still
+  // shouldn't need delegation from themselves). Every OTHER field
+  // (rates, scheduling buffer, guest status, self-scheduling, service
+  // tags) is untouched by this check -- staff with artists.manage can
+  // always edit those, exactly as before. Silently dropped rather than
+  // rejecting the whole request, so a staff member without delegation can
+  // still save changes to the fields they DO have access to in the same
+  // request the UI already sends as one combined save.
+  const isSelf = artist.userId === req.user!.userId;
+  const canEditProfileFields = isSelf || (artist.memberships[0]?.allowsStudioProfileEdits ?? false);
+  if (!canEditProfileFields) {
+    bio = undefined;
+    specialties = undefined;
+    portfolioImages = undefined;
+    instagramHandle = undefined;
+    facebookProfileUrl = undefined;
   }
 
   if (serviceIds !== undefined) {
@@ -430,6 +467,54 @@ router.patch("/:id/self-scheduling", requireAuth, async (req, res) => {
   emitInvalidation({ type: "artist.changed", studioId: req.user!.studioId, artistId: id });
 
   res.json(updated);
+});
+
+// Solo artist architecture, Phase 4: this toggle is artist-controlled,
+// full stop -- unlike self-scheduling above (which OWNER can also set for
+// any artist), there is deliberately NO staff bypass here at all. This is
+// the one thing the delegation toggle exists specifically to keep out of
+// staff's hands: whether studio staff may edit this artist's shared
+// profile fields (bio/specialties/portfolioImages/instagramHandle/
+// facebookProfileUrl -- see PATCH /:id's own enforcement) on their
+// behalf. Upserts rather than requiring a pre-existing membership row --
+// harmless defensive-only path today (Part 2's migration already gave
+// every artist a HOME row), but keeps this route correct on its own even
+// if that invariant were ever violated.
+router.patch("/:id/profile-delegation", requireAuth, async (req, res) => {
+  const id = req.params.id as string;
+  const { allowsStudioProfileEdits } = req.body ?? {};
+
+  if (typeof allowsStudioProfileEdits !== "boolean") {
+    return res.status(400).json({ error: "allowsStudioProfileEdits must be a boolean" });
+  }
+
+  const artist = await prisma.artist.findUnique({ where: { id }, include: { user: true } });
+  if (!artist || artist.user.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Artist not found" });
+  }
+
+  if (artist.userId !== req.user!.userId) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const membership = await prisma.studioMembership.upsert({
+    where: { studioId_artistId: { studioId: req.user!.studioId, artistId: id } },
+    update: { allowsStudioProfileEdits },
+    create: { studioId: req.user!.studioId, artistId: id, type: "HOME", allowsStudioProfileEdits },
+  });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "StudioMembership",
+    entityId: membership.id,
+    action: "update",
+    changes: { allowsStudioProfileEdits },
+  });
+
+  emitInvalidation({ type: "artist.changed", studioId: req.user!.studioId, artistId: id });
+
+  res.json({ allowsStudioProfileEdits: membership.allowsStudioProfileEdits });
 });
 
 export default router;

@@ -10,7 +10,16 @@ export interface UserProfile {
   studioId: string
   createdAt: string
   pendingEmail: string | null
-  artist?: { id: string; bio: string | null; specialties: string[]; allowsClientSelfScheduling: boolean }
+  artist?: {
+    id: string
+    bio: string | null
+    specialties: string[]
+    allowsClientSelfScheduling: boolean
+    // Solo artist architecture, Phase 4: the artist's own HOME membership
+    // row -- an array (same shape the backend's Prisma include returns),
+    // even though exactly one HOME row exists per artist in practice.
+    memberships: { allowsStudioProfileEdits: boolean }[]
+  }
   permissions: string[]
   // Solo artist architecture, Phase 3: true only for an ARTIST-role user
   // with no other OWNER/FRONT_DESK at their studio -- lets Profile.tsx

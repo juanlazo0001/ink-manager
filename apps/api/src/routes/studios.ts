@@ -472,7 +472,15 @@ router.delete("/:studioId/invites/:userId", requireAuth, requirePermission("team
 });
 
 const USER_INCLUDE_ARTIST = {
-  artist: { select: { id: true, bio: true, specialties: true, allowsClientSelfScheduling: true } },
+  artist: {
+    select: {
+      id: true,
+      bio: true,
+      specialties: true,
+      allowsClientSelfScheduling: true,
+      memberships: { where: { type: "HOME" }, select: { allowsStudioProfileEdits: true } },
+    },
+  },
 } as const;
 type UserWithArtist = Prisma.UserGetPayload<{ include: typeof USER_INCLUDE_ARTIST }>;
 

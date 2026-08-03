@@ -6866,3 +6866,46 @@ Real test setup, not simulated: bootstrapped a genuine second studio ("Solo Ink 
 
 Both typechecks clean.
 
+## Part 4 — Profile-editing delegation, wired end to end
+
+### Precisely which fields, decided from the investigation
+
+`bio`, `specialties`, `portfolioImages`, `instagramHandle`, `facebookProfileUrl` — the artist's shared profile data (already living directly on `Artist`, per Part 1's finding that nothing needed to physically move). Every other field `PATCH /artists/:id` accepts — rates, scheduling buffer, guest status, `allowsClientSelfScheduling`, service tags — stays gated by `artists.manage` alone, completely untouched by this toggle, matching the task's explicit "does NOT extend to... the artist's own scheduling/self-booking settings" instruction (see Part 1's corrected-premise note on what "artist-only" actually means for those fields today).
+
+### Backend: silently strip, don't reject
+
+`PATCH /artists/:id` now computes `canEditProfileFields = isSelf || membership.allowsStudioProfileEdits`, and when false, the five profile fields are dropped from the update *before* the data object is built — every other field in the same request still applies normally. Deliberately not a whole-request 403: `ArtistDetail.tsx`'s "Save changes" button already sends every section's fields together in one `PATCH` (rates + buffer + guest + self-scheduling + profile fields, all at once) — rejecting the entire request the moment an undelegated staff member touches *any* profile field would also block them from saving the scheduling buffer or guest dates in the same click, a far bigger regression than the toggle was ever meant to cause. Live-verified directly: `OWNER` sent `{ bio: "...", schedulingBufferMinutes: 45 }` in one request while delegation was off — response confirmed `bio` unchanged, `schedulingBufferMinutes: 45` applied.
+
+New `PATCH /artists/:id/profile-delegation` — artist-controlled, full stop, no staff bypass exists on this route at all (unlike Part 3's self-scheduling route, where `OWNER` can still act on any artist's behalf). This is the one thing the toggle exists specifically to keep out of staff's hands. Verified an artist can't use it to toggle *another* artist's delegation (`403`).
+
+`ARTIST_INCLUDE`/`ARTIST_LIST_SELECT` (artists.ts) and both `GET /users/me` artist selects gained the HOME membership's `allowsStudioProfileEdits`, so both the staff-facing `ArtistDetail.tsx` and the artist's own `Profile.tsx` can read current delegation state.
+
+### Frontend
+
+`ArtistDetail.tsx`: a new `canEditProfileFields` (separate from the page-wide `canManage`) now gates only the Bio/Social Links/Specialties/Portfolio widgets' editable-vs-read-only rendering — Rates/Scheduling Buffer/Guest Artist/Preferred Schedule/Services widgets still key off `canManage` alone, unchanged. When staff has `artists.manage` but this artist hasn't delegated, each of the four widgets shows a plain note ("This artist hasn't given studio staff permission to edit their profile.") above its now-read-only content, instead of silently just not offering an edit control with no explanation.
+
+`Profile.tsx`: new "Studio profile access" toggle, universal (not solo-gated, unlike Part 3's self-scheduling toggle — any artist in any studio controls this), with plain-language copy on exactly what it does and doesn't grant (explicitly calls out that login/password/scheduling settings are never affected, regardless of the toggle).
+
+### Live verification
+
+- Delegation **on** (the Part 2 migration's grandfathered default): `OWNER` edits `artist1`'s bio via `ArtistDetail.tsx` → succeeds, matching pre-existing behavior exactly.
+- Turned delegation **off** via `artist1`'s own `PATCH /artists/:id/profile-delegation`. Re-loaded `ArtistDetail.tsx` as `OWNER`: Bio/Social Links/Specialties/Portfolio all render read-only with the explanatory note (screenshotted); Rates/Scheduling Buffer/Guest Artist/Preferred Schedule/Services remain fully editable, "Save changes" still present and functional for those fields.
+- `artist1` toggled delegation back **on** through the real `Profile.tsx` UI (clicked the switch, confirmed the `PATCH` round-trip and the visual flip). Re-loaded `ArtistDetail.tsx` as `OWNER` again: all four profile-field widgets are now genuinely editable (real textarea/inputs/file picker, screenshotted) — the toggle is live end to end, not just at the API layer.
+- Confirmed throughout: `artist1`'s own `PATCH /users/me` self-edit (their existing bio/specialties self-service path) works identically regardless of the delegation toggle's state — it was never gated by it in the first place, exactly as intended.
+
+Both typechecks clean.
+
+## Final report
+
+**Commits**: Part 1 `6169a61`, Part 2 `197f686`, Part 3 `db5def7`, Part 4 (this entry's own commit, hash filled in below).
+
+**Part 1 investigation, summarized**: `Artist` has no direct `studioId` — every single-studio assumption traces back to the single-valued `Artist.user.studioId` chain, ~40+ call sites deep, plus a genuine latent scheduling-conflict bug found along the way (flagged for Phase 2, not fixed now — see that section). New `StudioMembership` (`type: HOME | GUEST`, `allowsStudioProfileEdits`) is the real Studio↔Artist affiliation model going forward; none of the ~40+ existing call sites were rewired this phase, since nothing about Phase 1-4's *observable* behavior requires an artist to belong to more than one studio — that stays Phase 2's job, and the schema is now shaped so Phase 2 doesn't need a second foundational migration to add it.
+
+**Part 2 regression pass**: confirmed via real API responses and screenshots (not assumed) — artists list/detail, permissions, flash gallery (staff-vs-self scoping), scheduling, dashboard, nav counts all unaffected by the migration. Expected, given the migration is purely additive.
+
+**Part 3 solo-studio detection**: no active `OWNER`/`FRONT_DESK` other than the artist's own account (`lib/soloStudio.ts`) — deliberately excludes other `ARTIST`-role colleagues from the check, since the rule being bypassed exists to guarantee a staff gatekeeper, and a studio with zero `OWNER`/`FRONT_DESK` has no such gatekeeper regardless of headcount. Both new capabilities (appointment creation/reschedule, self-scheduling toggle) are additive allow-paths layered on the existing permission system, never a change to its defaults — live-verified that a multi-person studio's artist is completely unaffected.
+
+**Part 4 delegation scoping, confirmed exact**: on = staff can edit bio/specialties/portfolioImages/instagramHandle/facebookProfileUrl and *nothing else*; off = those five fields are read-only for staff (silently stripped from a save, not a hard rejection, so other fields in the same request still apply) while every other artist field stays exactly as staff-manageable as before; the artist's own self-edit path and the toggle itself are never staff-reachable regardless of state.
+
+All background dev servers killed after every part's verification (confirmed via `netstat`, force-killed by PID when `tsx watch`'s own restart-on-save left a stale process holding the port — the same known quirk from earlier work this session, not a regression introduced here). All ad-hoc scratch scripts (`scratch-solo-setup*.ts`, `scratch-solo-inquiry.ts`, direct-Prisma verification scripts) deleted after use; none committed. Test data left in the dev database per this session's standing convention: the "Solo Ink Test" studio and its converted-to-`ARTIST` account, a handful of test appointments/clients/inquiries, and `artist1`'s edited bio/scheduling-buffer values from verification.
+
