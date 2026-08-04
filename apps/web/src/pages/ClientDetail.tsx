@@ -354,6 +354,12 @@ export default function ClientDetail() {
   const canGenerateWaiver = profile?.permissions.includes('waivers.generate') ?? false
   const isOwner = user?.role === 'OWNER'
   const canIssueGiftCards = profile?.permissions.includes('giftCards.issue') ?? false
+  // GET /clients/:id includes giftCards on the response unconditionally
+  // (permission-independent), so the widget itself is the only gate --
+  // without this, a role granted clients.view but not giftCards.view (a
+  // real, independently configurable pair) would see the full gift card
+  // table here, plus a click-through into GiftCardDetail.tsx that 403s.
+  const canViewGiftCards = profile?.permissions.includes('giftCards.view') ?? false
   const canMessage = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
   // POST /prefill-drafts is a hardcoded requireRole(OWNER, FRONT_DESK) on
   // the API, not a configurable permission -- matches that directly.
@@ -1944,6 +1950,13 @@ export default function ClientDetail() {
                 )}
               </Widget>
 
+              {/* Visible if either permission is held -- giftCards.issue without
+                  giftCards.view is a real, independently configurable
+                  combination (someone who can issue a new card without seeing
+                  the client's existing ones), so the widget itself isn't
+                  gated on canViewGiftCards alone; only the existing-cards
+                  list below is. */}
+              {(canViewGiftCards || canIssueGiftCards || isOwner) && (
               <Widget
                 key="gift-cards"
                 id="gift-cards"
@@ -1964,9 +1977,15 @@ export default function ClientDetail() {
                 }
               >
 
-                {client.giftCards.length === 0 && <p className="mt-4 text-sm text-fg-secondary">No gift cards yet.</p>}
+                {!canViewGiftCards && (
+                  <p className="mt-4 text-sm text-fg-secondary">You don't have permission to view existing gift cards.</p>
+                )}
 
-                {client.giftCards.length > 0 && (
+                {canViewGiftCards && client.giftCards.length === 0 && (
+                  <p className="mt-4 text-sm text-fg-secondary">No gift cards yet.</p>
+                )}
+
+                {canViewGiftCards && client.giftCards.length > 0 && (
                   <div className="mt-4 overflow-x-auto">
                     <table className="w-full text-left text-sm">
                       <thead>
@@ -2031,6 +2050,7 @@ export default function ClientDetail() {
                   </div>
                 )}
               </Widget>
+              )}
 
               <Widget
                 key="deposit-forms"

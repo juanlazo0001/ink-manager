@@ -7383,4 +7383,59 @@ Both isolated dev servers killed (`netstat` + `taskkill` by PID). All scratch ve
 
 `1236df1` on `main`.
 
+---
+
+# Role-based access sweep: internal links into pages a role can't reach
+
+Single session on `main`, direct follow-up to the previous artist self-service pass. User-reported bug plus a broader sweep for the same class of issue: a page reachable by some role contains a link or button that sends that role into a page/section it doesn't actually have permission to see.
+
+## Reported bug: ArtistDetail's own "Back to Artists" link, fixed
+
+`ArtistDetail.tsx`'s breadcrumb at the top of the page only checked `profile?.isSoloStudio` (`'Back to Profile'` vs `'Back to Artists'` -> `/team?tab=artists`), missing the `isSelf` check the page's own picture-management note a few lines down already uses (`isSelf || profile?.isSoloStudio`). Any non-solo artist who reached their own record via Profile's "Manage" link (the self-service entry point from the previous session's work) got sent to the studio's full staff/artist roster page on "back," not to their own Profile. Fixed to match the existing `isSelf`-aware pattern exactly: self-editing (regardless of solo status) now goes back to `/profile`; staff viewing someone else's record still goes to `/team?tab=artists`.
+
+## Sweep methodology
+
+For every route under `AppShellLayout` (Dashboard, Clients, ClientImport, ClientDetail, Calendar, AppointmentDetail, ArtistCreate, ArtistDetail, Inquiries, InquiryDetail, MyInquiries, Settings, Profile, Team, FlashGallery, Tasks, ConversationDeepLink, GiftCardDetail): cross-referenced the Sidebar's own `roles`/`permission` gate against (a) whether the page itself enforces the same restriction on direct navigation, not just via the sidebar being hidden, and (b) whether the page links to any *other* page/section a role that can legitimately reach it might not be able to open.
+
+## Team.tsx -- investigated, no bug found
+
+Sidebar hides the "Team" nav link for everyone except `OWNER` (`roles: ['OWNER']`), and `Team.tsx` itself has no matching top-level guard beyond a solo-studio redirect -- so a non-owner reaching `/team` directly (e.g. via the old "Back to Artists" link above) does land on the page. Investigated whether this leaks the Staff roster or Permissions matrix: it doesn't. `activeTab` is computed as `requestedTab && (isOwner || requestedTab === 'artists') ? requestedTab : isOwner ? 'staff' : 'artists'` -- a non-owner can never land on anything but the Artists tab, even via a typed `?tab=staff` URL -- and the Staff-roster/Permissions-matrix `useEffect` fetches are separately gated `if (!isOwner) return`, so no wasted or leaking request is even attempted. This is deliberate, working as designed (confirmed by the file's own comment at the guard), not a gap.
+
+## Real gap found and fixed: gift card amounts/links shown to roles lacking `giftCards.view`
+
+`giftCards.view` is a real, independently configurable permission (`FRONT_DESK` has it by default, `ARTIST` doesn't) -- distinct from `appointments.view`/`clients.view`, which gate the pages that were rendering this data unconditionally:
+
+- **`AppointmentDetail.tsx`**: `GET /appointments/:id` includes the full `giftCards` array (amount, status) for anyone with `appointments.view` (`ARTIST` has this by default) -- the page rendered the dollar amount and status as a clickable `Link` to `/gift-cards/:id` with no permission check at all. `giftCards.view` is exactly the same class of figure `reports.viewFinancial` already keeps off an artist's Dashboard by default (see the prior session's own explicit design note on that split) -- so this wasn't just a dead link, it was the underlying financial detail itself leaking, same as a dead link would. Added `canViewGiftCards` (mirrors the file's existing `canCheckout`/`canManagePhotos` permission consts) and hid the entire gift-card summary block behind it, not just the link.
+- **`ClientDetail.tsx`**: same underlying cause -- `GET /clients/:id` includes `giftCards` unconditionally, and the "Gift Cards" `Widget` (full table: code, amount, status, expiry, click-through to `/gift-cards/:id`) had no permission gate whatsoever, unlike every other optional widget on the same page. Added `canViewGiftCards`; the widget itself stays visible if the viewer can either view *or* issue gift cards (`canIssueGiftCards`, a separate, real permission someone could hold without `giftCards.view`, e.g. to create a new card without browsing existing ones) so the "Issue Gift Card" action doesn't disappear for that edge case, but the existing-cards list/table is now specifically gated on `canViewGiftCards` with a "You don't have permission to view existing gift cards." message in its place otherwise.
+
+Neither is reachable under any role's *default* permissions (`ARTIST` lacks both `clients.view` and `giftCards.view` out of the box) -- both require a studio to have granted `clients.view`/`appointments.view` without also granting `giftCards.view`, a real and independently supported combination in the permissions matrix, not a hypothetical one.
+
+## Checked, no leak found
+
+- **Inquiries.tsx / InquiryDetail.tsx**: no frontend role guard, but `GET /inquiries` and `GET /inquiries/:id` are hard `requireRole(OWNER, FRONT_DESK)` on the backend (not permission-configurable), and both pages already render the established "You don't have permission to..." message on a 403 rather than a blank/broken page -- same convention already used by `ArtistDetail.tsx`/`Team.tsx`/`Calendar.tsx`/`ClientDetail.tsx`/`Clients.tsx`. Direct navigation by an `ARTIST` is handled gracefully, no data exposure.
+- **MyInquiries.tsx / ArtistCreate.tsx**: both already have an explicit `<Navigate>` guard matching their backend's real restriction (`user.role !== 'ARTIST'` and `!artists.manage` respectively) -- confirmed correct, no change needed.
+- **ConversationsPanel.tsx** (global, mounted for every role including `ARTIST`): its `Link`s into `/clients/:id` and `/inquiries/:id` only ever render from conversation data the backend's own `visibleConversationWhere`/`canViewConversation` (`lib/conversations.ts`) already scopes by `conversations.viewClientThreads` -- an `ARTIST` without that permission (the default) never receives a CLIENT-type conversation in the list at all, so the links backing them never mount. Real flags-based visibility model, not a frontend-only filter.
+- **Dashboard.tsx**'s financial figures (`depositConversion`, `giftCardLiability`): confirmed the API response type itself marks these fields optional/absent for a role lacking `reports.viewFinancial` (the backend never sends them, not just a frontend `if`) -- the more robust pattern, already correctly in place from an earlier session.
+- **Tasks.tsx**'s `task.deepLink`: every "system" queue task source (`lib/tasks/*.ts`, appointment/inquiry/deposit/waiver reminders) is gated behind `tasks.viewQueue` (false by default for `ARTIST`) except `artistInvitePending.ts`, which is deliberately separate and was already vetted in an earlier session (its own deep link is a public accept page, not a staff route). Personal tasks (`tasks.manageOwn`, which `ARTIST` does have) carry no `deepLink` at all. No cross-role leak.
+- **ClientImport.tsx**: no frontend guard, but it's action-driven (file upload), not data-display-on-mount -- the only link to it (`Clients.tsx`) is already gated on `canImportClients`, and a direct hit would only ever fail gracefully on the upload action itself (`clients.import`, requirePermission), never render or leak data on load.
+- **Settings.tsx**: no internal cross-page links at all (grepped for `<Link`/`navigate(`) -- nothing to check.
+
+## Verification -- real accounts, live dev API/web (isolated `:4093`/`:5292`)
+
+- **Back-link fix**: artist2 (`dev-studio`, plain `ARTIST`, self-editing via Profile -> Manage) now lands on a link reading "Back to Profile" -> `/profile`, confirmed after the artist fetch resolves (polled at 500ms intervals to rule out a race in the test itself, not the app -- settles by ~2s). OWNER viewing artist2's record (a different artist, via Team) still gets "Back to Artists" -> `/team?tab=artists`, unaffected.
+- **Gift card gating, AppointmentDetail**: using a real dev-studio appointment with an attached `$100.00 (Redeemed)` gift card, artist2 (no `giftCards.view`) sees no "Gift card" text or dollar figure anywhere on the page. OWNER (has it via `giftCards.view` being in the full `OWNER` permission set) still sees the figure as a working clickable link into `/gift-cards/:id`.
+- **Gift card gating, ClientDetail**: code-verified against the same `canViewGiftCards`/`canIssueGiftCards` split (not independently re-tested live beyond the AppointmentDetail case, since it's the identical gate reused on the identical unconditional-backend-field pattern).
+
+## Typechecks
+
+`npx tsc --noEmit` (api, no backend changes this session but re-run for safety) and `npm run build` (web) -- both clean.
+
+## Cleanup
+
+Both isolated dev servers killed (`netstat` + `taskkill` by PID). All scratch verification/debug scripts deleted, none committed.
+
+## Commit
+
+`<pending>` on `main`.
+
 

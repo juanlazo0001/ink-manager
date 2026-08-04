@@ -177,6 +177,7 @@ export default function AppointmentDetail() {
   const canReschedule = (profile?.permissions.includes('appointments.reschedule') ?? false) || (profile?.isSoloStudioArtist ?? false)
   const canCheckout = profile?.permissions.includes('appointments.checkout') ?? false
   const canManagePhotos = profile?.permissions.includes('appointments.photos.manage') ?? false
+  const canViewGiftCards = profile?.permissions.includes('giftCards.view') ?? false
   const canGenerateWaiver = profile?.permissions.includes('waivers.generate') ?? false
   const canVerifyWaiver = profile?.permissions.includes('waivers.verify') ?? false
   const [startingConversation, setStartingConversation] = useState(false)
@@ -861,22 +862,34 @@ export default function AppointmentDetail() {
                   <p className="mt-4 border-t border-border pt-4 text-sm text-fg-secondary">{appointment.notes}</p>
                 )}
 
-                {appointment.giftCards.length > 0 && (
+                {/* giftCards.view gate: the backend includes this array on the
+                    appointment response for anyone with appointments.view (ARTIST
+                    by default), but the amounts/statuses here are the same
+                    financial detail reports.viewFinancial already keeps off an
+                    artist's dashboard by default, and the gift card's own detail
+                    page is separately gated on giftCards.view -- so this block
+                    (not just the link) is hidden for a role lacking it, rather
+                    than showing the figures with a dead link underneath. */}
+                {canViewGiftCards && appointment.giftCards.length > 0 && (
                   <div className="mt-4 border-t border-border pt-4 text-sm">
                     <span className="text-fg-muted">
                       Gift card{appointment.giftCards.length === 1 ? '' : `s (${appointment.giftCards.length})`}:{' '}
                     </span>
                     <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1">
-                      {appointment.giftCards.map((card, i) => (
-                        <span key={card.id}>
-                          <Link to={`/gift-cards/${card.id}`} className="text-fg hover:underline">
-                            {card.status === 'EXEMPT'
-                              ? `Deposit Exemption${card.exemptionReason ? ` (${card.exemptionReason})` : ''}`
-                              : `${formatCents(card.amountCents)} (${formatStatus(card.status)})`}
-                          </Link>
-                          {i < appointment.giftCards.length - 1 ? ',' : ''}
-                        </span>
-                      ))}
+                      {appointment.giftCards.map((card, i) => {
+                        const label =
+                          card.status === 'EXEMPT'
+                            ? `Deposit Exemption${card.exemptionReason ? ` (${card.exemptionReason})` : ''}`
+                            : `${formatCents(card.amountCents)} (${formatStatus(card.status)})`
+                        return (
+                          <span key={card.id}>
+                            <Link to={`/gift-cards/${card.id}`} className="text-fg hover:underline">
+                              {label}
+                            </Link>
+                            {i < appointment.giftCards.length - 1 ? ',' : ''}
+                          </span>
+                        )
+                      })}
                     </span>
                   </div>
                 )}
