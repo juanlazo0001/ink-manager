@@ -44,8 +44,12 @@ export default function TopBar() {
   // The entry point itself must reflect who's REALLY logged in (not the
   // impersonated target) -- and is hidden entirely while already viewing
   // as someone, since switching targets mid-session isn't a supported flow
-  // (exit first).
-  const canUseViewAs = realUser?.role === 'OWNER' && !viewAsTarget
+  // (exit first). Also hidden for a solo studio -- ViewAsPicker's roster
+  // excludes the acting user, so a solo OWNER+Artist would only ever open
+  // it to see "No other staff members yet.", a dead end rather than a real
+  // action. Reappears automatically once a second person joins, same
+  // isSoloStudio flip every other solo-simplification item already uses.
+  const canUseViewAs = realUser?.role === 'OWNER' && !viewAsTarget && !(profile?.isSoloStudio ?? false)
 
   // Same combined-count math the sidebar used to show on its Tasks item:
   // open Assigned-to-Me items + undismissed Studio Queue items visible to

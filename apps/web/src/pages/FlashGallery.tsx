@@ -122,12 +122,21 @@ export default function FlashGallery() {
   }, [pieces, statusFilter, artistFilter, canManageOthers])
 
   // Whose public gallery link to offer copying, right now: an ARTIST always
-  // has exactly one (their own); staff only has an unambiguous one to offer
-  // once they've filtered down to a single artist -- the link is inherently
-  // per-artist (see FlashPublicGallery.tsx's own /flash/:studioSlug/:artistId
-  // route), so "every artist's pieces" has no single link to give.
+  // has exactly one (their own); a solo OWNER+Artist is equally unambiguous
+  // (profile.artist is populated for them too -- see GET /me's own
+  // role-agnostic `artist: user.artist ?? undefined`) even though their
+  // role isn't literally ARTIST, so the link shouldn't hinge on selecting a
+  // filter that no longer exists for them (see canShowArtistFilter below).
+  // Any other staff only has an unambiguous one to offer once they've
+  // filtered down to a single artist -- the link is inherently per-artist
+  // (see FlashPublicGallery.tsx's own /flash/:studioSlug/:artistId route),
+  // so "every artist's pieces" has no single link to give.
   const linkArtistId =
-    user?.role === 'ARTIST' ? (profile?.artist?.id ?? null) : artistFilter.length === 1 ? artistFilter[0] : null
+    user?.role === 'ARTIST' || profile?.isSoloStudio
+      ? (profile?.artist?.id ?? null)
+      : artistFilter.length === 1
+        ? artistFilter[0]
+        : null
   const publicGalleryUrl = studioSlug && linkArtistId ? `${window.location.origin}/flash/${studioSlug}/${linkArtistId}` : null
 
   async function handleCopyLink() {
@@ -273,7 +282,12 @@ export default function FlashGallery() {
           onChange={setStatusFilter}
         />
 
-        {canManageOthers && (
+        {/* Meaningless with exactly one artist in the studio -- filtering
+            never narrows anything, and it's what was making the public
+            gallery link (below) unreachable by default for a solo
+            OWNER+Artist, since it used to require picking down to "one"
+            from a list of one. */}
+        {canManageOthers && !profile?.isSoloStudio && (
           <MultiSelectFilter
             placeholder="All artists"
             options={artists.map((artist) => ({ value: artist.id, label: artistLabel(artist) }))}

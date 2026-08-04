@@ -704,16 +704,21 @@ export default function Inquiries() {
               />
             </div>
 
-            <MultiSelectFilter
-              placeholder="All artists"
-              options={[
-                { value: 'unassigned', label: 'Unassigned' },
-                ...(artistOptions?.map((artist) => ({ value: artist.id, label: artistLabel(artist) })) ?? []),
-              ]}
-              selected={artistFilter}
-              onChange={setArtistFilter}
-              className="w-44 shrink-0"
-            />
+            {/* UI simplification pass: meaningless with exactly one artist
+                in the studio -- every real option below "Unassigned" would
+                always be that one same artist. */}
+            {!profile?.isSoloStudio && (
+              <MultiSelectFilter
+                placeholder="All artists"
+                options={[
+                  { value: 'unassigned', label: 'Unassigned' },
+                  ...(artistOptions?.map((artist) => ({ value: artist.id, label: artistLabel(artist) })) ?? []),
+                ]}
+                selected={artistFilter}
+                onChange={setArtistFilter}
+                className="w-44 shrink-0"
+              />
+            )}
 
             <select
               value={sortOption}

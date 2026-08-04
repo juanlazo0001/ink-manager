@@ -857,7 +857,7 @@ export default function Calendar() {
             </div>
           </div>
 
-          {canManageCalendar && !isMobile && visibleArtistOptions && visibleArtistOptions.length > 0 && (
+          {canManageCalendar && !isMobile && visibleArtistOptions && visibleArtistOptions.length > 1 && (
             <div className="mt-4 flex flex-wrap items-center gap-2">
               <span className="text-xs font-medium uppercase tracking-wide text-fg-muted">Artists</span>
               {visibleArtistOptions.map((artist) => {
@@ -926,7 +926,7 @@ export default function Calendar() {
             </div>
           )}
 
-          {isMobile && !isArtist && visibleArtistOptions && visibleArtistOptions.length > 0 && (
+          {isMobile && !isArtist && visibleArtistOptions && visibleArtistOptions.length > 1 && (
             <div className="mt-4">
               <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-fg-muted">Artist</label>
               <ArtistSelect

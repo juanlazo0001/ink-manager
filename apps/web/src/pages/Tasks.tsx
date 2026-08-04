@@ -525,7 +525,9 @@ export default function Tasks() {
 
               <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h2 className={isEditorial ? 'sc text-[20px]' : 'text-base font-semibold text-fg'}>Assigned to Me</h2>
+                  <h2 className={isEditorial ? 'sc text-[20px]' : 'text-base font-semibold text-fg'}>
+                    {profile?.isSoloStudio ? 'Personal' : 'Assigned to Me'}
+                  </h2>
                   {incompletePersonal.length > 0 && (
                     <div className="flex items-center gap-1.5">
                       <PillMenu
