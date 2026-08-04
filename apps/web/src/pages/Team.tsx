@@ -16,7 +16,7 @@ import { useUserProfile } from '../context/useUserProfile'
 import { useViewAs } from '../context/useViewAs'
 import { useSocket } from '../context/useSocket'
 import PresenceDot from '../components/PresenceDot'
-import { PlusIcon, ViewIcon, InstagramIcon, FacebookIcon, ChevronDownIcon, PencilIcon, TrashIcon } from '../components/icons'
+import { PlusIcon, ViewIcon, InstagramIcon, FacebookIcon, ChevronDownIcon, PencilIcon, TrashIcon, SendIcon, CheckIcon } from '../components/icons'
 import { useThemePreset } from '../lib/useThemePreset'
 
 type PermissionMatrix = Record<string, Record<string, boolean>>
@@ -792,13 +792,21 @@ export default function Team() {
                                 type="button"
                                 onClick={() => handleResendInvite(invite)}
                                 disabled={resendingInviteId === invite.id}
-                                className="rounded-full border border-border px-2 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40 sm:px-3"
+                                aria-label="Resend invite"
+                                className="flex items-center gap-1.5 rounded-full border border-border px-2 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40 sm:px-3"
                               >
-                                {resendingInviteId === invite.id
-                                  ? 'Resending…'
-                                  : resendSuccessId === invite.id
-                                    ? 'Sent!'
-                                    : 'Resend'}
+                                {resendSuccessId === invite.id ? (
+                                  <CheckIcon className="h-3.5 w-3.5 shrink-0" />
+                                ) : (
+                                  <SendIcon className="h-3.5 w-3.5 shrink-0" />
+                                )}
+                                <span className="hidden sm:inline">
+                                  {resendingInviteId === invite.id
+                                    ? 'Resending…'
+                                    : resendSuccessId === invite.id
+                                      ? 'Sent!'
+                                      : 'Resend'}
+                                </span>
                               </button>
                               <button
                                 type="button"
@@ -806,9 +814,11 @@ export default function Team() {
                                   setCancellingInvite(invite)
                                   setCancelError(null)
                                 }}
-                                className="rounded-full border border-danger/40 px-2 py-1.5 text-xs font-medium text-danger transition hover:bg-danger/10 sm:px-3"
+                                aria-label="Cancel invite"
+                                className="flex items-center gap-1.5 rounded-full border border-danger/40 px-2 py-1.5 text-xs font-medium text-danger transition hover:bg-danger/10 sm:px-3"
                               >
-                                Cancel
+                                <TrashIcon className="h-3.5 w-3.5 shrink-0" />
+                                <span className="hidden sm:inline">Cancel</span>
                               </button>
                             </div>
                           </td>
@@ -959,13 +969,21 @@ export default function Team() {
                                 type="button"
                                 onClick={() => handleResendArtistInvite(invite)}
                                 disabled={resendingArtistInviteId === invite.id}
-                                className="rounded-full border border-border px-2 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40 sm:px-3"
+                                aria-label="Resend invite"
+                                className="flex items-center gap-1.5 rounded-full border border-border px-2 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40 sm:px-3"
                               >
-                                {resendingArtistInviteId === invite.id
-                                  ? 'Resending…'
-                                  : resendArtistInviteSuccessId === invite.id
-                                    ? 'Sent!'
-                                    : 'Resend'}
+                                {resendArtistInviteSuccessId === invite.id ? (
+                                  <CheckIcon className="h-3.5 w-3.5 shrink-0" />
+                                ) : (
+                                  <SendIcon className="h-3.5 w-3.5 shrink-0" />
+                                )}
+                                <span className="hidden sm:inline">
+                                  {resendingArtistInviteId === invite.id
+                                    ? 'Resending…'
+                                    : resendArtistInviteSuccessId === invite.id
+                                      ? 'Sent!'
+                                      : 'Resend'}
+                                </span>
                               </button>
                               <button
                                 type="button"
@@ -973,9 +991,11 @@ export default function Team() {
                                   setCancellingArtistInvite(invite)
                                   setCancelArtistInviteError(null)
                                 }}
-                                className="rounded-full border border-danger/40 px-2 py-1.5 text-xs font-medium text-danger transition hover:bg-danger/10 sm:px-3"
+                                aria-label="Cancel invite"
+                                className="flex items-center gap-1.5 rounded-full border border-danger/40 px-2 py-1.5 text-xs font-medium text-danger transition hover:bg-danger/10 sm:px-3"
                               >
-                                Cancel
+                                <TrashIcon className="h-3.5 w-3.5 shrink-0" />
+                                <span className="hidden sm:inline">Cancel</span>
                               </button>
                             </div>
                           </td>

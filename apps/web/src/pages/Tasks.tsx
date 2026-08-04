@@ -321,7 +321,17 @@ export default function Tasks() {
     )
   }
 
-  const systemGroups = data ? groupByType(data.system) : []
+  // Pending artist invites are personal (addressed to this account's own
+  // email, possibly from a studio they aren't even a member of), not
+  // "front-desk work" -- rendered in their own always-visible section
+  // below, never inside Studio Queue, which stays hidden for role ARTIST
+  // regardless (see that section's own gate). Split out of `data.system`
+  // before grouping so Studio Queue's own type-filter dropdown never
+  // offers it as an option either.
+  const artistInviteTasks = data?.system.filter((t) => t.type === 'ARTIST_INVITE_PENDING') ?? []
+  const otherSystemTasks = data?.system.filter((t) => t.type !== 'ARTIST_INVITE_PENDING') ?? []
+
+  const systemGroups = groupByType(otherSystemTasks)
   const visibleSystemGroups = queueTypeFilter
     ? systemGroups.filter(([type]) => type === queueTypeFilter)
     : systemGroups
@@ -373,6 +383,57 @@ export default function Tasks() {
 
           {data && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={uiSpringTransition}>
+              {/* Personal to this account's own email, from a studio they
+                  may not even be a member of yet -- always visible
+                  regardless of role, unlike Studio Queue below (which stays
+                  hidden for role ARTIST). See lib/tasks/artistInvitePending.ts
+                  on the backend for why this bypasses tasks.viewQueue entirely. */}
+              {artistInviteTasks.length > 0 && (
+                <div className="mt-6 rounded-2xl border border-accent/30 bg-accent/5 p-5">
+                  <h2 className={isEditorial ? 'sc text-[20px]' : 'text-base font-semibold text-fg'}>
+                    Studio invites
+                  </h2>
+                  <p className="mt-1 text-sm text-fg-secondary">Waiting on your response.</p>
+
+                  <ul className="mt-4 space-y-2">
+                    <AnimatePresence initial={false}>
+                      {artistInviteTasks.map((task) => (
+                        <motion.li
+                          key={`${task.type}:${task.dismissalKey}`}
+                          layout
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          transition={uiSpringTransition}
+                          className="flex items-center justify-between gap-3 rounded-lg border border-border bg-surface p-3 text-sm"
+                        >
+                          <div className="min-w-0">
+                            <p className="text-fg">{task.title}</p>
+                            <p className="mt-0.5 text-xs text-fg-muted">Since {formatDateTime(task.actionableAt)}</p>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-1.5">
+                            <Link
+                              to={task.deepLink}
+                              className="rounded-full bg-accent px-3 py-1 text-xs font-semibold text-bg transition hover:bg-accent-hover"
+                            >
+                              Respond
+                            </Link>
+                            <button
+                              type="button"
+                              onClick={() => dismissMutation.mutate(task)}
+                              disabled={dismissMutation.isPending || !!viewAsTarget}
+                              className="rounded-full border border-border px-3 py-1 text-xs font-medium text-fg-secondary transition hover:bg-surface hover:text-fg disabled:opacity-60"
+                            >
+                              Dismiss
+                            </button>
+                          </div>
+                        </motion.li>
+                      ))}
+                    </AnimatePresence>
+                  </ul>
+                </div>
+              )}
+
               {user?.role !== 'ARTIST' && (
               // No .card-surface here, deliberately -- dense list content
               // (same category as Conversations' thread list / Calendar's
@@ -408,11 +469,11 @@ export default function Tasks() {
                   )}
                 </div>
 
-                {data.system.length === 0 && (
+                {otherSystemTasks.length === 0 && (
                   <p className="mt-4 text-sm text-fg-secondary">Nothing needs attention right now.</p>
                 )}
 
-                {data.system.length > 0 && visibleSystemGroups.length === 0 && (
+                {otherSystemTasks.length > 0 && visibleSystemGroups.length === 0 && (
                   <p className="mt-4 text-sm text-fg-secondary">No tasks match this filter.</p>
                 )}
 

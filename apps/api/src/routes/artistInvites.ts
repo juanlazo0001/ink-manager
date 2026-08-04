@@ -131,6 +131,11 @@ router.post("/artist-invite/accept/:token", optionalAuth, async (req, res) => {
       await tx.studioMembership.create({
         data: { studioId: invite!.studioId, artistId: artist.id, type: "HOME", allowsStudioProfileEdits: false },
       });
+      // Same fix as artists.ts's /go-solo route: FlashPiece carries its own
+      // independent studioId, so it doesn't follow User.studioId
+      // automatically -- without this, existing pieces stay attached to
+      // (and visible/manageable at) the studio this artist just left.
+      await tx.flashPiece.updateMany({ where: { artistId: artist.id, studioId: oldStudioId }, data: { studioId: invite!.studioId } });
       const payload: AuthPayload = { userId: existingUser.id, studioId: invite!.studioId, role: Role.ARTIST };
       freshToken = jwt.sign(payload, JWT_SECRET, { expiresIn: "7d" });
     } else {

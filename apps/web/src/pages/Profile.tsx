@@ -590,7 +590,11 @@ export default function Profile() {
             </div>
           )}
 
-          {profile && isArtist && profile.artist && (
+          {/* Hidden once already solo -- going solo again would abandon the
+              studio they're the only member of (leaving it with zero active
+              users) to create a near-identical new one, never a meaningful
+              action once there's no one else left to leave. */}
+          {profile && isArtist && profile.artist && !profile.isSoloStudio && (
             <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-6">
               <p className="text-xs font-semibold uppercase tracking-wider text-fg-muted">Go solo</p>
 

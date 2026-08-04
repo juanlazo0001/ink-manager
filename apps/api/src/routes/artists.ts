@@ -635,6 +635,15 @@ router.post("/:id/go-solo", requireAuth, async (req, res) => {
       data: { studioId: studio.id, artistId: id, type: "HOME", allowsStudioProfileEdits: true },
     });
 
+    // Flash gallery is artist-level content (like bio/portfolio/rates) but
+    // FlashPiece also carries its own independent studioId column (for
+    // studio-scoped staff queries) -- unlike User.studioId, nothing else
+    // updates this automatically, so it has to happen explicitly here or
+    // every existing piece silently stays attached to the studio the
+    // artist just left (still visible/manageable there, invisible at their
+    // new one) despite this route's own promise that it "comes with you."
+    await tx.flashPiece.updateMany({ where: { artistId: id, studioId: oldStudioId }, data: { studioId: studio.id } });
+
     return { studio, membership };
   });
 

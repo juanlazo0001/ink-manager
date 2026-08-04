@@ -18,7 +18,7 @@ import { slugify } from "../lib/slug";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { sendPlatformEmail } from "../lib/platformEmail";
 import { renderPlatformEmailHtml } from "../lib/emailTemplate";
-import { emitInvalidation } from "../lib/realtime/registry";
+import { emitInvalidation, emitUserInvalidation } from "../lib/realtime/registry";
 import { createArtistMembershipInvite, resendArtistMembershipInvite } from "../lib/artistMembershipInvites";
 
 const router = Router();
@@ -357,6 +357,18 @@ router.post("/:studioId/invites", requireAuth, requirePermission("team.manage"),
       return res.status(400).json({ error: "membershipType must be HOME or GUEST when inviting an Artist" });
     }
 
+    // Caught here, with a clear message, rather than only surfacing as a
+    // raw partial-unique-index violation at accept time (days later, on
+    // the INVITEE's side) -- an existing identity who already has an
+    // active membership (HOME or GUEST) at this exact studio has nothing
+    // left for a fresh invite to grant.
+    const existingArtistMembership = await prisma.studioMembership.findFirst({
+      where: { studioId, endedAt: null, artist: { user: { email: trimmedEmail } } },
+    });
+    if (existingArtistMembership) {
+      return res.status(409).json({ error: "This artist already has an active membership at your studio." });
+    }
+
     const studioForInvite = await prisma.studio.findUniqueOrThrow({ where: { id: studioId }, select: { name: true } });
     const invite = await createArtistMembershipInvite({
       studioId,
@@ -588,6 +600,15 @@ router.delete("/:studioId/artist-invites/:inviteId", requireAuth, requirePermiss
   await prisma.artistMembershipInvite.delete({ where: { id: inviteId } });
 
   emitInvalidation({ type: "team.changed", studioId });
+
+  // If this invite was already visible on an existing identity's own Tasks
+  // page (artistInvitePendingSource), push a live refresh so a cancelled
+  // invite disappears immediately rather than sitting there until their
+  // next natural navigation to /tasks.
+  const cancelledInviteUser = await prisma.user.findUnique({ where: { email: existing.email }, select: { id: true } });
+  if (cancelledInviteUser) {
+    emitUserInvalidation(cancelledInviteUser.id, [["tasks", cancelledInviteUser.id]]);
+  }
 
   res.status(204).send();
 });

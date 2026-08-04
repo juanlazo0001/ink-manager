@@ -4,6 +4,7 @@ import { Role } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { diffObjects, logAudit } from "../lib/audit";
 import { TASK_SOURCE_REGISTRY } from "../lib/tasks/registry";
+import { artistInvitePendingSource } from "../lib/tasks/artistInvitePending";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { hasPermission, requirePermission } from "../lib/permissions";
 
@@ -11,7 +12,10 @@ const router = Router();
 router.use(requireAuth);
 router.use(requireRole(Role.OWNER, Role.FRONT_DESK, Role.ARTIST));
 
-const VALID_TASK_TYPES = new Set(TASK_SOURCE_REGISTRY.map((s) => s.type));
+// artistInvitePendingSource is deliberately excluded from the registry
+// itself (see that file's own comment) but still needs to be a valid
+// dismiss target, same as every registry source.
+const VALID_TASK_TYPES = new Set([...TASK_SOURCE_REGISTRY.map((s) => s.type), artistInvitePendingSource.type]);
 
 // System tasks are front-desk work (front desk walks in and sees everything
 // needing attention) -- governed by tasks.viewQueue, defaulting true for
@@ -53,19 +57,23 @@ router.get("/", async (req, res) => {
   // reflects that (FALSE for ARTIST). FRONT_DESK's system-queue access is
   // now the same toggle instead of an unconditional role check -- both
   // paths collapse to the identical empty-system-array response.
-  if (!(await hasPermission(studioId, role, "tasks.viewQueue"))) {
-    return res.json({ system: [], personal, assignedByMe });
-  }
+  //
+  // artistInvitePendingSource bypasses this gate on purpose -- it's not
+  // "front-desk work," it's a pending invite addressed to this person's
+  // own email specifically, from a studio that may not even be this one.
+  // Fetched regardless of role or tasks.viewQueue (see that source's own
+  // comment).
+  const viewsQueue = await hasPermission(studioId, role, "tasks.viewQueue");
 
-  const [sourceResults, dismissals] = await Promise.all([
-    Promise.all(TASK_SOURCE_REGISTRY.map((source) => source.fetch(studioId, userId))),
+  const [registrySourceResults, artistInviteTasks, dismissals] = await Promise.all([
+    viewsQueue ? Promise.all(TASK_SOURCE_REGISTRY.map((source) => source.fetch(studioId, userId))) : [],
+    artistInvitePendingSource.fetch(studioId, userId),
     prisma.taskDismissal.findMany({ where: { studioId, userId }, select: { taskType: true, entityId: true } }),
   ]);
 
   const dismissedKeys = new Set(dismissals.map((d) => `${d.taskType}:${d.entityId}`));
 
-  const system = sourceResults
-    .flat()
+  const system = [...registrySourceResults.flat(), ...artistInviteTasks]
     .filter((task) => !dismissedKeys.has(`${task.type}:${task.dismissalKey}`))
     .sort((a, b) => a.actionableAt.getTime() - b.actionableAt.getTime());
 

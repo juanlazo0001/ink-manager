@@ -3,6 +3,7 @@ import { prisma } from "./prisma";
 import { PUBLIC_APP_URL } from "./publicUrl";
 import { sendPlatformEmail } from "./platformEmail";
 import { renderPlatformEmailHtml } from "./emailTemplate";
+import { emitUserInvalidation } from "./realtime/registry";
 import type { StudioMembershipType } from "../../generated/prisma/enums";
 
 export const ARTIST_INVITE_TOKEN_TTL_DAYS = 7;
@@ -25,6 +26,21 @@ function sendArtistInviteEmail(params: { inviteId: string; email: string; studio
   }).catch((err) => {
     console.error("Failed to send artist invite email", { inviteId, err });
   });
+}
+
+// If the target email already belongs to a real account, push a live
+// "tasks" refresh to their own session -- the same query key
+// tasksQueryKey(userId) resolves to on the frontend -- so the new pending
+// invite (surfaced by lib/tasks/artistInvitePending.ts) appears on their
+// Tasks page immediately if they happen to have it open, not just on their
+// next natural navigation there. A brand-new identity has no account (and
+// therefore no socket) to push to -- this is a no-op for that case, not an
+// error, since email is the only discovery path that can exist for them.
+async function notifyExistingIdentity(email: string) {
+  const existingUser = await prisma.user.findUnique({ where: { email }, select: { id: true } });
+  if (existingUser) {
+    emitUserInvalidation(existingUser.id, [["tasks", existingUser.id]]);
+  }
 }
 
 // Artist mobility, Part 2: studio-initiated invite specifically for an
@@ -50,6 +66,7 @@ export async function createArtistMembershipInvite(params: {
   });
 
   sendArtistInviteEmail({ inviteId: invite.id, email, studioName, membershipType, token });
+  notifyExistingIdentity(email).catch((err) => console.error("Failed to notify existing identity of new artist invite", { email, err }));
 
   return invite;
 }
@@ -67,6 +84,7 @@ export async function resendArtistMembershipInvite(params: { inviteId: string; e
   await prisma.artistMembershipInvite.update({ where: { id: inviteId }, data: { token, tokenExpiresAt } });
 
   sendArtistInviteEmail({ inviteId, email, studioName, membershipType, token });
+  notifyExistingIdentity(email).catch((err) => console.error("Failed to notify existing identity of resent artist invite", { email, err }));
 }
 
 export function isExpiredOrInvalidArtistInvite(invite: { tokenExpiresAt: Date } | null) {

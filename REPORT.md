@@ -7275,3 +7275,53 @@ Both isolated dev servers killed (`netstat` + `taskkill` by PID). All scratch ve
 
 `c2c08ad` on `main`.
 
+---
+
+# Mobile pending-invite icons, artist-invite tasks, and two real go-solo bugs
+
+Single session on `main`, several small follow-up requests handled together. No schema changes.
+
+## 1. Pending invites: icon-only Resend/Cancel below the `sm` breakpoint
+
+Both pending-invite tables (Staff tab, and the new Artists tab one from the previous entry) now render `SendIcon`/`CheckIcon` (resend, swapping to a checkmark on success) and `TrashIcon` (cancel) permanently, with the text label wrapped in `hidden sm:inline` -- icon-only below 640px, icon+label at `sm` and up, matching every other responsive treatment already in this app. `aria-label` added to both buttons so the icon-only state stays accessible. Verified at a 375px viewport: buttons render as compact icon pills, no horizontal cramping.
+
+## 2. An existing artist's pending invite now shows up on their own Tasks page
+
+New backend-only task source (`lib/tasks/artistInvitePending.ts`), deliberately **not** registered in `TASK_SOURCE_REGISTRY` -- every other source is studio-scoped "front-desk work" gated behind `tasks.viewQueue` (false by default for `ARTIST`, which is exactly the role most likely to receive one of these). Fetched separately in `GET /tasks` and merged into `system` unconditionally, regardless of role or that permission. Frontend splits it out of `Studio Queue` (which stays role-gated exactly as before) into its own always-visible "Studio invites" card at the top of the page, with Respond (deep-links straight to the accept page) and Dismiss actions.
+
+**Live, not just on next page load**: added `emitUserInvalidation` (`lib/realtime/registry.ts`) -- every other invalidation event targets a `studio:<id>` room, but this pushes to the invited person's own `user:<id>` room (they already join it on connect, per `io.ts` -- nothing else used this room before now). Wired into invite create, resend, and cancel, so an existing identity who already has Tasks open sees the invite appear, update, or disappear without a reload. Verified live: opened artist2's Tasks page, sent them an invite from a second browser context, watched it appear in the first with no navigation.
+
+Dismissal key folds in `tokenExpiresAt` (same pattern `ESTIMATE_FOLLOWUP`/`NEW_CONVERSATION` already use) so a resent invite resurfaces even if the artist had dismissed the earlier one.
+
+**Real bug found while testing this**: inviting an artist who already has an active membership (HOME or GUEST) at the target studio previously wasn't caught until *accept* time, as a raw partial-unique-index violation (`409` with no useful message, on the invitee's side, possibly days later). Added a pre-check at invite-creation time instead -- the studio gets a clear `409` immediately when they try to send a redundant invite.
+
+## 3. "Go solo" no longer shown once already solo
+
+Real bug, reported directly: an already-solo artist still saw the "Go solo" button. Going solo again would abandon the studio they're the only member of (leaving it with zero active users) to create a near-duplicate new one -- never a meaningful action once there's no one left to leave. Hidden via `!profile.isSoloStudio`, same flag the rest of the solo-simplification work already uses.
+
+## 4. Flash gallery now actually transfers on a home change
+
+Real bug, reported directly, and confirmed live in the dev database: `FlashPiece` carries its own independent `studioId` column (for studio-scoped staff queries) that never followed `User.studioId` on either transition that changes an artist's home -- `/go-solo` and the existing-identity HOME-accept branch of `/artist-invite/accept/:token`. Every existing piece silently stayed attached to (visible and manageable at) the studio the artist had just left, and never appeared at their new one -- directly contradicting the Go Solo UI's own copy ("Your bio, portfolio, rates, and flash gallery all come with you"). Fixed both transactions to reassign `FlashPiece.studioId` alongside everything else that already moves.
+
+**Pre-existing broken data found and corrected**: artist1 (who went solo, then changed homes again, earlier this session -- before this fix existed) had 6 real flash pieces still orphaned at `dev-studio`. Corrected directly (reassigned to their current studio) rather than left broken, since this was the literal bug being reported, not hypothetical.
+
+## Verification -- real accounts, live dev API/web (isolated `:4093`/`:5292`)
+
+- **Mobile icons**: 375px viewport screenshot, Artists tab pending-invite row -- compact icon-only buttons, no visible text, no horizontal cramping.
+- **Artist-invite task, live push**: artist2's Tasks page open in one browser context; invited from a second. "Studio invites" card appeared with correct studio name and membership wording, with zero navigation on the first tab. Clicked Respond from the task itself, completed the existing-identity accept flow, confirmed the card disappeared afterward.
+- **Duplicate-membership guard**: attempted to re-invite artist2 (who already has a real GUEST membership at QA Regular Studio from earlier testing) -- clean `409` with a clear message at send time, not a cryptic failure at accept time.
+- **Go solo hidden when already solo**: confirmed absent on a real already-solo account's Profile page; confirmed still present and functional on a real not-yet-solo artist's.
+- **Flash gallery transfer**: created a real flash piece for a real dev-studio artist, had them go solo for real, confirmed the piece appeared at their new solo studio's gallery and disappeared from dev-studio's.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npm run build` (web) -- both clean, re-run after every remaining change.
+
+## Cleanup
+
+Both isolated dev servers killed (`netstat` + `taskkill` by PID, including one more `EADDRINUSE` stale-process restart mid-session -- same known `tsx watch` quirk, not a regression). All scratch verification/correction scripts deleted, none committed. Real test data left in the dev database, now with corrected flash-piece ownership throughout.
+
+## Commit
+
+`<pending>` on `main`.
+

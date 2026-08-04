@@ -151,3 +151,20 @@ export function emitInvalidation(event: InvalidationEvent): void {
     console.error("[realtime] failed to emit invalidation", event.type, err);
   }
 }
+
+// Every InvalidationEvent above targets a studio room -- correct for
+// everything that's actually studio-scoped, but an artist invite is
+// addressed to a specific person's email, possibly from a studio they
+// aren't even a member of yet. That person's socket already joins a
+// personal `user:<id>` room regardless of which studio room(s) it's also
+// in (see io.ts's own connection handler) -- this is the one existing hook
+// for pushing to it. Only meaningful for an EXISTING identity (a brand-new
+// one has no account, and therefore no socket, to push to at all).
+export function emitUserInvalidation(userId: string, keys: unknown[][]): void {
+  try {
+    const io = getIo();
+    io.to(`user:${userId}`).emit("invalidate", { keys });
+  } catch (err) {
+    console.error("[realtime] failed to emit user invalidation", userId, err);
+  }
+}
