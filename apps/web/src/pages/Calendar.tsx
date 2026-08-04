@@ -330,7 +330,7 @@ function CalendarToolbar({ date, label, view, views, onNavigate, onView }: Toolb
                 isEditorial
                   ? [
                       'editorial-btn-secondary rounded-full border px-3 py-1 capitalize transition',
-                      v === view ? 'border-accent bg-accent/10 text-accent' : 'border-transparent text-fg-muted hover:border-border-strong',
+                      v === view ? 'is-active' : 'border-transparent text-fg-muted hover:border-border-strong',
                     ].join(' ')
                   : `rounded-full px-3 py-1 text-xs font-medium capitalize transition ${
                       v === view ? 'bg-accent text-bg' : 'text-fg-secondary hover:bg-surface'
@@ -878,7 +878,7 @@ export default function Calendar() {
                       isEditorial
                         ? [
                             'editorial-btn-secondary flex items-center gap-1.5 rounded-full border py-1 pl-1 pr-3 transition',
-                            active ? 'border-accent bg-accent/10 text-accent' : 'border-transparent text-fg-muted hover:border-border-strong',
+                            active ? 'is-active' : 'border-transparent text-fg-muted hover:border-border-strong',
                           ].join(' ')
                         : `flex items-center gap-1.5 rounded-full border py-1 pl-1 pr-3 text-xs font-medium transition ${
                             active

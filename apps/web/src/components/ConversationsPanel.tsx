@@ -626,6 +626,20 @@ export default function ConversationsPanel() {
   // client-details panel opens, so opening it doesn't cramp the message
   // list -- panel grows to the left since the slide-over is right-anchored.
   const [contextOpen, setContextOpen] = useState(false)
+  // Lifted out of ConversationListView (rather than left as that
+  // component's own local state) because opening any single thread swaps
+  // ConversationListView out for ThreadView -- unmounting it -- and going
+  // back to the list remounts a fresh instance. Local state there reset on
+  // every such round-trip, which read as filters/sort silently clearing
+  // "when you leave and come back." Living here instead survives that
+  // remount, since ConversationsPanel itself is mounted once at the app
+  // root (see App.tsx) and never unmounts across route changes.
+  const [entityTypeFilter, setEntityTypeFilter] = useState('')
+  const [artistIdFilter, setArtistIdFilter] = useState('')
+  const [conversationSearch, setConversationSearch] = useState('')
+  const [showFilters, setShowFilters] = useState(false)
+  const [quickFilter, setQuickFilter] = useState<'all' | 'unread' | 'needs-action'>('all')
+  const [sortOption, setSortOption] = useState<'recent' | 'oldest' | 'unread' | 'name'>('recent')
   // Mounted lazily on first open (so a panel never opened at all never
   // fetches anything), then kept mounted forever after -- closing just
   // slides it off-screen. That's what lets the thread/list remember its
@@ -836,6 +850,18 @@ export default function ConversationsPanel() {
               showTabs={!isArtist && !(profile?.isSoloStudio ?? false)}
               onSelect={(id) => setSelectedId(id)}
               onClose={closePanel}
+              entityTypeFilter={entityTypeFilter}
+              onEntityTypeFilterChange={setEntityTypeFilter}
+              artistIdFilter={artistIdFilter}
+              onArtistIdFilterChange={setArtistIdFilter}
+              search={conversationSearch}
+              onSearchChange={setConversationSearch}
+              showFilters={showFilters}
+              onShowFiltersChange={setShowFilters}
+              quickFilter={quickFilter}
+              onQuickFilterChange={setQuickFilter}
+              sortOption={sortOption}
+              onSortOptionChange={setSortOption}
             />
           ))}
       </motion.div>
@@ -863,6 +889,18 @@ function ConversationListView({
   showTabs,
   onSelect,
   onClose,
+  entityTypeFilter,
+  onEntityTypeFilterChange,
+  artistIdFilter,
+  onArtistIdFilterChange,
+  search,
+  onSearchChange,
+  showFilters,
+  onShowFiltersChange,
+  quickFilter,
+  onQuickFilterChange,
+  sortOption,
+  onSortOptionChange,
 }: {
   tab: Tab
   isOpen: boolean
@@ -870,21 +908,27 @@ function ConversationListView({
   showTabs: boolean
   onSelect: (id: string) => void
   onClose: () => void
-}) {
-  const { shape: listShape } = useThemePreset()
-  const isEditorial = listShape === 'editorial'
-  const [entityTypeFilter, setEntityTypeFilter] = useState('')
-  const [artistIdFilter, setArtistIdFilter] = useState('')
-  const [search, setSearch] = useState('')
-  const [showFilters, setShowFilters] = useState(false)
-  const [quickFilter, setQuickFilter] = useState<'all' | 'unread' | 'needs-action'>('all')
+  entityTypeFilter: string
+  onEntityTypeFilterChange: (value: string) => void
+  artistIdFilter: string
+  onArtistIdFilterChange: (value: string) => void
+  search: string
+  onSearchChange: (value: string) => void
+  showFilters: boolean
+  onShowFiltersChange: (value: boolean | ((prev: boolean) => boolean)) => void
+  quickFilter: 'all' | 'unread' | 'needs-action'
+  onQuickFilterChange: (value: 'all' | 'unread' | 'needs-action') => void
   // Client-side only -- the full matching list is always fetched in one
   // shot (no pagination on GET /conversations), so there's no missing-data
   // cutoff to worry about re-sorting after the fact. 'recent' matches the
   // backend's own default order (lastMessageAt desc); kept as an explicit
   // case rather than a "no sort" no-op so all four options share one
   // comparator.
-  const [sortOption, setSortOption] = useState<'recent' | 'oldest' | 'unread' | 'name'>('recent')
+  sortOption: 'recent' | 'oldest' | 'unread' | 'name'
+  onSortOptionChange: (value: 'recent' | 'oldest' | 'unread' | 'name') => void
+}) {
+  const { shape: listShape } = useThemePreset()
+  const isEditorial = listShape === 'editorial'
   const [showNewChat, setShowNewChat] = useState(false)
   const [newChatSearch, setNewChatSearch] = useState('')
   const [newChatError, setNewChatError] = useState<string | null>(null)
@@ -1204,7 +1248,7 @@ function ConversationListView({
           <input
             type="text"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => onSearchChange(e.target.value)}
             placeholder="Search inquiries…"
             className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-base text-fg focus:border-accent focus:outline-none"
           />
@@ -1217,7 +1261,7 @@ function ConversationListView({
           icon={<FilterIcon className="h-3.5 w-3.5" />}
           value={quickFilter}
           options={QUICK_FILTER_OPTIONS}
-          onChange={setQuickFilter}
+          onChange={onQuickFilterChange}
           isEditorial={isEditorial}
           active={quickFilter !== 'all'}
         />
@@ -1228,14 +1272,14 @@ function ConversationListView({
             icon={<SortIcon className="h-3.5 w-3.5" />}
             value={sortOption}
             options={SORT_OPTIONS}
-            onChange={setSortOption}
+            onChange={onSortOptionChange}
             isEditorial={isEditorial}
           />
 
           {tab === 'CLIENT' && (
             <button
               type="button"
-              onClick={() => setShowFilters((v) => !v)}
+              onClick={() => onShowFiltersChange((v) => !v)}
               aria-label="More filters"
               aria-pressed={showFilters}
               className={[
@@ -1254,7 +1298,7 @@ function ConversationListView({
           <div className="flex gap-2">
             <select
               value={entityTypeFilter}
-              onChange={(e) => setEntityTypeFilter(e.target.value)}
+              onChange={(e) => onEntityTypeFilterChange(e.target.value)}
               className="min-w-0 flex-1 rounded-lg border border-border bg-surface-inset px-2.5 py-2 text-base text-fg focus:border-accent focus:outline-none"
             >
               <option value="">Any tagged type</option>
@@ -1269,7 +1313,7 @@ function ConversationListView({
               className="min-w-0 flex-1"
               artists={artistOptions}
               value={artistIdFilter || null}
-              onChange={(artistId) => setArtistIdFilter(artistId ?? '')}
+              onChange={(artistId) => onArtistIdFilterChange(artistId ?? '')}
               clearLabel="Any artist"
             />
           </div>
@@ -1277,9 +1321,9 @@ function ConversationListView({
             <button
               type="button"
               onClick={() => {
-                setEntityTypeFilter('')
-                setArtistIdFilter('')
-                setSearch('')
+                onEntityTypeFilterChange('')
+                onArtistIdFilterChange('')
+                onSearchChange('')
               }}
               className="text-xs text-fg-muted underline hover:text-fg"
             >

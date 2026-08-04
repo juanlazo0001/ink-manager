@@ -50,7 +50,7 @@ export default function PillMenu<T extends string>({
           isEditorial
             ? [
                 'editorial-btn-secondary flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 transition',
-                active ? 'border-accent bg-accent/10 text-accent' : 'border-transparent text-fg-muted hover:border-border-strong',
+                active ? 'is-active' : 'border-transparent text-fg-muted hover:border-border-strong',
               ].join(' ')
             : [
                 'flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12.5px] font-semibold transition-colors duration-fast ease-out',

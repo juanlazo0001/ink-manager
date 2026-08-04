@@ -1094,6 +1094,22 @@
   color: var(--color-fg);
   background: rgba(201, 154, 91, 0.08);
 }
+/* Selected/active state for editorial-btn-secondary toggles (Calendar's
+   view switcher and artist-filter chips, PillMenu's Filter/Sort pills).
+   .editorial-btn-secondary above is plain unlayered CSS, not a Tailwind
+   @layer utility -- so a same-specificity Tailwind class in the same
+   className (border-accent, bg-accent/10, text-accent) can never win
+   against it regardless of where it sits in the class string, which
+   silently erased every "this one is selected" indicator under Editorial
+   Gold specifically (they still worked under every other preset, which
+   doesn't go through this class at all). Two joined classes outrank one
+   by specificity -- not source order -- so call sites add this alongside
+   .editorial-btn-secondary instead of relying on the Tailwind utilities. */
+.editorial-btn-secondary.is-active {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  background: rgba(201, 154, 91, 0.1);
+}
 
 /* Editorial Gold: every semi-bold/bold weight across the app becomes
    regular, theme-scoped. Rather than hunting down every call site that
