@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Navigate } from 'react-router-dom'
+import { Navigate, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import Modal from '../components/Modal'
 import InquiryKanbanBoard from '../components/kanban/InquiryKanbanBoard'
@@ -80,6 +80,7 @@ const EMPTY_APPROVE_FORM = {
 
 export default function MyInquiries() {
   const user = useEffectiveUser()
+  const navigate = useNavigate()
   useMarkSectionSeen('inquiries')
 
   const [inquiries, setInquiries] = useState<Inquiry[] | null>(null)
@@ -299,6 +300,7 @@ export default function MyInquiries() {
                   resolveTransition={(params) =>
                     resolveArtistTransition({ ...params, inquiry: params.inquiry })
                   }
+                  onOpenCard={(id) => navigate(`/my-inquiries/${id}`)}
                   emptyMessage="Nothing assigned to you right now."
                 />
               )}

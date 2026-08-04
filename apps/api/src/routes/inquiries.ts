@@ -630,6 +630,90 @@ const INQUIRY_INCLUDE = {
   },
 } as const;
 
+// Artist-facing projection: used by GET /assigned-to-me (list) and
+// GET /assigned-to-me/:id (single project detail) -- both scoped to
+// assignedArtistId === the requesting artist's own id, never the full
+// INQUIRY_INCLUDE above. Sessions/photos/notes are the artist's own working
+// data for the tattoo (schedule, checkout photos, staff notes about the
+// project) and are included in full; deposit/financial specifics are
+// deliberately reduced to a signed/paid status only -- no dollar amounts,
+// no signature image or name, no payment method, no gift card details --
+// the same "operational status yes, financial specifics no" split
+// reports.viewFinancial already draws for the Dashboard (see reports.ts).
+const ARTIST_INQUIRY_SELECT = {
+  id: true,
+  channel: true,
+  description: true,
+  colorOrBlackGrey: true,
+  placement: true,
+  estimatedSize: true,
+  hasBeenTattooedBefore: true,
+  budget: true,
+  desiredTiming: true,
+  referenceImages: true,
+  placementImages: true,
+  createdAt: true,
+  updatedAt: true,
+  status: true,
+  priceEstimateLow: true,
+  priceEstimateHigh: true,
+  timeEstimateHoursMin: true,
+  timeEstimateHoursMax: true,
+  projectCompletedAt: true,
+  client: { select: { firstName: true, lastName: true } },
+  assignedArtist: {
+    select: { id: true, user: { select: { id: true, name: true, email: true, avatarUrl: true } } },
+  },
+  service: { select: { id: true, name: true, pricingModel: true } },
+  appointment: { select: { id: true, startTime: true, endTime: true, status: true } },
+  sessions: {
+    select: {
+      id: true,
+      startTime: true,
+      endTime: true,
+      status: true,
+      checkedOutAt: true,
+      liabilityWaiver: { select: { status: true } },
+      photos: {
+        select: { id: true, url: true, uploadedAt: true },
+        orderBy: { uploadedAt: "desc" },
+      },
+    },
+    orderBy: { startTime: "asc" },
+  },
+  plannedSessions: {
+    select: {
+      id: true,
+      sessionNumber: true,
+      estimatedHoursMin: true,
+      estimatedHoursMax: true,
+      estimatedPriceLow: true,
+      estimatedPriceHigh: true,
+      // Limited, same as depositForms below -- signed/paid status only.
+      depositForm: { select: { signedAt: true, paidAt: true } },
+    },
+    orderBy: { sessionNumber: "asc" },
+  },
+  depositForms: {
+    select: { id: true, sessionNumber: true, signedAt: true, paidAt: true, paidManually: true },
+    orderBy: { sessionNumber: "asc" },
+  },
+  // New: InquiryNote has no artist/staff-only distinction in the schema
+  // (see that model's own comment), so every note on the project is
+  // included -- this is a deliberate widening (an artist previously had no
+  // access to inquiry notes at all, regardless of permission), matching
+  // the task's explicit request to let an artist review "notes" on their
+  // own assigned project.
+  notes: {
+    // Only notes staff has explicitly marked visible -- see
+    // InquiryNote.visibleToArtist's own schema comment. Everything else
+    // (the studio-internal default) never reaches this response.
+    where: { visibleToArtist: true },
+    select: { id: true, bodyHtml: true, attachments: true, createdAt: true, author: NOTE_AUTHOR_SELECT },
+    orderBy: { createdAt: "desc" },
+  },
+} as const;
+
 // The inbox list only renders these fields -- preferredArtist/depositForm
 // are detail-page-only, so the list query skips them.
 // updatedAt/priceEstimateLow/High/assignedArtist were added for the Kanban
@@ -815,11 +899,34 @@ router.get("/assigned-to-me", requireAuth, requireRole(Role.ARTIST), requirePerm
       assignedArtistId: artist.id,
       ...(scopeAll ? NOT_ARCHIVED : { status: InquiryStatus.ARTIST_ASSIGNED }),
     },
-    include: INQUIRY_INCLUDE,
+    select: ARTIST_INQUIRY_SELECT,
     orderBy: scopeAll ? { updatedAt: "desc" } : { assignedAt: "desc" },
   });
 
   res.json(inquiries);
+});
+
+// Single-project detail for the artist's own board (Kanban card click,
+// direct URL/refresh) -- same ARTIST_INQUIRY_SELECT projection as the list
+// above, scoped identically to assignedArtistId === their own artist id.
+// Registered before the generic "/:id" below for the same reason
+// "assigned-to-me" itself is.
+router.get("/assigned-to-me/:id", requireAuth, requireRole(Role.ARTIST), requirePermission("inquiries.view"), async (req, res) => {
+  const artist = await prisma.artist.findUnique({ where: { userId: req.user!.userId } });
+  if (!artist) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  const inquiry = await prisma.inquiry.findFirst({
+    where: { id: req.params.id as string, assignedArtistId: artist.id },
+    select: ARTIST_INQUIRY_SELECT,
+  });
+
+  if (!inquiry) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  res.json(inquiry);
 });
 
 // Same reasoning as GET / above -- stays OWNER/FRONT_DESK-only regardless
@@ -3036,7 +3143,7 @@ router.get("/:id/notes", requireAuth, requirePermission("inquiries.notes.manage"
 
 router.post("/:id/notes", requireAuth, requirePermission("inquiries.notes.manage"), async (req, res) => {
   const id = req.params.id as string;
-  const { bodyHtml, attachments } = req.body ?? {};
+  const { bodyHtml, attachments, visibleToArtist } = req.body ?? {};
 
   if (typeof bodyHtml !== "string" || isBlankHtml(bodyHtml)) {
     return res.status(400).json({ error: "bodyHtml is required" });
@@ -3044,6 +3151,10 @@ router.post("/:id/notes", requireAuth, requirePermission("inquiries.notes.manage
 
   if (attachments !== undefined && !isValidAttachments(attachments)) {
     return res.status(400).json({ error: "attachments must be an array of {url, filename, mimeType}" });
+  }
+
+  if (visibleToArtist !== undefined && typeof visibleToArtist !== "boolean") {
+    return res.status(400).json({ error: "visibleToArtist must be a boolean" });
   }
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id }, select: { studioId: true } });
@@ -3058,6 +3169,7 @@ router.post("/:id/notes", requireAuth, requirePermission("inquiries.notes.manage
       authorId: req.user!.userId,
       bodyHtml: bodyHtml.trim(),
       attachments: attachments && attachments.length > 0 ? attachments : undefined,
+      visibleToArtist: visibleToArtist ?? false,
     },
     include: { author: NOTE_AUTHOR_SELECT },
   });
@@ -3079,7 +3191,7 @@ router.post("/:id/notes", requireAuth, requirePermission("inquiries.notes.manage
 router.patch("/:id/notes/:noteId", requireAuth, requirePermission("inquiries.notes.manage"), async (req, res) => {
   const id = req.params.id as string;
   const noteId = req.params.noteId as string;
-  const { bodyHtml, attachments } = req.body ?? {};
+  const { bodyHtml, attachments, visibleToArtist } = req.body ?? {};
 
   if (typeof bodyHtml !== "string" || isBlankHtml(bodyHtml)) {
     return res.status(400).json({ error: "bodyHtml is required" });
@@ -3087,6 +3199,10 @@ router.patch("/:id/notes/:noteId", requireAuth, requirePermission("inquiries.not
 
   if (attachments !== undefined && !isValidAttachments(attachments)) {
     return res.status(400).json({ error: "attachments must be an array of {url, filename, mimeType}" });
+  }
+
+  if (visibleToArtist !== undefined && typeof visibleToArtist !== "boolean") {
+    return res.status(400).json({ error: "visibleToArtist must be a boolean" });
   }
 
   const note = await prisma.inquiryNote.findUnique({ where: { id: noteId } });
@@ -3109,7 +3225,7 @@ router.patch("/:id/notes/:noteId", requireAuth, requirePermission("inquiries.not
 
   const updated = await prisma.inquiryNote.update({
     where: { id: noteId },
-    data: { bodyHtml: trimmed, attachments: attachmentsUpdate },
+    data: { bodyHtml: trimmed, attachments: attachmentsUpdate, visibleToArtist },
     include: { author: NOTE_AUTHOR_SELECT },
   });
 

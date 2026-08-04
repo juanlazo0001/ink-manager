@@ -1492,6 +1492,15 @@ model InquiryNote {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Staff-set, per-note -- default false so every existing note (and every
+  // new one unless the author opts in) stays exactly as private as
+  // NotesSection.tsx's own original design intended ("never shown to the
+  // client or shared with an artist"). Only notes with this true are
+  // returned to the assigned artist via ARTIST_INQUIRY_SELECT
+  // (routes/inquiries.ts) -- the staff-facing GET/POST/PATCH routes are
+  // unaffected and always see every note regardless of this flag.
+  visibleToArtist Boolean @default(false)
+
   // Array<{url, filename, mimeType}> -- unlike Message.attachments (bare
   // Cloudinary URLs, images only, uploaded via the image/upload endpoint),
   // note attachments can be any file type (uploaded via Cloudinary's

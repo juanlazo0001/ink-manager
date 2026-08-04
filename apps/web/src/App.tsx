@@ -30,6 +30,7 @@ import { PLATFORM_PRIVACY_POLICY_HTML, PLATFORM_TERMS_HTML } from './content/pla
 import Inquiries from './pages/Inquiries'
 import InquiryDetail from './pages/InquiryDetail'
 import MyInquiries from './pages/MyInquiries'
+import MyProjectDetail from './pages/MyProjectDetail'
 import EstimateResponse from './pages/EstimateResponse'
 import EstimateRevisionResponse from './pages/EstimateRevisionResponse'
 import DepositResponse from './pages/DepositResponse'
@@ -214,6 +215,7 @@ function AppRoutes() {
           <Route path="/inquiries" element={<Inquiries />} />
           <Route path="/inquiries/:id" element={<InquiryDetail />} />
           <Route path="/my-inquiries" element={<MyInquiries />} />
+          <Route path="/my-inquiries/:id" element={<MyProjectDetail />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/profile" element={<Profile />} />
           <Route path="/team" element={<Team />} />

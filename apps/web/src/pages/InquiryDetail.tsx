@@ -4302,6 +4302,7 @@ export default function InquiryDetail() {
                     canManage={canManageNotes}
                     readOnly={!!viewAsTarget}
                     bare
+                    supportsArtistVisibility
                   />
                 </Widget>
               )}

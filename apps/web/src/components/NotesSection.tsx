@@ -23,6 +23,9 @@ interface Note {
   // studio -- the note content itself survives, only the author link goes.
   author: NoteAuthor | null
   attachments: NoteAttachment[] | null
+  // Only present on InquiryNote (undefined for AppointmentNote, which has
+  // no such column) -- see supportsArtistVisibility below.
+  visibleToArtist?: boolean
 }
 
 interface NotesSectionProps {
@@ -49,6 +52,13 @@ interface NotesSectionProps {
   // already knows synchronously). Skips this component's own card/title
   // so there's exactly one of each.
   bare?: boolean
+  // InquiryNote only -- AppointmentNote has no visibleToArtist column, and
+  // an artist's project detail page doesn't surface per-session notes at
+  // all yet, so this stays false for every AppointmentDetail.tsx call site.
+  // Adds a per-note "Share with artist" toggle to the composer and each
+  // note's edit mode; default off (studio-internal), matching the
+  // column's own default and this component's original design intent.
+  supportsArtistVisibility?: boolean
 }
 
 // RichTextEditor's own empty state is "<p></p>", not "" -- same
@@ -171,7 +181,14 @@ function AttachButton({
 // composer. Never merged into that display. Shared by InquiryDetail.tsx
 // (Inquiry-level notes) and AppointmentDetail.tsx (per-session notes) --
 // same UX, same backend note shape, only the REST path differs.
-export default function NotesSection({ notesPath, queryKeyId, canManage, readOnly, bare = false }: NotesSectionProps) {
+export default function NotesSection({
+  notesPath,
+  queryKeyId,
+  canManage,
+  readOnly,
+  bare = false,
+  supportsArtistVisibility = false,
+}: NotesSectionProps) {
   const user = useEffectiveUser()
   const queryClient = useQueryClient()
   const queryKey = ['notes', notesPath, queryKeyId] as const
@@ -188,6 +205,7 @@ export default function NotesSection({ notesPath, queryKeyId, canManage, readOnl
 
   const [composerValue, setComposerValue] = useState('')
   const [composerAttachments, setComposerAttachments] = useState<NoteAttachment[]>([])
+  const [composerVisibleToArtist, setComposerVisibleToArtist] = useState(false)
   const [attachingComposer, setAttachingComposer] = useState(false)
   const [attachComposerError, setAttachComposerError] = useState<string | null>(null)
   const [posting, setPosting] = useState(false)
@@ -196,6 +214,7 @@ export default function NotesSection({ notesPath, queryKeyId, canManage, readOnl
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
   const [editAttachments, setEditAttachments] = useState<NoteAttachment[]>([])
+  const [editVisibleToArtist, setEditVisibleToArtist] = useState(false)
   const [attachingEdit, setAttachingEdit] = useState(false)
   const [attachEditError, setAttachEditError] = useState<string | null>(null)
   const [savingEditId, setSavingEditId] = useState<string | null>(null)
@@ -215,10 +234,12 @@ export default function NotesSection({ notesPath, queryKeyId, canManage, readOnl
         body: JSON.stringify({
           bodyHtml: composerValue,
           attachments: composerAttachments.length > 0 ? composerAttachments : undefined,
+          ...(supportsArtistVisibility ? { visibleToArtist: composerVisibleToArtist } : {}),
         }),
       })
       setComposerValue('')
       setComposerAttachments([])
+      setComposerVisibleToArtist(false)
       queryClient.invalidateQueries({ queryKey })
     } catch (err) {
       setPostError(err instanceof Error ? err.message : 'Failed to post note')
@@ -231,6 +252,7 @@ export default function NotesSection({ notesPath, queryKeyId, canManage, readOnl
     setEditingNoteId(note.id)
     setEditValue(note.bodyHtml)
     setEditAttachments(note.attachments ?? [])
+    setEditVisibleToArtist(note.visibleToArtist ?? false)
     setAttachEditError(null)
     setEditError(null)
   }
@@ -245,7 +267,11 @@ export default function NotesSection({ notesPath, queryKeyId, canManage, readOnl
       // removed every attachment," not "leave attachments untouched."
       await apiFetch(`${notesPath}/${noteId}`, {
         method: 'PATCH',
-        body: JSON.stringify({ bodyHtml: editValue, attachments: editAttachments }),
+        body: JSON.stringify({
+          bodyHtml: editValue,
+          attachments: editAttachments,
+          ...(supportsArtistVisibility ? { visibleToArtist: editVisibleToArtist } : {}),
+        }),
       })
       setEditingNoteId(null)
       queryClient.invalidateQueries({ queryKey })
@@ -274,7 +300,11 @@ export default function NotesSection({ notesPath, queryKeyId, canManage, readOnl
 
   const content = (
     <>
-      <p className="mt-1 text-xs text-fg-muted">Internal only -- never shown to the client or shared with an artist.</p>
+      <p className="mt-1 text-xs text-fg-muted">
+        {supportsArtistVisibility
+          ? 'Internal by default -- use the toggle below to share a note with the assigned artist.'
+          : 'Internal only -- never shown to the client or shared with an artist.'}
+      </p>
 
       <div className="mt-4">
         <RichTextEditor value={composerValue} onChange={setComposerValue} />
@@ -292,6 +322,19 @@ export default function NotesSection({ notesPath, queryKeyId, canManage, readOnl
         )}
         {attachComposerError && <p className="mt-2 text-sm text-danger">{attachComposerError}</p>}
         {postError && <p className="mt-2 text-sm text-danger">{postError}</p>}
+
+        {supportsArtistVisibility && (
+          <label className="mt-3 flex w-fit items-center gap-2 text-sm text-fg-secondary">
+            <input
+              type="checkbox"
+              checked={composerVisibleToArtist}
+              onChange={(event) => setComposerVisibleToArtist(event.target.checked)}
+              disabled={readOnly}
+              className="h-4 w-4 rounded border-border text-accent focus:ring-accent"
+            />
+            Share with assigned artist
+          </label>
+        )}
 
         <div className="mt-3 flex items-center gap-2">
           <AttachButton
@@ -329,8 +372,15 @@ export default function NotesSection({ notesPath, queryKeyId, canManage, readOnl
             return (
               <li key={note.id} className="rounded-lg border border-border p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-                  <span className="font-medium text-fg">
-                    {note.author ? note.author.name || note.author.email : 'Deleted user'}
+                  <span className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium text-fg">
+                      {note.author ? note.author.name || note.author.email : 'Deleted user'}
+                    </span>
+                    {supportsArtistVisibility && note.visibleToArtist && (
+                      <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[11px] font-medium text-accent">
+                        Shared with artist
+                      </span>
+                    )}
                   </span>
                   <span className="text-xs text-fg-muted">
                     {formatDateTime(note.createdAt)}
@@ -355,6 +405,19 @@ export default function NotesSection({ notesPath, queryKeyId, canManage, readOnl
                     )}
                     {attachEditError && <p className="mt-2 text-sm text-danger">{attachEditError}</p>}
                     {editError && <p className="mt-2 text-sm text-danger">{editError}</p>}
+
+                    {supportsArtistVisibility && (
+                      <label className="mt-3 flex w-fit items-center gap-2 text-sm text-fg-secondary">
+                        <input
+                          type="checkbox"
+                          checked={editVisibleToArtist}
+                          onChange={(event) => setEditVisibleToArtist(event.target.checked)}
+                          disabled={readOnly}
+                          className="h-4 w-4 rounded border-border text-accent focus:ring-accent"
+                        />
+                        Share with assigned artist
+                      </label>
+                    )}
 
                     <div className="mt-3 flex flex-wrap items-center gap-3">
                       <AttachButton
