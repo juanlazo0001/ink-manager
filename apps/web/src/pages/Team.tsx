@@ -271,6 +271,31 @@ export default function Team() {
   const [cancelArtistInviteError, setCancelArtistInviteError] = useState<string | null>(null)
   const [cancelArtistInviteSubmitting, setCancelArtistInviteSubmitting] = useState(false)
 
+  // Part 4: ends this artist's membership at THIS studio only -- never
+  // their account (POST /studios/:studioId/artists/:artistId/remove,
+  // requireRole(OWNER)). Distinct from "Delete" above, which only ever
+  // works for a real HOME artist here (disabled otherwise, since a real
+  // GUEST never appears in `users`) -- this is the guest-facing
+  // equivalent, though the backend accepts either membership type.
+  const [removingArtist, setRemovingArtist] = useState<ArtistCard | null>(null)
+  const [removeArtistError, setRemoveArtistError] = useState<string | null>(null)
+  const [removeArtistSubmitting, setRemoveArtistSubmitting] = useState(false)
+
+  async function handleConfirmRemoveArtist() {
+    if (!user?.studioId || !removingArtist) return
+    setRemoveArtistSubmitting(true)
+    setRemoveArtistError(null)
+    try {
+      await apiFetch(`/studios/${user.studioId}/artists/${removingArtist.id}/remove`, { method: 'POST' })
+      setRemovingArtist(null)
+      queryClient.invalidateQueries({ queryKey: artistsQueryKey(user.studioId) })
+    } catch (err) {
+      setRemoveArtistError(err instanceof Error ? err.message : 'Failed to remove artist')
+    } finally {
+      setRemoveArtistSubmitting(false)
+    }
+  }
+
   async function handleResendArtistInvite(invite: ArtistInvite) {
     if (!user?.studioId) return
     setResendArtistInviteError(null)
@@ -1209,6 +1234,24 @@ export default function Team() {
                               Delete
                             </button>
                           )}
+                          {/* Part 4: the guest-facing counterpart to Delete
+                              above -- a real GUEST artist is never in
+                              `users` (Delete stays correctly disabled for
+                              them), so this is their only removal path.
+                              Ends the membership only, never the account. */}
+                          {artist.memberships[0]?.type === 'GUEST' && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setRemoveArtistError(null)
+                                setRemovingArtist(artist)
+                              }}
+                              className="rounded-full border border-danger/40 px-3 py-1.5 text-xs font-medium text-danger transition hover:bg-danger/10"
+                            >
+                              Remove
+                            </button>
+                          )}
                         </div>
                       )}
                             </div>
@@ -1658,6 +1701,38 @@ export default function Team() {
               className="rounded-full bg-danger px-4 py-2 text-sm font-medium text-bg transition hover:bg-danger/90 disabled:opacity-60"
             >
               {cancelArtistInviteSubmitting ? 'Cancelling…' : 'Cancel invite'}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {removingArtist && (
+        <Modal title="Remove artist" onClose={() => (removeArtistSubmitting ? null : setRemovingArtist(null))}>
+          <p className="text-sm text-fg-secondary">
+            Remove{' '}
+            <span className="font-semibold">{removingArtist.user.name || removingArtist.user.email}</span> from your
+            studio? This ends their membership here only -- their account, and any membership they have at another
+            studio, are unaffected. Their past appointments and client history at your studio are preserved.
+          </p>
+
+          {removeArtistError && <p className="mt-3 text-sm text-danger">{removeArtistError}</p>}
+
+          <div className="mt-5 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setRemovingArtist(null)}
+              disabled={removeArtistSubmitting}
+              className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmRemoveArtist}
+              disabled={removeArtistSubmitting}
+              className="rounded-full bg-danger px-4 py-2 text-sm font-medium text-bg transition hover:bg-danger/90 disabled:opacity-60"
+            >
+              {removeArtistSubmitting ? 'Removing…' : 'Remove from studio'}
             </button>
           </div>
         </Modal>

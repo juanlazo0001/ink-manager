@@ -187,11 +187,27 @@ router.get("/", requirePermission("artists.view"), async (req, res) => {
   // signal (unlike isActive, which also covers reversible deactivation --
   // deliberately NOT filtered on here, so a deactivated-but-not-deleted
   // artist's card still shows up exactly as it always has).
+  // Part 4 (studio-initiated removal): the same fallback clause has a
+  // second failure mode, distinct from Part 3's -- an artist deliberately
+  // removed from this studio (POST /:studioId/artists/:artistId/remove)
+  // still has a real ENDED membership row here, but if their
+  // User.studioId happened to still equal this studio (the same
+  // set-at-creation quirk Part 3 documents), the bare `user.studioId`
+  // fallback would keep showing them as if nothing happened. The
+  // distinguishing signal: a genuinely missing membership row (what the
+  // fallback exists to protect against) means no row at all for this
+  // studio, ended or otherwise -- so the fallback now only fires when
+  // there's no ENDED row here to contradict it. A real active-membership
+  // artist is unaffected either way (still matched by the second OR
+  // branch below, or simply has no ended row to trip this condition).
   const artists = await prisma.artist.findMany({
     where: {
       user: { deletedAt: null },
       OR: [
-        { user: { studioId: req.user!.studioId } },
+        {
+          user: { studioId: req.user!.studioId },
+          memberships: { none: { studioId: req.user!.studioId, endedAt: { not: null } } },
+        },
         { memberships: { some: { studioId: req.user!.studioId, endedAt: null } } },
       ],
     },

@@ -626,6 +626,59 @@ router.delete("/:studioId/artist-invites/:inviteId", requireAuth, requirePermiss
   res.status(204).send();
 });
 
+// Part 4: a studio can end an artist's MEMBERSHIP here -- never their
+// account. Hardcoded requireRole(OWNER), same as PATCH /:studioId
+// (studio profile) and GET/PATCH /:studioId/permissions -- deliberately
+// not requirePermission("artists.manage"), which a studio could grant to
+// FRONT_DESK or even ARTIST via its own matrix; ending someone's
+// membership is kept at the same trust level as the studio's other
+// hardcoded owner-only actions regardless of that.
+//
+// Ends ONLY the one active membership row at THIS studio (HOME or
+// GUEST) -- any membership this artist has at any OTHER studio, and
+// their account itself, are completely untouched. This is the exact
+// same "preserve history, only change access" shape deactivation and
+// self-initiated departure already use elsewhere: no User/Artist row is
+// touched, no personal data is scrubbed, every appointment/inquiry/gift
+// card/etc. this artist was ever involved in at this studio keeps
+// pointing at the same real (still fully intact) Artist record. There
+// is deliberately no code path from here (or anywhere else reachable by
+// a studio/staff role) to POST /users/me/delete-account -- that route
+// takes no id param and is reachable only by the authenticated artist
+// acting on their own account (requireRole(ARTIST), no studioId/artistId
+// param to redirect it at someone else).
+router.post("/:studioId/artists/:artistId/remove", requireAuth, requireRole(Role.OWNER), async (req, res) => {
+  const studioId = req.params.studioId as string;
+  const artistId = req.params.artistId as string;
+
+  if (studioId !== req.user!.studioId) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const membership = await prisma.studioMembership.findFirst({
+    where: { studioId, artistId, endedAt: null },
+  });
+  if (!membership) {
+    return res.status(404).json({ error: "This artist has no active membership at your studio." });
+  }
+
+  await prisma.studioMembership.update({ where: { id: membership.id }, data: { endedAt: new Date() } });
+
+  await logAudit({
+    studioId,
+    actorUserId: req.user!.userId,
+    entityType: "StudioMembership",
+    entityId: membership.id,
+    action: "artist_removed_by_studio",
+    changes: { artistId, membershipType: membership.type },
+  });
+
+  emitInvalidation({ type: "team.changed", studioId });
+  emitInvalidation({ type: "artist.changed", studioId, artistId });
+
+  res.json({ success: true });
+});
+
 const USER_INCLUDE_ARTIST = {
   artist: {
     select: {
