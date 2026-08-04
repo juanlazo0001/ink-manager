@@ -7845,6 +7845,16 @@ Dev servers killed (`netstat` + `taskkill` by PID). `apps/web/.env.local` remove
 
 ## Commit
 
-`35dfa25` on `main`.
+`35dfa25` on `main` (hash-fix `f0e8a2a`).
+
+---
+
+## Follow-up: Justin's account deleted (production data only, no code change)
+
+With the fix above built and verified, actually deleted Justin's real account per the original request. Confirmed his current production state first (read-only): `role: OWNER`, sole active user of "Justin Tattoo", his old HOME membership at Black Hive Ink and Arts already ended (from the earlier go-solo conversion) and his GUEST membership there also already ended (independently, sometime after this session's earlier work -- not something this session's tooling touched) -- so he had exactly one active membership left, the HOME one at his own solo studio. Textbook solo-owner-artist case.
+
+Since the code above isn't deployed yet and the request was to act now, ran a one-off script mirroring `POST /users/me/delete-account`'s exact logic (same transaction shape, same field list, same audit log call), scoped to exactly his `userId`/`artistId` with an id-mismatch guard before touching anything. Verified after: login email rewritten to `deleted-{id}@deleted.inkmanager.invalid`, password cleared, `isActive: false`, `deletedAt` set, and his one remaining active membership ended. His historical Appointment/Inquiry/GiftCard records at every studio he ever worked with are untouched -- same "preserve history, only change access" guarantee the real route gives every other artist. His solo studio "Justin Tattoo" itself is left in place, now with zero active users -- an inert, harmless orphan, not something anything else in the app depends on existing/not-existing.
+
+Script deleted immediately after use, along with the read-only investigation and verification scripts. No code changed by this follow-up -- covered entirely by the commit above.
 
 
