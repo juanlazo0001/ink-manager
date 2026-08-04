@@ -576,10 +576,17 @@ router.patch("/:id/self-scheduling", requireAuth, async (req, res) => {
 // staff's hands: whether studio staff may edit this artist's shared
 // profile fields (bio/specialties/portfolioImages/instagramHandle/
 // facebookProfileUrl -- see PATCH /:id's own enforcement) on their
-// behalf. Upserts rather than requiring a pre-existing membership row --
-// harmless defensive-only path today (Part 2's migration already gave
-// every artist a HOME row), but keeps this route correct on its own even
-// if that invariant were ever violated.
+// behalf.
+//
+// Requires a real, existing HOME row -- no longer upserts one into
+// existence. That upsert was believed harmless ("every artist already has
+// a HOME row"), but a guest-only artist genuinely has none: a brand-new
+// identity whose first-ever invite was a GUEST invite gets User.studioId
+// set to that studio at creation (nothing to home them anywhere else) but
+// never gets a HOME membership row there at all. Silently creating one
+// the moment they toggled this would fabricate a HOME relationship that
+// was never real. Real guest studios use their own membership-id-scoped
+// route below instead.
 router.patch("/:id/profile-delegation", requireAuth, async (req, res) => {
   const id = req.params.id as string;
   const { allowsStudioProfileEdits } = req.body ?? {};
@@ -597,21 +604,21 @@ router.patch("/:id/profile-delegation", requireAuth, async (req, res) => {
     return res.status(403).json({ error: "Forbidden" });
   }
 
-  // No compound-unique on (studioId, artistId) anymore now that a
-  // membership can end and a new one begin (see schema.prisma's own
-  // comment on StudioMembership) -- "the" membership here means the
-  // active one, found by hand rather than via `upsert`'s where clause.
+  // "The" membership means the active HOME one specifically -- found by
+  // hand (not `upsert`'s where clause) since there's no compound-unique on
+  // (studioId, artistId) anymore now that a membership can end and a new
+  // one begin (see schema.prisma's own comment on StudioMembership).
   const existingMembership = await prisma.studioMembership.findFirst({
-    where: { studioId: req.user!.studioId, artistId: id, endedAt: null },
+    where: { studioId: req.user!.studioId, artistId: id, type: "HOME", endedAt: null },
   });
-  const membership = existingMembership
-    ? await prisma.studioMembership.update({
-        where: { id: existingMembership.id },
-        data: { allowsStudioProfileEdits },
-      })
-    : await prisma.studioMembership.create({
-        data: { studioId: req.user!.studioId, artistId: id, type: "HOME", allowsStudioProfileEdits },
-      });
+  if (!existingMembership) {
+    return res.status(404).json({ error: "You don't have a home membership at this studio." });
+  }
+
+  const membership = await prisma.studioMembership.update({
+    where: { id: existingMembership.id },
+    data: { allowsStudioProfileEdits },
+  });
 
   await logAudit({
     studioId: req.user!.studioId,
@@ -623,6 +630,55 @@ router.patch("/:id/profile-delegation", requireAuth, async (req, res) => {
   });
 
   emitInvalidation({ type: "artist.changed", studioId: req.user!.studioId, artistId: id });
+
+  res.json({ allowsStudioProfileEdits: membership.allowsStudioProfileEdits });
+});
+
+// The guest-membership counterpart to profile-delegation above. That route
+// can only ever target the artist's OWN current session studioId (their
+// HOME studio) -- there's no way to reach a DIFFERENT studio's membership
+// through it, so an artist visiting elsewhere as a GUEST had no way to
+// delegate profile-edit access to that studio specifically. Targets a real
+// StudioMembership row by id instead of inferring the studio from the
+// session, so it works for any of the artist's own active memberships --
+// same self-only, no-staff-bypass rule as profile-delegation (this is the
+// one thing kept out of staff's hands, full stop).
+router.patch("/:id/memberships/:membershipId/profile-delegation", requireAuth, async (req, res) => {
+  const id = req.params.id as string;
+  const membershipId = req.params.membershipId as string;
+  const { allowsStudioProfileEdits } = req.body ?? {};
+
+  if (typeof allowsStudioProfileEdits !== "boolean") {
+    return res.status(400).json({ error: "allowsStudioProfileEdits must be a boolean" });
+  }
+
+  const artist = await prisma.artist.findUnique({ where: { id } });
+  if (!artist || artist.userId !== req.user!.userId) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const existingMembership = await prisma.studioMembership.findFirst({
+    where: { id: membershipId, artistId: id, endedAt: null },
+  });
+  if (!existingMembership) {
+    return res.status(404).json({ error: "Membership not found" });
+  }
+
+  const membership = await prisma.studioMembership.update({
+    where: { id: existingMembership.id },
+    data: { allowsStudioProfileEdits },
+  });
+
+  await logAudit({
+    studioId: existingMembership.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "StudioMembership",
+    entityId: membership.id,
+    action: "update",
+    changes: { allowsStudioProfileEdits },
+  });
+
+  emitInvalidation({ type: "artist.changed", studioId: existingMembership.studioId, artistId: id });
 
   res.json({ allowsStudioProfileEdits: membership.allowsStudioProfileEdits });
 });

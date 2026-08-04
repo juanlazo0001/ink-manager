@@ -84,6 +84,15 @@ export default function Profile() {
   const [profileDelegationSubmitting, setProfileDelegationSubmitting] = useState(false)
   const [profileDelegationError, setProfileDelegationError] = useState<string | null>(null)
 
+  // Per-guest-studio counterpart to the toggle above -- hits PATCH
+  // /artists/:id/memberships/:membershipId/profile-delegation, targeting a
+  // specific StudioMembership id rather than the artist's own current
+  // session studio (which the route above is hardcoded to). One
+  // submitting/error slot, keyed by membership id, since only one row is
+  // ever being toggled at a time.
+  const [guestDelegationSubmittingId, setGuestDelegationSubmittingId] = useState<string | null>(null)
+  const [guestDelegationError, setGuestDelegationError] = useState<string | null>(null)
+
   // Artist mobility, Part 1: hits POST /artists/:id/go-solo, self-only, no
   // staff bypass -- same shape as profile-delegation above. Success returns
   // a fresh JWT (studioId/role changed, so the old one is stale -- see that
@@ -222,6 +231,23 @@ export default function Profile() {
       setProfileDelegationError(err instanceof Error ? err.message : 'Failed to update')
     } finally {
       setProfileDelegationSubmitting(false)
+    }
+  }
+
+  async function handleToggleGuestDelegation(membershipId: string, current: boolean) {
+    if (!profile?.artist) return
+    setGuestDelegationError(null)
+    setGuestDelegationSubmittingId(membershipId)
+    try {
+      await apiFetch(`/artists/${profile.artist.id}/memberships/${membershipId}/profile-delegation`, {
+        method: 'PATCH',
+        body: JSON.stringify({ allowsStudioProfileEdits: !current }),
+      })
+      await refresh()
+    } catch (err) {
+      setGuestDelegationError(err instanceof Error ? err.message : 'Failed to update')
+    } finally {
+      setGuestDelegationSubmittingId(null)
     }
   }
 
@@ -521,8 +547,19 @@ export default function Profile() {
           {/* UI simplification pass: delegating profile access to "your
               studio" is nonsensical for a solo artist -- they and the
               studio are the same entity, so there's no separate staff to
-              delegate to. Hidden entirely, not shown-disabled. */}
-          {profile && isArtist && profile.artist && !profile.isSoloStudio && (
+              delegate to. Hidden entirely, not shown-disabled.
+
+              Also requires a real HOME membership to exist
+              (memberships.length > 0, filtered server-side to type: HOME).
+              A guest-only artist (no HOME anywhere) still has a session
+              studioId -- set at account creation and never meaningfully
+              reassigned for a guest-first identity -- so without this
+              check the toggle would render as if it applied to a real home
+              studio that doesn't exist, and PATCH /artists/:id/profile-
+              delegation's own upsert would silently create a fake HOME
+              membership at whatever studio the session happens to point
+              to. Real guest studios get their own toggle below instead. */}
+          {profile && isArtist && profile.artist && !profile.isSoloStudio && profile.artist.memberships.length > 0 && (
             <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-6">
               <p className="text-xs font-semibold uppercase tracking-wider text-fg-muted">Studio profile access</p>
 
@@ -556,6 +593,61 @@ export default function Profile() {
                     ].join(' ')}
                   />
                 </button>
+              </div>
+            </div>
+          )}
+
+          {/* Lets an artist see, from their own Profile, every studio
+              they're currently a real active guest at -- previously there
+              was no way to confirm this anywhere except a studio's own Team
+              page. Each row gets its own delegation toggle, since the
+              existing "Studio profile access" toggle above only ever
+              reaches the artist's own current/HOME studio -- there was no
+              way to grant a GUEST studio the same access before this. */}
+          {profile && isArtist && profile.artist && profile.artist.guestMemberships.length > 0 && (
+            <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-6">
+              <p className="text-xs font-semibold uppercase tracking-wider text-fg-muted">Guest studios</p>
+              <p className="mt-1 text-xs text-fg-secondary">
+                Studios you're currently a guest artist at. Each has its own toggle for letting that studio's staff
+                edit your portfolio photos, flash gallery pieces, and bio on your behalf -- same rules as your home
+                studio above, never your login or scheduling settings.
+              </p>
+
+              {guestDelegationError && <p className="mt-2 text-xs text-danger">{guestDelegationError}</p>}
+
+              <div className="mt-4 space-y-3">
+                {profile.artist.guestMemberships.map((membership) => (
+                  <div
+                    key={membership.id}
+                    className="flex items-center justify-between gap-4 rounded-lg border border-border bg-surface-inset px-4 py-3"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-fg">{membership.studio.name}</p>
+                      <p className="mt-0.5 text-xs text-fg-muted">
+                        Guest artist since {new Date(membership.createdAt).toLocaleDateString()}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={membership.allowsStudioProfileEdits}
+                      aria-label={`Let ${membership.studio.name} staff edit my profile`}
+                      disabled={guestDelegationSubmittingId === membership.id}
+                      onClick={() => handleToggleGuestDelegation(membership.id, membership.allowsStudioProfileEdits)}
+                      className={[
+                        'relative h-6 w-11 shrink-0 rounded-full transition disabled:opacity-40',
+                        membership.allowsStudioProfileEdits ? 'bg-accent' : 'bg-surface border border-border',
+                      ].join(' ')}
+                    >
+                      <span
+                        className={[
+                          'absolute top-0.5 h-5 w-5 rounded-full bg-bg transition',
+                          membership.allowsStudioProfileEdits ? 'left-[22px]' : 'left-0.5',
+                        ].join(' ')}
+                      />
+                    </button>
+                  </div>
+                ))}
               </div>
             </div>
           )}

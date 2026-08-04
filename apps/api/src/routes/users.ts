@@ -91,7 +91,31 @@ router.get("/me", async (req, res) => {
           bio: true,
           specialties: true,
           allowsClientSelfScheduling: true,
-          memberships: { where: { type: "HOME", endedAt: null }, select: { allowsStudioProfileEdits: true } },
+          // Every currently-active membership (HOME and any GUEST rows),
+          // split into the two response shapes below in code -- Prisma's
+          // `select` can't alias one relation field into two differently-
+          // filtered response keys, so this fetches everything once
+          // (type included) rather than declaring `memberships` twice.
+          // The GUEST half is new: previously GET /me only ever surfaced
+          // the HOME row, so a guest artist had no way to confirm their
+          // own active guest status anywhere except a studio's own Team
+          // page. Also backs the per-membership delegation toggle (PATCH
+          // /artists/:id/memberships/:membershipId/profile-delegation) --
+          // the existing profile-delegation route only ever targets the
+          // artist's OWN current session studioId (their HOME studio), so
+          // it has no way to delegate access to a studio they're merely
+          // guesting at.
+          memberships: {
+            where: { endedAt: null },
+            select: {
+              id: true,
+              type: true,
+              allowsStudioProfileEdits: true,
+              createdAt: true,
+              studio: { select: { id: true, name: true } },
+            },
+            orderBy: { createdAt: "asc" },
+          },
         },
       },
     },
@@ -101,7 +125,26 @@ router.get("/me", async (req, res) => {
     return res.status(404).json({ error: "User not found" });
   }
 
-  const { password: _password, ...safeUser } = user;
+  const allMemberships = user.artist?.memberships ?? [];
+  const userWithSplitMemberships = user.artist
+    ? {
+        ...user,
+        artist: {
+          ...user.artist,
+          // Same shape the frontend already expects (HOME row only,
+          // allowsStudioProfileEdits) -- unchanged for every existing
+          // caller of profile.artist.memberships.
+          memberships: allMemberships
+            .filter((m) => m.type === "HOME")
+            .map((m) => ({ allowsStudioProfileEdits: m.allowsStudioProfileEdits })),
+          guestMemberships: allMemberships
+            .filter((m) => m.type === "GUEST")
+            .map((m) => ({ id: m.id, allowsStudioProfileEdits: m.allowsStudioProfileEdits, createdAt: m.createdAt, studio: m.studio })),
+        },
+      }
+    : user;
+
+  const { password: _password, ...safeUser } = userWithSplitMemberships;
   const permissions = await getEffectivePermissions(user.studioId, user.role);
   // Solo artist architecture, Phase 3: lets Profile.tsx show the
   // self-scheduling toggle only where it's actually reachable (a solo

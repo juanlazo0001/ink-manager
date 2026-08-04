@@ -1213,19 +1213,37 @@ export default function Team() {
                               View as
                             </button>
                           )}
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              const teamUser = users?.find((u) => u.id === artist.user.id)
-                              if (teamUser) openEdit(teamUser)
-                            }}
-                            disabled={!users?.some((u) => u.id === artist.user.id)}
-                            className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
-                          >
-                            Edit account
-                          </button>
-                          {artist.user.id !== realUser?.userId && (
+                          {/* Edit account / Delete: for a real HOME artist
+                              only -- someone this studio directly added.
+                              Previously gated on `users?.some(...)` (whether
+                              this artist appears in the studio's own User
+                              roster), which is unreliable: a brand-new
+                              identity's User.studioId is set to whichever
+                              studio their FIRST invite happened to be
+                              (HOME or GUEST) and never reassigned later, so
+                              a genuine guest whose first-ever invite was a
+                              guest invite could still incorrectly appear in
+                              `users` and get real account-management
+                              capabilities a studio that merely hosts them as
+                              a guest should never have. memberships[0]?.type
+                              is the real, current signal -- hidden entirely
+                              for a guest, not just shown-disabled, since
+                              "Remove" (below) is their actual action here. */}
+                          {artist.memberships[0]?.type === 'HOME' && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                const teamUser = users?.find((u) => u.id === artist.user.id)
+                                if (teamUser) openEdit(teamUser)
+                              }}
+                              disabled={!users?.some((u) => u.id === artist.user.id)}
+                              className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              Edit account
+                            </button>
+                          )}
+                          {artist.memberships[0]?.type === 'HOME' && artist.user.id !== realUser?.userId && (
                             <button
                               type="button"
                               onClick={(e) => {
@@ -1240,10 +1258,8 @@ export default function Team() {
                             </button>
                           )}
                           {/* Part 4: the guest-facing counterpart to Delete
-                              above -- a real GUEST artist is never in
-                              `users` (Delete stays correctly disabled for
-                              them), so this is their only removal path.
-                              Ends the membership only, never the account. */}
+                              above -- ends the membership only, never the
+                              account. */}
                           {artist.memberships[0]?.type === 'GUEST' && (
                             <button
                               type="button"

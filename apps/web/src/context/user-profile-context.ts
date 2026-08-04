@@ -19,6 +19,19 @@ export interface UserProfile {
     // row -- an array (same shape the backend's Prisma include returns),
     // even though exactly one HOME row exists per artist in practice.
     memberships: { allowsStudioProfileEdits: boolean }[]
+    // Every studio this artist is currently an active real GUEST at --
+    // previously GET /me never surfaced this at all, so a guest artist had
+    // no way to confirm their own guest status anywhere except a studio's
+    // own Team page. Each entry's own `id` is a real StudioMembership id,
+    // used to target PATCH /artists/:id/memberships/:membershipId/
+    // profile-delegation -- the existing (HOME-only) profile-delegation
+    // toggle has no way to reach a studio the artist merely guests at.
+    guestMemberships: {
+      id: string
+      allowsStudioProfileEdits: boolean
+      createdAt: string
+      studio: { id: string; name: string }
+    }[]
   }
   permissions: string[]
   // Solo artist architecture, Phase 3: true only for an ARTIST-role user

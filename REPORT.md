@@ -7722,4 +7722,47 @@ No code changed -- this section exists purely so the production data change has 
 
 All scratch investigation/conversion/verification scripts deleted immediately after use, none committed.
 
+---
+
+# Guest artist permissions: no account-management capability, visible guest status, per-studio delegation
+
+Direct follow-up to the solo-studio conversion above. User feedback after reviewing it: a guest artist still showed "Delete" on the hosting studio's Team card; a guest artist had no way to see their own active guest status anywhere; and there was no way for a guest to let the studio they're visiting manage their profile (the existing delegation toggle only ever reaches an artist's own home studio).
+
+## 1. Edit account / Delete hidden for non-HOME artists
+
+Root cause: both buttons were gated on `users?.some(u => u.id === artist.user.id)` -- whether the artist appears in the studio's own `User.studioId`-scoped roster. This is the same unreliable signal the last two sessions' work already found and worked around elsewhere (`GET /artists`'s roster-visibility fix, twice): a brand-new identity's `User.studioId` is set to whichever studio their *first-ever* invite happened to be, HOME or GUEST, and never reassigned afterward. A genuine guest whose first invite was a guest invite could still match this check and get real account-management buttons a studio that merely hosts them should never have. Changed both to key off the real signal, `memberships[0]?.type === 'HOME'`, and hidden entirely (not shown-disabled) for a guest -- "Remove" is their real action.
+
+## 2. Guest status now visible on the artist's own Profile
+
+`GET /users/me` previously only ever returned an artist's HOME membership (filtered `type: "HOME"`) -- a guest artist had no way to confirm their own active guest status anywhere except by asking the hosting studio to check their own Team page. Extended the route to also return every active `GUEST` membership (studio name, since-when) as `artist.guestMemberships`, and added a "Guest studios" card to `Profile.tsx` listing them.
+
+(Implementation note: Prisma's `select` can't alias one relation field into two differently-filtered response keys, so `GET /me` now fetches every active membership once -- `type` included -- and splits it into the existing HOME-only `memberships` shape and the new `guestMemberships` array in code, rather than declaring `memberships` twice.)
+
+## 3. Per-guest-studio profile-delegation toggle
+
+The existing `PATCH /artists/:id/profile-delegation` infers which studio to delegate to entirely from the caller's own current session `studioId` -- it has no parameter for "which studio," so it can only ever reach an artist's own home studio, never a studio they're merely guesting at. Added `PATCH /artists/:id/memberships/:membershipId/profile-delegation`, targeting a specific `StudioMembership` row by id instead of inferring it from the session -- same self-only rule (`artist.userId === req.user.userId`), no staff bypass, matching the original toggle's own design intent exactly. Each row in the new "Guest studios" list gets its own toggle wired to this route.
+
+## Real bug found while verifying, fixed before shipping
+
+Screenshotting the new "Guest studios" section on a guest-only test artist (no HOME membership anywhere) surfaced that the *existing* "Studio profile access" section still rendered for them too, as if their session's studio were a real home. It would have been: `PATCH /:id/profile-delegation`'s original upsert fallback ("if no membership row exists, create one as HOME") was justified by a comment claiming every artist already has a HOME row -- true when written, but not for the guest-first-identity case this same follow-up session's earlier work introduced. Toggling it would have silently fabricated a HOME membership at whatever studio the session happened to point to. Fixed both ends: the frontend section now also requires `profile.artist.memberships.length > 0` (a real HOME row must exist) before rendering, and the backend route no longer upserts -- it requires a real, existing HOME row and 404s otherwise, closing the gap at its source rather than only hiding the button that could have triggered it.
+
+## Verification -- real accounts, live dev API/web (isolated `:4093`/`:5292`)
+
+- **Buttons**: created a fresh new-identity guest artist (the exact case that would have tripped the old `users?.some(...)` check) -- Team card shows only `View as` and `Remove`, no `Edit account`, no `Delete` (screenshotted).
+- **Guest studios visibility**: the same artist's own Profile shows a "Guest studios" card listing the real hosting studio, "Guest artist since [date]".
+- **Delegation toggle**: clicked it -- `aria-checked` flips immediately, and the new state survives a full page reload (confirming the PATCH + refetch round-trip, not just optimistic UI).
+- **Fake-HOME-toggle fix**: same guest-only artist's Profile no longer shows "Studio profile access" at all. Regression-checked a real HOME artist (`artist2@dev-studio.test`) still sees it correctly, and separately confirmed their own real, pre-existing guest membership at a different studio (from earlier session testing) correctly appears in their own "Guest studios" list too -- both sections coexist correctly for an artist who is genuinely both a real HOME artist somewhere and a real GUEST somewhere else.
+
+## Typechecks
+
+`npx tsc --noEmit -p tsconfig.app.json` (web) and `npm run build` (web) both clean; `npx tsc --noEmit` (api) clean.
+
+## Cleanup
+
+Both isolated dev servers killed (`netstat` + `taskkill` by PID). All scratch verification scripts deleted immediately after use, none committed.
+
+## Commit
+
+`<pending>` on `main`.
+
 
