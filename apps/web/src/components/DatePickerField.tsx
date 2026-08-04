@@ -44,6 +44,22 @@ export default function DatePickerField({ value, onChange, placeholder, disabled
                 onChange(day ? toDateString(day) : '')
                 setShowCalendar(false)
               }}
+              // Same fix as SelfSchedule.tsx's own DayPicker: react-day-
+              // picker/style.css defines its own light-mode --rdp-accent-
+              // color: blue directly on .rdp-root, at the exact same
+              // specificity as index.css's gold-accent override of that
+              // same selector -- whichever stylesheet happens to be
+              // injected last wins the cascade tie, so this can render blue
+              // depending on load order rather than reliably matching the
+              // theme. Inline styles on the root element beat any
+              // stylesheet rule regardless of injection order.
+              style={
+                {
+                  '--rdp-accent-color': 'var(--color-accent)',
+                  '--rdp-accent-background-color': 'color-mix(in srgb, var(--color-accent) 20%, transparent)',
+                  '--rdp-today-color': 'var(--color-accent)',
+                } as React.CSSProperties
+              }
             />
           </div>
         </>

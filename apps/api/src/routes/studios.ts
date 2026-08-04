@@ -282,6 +282,21 @@ router.post("/:studioId/users", requireAuth, requirePermission("team.manage"), a
         },
       });
       createdArtistId = artist.id;
+
+      // Real bug, found while tightening PATCH /artists/:id/profile-
+      // delegation to stop upserting a HOME row into existence: this route
+      // never created a StudioMembership at all, for either creation path,
+      // so a directly-added artist had no membership row until something
+      // else happened to create one -- meaning they could never grant
+      // delegation (PATCH .../profile-delegation would 404, correctly
+      // refusing to fabricate a membership) and staff could never legally
+      // gain edit access either. allowsStudioProfileEdits defaults false,
+      // same as every other creation path (invite-accept) -- staff typed
+      // in this artist's initial profile data above, but ongoing edit
+      // access still isn't assumed; the artist decides once they log in.
+      await tx.studioMembership.create({
+        data: { studioId, artistId: artist.id, type: "HOME", allowsStudioProfileEdits: false },
+      });
     }
 
     return tx.user.findUniqueOrThrow({ where: { id: created.id }, include: USER_INCLUDE_ARTIST });

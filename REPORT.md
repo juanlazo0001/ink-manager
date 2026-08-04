@@ -7765,4 +7765,45 @@ Both isolated dev servers killed (`netstat` + `taskkill` by PID). All scratch ve
 
 `315e325` on `main`.
 
+---
+
+# Delegation covers everything, direct-creation membership gap, empty-services default, date picker theming
+
+Direct follow-up to the guest-permissions work above, four items from one round of user feedback. No schema changes.
+
+## 1. Delegation now gates rates/scheduling buffer/services too, not just profile fields
+
+Reported directly: a studio could edit a freshly-invited artist's profile before that artist ever had a chance to decide whether to allow it. Investigation confirmed the actual behavior: bio/specialties/portfolio/social links already correctly required `allowsStudioProfileEdits`, but rates, scheduling buffer, and services offered were a deliberate *earlier-session* carve-out -- staff-editable by any `artists.manage` holder regardless of delegation, reasoned at the time as "studio business config, not personal profile content." Confirmed with the user before reversing that: all of it now sits behind the same single gate. `isGuest`/`guestStartDate`/`guestEndDate` (the studio's own classification) and `allowsClientSelfScheduling` (a booking-policy switch for the studio's own clients, with its own dedicated route) stay outside it, unchanged -- neither is the artist's personal data.
+
+## 2. Real gap found while implementing #1: directly-created artists had no membership row at all
+
+`PATCH /artists/:id/profile-delegation`'s original upsert ("create a HOME row if none exists") was already hardened to a hard 404 in the previous session's work, once a guest-only-artist case proved that upsert could fabricate a bogus HOME relationship. Consolidating rates/scheduling/services into the same gate here surfaced the flip side: `POST /studios/:studioId/users` (the "Add Directly" artist-creation flow) never created a `StudioMembership` row at all, for either creation path -- only invite-accept did. A directly-created artist therefore had zero membership rows, meaning they could never grant delegation (the route correctly refuses to fabricate one) and staff could never legally gain edit access either -- a real dead end this session's earlier hardening pass didn't anticipate because it was written by working from the invite path only. Fixed at the source: `POST /studios/:studioId/users` now creates a real `HOME` `StudioMembership` row (`allowsStudioProfileEdits: false`, same default every other creation path already uses) in the same transaction as the `User`/`Artist` rows.
+
+## 3. Guest artists were invisible to assignment pickers -- empty services now means unrestricted, not "practices nothing"
+
+Reported directly: guest artists weren't showing up as assignable. Traced to `InquiryDetail.tsx`'s and `AppointmentForm.tsx`'s artist pickers, both filtering to only artists explicitly tagged (via `ArtistService`) for the inquiry/appointment's specific service. Every real guest artist in dev-studio had a genuinely empty `artistServices` array -- not a bug in isolation, just the natural state of a freshly invited artist nobody has configured yet, made categorically worse by item 1: staff can no longer tag a guest's services without delegation, and the guest hasn't logged in to do it themselves, so an untagged guest had no path to ever becoming assignable. Confirmed with the user before changing the interpretation (this affects every artist, not just guests): an artist with zero services tagged is now treated as available for anything, the same permissive default already used everywhere a truly "not yet configured" state exists in this app. Once real tags exist, filtering behaves exactly as before -- this only changes the untouched-default case. No backend change needed; the service filter has always been frontend-only (the backend never validated it at assignment time).
+
+## 4. Limited Availability Window's date picker: blue accents fixed to match the theme
+
+Reported directly, with `SelfSchedule.tsx` named as the example of a date picker that looks right. Root cause was already discovered and worked around once in this exact codebase, just not applied everywhere: `react-day-picker/style.css`'s own light-mode `--rdp-accent-color: blue` sits at the exact same CSS specificity as `index.css`'s theme-accent override of that same selector, so whichever stylesheet happens to be injected last wins the cascade tie -- `SelfSchedule.tsx`'s own `DayPicker` already works around this with an inline `style` prop (inline styles beat any stylesheet rule regardless of injection order), but `DatePickerField.tsx` (Limited Availability Window's date range, also used by `ArtistCreate.tsx`) and `DateAndTimeRangeFields.tsx` (appointment/session date+time picking) never got the same treatment. Applied the identical inline override to both.
+
+## Verification -- real accounts, live dev API/web (isolated `:4093`/`:5292`)
+
+- **Delegation covers everything**: with a real guest artist's delegation explicitly turned off (via their own token, staff can't touch it), a direct API `PATCH` attempting to set `hourlyRateCents` returns `200` but the value is silently unchanged (confirmed by immediately re-reading it back) -- staff's write was accepted but dropped, not rejected outright, matching this route's existing "save what you can, drop what you can't" shape. Frontend: Rates/Scheduling Buffer/Services Offered all render read-only with the same "hasn't given studio staff permission" note the profile-fields widgets already used, for a staff viewer without delegation.
+- **Direct-creation membership**: created a real artist via `POST /studios/:studioId/users` -- confirmed via direct API read they now have a real `HOME` membership row (`memberships.length > 0`, `type: "HOME"`), not zero.
+- **Empty-services default**: code-reviewed the exact mechanism against real dev-studio data (every real guest artist there has a genuinely empty `artistServices` array, confirming this was reproducible, not hypothetical); the filter itself has no server-side counterpart to separately verify.
+- **Date picker theming**: opened Limited Availability Window's date picker on a real artist -- screenshotted, header/navigation render in the app's real gold accent color, not the library's default blue.
+
+## Typechecks
+
+`npx tsc --noEmit -p tsconfig.app.json` (web) and `npm run build` (web) both clean; `npx tsc --noEmit` (api) clean.
+
+## Cleanup
+
+Both isolated dev servers killed (`netstat` + `taskkill` by PID). All scratch verification scripts deleted immediately after use, none committed.
+
+## Commit
+
+`<pending>` on `main`.
+
 

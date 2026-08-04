@@ -301,20 +301,25 @@ router.patch("/:id", requirePermissionOrSelfArtist("artists.manage"), async (req
     allowsClientSelfScheduling = undefined;
   }
 
-  // Solo artist architecture, Phase 4 (extended in Part 2 to cover a GUEST
-  // studio's own delegation grant, not just HOME's): bio/specialties/
-  // portfolioImages/instagramHandle/facebookProfileUrl are the artist's
-  // own shared profile data (see StudioMembership.allowsStudioProfileEdits'
-  // own schema comment for the exact scope) -- editable by staff only when
-  // THIS studio's membership with the artist (HOME or GUEST, whichever
-  // applies) has delegation on, or when staff IS the artist
-  // (requirePermission above already confirmed artists.manage, so an
-  // ARTIST reaching this route at all means a studio explicitly granted
-  // them that broad permission -- rare, but self-edits still shouldn't
-  // need delegation from themselves). Silently dropped rather than
-  // rejecting the whole request, so a staff member without delegation can
-  // still save changes to the fields they DO have access to in the same
-  // request the UI already sends as one combined save.
+  // Delegation gate, covering EVERY field that isn't studio-owned data:
+  // bio/specialties/portfolioImages/instagramHandle/facebookProfileUrl,
+  // AND (as of this pass) rates/schedulingBufferMinutes/serviceIds --
+  // previously that second group was staff-editable by any artists.manage
+  // holder regardless of delegation ("studio business config, not
+  // personal profile content"), which meant a studio could set a freshly
+  // invited artist's rates/schedule/services the moment the invite was
+  // accepted, before that artist had ever had a chance to decide whether
+  // to allow it. Reported directly as wrong: nothing on this list should
+  // be staff-editable until the artist turns "Let studio staff edit my
+  // profile" on themselves (StudioMembership.allowsStudioProfileEdits),
+  // full stop -- self-edits never need it, matching every other gate on
+  // this route. Two things deliberately stay OUTSIDE this gate, staff-
+  // settable regardless: isGuest/guestStartDate/guestEndDate (the
+  // studio's own classification of the artist, never the artist's call --
+  // already excluded above) and allowsClientSelfScheduling (a booking-
+  // policy switch the studio manages for its own clients' experience, a
+  // different category from the artist's personal profile/business data,
+  // and already excluded from self-bypass above for the same reason).
   const isSelf = artist.userId === req.user!.userId;
   const canEditProfileFields = isSelf || (artist.memberships[0]?.allowsStudioProfileEdits ?? false);
   if (!canEditProfileFields) {
@@ -323,6 +328,10 @@ router.patch("/:id", requirePermissionOrSelfArtist("artists.manage"), async (req
     portfolioImages = undefined;
     instagramHandle = undefined;
     facebookProfileUrl = undefined;
+    hourlyRateCents = undefined;
+    flatRateCents = undefined;
+    schedulingBufferMinutes = undefined;
+    serviceIds = undefined;
   }
 
   if (serviceIds !== undefined) {

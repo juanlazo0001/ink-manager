@@ -105,6 +105,19 @@ export default function DateAndTimeRangeFields({
                       : undefined
                   }
                   modifiersClassNames={{ unavailable: 'opacity-40' }}
+                  // Same fix as SelfSchedule.tsx's and DatePickerField.tsx's
+                  // own DayPicker: react-day-picker/style.css's light-mode
+                  // --rdp-accent-color: blue can win the cascade tie against
+                  // index.css's gold-accent override depending on stylesheet
+                  // injection order. Inline styles on the root element beat
+                  // any stylesheet rule regardless of that order.
+                  style={
+                    {
+                      '--rdp-accent-color': 'var(--color-accent)',
+                      '--rdp-accent-background-color': 'color-mix(in srgb, var(--color-accent) 20%, transparent)',
+                      '--rdp-today-color': 'var(--color-accent)',
+                    } as React.CSSProperties
+                  }
                 />
                 {unavailableDaysOfWeek && unavailableDaysOfWeek.length > 0 && (
                   <p className="mt-1 px-1 text-[10px] text-fg-muted">

@@ -263,10 +263,14 @@ export default function AppointmentForm({
   // Service lines: once a project is known, the artist picker narrows to
   // only artists tagged (via ArtistService) as offering THAT project's
   // service -- same filtering InquiryDetail.tsx's own assignment picker
-  // applies. No project picked yet (e.g. Calendar's blank "New Appointment"
-  // before a client/project is chosen) shows every artist, same as before.
+  // applies, including treating zero tags as unrestricted rather than
+  // "practices nothing" (see that file's own comment on why). No project
+  // picked yet (e.g. Calendar's blank "New Appointment" before a client/
+  // project is chosen) shows every artist, same as before.
   const artistOptions = allArtistOptions?.filter(
-    (a) => !isEndedGuest(a) && (!selectedInquiry || a.artistServices.some((s) => s.serviceId === selectedInquiry.service.id)),
+    (a) =>
+      !isEndedGuest(a) &&
+      (!selectedInquiry || a.artistServices.length === 0 || a.artistServices.some((s) => s.serviceId === selectedInquiry.service.id)),
   )
   const selectedArtist = artistOptions?.find((a) => a.id === artistId)
 

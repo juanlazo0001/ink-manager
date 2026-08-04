@@ -578,12 +578,23 @@ export default function InquiryDetail() {
   // excludes ended guests by default, and -- service lines -- is filtered
   // to only artists tagged (via ArtistService) as offering THIS inquiry's
   // specific service, so staff can't assign, say, a tattoo-only artist to a
-  // Powder Brows inquiry. "Share with Artist" below is a send-to/notify
-  // action, not an assignment, so it intentionally still lists everyone --
-  // staff may reasonably want to loop in a former guest or a differently-
-  // tagged artist just to ask a question.
+  // Powder Brows inquiry. An artist with NO services tagged at all is
+  // treated as unrestricted (assignable to anything), not excluded from
+  // everything -- a freshly invited/created artist (guest or home)
+  // legitimately starts with zero tags until someone configures them, and
+  // reading that as "practices nothing" made every brand-new artist
+  // permanently unassignable, guests especially (staff can't tag a guest's
+  // services without delegation, so an untagged guest had no path to ever
+  // becoming assignable without the guest logging in themselves first).
+  // Once real tags exist, filtering behaves exactly as before. "Share with
+  // Artist" below is a send-to/notify action, not an assignment, so it
+  // intentionally still lists everyone regardless -- staff may reasonably
+  // want to loop in a former guest or a differently-tagged artist just to
+  // ask a question.
   const assignableArtistOptions = artistOptions?.filter(
-    (a) => !isEndedGuest(a) && (!inquiry?.service || a.artistServices.some((s) => s.serviceId === inquiry.service.id)),
+    (a) =>
+      !isEndedGuest(a) &&
+      (!inquiry?.service || a.artistServices.length === 0 || a.artistServices.some((s) => s.serviceId === inquiry.service.id)),
   )
   // ArtistSelect matches on `id`; the share modal's value is the artist's
   // USER id (see the artistUserId POST payload below), not the Artist

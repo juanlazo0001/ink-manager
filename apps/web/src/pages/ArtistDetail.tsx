@@ -202,20 +202,21 @@ export default function ArtistDetail() {
   // granted them artists.manage -- that permission is about managing OTHER
   // artists (matches the backend's own requirePermissionOrSelfArtist, PATCH
   // /artists/:id). isSelf alone is always enough; staff additionally needs
-  // real delegation (allowsStudioProfileEdits) for bio/specialties/
-  // portfolio/social links specifically, or just artists.manage for rates/
-  // scheduling buffer/services (no delegation concept for those -- see
-  // canEditCoreFields below).
+  // real delegation (allowsStudioProfileEdits). Covers EVERYTHING now --
+  // bio/specialties/portfolio/social links AND rates/scheduling buffer/
+  // services offered (previously that second group had no delegation
+  // concept at all, staff-editable by any artists.manage holder the
+  // moment an invite was accepted, before the artist had any chance to
+  // decide whether to allow it -- reported directly as wrong and folded
+  // into this same single gate). isGuest/guestStartDate/guestEndDate (the
+  // studio's own classification) and allowsClientSelfScheduling (a
+  // booking-policy switch, not the artist's personal data) deliberately
+  // stay outside this gate -- both already excluded server-side
+  // regardless of what this page sends.
   const canEditProfileFields = isSelf || (canManageStaff && (artist?.memberships[0]?.allowsStudioProfileEdits ?? false))
-  // Rates/scheduling buffer/services offered have no delegation concept
-  // (StudioMembership.allowsStudioProfileEdits only ever covers bio/
-  // specialties/portfolio/social links) -- self or real artists.manage,
-  // same as the backend's own unconditional-once-past-the-router-gate
-  // handling of these fields.
-  const canEditCoreFields = isSelf || canManageStaff
   // Whether this page is interactive for the viewer at all, regardless of
   // which specific fields they can touch -- drives the Save button.
-  const canEdit = canEditCoreFields
+  const canEdit = canEditProfileFields
 
   async function handleSaveSchedule() {
     if (!id) return
@@ -479,7 +480,12 @@ export default function ArtistDetail() {
                   suggest a starting price per session (hourly rate × that session's hour estimate, or the flat rate
                   as-is) that staff can freely override.
                 </p>
-                {canEditCoreFields ? (
+                {canManageStaff && !canEditProfileFields && (
+                  <p className="mt-1 text-xs text-fg-muted">
+                    This artist hasn't given studio staff permission to edit their profile.
+                  </p>
+                )}
+                {canEditProfileFields ? (
                   <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <div>
                       <label className="mb-1 block text-sm font-medium text-fg-secondary">Hourly rate</label>
@@ -533,7 +539,12 @@ export default function ArtistDetail() {
                   Minimum gap flagged as a possible conflict when booking this artist. Overrides the studio's own
                   default (Settings → Defaults) for this artist only -- leave blank to just use that default.
                 </p>
-                {canEditCoreFields ? (
+                {canManageStaff && !canEditProfileFields && (
+                  <p className="mt-1 text-xs text-fg-muted">
+                    This artist hasn't given studio staff permission to edit their profile.
+                  </p>
+                )}
+                {canEditProfileFields ? (
                   <div className="mt-3 max-w-[12rem]">
                     <label className="mb-1 block text-sm font-medium text-fg-secondary">Buffer (minutes)</label>
                     <input
@@ -563,12 +574,16 @@ export default function ArtistDetail() {
                     availability instead of waiting for staff to schedule them. Their pick only creates a pending
                     request -- staff still confirms it before it's a real appointment.
                   </p>
-                  {/* Deliberately stays staff-only here, unlike rates/
-                      buffer/services above -- this has its own dedicated,
-                      more narrowly-scoped self-route (PATCH /:id/self-
-                      scheduling, solo-gated) that this general save
-                      shouldn't quietly duplicate; the backend already
-                      strips this field for a self-bypass request. */}
+                  {/* Deliberately stays staff-only (any artists.manage
+                      holder) regardless of delegation, unlike everything
+                      else on this page -- a booking-policy switch the
+                      studio manages for its own clients' experience, not
+                      the artist's personal profile/business data, and it
+                      has its own dedicated, more narrowly-scoped self-
+                      route (PATCH /:id/self-scheduling, solo-gated) that
+                      this general save shouldn't quietly duplicate; the
+                      backend already strips this field for a self-bypass
+                      request. */}
                   {canManageStaff ? (
                     <label className="mt-3 flex items-center gap-2 text-sm text-fg">
                       <input
@@ -685,8 +700,13 @@ export default function ArtistDetail() {
                   Which of the studio's services this artist practices -- only artists tagged here appear as
                   practitioner options for an inquiry in that service.
                 </p>
+                {canManageStaff && !canEditProfileFields && (
+                  <p className="mt-1 text-xs text-fg-muted">
+                    This artist hasn't given studio staff permission to edit their profile.
+                  </p>
+                )}
                 <div className="mt-3">
-                  {canEditCoreFields ? (
+                  {canEditProfileFields ? (
                     serviceOptions.length > 0 ? (
                       <div className="flex flex-wrap gap-x-4 gap-y-2">
                         {serviceOptions
