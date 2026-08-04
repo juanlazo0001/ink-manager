@@ -1,11 +1,13 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
-import { requireAuth } from "../middleware/auth";
-import type { Role } from "../../generated/prisma/enums";
+import { requireAuth, requireRole } from "../middleware/auth";
+import { Role } from "../../generated/prisma/enums";
 import { getEffectivePermissions } from "../lib/permissions";
 import { validateImageDataUrl } from "../lib/images";
 import { normalizePhone } from "../lib/phone";
 import { isSoloStudioArtist as isSoloStudioArtistCheck, isSoloStudio as isSoloStudioCheck } from "../lib/soloStudio";
+import { logAudit } from "../lib/audit";
+import { emitInvalidation } from "../lib/realtime/registry";
 
 const router = Router();
 
@@ -183,6 +185,136 @@ router.patch("/me", async (req, res) => {
   const { password: _password, ...safeUser } = updated;
   const permissions = await getEffectivePermissions(updated.studioId, updated.role);
   res.json({ ...serializeUser(safeUser), permissions });
+});
+
+// Part 3: artist self-deletion. Deliberately requireRole(ARTIST), self
+// only -- there is no studioId/userId param, always "whoever's token this
+// is." Never reachable from any studio/staff-facing route (see Part 4's
+// own adversarial confirmation that no such path exists) -- a studio can
+// remove an artist's MEMBERSHIP (POST /studios/:studioId/artists/:artistId/
+// remove), never their account.
+//
+// Anonymize-in-place, not a cascade delete: the User/Artist rows are never
+// removed, only scrubbed, so every historical FK a real Appointment/
+// Inquiry/GiftCard/AuditLog/etc. already holds keeps resolving to a real
+// row instead of a dangling or nulled-out one -- same "preserve history,
+// only change access" principle deactivation and go-solo/studio-departure
+// already use elsewhere in this app, just permanent and personal-data-
+// scrubbing rather than just an access flag.
+router.post("/me/delete-account", requireRole(Role.ARTIST), async (req, res) => {
+  const { confirm } = req.body ?? {};
+
+  if (confirm !== "DELETE") {
+    return res.status(400).json({ error: 'Type "DELETE" to confirm this action.' });
+  }
+
+  const userId = req.user!.userId;
+
+  const artist = await prisma.artist.findUnique({ where: { userId }, select: { id: true } });
+  if (!artist) {
+    return res.status(404).json({ error: "Artist profile not found" });
+  }
+
+  // Every studio this artist has ever had an ACTIVE membership at -- not
+  // just their current studioId, since a real GUEST membership elsewhere
+  // is exactly as real and needs to be ended and its studio notified too.
+  const activeMemberships = await prisma.studioMembership.findMany({
+    where: { artistId: artist.id, endedAt: null },
+    select: { studioId: true },
+  });
+  const affectedStudioIds = [...new Set(activeMemberships.map((m) => m.studioId))];
+
+  // Flash pieces: genuinely no history (never appeared in any real
+  // client Inquiry) are safe to remove outright, same as the staff
+  // hard-delete route's own "no history = safe to fully remove"
+  // reasoning. A piece with real inquiry history is retired instead
+  // (RETIRED already exists for exactly this -- "manually pulled from
+  // the gallery" -- see FlashPieceStatus's own comment) rather than
+  // destroyed, so the studio's own historical record of what was
+  // requested/booked from it survives intact.
+  const flashPieces = await prisma.flashPiece.findMany({
+    where: { artistId: artist.id },
+    select: { id: true, _count: { select: { inquiries: true } } },
+  });
+  const flashPieceIdsToDelete = flashPieces.filter((p) => p._count.inquiries === 0).map((p) => p.id);
+  const flashPieceIdsToRetire = flashPieces.filter((p) => p._count.inquiries > 0).map((p) => p.id);
+
+  await prisma.$transaction(async (tx) => {
+    if (activeMemberships.length > 0) {
+      await tx.studioMembership.updateMany({
+        where: { artistId: artist.id, endedAt: null },
+        data: { endedAt: new Date() },
+      });
+    }
+
+    if (flashPieceIdsToDelete.length > 0) {
+      await tx.flashPiece.deleteMany({ where: { id: { in: flashPieceIdsToDelete } } });
+    }
+    if (flashPieceIdsToRetire.length > 0) {
+      await tx.flashPiece.updateMany({ where: { id: { in: flashPieceIdsToRetire } }, data: { status: "RETIRED" } });
+    }
+
+    // Personal profile content -- exactly what item 1's task description
+    // calls out: bio, portfolio, and (via flash pieces above) their own
+    // gallery. Social links included as the same category of personal
+    // content. Rates/scheduling-buffer/services stay untouched -- not
+    // personal data, and moot the moment every membership above ends.
+    await tx.artist.update({
+      where: { id: artist.id },
+      data: {
+        bio: null,
+        specialties: [],
+        portfolioImages: [],
+        instagramHandle: null,
+        facebookProfileUrl: null,
+      },
+    });
+
+    // Login credentials + email, permanently. The synthetic email is
+    // unique-safe (userId is unique) and frees the real address for reuse
+    // -- someone signing up again with it later finds no trace it was
+    // ever taken. password: null makes login mathematically impossible
+    // (bcrypt.compare against a real hash never matches null), isActive:
+    // false is the same authority every other login/session check in this
+    // app already keys off, and every outstanding token is cleared so
+    // none of the account's three separate token-based flows (invite,
+    // password reset, email change) can be used to claw back in.
+    await tx.user.update({
+      where: { id: userId },
+      data: {
+        email: `deleted-${userId}@deleted.inkmanager.invalid`,
+        name: "Deleted User",
+        phone: null,
+        avatarUrl: null,
+        password: null,
+        isActive: false,
+        deletedAt: new Date(),
+        inviteToken: null,
+        inviteTokenExpiresAt: null,
+        passwordResetToken: null,
+        passwordResetTokenExpiresAt: null,
+        pendingEmail: null,
+        emailChangeToken: null,
+        emailChangeTokenExpiresAt: null,
+      },
+    });
+  });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: userId,
+    entityType: "User",
+    entityId: userId,
+    action: "self_deleted_account",
+    changes: { affectedStudioIds, flashPiecesDeleted: flashPieceIdsToDelete.length, flashPiecesRetired: flashPieceIdsToRetire.length },
+  });
+
+  for (const studioId of affectedStudioIds) {
+    emitInvalidation({ type: "team.changed", studioId });
+    emitInvalidation({ type: "artist.changed", studioId, artistId: artist.id });
+  }
+
+  res.json({ success: true });
 });
 
 export default router;

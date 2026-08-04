@@ -411,6 +411,20 @@ model User {
   deactivatedBy    User?     @relation("UserDeactivatedBy", fields: [deactivatedById], references: [id])
   deactivatedUsers User[]    @relation("UserDeactivatedBy")
 
+  // Self-deletion (artist account deletion, Part 3). Distinct from
+  // deactivatedAt above: deactivation is reversible and staff-initiated
+  // (toggle-able back on); this is permanent and self-initiated only (see
+  // POST /users/me/delete-account, requireRole(ARTIST) -- never reachable
+  // from any studio-side/staff route, confirmed adversarially). The row
+  // itself is never deleted -- every FK a real appointment/inquiry/gift
+  // card/etc. already holds against this User/Artist id needs to keep
+  // resolving to a real (now-anonymized) row, exactly the same
+  // "preserve history, only change access" principle deactivation and
+  // studio departure already use elsewhere. isActive is set false at the
+  // same time (the actual login-blocking authority, same as deactivation),
+  // so this field is audit metadata, not a second competing gate.
+  deletedAt DateTime?
+
   studioId String
   studio   Studio @relation(fields: [studioId], references: [id])
 

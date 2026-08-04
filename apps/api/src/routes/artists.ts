@@ -174,8 +174,22 @@ router.get("/", requirePermission("artists.view"), async (req, res) => {
   // too (not replaced by the membership check alone) as a defensive
   // fallback for any HOME artist whose membership row is somehow missing,
   // so this list can never lose someone it already showed.
+  //
+  // Part 3 (artist self-deletion): a genuinely deleted account's own
+  // membership rows are all correctly ended, but a brand-new identity's
+  // User.studioId is set at account creation regardless of whether their
+  // FIRST membership was HOME or GUEST (see artistInvites.ts's own
+  // new-identity branch) and is never cleared on deletion (it's a
+  // required field with nothing meaningful to reset it to) -- so without
+  // this, the fallback clause above alone would keep surfacing a deleted
+  // artist here forever, including in every "assign this to an artist"
+  // picker that reads this same list. deletedAt is a permanent, one-way
+  // signal (unlike isActive, which also covers reversible deactivation --
+  // deliberately NOT filtered on here, so a deactivated-but-not-deleted
+  // artist's card still shows up exactly as it always has).
   const artists = await prisma.artist.findMany({
     where: {
+      user: { deletedAt: null },
       OR: [
         { user: { studioId: req.user!.studioId } },
         { memberships: { some: { studioId: req.user!.studioId, endedAt: null } } },

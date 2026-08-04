@@ -1,11 +1,14 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import PhoneInput from '../components/PhoneInput'
+import Modal from '../components/Modal'
 import { apiFetch } from '../lib/api'
 import { formatPhoneInput, isValidPhoneDigits, readFileAsDataUrl, MAX_IMAGE_FILE_BYTES } from '../lib/format'
 import { useUserProfile } from '../context/useUserProfile'
 import { useAuth } from '../context/useAuth'
 import { SparkleIcon, CloseIcon } from '../components/icons'
+
+const DELETE_ACCOUNT_CONFIRM_TEXT = 'DELETE'
 
 const EMPTY_FORM = { name: '', phone: '' }
 
@@ -90,6 +93,16 @@ export default function Profile() {
   const [goSoloStudioName, setGoSoloStudioName] = useState('')
   const [goSoloError, setGoSoloError] = useState<string | null>(null)
   const [goSoloSubmitting, setGoSoloSubmitting] = useState(false)
+
+  // Part 3: artist self-deletion. POST /users/me/delete-account,
+  // requireRole(ARTIST), self only. Success has no fresh JWT to switch to
+  // -- the account can't authenticate at all anymore -- so this logs out
+  // and bounces to /login directly, same terminal shape a deactivated
+  // account's own 401 already produces elsewhere.
+  const [showDeleteAccount, setShowDeleteAccount] = useState(false)
+  const [deleteAccountConfirmText, setDeleteAccountConfirmText] = useState('')
+  const [deleteAccountError, setDeleteAccountError] = useState<string | null>(null)
+  const [deleteAccountSubmitting, setDeleteAccountSubmitting] = useState(false)
 
   useEffect(() => {
     if (profile) {
@@ -234,6 +247,33 @@ export default function Profile() {
     }
   }
 
+  function openDeleteAccount() {
+    setDeleteAccountConfirmText('')
+    setDeleteAccountError(null)
+    setShowDeleteAccount(true)
+  }
+
+  async function handleDeleteAccountSubmit(event: FormEvent) {
+    event.preventDefault()
+    if (deleteAccountConfirmText !== DELETE_ACCOUNT_CONFIRM_TEXT) return
+
+    setDeleteAccountError(null)
+    setDeleteAccountSubmitting(true)
+    try {
+      await apiFetch('/users/me/delete-account', {
+        method: 'POST',
+        body: JSON.stringify({ confirm: deleteAccountConfirmText }),
+      })
+      // No fresh token to switch to -- the account can no longer
+      // authenticate at all. logout() clears the session; ProtectedRoute
+      // reacts to that on its own next render and bounces to /login.
+      logout()
+    } catch (err) {
+      setDeleteAccountError(err instanceof Error ? err.message : 'Failed to delete account')
+      setDeleteAccountSubmitting(false)
+    }
+  }
+
   function openChangeEmail() {
     setNewEmail('')
     setEmailCurrentPassword('')
@@ -302,6 +342,7 @@ export default function Profile() {
   }
 
   return (
+    <>
     <div className="mx-auto max-w-2xl px-6 py-6 sm:px-10 sm:py-8">
           <h1 className="text-2xl font-bold text-fg sm:text-3xl">My profile</h1>
           <p className="mt-1 text-sm text-fg-secondary">Manage your account details and login.</p>
@@ -835,6 +876,84 @@ export default function Profile() {
               </div>
             </div>
           )}
+
+          {/* Part 3: artist self-deletion. profile.role === 'ARTIST' exactly
+              (not just isArtist, which also covers a solo OWNER+Artist) --
+              matches the backend's own requireRole(ARTIST) scope. A solo
+              owner deleting their account would also mean deleting the
+              studio itself, a materially different and more complex flow
+              this doesn't attempt to cover. */}
+          {profile && profile.role === 'ARTIST' && (
+            <div className="mt-6 rounded-2xl border border-danger/30 bg-danger/5 p-6">
+              <p className="text-xs font-semibold uppercase tracking-wider text-danger">Danger zone</p>
+              <div className="mt-4 flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-fg">Delete my account</p>
+                  <p className="mt-1 text-xs text-fg-secondary">
+                    Permanently deletes your login, email, and profile content (bio, portfolio, flash gallery) and
+                    ends every studio membership you have. Your appointment and client history at every studio
+                    you've worked with is preserved for their records -- it just won't be tied to your personal
+                    account anymore. This cannot be undone.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={openDeleteAccount}
+                  className="shrink-0 rounded-full border border-danger/40 px-4 py-2 text-sm font-medium text-danger transition hover:bg-danger/10"
+                >
+                  Delete account
+                </button>
+              </div>
+            </div>
+          )}
         </div>
+
+      {showDeleteAccount && (
+        <Modal title="Delete your account" onClose={() => (deleteAccountSubmitting ? null : setShowDeleteAccount(false))}>
+          <form onSubmit={handleDeleteAccountSubmit}>
+            <p className="text-sm text-fg-secondary">
+              This permanently deletes your login credentials, email, and profile content, and ends every studio
+              membership (home and guest) you currently have. <span className="font-semibold text-fg">This cannot be undone.</span>
+            </p>
+
+            <div className="mt-4 rounded-lg border border-border bg-surface-inset p-3 text-sm">
+              <p className="mb-2 text-xs font-medium uppercase tracking-wider text-fg-muted">This will permanently remove</p>
+              <ul className="space-y-1 text-fg-secondary">
+                <li>Your login (email and password) -- you won't be able to sign in again</li>
+                <li>Your bio, specialties, and portfolio</li>
+                <li>Flash pieces with no booking history (pieces that have real requests are retired, not deleted)</li>
+              </ul>
+              <p className="mb-2 mt-3 text-xs font-medium uppercase tracking-wider text-fg-muted">Preserved for each studio's records</p>
+              <ul className="space-y-1 text-fg-secondary">
+                <li>Past appointments and client relationships</li>
+                <li>Notes, gift cards, and other records you were involved in</li>
+              </ul>
+            </div>
+
+            <div className="mt-4">
+              <label className="mb-1 block text-sm font-medium text-fg-secondary">
+                Type <span className="font-mono font-semibold text-fg">{DELETE_ACCOUNT_CONFIRM_TEXT}</span> to confirm
+              </label>
+              <input
+                type="text"
+                value={deleteAccountConfirmText}
+                onChange={(event) => setDeleteAccountConfirmText(event.target.value)}
+                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-danger focus:outline-none focus:ring-1 focus:ring-danger"
+              />
+            </div>
+
+            {deleteAccountError && <p className="mt-3 text-sm text-danger">{deleteAccountError}</p>}
+
+            <button
+              type="submit"
+              disabled={deleteAccountSubmitting || deleteAccountConfirmText !== DELETE_ACCOUNT_CONFIRM_TEXT}
+              className="mt-5 w-full rounded-full bg-danger px-4 py-2 text-sm font-medium text-bg transition hover:bg-danger/90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {deleteAccountSubmitting ? 'Deleting…' : 'Permanently delete my account'}
+            </button>
+          </form>
+        </Modal>
+      )}
+    </>
   )
 }

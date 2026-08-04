@@ -90,10 +90,15 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   // "expired" from "revoked."
   const liveUser = await prisma.user.findUnique({
     where: { id: realUser.userId },
-    select: { isActive: true, deactivatedAt: true, passwordChangedAt: true },
+    select: { isActive: true, deactivatedAt: true, deletedAt: true, passwordChangedAt: true },
   });
 
-  if (!liveUser || !liveUser.isActive || liveUser.deactivatedAt) {
+  // deletedAt implies isActive: false already (set together at deletion --
+  // see User.deletedAt's own schema comment), so this is belt-and-suspenders
+  // rather than the only thing standing between a deleted account and a
+  // still-valid 7-day JWT -- explicit anyway, since "why was this rejected"
+  // is worth being able to answer from the field list alone.
+  if (!liveUser || !liveUser.isActive || liveUser.deactivatedAt || liveUser.deletedAt) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
