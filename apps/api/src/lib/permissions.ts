@@ -21,9 +21,14 @@ import { isSoloStudioArtist } from "./soloStudio";
 // studio's existing clients.manage/appointments.manage override onto every
 // one of that key's successor keys so no studio's customization silently
 // reset to a different default.
+//
+// studio.manage is ALSO retired (same "deliberately removed, not just
+// defaulted off" treatment) -- editing the studio's own name/logo/website
+// is OWNER-only now (routes/studios.ts's PATCH /:studioId), hardcoded via
+// requireRole, never a configurable grant. A real studio had this toggled
+// on for ARTIST via the matrix, letting any artist rename the business.
 export const PERMISSION_KEYS = [
   // Unchanged from before this expansion.
-  "studio.manage",
   "locations.manage",
   "artists.manage",
   "artists.view",
@@ -322,6 +327,37 @@ export function requirePermissionOrSoloArtist(key: PermissionKey) {
 
     if (req.user.role === Role.ARTIST && (await isSoloStudioArtist(req.user.studioId, req.user.userId))) {
       req.viaSoloArtistBypass = true;
+      return next();
+    }
+
+    return res.status(403).json({ error: "Forbidden" });
+  };
+}
+
+// An artist manages their own profile (rates, scheduling buffer, services
+// offered, bio/specialties/portfolio/social links -- everything on
+// PATCH /artists/:id except the studio-only guest-artist classification,
+// stripped separately by the route itself using req.viaSelfArtistBypass)
+// regardless of whether their studio has granted them artists.manage --
+// that permission is about managing OTHER artists, and withholding it was
+// never meant to also block someone from managing themselves. Same shape
+// as requirePermissionOrSoloArtist above: permission first, self-bypass
+// second, both real allow-paths rather than one masquerading as the other.
+export function requirePermissionOrSelfArtist(key: PermissionKey) {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const allowed = await hasPermission(req.user.studioId, req.user.role, key);
+    if (allowed) {
+      return next();
+    }
+
+    const artistId = req.params.id as string | undefined;
+    const artist = artistId ? await prisma.artist.findUnique({ where: { id: artistId }, select: { userId: true } }) : null;
+    if (artist && artist.userId === req.user.userId) {
+      req.viaSelfArtistBypass = true;
       return next();
     }
 

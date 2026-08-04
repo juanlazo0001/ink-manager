@@ -6,7 +6,7 @@ import { formatPhoneInput, isValidPhoneDigits, readFileAsDataUrl, MAX_IMAGE_FILE
 import { useUserProfile } from '../context/useUserProfile'
 import { useAuth } from '../context/useAuth'
 
-const EMPTY_FORM = { name: '', phone: '', bio: '', specialties: '' }
+const EMPTY_FORM = { name: '', phone: '' }
 
 export default function Profile() {
   const { profile, loading, refresh } = useUserProfile()
@@ -73,12 +73,7 @@ export default function Profile() {
 
   useEffect(() => {
     if (profile) {
-      setForm({
-        name: profile.name ?? '',
-        phone: profile.phone ?? '',
-        bio: profile.artist?.bio ?? '',
-        specialties: profile.artist?.specialties.join(', ') ?? '',
-      })
+      setForm({ name: profile.name ?? '', phone: profile.phone ?? '' })
       setAvatarUrl(profile.avatarUrl)
     }
   }, [profile])
@@ -91,19 +86,14 @@ export default function Profile() {
 
   function handleCancel() {
     if (profile) {
-      setForm({
-        name: profile.name ?? '',
-        phone: profile.phone ?? '',
-        bio: profile.artist?.bio ?? '',
-        specialties: profile.artist?.specialties.join(', ') ?? '',
-      })
+      setForm({ name: profile.name ?? '', phone: profile.phone ?? '' })
       setAvatarUrl(profile.avatarUrl)
     }
     setError(null)
     setEditing(false)
   }
 
-  function updateField(field: 'name' | 'phone' | 'bio' | 'specialties') {
+  function updateField(field: 'name' | 'phone') {
     return (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
       setForm((current) => ({ ...current, [field]: event.target.value }))
     }
@@ -153,14 +143,6 @@ export default function Profile() {
       name: form.name,
       phone: form.phone,
       avatarUrl,
-    }
-
-    if (isArtist) {
-      payload.bio = form.bio
-      payload.specialties = form.specialties
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean)
     }
 
     try {
@@ -349,24 +331,6 @@ export default function Profile() {
                   </button>
                 </div>
 
-                {isArtist && (
-                  <div className="mt-4 border-t border-border pt-4">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-fg-muted">Artist details</p>
-                    <p className="mt-2 text-sm text-fg-secondary">{profile.artist?.bio || 'No bio yet.'}</p>
-                    {profile.artist && profile.artist.specialties.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {profile.artist.specialties.map((specialty) => (
-                          <span
-                            key={specialty}
-                            className="inline-flex items-center rounded-full border border-border px-2.5 py-1 text-xs font-medium text-fg-secondary"
-                          >
-                            {specialty}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
               </div>
             )}
 
@@ -427,38 +391,6 @@ export default function Profile() {
                     className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                   />
                 </div>
-
-                {isArtist && (
-                  <>
-                    <div className="mb-5">
-                      <label htmlFor="profileBio" className="mb-1 block text-sm font-medium text-fg-secondary">
-                        Bio
-                      </label>
-                      <textarea
-                        id="profileBio"
-                        rows={3}
-                        value={form.bio}
-                        onChange={updateField('bio')}
-                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                      />
-                    </div>
-
-                    <div className="mb-5">
-                      <label htmlFor="profileSpecialties" className="mb-1 block text-sm font-medium text-fg-secondary">
-                        Specialties
-                      </label>
-                      <input
-                        id="profileSpecialties"
-                        type="text"
-                        placeholder="e.g. Blackwork, Fine line, Realism"
-                        value={form.specialties}
-                        onChange={updateField('specialties')}
-                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                      />
-                      <p className="mt-1 text-xs text-fg-muted">Comma-separated.</p>
-                    </div>
-                  </>
-                )}
 
                 <div className="flex gap-3">
                   <button
@@ -567,18 +499,21 @@ export default function Profile() {
             </div>
           )}
 
-          {/* UI simplification pass: rates/scheduling buffer/guest window/
-              services normally live on ArtistDetail.tsx, only ever reached
-              via Team -> Artists (studio staff managing an artist). A solo
-              artist IS that staff, but Team is gone for them -- this is
-              their only remaining path to those fields, closing the gap
-              Team's removal would otherwise leave. */}
-          {profile && isArtist && profile.artist && profile.isSoloStudio && (
+          {/* The single place bio/specialties/portfolio/social links/rates/
+              scheduling buffer/services offered/preferred schedule are all
+              editable -- ArtistDetail.tsx now supports full self-edit
+              regardless of studio permissions (requirePermissionOrSelfArtist,
+              artists.ts), so this is universal, not solo-only. Previously
+              Profile.tsx also had its own bio/specialties fields, which
+              just duplicated this page for the same data -- removed, this
+              is the one place now. */}
+          {profile && isArtist && profile.artist && (
             <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-6">
-              <p className="text-xs font-semibold uppercase tracking-wider text-fg-muted">Rates, schedule &amp; services</p>
+              <p className="text-xs font-semibold uppercase tracking-wider text-fg-muted">Artist profile</p>
               <div className="mt-4 flex items-start justify-between gap-4">
                 <p className="text-sm text-fg-secondary">
-                  Set your rates, scheduling buffer, guest-artist window, and which services you offer.
+                  Manage your bio, specialties, portfolio, social links, rates, scheduling buffer, services offered,
+                  and preferred schedule.
                 </p>
                 <Link
                   to={`/artists/${profile.artist.id}`}

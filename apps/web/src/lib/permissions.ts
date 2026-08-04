@@ -90,7 +90,6 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
   {
     label: 'Team & Locations',
     keys: [
-      { key: 'studio.manage', label: 'Manage studio profile', description: 'Edit the studio’s name, logo, and website.' },
       { key: 'team.manage', label: 'Manage team members', description: 'Add, edit, deactivate, or delete staff accounts.' },
       { key: 'locations.manage', label: 'Manage locations', description: 'Add, edit, and delete studio locations and their hours.' },
       { key: 'artists.manage', label: 'Manage artist profiles', description: 'Add and edit artist bios, specialties, and portfolio.' },

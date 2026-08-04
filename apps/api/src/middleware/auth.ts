@@ -36,6 +36,12 @@ declare global {
       // your own appointments" restriction that bypass specifically needs,
       // without the route re-deriving solo status itself.
       viaSoloArtistBypass?: boolean;
+      // requirePermissionOrSelfArtist (lib/permissions.ts): set only when
+      // an artist reached PATCH /artists/:id via self-access rather than a
+      // real artists.manage grant -- lets that route strip the fields only
+      // real studio staff should ever set (isGuest/guestStartDate/
+      // guestEndDate) without re-deriving self-vs-staff itself.
+      viaSelfArtistBypass?: boolean;
     }
   }
 }

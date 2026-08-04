@@ -5,7 +5,7 @@ import { requireAuth } from "../middleware/auth";
 import type { AuthPayload } from "../middleware/auth";
 import { Role } from "../../generated/prisma/enums";
 import type { Prisma } from "../../generated/prisma/client";
-import { hasPermission, requirePermission } from "../lib/permissions";
+import { hasPermission, requirePermission, requirePermissionOrSelfArtist } from "../lib/permissions";
 import { diffObjects, logAudit } from "../lib/audit";
 import { isStringArray, isValidDateOrNull, isValidPreferredSchedule } from "../lib/artistValidation";
 import { emitInvalidation } from "../lib/realtime/registry";
@@ -203,7 +203,7 @@ router.get("/:id", requirePermission("artists.view"), async (req, res) => {
   res.json(artist);
 });
 
-router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
+router.patch("/:id", requirePermissionOrSelfArtist("artists.manage"), async (req, res) => {
   const id = req.params.id as string;
   let {
     bio,
@@ -250,6 +250,24 @@ router.patch("/:id", requirePermission("artists.manage"), async (req, res) => {
     hourlyRateCents = undefined;
     flatRateCents = undefined;
     schedulingBufferMinutes = undefined;
+    allowsClientSelfScheduling = undefined;
+  }
+
+  // Self-service profile management: an artist manages their own rates,
+  // scheduling buffer, and services regardless of whether their studio
+  // granted them artists.manage (see requirePermissionOrSelfArtist's own
+  // comment) -- but guest-artist classification is the STUDIO's call about
+  // them, never their own, and allowsClientSelfScheduling already has its
+  // own dedicated, more narrowly-scoped self-route
+  // (PATCH /:id/self-scheduling, solo-gated) that this general route
+  // shouldn't quietly duplicate. Stripped here whenever the caller reached
+  // this route via self-bypass rather than a real artists.manage grant --
+  // a real staff member (with or without being this artist) keeps setting
+  // these exactly as before.
+  if (req.viaSelfArtistBypass) {
+    isGuest = undefined;
+    guestStartDate = undefined;
+    guestEndDate = undefined;
     allowsClientSelfScheduling = undefined;
   }
 

@@ -79,7 +79,7 @@ export default function ArtistDetail() {
   const { id } = useParams<{ id: string }>()
   const user = useEffectiveUser()
   const { profile } = useUserProfile()
-  const canManage = profile?.permissions.includes('artists.manage') ?? false
+  const canManageStaff = profile?.permissions.includes('artists.manage') ?? false
 
   const [artist, setArtist] = useState<Artist | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -196,15 +196,26 @@ export default function ArtistDetail() {
     (profile?.permissions.includes('artistSchedules.manage') ?? false) &&
     (user?.role !== 'ARTIST' || artist.user.id === user?.userId)
 
-  // Solo artist architecture, Phase 4: canManage alone (artists.manage)
-  // is no longer sufficient for bio/specialties/portfolio/social links --
-  // this artist's own HOME membership must also have delegated profile
-  // edits, UNLESS the viewer is editing their own record. Every other
-  // widget (rates, scheduling buffer, guest status, self-scheduling,
-  // services) stays gated on canManage alone, matching the backend's own
-  // PATCH /:id enforcement exactly (see that route's own comment).
   const isSelf = !!artist && artist.user.id === user?.userId
-  const canEditProfileFields = canManage && (isSelf || (artist?.memberships[0]?.allowsStudioProfileEdits ?? false))
+
+  // An artist manages their own profile regardless of whether their studio
+  // granted them artists.manage -- that permission is about managing OTHER
+  // artists (matches the backend's own requirePermissionOrSelfArtist, PATCH
+  // /artists/:id). isSelf alone is always enough; staff additionally needs
+  // real delegation (allowsStudioProfileEdits) for bio/specialties/
+  // portfolio/social links specifically, or just artists.manage for rates/
+  // scheduling buffer/services (no delegation concept for those -- see
+  // canEditCoreFields below).
+  const canEditProfileFields = isSelf || (canManageStaff && (artist?.memberships[0]?.allowsStudioProfileEdits ?? false))
+  // Rates/scheduling buffer/services offered have no delegation concept
+  // (StudioMembership.allowsStudioProfileEdits only ever covers bio/
+  // specialties/portfolio/social links) -- self or real artists.manage,
+  // same as the backend's own unconditional-once-past-the-router-gate
+  // handling of these fields.
+  const canEditCoreFields = isSelf || canManageStaff
+  // Whether this page is interactive for the viewer at all, regardless of
+  // which specific fields they can touch -- drives the Save button.
+  const canEdit = canEditCoreFields
 
   const isEndedGuest =
     !!artist?.isGuest && !!artist.guestEndDate && new Date(artist.guestEndDate) < new Date()
@@ -374,11 +385,11 @@ export default function ArtistDetail() {
                     )}
                   </div>
                 </div>
-                {canManage && (
+                {canEdit && (
                   <p className="mt-3 text-xs text-fg-muted">
                     Profile picture is managed from{' '}
-                    <Link to={profile?.isSoloStudio ? '/profile' : '/team'} className="underline hover:text-fg-secondary">
-                      {profile?.isSoloStudio ? 'your profile' : 'Team'}
+                    <Link to={isSelf || profile?.isSoloStudio ? '/profile' : '/team'} className="underline hover:text-fg-secondary">
+                      {isSelf || profile?.isSoloStudio ? 'your profile' : 'Team'}
                     </Link>
                     .
                   </p>
@@ -393,7 +404,13 @@ export default function ArtistDetail() {
               </div>
 
               <ReorderableWidgetList pageKey="artist-detail" defaultOrder={ARTIST_WIDGET_ORDER}>
-              {canManage && (
+              {/* A solo artist can't be a "guest" at their own studio --
+                  there's no separate studio for them to visit. Staff-only
+                  even in a multi-person studio: this is the studio's
+                  classification of the artist, never their own to set (see
+                  requirePermissionOrSelfArtist's own comment on the
+                  backend for the same self-vs-staff split). */}
+              {canManageStaff && !profile?.isSoloStudio && (
                 <Widget key="guest-artist" id="guest-artist" title="Guest Artist">
                   <p className="mt-1 text-xs text-fg-muted">
                     A guest artist working a limited window. Once their end date passes, they drop out of Calendar's
@@ -427,7 +444,7 @@ export default function ArtistDetail() {
               )}
 
               <Widget key="bio" id="bio" title="Bio">
-                {canManage && !canEditProfileFields && (
+                {canManageStaff && !canEditProfileFields && (
                   <p className="mt-1 text-xs text-fg-muted">
                     This artist hasn't given studio staff permission to edit their profile.
                   </p>
@@ -451,7 +468,7 @@ export default function ArtistDetail() {
                   suggest a starting price per session (hourly rate × that session's hour estimate, or the flat rate
                   as-is) that staff can freely override.
                 </p>
-                {canManage ? (
+                {canEditCoreFields ? (
                   <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <div>
                       <label className="mb-1 block text-sm font-medium text-fg-secondary">Hourly rate</label>
@@ -505,7 +522,7 @@ export default function ArtistDetail() {
                   Minimum gap flagged as a possible conflict when booking this artist. Overrides the studio's own
                   default (Settings → Defaults) for this artist only -- leave blank to just use that default.
                 </p>
-                {canManage ? (
+                {canEditCoreFields ? (
                   <div className="mt-3 max-w-[12rem]">
                     <label className="mb-1 block text-sm font-medium text-fg-secondary">Buffer (minutes)</label>
                     <input
@@ -535,7 +552,13 @@ export default function ArtistDetail() {
                     availability instead of waiting for staff to schedule them. Their pick only creates a pending
                     request -- staff still confirms it before it's a real appointment.
                   </p>
-                  {canManage ? (
+                  {/* Deliberately stays staff-only here, unlike rates/
+                      buffer/services above -- this has its own dedicated,
+                      more narrowly-scoped self-route (PATCH /:id/self-
+                      scheduling, solo-gated) that this general save
+                      shouldn't quietly duplicate; the backend already
+                      strips this field for a self-bypass request. */}
+                  {canManageStaff ? (
                     <label className="mt-3 flex items-center gap-2 text-sm text-fg">
                       <input
                         type="checkbox"
@@ -554,7 +577,7 @@ export default function ArtistDetail() {
               </Widget>
 
               <Widget key="social-links" id="social-links" title="Social Links">
-                {canManage && !canEditProfileFields && (
+                {canManageStaff && !canEditProfileFields && (
                   <p className="mt-1 text-xs text-fg-muted">
                     This artist hasn't given studio staff permission to edit their profile.
                   </p>
@@ -621,7 +644,7 @@ export default function ArtistDetail() {
               </Widget>
 
               <Widget key="specialties" id="specialties" title="Specialties">
-                {canManage && !canEditProfileFields && (
+                {canManageStaff && !canEditProfileFields && (
                   <p className="mt-1 text-xs text-fg-muted">
                     This artist hasn't given studio staff permission to edit their profile.
                   </p>
@@ -652,7 +675,7 @@ export default function ArtistDetail() {
                   practitioner options for an inquiry in that service.
                 </p>
                 <div className="mt-3">
-                  {canManage ? (
+                  {canEditCoreFields ? (
                     serviceOptions.length > 0 ? (
                       <div className="flex flex-wrap gap-x-4 gap-y-2">
                         {serviceOptions
@@ -718,7 +741,7 @@ export default function ArtistDetail() {
               </Widget>
 
               <Widget key="portfolio" id="portfolio" title="Portfolio">
-                {canManage && !canEditProfileFields && (
+                {canManageStaff && !canEditProfileFields && (
                   <p className="mt-1 text-xs text-fg-muted">
                     This artist hasn't given studio staff permission to edit their profile.
                   </p>
@@ -784,7 +807,7 @@ export default function ArtistDetail() {
               </Widget>
               </ReorderableWidgetList>
 
-              {canManage && (
+              {canEdit && (
                 <div className="mt-6 flex items-center gap-3">
                   <button
                     type="button"

@@ -394,7 +394,12 @@ export default function Settings() {
   const { studio, loading, refresh } = useStudio()
   const { profile } = useUserProfile()
   const user = useEffectiveUser()
-  const canManageStudio = profile?.permissions.includes('studio.manage') ?? false
+  // OWNER-only, matching PATCH /studios/:studioId's own requireRole(OWNER)
+  // -- no longer a configurable permission (a real studio had this granted
+  // to ARTIST via the matrix, letting any artist rename the business or
+  // swap its logo). See lib/permissions.ts's own comment on why
+  // "studio.manage" was retired rather than just defaulted off.
+  const canManageStudio = user?.role === 'OWNER'
   const canManageLocations = profile?.permissions.includes('locations.manage') ?? false
   const canViewPolicies = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
   const isOwner = user?.role === 'OWNER'

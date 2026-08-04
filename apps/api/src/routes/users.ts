@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { requireAuth } from "../middleware/auth";
-import { Role } from "../../generated/prisma/enums";
+import type { Role } from "../../generated/prisma/enums";
 import { getEffectivePermissions } from "../lib/permissions";
 import { validateImageDataUrl } from "../lib/images";
 import { normalizePhone } from "../lib/phone";
@@ -162,37 +162,22 @@ router.patch("/me", async (req, res) => {
   // Profile.tsx's old combined form no longer sends them, but no other
   // caller of this route needs to be treated as invalid via a leftover key.
 
-  // Artist-only fields: no-op for any other role, and no-op if the caller's
-  // role is ARTIST but somehow has no Artist row yet (created separately by
-  // an OWNER via POST /artists — out of scope here).
-  if (req.user!.role === Role.ARTIST && (body.bio !== undefined || body.specialties !== undefined)) {
-    const artist = await prisma.artist.findUnique({ where: { userId: req.user!.userId } });
-
-    if (artist) {
-      const artistData: { bio?: string | null; specialties?: string[] } = {};
-
-      if (body.bio !== undefined) {
-        if (body.bio !== null && typeof body.bio !== "string") {
-          return res.status(400).json({ error: "bio must be a string or null" });
-        }
-        artistData.bio = typeof body.bio === "string" ? body.bio.trim() || null : null;
-      }
-
-      if (body.specialties !== undefined) {
-        if (!Array.isArray(body.specialties) || body.specialties.some((s: unknown) => typeof s !== "string")) {
-          return res.status(400).json({ error: "specialties must be an array of strings" });
-        }
-        artistData.specialties = body.specialties;
-      }
-
-      await prisma.artist.update({ where: { userId: req.user!.userId }, data: artistData });
-    }
-  }
+  // bio/specialties used to be editable here too (ARTIST role only), but
+  // that duplicated the exact same fields PATCH /artists/:id already
+  // handles (now self-editable there regardless of studio permissions --
+  // see requirePermissionOrSelfArtist) -- confusing to have the same data
+  // savable from two different forms on two different pages. Profile.tsx
+  // no longer sends bio/specialties here at all; this route is genuinely
+  // account-fields-only now (name/phone/avatar).
 
   const updated = await prisma.user.update({
     where: { id: req.user!.userId },
     data,
-    include: { artist: { select: { id: true, bio: true, specialties: true, allowsClientSelfScheduling: true, memberships: { where: { type: "HOME" }, select: { allowsStudioProfileEdits: true } } } } },
+    // Filtered to the CURRENT active HOME row (endedAt: null), not just
+    // type: HOME -- same fix already applied to GET /me just above and to
+    // artists.ts/studios.ts's own equivalent includes (artist mobility
+    // Part 2 and its follow-up) -- missed here until now.
+    include: { artist: { select: { id: true, bio: true, specialties: true, allowsClientSelfScheduling: true, memberships: { where: { type: "HOME", endedAt: null }, select: { allowsStudioProfileEdits: true } } } } },
   });
 
   const { password: _password, ...safeUser } = updated;

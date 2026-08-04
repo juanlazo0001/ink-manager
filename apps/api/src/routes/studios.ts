@@ -103,10 +103,18 @@ router.get("/:studioId", requireAuth, async (req, res) => {
 // is nullable; an empty string clears the field back to null.
 const OPTIONAL_TEXT_FIELDS = ["website"] as const;
 
-// Studio profile editing is a configurable permission (see lib/permissions)
-// — OWNER always has it; other roles depend on the studio's matrix.
+// Studio profile editing (name/logo/website) -- the business's own
+// identity -- is OWNER-only, full stop, no longer a configurable
+// permission (was requirePermission("studio.manage"), toggleable for
+// FRONT_DESK/ARTIST/CUSTOMER via the Permissions matrix; a real studio had
+// this granted to ARTIST, letting any artist rename the business or swap
+// its logo). Retired the same way clients.manage/appointments.manage were
+// (see lib/permissions.ts's PERMISSION_KEYS comment) -- "studio.manage" is
+// removed from that array entirely rather than just defaulted off, so no
+// override can ever re-enable it; any existing RolePermission row for it
+// is left untouched in the database, never read again.
 // logoUrl is either a base64 data URL (new/changed logo) or null (remove).
-router.patch("/:studioId", requireAuth, requirePermission("studio.manage"), async (req, res) => {
+router.patch("/:studioId", requireAuth, requireRole(Role.OWNER), async (req, res) => {
   const studioId = req.params.studioId as string;
 
   if (studioId !== req.user!.studioId) {

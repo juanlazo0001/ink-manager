@@ -7325,3 +7325,62 @@ Both isolated dev servers killed (`netstat` + `taskkill` by PID, including one m
 
 `f5003f0` on `main`.
 
+---
+
+# Artist self-service profile editing, duplicate Bio/Specialties, and Settings studio-edit lockdown
+
+Single session on `main`, direct follow-up to the previous solo-artist/go-solo work. Four reported UI/permission issues, all investigated and fixed. No schema changes.
+
+## 1. "Guest Artist" option hidden for solo studios
+
+`ArtistDetail.tsx`'s Guest Artist widget (the old, single-studio `Artist.isGuest`/`guestStartDate`/`guestEndDate` display flag -- not to be confused with the newer, real `StudioMembership.type: GUEST` from the artist-mobility work) makes no sense for a studio of one: there's no one else to be a "guest" relative to. Gated the widget behind the existing `isSoloStudio` flag: `{canManageStaff && !profile?.isSoloStudio && (...)}`.
+
+## 2. Artists can now self-edit their full profile, not just Bio/Specialties
+
+Real gap: `PATCH /artists/:id` was gated purely on the `artists.manage` permission (a studio grant for managing *other* artists), with no self-access path at all -- an artist without that permission couldn't touch their own rates, scheduling buffer, or services offered, only Bio/Specialties (via a separate `PATCH /me` carve-out) and Preferred Schedule (which already had its own correctly-scoped self-access).
+
+Added `requirePermissionOrSelfArtist(key)` (`lib/permissions.ts`), mirroring the existing `requirePermissionOrSoloArtist` pattern: checks the real permission first, then falls back to whether `req.params.id` belongs to the requesting user's own `Artist` row, setting `req.viaSelfArtistBypass = true`. `PATCH /:id` now uses this instead of a flat `requirePermission("artists.manage")`.
+
+Two field groups end up with different self-access rules, both intentional:
+- **Profile fields** (bio, specialties, portfolioImages, social links): self, or staff-with-`artists.manage` *and* the artist has delegated via `allowsStudioProfileEdits`. Unchanged in concept -- just fixed a bug where self-access was incorrectly also gated behind the delegation flag, which only ever made sense for the staff-editing-someone-else case.
+- **Core fields** (rates, scheduling buffer, services offered): self, or staff-with-`artists.manage`, no delegation concept -- previously staff-only, now genuinely self-editable.
+
+Deliberately **not** extended to `isGuest`/`guestStartDate`/`guestEndDate` (the studio's classification of the artist, never the artist's own call -- explicitly stripped back out when `viaSelfArtistBypass` is set) or `allowsClientSelfScheduling` (already has its own dedicated, more narrowly-scoped route, `PATCH /:id/self-scheduling` -- duplicating that here would just create two paths to the same field). This matches the user's own list exactly: rates, scheduling buffer, social links, services offered, preferred schedule, portfolio -- not guest status, not self-scheduling.
+
+`ArtistDetail.tsx`: renamed `canManage` -> `canManageStaff` (it was never really about "can manage," always "can manage *staff*"), and added `isSelf`/`canEditProfileFields`/`canEditCoreFields` as separate derived values, wiring Rates, Scheduling Buffer, and Services Offered to `canEditCoreFields`. The nested self-scheduling toggle inside the Scheduling Buffer widget deliberately stays gated on `canManageStaff` only, matching the backend decision above.
+
+## 3. Duplicate Bio/Specialties editing removed from Profile.tsx
+
+`Profile.tsx` had its own Bio/Specialties read-only display and edit form, entirely separate from (and duplicating) `ArtistDetail.tsx`'s "Manage" section -- editing one didn't visibly update the other without a refetch, and having the same two fields editable in two places was just confusing, as reported. Removed the "Artist details" display block, the Bio/Specialties form fields, and their handling from `EMPTY_FORM`/seeding/`handleSubmit`/`updateField` -- `Profile.tsx` now only edits `name`/`phone` (account-level fields), full stop.
+
+In its place, broadened the existing "Rates, schedule & services" card (previously solo-studio-only, since that was the only way a solo artist could reach `ArtistDetail.tsx` at all -- see the previous session's "real gap" note) to show for **any** artist, relabeled "Artist profile," description updated to "Manage your bio, specialties, portfolio, social links, rates, scheduling buffer, services offered, and preferred schedule." One entry point, one place each field lives -- not two.
+
+## 4. Settings: artists can no longer edit studio profile; locations already showed address/hours correctly
+
+Real gap, and a real bug, found together while investigating:
+
+- **The bug**: `Settings.tsx`'s `canManageStudio` read `profile?.permissions.includes('studio.manage')`, and `studio.manage` was a genuinely configurable permission key that could be granted to any role, including `ARTIST` -- and evidently had been, for the user's real studio, since they were seeing an editable Studio Profile card as an artist. The backend route itself, `PATCH /studios/:studioId` (name/logo/website), was gated the same way (`requirePermission("studio.manage")`), so this wasn't just a frontend display bug -- an artist with that permission genuinely could edit the studio via direct API call too.
+- **The fix**: retired `studio.manage` entirely, following the exact precedent already in this codebase for `clients.manage`/`appointments.manage` (removed from `PERMISSION_KEYS` on the backend and `PERMISSION_GROUPS` on the frontend, with a comment explaining the retirement; any existing `RolePermission` row referencing it is left untouched in the database, never read again). Backend route hardened to `requireRole(Role.OWNER)`; frontend `canManageStudio` hardened to `user?.role === 'OWNER'`. This is a genuine tightening, not just a default change -- no role below Owner can edit studio branding now, regardless of what any studio's permission matrix says.
+- **The "doesn't show address/hours" half -- investigated, no bug found.** `LocationCard`'s JSX already renders address, phone, and email unconditionally to any viewer; only the Edit/Delete/Add-location buttons are gated behind `canManageLocations`. `GET /:studioId/locations` is `requireAuth`-only, no extra permission check. Verified live against dev-studio's real seeded location ("Main Location," 123 Main St, Suite 2, Portland, OR 97201) as a plain artist with no `locations.manage` -- address, phone, and email all render correctly, only the management buttons are absent. (Dev-studio's location has no `hours` set, so hours display specifically wasn't exercised, but the rendering path is unconditional on permission either way.)
+
+## Verification -- real accounts, live dev API/web (isolated `:4093`/`:5292`)
+
+- **Solo studio**: Guest Artist widget confirmed absent from a real solo account's own `ArtistDetail.tsx`.
+- **Self-edit, artist2** (`dev-studio`, plain `ARTIST` role, no `artists.manage`): `/profile` shows no "Artist details" duplicate section, has the new unconditional "Artist profile" card. Own `ArtistDetail.tsx` shows no Guest Artist widget (staff-only, correctly excluded), Rates/Scheduling Buffer/Services Offered all render as live editable inputs (not read-only text), "Save changes" present. Actually edited and saved the hourly rate (`85` -> `hourlyRateCents: 8500` in the PATCH response) to prove the round trip, not just that inputs render.
+- **Settings lockdown, artist2**: Studio Profile card shows "You don't have permission to edit this," no Edit button; Locations card shows the real address/phone/email, no Add-location button. Direct API `PATCH /studios/:id` as artist2 returns `403` (defense-in-depth, not just a frontend gate). Screenshotted.
+- **Regression -- OWNER unaffected**: `owner@dev-studio.test`'s Settings still has a working Edit button on Studio Profile and Add-location button.
+- **Regression -- staff managing other artists unaffected**: OWNER viewing artist2's `ArtistDetail.tsx` (someone else's record) still sees the Guest Artist widget and Save changes, confirming the self-bypass didn't leak into or replace the staff path.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npm run build` (web) -- both clean, re-run after every remaining change.
+
+## Cleanup
+
+Both isolated dev servers killed (`netstat` + `taskkill` by PID). All scratch verification scripts deleted, none committed.
+
+## Commit
+
+`<pending>` on `main`.
+
+
