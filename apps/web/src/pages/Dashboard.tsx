@@ -24,6 +24,12 @@ interface FunnelStage {
 
 interface ReportsDashboard {
   range: { start: string; end: string }
+  // 'own' for an ARTIST (every section below scoped to their own assigned
+  // inquiries/appointments), 'studio' for everyone else -- see reports.ts's
+  // own comment on the route. The frontend still keys copy/layout off
+  // user.role directly (available immediately, no fetch to wait on) rather
+  // than this field; it's here mainly so the response is self-describing.
+  scope: 'own' | 'studio'
   funnel: { stages: FunnelStage[] }
   lostRate: { lost: number; cold: number; converted: number; lostColdRate: number | null }
   responseTime: {
@@ -112,6 +118,11 @@ export default function Dashboard() {
   })
 
   const welcomeName = profile?.name?.trim().split(' ')[0] || (user ? formatStatus(user.role) : '')
+  // Role, not data.scope -- available immediately on first render, so the
+  // header/card copy never flashes the studio-wide wording before the
+  // dashboard fetch resolves. The two always agree (see reports.ts).
+  const isOwnScope = user?.role === 'ARTIST'
+  const subtitle = isOwnScope ? "Here's how your work is going." : "Here's how the studio is doing."
 
   return (
         <div className="mx-auto max-w-7xl px-6 py-6 sm:px-10 sm:py-8">
@@ -123,7 +134,7 @@ export default function Dashboard() {
                       .kicker + h2 em) -- eyebrow above, serif "Welcome,"
                       with the name set apart in italic serif beneath,
                       rather than one plain heading line. */}
-                  <Eyebrow>Here's how the studio is doing.</Eyebrow>
+                  <Eyebrow>{subtitle}</Eyebrow>
                   <h1 className="mt-3 font-display text-[clamp(32px,4vw,44px)] font-normal leading-[1.05] tracking-[-0.015em] text-fg">
                     Welcome, <span className="text-accent-hover italic">{welcomeName}</span>
                   </h1>
@@ -131,7 +142,7 @@ export default function Dashboard() {
               ) : (
                 <>
                   <h1 className="text-2xl font-bold text-fg sm:text-3xl">Welcome, {welcomeName}</h1>
-                  <p className="mt-1 text-sm text-fg-secondary">Here's how the studio is doing.</p>
+                  <p className="mt-1 text-sm text-fg-secondary">{subtitle}</p>
                 </>
               )}
             </div>
@@ -173,7 +184,7 @@ export default function Dashboard() {
               exit={{ opacity: 0 }}
               transition={uiSpringTransition}
             >
-              <CardShell title="Inquiry Funnel" caption={`${range.start} – ${range.end}`}>
+              <CardShell title={isOwnScope ? 'Your Inquiry Funnel' : 'Inquiry Funnel'} caption={`${range.start} – ${range.end}`}>
                 <div className="mb-3 flex items-center gap-2 text-xs text-fg-muted">
                   <DocumentIcon className="h-3.5 w-3.5" />
                   Conversion is shown as % of Received still in this stage today
@@ -214,7 +225,7 @@ export default function Dashboard() {
                 )}
                 {!(isEditorial && data.lostRate.lostColdRate == null) && (
                   <p className={isEditorial ? 'mt-3 text-[13.5px] text-fg-muted' : 'mt-1 text-xs text-fg-muted'}>
-                    of inquiries that reached a terminal outcome ended lost or cold, rest converted
+                    of {isOwnScope ? 'your inquiries' : 'inquiries'} that reached a terminal outcome ended lost or cold, rest converted
                   </p>
                 )}
                 <div className="mt-4 flex flex-wrap gap-4 text-sm">
@@ -253,21 +264,37 @@ export default function Dashboard() {
                 </div>
               </CardShell>
 
-              <CardShell title="Artist Utilization" caption={`${range.start} – ${range.end}`}>
-                <div className="mb-3 flex items-center gap-2 text-xs text-fg-muted">
-                  <ArtistsIcon className="h-3.5 w-3.5" />
-                  Appointments scheduled in this range
-                </div>
-                <HorizontalBarList
-                  data={data.artistUtilization.map((a) => ({
-                    key: a.artistId,
-                    label: a.name,
-                    value: a.appointmentCount,
-                    valueLabel: String(a.appointmentCount),
-                  }))}
-                  emptyMessage="No appointments scheduled in this range."
-                />
-              </CardShell>
+              {/* An ARTIST's own artistUtilization is always exactly one
+                  entry (themselves, backend-scoped) -- a bar chart with one
+                  full-width bar reads as "compared to nobody," so this
+                  renders as a single stat card instead, matching Needs
+                  Scheduling's own layout, rather than the cross-artist
+                  comparison OWNER/FRONT_DESK still see. */}
+              {isOwnScope ? (
+                <CardShell title="My Appointments" caption={`${range.start} – ${range.end}`}>
+                  <div className={isEditorial ? 'flex items-center gap-3' : 'flex items-center gap-2'}>
+                    <ArtistsIcon className={isEditorial ? 'h-4 w-4 text-accent' : 'h-4 w-4 text-fg-muted'} />
+                    <p className={bigStatClass(isEditorial, 'xl')}>{data.artistUtilization[0]?.appointmentCount ?? 0}</p>
+                  </div>
+                  <p className="mt-1 text-xs text-fg-muted">Appointments scheduled in this range</p>
+                </CardShell>
+              ) : (
+                <CardShell title="Artist Utilization" caption={`${range.start} – ${range.end}`}>
+                  <div className="mb-3 flex items-center gap-2 text-xs text-fg-muted">
+                    <ArtistsIcon className="h-3.5 w-3.5" />
+                    Appointments scheduled in this range
+                  </div>
+                  <HorizontalBarList
+                    data={data.artistUtilization.map((a) => ({
+                      key: a.artistId,
+                      label: a.name,
+                      value: a.appointmentCount,
+                      valueLabel: String(a.appointmentCount),
+                    }))}
+                    emptyMessage="No appointments scheduled in this range."
+                  />
+                </CardShell>
+              )}
 
               {/* Not gated by canViewFinancial -- an operational scheduling
                   count, not a dollar figure, same visibility as the funnel/
@@ -278,7 +305,7 @@ export default function Dashboard() {
                   <p className={bigStatClass(isEditorial, 'xl')}>{data.needsSchedulingCount}</p>
                 </div>
                 <p className="mt-1 text-xs text-fg-muted">
-                  Project{data.needsSchedulingCount === 1 ? '' : 's'} with no appointment booked yet
+                  {isOwnScope ? 'Your project' : 'Project'}{data.needsSchedulingCount === 1 ? '' : 's'} with no appointment booked yet
                 </p>
               </CardShell>
 

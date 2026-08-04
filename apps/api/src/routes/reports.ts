@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
-import { AppointmentStatus, InquiryStatus, GiftCardStatus } from "../../generated/prisma/enums";
+import { AppointmentStatus, InquiryStatus, GiftCardStatus, Role } from "../../generated/prisma/enums";
 import { requireAuth } from "../middleware/auth";
 import { hasPermission, requirePermission } from "../lib/permissions";
 
@@ -57,11 +57,24 @@ function pct(numerator: number, denominator: number): number | null {
 // conversion rate is the more meaningful number, and gift card liability
 // is a right-now snapshot by definition).
 router.get("/dashboard", async (req, res) => {
-  const { studioId, role } = req.user!;
+  const { studioId, userId, role } = req.user!;
   const { start, end } = parseRange(req);
   const canViewFinancial = await hasPermission(studioId, role, "reports.viewFinancial");
 
-  const inquiryBaseWhere = { studioId, archivedAt: null, createdAt: { gte: start, lte: end } } as const;
+  // An ARTIST's dashboard is their own performance, not the whole studio's --
+  // every section below scopes to their own assigned inquiries/appointments
+  // when this is set, rather than the studioId-only where clauses OWNER/
+  // FRONT_DESK still get. null for every other role (no extra filter).
+  const scopingArtist =
+    role === Role.ARTIST ? await prisma.artist.findUnique({ where: { userId }, select: { id: true } }) : null;
+  const artistScope = scopingArtist ? { assignedArtistId: scopingArtist.id } : {};
+
+  const inquiryBaseWhere = {
+    studioId,
+    archivedAt: null,
+    createdAt: { gte: start, lte: end },
+    ...artistScope,
+  } as const;
 
   const [
     receivedCount,
@@ -116,14 +129,28 @@ router.get("/dashboard", async (req, res) => {
     }),
     prisma.appointment.groupBy({
       by: ["artistId"],
-      where: { studioId, archivedAt: null, startTime: { gte: start, lte: end } },
+      where: {
+        studioId,
+        archivedAt: null,
+        startTime: { gte: start, lte: end },
+        // Appointment carries its own direct artistId (not just via
+        // inquiry.assignedArtistId) -- scope on that field itself rather
+        // than scopingArtist's spread-in assignedArtistId shape above,
+        // which only applies to Inquiry where clauses.
+        ...(scopingArtist ? { artistId: scopingArtist.id } : {}),
+      },
       _count: { _all: true },
     }),
     // All-time by design -- see comment above the route.
     prisma.depositForm.findMany({
-      where: { inquiry: { studioId, archivedAt: null } },
+      where: { inquiry: { studioId, archivedAt: null, ...artistScope } },
       select: { createdAt: true, paidManually: true, paidAt: true },
     }),
+    // Gift card liability has no natural per-artist scope -- a card belongs
+    // to a client/the studio, not to whichever artist eventually redeems
+    // it -- so this stays studio-wide even for an ARTIST (moot by default
+    // anyway, since it's already behind reports.viewFinancial, which
+    // defaults false for ARTIST).
     prisma.giftCard.aggregate({
       where: {
         studioId,
@@ -148,6 +175,7 @@ router.get("/dashboard", async (req, res) => {
         status: { in: [InquiryStatus.SCHEDULING, InquiryStatus.WAITLISTED, InquiryStatus.CONFIRMED] },
         appointmentId: null,
         sessions: { none: {} },
+        ...artistScope,
       },
     }),
   ]);
@@ -191,6 +219,12 @@ router.get("/dashboard", async (req, res) => {
 
   res.json({
     range: { start: start.toISOString(), end: end.toISOString() },
+    // Tells the frontend whether every section above is studio-wide
+    // (OWNER/FRONT_DESK) or scoped down to just the requesting artist's own
+    // assigned inquiries/appointments -- drives copy ("the studio" vs "your
+    // work") and whether Artist Utilization renders as a cross-artist
+    // comparison at all.
+    scope: scopingArtist ? "own" : "studio",
     funnel: { stages: funnelStages },
     lostRate: {
       lost: lostCount,

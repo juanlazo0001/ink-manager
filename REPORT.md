@@ -7438,4 +7438,47 @@ Both isolated dev servers killed (`netstat` + `taskkill` by PID). All scratch ve
 
 `6b2209c` on `main`.
 
+---
+
+# Artist dashboard scoped to the artist's own metrics
+
+Single session on `main`, direct follow-up to the role-based access sweep. Reported directly: an `ARTIST`'s Dashboard showed the entire studio's numbers -- every other artist's appointment counts, every inquiry regardless of who it was assigned to -- not their own work. Same underlying class of issue as the sweep (a role seeing data beyond what's actually theirs), just a metrics page rather than a navigation leak.
+
+## Root cause
+
+`GET /reports/dashboard` (`apps/api/src/routes/reports.ts`) was purely `studioId`-scoped throughout, with zero awareness of which role was asking -- an `ARTIST` and the studio's `OWNER` got byte-for-byte the same funnel counts, lost/cold rate, response times, per-artist appointment breakdown, and scheduling backlog. The only existing role split (`reports.viewFinancial`) governs two dollar-figure cards, not the six operational ones every role already saw.
+
+## Fix
+
+Resolves the requesting user's own `Artist` row when `role === ARTIST` and threads an `artistScope` filter through every query in the route:
+
+- **Inquiry-based sections** (funnel, lost/cold rate, response time): `inquiryBaseWhere` now spreads in `{ assignedArtistId: artist.id }` for an artist, so every stage count and response-time average is theirs alone.
+- **Appointment groupBy** (backs Artist Utilization): scoped on `Appointment.artistId` directly (its own field, not `Inquiry.assignedArtistId`) -- for an artist this naturally collapses to a single group, their own.
+- **Deposit Conversion** (behind `reports.viewFinancial`, not default for `ARTIST`): deposit forms scoped to `inquiry: { ...artistScope }` too, for the rare case a studio grants that permission to an artist.
+- **Needs Scheduling**: same `assignedArtistId` scope -- an artist's backlog count, not the studio's.
+- **Gift Card Liability**: deliberately left studio-wide -- a gift card belongs to a client/the studio, not to whichever artist eventually redeems it, so there's no honest per-artist number to compute. Moot in practice (already behind `reports.viewFinancial`, off by default for `ARTIST`).
+
+Response now includes `scope: 'own' | 'studio'` so the payload is self-describing, though the frontend keys its copy off `user.role` directly (available immediately, no fetch to wait on -- avoids a flash of studio-wide wording before the dashboard query resolves).
+
+## Frontend
+
+`Dashboard.tsx`: subtitle switches to "Here's how your work is going." for an artist. "Inquiry Funnel" -> "Your Inquiry Funnel", Lost/Cold Rate's caption -> "of your inquiries...", Needs Scheduling's caption -> "Your project(s) with no appointment booked yet". Artist Utilization -- previously a `HorizontalBarList` comparing every artist in the studio -- swapped for a single-stat "My Appointments" card (same layout language as Needs Scheduling) when `isOwnScope`, since a backend-scoped artist's own utilization array is always exactly one entry; a bar chart with one full-width bar reads as "compared to nobody" rather than as a real comparison. `OWNER`/`FRONT_DESK` still get the original cross-artist bar list, unchanged.
+
+## Verification -- real accounts, live dev API/web (isolated `:4093`/`:5292`)
+
+- **artist2** (`dev-studio`, plain `ARTIST`): API response confirmed `scope: "own"` and `artistUtilization` containing exactly one entry (themselves, real appointment count). Dashboard renders "Here's how your work is going.", "Your Inquiry Funnel", "My Appointments" as a single-stat card, no "Artist Utilization" bar list anywhere on the page. Screenshotted -- funnel/response-time/needs-scheduling all populated with real, artist2-specific numbers.
+- **Regression -- OWNER unaffected**: API response confirmed `scope: "studio"` and `artistUtilization` still listing all 6 dev-studio artists; Dashboard still shows "Here's how the studio is doing." and the original "Artist Utilization" comparison, no "My Appointments" card.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npx tsc --noEmit` (web) -- both clean.
+
+## Cleanup
+
+Both isolated dev servers killed (`netstat` + `taskkill` by PID). All scratch verification scripts deleted, none committed.
+
+## Commit
+
+`<pending>` on `main`.
+
 
