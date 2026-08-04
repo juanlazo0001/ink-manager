@@ -154,11 +154,17 @@ const COUNTERPART_SELECT = {
   participants: {
     select: { userId: true, user: { select: { id: true, name: true, email: true, avatarUrl: true } } },
   },
+  // Only needed for the STAFF self-view case below (the studio's own name,
+  // shown in place of a fixed "other person" who doesn't structurally
+  // exist from that side of the thread).
+  studio: { select: { name: true } },
 } as const;
 
 function toCounterpart(
   conversation: {
     type: ConversationType;
+    studioId: string;
+    studio: { name: string };
     client: { id: string; firstName: string; lastName: string; user: { avatarUrl: string | null } | null } | null;
     staffUser: { id: string; name: string | null; email: string; role: Role; avatarUrl: string | null } | null;
     participants: { userId: string; user: { id: string; name: string | null; email: string; avatarUrl: string | null } }[];
@@ -173,6 +179,18 @@ function toCounterpart(
     };
   }
   if (conversation.type === ConversationType.STAFF && conversation.staffUser) {
+    // staffUserId identifies "which artist this thread belongs to" (see the
+    // schema's own comment on the field), not literally a staff member --
+    // from OWNER/FRONT_DESK's side that's correctly the other party, but
+    // when the artist THEMSELVES is the viewer, staffUser IS the viewer,
+    // and showing it back as their own counterpart read as chatting with
+    // themselves (reported directly: confusing). Any of the studio's
+    // OWNER/FRONT_DESK can reply here, so there's no one fixed person to
+    // name instead the way GROUP already lists "everyone but me" below --
+    // the studio itself is the honest answer.
+    if (viewerUserId === conversation.staffUser.id) {
+      return { id: conversation.studioId, name: conversation.studio.name, avatarUrl: null };
+    }
     return {
       id: conversation.staffUser.id,
       name: conversation.staffUser.name ?? conversation.staffUser.email,

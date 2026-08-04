@@ -1,10 +1,11 @@
-import { useEffect, useState, type FormEvent } from 'react'
-import { Navigate, useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useState, type FormEvent } from 'react'
+import { Link, Navigate, useNavigate } from 'react-router-dom'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import Modal from '../components/Modal'
 import InquiryKanbanBoard from '../components/kanban/InquiryKanbanBoard'
+import StatusPill from '../components/StatusPill'
 import { INQUIRY_TAB_COLUMNS, PROJECT_TAB_COLUMNS } from './Inquiries'
-import type { KanbanInquiry, KanbanTransition } from '../lib/kanban'
+import { deriveProjectStage, PROJECT_STAGE_LABELS, type KanbanInquiry, type KanbanTransition } from '../lib/kanban'
 import { apiFetch } from '../lib/api'
 import { formatDateTime, formatStatus } from '../lib/format'
 import { useEffectiveUser } from '../context/useEffectiveUser'
@@ -81,11 +82,8 @@ const EMPTY_APPROVE_FORM = {
 export default function MyInquiries() {
   const user = useEffectiveUser()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   useMarkSectionSeen('inquiries')
-
-  const [inquiries, setInquiries] = useState<Inquiry[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [refreshIndex, setRefreshIndex] = useState(0)
 
   const [approvingInquiry, setApprovingInquiry] = useState<Inquiry | null>(null)
   const [approveForm, setApproveForm] = useState(EMPTY_APPROVE_FORM)
@@ -97,18 +95,25 @@ export default function MyInquiries() {
   const [declineError, setDeclineError] = useState<string | null>(null)
   const [declineSubmitting, setDeclineSubmitting] = useState(false)
 
-  // Kanban board (Package E) -- a second, independent data source from the
-  // flat inbox above (?scope=all instead of the default ARTIST_ASSIGNED-
-  // only filter), fetched via React Query so it also benefits for free from
-  // the WS inquiry.updated invalidation (see assignedInquiriesQueryKey).
-  // Only ever fetched once the artist actually switches to Board view.
+  // Shared data source for BOTH List and Board (?scope=all, not the
+  // narrower default ARTIST_ASSIGNED-only filter) -- List used to fetch its
+  // own separate, narrower inbox and never learned about Projects at all,
+  // which is exactly why Board was the only place they showed up. One
+  // React Query source for both view modes now, same "List/Board are a
+  // rendering-mode toggle only" shape Inquiries.tsx's staff view already
+  // uses -- also gets the WS inquiry.updated invalidation for free (see
+  // assignedInquiriesQueryKey) in both modes.
   const [viewMode, setViewMode] = useState<ViewMode>('list')
   const [kanbanTab, setKanbanTab] = useState<PipelineTab>('inquiries')
 
-  const { data: kanbanInquiries, isLoading: kanbanLoading } = useQuery({
+  const {
+    data: kanbanInquiries,
+    isLoading: kanbanLoading,
+    isError: kanbanIsError,
+  } = useQuery({
     queryKey: assignedInquiriesQueryKey(user?.studioId ?? ''),
     queryFn: () => apiFetch<Inquiry[]>('/inquiries/assigned-to-me?scope=all'),
-    enabled: user?.role === 'ARTIST' && viewMode === 'kanban',
+    enabled: user?.role === 'ARTIST',
   })
 
   const kanbanTabStatuses: readonly string[] =
@@ -143,29 +148,6 @@ export default function MyInquiries() {
     }
   }
 
-  useEffect(() => {
-    if (user?.role !== 'ARTIST') return
-
-    let ignore = false
-
-    async function load() {
-      setError(null)
-
-      try {
-        const data = await apiFetch<Inquiry[]>('/inquiries/assigned-to-me')
-        if (!ignore) setInquiries(data)
-      } catch (err) {
-        if (!ignore) setError(err instanceof Error ? err.message : 'Failed to load inquiries')
-      }
-    }
-
-    load()
-
-    return () => {
-      ignore = true
-    }
-  }, [user?.role, refreshIndex])
-
   function openApprove(inquiry: Inquiry) {
     setApprovingInquiry(inquiry)
     setApproveForm(EMPTY_APPROVE_FORM)
@@ -196,7 +178,7 @@ export default function MyInquiries() {
       })
 
       setApprovingInquiry(null)
-      setRefreshIndex((index) => index + 1)
+      queryClient.invalidateQueries({ queryKey: assignedInquiriesQueryKey(user?.studioId ?? '') })
     } catch (err) {
       setApproveError(err instanceof Error ? err.message : 'Failed to approve inquiry')
     } finally {
@@ -224,7 +206,7 @@ export default function MyInquiries() {
       })
 
       setDecliningInquiry(null)
-      setRefreshIndex((index) => index + 1)
+      queryClient.invalidateQueries({ queryKey: assignedInquiriesQueryKey(user?.studioId ?? '') })
     } catch (err) {
       setDeclineError(err instanceof Error ? err.message : 'Failed to decline inquiry')
     } finally {
@@ -243,7 +225,9 @@ export default function MyInquiries() {
             <div>
               <h1 className="text-2xl font-bold text-fg sm:text-3xl">My Inquiries</h1>
               <p className="mt-1 text-sm text-fg-secondary">
-                {viewMode === 'list' ? 'Tattoo requests assigned to you for review.' : 'Everything currently assigned to you.'}
+                {kanbanTab === 'projects'
+                  ? 'Confirmed work: deposit paid through completed.'
+                  : 'Tattoo requests assigned to you, from new through a paid deposit.'}
               </p>
             </div>
 
@@ -265,28 +249,29 @@ export default function MyInquiries() {
             </div>
           </div>
 
-          {viewMode === 'kanban' && (
-            <div className="mt-4 flex gap-1 border-b border-border">
-              {(
-                [
-                  ['inquiries', 'Inquiries'],
-                  ['projects', 'Projects'],
-                ] as const
-              ).map(([tab, label]) => (
-                <button
-                  key={tab}
-                  type="button"
-                  onClick={() => setKanbanTab(tab)}
-                  className={[
-                    'rounded-t-lg px-4 py-2 text-sm font-medium transition',
-                    kanbanTab === tab ? 'border-b-2 border-accent text-fg' : 'text-fg-muted hover:text-fg',
-                  ].join(' ')}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          )}
+          {/* Inquiries/Projects is independent of List vs. Board -- same
+              shared data, just two renderings of it (see the query comment
+              above), same as the staff Inquiries.tsx page. */}
+          <div className="mt-4 flex gap-1 border-b border-border">
+            {(
+              [
+                ['inquiries', 'Inquiries'],
+                ['projects', 'Projects'],
+              ] as const
+            ).map(([tab, label]) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setKanbanTab(tab)}
+                className={[
+                  'rounded-t-lg px-4 py-2 text-sm font-medium transition',
+                  kanbanTab === tab ? 'border-b-2 border-accent text-fg' : 'text-fg-muted hover:text-fg',
+                ].join(' ')}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
 
           {viewMode === 'kanban' && (
             <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
@@ -307,25 +292,30 @@ export default function MyInquiries() {
             </div>
           )}
 
-          {viewMode === 'list' && error && (
+          {viewMode === 'list' && kanbanIsError && (
             <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
-              <p className="text-sm text-danger">{error}</p>
+              <p className="text-sm text-danger">Failed to load inquiries.</p>
             </div>
           )}
 
-          {viewMode === 'list' && !error && inquiries === null && (
-            <p className="mt-6 text-sm text-fg-secondary">Loading inquiries…</p>
+          {viewMode === 'list' && !kanbanIsError && kanbanLoading && (
+            <p className="mt-6 text-sm text-fg-secondary">Loading…</p>
           )}
 
-          {viewMode === 'list' && !error && inquiries !== null && inquiries.length === 0 && (
+          {viewMode === 'list' && !kanbanIsError && !kanbanLoading && kanbanFilteredInquiries && kanbanFilteredInquiries.length === 0 && (
             <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
               <p className="text-sm text-fg-secondary">Nothing assigned to you right now.</p>
             </div>
           )}
 
-          {viewMode === 'list' && !error && inquiries && inquiries.length > 0 && (
+          {viewMode === 'list' && !kanbanIsError && !kanbanLoading && kanbanFilteredInquiries && kanbanFilteredInquiries.length > 0 && (
             <div className="mt-6 space-y-5">
-              {inquiries.map((inquiry) => (
+              {kanbanFilteredInquiries.map((inquiry) => {
+                // Same "a Project shows its pipeline stage, not the raw
+                // status" rule as InquiryKanbanCard's own pill -- keeps the
+                // List row and this same item's Board card in agreement.
+                const projectStage = deriveProjectStage(inquiry)
+                return (
                 <div key={inquiry.id} className="rounded-2xl card-surface border border-border bg-surface p-5">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
@@ -335,22 +325,37 @@ export default function MyInquiries() {
                       <p className="mt-1 text-sm text-fg-secondary">
                         Submitted {formatDateTime(inquiry.createdAt)} via {formatStatus(inquiry.channel)}
                       </p>
+                      <StatusPill
+                        className="mt-2"
+                        status={projectStage ?? inquiry.status}
+                        label={projectStage ? PROJECT_STAGE_LABELS[projectStage] : undefined}
+                      />
                     </div>
                     <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => openApprove(inquiry)}
-                        className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover"
-                      >
-                        Approve
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => openDecline(inquiry)}
+                      {inquiry.status === 'ARTIST_ASSIGNED' && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => openApprove(inquiry)}
+                            className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover"
+                          >
+                            Approve
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openDecline(inquiry)}
+                            className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
+                          >
+                            Decline
+                          </button>
+                        </>
+                      )}
+                      <Link
+                        to={`/my-inquiries/${inquiry.id}`}
                         className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
                       >
-                        Decline
-                      </button>
+                        View details
+                      </Link>
                     </div>
                   </div>
 
@@ -389,7 +394,8 @@ export default function MyInquiries() {
                     <ImageGrid images={inquiry.placementImages} />
                   </div>
                 </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>

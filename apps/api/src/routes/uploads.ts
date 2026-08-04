@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { cloudinary } from "../lib/cloudinary";
 import { requireAuth, requireRole } from "../middleware/auth";
-import { requirePermission } from "../lib/permissions";
+import { hasPermission, requirePermission } from "../lib/permissions";
 import { Role } from "../../generated/prisma/enums";
 
 const router = Router();
@@ -33,9 +33,23 @@ router.get("/signature", (_req, res) => {
   res.json(signFolder(INQUIRY_UPLOAD_FOLDER));
 });
 
-// Authenticated: only studio members who can manage artist profiles can
-// upload portfolio images, scoped to their own folder.
-router.get("/portfolio-signature", requireAuth, requirePermission("artists.manage"), (_req, res) => {
+// Authenticated: studio members who can manage artist profiles get a
+// signature, same as before -- but PATCH /artists/:id (where the resulting
+// URL actually gets saved) has always let an artist manage their OWN
+// portfolio regardless of artists.manage (that permission is about
+// managing OTHER artists' profiles, not a gate on your own -- see
+// requirePermissionOrSelfArtist's own comment). This route never got that
+// same self-upload allowance: an artist without artists.manage could save
+// a portfolio URL but never obtain one, since requesting the signature
+// 403'd before they got that far. Any ARTIST-role caller is inherently
+// asking for their OWN folder here (there's no target-artist param to
+// check against), so no separate self-vs-other check is needed the way
+// requirePermissionOrSelfArtist needs one.
+router.get("/portfolio-signature", requireAuth, async (req, res) => {
+  const allowed = (await hasPermission(req.user!.studioId, req.user!.role, "artists.manage")) || req.user!.role === Role.ARTIST;
+  if (!allowed) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
   res.json(signFolder(PORTFOLIO_UPLOAD_FOLDER));
 });
 

@@ -7857,4 +7857,48 @@ Since the code above isn't deployed yet and the request was to act now, ran a on
 
 Script deleted immediately after use, along with the read-only investigation and verification scripts. No code changed by this follow-up -- covered entirely by the commit above.
 
+---
+
+# Three artist-view bugs: Projects missing from List, own-name in Staff chat header, portfolio upload Forbidden
+
+Three items from one round of direct user feedback, all specific to the artist's own view. No schema changes.
+
+## 1. Projects only showed up in Board view, not List
+
+Root cause: `MyInquiries.tsx` (the artist's own Inquiries/Projects page) had List and Board as two genuinely different features, not two renderings of the same data the way the staff `Inquiries.tsx` page already treats them (that page's own comment: "List/Kanban is a rendering-mode toggle only -- it shares the same fetched `inquiries`, the same tab, and the same filters"). Board fetched everything assigned to the artist (`?scope=all`) and had its own Inquiries/Projects tabs; List fetched a completely separate, narrower endpoint (`/inquiries/assigned-to-me`, no scope -- only `ARTIST_ASSIGNED`, the flat approve/decline inbox) with no tabs at all, so Projects had no way to appear there regardless of anything the artist did.
+
+Fixed by making List share Board's data source and tab state, matching the staff page's own architecture: the Inquiries/Projects tab bar now renders regardless of view mode, the `scope=all` React Query fetch now powers both, and List's per-item card only shows Approve/Decline when `status === 'ARTIST_ASSIGNED'` (the only stage that action ever applied to), adding a `StatusPill` (using the same `deriveProjectStage` a Project's Kanban card already uses, so the pill agrees with the tab it's sitting in) and a "View details" link to every row. Approve/Decline's old manual `refreshIndex` refetch was replaced with `queryClient.invalidateQueries` against the shared query key -- also picks up the existing WS `inquiry.updated` auto-invalidation for free, same as Board already did.
+
+## 2. Artist's Staff conversation showed their own name in the header
+
+Root cause: `Conversation.staffUserId` identifies "which artist this 1:1-with-management thread belongs to" (per the field's own schema comment), not literally a staff member. `toCounterpart()` (`apps/api/src/routes/conversations.ts`) returned that field's user unconditionally for `STAFF`-type conversations -- correct from OWNER/FRONT_DESK's side (the other party really is that artist), but when the artist themselves is the viewer, `staffUser` IS the viewer, so they saw their own name at the top of their own chat. Reported directly as confusing.
+
+Fixed: when `viewerUserId === conversation.staffUser.id`, `toCounterpart` now returns the studio's own name instead (added `studio: { select: { name: true } }` to `COUNTERPART_SELECT`). Deliberately not a specific staff member's name -- any of the studio's OWNER/FRONT_DESK can reply in this thread, so there's no one fixed "other person" the way GROUP threads already correctly list "everyone but me"; the studio itself is the honest answer. `counterpart.id` becomes the studio's id in this case (harmless: the only place `counterpart.id` matters for a non-CLIENT thread is an online-presence-dot lookup, which correctly just never lights up for it). This also happens to fix the same confusion in the Conversations list row, not just the open-thread header, since both read through the same `toCounterpart`.
+
+## 3. Portfolio image upload returned Forbidden for the artist's own account
+
+Root cause: `GET /uploads/portfolio-signature` (the Cloudinary-signature endpoint the upload flow calls before ever reaching the route that saves the resulting URL) was gated on plain `requirePermission("artists.manage")` -- a real staff-management permission an ARTIST role doesn't hold by default. `PATCH /artists/:id` (where the URL is actually saved) has always separately let an artist manage their own portfolio via `requirePermissionOrSelfArtist`, regardless of `artists.manage` -- but the signature route never got the equivalent self-upload allowance, so an artist without that permission could never obtain a signature to upload with in the first place, 403ing before they got anywhere near the save step.
+
+Fixed: the route now also allows any `ARTIST`-role caller. No target-artist id exists on this route to check "is this actually your own" against (unlike `requirePermissionOrSelfArtist`, which checks a specific `:id` param) -- an artist requesting this signature is inherently asking for their own folder, so no separate self-vs-other check is needed.
+
+## Verification -- live dev API/web
+
+Used a real dev-DB artist (`avatartest-p4@example.com`) with both `ARTIST_ASSIGNED` and later-stage (`SCHEDULING`/`CONFIRMED`/`DEPOSIT_PENDING`) inquiries assigned, and an existing real `STAFF` conversation.
+
+- **Projects in List**: switched to the Projects tab in List view -- real items render with correct stage pills (Needs Scheduling / Session Complete / Scheduled), no Approve/Decline on any of them, "View details" present on every row; switching to Board kept the same tab selected and showed the same items (screenshotted).
+- **Staff chat header**: `GET /conversations/:id/messages` as this artist, on their own real `STAFF` conversation, now returns `counterpart: { id: "<studioId>", name: "Dev Studio", avatarUrl: null }` instead of their own name/id.
+- **Portfolio upload**: `GET /uploads/portfolio-signature` as this artist now returns `200` with a real Cloudinary signature (previously `403 Forbidden`).
+
+## Typechecks
+
+`npx tsc --noEmit -p tsconfig.app.json` (web) and `npm run build` (web) both clean; `npx tsc --noEmit` (api) clean.
+
+## Cleanup
+
+Dev servers killed (`netstat` + `taskkill` by PID). `apps/web/.env.local` removed. All scratch scripts deleted immediately after use, none committed. Left several unrelated files in the working tree completely untouched -- a commit already on `origin/main` (`ada0cda`, "Fix mobile dropdown clipping in date/specialty pickers") and a handful of uncommitted modifications (`ConversationsPanel.tsx`, `PillMenu.tsx`, `index.css`, `Calendar.tsx`, branding assets) that this session didn't make, apparently from concurrent work elsewhere in the same repo folder -- only this session's own three files were staged/committed.
+
+## Commit
+
+`<pending>` on `main`.
+
 
