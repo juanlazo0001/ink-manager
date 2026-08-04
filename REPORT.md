@@ -7481,4 +7481,97 @@ Both isolated dev servers killed (`netstat` + `taskkill` by PID). All scratch ve
 
 `b57b20a` on `main`.
 
+---
+
+# Artists can review their own projects (sessions, photos, notes) with deposit/estimate financial details limited
+
+Single session on `main`, direct follow-up to the role-based access sweep. Reported directly: an artist assigned to a project on a multi-person studio had no way to review its details -- description, sessions, photos, notes -- beyond the flat approve/decline inbox, which only ever shows a freshly-assigned inquiry, not anything already converted to a scheduled/confirmed project. One schema change (`InquiryNote.visibleToArtist`).
+
+## Real gap found while investigating: `GET /inquiries/assigned-to-me` already over-shared financial data
+
+Before building anything, checked what data the artist's existing Kanban board (Package E) actually receives today. `GET /inquiries/assigned-to-me` used the same `INQUIRY_INCLUDE` as the full staff detail route -- meaning any `ARTIST` fetching their own assigned inquiries already received `depositForms` in full: `depositAmount`, `feeAmount`, `totalCharged`, `signatureData` (the literal signature image), `signatureName`, `paidVia`, and attached `giftCard` (`code`, `amountCents`, `status`). None of this was rendered by `MyInquiries.tsx`'s narrower TS interface, but the raw API response already contained it -- a real, present exposure (visible in any browser Network tab), not a hypothetical one, matching this task's own "limited visibility into estimate/deposit" requirement.
+
+## Backend: a dedicated, deliberately limited artist projection
+
+Added `ARTIST_INQUIRY_SELECT` (`routes/inquiries.ts`), used by both `GET /assigned-to-me` (list, now `select` instead of `include: INQUIRY_INCLUDE`) and a new `GET /assigned-to-me/:id` (single-project detail, same `assignedArtistId` scoping, 404 otherwise). Sessions, session photos, and reference/placement images are included in full -- this is the artist's own working data. Deposit forms and planned-session deposit links are reduced to `{ id, sessionNumber, signedAt, paidAt, paidManually }` -- no dollar amounts, no signature, no payment method, no gift card details, the same "operational status yes, financial specifics no" split `reports.viewFinancial` already draws for the Dashboard (see the previous session's entry).
+
+## Notes: asked first, since it reversed a deliberate prior decision
+
+`NotesSection.tsx` had an explicit, intentional comment: "Internal only -- never shown to the client or shared with an artist." Rather than silently reversing that, asked whether an artist should see internal staff notes at all. Answer: a per-note toggle, staff's call each time. Added `InquiryNote.visibleToArtist` (`Boolean @default(false)`, migration `20260804123433_inquiry_note_visible_to_artist`) -- `POST`/`PATCH /inquiries/:id/notes` accept it, `ARTIST_INQUIRY_SELECT`'s `notes` relation filters `where: { visibleToArtist: true }`. `NotesSection.tsx` gained a `supportsArtistVisibility` prop (on only at `InquiryDetail.tsx`'s call site -- `AppointmentDetail.tsx`'s session-notes usage is untouched, no schema change there) that adds a "Share with assigned artist" checkbox to the composer and each note's edit mode, plus a small "Shared with artist" badge on posted notes that have it set. Default stays off, matching both the column's default and the component's original design intent -- nothing becomes artist-visible without a staff member deliberately opting it in.
+
+## Migration note: pre-existing checksum drift on an unrelated migration
+
+`npx prisma migrate dev` refused to proceed, reporting migration `20260801214242_flash_payment` (unrelated, already applied, from an earlier session) was "modified after it was applied," and offered only `prisma migrate reset` (drops the entire dev database) as its resolution path. Did **not** run that -- `prisma migrate status` independently confirmed the real dev database schema is already up to date and uncorrupted, so this is specifically a `migrate dev`'s shadow-database checksum check tripping on that one file (likely a line-ending normalization at some point, given this repo's own recurring CRLF/LF git warnings), not real drift. Worked around it entirely: hand-wrote the migration SQL (`ALTER TABLE "InquiryNote" ADD COLUMN "visibleToArtist" BOOLEAN NOT NULL DEFAULT false;`), then applied it with `prisma migrate deploy` (the production-safe path, no shadow database involved). Confirmed clean afterward: `prisma migrate status` reports up to date, 83 migrations. **Flagging this for whoever hits it next**: don't run `migrate reset` against the dev database to clear this -- it's real data, and the drift is cosmetic, not a genuine schema mismatch.
+
+## Frontend: new `MyProjectDetail.tsx`, not a retrofit of the staff page
+
+Considered reusing `/inquiries/:id` (`InquiryDetail.tsx`) with per-widget hiding for an artist viewer, but that page is built almost entirely around staff workflow actions (Mark Lost, Reopen, Waitlist, reassign artist, revise estimate, manage deposits, share-to-artist) that don't apply to an artist reviewing their own work, and piecemeal-hiding that much surface area is exactly the kind of thing that leaves an accidental gap. Built a new, separate, purpose-built page instead -- the same architectural choice this codebase already made once for `MyInquiries.tsx` itself (parallel to, not reusing, `Inquiries.tsx`).
+
+`MyProjectDetail.tsx` (route `/my-inquiries/:id`, `ARTIST`-guarded): Project details (description, placement, size, color, budget, timing, tattooed-before, their own estimate range), reference/placement images, Sessions (date, status, checked-out, waiver status, photos), Deposit status (signed/paid only, per the backend's limited shape), and Notes (read-only, only ever the pre-filtered artist-visible set). No approve/decline actions here -- those stay exactly where they already work (the List inbox, and the Kanban board's own drag-to-approve flow) rather than being duplicated a third time.
+
+`MyInquiries.tsx`'s Kanban board never had `onOpenCard` wired at all (confirmed by reading the component -- clicking a card did nothing). Wired it to `navigate(/my-inquiries/${id})`, covering both the Inquiries and Projects tabs.
+
+## Verification -- real accounts, live dev API/web (isolated `:4093`/`:5292`)
+
+- **Limited projection, direct API**: fetched a real dev-studio project (artist2's, with a real deposit form: `$100` deposit, `$10` fee, signed/paid) via `GET /inquiries/assigned-to-me/:id` as artist2 -- response's `depositForms[0]` has no `depositAmount` key at all (`'depositAmount' in obj` -> `false`), only `{ id, sessionNumber, signedAt, paidAt, paidManually }`.
+- **Notes toggle, end to end**: posted two notes as OWNER on that same project -- one default (private), one with `visibleToArtist: true`. artist2's `GET /assigned-to-me/:id` returned exactly one note (the shared one); the private one never appeared. Confirmed the reverse isn't broken either: OWNER's own `InquiryDetail.tsx` still shows both notes, with a "Shared with artist" badge on only the one that has it (screenshotted).
+- **Project detail page, live**: artist2 navigating to `/my-inquiries/:id` for that same project sees Sessions (1, Completed, checked out), Deposit status ("Session 1 -- Signed [date], Paid" -- no dollar figures anywhere on the page except their own estimate, "$300 - 2h", which is intentionally visible), and Notes (only the shared one). Screenshotted.
+- **Kanban wiring**: confirmed `onOpenCard` navigates correctly from both Kanban tabs.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npm run build` (web) -- both clean.
+
+## Cleanup
+
+Both isolated dev servers killed (`netstat` + `taskkill` by PID). All scratch verification scripts deleted, none committed. Real test data left in the dev database (two real notes on a real dev-studio project, one private, one artist-shared -- exactly the state needed to demonstrate the feature is real, not mocked).
+
+## Commit
+
+`3ba4b47` on `main`.
+
+---
+
+# Solo-studio simplification, batch 2
+
+Single session on `main`, five smaller items reported together, same spirit as the earlier solo-studio simplification passes (Team/Locations/Studio Profile/Tasks removal for a studio of one).
+
+## 1. "View portal as..." hidden until real staff exists
+
+`TopBar.tsx`'s `canUseViewAs` only checked `realUser?.role === 'OWNER' && !viewAsTarget` -- a solo `OWNER`+`Artist` always saw the entry point, even though `ViewAsPicker`'s own roster already excludes the acting user, so opening it only ever showed "No other staff members yet." Added `&& !(profile?.isSoloStudio ?? false)`. Reappears automatically the moment a second person joins, same `isSoloStudio` flip every other item in this family uses -- no separate re-enable step.
+
+## 2. Tasks: "Assigned to Me" -> "Personal" for a solo studio
+
+The heading itself was the only piece still using multi-person framing -- the filter options, the "Assigned by Me" section, and the "Assigned by others" filter choice were all already correctly hidden for `isSoloStudio` from an earlier pass. Just the section's own `<h2>` text was still hardcoded "Assigned to Me"; now `profile?.isSoloStudio ? 'Personal' : 'Assigned to Me'`.
+
+## 3. Artist filters hidden with exactly one artist
+
+- **Inquiries.tsx**: the "All artists" `MultiSelectFilter` (staff Inquiries & Projects page) is now `!profile?.isSoloStudio`-gated -- narrowing between "the one artist" and "Unassigned" is not a meaningful filter.
+- **Calendar.tsx**: found an existing, already-correct precedent in the same file -- the Locations "Hours for" selector is already gated `locations.length > 1`, not `> 0`. The Artist toggle-chip row and the mobile Artist `<select>` were still using `.length > 0`, an inconsistency with that established convention, not a deliberate choice -- both changed to `> 1`. (The "Include past guests" checkbox is nested inside the same block; unaffected in practice, since a solo studio can't have guest artists at all -- that concept was already removed for solo studios in an earlier pass.)
+
+## 4. Flash Gallery: public link always available for a solo studio, real bug fixed
+
+Found and fixed the actual cause, not just a missing gate: `linkArtistId`'s ternary only special-cased `user?.role === 'ARTIST'` (falling back to `profile?.artist?.id`) -- a solo studio's `OWNER`+`Artist` has role `OWNER`, not `ARTIST`, so it fell through to the staff branch (`artistFilter.length === 1 ? artistFilter[0] : null`), which defaults to `null` (no filter selected) -- meaning the copy-link button was **disabled by default** for exactly the account this task is about, only becoming usable if they happened to filter down to themselves first. Fixed by also checking `profile?.isSoloStudio` (which correctly resolves `profile?.artist?.id` too, since `GET /me`'s own `artist` field is role-agnostic -- populated for anyone with a real `Artist` row, not just `ARTIST`-role users). Also hid the now-pointless "All artists" filter for `isSoloStudio`, same reasoning as item 3.
+
+## 5. Dashboard "Artist Utilization" -- already fixed, no bug found
+
+Re-raised by the user, already resolved in the immediately preceding session (`b57b20a`): every `ARTIST` (not just solo) already gets a "My Appointments" single-stat card instead of the cross-artist comparison. Verified current code matches -- no change needed here.
+
+## Verification -- real accounts, live dev API/web (isolated `:4093`/`:5292`)
+
+- **Solo** (`juan.lazo0001+qa-solo@gmail.com`): no "View portal as" in the account menu; Tasks shows "Personal" (not "Assigned to Me"); Inquiries has no "All artists" filter; Calendar has no Artists chip row; Flash Gallery has no "All artists" filter and its "Copy public gallery link" button is present and enabled by default (screenshotted).
+- **Regression -- dev-studio (multi-person) unaffected**: OWNER still sees "View portal as", Tasks still reads "Assigned to Me", Inquiries and Flash Gallery still show "All artists", Calendar's Artist chip row (12 real artists, screenshotted) is unaffected.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npm run build` (web) -- both clean.
+
+## Cleanup
+
+Both isolated dev servers killed (`netstat` + `taskkill` by PID). All scratch verification scripts deleted, none committed.
+
+## Commit
+
+`4552949` on `main`.
+
 
