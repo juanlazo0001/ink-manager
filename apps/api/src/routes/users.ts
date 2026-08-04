@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
-import { requireAuth, requireRole } from "../middleware/auth";
+import { requireAuth } from "../middleware/auth";
 import { Role } from "../../generated/prisma/enums";
 import { getEffectivePermissions } from "../lib/permissions";
 import { validateImageDataUrl } from "../lib/images";
@@ -230,12 +230,12 @@ router.patch("/me", async (req, res) => {
   res.json({ ...serializeUser(safeUser), permissions });
 });
 
-// Part 3: artist self-deletion. Deliberately requireRole(ARTIST), self
-// only -- there is no studioId/userId param, always "whoever's token this
-// is." Never reachable from any studio/staff-facing route (see Part 4's
-// own adversarial confirmation that no such path exists) -- a studio can
-// remove an artist's MEMBERSHIP (POST /studios/:studioId/artists/:artistId/
-// remove), never their account.
+// Part 3: artist self-deletion (extended later to solo owner-artists too,
+// see isEligible below). Self only -- there is no studioId/userId param,
+// always "whoever's token this is." Never reachable from any studio/staff-
+// facing route (see Part 4's own adversarial confirmation that no such
+// path exists) -- a studio can remove an artist's MEMBERSHIP (POST
+// /studios/:studioId/artists/:artistId/remove), never their account.
 //
 // Anonymize-in-place, not a cascade delete: the User/Artist rows are never
 // removed, only scrubbed, so every historical FK a real Appointment/
@@ -244,7 +244,7 @@ router.patch("/me", async (req, res) => {
 // only change access" principle deactivation and go-solo/studio-departure
 // already use elsewhere in this app, just permanent and personal-data-
 // scrubbing rather than just an access flag.
-router.post("/me/delete-account", requireRole(Role.ARTIST), async (req, res) => {
+router.post("/me/delete-account", async (req, res) => {
   const { confirm } = req.body ?? {};
 
   if (confirm !== "DELETE") {
@@ -252,6 +252,20 @@ router.post("/me/delete-account", requireRole(Role.ARTIST), async (req, res) => 
   }
 
   const userId = req.user!.userId;
+
+  // A solo owner-artist (go-solo's own studio, or any studio that has
+  // simply shrunk to just them) is functionally identical to a plain
+  // ARTIST here -- there's no other staff whose access this could disrupt,
+  // and no one left to run the studio for. Any other OWNER (one with
+  // active colleagues) is deliberately excluded: that's "delete my
+  // business," a materially bigger and more dangerous action than
+  // "delete my own artist account," and not what this route does.
+  const isEligible =
+    req.user!.role === Role.ARTIST ||
+    (req.user!.role === Role.OWNER && (await isSoloStudioArtistCheck(req.user!.studioId, userId)));
+  if (!isEligible) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
 
   const artist = await prisma.artist.findUnique({ where: { userId }, select: { id: true } });
   if (!artist) {

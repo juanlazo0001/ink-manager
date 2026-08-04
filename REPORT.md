@@ -7806,4 +7806,45 @@ Both isolated dev servers killed (`netstat` + `taskkill` by PID). All scratch ve
 
 `f828f31` on `main`.
 
+---
+
+# Solo owner-artists can now self-delete too
+
+Reported directly: Justin (converted to his own solo studio "Justin Tattoo" earlier this session via go-solo mechanics) had no way to delete his own account, even though the self-deletion feature already existed.
+
+## Root cause
+
+`POST /users/me/delete-account` and Profile.tsx's Danger Zone were both deliberately scoped to `role === ARTIST` exactly when Part 3 first built self-deletion, with an explicit comment calling out the exclusion: "a solo owner deleting their account would also mean deleting the studio itself, a materially different and more complex flow this doesn't attempt to cover." Justin's go-solo conversion made him `role: OWNER` of his own studio, so both the backend route (403) and the frontend button (hidden) correctly enforced that original, narrower design -- just not one that covers a real, now-existing case.
+
+Revisiting it: a solo owner-artist isn't actually the harder case that comment was guarding against. There's no other staff whose access this could disrupt, and the existing anonymize-in-place mechanism (end every active membership, scrub login/profile, leave every historical FK intact) already generalizes cleanly -- ending their one HOME membership just leaves their solo studio with zero active users, a harmless orphaned shell, not a broken one. The dangerous case is a *non-solo* OWNER deleting themselves (that's "delete my business," could leave real colleagues locked out, and isn't personal-account deletion at all) -- that stays excluded.
+
+## Fix
+
+- `apps/api/src/routes/users.ts`: `POST /me/delete-account` no longer uses `requireRole(Role.ARTIST)`. Inline eligibility check instead: `role === ARTIST`, or `role === OWNER` and `isSoloStudioArtist(studioId, userId)` -- reusing the exact helper (`lib/soloStudio.ts`) already used elsewhere in this app for this same "is this OWNER's own account the studio's only real occupant" question, not a new concept.
+- `apps/web/src/pages/Profile.tsx`: Danger Zone's gate updated to match -- `role === 'ARTIST' || (role === 'OWNER' && profile.isSoloStudioArtist)`.
+
+No schema change. No change to the deletion logic itself (anonymize-in-place, membership-ending, flash-piece handling) -- only who's allowed to trigger it.
+
+## Verification -- live dev API/web
+
+Reset a leftover dev-DB test account (`juan.lazo0001+qa-solo@gmail.com`, a real solo OWNER+Artist from earlier session testing) to a known password and drove it through a real browser session:
+- `GET /users/me` returns `role: OWNER`, `isSoloStudioArtist: true`.
+- Profile page renders Danger Zone / "Delete account".
+- `POST /users/me/delete-account` with `confirm: "DELETE"` returns `200 { success: true }`; direct DB read afterward confirms the user row was correctly anonymized (email rewritten to `deleted-{id}@...`, `password: null`, `isActive: false`, `deletedAt` set) and their one HOME membership was ended (`endedAt` set) -- same shape as every other self-deletion this session, just reachable from OWNER now.
+- Regression check: a real non-solo OWNER (`owner@dev-studio.test`, multi-person dev-studio) still gets Danger Zone hidden and a `403 Forbidden` from the API -- confirms the narrower "delete my business" case stays excluded, only the solo case was widened.
+
+(Dev API's `VITE_API_URL` pointed at a LAN IP unreachable from this sandbox -- worked around with a local-only, gitignored `apps/web/.env.local` override for the duration of testing, removed afterward.)
+
+## Typechecks
+
+`npx tsc --noEmit -p tsconfig.app.json` (web) and `npm run build` (web) both clean; `npx tsc --noEmit` (api) clean.
+
+## Cleanup
+
+Dev servers killed (`netstat` + `taskkill` by PID). `apps/web/.env.local` removed. All scratch scripts (`scratch-find-solo-owner.ts`, `scratch-reset-pw.ts`, `scratch-verify-after.ts`, `scratch-verify-after2.ts`) deleted immediately after use, none committed. The dev-DB test account used for verification (`juan.lazo0001+qa-solo@gmail.com`) is now genuinely deleted (anonymized) as a side effect of testing the real flow -- consistent with what the feature is supposed to do, left as-is rather than restored.
+
+## Commit
+
+`<pending>` on `main`.
+
 

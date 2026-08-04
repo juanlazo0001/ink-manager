@@ -969,13 +969,13 @@ export default function Profile() {
             </div>
           )}
 
-          {/* Part 3: artist self-deletion. profile.role === 'ARTIST' exactly
-              (not just isArtist, which also covers a solo OWNER+Artist) --
-              matches the backend's own requireRole(ARTIST) scope. A solo
-              owner deleting their account would also mean deleting the
-              studio itself, a materially different and more complex flow
-              this doesn't attempt to cover. */}
-          {profile && profile.role === 'ARTIST' && (
+          {/* Part 3: artist self-deletion, extended to solo owner-artists --
+              matches the backend's own isEligible check (ARTIST, or OWNER
+              with isSoloStudioArtist true). Not plain isArtist: a non-solo
+              OWNER who also holds an Artist profile still has colleagues
+              depending on that studio, and deleting their own account isn't
+              a flow this route (or this button) covers. */}
+          {profile && (profile.role === 'ARTIST' || (profile.role === 'OWNER' && profile.isSoloStudioArtist)) && (
             <div className="mt-6 rounded-2xl border border-danger/30 bg-danger/5 p-6">
               <p className="text-xs font-semibold uppercase tracking-wider text-danger">Danger zone</p>
               <div className="mt-4 flex items-start justify-between gap-4">
