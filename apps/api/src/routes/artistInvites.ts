@@ -91,6 +91,22 @@ router.post("/artist-invite/accept/:token", optionalAuth, async (req, res) => {
         data: { studioId: invite!.studioId, artistId: artist.id, type: invite!.membershipType, allowsStudioProfileEdits: false },
       });
       await tx.artistMembershipInvite.delete({ where: { id: invite!.id } });
+      // Part 2 (guest-artist onboarding): a real, skippable-not-blocking
+      // nudge on a genuinely new identity's own task list -- createdById
+      // set to themselves (not left null/system) so it lands in Tasks.tsx's
+      // "My tasks" grouping rather than "Assigned by others", which would
+      // read as a colleague assigned it and show "Assigned by a deleted
+      // user" once createdBy resolves to nothing. No dueAt -- this is an
+      // encouragement, not a deadline.
+      await tx.personalTask.create({
+        data: {
+          studioId: invite!.studioId,
+          userId: user.id,
+          createdById: user.id,
+          title: "Complete your artist profile",
+          notes: "Add a bio, your specialties, and a few portfolio pieces so clients and your studio can get to know your work.",
+        },
+      });
       return { user, artist };
     });
 
