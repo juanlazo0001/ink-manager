@@ -7574,4 +7574,81 @@ Both isolated dev servers killed (`netstat` + `taskkill` by PID). All scratch ve
 
 `4552949` on `main`.
 
+---
+
+# Guest artist invite fixes + profile onboarding nudge + artist account deletion
+
+Four-part session on `main`, each part committed and pushed separately. Schema changes in Parts 1 and 3 (both additive columns, applied via `migrate deploy` rather than `migrate dev` -- see the migration note below). No other session was mid-migration (`prisma migrate status` confirmed clean before starting).
+
+## Part 1 -- two small bugs: invite name + Guest Artists grouping (`6dc9563`)
+
+**Name dropped on guest-artist invite acceptance.** Root cause was at invite-*creation* time, not accept time: Team.tsx's "Invite Artist" form already collected a name and sent it in the request body, but `studios.ts`'s `POST /:studioId/invites` ARTIST branch called `createArtistMembershipInvite({ studioId, studioName, email, membershipType })` -- dropping `name` on the floor -- and `ArtistMembershipInvite` had no column to hold it even if passed. By the time the invitee reached the accept page days later, the name was long gone, unrecoverable. Added `ArtistMembershipInvite.name` (migration `20260804145238_artist_membership_invite_name`), threaded it through `createArtistMembershipInvite`, and applied it on `POST /artist-invite/accept/:token`'s new-identity branch only -- an *existing* identity accepting keeps their own real name, never overwritten by whatever the inviting studio happened to type.
+
+**Team → Artists tab HOME/GUEST grouping.** The grouping UI already existed, but filtered on `Artist.isGuest` -- the *older*, single-studio "temporarily visiting" display flag -- instead of the real `StudioMembership.type` from the artist-mobility work. A real guest artist (invited via the actual Guest Artist flow) almost never has the old flag set, so every one of them was silently miscategorized under "Studio Artists" instead of its own "Guest Artists" section. Fixed to filter on `memberships[0]?.type === 'GUEST'`, the field the task specifically named.
+
+**Verified live**: sent a real guest invite with a name, accepted it as a genuinely new identity, confirmed `GET /users/me` returns the real name end to end. Confirmed the Artists tab now shows a real "Guest Artists" section with real guest accounts in it, separate from "Studio Artists" (screenshotted) -- including the old `isGuest`-flag badges (a few pre-existing test artists happen to have that legacy flag set) correctly staying independent and unaffected, since they're a genuinely different, orthogonal concept.
+
+## Part 2 -- first-time guest artist: redirect, encouragement, task nudge (`994a1de`)
+
+**Redirect to Profile** already worked correctly for the artist-invite path (both new and existing identity both `navigate('/profile')`, same as the regular team invite) -- investigated, no fix needed.
+
+**What was actually missing**: a dismissible, non-blocking "Welcome! Let's set up your artist profile" banner on `Profile.tsx`, shown whenever an artist's bio *and* specialties are both still empty. No separate "new account" flag was needed -- an empty profile is itself the signal, so the banner fades away on its own the moment either field gets real content, dismissed or not; a deliberate dismiss (✕, `localStorage`, scoped per-user) is also offered for someone who genuinely doesn't want to fill it in yet. A real `PersonalTask` ("Complete your artist profile") is created server-side at account-creation time for a genuinely new identity accepting any artist invite (HOME or GUEST -- both go through the identical "new identity" branch) -- `createdById` set to themselves specifically so it lands in Tasks.tsx's "My tasks" grouping, not "Assigned by others" (which would misleadingly read as a colleague assigned it).
+
+**Verified live**: completed a real guest-artist invite end to end -- landed on `/profile`, saw the banner with a working "Complete my profile" CTA (screenshotted, correctly showing the Part 1 name fix carrying through too), confirmed the task appears on `/tasks` with no "Assigned by" attribution, dismissed the banner and confirmed it survives a reload (not dismissible-then-reappearing).
+
+## Part 3 -- artist account self-deletion: anonymize in place, preserve history (`fff806c`)
+
+**Design**, following the existing "preserve history, only change access" convention this codebase already uses for deactivation and studio departure (confirmed by reading the *existing* staff hard-delete route first -- it explicitly documents that an artist with any real appointment/inquiry history is hard-blocked from deletion entirely, deactivation being the only option, because the schema's FKs aren't built to survive a real cascade delete): **anonymize in place, never delete the row.** New `POST /users/me/delete-account` (`requireRole(ARTIST)`, self only, no id param at all -- there's nothing to redirect it at). Typed `"DELETE"` confirmation, matching the exact convention the existing staff-delete-account modal already established (`Team.tsx`'s own `DELETE_CONFIRM_TEXT`).
+
+**Mechanism, exactly**:
+- `User` row: `email` → a synthetic, unique-safe placeholder (`deleted-{userId}@deleted.inkmanager.invalid`, freeing the real address for reuse), `password` → `null` (mathematically un-loginable -- `bcrypt.compare` against `null` never matches, confirmed this doesn't crash via the login route's own existing `DUMMY_PASSWORD_HASH` fallback), `name` → `"Deleted User"`, `phone`/`avatarUrl` → `null`, `isActive` → `false`, new `deletedAt` timestamp, every outstanding token (invite/password-reset/email-change) cleared.
+- `Artist` row: `bio`/`specialties`/`portfolioImages`/`instagramHandle`/`facebookProfileUrl` cleared. Rates/scheduling-buffer/services left untouched -- not personal data, and moot once every membership ends anyway.
+- Every active `StudioMembership` (home *and* any guests, at *every* studio, not just the current one) gets `endedAt` set.
+- Flash pieces with zero real inquiry history: deleted outright. Flash pieces *with* real history: set to `RETIRED` (an existing status, "manually pulled from the gallery") rather than destroyed, so a studio's own record of what was requested/booked from it survives.
+- The row itself is **never** deleted -- every historical FK a real `Appointment`/`Inquiry`/`GiftCard`/etc. already holds keeps resolving to a real (now-anonymized) row instead of a dangling or nulled-out one.
+
+**Migration note, worth flagging for next time**: `prisma migrate dev` refused to run for this schema change too, reporting an *unrelated*, already-applied migration (`20260801214242_flash_payment`, from a much earlier session) as "modified after it was applied" and offering only a full dev-database reset as its resolution. Did not do that -- `prisma migrate status` independently confirmed the real schema is fine (this is `migrate dev`'s shadow-database checksum check specifically, not the deployed database). Worked around it the same way as the prior session's own note on this: hand-wrote the migration SQL and applied via `prisma migrate deploy` (no shadow database involved). This will keep happening to `migrate dev` specifically until someone deliberately resolves that one file's checksum -- `migrate deploy` (the only thing that should ever touch this database day-to-day per `DEVELOPMENT.md`) is unaffected.
+
+**Real gap found via adversarial testing, fixed before this was safe to ship**: created a real artist with a real appointment and a real client relationship, deleted their account, and found they *still* appeared in the studio's live `GET /artists` roster (and therefore in every artist-assignment picker) despite having zero active memberships. Root cause: that route's own defensive `OR` clause falls back to matching on `user.studioId` alone (a safety net for "a HOME artist whose membership row is somehow missing") -- and a brand-new identity's `studioId` is set at account creation regardless of whether their first invite was HOME or GUEST, and is never reassigned by deletion (nothing to meaningfully set it to). Fixed by excluding `deletedAt`-set accounts from that query specifically -- **not** `isActive`, so a reversibly deactivated-but-not-deleted artist's card is completely unaffected, only genuinely, permanently deleted accounts disappear from the live roster.
+
+**Verified live, adversarially**:
+- Real artist, real appointment (`CONFIRMED`), real client (`Part3 HistoryClient`) -- deleted their account via the real endpoint.
+- Login with the original email/password: `401 invalid credentials`.
+- The exact JWT captured *before* deletion, replayed *after*: `401 Unauthorized` -- confirms the auth middleware's live DB check (not just token expiry) is what's actually doing the work, not merely that a fresh login fails.
+- `GET /appointments/:id` as the studio owner: still `200`, still shows the real appointment, `artist.user.name` now reads `"Deleted User"`, no error, no broken reference (screenshotted -- the whole page renders normally, avatar circle correctly shows "D").
+- `GET /inquiries/:id`: same -- real project history intact, artist shown as `Deleted User`.
+- `GET /clients/:id`: real client relationship still resolves, `200`.
+- `GET /artists` (roster): the deleted artist is gone (confirmed both via direct API and live in Team.tsx's Artists tab) -- this is the fix above, verified working, not just theorized.
+
+## Part 4 -- studio can remove an artist, never delete their account (`bb72e10`)
+
+**Investigated first**: no studio-initiated "remove this artist" action existed at all. Every existing `studioMembership.update`/`updateMany` call site in the whole codebase (grepped across every route file) is self-initiated -- go-solo, profile-delegation, the invite-accept flow's own HOME-transfer logic, and Part 3's new self-deletion route. Staff's existing "Edit account"/"Delete" buttons on a guest artist's Team card were already correctly *disabled* for a real guest (they never appear in `users`, that studio's own `User.studioId`-scoped roster) -- meaning staff genuinely had zero way to do anything about a guest artist's membership before this part.
+
+**Built**: `POST /studios/:studioId/artists/:artistId/remove`, hardcoded `requireRole(OWNER)` -- deliberately not the configurable `artists.manage` permission (which a studio could grant to `FRONT_DESK` or even `ARTIST` via its own matrix), matching the same trust level `PATCH /:studioId` (studio profile) and the permissions matrix routes already use. Ends only the one active membership row at *this* studio (HOME or GUEST) -- no other row, anywhere, is touched. Team.tsx's Artists tab gets a "Remove" button on guest cards (the `Delete` button's already-correct guest-disabled state made clear this needed its own, separate action rather than just enabling `Delete` for guests, which is a materially different, harsher action).
+
+**Second form of Part 3's own roster-leak bug, found and fixed here too**: a *deliberately removed* artist (real `endedAt` row, not missing) hit the exact same `user.studioId` fallback -- since that field still pointed at the studio that just removed them, they kept appearing in that studio's own roster as if nothing happened. Refined the fallback again: it only fires when there's no *ended* membership row at this studio contradicting it, distinguishing "genuinely missing row" (what the fallback exists to protect against) from "there's a real row here, and it says removed."
+
+**Adversarial audit -- the actual point of this part**:
+- Grepped every write site for `User.deletedAt` in the entire codebase: exactly one exists (`routes/users.ts`, inside the self-delete transaction). Nothing else, anywhere, sets it.
+- `requireRole`'s own implementation is a strict allowlist (`allowedRoles.includes(req.user.role)`) -- no `OWNER`-bypasses-everything shortcut exists anywhere in this middleware, confirmed by reading it directly.
+- OWNER's own real token, hit directly against `POST /users/me/delete-account`: `403 Forbidden` (their role isn't `ARTIST`). Same for `FRONT_DESK`. Confirmed live, both roles.
+- **The one real indirect path worth checking**: View As. Confirmed by reading `middleware/auth.ts` that `req.user.role`/`userId` genuinely do swap to the target's real identity while an `X-View-As-User` header is honored (View As is a real server-side identity substitution, not just a frontend display trick) -- which is exactly why the *same* middleware chokepoint also hard-blocks **any non-GET request at all** while that header is present, regardless of which route it's headed to (`"Read-only while viewing as another user"`, 403, before the request ever reaches route-specific logic). Confirmed this holds in practice, not just in the comment: sent a real `POST /users/me/delete-account` as the real OWNER with a real artist's `userId` in `X-View-As-User` and a valid confirm phrase -- `403`, request never dispatched, target artist's account fully unaffected (re-confirmed via `GET /users/me` with their own real token immediately after).
+
+**Verified live (happy path)**: created a real guest artist, removed them from `dev-studio` via the real "Remove" button and confirm modal in Team.tsx (screenshotted before/after -- they disappear from the Guest Artists section). Confirmed via direct DB read afterward: their `StudioMembership` row has a real `endedAt` timestamp (not deleted, the row still exists), while their `User` row is completely untouched -- real password hash, real name, real email, `isActive: true`, `deletedAt: null`. Logged in as them immediately after removal: works exactly as before, `memberships: []` for this studio, nothing else affected.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npm run build` (web) -- both clean, re-run after every part before its own commit.
+
+## Cleanup
+
+Both isolated dev servers killed (`netstat` + `taskkill` by PID). All scratch verification/token-lookup scripts deleted immediately after use, none committed. Real test data left in the dev database throughout (real guest-artist accounts, a real appointment/client/inquiry used for Part 3's adversarial deletion test, a real removed-guest fixture for Part 4) -- consistent with this session's own standing convention that dev-database test data from live verification isn't rolled back.
+
+## Commits
+
+- Part 1: `6dc9563`
+- Part 2: `994a1de`
+- Part 3: `fff806c`
+- Part 4: `bb72e10`
+
 
