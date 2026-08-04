@@ -7706,4 +7706,20 @@ Both isolated dev servers killed (`netstat` + `taskkill` by PID). All scratch ve
 
 `9b6e4b0` on `main`.
 
+---
+
+# Follow-up: Justin and Katie converted to real solo-studio guests (production data only, no code change)
+
+Direct follow-up to the fix above -- after shipping it, the user asked why Justin and Katie still showed under Studio Artists (correctly, per the fix: their real membership was `HOME`) and whether they could be made real guests. Investigated with the user rather than guessing: they were added directly (no invite flow), have no solo artist account of their own, and their real home studio isn't in Ink Manager at all -- so `GUEST` genuinely couldn't be represented for them (it requires an active `HOME` membership at another studio in the same system) until that home studio existed.
+
+**What was done**, with explicit confirmation on both the studio-naming approach and the (acknowledged test) accounts before touching production: replicated `POST /artists/:id/go-solo`'s own mechanics directly (self-service only in the real route -- neither account could trigger it themselves) for both artists -- new solo `Studio` row, `User.studioId`/`role` -> the new studio as `OWNER`, old `HOME` membership at Black Hive Ink and Arts ended, new `HOME` membership at their own new studio, flash gallery moved over. Then did the one thing `go-solo` deliberately doesn't do on its own: created a fresh `GUEST` membership back at Black Hive, so they remain connected there exactly as their real situation calls for (visiting, with a real home elsewhere now).
+
+Verified via direct read afterward: both show `role: OWNER`, `studioId` pointing at their own new studio, a real `HOME` row there (`endedAt: null`), their old Black Hive `HOME` row correctly `endedAt`-stamped, and a new Black Hive `GUEST` row (`endedAt: null`). Confirmed this resolves correctly against `GET /artists`' actual membership query (scoped per-viewer-studio, `endedAt: null`) -- Black Hive's own Team page will now show them under Guest Artists with the real membership-based badge, no code change needed since the fix from the prior entry already made that badge derive purely from `StudioMembership.type`.
+
+No code changed -- this section exists purely so the production data change has a record. Real audit log rows written for the same three actions `go-solo` itself would log (`go_solo_departed`, `go_solo_created`) plus one new one (`guest_membership_added_after_solo_conversion`) for the part `go-solo` doesn't cover, each noting "staff-initiated on behalf of artist" so this doesn't read as if either artist did it themselves.
+
+## Cleanup
+
+All scratch investigation/conversion/verification scripts deleted immediately after use, none committed.
+
 
