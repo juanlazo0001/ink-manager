@@ -77,7 +77,14 @@ router.post("/artist-invite/accept/:token", optionalAuth, async (req, res) => {
 
     const { user, artist } = await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
-        data: { email: invite!.email, role: Role.ARTIST, studioId: invite!.studioId, password: passwordHash, isActive: true },
+        data: {
+          email: invite!.email,
+          role: Role.ARTIST,
+          studioId: invite!.studioId,
+          password: passwordHash,
+          isActive: true,
+          name: invite!.name,
+        },
       });
       const artist = await tx.artist.create({ data: { userId: user.id, specialties: [], portfolioImages: [] } });
       await tx.studioMembership.create({

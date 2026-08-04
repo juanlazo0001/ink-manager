@@ -55,14 +55,15 @@ export async function createArtistMembershipInvite(params: {
   studioName: string;
   email: string;
   membershipType: StudioMembershipType;
+  name?: string | null;
 }) {
-  const { studioId, studioName, email, membershipType } = params;
+  const { studioId, studioName, email, membershipType, name } = params;
 
   const token = crypto.randomBytes(32).toString("hex");
   const tokenExpiresAt = new Date(Date.now() + ARTIST_INVITE_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000);
 
   const invite = await prisma.artistMembershipInvite.create({
-    data: { studioId, email, membershipType, token, tokenExpiresAt },
+    data: { studioId, email, membershipType, token, tokenExpiresAt, name: name ?? null },
   });
 
   sendArtistInviteEmail({ inviteId: invite.id, email, studioName, membershipType, token });

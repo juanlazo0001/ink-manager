@@ -44,6 +44,7 @@ interface ArtistCard {
 interface ArtistInvite {
   id: string
   email: string
+  name: string | null
   membershipType: 'HOME' | 'GUEST'
   tokenExpiresAt: string
 }
@@ -956,7 +957,16 @@ export default function Team() {
                       const expired = new Date(invite.tokenExpiresAt) < new Date()
                       return (
                         <tr key={invite.id}>
-                          <td className="py-2.5 text-fg">{invite.email}</td>
+                          <td className="py-2.5 text-fg">
+                            {invite.name ? (
+                              <>
+                                {invite.name}
+                                <span className="block text-xs text-fg-muted sm:inline sm:pl-1.5">{invite.email}</span>
+                              </>
+                            ) : (
+                              invite.email
+                            )}
+                          </td>
                           <td className="hidden py-2.5 text-fg-secondary sm:table-cell">
                             {invite.membershipType === 'HOME' ? 'Home' : 'Guest'}
                           </td>
@@ -1029,9 +1039,18 @@ export default function Team() {
 
               {!artistsErrorMessage && artists && artists.length > 0 && (
                 <div className="space-y-8">
+                  {/* Grouped on the real, current membership type (Artist
+                      mobility, Phase 1's StudioMembership.type) -- NOT
+                      Artist.isGuest, the older, separate "temporarily
+                      visiting" display flag from before that model existed.
+                      An artist invited through the real Guest Artist flow
+                      has a GUEST membership row but almost never has the
+                      old isGuest flag set, so filtering on that left every
+                      real guest artist miscategorized under "Studio
+                      Artists". */}
                   {[
-                    { label: 'Studio Artists', items: artists.filter((artist) => !artist.isGuest) },
-                    { label: 'Guest Artists', items: artists.filter((artist) => artist.isGuest) },
+                    { label: 'Studio Artists', items: artists.filter((artist) => artist.memberships[0]?.type !== 'GUEST') },
+                    { label: 'Guest Artists', items: artists.filter((artist) => artist.memberships[0]?.type === 'GUEST') },
                   ]
                     .filter((group) => group.items.length > 0)
                     .map((group) => (

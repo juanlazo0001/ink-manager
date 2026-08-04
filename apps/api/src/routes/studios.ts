@@ -383,6 +383,11 @@ router.post("/:studioId/invites", requireAuth, requirePermission("team.manage"),
       studioName: studioForInvite.name,
       email: trimmedEmail,
       membershipType,
+      // Bug fix: this was previously dropped entirely -- Team.tsx's "Invite
+      // Artist" form already collects it, but ArtistMembershipInvite had no
+      // column to hold it, so a new identity's name never survived past
+      // this request even though it was right here in the body.
+      name: typeof name === "string" && name.trim() ? name.trim() : null,
     });
 
     await logAudit({

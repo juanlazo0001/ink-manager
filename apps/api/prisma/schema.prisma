@@ -615,6 +615,14 @@ model ArtistMembershipInvite {
   studio   Studio @relation(fields: [studioId], references: [id])
 
   email          String
+  // Optional -- staff sending the invite may not always have a name to
+  // enter, but when they do (Team.tsx's "Invite Artist" form already has
+  // this field), it needs somewhere to land until accept time, since a
+  // brand-new identity's User row doesn't exist yet to hold it directly.
+  // Only ever applied to a genuinely NEW identity at accept
+  // (routes/artistInvites.ts) -- an existing identity accepting keeps
+  // their own real name untouched.
+  name           String?
   membershipType StudioMembershipType
 
   token          String    @unique
