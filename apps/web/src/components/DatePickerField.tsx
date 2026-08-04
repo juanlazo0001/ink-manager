@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { DayPicker } from 'react-day-picker'
 import 'react-day-picker/style.css'
 import { toDateString, parseDateString } from './DateAndTimeRangeFields'
+import DropdownPortal from './DropdownPortal'
 
 interface DatePickerFieldProps {
   value: string // yyyy-mm-dd, '' if unset
@@ -19,10 +20,12 @@ interface DatePickerFieldProps {
 export default function DatePickerField({ value, onChange, placeholder, disabled, id }: DatePickerFieldProps) {
   const [showCalendar, setShowCalendar] = useState(false)
   const selectedDate = parseDateString(value)
+  const buttonRef = useRef<HTMLButtonElement>(null)
 
   return (
     <div className="relative">
       <button
+        ref={buttonRef}
         id={id}
         type="button"
         disabled={disabled}
@@ -33,37 +36,38 @@ export default function DatePickerField({ value, onChange, placeholder, disabled
           ? selectedDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
           : (placeholder ?? 'Select a date')}
       </button>
-      {showCalendar && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setShowCalendar(false)} aria-hidden="true" />
-          <div className="absolute z-20 mt-1 rounded-xl border border-border bg-surface-raised p-2 shadow-xl">
-            <DayPicker
-              mode="single"
-              selected={selectedDate}
-              onSelect={(day) => {
-                onChange(day ? toDateString(day) : '')
-                setShowCalendar(false)
-              }}
-              // Same fix as SelfSchedule.tsx's own DayPicker: react-day-
-              // picker/style.css defines its own light-mode --rdp-accent-
-              // color: blue directly on .rdp-root, at the exact same
-              // specificity as index.css's gold-accent override of that
-              // same selector -- whichever stylesheet happens to be
-              // injected last wins the cascade tie, so this can render blue
-              // depending on load order rather than reliably matching the
-              // theme. Inline styles on the root element beat any
-              // stylesheet rule regardless of injection order.
-              style={
-                {
-                  '--rdp-accent-color': 'var(--color-accent)',
-                  '--rdp-accent-background-color': 'color-mix(in srgb, var(--color-accent) 20%, transparent)',
-                  '--rdp-today-color': 'var(--color-accent)',
-                } as React.CSSProperties
-              }
-            />
-          </div>
-        </>
-      )}
+      <DropdownPortal
+        open={showCalendar}
+        onClose={() => setShowCalendar(false)}
+        anchorRef={buttonRef}
+        maxHeightCap={360}
+        className="rounded-xl border border-border bg-surface-raised p-2 shadow-xl"
+      >
+        <DayPicker
+          mode="single"
+          selected={selectedDate}
+          onSelect={(day) => {
+            onChange(day ? toDateString(day) : '')
+            setShowCalendar(false)
+          }}
+          // Same fix as SelfSchedule.tsx's own DayPicker: react-day-
+          // picker/style.css defines its own light-mode --rdp-accent-
+          // color: blue directly on .rdp-root, at the exact same
+          // specificity as index.css's gold-accent override of that
+          // same selector -- whichever stylesheet happens to be
+          // injected last wins the cascade tie, so this can render blue
+          // depending on load order rather than reliably matching the
+          // theme. Inline styles on the root element beat any
+          // stylesheet rule regardless of injection order.
+          style={
+            {
+              '--rdp-accent-color': 'var(--color-accent)',
+              '--rdp-accent-background-color': 'color-mix(in srgb, var(--color-accent) 20%, transparent)',
+              '--rdp-today-color': 'var(--color-accent)',
+            } as React.CSSProperties
+          }
+        />
+      </DropdownPortal>
     </div>
   )
 }

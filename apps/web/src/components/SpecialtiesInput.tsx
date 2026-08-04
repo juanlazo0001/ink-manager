@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { CloseIcon } from './icons'
+import DropdownPortal from './DropdownPortal'
 
 // Common industry specialties, shown as quick-pick suggestions. Studios
 // aren't limited to this list — typing anything else and pressing Enter
@@ -34,6 +35,7 @@ interface SpecialtiesInputProps {
 export default function SpecialtiesInput({ value, onChange }: SpecialtiesInputProps) {
   const [inputValue, setInputValue] = useState('')
   const [open, setOpen] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
 
   const normalizedSelected = new Set(value.map((v) => v.toLowerCase()))
 
@@ -93,6 +95,7 @@ export default function SpecialtiesInput({ value, onChange }: SpecialtiesInputPr
 
       <div className="relative">
         <input
+          ref={inputRef}
           type="text"
           value={inputValue}
           onChange={(e) => {
@@ -106,31 +109,36 @@ export default function SpecialtiesInput({ value, onChange }: SpecialtiesInputPr
           className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
         />
 
-        {open && (suggestions.length > 0 || isNewCustomValue) && (
-          <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-xl border border-border bg-surface-raised shadow-lg">
-            {suggestions.map((option) => (
-              <button
-                key={option}
-                type="button"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => addSpecialty(option)}
-                className="block w-full px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
-              >
-                {option}
-              </button>
-            ))}
-            {isNewCustomValue && (
-              <button
-                type="button"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => addSpecialty(trimmedInput)}
-                className="block w-full border-t border-border px-3 py-2 text-left text-sm font-medium text-fg hover:bg-surface"
-              >
-                Add "{trimmedInput}"
-              </button>
-            )}
-          </div>
-        )}
+        <DropdownPortal
+          open={open && (suggestions.length > 0 || isNewCustomValue)}
+          onClose={() => setOpen(false)}
+          anchorRef={inputRef}
+          matchWidth
+          maxHeightCap={256}
+          className="rounded-xl border border-border bg-surface-raised shadow-lg"
+        >
+          {suggestions.map((option) => (
+            <button
+              key={option}
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => addSpecialty(option)}
+              className="block w-full px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
+            >
+              {option}
+            </button>
+          ))}
+          {isNewCustomValue && (
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => addSpecialty(trimmedInput)}
+              className="block w-full border-t border-border px-3 py-2 text-left text-sm font-medium text-fg hover:bg-surface"
+            >
+              Add "{trimmedInput}"
+            </button>
+          )}
+        </DropdownPortal>
       </div>
     </div>
   )

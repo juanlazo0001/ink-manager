@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { DayPicker } from 'react-day-picker'
 import 'react-day-picker/style.css'
+import DropdownPortal from './DropdownPortal'
 
 // Phase UI-4: an appointment never spans more than one calendar day, so
 // this is deliberately one date + two times -- never a separate end-date
@@ -71,6 +72,7 @@ export default function DateAndTimeRangeFields({
   const [showCalendar, setShowCalendar] = useState(false)
   const selectedDate = parseDateString(value.date)
   const rangeInvalid = !!value.date && !!value.startTime && !!value.endTime && !isValidTimeRange(value)
+  const buttonRef = useRef<HTMLButtonElement>(null)
 
   return (
     <div>
@@ -78,6 +80,7 @@ export default function DateAndTimeRangeFields({
         <div className="relative">
           <label className="mb-1 block text-sm font-medium text-fg-secondary">Date</label>
           <button
+            ref={buttonRef}
             type="button"
             disabled={disabled}
             onClick={() => setShowCalendar((v) => !v)}
@@ -87,46 +90,47 @@ export default function DateAndTimeRangeFields({
               ? selectedDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
               : 'Select a date'}
           </button>
-          {showCalendar && (
-            <>
-              <div className="fixed inset-0 z-10" onClick={() => setShowCalendar(false)} aria-hidden="true" />
-              <div className="absolute z-20 mt-1 rounded-xl border border-border bg-surface-raised p-2 shadow-xl">
-                <DayPicker
-                  mode="single"
-                  selected={selectedDate}
-                  onSelect={(day) => {
-                    if (!day) return
-                    onChange({ ...value, date: toDateString(day) })
-                    setShowCalendar(false)
-                  }}
-                  modifiers={
-                    unavailableDaysOfWeek && unavailableDaysOfWeek.length > 0
-                      ? { unavailable: (day) => unavailableDaysOfWeek.includes(day.getDay()) }
-                      : undefined
-                  }
-                  modifiersClassNames={{ unavailable: 'opacity-40' }}
-                  // Same fix as SelfSchedule.tsx's and DatePickerField.tsx's
-                  // own DayPicker: react-day-picker/style.css's light-mode
-                  // --rdp-accent-color: blue can win the cascade tie against
-                  // index.css's gold-accent override depending on stylesheet
-                  // injection order. Inline styles on the root element beat
-                  // any stylesheet rule regardless of that order.
-                  style={
-                    {
-                      '--rdp-accent-color': 'var(--color-accent)',
-                      '--rdp-accent-background-color': 'color-mix(in srgb, var(--color-accent) 20%, transparent)',
-                      '--rdp-today-color': 'var(--color-accent)',
-                    } as React.CSSProperties
-                  }
-                />
-                {unavailableDaysOfWeek && unavailableDaysOfWeek.length > 0 && (
-                  <p className="mt-1 px-1 text-[10px] text-fg-muted">
-                    Greyed days are outside this artist's usual schedule.
-                  </p>
-                )}
-              </div>
-            </>
-          )}
+          <DropdownPortal
+            open={showCalendar}
+            onClose={() => setShowCalendar(false)}
+            anchorRef={buttonRef}
+            maxHeightCap={360}
+            className="rounded-xl border border-border bg-surface-raised p-2 shadow-xl"
+          >
+            <DayPicker
+              mode="single"
+              selected={selectedDate}
+              onSelect={(day) => {
+                if (!day) return
+                onChange({ ...value, date: toDateString(day) })
+                setShowCalendar(false)
+              }}
+              modifiers={
+                unavailableDaysOfWeek && unavailableDaysOfWeek.length > 0
+                  ? { unavailable: (day) => unavailableDaysOfWeek.includes(day.getDay()) }
+                  : undefined
+              }
+              modifiersClassNames={{ unavailable: 'opacity-40' }}
+              // Same fix as SelfSchedule.tsx's and DatePickerField.tsx's
+              // own DayPicker: react-day-picker/style.css's light-mode
+              // --rdp-accent-color: blue can win the cascade tie against
+              // index.css's gold-accent override depending on stylesheet
+              // injection order. Inline styles on the root element beat
+              // any stylesheet rule regardless of that order.
+              style={
+                {
+                  '--rdp-accent-color': 'var(--color-accent)',
+                  '--rdp-accent-background-color': 'color-mix(in srgb, var(--color-accent) 20%, transparent)',
+                  '--rdp-today-color': 'var(--color-accent)',
+                } as React.CSSProperties
+              }
+            />
+            {unavailableDaysOfWeek && unavailableDaysOfWeek.length > 0 && (
+              <p className="mt-1 px-1 text-[10px] text-fg-muted">
+                Greyed days are outside this artist's usual schedule.
+              </p>
+            )}
+          </DropdownPortal>
         </div>
 
         <div>
