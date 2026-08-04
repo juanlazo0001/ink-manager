@@ -322,12 +322,18 @@ export default function ArtistCreate() {
               </div>
             </div>
 
+            {/* Renamed from "Guest Artist" -- see ArtistDetail.tsx's own
+                widget for why. This is a scheduling-only availability
+                window, unrelated to real studio membership (a directly-
+                created artist is always this studio's own HOME artist,
+                membershipType isn't even part of this flow). */}
             <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
-              <h2 className="text-base font-semibold text-fg">Guest Artist</h2>
+              <h2 className="text-base font-semibold text-fg">Limited Availability Window</h2>
               <p className="mt-1 text-xs text-fg-muted">
-                A guest artist working a limited window. Once their end date passes, they drop out of Calendar's
-                default resource columns and default assignment pickers (but stay fully visible on the Artists tab,
-                and their past appointments are never hidden).
+                Restricts this artist to a specific date range at your studio -- useful for someone working a
+                genuinely limited engagement. Once the end date passes, they drop out of Calendar's default
+                resource columns and default assignment pickers (but stay fully visible on the Artists tab, and
+                their past appointments are never hidden).
               </p>
 
               <label className="mt-3 flex items-center gap-2 text-sm font-medium text-fg-secondary">
@@ -337,7 +343,7 @@ export default function ArtistCreate() {
                   onChange={(e) => setIsGuest(e.target.checked)}
                   className="h-4 w-4 rounded border-border bg-surface-inset accent-accent"
                 />
-                Guest artist
+                Limited availability window
               </label>
 
               {isGuest && (

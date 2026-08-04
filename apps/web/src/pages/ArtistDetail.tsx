@@ -217,9 +217,6 @@ export default function ArtistDetail() {
   // which specific fields they can touch -- drives the Save button.
   const canEdit = canEditCoreFields
 
-  const isEndedGuest =
-    !!artist?.isGuest && !!artist.guestEndDate && new Date(artist.guestEndDate) < new Date()
-
   async function handleSaveSchedule() {
     if (!id) return
 
@@ -361,21 +358,22 @@ export default function ArtistDetail() {
                   <div>
                     <h1 className="flex flex-wrap items-center gap-2 text-xl font-bold text-fg">
                       {artist.user.name || artist.user.email}
+                      {/* This badge is now the ONLY source of "is this person
+                          a guest here" -- derived exclusively from the real
+                          StudioMembership.type (artist-mobility work), never
+                          from the legacy isGuest/guestStartDate/guestEndDate
+                          fields below (see the "Limited Availability Window"
+                          widget's own comment for why those are a separate,
+                          unrelated concept and must never drive this badge).
+                          The two used to be shown side by side here, which is
+                          exactly how two real artists ended up with a
+                          "Guest (ended)" badge while their actual, current
+                          membership was HOME -- a stale scheduling-window flag
+                          from before the real membership system existed,
+                          rendered as if it were live status. */}
                       {artist.memberships[0]?.type === 'GUEST' && (
                         <span className="rounded-full bg-accent/10 px-2.5 py-0.5 text-xs font-medium text-accent">
                           Guest artist
-                        </span>
-                      )}
-                      {artist.isGuest && (
-                        <span
-                          className={[
-                            'rounded-full px-2.5 py-0.5 text-xs font-medium',
-                            isEndedGuest
-                              ? 'bg-surface-inset text-fg-muted'
-                              : 'bg-accent/10 text-accent',
-                          ].join(' ')}
-                        >
-                          {isEndedGuest ? 'Guest (ended)' : 'Guest'}
                         </span>
                       )}
                     </h1>
@@ -396,26 +394,39 @@ export default function ArtistDetail() {
                 )}
                 {artist.memberships[0]?.type === 'GUEST' && (
                   <p className="mt-3 text-xs text-fg-muted">
-                    This artist's home studio is elsewhere. Rates, scheduling buffer, guest window, self-scheduling,
-                    and services stay under their home studio's control from here -- only changes to fields they've
-                    delegated to you (if any) will be saved.
+                    This artist's home studio is elsewhere. Rates, scheduling buffer, availability window,
+                    self-scheduling, and services stay under their home studio's control from here -- only changes
+                    to fields they've delegated to you (if any) will be saved.
                   </p>
                 )}
               </div>
 
               <ReorderableWidgetList pageKey="artist-detail" defaultOrder={ARTIST_WIDGET_ORDER}>
-              {/* A solo artist can't be a "guest" at their own studio --
-                  there's no separate studio for them to visit. Staff-only
-                  even in a multi-person studio: this is the studio's
-                  classification of the artist, never their own to set (see
-                  requirePermissionOrSelfArtist's own comment on the
-                  backend for the same self-vs-staff split). */}
+              {/* Renamed from "Guest Artist" -- this is Artist.isGuest/
+                  guestStartDate/guestEndDate, a scheduling-only availability
+                  window (Calendar shading, drops out of default assignment
+                  pickers once past) that predates the real multi-studio
+                  StudioMembership.type system and has NO connection to it.
+                  Two real artists ended up with a stale, misleading
+                  "Guest (ended)" badge from this exact field while their
+                  actual current membership was HOME -- the old naming made
+                  it look like studio-membership status, so someone checked
+                  it thinking it meant something it doesn't. The mechanism
+                  is real and still useful (an artist working a genuinely
+                  limited date range at this studio) and stays exactly as
+                  it was; only the name changed, so it can never again be
+                  mistaken for the real "Guest artist" badge above (which
+                  comes exclusively from memberships[0]?.type). Still
+                  staff-only, still hidden for a solo studio (no one else's
+                  availability to restrict) -- unchanged from before. */}
               {canManageStaff && !profile?.isSoloStudio && (
-                <Widget key="guest-artist" id="guest-artist" title="Guest Artist">
+                <Widget key="guest-artist" id="guest-artist" title="Limited Availability Window">
                   <p className="mt-1 text-xs text-fg-muted">
-                    A guest artist working a limited window. Once their end date passes, they drop out of Calendar's
-                    default resource columns and default assignment pickers (but stay fully visible here, and their
-                    past appointments are never hidden).
+                    Restricts this artist to a specific date range at your studio -- useful for someone working a
+                    genuinely limited engagement. Once the end date passes, they drop out of Calendar's default
+                    resource columns and default assignment pickers (but stay fully visible here, and their past
+                    appointments are never hidden). Unrelated to the "Guest artist" badge above, which reflects
+                    their real studio membership.
                   </p>
 
                   <label className="mt-3 flex items-center gap-2 text-sm font-medium text-fg-secondary">
@@ -425,7 +436,7 @@ export default function ArtistDetail() {
                       onChange={(e) => setIsGuest(e.target.checked)}
                       className="h-4 w-4 rounded border-border bg-surface-inset accent-accent"
                     />
-                    Guest artist
+                    Limited availability window
                   </label>
 
                   {isGuest && (

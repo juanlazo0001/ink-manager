@@ -55,6 +55,13 @@ interface ArtistOption {
   preferredSchedule: ScheduleBlock[] | null
 }
 
+// isGuest/guestStartDate/guestEndDate are the "Limited Availability Window"
+// feature (renamed from "Guest Artist" -- see ArtistDetail.tsx's own widget)
+// -- a scheduling-only date range, unrelated to real studio membership
+// (StudioMembership.type). Internal names here kept as-is (isEndedGuest,
+// isOutsideGuestWindow below, includePastGuests state) since they're not
+// user-facing; only the visible "Include past availability windows" label
+// changed.
 function isEndedGuest(artist: ArtistOption): boolean {
   return artist.isGuest && !!artist.guestEndDate && new Date(artist.guestEndDate) < new Date()
 }
@@ -526,7 +533,7 @@ export default function Calendar() {
   const studioTimezone = studioSettings?.timezone ?? 'America/New_York'
 
   // Ended guests are excluded from every column/filter/switcher below by
-  // default -- "Include past guests" brings them back without ever hiding
+  // default -- "Include past availability windows" brings them back without ever hiding
   // their actual past appointments (Month view already shows everyone
   // regardless, see displayEvents below).
   const visibleArtistOptions = useMemo(
@@ -607,7 +614,7 @@ export default function Calendar() {
     // Month view: unfiltered (selectedArtistIds still null, staff hasn't
     // touched a chip yet) keeps its original "show everyone regardless"
     // behavior -- including an ended guest's past appointments, which
-    // aren't in activeArtistIds at all once "Include past guests" is off
+    // aren't in activeArtistIds at all once "Include past availability windows" is off
     // (see the comment on that state above). Only once staff explicitly
     // picks a chip does Month view start narrowing down, same as Week/Day
     // already did.
@@ -896,7 +903,7 @@ export default function Calendar() {
                     }}
                     className="h-3.5 w-3.5 rounded border-border bg-surface-inset accent-accent"
                   />
-                  Include past guests
+                  Include past availability windows
                 </label>
               )}
             </div>
@@ -946,7 +953,7 @@ export default function Calendar() {
                     }}
                     className="h-3.5 w-3.5 rounded border-border bg-surface-inset accent-accent"
                   />
-                  Include past guests
+                  Include past availability windows
                 </label>
               )}
             </div>

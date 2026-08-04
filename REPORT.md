@@ -7651,4 +7651,59 @@ Both isolated dev servers killed (`netstat` + `taskkill` by PID). All scratch ve
 - Part 3: `fff806c`
 - Part 4: `bb72e10`
 
+---
+
+# Guest Artists section bugs — grouping, button layout, profile-toggle desync
+
+Single session on `main`. No schema changes. Investigated before fixing, per the task's own instruction, since item 3 was flagged as possibly a genuine dual-field desync rather than a display bug -- it was, and turned out to be the root cause of item 1 too.
+
+## Root cause, all three bugs
+
+Read production data for the two real artists named in the report (`Justin`, `Katie Jones`) plus the correctly-working case (`Juangi`), read-only against `.env.production`'s `DATABASE_URL` per `DEVELOPMENT.md`'s own sanctioned one-off pattern. Confirmed: **two completely separate fields both claim to represent "guest status," and they've drifted out of sync.**
+
+- `StudioMembership.type` (the real, current, multi-studio membership system from the artist-mobility work) -- Justin and Katie both have an active `HOME` membership; Juangi has an active `GUEST` membership. This is authoritative and was already correct.
+- `Artist.isGuest` / `guestStartDate` / `guestEndDate` -- a much older, single-studio field predating the membership system entirely. Justin and Katie both had `isGuest: true` with a date range that had already passed; Juangi had `isGuest: false`. Nobody had touched Juangi's flag (so it defaults to unchecked, backwards from what their real, active guest membership would suggest); somebody had checked it for Justin and Katie at some point, for reasons lost to history, with a range that's now stale.
+
+Once this was confirmed, everything reported made sense:
+
+1. **"Ended guest memberships still showing in Studio Artists"** -- not actually a grouping bug. The grouping (fixed in the immediately preceding session to key off `memberships[0]?.type`) was already correct: Justin and Katie are real, current `HOME` artists, so Studio Artists is exactly where they belong. The bug was the **stale `isGuest`-derived badge** rendering `"Guest (ended)"` right next to a correctly-placed roster entry, making the correct placement look wrong.
+2. **4-button row wrapping** -- a real, independent CSS bug (see below), unrelated to the field desync.
+3. **Profile-page checkbox not matching the Team page** -- confirmed dual-field desync. The checkbox on `ArtistDetail.tsx`/`ArtistCreate.tsx` reads/writes `isGuest`, which has zero relationship to the real membership type the Team page's grouping and badge use.
+
+**Not just a display bug, either**: `isGuest`/`guestStartDate`/`guestEndDate` are also load-bearing for a real, functioning feature -- `apps/api/src/lib/schedulingAssistant.ts` restricts self-schedule suggested times to the date window, `Calendar.tsx` shades unavailable dates and drops the artist from default resource columns once the window passes, and both `InquiryDetail.tsx` and `AppointmentForm.tsx` exclude an "ended" artist from their default assignment pickers. This meant Justin and Katie's stale, long-expired window wasn't just a cosmetic badge problem -- it was likely also silently excluding two real, current studio artists from Calendar's default view and from being assigned new work by default, right now, in production.
+
+Given the mechanism is real and still useful (someone actually working a genuinely limited engagement), asked before proceeding rather than guessing: keep the feature and its mechanism exactly as-is, but rename it everywhere so it can never again be mistaken for real studio-membership status. Confirmed via `AskUserQuestion` before touching anything.
+
+## Fix
+
+- **The "Guest"/"Guest (ended)" badge** derived from `isGuest`/`guestEndDate` removed entirely from `Team.tsx`'s artist cards and `ArtistDetail.tsx`'s header -- the real `"Guest artist"` badge (from `memberships[0]?.type === 'GUEST'`) is now the only guest-status indicator anywhere in the app.
+- **The editing widget** renamed from "Guest Artist" to **"Limited Availability Window"** in both `ArtistDetail.tsx` (the staff-editing widget) and `ArtistCreate.tsx` (the direct-creation form) -- same checkbox, same two date fields, same underlying `isGuest`/`guestStartDate`/`guestEndDate` columns and `PATCH /artists/:id` API shape (no backend change needed; the desync was entirely a frontend labeling/badge problem, the backend never conflated the two concepts). Copy updated to describe what the field actually does (a scheduling date-range restriction) and explicitly calls out that it's unrelated to the real "Guest artist" badge.
+- **Every other user-facing "guest" string** tied to this same mechanism renamed for consistency: Calendar's "Include past guests" checkbox -> "Include past availability windows" (both desktop and mobile instances). Internal, non-user-facing identifiers (`isEndedGuest`, `isOutsideGuestWindow`, `includePastGuests` state, the `isGuest` field name itself) deliberately left as-is -- renaming those would touch many more call sites for zero user-visible benefit and meaningfully more risk; each now has a comment pointing at the real "Limited Availability Window" naming for anyone reading the code fresh.
+- **Button row wrapping** (`Team.tsx`): the action row was plain `flex gap-2` with no wrap allowance -- a guest artist's 4th button (`Remove`, from the previous session's studio-removal work) had nowhere to go on a narrower card (the grid goes up to 3 columns) and overflowed/squished. Changed to `flex flex-wrap gap-2`, which lets buttons that don't fit drop to a full second row at full size, with the same gap spacing on both axes, rather than shrinking or clipping.
+
+**Production data correction**: with explicit confirmation first, cleared the stale `isGuest`/`guestStartDate`/`guestEndDate` for exactly the two real Artist rows already identified (Justin, Katie Jones) -- a targeted `updateMany` against those two ids only, verified before/after. Restores their default Calendar/assignment-picker visibility; nothing else touched.
+
+## A real, unrelated bug found and fixed along the way
+
+While verifying the button-row fix, discovered `apps/web`'s plain `npx tsc --noEmit` (no `-p` flag) was not reliably checking this project -- `apps/web/tsconfig.json` is a solution-style file (`files: []`, `references: [...]`) that requires either `--build` mode or pointing directly at `tsconfig.app.json` to actually type-check anything. This had been silently passing while `npm run build` (the real, esbuild-backed check) caught a genuine JSX syntax error I'd introduced (a `{/* comment */}` placed directly inside the parens of `{isOwner && ( ... )}`, before the actual element -- invalid, since a parenthesized JSX expression can only contain one thing). Fixed the syntax error (moved the comment above the expression, as a plain leading comment) and will use `npx tsc --noEmit -p tsconfig.app.json` for this repo's web app going forward, since it's the one that actually agrees with `npm run build`.
+
+## Verification -- real accounts, live dev API/web (isolated `:4093`/`:5292`)
+
+- **Bug 1**: reproduced the exact desync on a real dev-studio `HOME` artist (set `isGuest: true` with a past date range via the API, mirroring Justin/Katie's real production state) -- confirmed no `"Guest (ended)"` badge anywhere on the Team page, artist correctly sits in Studio Artists with no misleading badge. Reverted the test mutation afterward (this was a reproduction of a bug, not real feature-verification content worth leaving behind).
+- **Bug 2**: screenshotted the Guest Artists section at a narrower (2-column) viewport -- both real guest fixtures show `View as`/`Edit account` on one row and `Delete`/`Remove` cleanly wrapped to a second, no overflow or squishing.
+- **Bug 3**: the same reproduction artist's own `ArtistDetail.tsx` page, screenshotted -- widget reads "LIMITED AVAILABILITY WINDOW" with the updated description, checkbox reads "Limited availability window" and correctly reflects the real (if legacy) field's own checked state and dates, header shows no stale badge.
+- **Production correction**: before/after read confirming both real rows updated (`isGuest: true` -> `false`, dates -> `null`) for exactly the two intended artist ids, nothing else touched.
+
+## Typechecks
+
+`npx tsc --noEmit -p tsconfig.app.json` (web) and `npm run build` (web) both clean; `npx tsc --noEmit` (api, no backend changes this session) clean.
+
+## Cleanup
+
+Both isolated dev servers killed (`netstat` + `taskkill` by PID). All scratch verification/production-investigation/production-correction scripts deleted immediately after use, none committed.
+
+## Commit
+
+`<pending>` on `main`.
+
 

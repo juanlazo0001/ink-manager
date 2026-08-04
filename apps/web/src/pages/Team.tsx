@@ -1108,25 +1108,22 @@ export default function Team() {
                         <div className="min-w-0">
                           <p className="flex items-center gap-1.5 truncate text-sm font-semibold text-fg">
                             <span className="truncate">{artist.user.name || artist.user.email}</span>
+                            {/* The ONLY guest-status badge now -- derived
+                                exclusively from the real StudioMembership.type.
+                                A second badge used to render here from the
+                                legacy isGuest/guestEndDate fields (a
+                                scheduling-only availability window, unrelated
+                                to real membership -- see the "Limited
+                                Availability Window" widget on ArtistDetail.tsx
+                                for the full story), which is exactly how a
+                                real HOME artist ended up wearing a stale
+                                "Guest (ended)" badge here while correctly
+                                sitting in the Studio Artists section below. */}
                             {artist.memberships[0]?.type === 'GUEST' && (
                               <span className="shrink-0 rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent">
                                 Guest artist
                               </span>
                             )}
-                            {artist.isGuest &&
-                              (() => {
-                                const ended = !!artist.guestEndDate && new Date(artist.guestEndDate) < new Date()
-                                return (
-                                  <span
-                                    className={[
-                                      'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium',
-                                      ended ? 'bg-surface-inset text-fg-muted' : 'bg-accent/10 text-accent',
-                                    ].join(' ')}
-                                  >
-                                    {ended ? 'Guest (ended)' : 'Guest'}
-                                  </span>
-                                )
-                              })()}
                           </p>
                           <p className="truncate text-xs text-fg-muted">{artist.user.email}</p>
                         </div>
@@ -1193,8 +1190,16 @@ export default function Team() {
                         </div>
                       )}
 
+                      {/* flex-wrap: an active guest artist gets a 4th button
+                          (Remove, below) alongside View As/Edit account/
+                          Delete -- plain `flex` with no wrap left the row
+                          overflowing/squishing on a narrower card (this grid
+                          goes up to 3 columns). Wrapping keeps every button
+                          full-size and legible, just spilling onto a second
+                          line with the same gap spacing on both axes, rather
+                          than shrinking or clipping. */}
                       {isOwner && (
-                        <div className="mt-4 flex gap-2 border-t border-border pt-3">
+                        <div className="mt-4 flex flex-wrap gap-2 border-t border-border pt-3">
                           {canUseViewAs && artist.user.id !== realUser?.userId && (
                             <button
                               type="button"

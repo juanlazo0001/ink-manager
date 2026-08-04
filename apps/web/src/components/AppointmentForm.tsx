@@ -69,8 +69,10 @@ interface SuggestedTimeCandidate {
   hasBufferConflict: boolean
 }
 
-// New assignments never default-offer a guest artist whose window has
-// ended -- they still fully exist and their past appointments are
+// New assignments never default-offer an artist whose "Limited Availability
+// Window" (isGuest/guestEndDate -- renamed from "Guest Artist," see
+// ArtistDetail.tsx's own widget; unrelated to real StudioMembership.type)
+// has ended -- they still fully exist and their past appointments are
 // untouched, they just don't show up here to be picked for something new.
 function isEndedGuest(artist: ArtistOption): boolean {
   return artist.isGuest && !!artist.guestEndDate && new Date(artist.guestEndDate) < new Date()
