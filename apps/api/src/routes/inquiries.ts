@@ -796,6 +796,34 @@ function sortOrderBy(sort: SortOption): Prisma.InquiryOrderByWithRelationInput[]
   }
 }
 
+// Artist mobility: JS-side counterpart to sortOrderBy, used only when
+// merging a guest-studio sub-query's own already-DB-sorted rows into the
+// home list below -- two separately-sorted arrays need a real merge/re-sort
+// to interleave correctly, Prisma's `orderBy` only ever sorts within one
+// `findMany` call.
+function sortComparator(sort: SortOption): (a: InquirySortFields, b: InquirySortFields) => number {
+  switch (sort) {
+    case "createdAt_asc":
+      return (a, b) => a.createdAt.getTime() - b.createdAt.getTime();
+    case "updatedAt_desc":
+      return (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime();
+    case "clientName_asc":
+      return (a, b) =>
+        `${a.client.firstName} ${a.client.lastName}`.localeCompare(`${b.client.firstName} ${b.client.lastName}`);
+    case "clientName_desc":
+      return (a, b) =>
+        `${b.client.firstName} ${b.client.lastName}`.localeCompare(`${a.client.firstName} ${a.client.lastName}`);
+    case "createdAt_desc":
+    default:
+      return (a, b) => b.createdAt.getTime() - a.createdAt.getTime();
+  }
+}
+interface InquirySortFields {
+  createdAt: Date;
+  updatedAt: Date;
+  client: { firstName: string; lastName: string };
+}
+
 // Normalizes a query param that Express may hand back as a single string,
 // an array (repeated ?key=a&key=b), or undefined -- every multi-select
 // filter below (status, artistId) takes this same shape.
@@ -880,7 +908,49 @@ router.get("/", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), requirePe
     take: 100,
   });
 
-  res.json(inquiries);
+  // Artist mobility: this caller may ALSO be an artist with active GUEST
+  // memberships elsewhere -- if so, blend in whatever's assigned to them at
+  // those studios too, so "my Inquiries & Projects page" isn't blind to
+  // guest work the way it was before (assign-artist already accepted a
+  // guest, nothing ever surfaced it back to them). No-op for the overwhelming
+  // majority of callers (no Artist row, or none guesting anywhere), and
+  // skipped outright when the caller's own artistId/unassigned filter
+  // wouldn't have matched them anyway -- these rows are always assigned to
+  // the caller by construction, never "unassigned" or a different artist.
+  const requestingArtist = await prisma.artist.findUnique({ where: { userId: req.user!.userId }, select: { id: true } });
+  const includeGuestAssignments =
+    requestingArtist != null && !wantsUnassigned && (artistIds.length === 0 || artistIds.includes(requestingArtist.id));
+
+  let combined: Array<(typeof inquiries)[number] & { fromGuestStudio: { id: string; name: string } | null }> = inquiries.map(
+    (inquiry) => ({ ...inquiry, fromGuestStudio: null }),
+  );
+
+  if (includeGuestAssignments) {
+    const guestMemberships = await prisma.studioMembership.findMany({
+      where: { artistId: requestingArtist!.id, type: "GUEST", endedAt: null },
+      select: { studioId: true },
+    });
+
+    if (guestMemberships.length > 0) {
+      const guestRows = await prisma.inquiry.findMany({
+        where: {
+          studioId: { in: guestMemberships.map((m) => m.studioId) },
+          assignedArtistId: requestingArtist!.id,
+          ...NOT_ARCHIVED,
+          ...(statusValues.length > 0 ? { status: { in: statusValues } } : {}),
+          ...(searchWhere ?? {}),
+        },
+        select: { ...INQUIRY_LIST_SELECT, studio: { select: { id: true, name: true } } },
+        orderBy: sortOrderBy(sort),
+        take: 100,
+      });
+
+      const guestInquiries = guestRows.map(({ studio, ...rest }) => ({ ...rest, fromGuestStudio: studio }));
+      combined = [...combined, ...guestInquiries].sort(sortComparator(sort)).slice(0, 100);
+    }
+  }
+
+  res.json(combined);
 });
 
 // Artist-facing inbox: inquiries currently assigned to the requesting
@@ -919,23 +989,36 @@ router.get("/assigned-to-me", requireAuth, requireRole(Role.ARTIST), requirePerm
 // above, scoped identically to assignedArtistId === their own artist id.
 // Registered before the generic "/:id" below for the same reason
 // "assigned-to-me" itself is.
-router.get("/assigned-to-me/:id", requireAuth, requireRole(Role.ARTIST), requirePermission("inquiries.view"), async (req, res) => {
-  const artist = await prisma.artist.findUnique({ where: { userId: req.user!.userId } });
-  if (!artist) {
-    return res.status(404).json({ error: "Inquiry not found" });
-  }
+//
+// Artist mobility: also reachable by role OWNER, not just plain ARTIST --
+// a solo studio's owner is role OWNER with their own attached Artist
+// profile (soloStudio.ts), so this is the route their guest-studio project
+// cards (blended into GET / above, see fromGuestStudio) link to for detail.
+// Still scoped to assignedArtistId === their own artist id regardless of
+// role, and still 404s cleanly for an OWNER with no Artist row at all.
+router.get(
+  "/assigned-to-me/:id",
+  requireAuth,
+  requireRole(Role.ARTIST, Role.OWNER),
+  requirePermission("inquiries.view"),
+  async (req, res) => {
+    const artist = await prisma.artist.findUnique({ where: { userId: req.user!.userId } });
+    if (!artist) {
+      return res.status(404).json({ error: "Inquiry not found" });
+    }
 
-  const inquiry = await prisma.inquiry.findFirst({
-    where: { id: req.params.id as string, assignedArtistId: artist.id },
-    select: ARTIST_INQUIRY_SELECT,
-  });
+    const inquiry = await prisma.inquiry.findFirst({
+      where: { id: req.params.id as string, assignedArtistId: artist.id },
+      select: ARTIST_INQUIRY_SELECT,
+    });
 
-  if (!inquiry) {
-    return res.status(404).json({ error: "Inquiry not found" });
-  }
+    if (!inquiry) {
+      return res.status(404).json({ error: "Inquiry not found" });
+    }
 
-  res.json(inquiry);
-});
+    res.json(inquiry);
+  },
+);
 
 // Same reasoning as GET / above -- stays OWNER/FRONT_DESK-only regardless
 // of the inquiries.view toggle; an artist's own inquiries are reached via

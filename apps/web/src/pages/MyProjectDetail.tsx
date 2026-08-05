@@ -116,6 +116,15 @@ export default function MyProjectDetail() {
   const { id } = useParams<{ id: string }>()
   const user = useEffectiveUser()
 
+  // Artist mobility: a solo studio's owner is role OWNER with their own
+  // attached Artist profile (soloStudio.ts), not role ARTIST -- this page
+  // is also where their guest-studio project cards (Inquiries.tsx's
+  // fromGuestStudio blend) link to for detail, so OWNER needs to reach it
+  // too. GET /inquiries/assigned-to-me/:id already 404s cleanly for an
+  // OWNER with no Artist row, same as it always has for a role-ARTIST
+  // caller with none.
+  const canViewOwnAssignments = user?.role === 'ARTIST' || user?.role === 'OWNER'
+
   const {
     data: project,
     isLoading,
@@ -123,10 +132,10 @@ export default function MyProjectDetail() {
   } = useQuery({
     queryKey: ['assigned-project', id],
     queryFn: () => apiFetch<Project>(`/inquiries/assigned-to-me/${id}`),
-    enabled: !!id && user?.role === 'ARTIST',
+    enabled: !!id && canViewOwnAssignments,
   })
 
-  if (user && user.role !== 'ARTIST') {
+  if (user && !canViewOwnAssignments) {
     return <Navigate to="/dashboard" replace />
   }
 
@@ -139,11 +148,19 @@ export default function MyProjectDetail() {
         : `${project.timeEstimateHoursMin}–${project.timeEstimateHoursMax}h`
       : null
 
+  // MyInquiries.tsx (role ARTIST's own "My Inquiries" board) redirects any
+  // other role straight to /dashboard -- an OWNER landing here from a
+  // guest-studio project card (Inquiries.tsx) needs to go back to their
+  // real Inquiries & Projects page instead, or "back" would just bounce
+  // them again.
+  const backTo = user?.role === 'OWNER' ? '/inquiries' : '/my-inquiries'
+  const backLabel = user?.role === 'OWNER' ? 'Back to Inquiries & Projects' : 'Back to My Inquiries'
+
   return (
     <div className="mx-auto max-w-4xl px-6 py-6 sm:px-10 sm:py-8">
-      <Link to="/my-inquiries" className="inline-flex items-center gap-2 text-sm text-fg-secondary hover:text-fg">
+      <Link to={backTo} className="inline-flex items-center gap-2 text-sm text-fg-secondary hover:text-fg">
         <ArrowLeftIcon className="h-4 w-4" />
-        Back to My Inquiries
+        {backLabel}
       </Link>
 
       {error && (

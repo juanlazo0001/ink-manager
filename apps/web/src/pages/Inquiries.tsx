@@ -50,6 +50,14 @@ interface Inquiry {
   sessions: { id: string; startTime: string; checkedOutAt: string | null; liabilityWaiver: { status: string } | null }[]
   // Project pipeline stage -- see deriveProjectStage in lib/kanban.ts.
   projectCompletedAt: string | null
+  // Artist mobility: set only for a row blended in from a studio where the
+  // viewer (also an artist, e.g. a solo studio's OWNER) is an active GUEST
+  // -- null for every normal home-studio row. Drives the studio badge, the
+  // detail-link target (the safer, reduced /my-inquiries/:id view rather
+  // than the full staff /inquiries/:id one), and disables Kanban drag --
+  // status changes on someone else's studio's project happen from THEIR
+  // side, not by dragging a card here.
+  fromGuestStudio: { id: string; name: string } | null
 }
 
 type PipelineTab = 'inquiries' | 'projects'
@@ -307,6 +315,18 @@ export default function Inquiries() {
     navigate(`/inquiries/${inquiryId}`)
   }
 
+  // Artist mobility: a blended guest-studio row (see the Inquiry interface's
+  // own fromGuestStudio comment) links to the safer, reduced artist-facing
+  // detail view instead of the full staff one -- this viewer has no
+  // legitimate access to another studio's full financials/notes just
+  // because they're a guest artist there. Shared by the List view's row
+  // click and the Kanban board's onOpenCard (which only ever hands back an
+  // id, not the row itself).
+  function openInquiry(id: string) {
+    const inquiry = filteredInquiries?.find((i) => i.id === id)
+    navigate(inquiry?.fromGuestStudio ? `/my-inquiries/${id}` : `/inquiries/${id}`)
+  }
+
   // Kanban drag resolution (Package E). Every case here either calls the
   // exact same route the rest of the app already uses for that transition,
   // or opens the exact same modal/section InquiryDetail.tsx already has for
@@ -323,6 +343,16 @@ export default function Inquiries() {
     fromColumnKey: string
     toColumnKey: string
   }): KanbanTransition {
+    // A blended guest-studio card (see fromGuestStudio) has no PATCH route
+    // this viewer can call at all -- every one below is home-studio-scoped
+    // on the backend, and status changes for someone else's project happen
+    // from their side, not by dragging a card here.
+    if (inquiry.fromGuestStudio) {
+      return {
+        kind: 'reject',
+        message: `This project belongs to ${inquiry.fromGuestStudio.name} -- status changes happen from that studio's side.`,
+      }
+    }
     if (toColumnKey === 'INACTIVE') {
       return { kind: 'open-flow', run: () => navigate(`/inquiries/${inquiry.id}?openFlow=mark-lost`) }
     }
@@ -353,6 +383,12 @@ export default function Inquiries() {
     fromColumnKey: string
     toColumnKey: string
   }): KanbanTransition {
+    if (inquiry.fromGuestStudio) {
+      return {
+        kind: 'reject',
+        message: `This project belongs to ${inquiry.fromGuestStudio.name} -- status changes happen from that studio's side.`,
+      }
+    }
     if (fromColumnKey === 'SCHEDULING' && toColumnKey === 'CONFIRMED') {
       return { kind: 'open-flow', run: () => navigate(`/inquiries/${inquiry.id}?openFlow=schedule`) }
     }
@@ -476,11 +512,7 @@ export default function Inquiries() {
 
   function renderRow(inquiry: Inquiry) {
     return (
-      <tr
-        key={inquiry.id}
-        onClick={() => navigate(`/inquiries/${inquiry.id}`)}
-        className="cursor-pointer hover:bg-surface-raised/60"
-      >
+      <tr key={inquiry.id} onClick={() => openInquiry(inquiry.id)} className="cursor-pointer hover:bg-surface-raised/60">
         <td className="py-3 pl-3">
           {inquiry.referenceImages[0] ? (
             <img src={inquiry.referenceImages[0]} alt="" className="h-10 w-10 rounded-lg object-cover" />
@@ -503,6 +535,11 @@ export default function Inquiries() {
             <span className="hidden max-w-[140px] truncate sm:block md:max-w-[200px] lg:max-w-[280px]">
               {inquiry.client.firstName} {inquiry.client.lastName}
             </span>
+            {inquiry.fromGuestStudio && (
+              <span className="mt-0.5 block max-w-[140px] truncate text-[11px] text-fg-muted md:max-w-[200px] lg:max-w-[280px]">
+                {inquiry.fromGuestStudio.name}
+              </span>
+            )}
           </td>
         )}
         {columnVisibility.channel && (
@@ -844,7 +881,7 @@ export default function Inquiries() {
                     ? resolveProjectsTabTransition({ ...params, inquiry: params.inquiry as Inquiry })
                     : resolveInquiriesTabTransition({ ...params, inquiry: params.inquiry as Inquiry })
                 }
-                onOpenCard={(id) => navigate(`/inquiries/${id}`)}
+                onOpenCard={openInquiry}
               />
             )}
 

@@ -22,6 +22,12 @@ export interface KanbanInquiry {
   appointment?: unknown
   sessions?: ProjectStageSession[]
   projectCompletedAt?: string | null
+  // Artist mobility: set only on a card blended in from a studio where the
+  // viewer is an active GUEST artist (Inquiries.tsx's own GET / response).
+  // Optional/undefined for MyInquiries.tsx's board, which never populates
+  // it -- same "consumer that doesn't fetch it just sees nothing" shape as
+  // every other optional field here.
+  fromGuestStudio?: { id: string; name: string } | null
 }
 
 // A Project (deposit-paid Inquiry) with zero linked Appointments yet --

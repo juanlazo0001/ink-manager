@@ -42,10 +42,17 @@ const InquiryKanbanCard = forwardRef<HTMLDivElement, InquiryKanbanCardProps>(fun
   { inquiry, columnKey, draggable, onOpen, pending = false },
   forwardedRef,
 ) {
+  // Artist mobility: a card blended in from a studio where the viewer is
+  // only an active GUEST has no PATCH route they can call at all (see
+  // Inquiries.tsx's resolveInquiriesTabTransition/resolveProjectsTabTransition,
+  // both reject it immediately) -- disabled at the drag source too, rather
+  // than relying solely on the post-drop rejection message, so it never
+  // visually picks up in the first place.
+  const isGuestCard = !!inquiry.fromGuestStudio
   const { ref: dragRef, isDragging } = useDraggable({
     id: inquiry.id,
     data: { columnKey, inquiry },
-    disabled: !draggable,
+    disabled: !draggable || isGuestCard,
   })
 
   const estimateRange = formatPriceEstimate(inquiry.priceEstimateLow, inquiry.priceEstimateHigh)
@@ -81,13 +88,16 @@ const InquiryKanbanCard = forwardRef<HTMLDivElement, InquiryKanbanCardProps>(fun
           'rounded-xl border border-l-4 border-border bg-surface p-3 text-left shadow-sm transition',
           TONE_BORDER_CLASSES[tone] ?? 'border-l-neutral',
           onOpen ? 'cursor-pointer hover:border-border-strong' : '',
-          draggable ? 'cursor-grab active:cursor-grabbing' : '',
+          draggable && !isGuestCard ? 'cursor-grab active:cursor-grabbing' : '',
           isDragging || pending ? 'opacity-50' : 'opacity-100',
         ].join(' ')}
       >
         <p className="truncate text-sm font-semibold text-fg">
           {inquiry.client.firstName} {inquiry.client.lastName}
         </p>
+        {inquiry.fromGuestStudio && (
+          <p className="truncate text-[11px] text-fg-muted">{inquiry.fromGuestStudio.name}</p>
+        )}
         <p className="mt-1 line-clamp-2 text-xs text-fg-secondary">{truncate(inquiry.description, 90)}</p>
 
         {projectStage && (
