@@ -94,6 +94,16 @@ function keysFor(event: InvalidationEvent): unknown[][] {
         // never refreshed live even for the SAME staff member's other
         // open tab, let alone a different one.
         ["conversation-context", event.conversationId],
+        // "+ New Chat"'s own roster (ConversationsPanel.tsx) is a SEPARATE
+        // query from ["conversations"] -- it's what decides whether an
+        // archived teammate shows up as re-messageable. Archiving/
+        // unarchiving a STAFF thread emits this exact event, so without
+        // this key the roster kept showing stale conversationArchivedAt
+        // data (its own 60s staleTime, never invalidated) -- someone who
+        // just got archived stayed invisible to "+ New Chat" for up to a
+        // minute, reading as "still can't start a conversation with them"
+        // even though the underlying archive/resume logic was correct.
+        ["conversations-staff-roster"],
         ["nav-counts"],
         // NEW_CONVERSATION system task depends on conversation state too.
         ["tasks"],

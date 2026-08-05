@@ -2107,8 +2107,12 @@ function ThreadView({
       // ['conversations'] and this thread's query for every connected
       // client eventually, but invalidating the thread query directly here
       // updates the header's Archived banner immediately for the person
-      // who just clicked, not on the next socket round-trip.
+      // who just clicked, not on the next socket round-trip. Same reasoning
+      // for the staff roster: archiving a Staff thread and then immediately
+      // opening "+ New Chat" for that same person shouldn't have to wait on
+      // a socket round-trip either.
       queryClient.invalidateQueries({ queryKey: ['conversation-thread', conversationId] })
+      queryClient.invalidateQueries({ queryKey: ['conversations-staff-roster'] })
     } catch (err) {
       setArchiveError(err instanceof Error ? err.message : `Failed to ${isArchived ? 'unarchive' : 'archive'}`)
     } finally {
@@ -3126,19 +3130,23 @@ function ThreadView({
                             {isMenuOpenForThis && (
                               <div
                                 className={[
-                                  'message-bubble absolute z-20 w-44 rounded-xl border border-border bg-surface-raised py-1 text-left shadow-xl',
+                                  // Wide enough for all 6 reaction icons in one
+                                  // row without wrapping/bleeding past the
+                                  // panel's own edge -- w-44 measured out to
+                                  // ~192px needed against 176px available.
+                                  'message-bubble absolute z-20 w-60 rounded-xl border border-border bg-surface-raised py-1 text-left shadow-xl',
                                   '-top-2',
                                   group.isOutboundSide ? 'right-6' : 'left-6',
                                 ].join(' ')}
                               >
-                                <div className="flex items-center justify-center gap-1 border-b border-border px-2 py-1.5">
+                                <div className="flex items-center justify-between gap-0.5 border-b border-border px-1.5 py-1.5">
                                   {REACTION_EMOJIS.map((emoji) => (
                                     <button
                                       key={emoji}
                                       type="button"
                                       onClick={() => handleToggleReaction(message, emoji)}
                                       aria-label={`React ${emoji}`}
-                                      className="rounded-md p-1 text-base leading-none transition hover:bg-surface"
+                                      className="rounded-md p-0.5 text-base leading-none transition hover:bg-surface"
                                     >
                                       {emoji}
                                     </button>
