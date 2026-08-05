@@ -28,6 +28,7 @@ import {
 } from "../lib/importColumnMapping";
 import { matchArtistForImportRow } from "../lib/importArtistMatching";
 import { emitInvalidation } from "../lib/realtime/registry";
+import { studioHasActiveMembership } from "../lib/artistAccess";
 
 const router = Router();
 
@@ -327,7 +328,13 @@ router.patch("/import/:batchId/rows/:rowId", async (req, res) => {
         where: { id: matchedArtistId },
         select: { user: { select: { studioId: true } } },
       });
-      if (!artist || artist.user.studioId !== req.user!.studioId) {
+      // Same guest-artist allowance as the assign-artist/scheduling routes
+      // -- a studio can match an import row to its own active GUEST
+      // artists too, not just HOME ones.
+      const artistBelongsToStudio =
+        artist != null &&
+        (artist.user.studioId === req.user!.studioId || (await studioHasActiveMembership(req.user!.studioId, matchedArtistId)));
+      if (!artistBelongsToStudio) {
         return res.status(400).json({ error: "matchedArtistId must belong to an artist in your studio" });
       }
     }

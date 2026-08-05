@@ -25,6 +25,7 @@ import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { resolveDepositAmounts, resolveRequiredDepositCents, resolveDepositTiers } from "../lib/depositTiers";
 import { generateUniqueReferralCode } from "../lib/referrals";
+import { studioHasActiveMembership } from "../lib/artistAccess";
 import { IntakeFieldKind } from "../../generated/prisma/enums";
 import { NOTE_AUTHOR_SELECT, canModifyNote, isBlankHtml, isValidAttachments } from "../lib/notes";
 import { getEffectiveIntakeFormFields, validateCustomFieldAnswers } from "../lib/intakeFormFields";
@@ -233,7 +234,14 @@ router.post("/", optionalAuth, async (req, res) => {
       include: { user: true },
     });
 
-    if (!preferredArtist || preferredArtist.user.studioId !== studio.id) {
+    // Same guest-artist allowance as the assign-artist route below --
+    // public intake can list a studio's active GUEST artists as pickable
+    // too (they already show up in the studio-facing artist picker), not
+    // just HOME ones.
+    const preferredArtistBelongsToStudio =
+      preferredArtist != null &&
+      (preferredArtist.user.studioId === studio.id || (await studioHasActiveMembership(studio.id, preferredArtist.id)));
+    if (!preferredArtistBelongsToStudio) {
       return res.status(400).json({ error: "preferredArtistId must belong to this studio" });
     }
   }
@@ -1131,7 +1139,16 @@ router.patch("/:id/assign", requireAuth, requirePermission("inquiries.assignArti
   }
 
   const artist = await prisma.artist.findUnique({ where: { id: artistId }, include: { user: true } });
-  if (!artist || artist.user.studioId !== req.user!.studioId) {
+  // Artist mobility: a studio can assign its own active GUEST artists too,
+  // not just HOME ones -- same check appointments.ts's own artistId
+  // validation uses. artist.user.studioId alone only answers "whose HOME
+  // studio is this," never "does this studio have a live relationship with
+  // them," so a solo artist guesting elsewhere was always rejected here
+  // even though GET /artists already lists them as assignable.
+  const artistBelongsToStudio =
+    artist != null &&
+    (artist.user.studioId === req.user!.studioId || (await studioHasActiveMembership(req.user!.studioId, artist.id)));
+  if (!artistBelongsToStudio) {
     return res.status(400).json({ error: "artistId must belong to your studio" });
   }
 

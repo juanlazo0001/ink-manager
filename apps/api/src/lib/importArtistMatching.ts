@@ -6,8 +6,21 @@ interface ArtistCandidate {
 }
 
 async function loadStudioArtists(studioId: string): Promise<ArtistCandidate[]> {
+  // Same membership-aware where clause as GET /artists (routes/artists.ts)
+  // -- a plain `user: { studioId }` filter only ever matches HOME artists,
+  // so a CSV row naming a studio's own active GUEST artist could never be
+  // auto-matched (or even offered as a fuzzy candidate) at all.
   const artists = await prisma.artist.findMany({
-    where: { user: { studioId } },
+    where: {
+      user: { deletedAt: null },
+      OR: [
+        {
+          user: { studioId },
+          memberships: { none: { studioId, endedAt: { not: null } } },
+        },
+        { memberships: { some: { studioId, endedAt: null } } },
+      ],
+    },
     select: { id: true, user: { select: { name: true } } },
   });
   return artists

@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma";
 import { Role } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { getSuggestedTimes } from "../lib/schedulingAssistant";
+import { studioHasActiveMembership } from "../lib/artistAccess";
 
 const router = Router();
 
@@ -31,7 +32,14 @@ router.get("/suggested-times", async (req, res) => {
   }
 
   const artist = await prisma.artist.findUnique({ where: { id: artistId }, include: { user: true } });
-  if (!artist || artist.user.studioId !== req.user!.studioId) {
+  // Same guest-artist allowance as appointments.ts's/inquiries.ts's own
+  // artistId validation -- an active GUEST membership counts too, not just
+  // HOME, so suggesting times for a guest doesn't 404 right after they were
+  // successfully assigned to the inquiry.
+  const artistBelongsToStudio =
+    artist != null &&
+    (artist.user.studioId === req.user!.studioId || (await studioHasActiveMembership(req.user!.studioId, artist.id)));
+  if (!artistBelongsToStudio) {
     return res.status(404).json({ error: "Artist not found" });
   }
 
