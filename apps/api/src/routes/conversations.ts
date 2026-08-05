@@ -221,7 +221,9 @@ function toCounterpart(
 //
 // All filtering happens here, server-side: entityType (has a tag of this
 // type), artistId (client has an inquiry assigned to that artist), search
-// (client name). Combining filters ANDs them together.
+// (client name, counterpart/participant staff name or email, or message
+// body content -- see searchWhere below). Combining filters ANDs them
+// together.
 router.get("/", async (req, res) => {
   const { studioId, userId, role } = req.user!;
   const typeFilter = typeof req.query.type === "string" ? req.query.type : undefined;
@@ -243,17 +245,6 @@ router.get("/", async (req, res) => {
     return res.status(400).json({ error: `entityType must be one of: ${TAGGABLE_ENTITY_TYPES.join(", ")}` });
   }
 
-  const clientWhere: Prisma.ClientWhereInput = {};
-  if (artistIdFilter) {
-    clientWhere.inquiries = { some: { assignedArtistId: artistIdFilter } };
-  }
-  if (searchFilter) {
-    clientWhere.OR = [
-      { firstName: { contains: searchFilter, mode: "insensitive" } },
-      { lastName: { contains: searchFilter, mode: "insensitive" } },
-    ];
-  }
-
   // Groups grow out of STAFF 1:1 threads (see POST /:id/messages), so the
   // Team tab's "STAFF" filter also needs to surface GROUP conversations --
   // there's no separate group tab in v1.
@@ -263,11 +254,40 @@ router.get("/", async (req, res) => {
       : { type: typeFilter as ConversationType }
     : {};
 
+  // Search used to be client-name-only AND folded into the same object as
+  // the artistId filter -- meaning it silently only ever matched CLIENT
+  // threads (a STAFF/GROUP thread has no `client` relation to match at
+  // all) and never looked at what was actually SAID in a conversation.
+  // Now matches: client name, the counterpart staff member's name/email
+  // (1:1 STAFF threads), any GROUP participant's name/email, or any
+  // message body in the thread -- kept as its own OR block, combined via
+  // AND (not spread) with the rest of `where` below, since
+  // visibleConversationWhere already owns the top-level OR key for
+  // visibility scoping and a second top-level OR would silently clobber
+  // it via object-spread key collision rather than actually combining.
+  const nameContains = (value: string): Prisma.StringFilter => ({ contains: value, mode: "insensitive" });
+  const searchWhere: Prisma.ConversationWhereInput | undefined =
+    searchFilter && searchFilter.length >= 2
+      ? {
+          OR: [
+            { client: { OR: [{ firstName: nameContains(searchFilter) }, { lastName: nameContains(searchFilter) }] } },
+            { staffUser: { OR: [{ name: nameContains(searchFilter) }, { email: nameContains(searchFilter) }] } },
+            {
+              participants: {
+                some: { user: { OR: [{ name: nameContains(searchFilter) }, { email: nameContains(searchFilter) }] } },
+              },
+            },
+            { messages: { some: { body: nameContains(searchFilter) } } },
+          ],
+        }
+      : undefined;
+
   const where: Prisma.ConversationWhereInput = {
     ...visibleConversationWhere(studioId, userId, role, res.locals.conversationFlags!),
     ...typeWhere,
     ...(entityTypeFilter ? { tags: { some: { entityType: entityTypeFilter } } } : {}),
-    ...(Object.keys(clientWhere).length > 0 ? { client: clientWhere } : {}),
+    ...(artistIdFilter ? { client: { inquiries: { some: { assignedArtistId: artistIdFilter } } } } : {}),
+    ...(searchWhere ? { AND: [searchWhere] } : {}),
     archivedAt: archivedFilter ? { not: null } : null,
   };
 
@@ -313,7 +333,14 @@ router.get("/", async (req, res) => {
 router.get("/staff", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
   const staff = await prisma.user.findMany({
     where: { studioId: req.user!.studioId, isActive: true, role: { not: Role.CUSTOMER } },
-    select: { id: true, name: true, email: true, avatarUrl: true, role: true, staffConversation: { select: { id: true } } },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      avatarUrl: true,
+      role: true,
+      staffConversation: { select: { id: true, archivedAt: true } },
+    },
     orderBy: { name: "asc" },
   });
 
@@ -325,6 +352,10 @@ router.get("/staff", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) 
       avatarUrl: u.avatarUrl,
       role: u.role,
       conversationId: u.staffConversation?.id ?? null,
+      // So the frontend can still surface someone in "+ New Chat" search
+      // when their existing thread is archived -- resuming it there is
+      // exactly the "search to bring them back" action, same as clients.
+      conversationArchivedAt: u.staffConversation?.archivedAt ?? null,
     })),
   );
 });

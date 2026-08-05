@@ -100,6 +100,7 @@ interface StaffRosterEntry {
   avatarUrl: string | null
   role: string
   conversationId: string | null
+  conversationArchivedAt: string | null
 }
 
 interface NewChatClient {
@@ -952,7 +953,12 @@ function ConversationListView({
   const params = new URLSearchParams({ type: tab })
   if (tab === 'CLIENT' && entityTypeFilter) params.set('entityType', entityTypeFilter)
   if (tab === 'CLIENT' && artistIdFilter) params.set('artistId', artistIdFilter)
-  if (tab === 'CLIENT' && search.trim()) params.set('search', search.trim())
+  // Search now also matches message content (and, on the Team tab, the
+  // teammate's own name/email) -- see the backend's own GET / comment --
+  // so it's no longer CLIENT-only. This is also how a search-then-open now
+  // un-archives a team member's thread the same way it already did for a
+  // client: the thread just needs to be findable first.
+  if (search.trim()) params.set('search', search.trim())
   // A separate server-side bucket, not a client-side filter over the same
   // fetch (see backend's own comment) -- archived threads aren't part of
   // the default list at all, so switching into this view needs its own
@@ -993,7 +999,13 @@ function ConversationListView({
     enabled: isOpen && tab === 'CLIENT' && showNewChat,
   })
 
-  const rosterWithoutThread = (roster ?? []).filter((member) => !member.conversationId)
+  // Same "search to bring them back up" reasoning as clients (which show
+  // up in New Chat search regardless of conversation state) -- someone
+  // with an ARCHIVED thread still needs a way back into "+ New Chat"
+  // search, since it's now the resume path (see startStaffChat below).
+  // Someone with a genuinely active thread stays hidden here, same as
+  // before -- they're already reachable from the regular list.
+  const rosterWithoutThread = (roster ?? []).filter((member) => !member.conversationId || member.conversationArchivedAt)
   const hasActiveFilter = !!(entityTypeFilter || artistIdFilter || search.trim())
 
   const newChatClientResults = (allClients ?? [])
@@ -1252,17 +1264,15 @@ function ConversationListView({
         </div>
       )}
 
-      {tab === 'CLIENT' && (
-        <div className="border-b border-border px-3 pt-3">
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Search inquiries…"
-            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-base text-fg focus:border-accent focus:outline-none"
-          />
-        </div>
-      )}
+      <div className="border-b border-border px-3 pt-3">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => onSearchChange(e.target.value)}
+          placeholder={tab === 'CLIENT' ? 'Search inquiries or messages…' : 'Search team or messages…'}
+          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-base text-fg focus:border-accent focus:outline-none"
+        />
+      </div>
 
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
         <PillMenu
