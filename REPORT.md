@@ -7928,3 +7928,14 @@ Dev servers: killed this session's own web server; left the other concurrent ses
 
 `76cd1f9` on `main`.
 
+---
+
+## Follow-up: updated background image assets loaded
+
+User dropped in updated raw exports for both `app-bg-blurred-dark` (replacing the prior one) and a new `app-bg-blurred-amber` variant (not wired into any code yet), both as large raw files again (~1MB, ~1593x987, one mislabeled `.jpg` that was actually PNG-encoded). Same treatment as before: resized to 640px wide and re-encoded as real JPEGs via `sharp-cli` (`app-bg-blurred-dark.jpg` now 640x397/~5KB, `app-bg-blurred-amber.jpg` 640x397/~5.8KB), oversized/mislabeled originals removed. Updated `TopBar.tsx`'s own comment (dimensions/size) to match. No wiring change -- `TopBar.tsx` still imports `app-bg-blurred-dark.jpg`; `amber` is added as a properly-sized asset only, not referenced anywhere.
+
+Verified: `npx tsc --noEmit -p tsconfig.app.json` and `npm run build` (web) both clean.
+
+## Commit
+
+`<pending>` on `main`.

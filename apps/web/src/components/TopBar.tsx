@@ -108,9 +108,9 @@ export default function TopBar() {
           layer order back to front is photo, wash, arc-decor/grain, then
           real content, matching Login's own photo/hero-shade/rings stack.
           The photo itself is a PRE-blurred static asset (app-bg-blurred-
-          dark.jpg, 640x243, ~2.6KB -- a darker re-grade of the original
+          dark.jpg, 640x397, ~5KB -- a darker re-grade of the original
           app-bg-blurred.jpg, downscaled/re-encoded the same way: sharp
-          resize + JPEG re-encode, not the raw 2752x1044 PNG export it
+          resize + JPEG re-encode, not the raw ~1600x1000 PNG export it
           started as), never a live CSS filter: blur() -- that would
           recompute every scroll/repaint, the same category of cost that caused the mobile
           backdrop-filter stutter on Login's card earlier. Same `decorative`
