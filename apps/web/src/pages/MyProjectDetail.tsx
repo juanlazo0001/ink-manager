@@ -61,6 +61,10 @@ interface Project {
   sessions: Session[]
   depositForms: DepositForm[]
   notes: Note[]
+  // Artist mobility: set only when this project belongs to a studio where
+  // the viewer is an active GUEST rather than their own home studio -- see
+  // Inquiries.tsx's own fromGuestStudio comment for the fuller context.
+  fromGuestStudio: { id: string; name: string } | null
 }
 
 function ImageGrid({ images }: { images: string[] }) {
@@ -188,6 +192,15 @@ export default function MyProjectDetail() {
                 <p className="mt-1 text-sm text-fg-secondary">
                   Submitted {formatDateTime(project.createdAt)} via {formatStatus(project.channel)}
                 </p>
+                {project.fromGuestStudio && (
+                  // Same accent-tinted pill as Inquiries.tsx's own
+                  // fromGuestStudio badge (List row + Kanban card) -- one
+                  // consistent "you're a guest here" tag wherever this
+                  // project shows up.
+                  <span className="mt-2 inline-block rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent">
+                    {project.fromGuestStudio.name}
+                  </span>
+                )}
               </div>
               <StatusPill
                 status={projectStage ?? project.status}

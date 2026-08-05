@@ -672,6 +672,12 @@ const ARTIST_INQUIRY_SELECT = {
   assignedArtist: {
     select: { id: true, user: { select: { id: true, name: true, email: true, avatarUrl: true } } },
   },
+  // Artist mobility: lets both /assigned-to-me routes below tell the caller
+  // which studio a project actually belongs to -- needed now that
+  // /assigned-to-me/:id is also reachable by an OWNER whose own home
+  // studio isn't necessarily this project's studio (see fromGuestStudio on
+  // each route's own response).
+  studio: { select: { id: true, name: true } },
   service: { select: { id: true, name: true, pricingModel: true } },
   appointment: { select: { id: true, startTime: true, endTime: true, status: true } },
   sessions: {
@@ -981,7 +987,16 @@ router.get("/assigned-to-me", requireAuth, requireRole(Role.ARTIST), requirePerm
     orderBy: scopeAll ? { updatedAt: "desc" } : { assignedAt: "desc" },
   });
 
-  res.json(inquiries);
+  // Same fromGuestStudio convention as GET / -- null for a project at the
+  // caller's own home studio, { id, name } for one at a studio where
+  // they're only an active GUEST (this route has no studio scoping at all,
+  // see its own comment above, so both are always possible here).
+  res.json(
+    inquiries.map(({ studio, ...rest }) => ({
+      ...rest,
+      fromGuestStudio: studio.id !== req.user!.studioId ? studio : null,
+    })),
+  );
 });
 
 // Single-project detail for the artist's own board (Kanban card click,
@@ -1016,7 +1031,8 @@ router.get(
       return res.status(404).json({ error: "Inquiry not found" });
     }
 
-    res.json(inquiry);
+    const { studio, ...rest } = inquiry;
+    res.json({ ...rest, fromGuestStudio: studio.id !== req.user!.studioId ? studio : null });
   },
 );
 
