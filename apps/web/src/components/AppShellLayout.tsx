@@ -23,7 +23,14 @@ export default function AppShellLayout() {
   const location = useLocation()
 
   return (
-    <div className="flex min-h-screen bg-bg text-fg">
+    // No bg-bg here (was: `flex min-h-screen bg-bg text-fg`) -- Sidebar
+    // paints its own opaque bg-surface panel regardless, and every routed
+    // page still sets bg-bg on its own top-level wrapper, so this outer
+    // div's own fill only ever mattered in the margins around those two
+    // (e.g. behind Sidebar's mobile-collapsed state). Removed so TopBar's
+    // fixed background photo/wash (see index.css) can show through there
+    // instead of being covered by a second, redundant opaque layer.
+    <div className="flex min-h-screen text-fg">
       <Sidebar />
 
       <div className="min-w-0 flex-1 overflow-y-auto">

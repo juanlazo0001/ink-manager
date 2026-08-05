@@ -7968,3 +7968,25 @@ Killed this session's own web dev server; left the other concurrent session's al
 
 `ae2ea74` on `main`.
 
+---
+
+## Follow-up: removed bg-bg from the shared app shell wrapper too
+
+Requested directly: also strip `bg-bg` from `AppShellLayout.tsx`'s outer `<div className="flex min-h-screen bg-bg text-fg">` -- the single shared wrapper (Sidebar + routed page column) every authenticated page renders inside, distinct from each individual page's own `min-h-screen bg-bg ...` div. Sidebar keeps its own opaque `bg-surface` panel regardless (unaffected), and each page's own `bg-bg` still covers its own content area -- this only changes the margin space around/above those two, which previously showed a second, redundant opaque fill instead of TopBar's fixed background photo/wash showing through.
+
+## Verification -- live dev web (Editorial Gold preset)
+
+Screenshotted Dashboard at desktop and mobile widths -- a warm amber glow from the background photo is now visible in the top margin above page content on both, previously fully hidden.
+
+## Typechecks
+
+`npx tsc --noEmit -p tsconfig.app.json` (web) and `npm run build` (web) both clean.
+
+## Cleanup
+
+Dev web server killed; other concurrent session's API server on :4000 left untouched. `apps/web/.env.local` removed.
+
+## Commit
+
+`<pending>` on `main`.
+
