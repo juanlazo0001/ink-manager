@@ -292,6 +292,24 @@
   }
 }
 
+/* Tapping a reply's quoted preview (ConversationsPanel.tsx's ThreadView)
+   scrolls to and briefly flashes the original bubble -- same "tap to jump
+   back" gesture iMessage itself uses. Plain toggled class (not a Tailwind
+   animate-* utility) since it's added/removed imperatively via
+   classList, not driven by a component prop. */
+.message-jump-highlight {
+  animation: message-jump-flash 1.2s ease-out;
+}
+@keyframes message-jump-flash {
+  0%,
+  100% {
+    box-shadow: none;
+  }
+  25% {
+    box-shadow: 0 0 0 2px var(--color-accent);
+  }
+}
+
 @layer base {
   body {
     @apply bg-bg text-fg;

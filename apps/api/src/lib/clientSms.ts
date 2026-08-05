@@ -24,8 +24,13 @@ async function sendSmsMessage(params: {
   toPhone: string;
   body: string;
   actorUserId: string | null;
+  // Quoted reply -- purely an internal UI relationship (see the Message
+  // model's own replyTo comment), never anything Twilio itself knows
+  // about. Only the composer's direct-send path ever actually passes one;
+  // reminder jobs/auto-sends never do.
+  replyToId?: string;
 }): Promise<SendSmsMessageResult> {
-  const { studioId, conversationId, toPhone, body, actorUserId } = params;
+  const { studioId, conversationId, toPhone, body, actorUserId, replyToId } = params;
 
   const integration = await prisma.studioIntegration.findUnique({
     where: { studioId_channel: { studioId, channel: IntegrationChannel.SMS } },
@@ -68,6 +73,7 @@ async function sendSmsMessage(params: {
         direction: MessageDirection.OUTBOUND,
         body,
         authorUserId: actorUserId,
+        replyToId,
         metadata: { providerSid: result!.sid, deliveryStatus: result!.status },
         createdAt: now,
       },
@@ -125,8 +131,9 @@ export async function sendClientSms(params: {
   body: string;
   actorUserId: string | null;
   bypassOptOutCheck?: boolean;
+  replyToId?: string;
 }): Promise<SendClientSmsResult> {
-  const { studioId, clientId, conversationId, body, actorUserId, bypassOptOutCheck } = params;
+  const { studioId, clientId, conversationId, body, actorUserId, bypassOptOutCheck, replyToId } = params;
 
   const client = await prisma.client.findUnique({ where: { id: clientId } });
   if (!client) {
@@ -139,7 +146,7 @@ export async function sendClientSms(params: {
     return { sent: false, reason: "no_phone" };
   }
 
-  return sendSmsMessage({ studioId, conversationId, toPhone: client.phone, body, actorUserId });
+  return sendSmsMessage({ studioId, conversationId, toPhone: client.phone, body, actorUserId, replyToId });
 }
 
 export type SendStaffSmsResult =

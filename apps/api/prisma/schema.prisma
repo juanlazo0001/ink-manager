@@ -443,6 +443,7 @@ model User {
   staffConversation         Conversation?             @relation("StaffConversation")
   archivedConversations     Conversation[]            @relation("ConversationArchivedBy")
   authoredMessages          Message[]                 @relation("MessageAuthor")
+  messageReactions          MessageReaction[]
   authoredInquiryNotes      InquiryNote[]             @relation("InquiryNoteAuthor")
   authoredAppointmentNotes  AppointmentNote[]         @relation("AppointmentNoteAuthor")
   uploadedAppointmentPhotos AppointmentPhoto[]        @relation("AppointmentPhotoUploadedBy")
@@ -2170,8 +2171,44 @@ model Message {
   authorUserId String?
   author       User?   @relation("MessageAuthor", fields: [authorUserId], references: [id])
 
+  // iMessage-style quoted reply -- purely a pointer, never rewrites body
+  // (unlike edit above, this is additive metadata, so it's allowed on an
+  // otherwise-immutable CLIENT thread message too: quoting what a client
+  // said isn't altering the record of what they said). SetNull rather than
+  // Cascade/Restrict: no route deletes a Message today, but if one ever
+  // does, a reply should keep existing with its quote simply gone rather
+  // than the delete failing or cascading into every reply.
+  replyToId String?
+  replyTo   Message?  @relation("MessageReplyTo", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies   Message[] @relation("MessageReplyTo")
+
+  // Tapback-style reactions -- same "additive, not a record edit" reasoning
+  // as replyTo above, so also allowed on CLIENT threads. One per (message,
+  // user) -- see MessageReaction's own @@unique.
+  reactions MessageReaction[]
+
   @@index([conversationId, createdAt])
   @@index([studioId])
+}
+
+// One tapback per (message, user) -- picking a new emoji replaces the
+// previous one rather than stacking, same semantics as iMessage's own
+// reactions. Fixed to a small quick-set of six enforced at the route layer
+// (not the schema, so the set can change without a migration): heart,
+// thumbs up, thumbs down, haha, exclamation, question mark.
+model MessageReaction {
+  id        String   @id @default(cuid())
+  emoji     String
+  createdAt DateTime @default(now())
+
+  messageId String
+  message   Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@unique([messageId, userId])
+  @@index([messageId])
 }
 
 // A server-stored draft of intake-form field values, handed to the public

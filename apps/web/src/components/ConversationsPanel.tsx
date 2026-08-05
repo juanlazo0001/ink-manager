@@ -133,6 +133,26 @@ interface MessageMetadata {
   gmailThreadId?: string
 }
 
+// One row per (message, user) who's tapped a reaction on it -- see the
+// Message model's own MessageReaction comment for why it's one-per-person
+// (a new pick replaces the old, never stacks).
+interface MessageReactionItem {
+  id: string
+  emoji: string
+  userId: string
+  user: { id: string; name: string | null }
+}
+
+// Just enough of the quoted original to render a reply's preview -- see
+// backend's MESSAGE_INCLUDE.replyTo comment for why it's one level deep,
+// not the full MessageItem shape recursively.
+interface ReplyToPreview {
+  id: string
+  body: string
+  authorUserId: string | null
+  author: { id: string; name: string | null; email: string } | null
+}
+
 interface MessageItem {
   id: string
   channel: string
@@ -144,6 +164,8 @@ interface MessageItem {
   updatedAt: string
   authorUserId: string | null
   author: { id: string; name: string | null; email: string } | null
+  reactions: MessageReactionItem[]
+  replyTo: ReplyToPreview | null
 }
 
 // One row per (conversation, user) who has ever read it -- STAFF/GROUP
@@ -887,6 +909,11 @@ const SORT_OPTIONS = [
   { value: 'name', label: 'Name (A–Z)' },
 ] as const
 
+// iMessage-style tapback quick-set -- must match the backend's own fixed
+// set exactly (apps/api/src/routes/conversations.ts's REACTION_EMOJIS),
+// since the PUT .../reaction route rejects anything outside it.
+const REACTION_EMOJIS = ['❤️', '👍', '👎', '😂', '‼️', '❓'] as const
+
 function ConversationListView({
   tab,
   isOpen,
@@ -1586,6 +1613,19 @@ function ThreadView({
   const [editValue, setEditValue] = useState('')
   const [savingEdit, setSavingEdit] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
+  // iMessage-style long-press/right-click menu (copy/edit/reply/react) --
+  // actionMenuFor is the id of the message the menu is currently open for
+  // (null = closed; anchored via CSS to that bubble's own `relative`
+  // container, same as the edit-pencil button already does, rather than
+  // tracking raw click coordinates), replyingTo is the quoted-reply target
+  // attached to whatever's typed next in the composer. Both allowed on
+  // every thread type, including CLIENT -- see this feature's own scoping
+  // decision (a reaction/reply is additive metadata, never a rewrite of
+  // what was actually sent/received, unlike edit above).
+  const [actionMenuFor, setActionMenuFor] = useState<string | null>(null)
+  const [replyingTo, setReplyingTo] = useState<MessageItem | null>(null)
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
+  const [reactionError, setReactionError] = useState<string | null>(null)
   const [showMoreMenu, setShowMoreMenu] = useState(false)
   const [showDraftModal, setShowDraftModal] = useState(false)
   const [draftLoading, setDraftLoading] = useState(false)
@@ -2245,11 +2285,13 @@ function ThreadView({
           ...(isClientThread ? { channel, direction } : {}),
           ...(isClientThread && channel === 'EMAIL' ? { subject: subject.trim() } : {}),
           ...(!isClientThread && mentionedUserIds.length > 0 ? { mentionedUserIds } : {}),
+          ...(replyingTo ? { replyToId: replyingTo.id } : {}),
         }),
       })
       setBody('')
       setAttachments([])
       setMentionedUserIds([])
+      setReplyingTo(null)
       queryClient.invalidateQueries({ queryKey: ['conversation-thread', conversationId] })
       queryClient.invalidateQueries({ queryKey: ['conversations'] })
       onMessageSent()
@@ -2264,6 +2306,7 @@ function ThreadView({
     setEditingMessageId(message.id)
     setEditValue(message.body)
     setEditError(null)
+    setActionMenuFor(null)
   }
 
   async function handleSaveEdit(messageId: string) {
@@ -2281,6 +2324,94 @@ function ThreadView({
       setEditError(err instanceof Error ? err.message : 'Failed to save message')
     } finally {
       setSavingEdit(false)
+    }
+  }
+
+  async function handleCopyMessage(message: MessageItem) {
+    try {
+      await navigator.clipboard.writeText(message.body)
+      setCopiedMessageId(message.id)
+      setTimeout(() => setCopiedMessageId((current) => (current === message.id ? null : current)), 1500)
+    } catch {
+      // Clipboard access can be denied (permissions, insecure context) --
+      // there's nothing actionable to show the user beyond the menu simply
+      // not confirming a copy that didn't happen.
+    }
+    setActionMenuFor(null)
+  }
+
+  function startReplyingTo(message: MessageItem) {
+    setReplyingTo(message)
+    setActionMenuFor(null)
+  }
+
+  // Tapping the reaction you already left toggles it off (DELETE) -- same
+  // gesture iMessage itself uses -- picking a different one replaces it
+  // (PUT, upsert on the backend). Optimistic-free: the panel already
+  // refetches the thread on every conversation.updated broadcast (see
+  // useSocket wiring elsewhere in this component), so a brief round-trip
+  // delay before the tapback appears matches how every other live update
+  // here already behaves.
+  async function handleToggleReaction(message: MessageItem, emoji: string) {
+    setActionMenuFor(null)
+    setReactionError(null)
+    const alreadyReactedWithThis = message.reactions.some((r) => r.userId === user?.userId && r.emoji === emoji)
+    try {
+      if (alreadyReactedWithThis) {
+        await apiFetch(`/conversations/${conversationId}/messages/${message.id}/reaction`, { method: 'DELETE' })
+      } else {
+        await apiFetch(`/conversations/${conversationId}/messages/${message.id}/reaction`, {
+          method: 'PUT',
+          body: JSON.stringify({ emoji }),
+        })
+      }
+      queryClient.invalidateQueries({ queryKey: ['conversation-thread', conversationId] })
+    } catch (err) {
+      setReactionError(err instanceof Error ? err.message : 'Failed to react')
+    }
+  }
+
+  // Tapping a reply's quoted preview jumps to (and briefly highlights) the
+  // original bubble -- same "tap to jump back" gesture iMessage itself
+  // uses. Silently does nothing if the original isn't currently loaded
+  // (e.g. it's further back than this thread's paginated-in history) --
+  // there's no good "force-load and scroll" story worth building for what's
+  // a nice-to-have on top of the core reply feature.
+  function scrollToMessage(messageId: string) {
+    const node = document.getElementById(`message-${messageId}`)
+    if (!node) return
+    node.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    node.classList.add('message-jump-highlight')
+    setTimeout(() => node.classList.remove('message-jump-highlight'), 1200)
+  }
+
+  // Closes the long-press/right-click menu on an outside click -- every
+  // menu action itself already closes it directly (see handleCopyMessage/
+  // startReplyingTo/handleToggleReaction/startEditingMessage above), this
+  // only covers "clicked away without picking anything." `.message-bubble`
+  // marks each bubble's own wrapper below, so a click on the trigger button
+  // or inside the open menu itself never counts as "outside."
+  useEffect(() => {
+    if (!actionMenuFor) return
+    function handleClickOutside(event: MouseEvent) {
+      if ((event.target as HTMLElement).closest('.message-bubble')) return
+      setActionMenuFor(null)
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [actionMenuFor])
+
+  // Long-press (touch only -- desktop uses the hover "•••" button or
+  // right-click instead): ~500ms matches iOS's own long-press threshold.
+  // Cancelled by scrolling (touchmove) so a long-press never fires mid-swipe.
+  const longPressTimerRef = useRef<number | null>(null)
+  function handleBubbleTouchStart(messageId: string) {
+    longPressTimerRef.current = window.setTimeout(() => setActionMenuFor(messageId), 500)
+  }
+  function clearLongPressTimer() {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
     }
   }
 
@@ -2898,13 +3029,51 @@ function ThreadView({
                         const canEditMessage =
                           !isClientThread && !sharedInquiryId && message.authorUserId === user?.userId && !viewAsTarget
                         const isEditingThis = editingMessageId === message.id
+                        // Copy/reply/react apply to every real message --
+                        // see this feature's own thread-scope decision --
+                        // just not to a shared-inquiry card, which isn't a
+                        // normal chat bubble with a body worth quoting.
+                        const canUseActionMenu = !sharedInquiryId
+                        const isMenuOpenForThis = actionMenuFor === message.id
+                        const reactionSummary = message.reactions.reduce<{ emoji: string; count: number; mine: boolean }[]>(
+                          (acc, r) => {
+                            const existing = acc.find((e) => e.emoji === r.emoji)
+                            const mine = existing?.mine || r.userId === user?.userId
+                            if (existing) {
+                              existing.count += 1
+                              existing.mine = mine
+                            } else {
+                              acc.push({ emoji: r.emoji, count: 1, mine })
+                            }
+                            return acc
+                          },
+                          [],
+                        )
 
                         return (
                           <div
                             key={message.id}
+                            id={`message-${message.id}`}
+                            onContextMenu={
+                              canUseActionMenu
+                                ? (e) => {
+                                    e.preventDefault()
+                                    setActionMenuFor(message.id)
+                                  }
+                                : undefined
+                            }
+                            onTouchStart={canUseActionMenu ? () => handleBubbleTouchStart(message.id) : undefined}
+                            onTouchEnd={canUseActionMenu ? clearLongPressTimer : undefined}
+                            onTouchMove={canUseActionMenu ? clearLongPressTimer : undefined}
                             className={[
-                              'group relative',
+                              'message-bubble group relative',
                               i === 0 ? '' : 'mt-[3px]',
+                              // Extra room for the reaction pill cluster below,
+                              // which is absolutely positioned half-outside the
+                              // bubble -- without this, a reacted-to message in
+                              // the middle of a tightly-stacked group would have
+                              // its pills overlapping the next bubble down.
+                              reactionSummary.length > 0 ? 'mb-3' : '',
                               'max-w-full px-4 py-2.5 text-sm text-fg',
                               cornerClass,
                               // Dual themes: these used to be hardcoded olive-
@@ -2933,6 +3102,83 @@ function ThreadView({
                                 className="absolute -top-2 -left-2 flex h-6 w-6 items-center justify-center rounded-full border border-border bg-surface-raised text-fg-muted opacity-0 shadow transition group-hover:opacity-100 hover:text-fg"
                               >
                                 <PencilIcon className="h-3 w-3" />
+                              </button>
+                            )}
+                            {/* iMessage-style long-press/right-click menu trigger --
+                                mouse users get this hover button as an obvious
+                                discovery path; touch users long-press the bubble
+                                itself, desktop users can also right-click it
+                                directly (see onContextMenu above). */}
+                            {canUseActionMenu && !isEditingThis && (
+                              <button
+                                type="button"
+                                onClick={() => setActionMenuFor(isMenuOpenForThis ? null : message.id)}
+                                aria-label="Message actions"
+                                title="Message actions"
+                                className={[
+                                  'absolute -top-2 -right-2 flex h-6 w-6 items-center justify-center rounded-full border border-border bg-surface-raised text-fg-muted shadow transition hover:text-fg',
+                                  isMenuOpenForThis ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+                                ].join(' ')}
+                              >
+                                <MoreIcon className="h-3 w-3" />
+                              </button>
+                            )}
+                            {isMenuOpenForThis && (
+                              <div
+                                className={[
+                                  'message-bubble absolute z-20 w-44 rounded-xl border border-border bg-surface-raised py-1 text-left shadow-xl',
+                                  '-top-2',
+                                  group.isOutboundSide ? 'right-6' : 'left-6',
+                                ].join(' ')}
+                              >
+                                <div className="flex items-center justify-center gap-1 border-b border-border px-2 py-1.5">
+                                  {REACTION_EMOJIS.map((emoji) => (
+                                    <button
+                                      key={emoji}
+                                      type="button"
+                                      onClick={() => handleToggleReaction(message, emoji)}
+                                      aria-label={`React ${emoji}`}
+                                      className="rounded-md p-1 text-base leading-none transition hover:bg-surface"
+                                    >
+                                      {emoji}
+                                    </button>
+                                  ))}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => startReplyingTo(message)}
+                                  className="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface"
+                                >
+                                  Reply
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyMessage(message)}
+                                  className="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface"
+                                >
+                                  {copiedMessageId === message.id ? 'Copied' : 'Copy'}
+                                </button>
+                                {canEditMessage && (
+                                  <button
+                                    type="button"
+                                    onClick={() => startEditingMessage(message)}
+                                    className="block w-full px-3 py-1.5 text-left text-sm text-fg hover:bg-surface"
+                                  >
+                                    Edit
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                            {message.replyTo && (
+                              <button
+                                type="button"
+                                onClick={() => scrollToMessage(message.replyTo!.id)}
+                                className="mb-1.5 block w-full rounded-lg border-l-2 border-border-strong bg-black/10 px-2 py-1 text-left text-[11px] text-fg-secondary hover:bg-black/15"
+                              >
+                                <span className="block truncate font-medium text-fg">
+                                  {message.replyTo.author?.name ?? message.replyTo.author?.email ?? 'Unknown'}
+                                </span>
+                                <span className="block truncate">{message.replyTo.body}</span>
                               </button>
                             )}
                             {sharedInquiryId && i === 0 && (
@@ -3070,6 +3316,30 @@ function ThreadView({
                                   </p>
                                 )
                               })()}
+                            {reactionSummary.length > 0 && (
+                              <div
+                                className={[
+                                  'absolute -bottom-3 flex gap-0.5',
+                                  group.isOutboundSide ? 'right-2' : 'left-2',
+                                ].join(' ')}
+                              >
+                                {reactionSummary.map(({ emoji, count, mine }) => (
+                                  <button
+                                    key={emoji}
+                                    type="button"
+                                    onClick={() => mine && handleToggleReaction(message, emoji)}
+                                    title={mine ? 'Tap to remove your reaction' : undefined}
+                                    className={[
+                                      'flex items-center gap-0.5 rounded-full border bg-surface px-1.5 py-0.5 text-[10px] shadow',
+                                      mine ? 'border-accent cursor-pointer' : 'border-border cursor-default',
+                                    ].join(' ')}
+                                  >
+                                    <span>{emoji}</span>
+                                    {count > 1 && <span className="text-fg-secondary">{count}</span>}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         )
                       })}
@@ -3097,6 +3367,32 @@ function ThreadView({
       </div>
 
       <div className="border-t border-border p-3">
+        {replyingTo && (
+          <div className="mb-2 flex items-start justify-between gap-2 rounded-lg border-l-2 border-accent bg-surface-inset px-2.5 py-1.5">
+            <div className="min-w-0">
+              <p className="text-[11px] font-medium text-fg">
+                Replying to {replyingTo.author?.name ?? replyingTo.author?.email ?? 'Unknown'}
+              </p>
+              <p className="truncate text-[11px] text-fg-secondary">{replyingTo.body}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setReplyingTo(null)}
+              aria-label="Cancel reply"
+              className="shrink-0 text-fg-muted hover:text-fg"
+            >
+              <CloseIcon className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+        {reactionError && (
+          <div className="mb-2 flex items-center justify-between gap-2 rounded-lg border border-danger/30 bg-danger/10 px-2.5 py-1.5 text-[11px] text-danger">
+            <span>{reactionError}</span>
+            <button type="button" onClick={() => setReactionError(null)} className="font-medium underline">
+              Dismiss
+            </button>
+          </div>
+        )}
         {attachments.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2">
             {attachments.map((url) => (

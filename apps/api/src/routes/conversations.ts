@@ -489,6 +489,33 @@ router.get("/resolve", async (req, res) => {
   res.json(existing);
 });
 
+// One shared shape for every route that creates, edits, or returns a
+// message -- so a freshly-sent/edited message and one loaded from GET
+// /:id/messages always carry the same fields (reactions/replyTo included,
+// never sometimes-present), rather than the frontend needing to guess
+// which endpoint's response happens to have populated them. reactions is
+// always [] on a brand-new message, but including it here rather than
+// hand-constructing an empty array keeps this the one source of truth for
+// the shape.
+const MESSAGE_INCLUDE = {
+  author: { select: { id: true, name: true, email: true } },
+  reactions: {
+    select: { id: true, emoji: true, userId: true, user: { select: { id: true, name: true } } },
+  },
+  // Just enough of the original to render a quoted preview -- not the full
+  // MESSAGE_INCLUDE recursively (no reactions-of-the-reply-target, no
+  // reply-chains-of-reply-chains); iMessage's own reply preview is one
+  // level deep too.
+  replyTo: {
+    select: {
+      id: true,
+      body: true,
+      authorUserId: true,
+      author: { select: { id: true, name: true, email: true } },
+    },
+  },
+} as const;
+
 const MESSAGES_PAGE_SIZE = 30;
 
 // Cursor pagination on (createdAt, id); a page is the MESSAGES_PAGE_SIZE
@@ -513,7 +540,7 @@ router.get("/:id/messages", async (req, res) => {
     orderBy: { createdAt: "desc" },
     take: MESSAGES_PAGE_SIZE + 1,
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-    include: { author: { select: { id: true, name: true, email: true } } },
+    include: MESSAGE_INCLUDE,
   });
 
   const hasMore = page.length > MESSAGES_PAGE_SIZE;
@@ -770,6 +797,19 @@ router.post("/:id/messages", async (req, res) => {
     return res.status(400).json({ error: "body or attachments is required" });
   }
 
+  // Quoted reply: same "best-effort, never blocks the send" treatment as
+  // mentionedUserIds below -- a stale/foreign/malformed replyToId (e.g. the
+  // quoted message got raced-deleted, or a client bug echoes back a bad
+  // id) just silently sends without a quote rather than rejecting the
+  // whole message. Constrained to THIS conversation so a reply can never
+  // reference a message from a thread the sender might not even have
+  // access to.
+  const requestedReplyToId = typeof body.replyToId === "string" && body.replyToId ? body.replyToId : undefined;
+  const replyToId = requestedReplyToId
+    ? (await prisma.message.findFirst({ where: { id: requestedReplyToId, conversationId: id }, select: { id: true } }))
+        ?.id
+    : undefined;
+
   // conversations.sendLive gates the REAL send specifically (SMS/email
   // actually going out), not whether a message can be posted at all --
   // lacking it behaves exactly like "channel not connected" below: falls
@@ -804,6 +844,7 @@ router.post("/:id/messages", async (req, res) => {
         conversationId: id,
         body: bodyText,
         actorUserId: userId,
+        replyToId,
       });
 
       if (!result.sent) {
@@ -818,7 +859,7 @@ router.post("/:id/messages", async (req, res) => {
 
       const created = await prisma.message.findUnique({
         where: { id: result.messageId },
-        include: { author: { select: { id: true, name: true, email: true } } },
+        include: MESSAGE_INCLUDE,
       });
       emitInvalidation({ type: "conversation.updated", studioId, conversationId: id });
       return res.status(201).json(created);
@@ -921,10 +962,11 @@ router.post("/:id/messages", async (req, res) => {
             direction: MessageDirection.OUTBOUND,
             body: bodyText,
             authorUserId: userId,
+            replyToId,
             metadata: { subject, gmailMessageId: sendResult.id, gmailThreadId: sendResult.threadId, rfc822MessageId },
             createdAt: now,
           },
-          include: { author: { select: { id: true, name: true, email: true } } },
+          include: MESSAGE_INCLUDE,
         });
         // New activity un-archives -- see Conversation.archivedAt's own
         // schema comment. Harmless no-op when it wasn't archived.
@@ -992,9 +1034,10 @@ router.post("/:id/messages", async (req, res) => {
         body: bodyText,
         attachments: attachments && attachments.length > 0 ? attachments : undefined,
         authorUserId: userId,
+        replyToId,
         createdAt: now,
       },
-      include: { author: { select: { id: true, name: true, email: true } } },
+      include: MESSAGE_INCLUDE,
     }),
     prisma.conversation.update({
       where: { id },
@@ -1085,7 +1128,7 @@ router.patch("/:id/messages/:messageId", async (req, res) => {
   const updated = await prisma.message.update({
     where: { id: messageId },
     data: { body: bodyText },
-    include: { author: { select: { id: true, name: true, email: true } } },
+    include: MESSAGE_INCLUDE,
   });
 
   await logAudit({
@@ -1099,6 +1142,89 @@ router.patch("/:id/messages/:messageId", async (req, res) => {
 
   emitInvalidation({ type: "conversation.updated", studioId, conversationId: id });
 
+  res.json(updated);
+});
+
+// iMessage-style tapback quick-set -- fixed rather than a full emoji
+// picker (this feature's own scoping decision), enforced here rather than
+// in the schema so the set itself can change without a migration.
+const REACTION_EMOJIS = ["❤️", "👍", "👎", "😂", "‼️", "❓"] as const;
+type ReactionEmoji = (typeof REACTION_EMOJIS)[number];
+
+async function loadMessageForReaction(id: string, messageId: string, studioId: string) {
+  return prisma.message.findFirst({ where: { id: messageId, conversationId: id, studioId }, select: { id: true } });
+}
+
+// Upsert-style: one reaction per (message, user) -- picking a new emoji
+// replaces whatever this user had on this message before, never stacks,
+// matching iMessage's own tapback behavior. Allowed on every conversation
+// type, including CLIENT threads (this feature's own scoping decision) --
+// a reaction is additive metadata, never a rewrite of what was actually
+// sent/received, so unlike edit above it doesn't run into the immutable-
+// record concern. Never delivered over SMS/Email regardless of thread
+// type -- purely an internal annotation, same as edit already is for
+// STAFF/GROUP.
+router.put("/:id/messages/:messageId/reaction", async (req, res) => {
+  const id = req.params.id as string;
+  const messageId = req.params.messageId as string;
+  const { studioId, userId, role } = req.user!;
+  const emoji = typeof req.body?.emoji === "string" ? req.body.emoji : undefined;
+
+  if (!emoji || !REACTION_EMOJIS.includes(emoji as ReactionEmoji)) {
+    return res.status(400).json({ error: `emoji must be one of: ${REACTION_EMOJIS.join(" ")}` });
+  }
+
+  const conversation = await prisma.conversation.findUnique({
+    where: { id },
+    include: { participants: { select: { userId: true } } },
+  });
+  if (!conversation || !canViewConversation(conversation, studioId, userId, role, res.locals.conversationFlags!)) {
+    return res.status(404).json({ error: "Conversation not found" });
+  }
+
+  const message = await loadMessageForReaction(id, messageId, studioId);
+  if (!message) {
+    return res.status(404).json({ error: "Message not found" });
+  }
+
+  await prisma.messageReaction.upsert({
+    where: { messageId_userId: { messageId, userId } },
+    create: { messageId, userId, emoji },
+    update: { emoji },
+  });
+
+  emitInvalidation({ type: "conversation.updated", studioId, conversationId: id });
+
+  const updated = await prisma.message.findUnique({ where: { id: messageId }, include: MESSAGE_INCLUDE });
+  res.json(updated);
+});
+
+// Tapping an already-selected reaction again clears it -- same toggle-off
+// gesture iMessage itself uses, rather than needing a separate "no
+// reaction" option in the quick-set.
+router.delete("/:id/messages/:messageId/reaction", async (req, res) => {
+  const id = req.params.id as string;
+  const messageId = req.params.messageId as string;
+  const { studioId, userId, role } = req.user!;
+
+  const conversation = await prisma.conversation.findUnique({
+    where: { id },
+    include: { participants: { select: { userId: true } } },
+  });
+  if (!conversation || !canViewConversation(conversation, studioId, userId, role, res.locals.conversationFlags!)) {
+    return res.status(404).json({ error: "Conversation not found" });
+  }
+
+  const message = await loadMessageForReaction(id, messageId, studioId);
+  if (!message) {
+    return res.status(404).json({ error: "Message not found" });
+  }
+
+  await prisma.messageReaction.deleteMany({ where: { messageId, userId } });
+
+  emitInvalidation({ type: "conversation.updated", studioId, conversationId: id });
+
+  const updated = await prisma.message.findUnique({ where: { id: messageId }, include: MESSAGE_INCLUDE });
   res.json(updated);
 });
 
