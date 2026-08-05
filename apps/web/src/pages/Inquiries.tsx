@@ -536,7 +536,11 @@ export default function Inquiries() {
               {inquiry.client.firstName} {inquiry.client.lastName}
             </span>
             {inquiry.fromGuestStudio && (
-              <span className="mt-0.5 block max-w-[140px] truncate text-[11px] text-fg-muted md:max-w-[200px] lg:max-w-[280px]">
+              // Same accent-tinted pill Team.tsx's own "Guest artist" badge
+              // uses (there: the artist is a guest at THIS studio; here:
+              // this row is a guest AT another studio) -- reusing that
+              // established color/shape rather than inventing a second one.
+              <span className="mt-1 inline-block max-w-[140px] truncate rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent md:max-w-[200px] lg:max-w-[280px]">
                 {inquiry.fromGuestStudio.name}
               </span>
             )}

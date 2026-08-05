@@ -96,7 +96,12 @@ const InquiryKanbanCard = forwardRef<HTMLDivElement, InquiryKanbanCardProps>(fun
           {inquiry.client.firstName} {inquiry.client.lastName}
         </p>
         {inquiry.fromGuestStudio && (
-          <p className="truncate text-[11px] text-fg-muted">{inquiry.fromGuestStudio.name}</p>
+          // Same accent-tinted pill as Team.tsx's own "Guest artist" badge
+          // and Inquiries.tsx's list-row equivalent -- one established
+          // color/shape for "guest," reused rather than reinvented.
+          <span className="mt-1 inline-block max-w-full truncate rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent">
+            {inquiry.fromGuestStudio.name}
+          </span>
         )}
         <p className="mt-1 line-clamp-2 text-xs text-fg-secondary">{truncate(inquiry.description, 90)}</p>
 
