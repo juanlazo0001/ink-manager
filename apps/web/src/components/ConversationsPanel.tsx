@@ -1614,11 +1614,14 @@ function ThreadView({
   const composerMenuActive = showComposerMenu || showTemplates || showLinkMenu || showPortfolioPicker
 
   const isClientThread = data?.conversation.type === 'CLIENT'
-  // Archiving is staff-only (see backend's own requireRole on POST /:id/
-  // archive) -- an artist can still fully use their own STAFF thread, they
-  // just don't get the "hide this from everyone's list" action, so the
-  // button isn't shown to them at all rather than shown and then 403ing.
-  const canManageThread = user?.role !== 'ARTIST'
+  // Matches the backend's own canManageArchive: staff can manage any
+  // thread they can see; an artist additionally gets this on their own
+  // STAFF thread specifically (not GROUP -- they're only one of several
+  // participants there, hiding it for everyone isn't their call alone).
+  // The button isn't shown at all when it wouldn't be allowed, rather than
+  // shown and then 403ing.
+  const isOwnStaffThread = data?.conversation.type === 'STAFF' && data?.conversation.staffUserId === user?.userId
+  const canManageThread = user?.role !== 'ARTIST' || isOwnStaffThread
   const isArchived = !!data?.conversation.archivedAt
 
   useEffect(() => {

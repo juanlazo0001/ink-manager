@@ -8032,3 +8032,38 @@ Dev web server killed; other concurrent session's API server on :4000 left untou
 
 `2a4c352` on `main`.
 
+---
+
+## Follow-up: artists can archive their own Staff thread; resuming a chat via search un-archives it
+
+Two items from direct feedback on the archive feature above.
+
+### 1. Artists can now archive their own Staff thread
+
+`POST /:id/archive`/`unarchive` were staff-only (`requireRole(OWNER, FRONT_DESK)`). Confirmed: an artist should get this on their own 1:1 line to the studio too. Replaced the route-level role gate with an inline `canManageArchive` check (needs the conversation loaded first, which route-level middleware can't do) -- true for OWNER/FRONT_DESK always, or for an ARTIST when `conversation.type === STAFF && conversation.staffUserId === them`. Deliberately **not** extended to GROUP threads: an artist is only one of several participants there once a thread's been upgraded (via @mention), and letting any one of them unilaterally hide it from everyone else (including OWNER/FRONT_DESK) is a different, riskier action than managing their own 1:1 line. Frontend's `canManageThread` (gates whether the More-actions menu/Archive item render at all, so an artist never sees a button that would 403) updated to match exactly.
+
+Found and worked around a real dev-DB data-integrity artifact while verifying this, unrelated to the feature itself: `artist1@dev-studio.test`'s `User.studioId` was left pointing at a different studio than their own conversations by earlier, unrelated work in this session (go-solo/studio-membership testing) -- every conversation lookup correctly 404'd for them as a result (`conversation.studioId !== req.user.studioId`), which looked like a bug in the new archive code until traced to its real cause. Verified instead against `artist2@dev-studio.test`, whose data is consistent.
+
+### 2. Searching to resume a chat now un-archives it
+
+Reported directly: no visible way to unarchive (the Archived-filter + banner from the previous round exist, but resuming an archived contact through the ordinary "search for them and start chatting" flow is the more natural path, and didn't un-archive). `POST /conversations` (the existing get-or-create route, whose own comment already documents it as "an intentional 'start this conversation' click," as opposed to `GET /resolve`'s passive/automatic lookups) now clears `archivedAt`/`archivedById` when it resolves to an *existing*, currently-archived conversation, in both the `clientId` and `staffUserId` branches -- same `conversation.updated` invalidation as every other archive state change, so it reappears in the default list immediately. `getOrCreateStaffConversation`'s return type widened to include `archivedAt` so the route can check it without a second query.
+
+## Verification -- isolated dev API (`:4099`, to rule out interference from the other concurrent session's own shared `:4000` server while debugging the studioId issue above) + web
+
+- Artist archiving their own Staff thread: `204`; disappears from their default list; appears under `archived=true`; a *different* artist attempting to archive it: `404` (not 403 -- consistent with `canViewConversation`'s existing "don't reveal existence" shape for a thread they're not part of).
+- Resuming via `POST /conversations` (both `clientId` and `staffUserId` branches) on an archived conversation: response comes back with `archivedAt: null`, and it's immediately back in the default list.
+- UI: logged in as the artist, opened their own "Dev Studio" thread, confirmed the More-actions menu shows only "Archive" (no "Draft with AI," correctly staff-only) -- screenshotted.
+- Test conversations left unarchived afterward (the resume-tests already did this as a side effect; confirmed nothing left archived).
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npx tsc --noEmit -p tsconfig.app.json` + `npm run build` (web) all clean.
+
+## Cleanup
+
+Isolated `:4099` API server and this session's own web dev server killed; other concurrent session's `:4000` API server untouched. `apps/web/.env.local` removed. All scratch scripts deleted immediately after use, none committed.
+
+## Commit
+
+`<pending>` on `main`.
+

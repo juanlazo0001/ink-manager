@@ -358,7 +358,20 @@ router.post("/", async (req, res) => {
     }
 
     const existing = await prisma.conversation.findUnique({ where: { clientId } });
-    if (existing) return res.json(existing);
+    if (existing) {
+      // This route is specifically "an intentional 'start this
+      // conversation' click" (see this route's own comment) -- searching
+      // this client back up to resume chatting with them un-archives, same
+      // as new message activity already does, so they don't stay hidden
+      // from the list right after the person who just resumed them.
+      if (!existing.archivedAt) return res.json(existing);
+      const resumed = await prisma.conversation.update({
+        where: { id: existing.id },
+        data: { archivedAt: null, archivedById: null },
+      });
+      emitInvalidation({ type: "conversation.updated", studioId, conversationId: existing.id });
+      return res.json(resumed);
+    }
 
     const created = await prisma.conversation.create({ data: { studioId, type: ConversationType.CLIENT, clientId } });
     await logAudit({
@@ -384,6 +397,16 @@ router.post("/", async (req, res) => {
   }
 
   const { conversation, created } = await getOrCreateStaffConversation(studioId, staffUserId, userId);
+  if (!created && conversation.archivedAt) {
+    // Same "explicit resume un-archives" reasoning as the clientId branch
+    // above.
+    const resumed = await prisma.conversation.update({
+      where: { id: conversation.id },
+      data: { archivedAt: null, archivedById: null },
+    });
+    emitInvalidation({ type: "conversation.updated", studioId, conversationId: conversation.id });
+    return res.status(200).json(resumed);
+  }
   res.status(created ? 201 : 200).json(conversation);
 });
 
@@ -588,18 +611,37 @@ router.delete("/:id/tags/:tagId", requireRole(Role.OWNER, Role.FRONT_DESK), asyn
 });
 
 // Archiving is shared/studio-wide (see Conversation.archivedAt's own
-// schema comment), so this is staff-only, same gate as tags above -- an
-// artist can still fully use their own STAFF thread, they just don't get
-// the "hide this from everyone's list" capability. Reversible; the thread
-// itself, its messages, and its history are completely untouched -- this
-// only changes what GET / returns by default.
-router.post("/:id/archive", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+// schema comment) -- staff (OWNER/FRONT_DESK) can archive anything they
+// can see, same as tags above. An artist additionally gets this on their
+// OWN STAFF thread specifically (conversation.staffUserId === them) --
+// it's their own line to the studio, so hiding it from their own list is
+// reasonable to leave in their hands too. Deliberately NOT extended to
+// GROUP threads: an artist is only one of several participants there, and
+// letting any one of them unilaterally hide it for everyone (including
+// OWNER/FRONT_DESK) is a different, riskier kind of action than managing
+// their own 1:1 line. Reversible either way; the thread itself, its
+// messages, and its history are completely untouched -- this only changes
+// what GET / returns by default.
+function canManageArchive(
+  conversation: { type: ConversationType; staffUserId: string | null },
+  userId: string,
+  role: Role,
+): boolean {
+  if (role === Role.OWNER || role === Role.FRONT_DESK) return true;
+  return conversation.type === ConversationType.STAFF && conversation.staffUserId === userId;
+}
+
+router.post("/:id/archive", async (req, res) => {
   const id = req.params.id as string;
   const { studioId, userId, role } = req.user!;
 
   const conversation = await prisma.conversation.findUnique({ where: { id } });
   if (!conversation || !canViewConversation(conversation, studioId, userId, role, res.locals.conversationFlags!)) {
     return res.status(404).json({ error: "Conversation not found" });
+  }
+
+  if (!canManageArchive(conversation, userId, role)) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   if (conversation.archivedAt) {
@@ -618,13 +660,17 @@ router.post("/:id/archive", requireRole(Role.OWNER, Role.FRONT_DESK), async (req
   res.status(204).send();
 });
 
-router.post("/:id/unarchive", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+router.post("/:id/unarchive", async (req, res) => {
   const id = req.params.id as string;
   const { studioId, userId, role } = req.user!;
 
   const conversation = await prisma.conversation.findUnique({ where: { id } });
   if (!conversation || !canViewConversation(conversation, studioId, userId, role, res.locals.conversationFlags!)) {
     return res.status(404).json({ error: "Conversation not found" });
+  }
+
+  if (!canManageArchive(conversation, userId, role)) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   if (!conversation.archivedAt) {

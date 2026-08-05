@@ -165,7 +165,7 @@ export async function getOrCreateStaffConversation(
   studioId: string,
   staffUserId: string,
   actorUserId: string | null,
-): Promise<{ conversation: { id: string }; created: boolean }> {
+): Promise<{ conversation: { id: string; archivedAt: Date | null }; created: boolean }> {
   const existing = await prisma.conversation.findUnique({ where: { staffUserId } });
   if (existing) return { conversation: existing, created: false };
 
