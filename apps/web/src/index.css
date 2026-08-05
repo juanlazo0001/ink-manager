@@ -485,34 +485,30 @@
   background-color: var(--color-card-glass-opaque);
 }
 
-/* Heavily-blurred photo background layer, TopBar-mounted alongside
-   .arc-decor below (same `decorative` gate, same fixed/viewport-wide
-   approach) -- one more atmospheric layer behind the app shell under
-   Editorial Gold, matching Login's own photo/hero-shade/rings stack but
-   for the general authenticated app rather than just the auth pages.
-   app-bg-blurred-dark.jpg is a PRE-blurred, darker-graded static asset
-   (a re-grade of the original app-bg-blurred.jpg, swapped in once the
-   lighter original's brighter patches -- a window, a light wall -- proved
-   too bright for comfortable text legibility under .app-bg-wash below;
-   see TopBar.tsx's own comment for how it was sized/re-encoded),
-   never a live CSS filter: blur(), which would be a continuous GPU cost
-   recomputed on every scroll/repaint (the same category of issue as the
-   mobile backdrop-filter stutter fixed earlier this project). Rendering a
-   small pre-blurred image costs the same as any other static background
-   image; there is nothing left to compute at runtime.
-   Explicit, distinct z-index per layer (photo 0, wash 1, .arc-decor
-   below 2) rather than all three at 0 relying on DOM order -- an earlier
-   version of this comment theorized DOM order among equal-z-index
-   siblings would be enough, matching how .arc-decor alone had always
-   behaved. Real manual testing found that wasn't the actual blocker: both
-   layers were rendering behind the *real* opaque layer, each page's own
+/* Heavily-blurred photo background layer, TopBar-mounted -- one more
+   atmospheric layer behind the app shell under Editorial Gold, matching
+   Login's own photo/hero-shade stack but for the general authenticated
+   app rather than just the auth pages. app-bg-blurred-amber.jpg is a
+   PRE-blurred static asset (see TopBar.tsx's own comment for how it was
+   sized/re-encoded), never a live CSS filter: blur(), which would be a
+   continuous GPU cost recomputed on every scroll/repaint (the same
+   category of issue as the mobile backdrop-filter stutter fixed earlier
+   this project). Rendering a small pre-blurred image costs the same as
+   any other static background image; there is nothing left to compute at
+   runtime.
+   Explicit z-index per layer (photo 0, wash 1) rather than both at 0
+   relying on DOM order -- found via real manual testing that both layers
+   were rendering behind the *real* opaque layer, each page's own
    top-level wrapper's plain `bg-bg` (Tailwind's fully-opaque utility,
-   `min-h-screen ... bg-bg ...`, sitting in normal document flow above
-   any z-index:0 fixed sibling regardless of DOM order between the two).
-   See `[data-theme="editorial-gold"] .bg-bg` below for that actual fix;
-   the explicit z-index values here are the smaller, secondary fix on top
-   of it (found the same way) so photo/wash/rings still layer correctly
-   relative to EACH OTHER once the real blocker is gone. */
+   `min-h-screen ... bg-bg ...`, sitting in normal document flow above any
+   z-index:0 fixed sibling regardless of DOM order between the two) --
+   confirmed by setting .app-bg-wash to a bright solid color and finding
+   zero pixel difference anywhere on screen, proving it wasn't rendering
+   at all. Every page's own `.bg-bg` wrapper is left fully opaque under
+   Editorial Gold same as every other preset (no override here) -- this
+   photo/wash pair is only ever visible in the margins around page
+   content (the TopBar strip, any page shorter than the viewport), not
+   bleeding through page bodies. */
 .app-bg-photo {
   position: fixed;
   inset: 0;
@@ -524,97 +520,17 @@
 }
 /* Flat, strong dark wash rather than Login's own directional vignette --
    Login's hero-shade gradient is shaped for a single centered hero photo
-   framing one card; the app shell scrolls and has no single focal point,
-   so a uniform wash guarantees legibility at every scroll position
-   regardless of which part of the now-abstract blurred photo happens to
-   sit underneath. Sits ABOVE the photo (z-index 1, one above .app-bg-
-   photo's 0) -- a real scrim actually cast over it, not a loading-state
-   placeholder color hidden behind an opaque image. Lower opacity than a
-   wash over the original, lighter photo would need (was 0.88 against
-   app-bg-blurred.jpg): app-bg-blurred-dark.jpg is already close to solid
-   near-black on its own, so a lighter scrim on top reaches the same
-   legibility floor without crushing out the last of the photo's texture
-   entirely. */
+   framing one card; this layer has no single focal point, so a uniform
+   wash guarantees legibility regardless of which part of the now-abstract
+   blurred photo happens to sit underneath. Sits ABOVE the photo (z-index
+   1, one above .app-bg-photo's 0) -- a real scrim actually cast over it,
+   not a loading-state placeholder color hidden behind an opaque image. */
 .app-bg-wash {
   position: fixed;
   inset: 0;
   z-index: 1;
   pointer-events: none;
   background: rgba(12, 10, 8, 0.45);
-}
-/* THE actual bug (found via real manual testing, not theorized): every
-   page's own top-level wrapper (Dashboard.tsx and 27 others, all
-   `min-h-screen ... bg-bg ...`) paints Tailwind's plain, fully OPAQUE
-   `.bg-bg` utility -- a solid fill covering the entire viewport height,
-   sitting in normal document flow ABOVE .app-bg-photo/.app-bg-wash
-   (z-index 0/1) regardless of anything done to those two elements' own
-   stacking, since it's the thing those two are supposed to sit BEHIND in
-   the first place. This is what "the image is behind another opaque
-   layer" actually meant -- confirmed by setting .app-bg-wash to a bright
-   solid color and finding zero pixel difference anywhere on screen,
-   proving it wasn't rendering at all.
-   Scoped to editorial-gold only, and to the exact `.bg-bg` utility class
-   (not `.bg-bg/NN` opacity-modifier variants like ViewAsBanner's own
-   `bg-bg/10`, a separate generated class Tailwind's slash-opacity syntax
-   produces, unaffected by this rule) -- every other preset's page
-   wrappers stay fully opaque, exactly as before. color-mix over
-   `--color-bg` itself (not a hardcoded duplicate rgba triplet), same
-   technique already used for .rbc-calendar's slot-selection tint above,
-   so this stays correct if editorial-gold's own --color-bg ever changes.
-   80% (originally 70%, tuned darker afterward) -- not the wash's own
-   value, this is what lets the photo read through the page shell without
-   the shell itself losing its own legibility-guaranteeing darkness. */
-[data-theme="editorial-gold"] .bg-bg {
-  background-color: color-mix(in srgb, var(--color-bg) 80%, transparent);
-}
-
-/* Recentered on the viewport (was top: -560px, anchored almost entirely
-   above it -- visible only as a sliver behind the header/TopBar area, and
-   never again once a page scrolled past its first screenful). Frosted-
-   glass cards (.card-surface) need something with real, soft, low-
-   frequency shape behind them to make the blur perceptible -- fine
-   high-frequency detail (like the grain texture) gets smoothed away by a
-   16px blur almost entirely, but large soft rings survive it, the same
-   proven combination the login/marketing pages already use. Staying
-   `position: fixed` (not tied to document scroll) means these same rings
-   stay centered in the current viewport at any scroll position on any
-   page, with zero per-page integration -- TopBar already mounts this once
-   on every authenticated page. */
-.arc-decor {
-  position: fixed;
-  left: 50%;
-  top: 50%;
-  transform: translate(-46%, -50%);
-  width: 1400px;
-  height: 1400px;
-  pointer-events: none;
-  /* z-index 2, above .app-bg-photo (1) -- otherwise the now-opaque photo
-     (see its own comment on why it needed to move to z-index 1) would sit
-     in front of these rings and hide them entirely. Confirmed via a
-     targeted on/off toggle: at the old z-index: 0, removing this element
-     produced an IDENTICAL screenshot to leaving it in, proving it was
-     already invisible, hidden behind the photo -- not a hypothetical. */
-  z-index: 2;
-}
-.arc-decor i {
-  position: absolute;
-  inset: 0;
-  border: 1px solid rgba(201, 154, 91, 0.1);
-  border-radius: 50%;
-  display: block;
-}
-.arc-decor i:nth-child(2) {
-  inset: 110px;
-  border-color: rgba(201, 154, 91, 0.07);
-}
-.arc-decor i:nth-child(3) {
-  inset: 230px;
-  border-color: rgba(201, 154, 91, 0.05);
-}
-@media (max-width: 767px) {
-  .arc-decor {
-    display: none;
-  }
 }
 
 .side-nav-link {

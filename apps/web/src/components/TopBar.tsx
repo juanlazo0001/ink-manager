@@ -14,7 +14,7 @@ import ViewAsPicker from './ViewAsPicker'
 import SearchPalette from './SearchPalette'
 import ConnectionStatusIndicator from './ConnectionStatusIndicator'
 import { useThemePreset } from '../lib/useThemePreset'
-import appBgBlurred from '../assets/app-bg-blurred-dark.jpg'
+import appBgBlurred from '../assets/app-bg-blurred-amber.jpg'
 
 interface TasksBadgeResponse {
   system: unknown[]
@@ -104,38 +104,22 @@ export default function TopBar() {
 
   return (
     <>
-      {/* Heavily-blurred photo + dark wash, behind the arc-ornament below --
-          layer order back to front is photo, wash, arc-decor/grain, then
-          real content, matching Login's own photo/hero-shade/rings stack.
-          The photo itself is a PRE-blurred static asset (app-bg-blurred-
-          dark.jpg, 640x397, ~5KB -- a darker re-grade of the original
-          app-bg-blurred.jpg, downscaled/re-encoded the same way: sharp
-          resize + JPEG re-encode, not the raw ~1600x1000 PNG export it
-          started as), never a live CSS filter: blur() -- that would
-          recompute every scroll/repaint, the same category of cost that caused the mobile
+      {/* Heavily-blurred photo + dark wash, behind the grain texture --
+          layer order back to front is photo, wash, grain, then real
+          content, matching Login's own photo/hero-shade stack. The photo
+          itself is a PRE-blurred static asset (app-bg-blurred-amber.jpg,
+          640x397, ~6KB), downscaled/re-encoded via sharp (resize + JPEG),
+          never a live CSS filter: blur() -- that would recompute every
+          scroll/repaint, the same category of cost that caused the mobile
           backdrop-filter stutter on Login's card earlier. Same `decorative`
-          gate as .arc-decor immediately below -- see index.css's own
-          comment on why .app-bg-wash now sits ABOVE this photo (a real
-          scrim, not a loading-state placeholder) and why its opacity is
-          lower than it would need to be over the original, lighter photo. */}
+          gate every other Editorial Gold-only decorative element on this
+          page uses -- see index.css's own comment on why .app-bg-wash sits
+          ABOVE this photo (a real scrim, not a loading-state placeholder). */}
       {decorative && (
         <>
           <img src={appBgBlurred} alt="" aria-hidden="true" className="app-bg-photo" />
           <span className="app-bg-wash" aria-hidden="true" />
         </>
-      )}
-      {/* Dual themes: faint concentric arcs behind the header area -- a
-          genuinely new DOM element the 'default' shape never had, so it's
-          only mounted when the active preset's `decorative` flag is set
-          (today, only 'editorial-gold'), not just hidden via CSS under
-          other presets. Gated on the same "logged in" condition as the
-          rest of TopBar so public token pages never mount it either. */}
-      {decorative && (
-        <span className="arc-decor" aria-hidden="true">
-          <i />
-          <i />
-          <i />
-        </span>
       )}
       <div className={`fixed right-4 z-30 flex items-center gap-2 ${viewAsTarget ? 'top-14' : 'top-4'}`}>
         <ConnectionStatusIndicator />

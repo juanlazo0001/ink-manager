@@ -7939,3 +7939,32 @@ Verified: `npx tsc --noEmit -p tsconfig.app.json` and `npm run build` (web) both
 ## Commit
 
 `bc46cec` on `main`.
+
+---
+
+## Follow-up: removed the .bg-bg darkening override and the ring ornament, switched to the amber photo
+
+Requested directly, three parts:
+
+1. **Removed `[data-theme="editorial-gold"] .bg-bg`'s 20%-transparent override.** This rule existed only to let the app-bg-photo/wash layer bleed faintly through every page's own opaque `.bg-bg` wrapper. Removing it restores `.bg-bg` to fully opaque under Editorial Gold, same as every other preset -- worth calling out plainly: the practical effect is that the photo/wash layer is now only visible in the margins around page content (the TopBar strip, any page shorter than the viewport), not bled through page bodies the way it was before. That's the literal ask ("darken the image... since it's already darker") -- flagging the visible consequence in case it wants revisiting.
+2. **Removed `.arc-decor`** (the concentric-rings ornament) entirely -- the CSS class/variants/media-query in `index.css` and the `<span className="arc-decor">` JSX in `TopBar.tsx`. Grain texture (a separate, unrelated mechanism) is untouched.
+3. **Switched the background photo** from `app-bg-blurred-dark.jpg` to `app-bg-blurred-amber.jpg` (added last round, not previously wired into any code).
+
+Updated the surrounding comments in `index.css`, `TopBar.tsx`, and `App.tsx` that referenced the now-removed `.bg-bg` override and `.arc-decor` (the latter was mentioned as a comparison case in `App.tsx`'s z-index-stacking bug writeup) to stop describing mechanisms that no longer exist.
+
+## Verification -- live dev web (Editorial Gold preset)
+
+Screenshotted Dashboard and Team: no rings, uniformly opaque dark page background (no more visible photo texture bleeding through card grids), consistent with the override's removal.
+
+## Typechecks
+
+`npx tsc --noEmit -p tsconfig.app.json` (web) and `npm run build` (web) both clean.
+
+## Cleanup
+
+Killed this session's own web dev server; left the other concurrent session's already-running API server on :4000 untouched. `apps/web/.env.local` removed.
+
+## Commit
+
+`<pending>` on `main`.
+
