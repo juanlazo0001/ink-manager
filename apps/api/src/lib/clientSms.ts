@@ -72,7 +72,12 @@ async function sendSmsMessage(params: {
         createdAt: now,
       },
     });
-    await tx.conversation.update({ where: { id: conversationId }, data: { lastMessageAt: now } });
+    // New activity un-archives -- see Conversation.archivedAt's own schema
+    // comment. Harmless no-op when it wasn't archived.
+    await tx.conversation.update({
+      where: { id: conversationId },
+      data: { lastMessageAt: now, archivedAt: null, archivedById: null },
+    });
     return created;
   });
 

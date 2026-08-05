@@ -7990,3 +7990,45 @@ Dev web server killed; other concurrent session's API server on :4000 left untou
 
 `f62109c` on `main`.
 
+---
+
+# Archive conversations
+
+New feature, requested directly. Design decision (archiving scope) confirmed with the user before building: **shared, studio-wide** archiving -- once archived, a conversation is hidden from everyone's list until someone unarchives it, matching how this conversation system already treats a thread as one shared record (visibility is role/permission-driven, never a personal per-user preference) rather than a personal mailbox.
+
+## Schema
+
+`Conversation.archivedAt`/`archivedById` (+ `archivedBy` relation to `User`, same "who did X, audit metadata" shape as `User.deactivatedAt`/`deactivatedById`), plus `@@index([studioId, archivedAt])`. Migration hand-written (`prisma migrate dev` is still broken in this environment on unrelated pre-existing checksum drift) and applied via `prisma migrate deploy`, then `prisma generate`.
+
+## Backend (`apps/api/src/routes/conversations.ts`)
+
+- `POST /:id/archive` / `POST /:id/unarchive` -- staff-only (`requireRole(OWNER, FRONT_DESK)`, same gate as tags), idempotent-guarded (400 if already in that state), fully reversible: the thread, its messages, and its history are completely untouched, this only changes what `GET /` returns by default. Both `logAudit` and the existing `conversation.updated` realtime event (already invalidates `['conversations']` and `['conversation-thread', id]` on the frontend -- no new event type needed).
+- `GET /` -- new `?archived=true` param. Default excludes archived (`archivedAt: null`); `archived=true` shows *only* archived ones, a separate bucket rather than a union with the active list -- same "one filter picks one bucket" shape as `type`/`entityType`/`artistId`.
+- **Auto-unarchive on new activity**: every one of the six places in the codebase that creates a `Message` and bumps `Conversation.lastMessageAt` (`conversations.ts` x2 -- in-app send and email send; `clientSms.ts`; `webhooks.ts` -- inbound SMS; `emailPoller.ts` -- inbound email; `inquiries.ts` -- share-to-artist) now also clears `archivedAt`/`archivedById` in that same update. Deliberately unconditional (a harmless no-op when not archived) rather than a separate conditional check -- this matters most for the two *inbound* paths (webhooks.ts, emailPoller.ts): a client texting or emailing back into an archived thread must not silently stay hidden from the studio.
+
+## Frontend (`apps/web/src/components/ConversationsPanel.tsx`)
+
+- New "Archived" option on the existing quick-filter `PillMenu` (All / Unread / Needs action / **Archived**) -- reuses the existing filter-pill UI rather than adding new chrome. Selecting it adds `archived=true` to the list fetch and its own query-key slot (a genuinely separate server-side bucket, not a client-side filter over the already-fetched active list).
+- Thread header: restructured the previously CLIENT-thread-only action row so the "More actions" (⋯) menu -- and the new "Archive"/"Unarchive" item in it -- shows for any thread a non-artist viewer has open (Draft-with-AI stays CLIENT-only inside that same menu). Artists don't see the action at all (rather than seeing it and getting a 403), since archiving is staff-only.
+- A small "Archived" banner (with its own inline Unarchive link) renders at the top of an open archived thread, so it's unambiguous when viewing one whether reached via the Archived filter or a direct link/search hit.
+- New `ArchiveIcon` added to `components/icons.tsx`, matching the existing icon set's `viewBox="0 0 20 20"` stroke style.
+
+## Verification -- live dev API/web
+
+- Archived a real client conversation via the API directly: disappeared from the default list, appeared under `?archived=true`; double-archiving correctly 400'd.
+- Sent a new in-app message to the now-archived thread: post succeeded, conversation reappeared in the default list with `archivedAt: null` -- confirms the auto-unarchive-on-activity behavior.
+- Full UI pass: opened Conversations, opened a thread, used the ⋯ menu's "Archive" item, confirmed the "Archived" banner rendered with a working "Unarchive" link, then confirmed the same conversation appeared under the "Archived" quick filter in the list (screenshotted at each step).
+- Test conversations unarchived afterward to leave dev-DB state as found.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npx tsc --noEmit -p tsconfig.app.json` + `npm run build` (web) all clean.
+
+## Cleanup
+
+Dev web server killed; other concurrent session's API server on :4000 left untouched (its `tsx watch` process picked up the new Prisma client/routes automatically). `apps/web/.env.local` removed. All scratch verification scripts deleted immediately after use, none committed.
+
+## Commit
+
+`<pending>` on `main`.
+

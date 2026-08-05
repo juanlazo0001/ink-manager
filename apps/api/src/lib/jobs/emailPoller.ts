@@ -151,7 +151,13 @@ async function run(scheduledFor: Date): Promise<JobDetails> {
             createdAt: now,
           },
         });
-        await tx.conversation.update({ where: { id: conversation.id }, data: { lastMessageAt: now } });
+        // New activity un-archives -- see Conversation.archivedAt's own
+        // schema comment. Important here specifically: a client emailing
+        // back into an archived thread must not stay hidden.
+        await tx.conversation.update({
+          where: { id: conversation.id },
+          data: { lastMessageAt: now, archivedAt: null, archivedById: null },
+        });
         return createdMessage;
       });
 

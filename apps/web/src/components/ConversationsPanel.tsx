@@ -27,6 +27,7 @@ import { navCountsQueryKey } from '../lib/queryKeys'
 import type { NavCounts } from '../lib/useNavCounts'
 import { useThemePreset } from '../lib/useThemePreset'
 import {
+  ArchiveIcon,
   ArrowLeftIcon,
   ArrowUpRightIcon,
   ArtistsIcon,
@@ -79,6 +80,7 @@ interface ConversationSummary {
   clientId: string | null
   staffUserId: string | null
   lastMessageAt: string | null
+  archivedAt: string | null
   counterpart: {
     id: string
     name: string
@@ -165,6 +167,7 @@ interface ThreadResponse {
     type: ConversationTypeValue
     clientId: string | null
     staffUserId: string | null
+    archivedAt: string | null
     counterpart: {
       id: string
       name: string
@@ -638,7 +641,7 @@ export default function ConversationsPanel() {
   const [artistIdFilter, setArtistIdFilter] = useState('')
   const [conversationSearch, setConversationSearch] = useState('')
   const [showFilters, setShowFilters] = useState(false)
-  const [quickFilter, setQuickFilter] = useState<'all' | 'unread' | 'needs-action'>('all')
+  const [quickFilter, setQuickFilter] = useState<'all' | 'unread' | 'needs-action' | 'archived'>('all')
   const [sortOption, setSortOption] = useState<'recent' | 'oldest' | 'unread' | 'name'>('recent')
   // Mounted lazily on first open (so a panel never opened at all never
   // fetches anything), then kept mounted forever after -- closing just
@@ -873,6 +876,7 @@ const QUICK_FILTER_OPTIONS = [
   { value: 'all', label: 'All' },
   { value: 'unread', label: 'Unread' },
   { value: 'needs-action', label: 'Needs action' },
+  { value: 'archived', label: 'Archived' },
 ] as const
 
 const SORT_OPTIONS = [
@@ -916,8 +920,8 @@ function ConversationListView({
   onSearchChange: (value: string) => void
   showFilters: boolean
   onShowFiltersChange: (value: boolean | ((prev: boolean) => boolean)) => void
-  quickFilter: 'all' | 'unread' | 'needs-action'
-  onQuickFilterChange: (value: 'all' | 'unread' | 'needs-action') => void
+  quickFilter: 'all' | 'unread' | 'needs-action' | 'archived'
+  onQuickFilterChange: (value: 'all' | 'unread' | 'needs-action' | 'archived') => void
   // Client-side only -- the full matching list is always fetched in one
   // shot (no pagination on GET /conversations), so there's no missing-data
   // cutoff to worry about re-sorting after the fact. 'recent' matches the
@@ -949,9 +953,14 @@ function ConversationListView({
   if (tab === 'CLIENT' && entityTypeFilter) params.set('entityType', entityTypeFilter)
   if (tab === 'CLIENT' && artistIdFilter) params.set('artistId', artistIdFilter)
   if (tab === 'CLIENT' && search.trim()) params.set('search', search.trim())
+  // A separate server-side bucket, not a client-side filter over the same
+  // fetch (see backend's own comment) -- archived threads aren't part of
+  // the default list at all, so switching into this view needs its own
+  // fetch/cache entry, same as every other param here.
+  if (quickFilter === 'archived') params.set('archived', 'true')
 
   const { data: conversations, isLoading } = useQuery({
-    queryKey: ['conversations', tab, entityTypeFilter, artistIdFilter, search.trim()],
+    queryKey: ['conversations', tab, entityTypeFilter, artistIdFilter, search.trim(), quickFilter === 'archived'],
     queryFn: () => apiFetch<ConversationSummary[]>(`/conversations?${params.toString()}`),
     refetchInterval: 30_000,
     // Cached data from a prefetch (FAB hover) or a previous open counts as
@@ -1338,11 +1347,13 @@ function ConversationListView({
 
         {!isLoading && visibleConversations.length === 0 && (
           <p className="p-4 text-sm text-fg-secondary">
-            {conversations && conversations.length > 0
-              ? 'Nothing matches this filter.'
-              : tab === 'CLIENT'
-                ? 'No client conversations yet.'
-                : 'No team conversations yet.'}
+            {quickFilter === 'archived'
+              ? 'Nothing archived.'
+              : conversations && conversations.length > 0
+                ? 'Nothing matches this filter.'
+                : tab === 'CLIENT'
+                  ? 'No client conversations yet.'
+                  : 'No team conversations yet.'}
           </p>
         )}
 
@@ -1553,6 +1564,8 @@ function ThreadView({
   const [showContext, setShowContext] = useState(false)
   const [showTagPicker, setShowTagPicker] = useState(false)
   const [tagError, setTagError] = useState<string | null>(null)
+  const [archiveError, setArchiveError] = useState<string | null>(null)
+  const [archiving, setArchiving] = useState(false)
   const [imagePickerFor, setImagePickerFor] = useState<string | null>(null)
   const [imageAttachError, setImageAttachError] = useState<string | null>(null)
   const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null)
@@ -1601,6 +1614,12 @@ function ThreadView({
   const composerMenuActive = showComposerMenu || showTemplates || showLinkMenu || showPortfolioPicker
 
   const isClientThread = data?.conversation.type === 'CLIENT'
+  // Archiving is staff-only (see backend's own requireRole on POST /:id/
+  // archive) -- an artist can still fully use their own STAFF thread, they
+  // just don't get the "hide this from everyone's list" action, so the
+  // button isn't shown to them at all rather than shown and then 403ing.
+  const canManageThread = user?.role !== 'ARTIST'
+  const isArchived = !!data?.conversation.archivedAt
 
   useEffect(() => {
     onContextOpenChange(isClientThread && showContext)
@@ -2024,6 +2043,26 @@ function ThreadView({
     }
   }
 
+  async function handleToggleArchive() {
+    setArchiveError(null)
+    setArchiving(true)
+    setShowMoreMenu(false)
+    try {
+      await apiFetch(`/conversations/${conversationId}/${isArchived ? 'unarchive' : 'archive'}`, { method: 'POST' })
+      // Same belt-and-suspenders as handleRemoveTag above -- the server's
+      // own conversation.updated socket event already invalidates both
+      // ['conversations'] and this thread's query for every connected
+      // client eventually, but invalidating the thread query directly here
+      // updates the header's Archived banner immediately for the person
+      // who just clicked, not on the next socket round-trip.
+      queryClient.invalidateQueries({ queryKey: ['conversation-thread', conversationId] })
+    } catch (err) {
+      setArchiveError(err instanceof Error ? err.message : `Failed to ${isArchived ? 'unarchive' : 'archive'}`)
+    } finally {
+      setArchiving(false)
+    }
+  }
+
   async function handleAttachImageToInquiry(imageUrl: string, inquiryId: string) {
     setImageAttachError(null)
     try {
@@ -2413,62 +2452,101 @@ function ThreadView({
             </p>
           )}
         </div>
-        {isClientThread && (
+        {(isClientThread || canManageThread) && (
           <div className="flex items-center gap-3.5">
-            <button
-              type="button"
-              onClick={() => {
-                setShowTagPicker((v) => !v)
-                setShowContext(false)
-              }}
-              aria-label="Add tag"
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
-            >
-              <TagIcon className="h-[18px] w-[18px]" />
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setShowContext((v) => !v)
-                setShowTagPicker(false)
-              }}
-              aria-label="Client details"
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
-            >
-              <InfoIcon className="h-[18px] w-[18px]" />
-            </button>
-            <div className="relative">
+            {isClientThread && (
               <button
                 type="button"
-                onClick={() => setShowMoreMenu((v) => !v)}
-                aria-label="More actions"
+                onClick={() => {
+                  setShowTagPicker((v) => !v)
+                  setShowContext(false)
+                }}
+                aria-label="Add tag"
                 className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
               >
-                <MoreIcon className="h-[18px] w-[18px]" />
+                <TagIcon className="h-[18px] w-[18px]" />
               </button>
-              {showMoreMenu && (
-                <>
-                  <div className="fixed inset-0 z-10" onClick={() => setShowMoreMenu(false)} aria-hidden="true" />
-                  <div className="absolute right-0 top-9 z-20 w-56 origin-top-right animate-scale-fade-in rounded-xl border border-border bg-surface-raised p-1 shadow-xl">
-                    <button
-                      type="button"
-                      onClick={handleOpenDraftModal}
-                      className={
-                        isEditorial
-                          ? 'flex w-full items-center gap-2 rounded-md px-3 py-2 text-left font-jura text-[11px] font-bold uppercase tracking-[0.14em] text-accent-hover hover:bg-accent/10'
-                          : 'flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface'
-                      }
-                    >
-                      <SparkleIcon className="h-3.5 w-3.5" />
-                      {isEditorial ? 'Draft with AI' : 'Draft inquiry from conversation'}
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
+            )}
+            {isClientThread && (
+              <button
+                type="button"
+                onClick={() => {
+                  setShowContext((v) => !v)
+                  setShowTagPicker(false)
+                }}
+                aria-label="Client details"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
+              >
+                <InfoIcon className="h-[18px] w-[18px]" />
+              </button>
+            )}
+            {canManageThread && (
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setShowMoreMenu((v) => !v)}
+                  aria-label="More actions"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-fg-muted transition hover:bg-surface hover:text-fg"
+                >
+                  <MoreIcon className="h-[18px] w-[18px]" />
+                </button>
+                {showMoreMenu && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setShowMoreMenu(false)} aria-hidden="true" />
+                    <div className="absolute right-0 top-9 z-20 w-56 origin-top-right animate-scale-fade-in rounded-xl border border-border bg-surface-raised p-1 shadow-xl">
+                      {isClientThread && (
+                        <button
+                          type="button"
+                          onClick={handleOpenDraftModal}
+                          className={
+                            isEditorial
+                              ? 'flex w-full items-center gap-2 rounded-md px-3 py-2 text-left font-jura text-[11px] font-bold uppercase tracking-[0.14em] text-accent-hover hover:bg-accent/10'
+                              : 'flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface'
+                          }
+                        >
+                          <SparkleIcon className="h-3.5 w-3.5" />
+                          {isEditorial ? 'Draft with AI' : 'Draft inquiry from conversation'}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={handleToggleArchive}
+                        disabled={archiving}
+                        className={
+                          isEditorial
+                            ? 'flex w-full items-center gap-2 rounded-md px-3 py-2 text-left font-jura text-[11px] font-bold uppercase tracking-[0.14em] text-fg-secondary hover:bg-surface disabled:opacity-60'
+                            : 'flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface disabled:opacity-60'
+                        }
+                      >
+                        <ArchiveIcon className="h-3.5 w-3.5" />
+                        {archiving ? (isArchived ? 'Unarchiving…' : 'Archiving…') : isArchived ? 'Unarchive' : 'Archive'}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
+
+      {archiveError && (
+        <div className="border-b border-border px-3 py-2 text-xs text-danger">{archiveError}</div>
+      )}
+
+      {isArchived && (
+        <div className="flex items-center justify-between gap-2 border-b border-border bg-surface-inset px-3 py-2 text-xs text-fg-muted">
+          <span className="flex items-center gap-1.5">
+            <ArchiveIcon className="h-3.5 w-3.5" />
+            Archived
+          </span>
+          {canManageThread && (
+            <button type="button" onClick={handleToggleArchive} disabled={archiving} className="text-accent hover:underline disabled:opacity-60">
+              {archiving ? 'Unarchiving…' : 'Unarchive'}
+            </button>
+          )}
+        </div>
+      )}
 
       {isClientThread && data.conversation.tags.length > 0 && (
         <div className="flex flex-wrap gap-1.5 border-b border-border px-3 py-2">

@@ -250,6 +250,16 @@ export function GiftCardIcon({ className }: IconProps) {
   )
 }
 
+export function ArchiveIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <rect x="2.5" y="3" width="15" height="4" rx="1" strokeLinejoin="round" />
+      <path d="M3.5 7v8a1.5 1.5 0 0 0 1.5 1.5h10A1.5 1.5 0 0 0 16.5 15V7" strokeLinejoin="round" />
+      <line x1="8" y1="10.5" x2="12" y2="10.5" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 export function MoreIcon({ className }: IconProps) {
   return (
     <svg viewBox="0 0 20 20" fill="currentColor" stroke="none" className={className}>

@@ -252,7 +252,13 @@ router.post("/twilio/sms", async (req, res) => {
         createdAt: now,
       },
     });
-    await tx.conversation.update({ where: { id: conversation.id }, data: { lastMessageAt: now } });
+    // New activity un-archives -- see Conversation.archivedAt's own schema
+    // comment. Important here specifically: a client texting back into an
+    // archived thread must not stay hidden from the studio's list.
+    await tx.conversation.update({
+      where: { id: conversation.id },
+      data: { lastMessageAt: now, archivedAt: null, archivedById: null },
+    });
     return created;
   });
 

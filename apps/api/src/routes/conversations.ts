@@ -228,6 +228,12 @@ router.get("/", async (req, res) => {
   const entityTypeFilter = typeof req.query.entityType === "string" ? req.query.entityType : undefined;
   const artistIdFilter = typeof req.query.artistId === "string" ? req.query.artistId : undefined;
   const searchFilter = typeof req.query.search === "string" ? req.query.search.trim() : undefined;
+  // Default excludes archived (the common "active inbox" view); ?archived=true
+  // flips to showing ONLY archived ones, a separate view rather than a
+  // union -- same "one filter picks one bucket" shape as every other
+  // param here, and keeps the default list from silently growing forever
+  // as more threads get archived over time.
+  const archivedFilter = req.query.archived === "true";
 
   if (typeFilter && !Object.values(ConversationType).includes(typeFilter as ConversationType)) {
     return res.status(400).json({ error: `type must be one of: ${Object.values(ConversationType).join(", ")}` });
@@ -262,6 +268,7 @@ router.get("/", async (req, res) => {
     ...typeWhere,
     ...(entityTypeFilter ? { tags: { some: { entityType: entityTypeFilter } } } : {}),
     ...(Object.keys(clientWhere).length > 0 ? { client: clientWhere } : {}),
+    archivedAt: archivedFilter ? { not: null } : null,
   };
 
   const conversations = await prisma.conversation.findMany({
@@ -280,6 +287,7 @@ router.get("/", async (req, res) => {
       clientId: conversation.clientId,
       staffUserId: conversation.staffUserId,
       lastMessageAt: conversation.lastMessageAt,
+      archivedAt: conversation.archivedAt,
       counterpart: toCounterpart(conversation, userId),
       primaryInquiry:
         conversation.type === ConversationType.CLIENT ? pickPrimaryInquiry(conversation.client?.inquiries) : null,
@@ -483,6 +491,7 @@ router.get("/:id/messages", async (req, res) => {
       type: conversation.type,
       clientId: conversation.clientId,
       staffUserId: conversation.staffUserId,
+      archivedAt: conversation.archivedAt,
       counterpart: toCounterpart(conversation, userId),
       primaryInquiry:
         conversation.type === ConversationType.CLIENT ? pickPrimaryInquiry(conversation.client?.inquiries) : null,
@@ -572,6 +581,62 @@ router.delete("/:id/tags/:tagId", requireRole(Role.OWNER, Role.FRONT_DESK), asyn
     action: "tag_removed",
     changes: { entityType: tag.entityType, entityId: tag.entityId, tagId },
   });
+
+  emitInvalidation({ type: "conversation.updated", studioId, conversationId: id });
+
+  res.status(204).send();
+});
+
+// Archiving is shared/studio-wide (see Conversation.archivedAt's own
+// schema comment), so this is staff-only, same gate as tags above -- an
+// artist can still fully use their own STAFF thread, they just don't get
+// the "hide this from everyone's list" capability. Reversible; the thread
+// itself, its messages, and its history are completely untouched -- this
+// only changes what GET / returns by default.
+router.post("/:id/archive", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+  const { studioId, userId, role } = req.user!;
+
+  const conversation = await prisma.conversation.findUnique({ where: { id } });
+  if (!conversation || !canViewConversation(conversation, studioId, userId, role, res.locals.conversationFlags!)) {
+    return res.status(404).json({ error: "Conversation not found" });
+  }
+
+  if (conversation.archivedAt) {
+    return res.status(400).json({ error: "This conversation is already archived" });
+  }
+
+  await prisma.conversation.update({
+    where: { id },
+    data: { archivedAt: new Date(), archivedById: userId },
+  });
+
+  await logAudit({ studioId, actorUserId: userId, entityType: "Conversation", entityId: id, action: "archived" });
+
+  emitInvalidation({ type: "conversation.updated", studioId, conversationId: id });
+
+  res.status(204).send();
+});
+
+router.post("/:id/unarchive", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) => {
+  const id = req.params.id as string;
+  const { studioId, userId, role } = req.user!;
+
+  const conversation = await prisma.conversation.findUnique({ where: { id } });
+  if (!conversation || !canViewConversation(conversation, studioId, userId, role, res.locals.conversationFlags!)) {
+    return res.status(404).json({ error: "Conversation not found" });
+  }
+
+  if (!conversation.archivedAt) {
+    return res.status(400).json({ error: "This conversation is not archived" });
+  }
+
+  await prisma.conversation.update({
+    where: { id },
+    data: { archivedAt: null, archivedById: null },
+  });
+
+  await logAudit({ studioId, actorUserId: userId, entityType: "Conversation", entityId: id, action: "unarchived" });
 
   emitInvalidation({ type: "conversation.updated", studioId, conversationId: id });
 
@@ -784,7 +849,9 @@ router.post("/:id/messages", async (req, res) => {
           },
           include: { author: { select: { id: true, name: true, email: true } } },
         });
-        await tx.conversation.update({ where: { id }, data: { lastMessageAt: now } });
+        // New activity un-archives -- see Conversation.archivedAt's own
+        // schema comment. Harmless no-op when it wasn't archived.
+        await tx.conversation.update({ where: { id }, data: { lastMessageAt: now, archivedAt: null, archivedById: null } });
         return createdMessage;
       });
 
@@ -854,7 +921,14 @@ router.post("/:id/messages", async (req, res) => {
     }),
     prisma.conversation.update({
       where: { id },
-      data: { lastMessageAt: now, ...(isFirstUpgrade ? { type: ConversationType.GROUP } : {}) },
+      // New activity un-archives -- see Conversation.archivedAt's own
+      // schema comment. Harmless no-op when it wasn't archived.
+      data: {
+        lastMessageAt: now,
+        archivedAt: null,
+        archivedById: null,
+        ...(isFirstUpgrade ? { type: ConversationType.GROUP } : {}),
+      },
     }),
     ...(newParticipantIds.length > 0
       ? [

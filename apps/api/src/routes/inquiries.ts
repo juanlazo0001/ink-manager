@@ -3053,7 +3053,12 @@ router.post("/:id/share-to-artist", requireAuth, requirePermission("inquiries.sh
         createdAt: now,
       },
     }),
-    prisma.conversation.update({ where: { id: conversation.id }, data: { lastMessageAt: now } }),
+    // New activity un-archives -- see Conversation.archivedAt's own schema
+    // comment. Harmless no-op when it wasn't archived.
+    prisma.conversation.update({
+      where: { id: conversation.id },
+      data: { lastMessageAt: now, archivedAt: null, archivedById: null },
+    }),
   ]);
 
   await logAudit({

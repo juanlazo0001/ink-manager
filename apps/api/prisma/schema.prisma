@@ -441,6 +441,7 @@ model User {
   createdPersonalTasks      PersonalTask[]            @relation("PersonalTaskCreatedBy")
   sectionSeens              SectionSeen[]
   staffConversation         Conversation?             @relation("StaffConversation")
+  archivedConversations     Conversation[]            @relation("ConversationArchivedBy")
   authoredMessages          Message[]                 @relation("MessageAuthor")
   authoredInquiryNotes      InquiryNote[]             @relation("InquiryNoteAuthor")
   authoredAppointmentNotes  AppointmentNote[]         @relation("AppointmentNoteAuthor")
@@ -2075,6 +2076,19 @@ model Conversation {
   staffUserId String? @unique
   staffUser   User?   @relation("StaffConversation", fields: [staffUserId], references: [id])
 
+  // Archiving: shared/studio-wide, not per-user -- once archived, hidden
+  // from everyone's list (GET /conversations excludes it by default) until
+  // someone unarchives it, same "one shared record, not a personal
+  // mailbox" model this conversation system already uses everywhere else
+  // (visibility is role/permission-driven, never per-user preference).
+  // Messages can still be sent to/read from an archived thread (e.g. an
+  // inbound client text automatically un-archives it -- see POST /:id/
+  // messages) -- archiving hides it from the default list view, it doesn't
+  // freeze or lock it.
+  archivedAt   DateTime?
+  archivedById String?
+  archivedBy   User?     @relation("ConversationArchivedBy", fields: [archivedById], references: [id])
+
   messages      Message[]
   reads         ConversationRead[]
   tags          ConversationTag[]
@@ -2082,6 +2096,7 @@ model Conversation {
   participants  ConversationParticipant[]
 
   @@index([studioId, type, lastMessageAt])
+  @@index([studioId, archivedAt])
 }
 
 // Links a conversation to a related record elsewhere in the app (that
