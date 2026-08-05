@@ -490,21 +490,22 @@
    approach) -- one more atmospheric layer behind the app shell under
    Editorial Gold, matching Login's own photo/hero-shade/rings stack but
    for the general authenticated app rather than just the auth pages.
-   app-bg-blurred.jpg is a PRE-blurred static asset (640x360, ~7KB,
-   generated once offline via sharp: downscaled from the same source
-   Login's own photo uses, then a strong gaussian blur, then re-encoded as
-   a small JPEG) -- never a live CSS filter: blur(), which would be a
-   continuous GPU cost recomputed on every scroll/repaint (the same
-   category of issue as the mobile backdrop-filter stutter fixed earlier
-   this project). Rendering a small pre-blurred JPEG costs the same as any
-   other static background image; there is nothing left to compute at
-   runtime.
-   Explicit, distinct z-index per layer (wash 0, photo 1, .arc-decor
+   app-bg-blurred-dark.jpg is a PRE-blurred, darker-graded static asset
+   (a re-grade of the original app-bg-blurred.jpg, swapped in once the
+   lighter original's brighter patches -- a window, a light wall -- proved
+   too bright for comfortable text legibility under .app-bg-wash below;
+   see TopBar.tsx's own comment for how it was sized/re-encoded),
+   never a live CSS filter: blur(), which would be a continuous GPU cost
+   recomputed on every scroll/repaint (the same category of issue as the
+   mobile backdrop-filter stutter fixed earlier this project). Rendering a
+   small pre-blurred image costs the same as any other static background
+   image; there is nothing left to compute at runtime.
+   Explicit, distinct z-index per layer (photo 0, wash 1, .arc-decor
    below 2) rather than all three at 0 relying on DOM order -- an earlier
    version of this comment theorized DOM order among equal-z-index
    siblings would be enough, matching how .arc-decor alone had always
-   behaved. Real manual testing found that wasn't the actual blocker: the
-   photo was rendering behind the *real* opaque layer, each page's own
+   behaved. Real manual testing found that wasn't the actual blocker: both
+   layers were rendering behind the *real* opaque layer, each page's own
    top-level wrapper's plain `bg-bg` (Tailwind's fully-opaque utility,
    `min-h-screen ... bg-bg ...`, sitting in normal document flow above
    any z-index:0 fixed sibling regardless of DOM order between the two).
@@ -515,10 +516,7 @@
 .app-bg-photo {
   position: fixed;
   inset: 0;
-  /* z-index: 1, one above .app-bg-wash -- found via real manual testing:
-     at equal z-index: 0 the photo rendered behind .app-bg-wash by DOM
-     order. Confirmed fixed at exactly this value. */
-  z-index: 1;
+  z-index: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -527,20 +525,22 @@
 /* Flat, strong dark wash rather than Login's own directional vignette --
    Login's hero-shade gradient is shaped for a single centered hero photo
    framing one card; the app shell scrolls and has no single focal point,
-   so a uniform wash (same near-black base color Login's own wash uses)
-   guarantees legibility at every scroll position regardless of which part
-   of the now-abstract blurred photo happens to sit underneath. Now sits
-   BEHIND the fully-opaque photo (z-index 1 above), so its own alpha is no
-   longer visually consequential once the photo has decoded -- kept as the
-   floor color for the brief window before that happens (a plain color
-   paints before an <img> decodes; an invisible one would show as a flash
-   of raw --color-bg instead). */
+   so a uniform wash guarantees legibility at every scroll position
+   regardless of which part of the now-abstract blurred photo happens to
+   sit underneath. Sits ABOVE the photo (z-index 1, one above .app-bg-
+   photo's 0) -- a real scrim actually cast over it, not a loading-state
+   placeholder color hidden behind an opaque image. Lower opacity than a
+   wash over the original, lighter photo would need (was 0.88 against
+   app-bg-blurred.jpg): app-bg-blurred-dark.jpg is already close to solid
+   near-black on its own, so a lighter scrim on top reaches the same
+   legibility floor without crushing out the last of the photo's texture
+   entirely. */
 .app-bg-wash {
   position: fixed;
   inset: 0;
-  z-index: 0;
+  z-index: 1;
   pointer-events: none;
-  background: rgba(12, 10, 8, 0.88);
+  background: rgba(12, 10, 8, 0.45);
 }
 /* THE actual bug (found via real manual testing, not theorized): every
    page's own top-level wrapper (Dashboard.tsx and 27 others, all

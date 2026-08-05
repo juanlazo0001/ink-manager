@@ -14,7 +14,7 @@ import ViewAsPicker from './ViewAsPicker'
 import SearchPalette from './SearchPalette'
 import ConnectionStatusIndicator from './ConnectionStatusIndicator'
 import { useThemePreset } from '../lib/useThemePreset'
-import appBgBlurred from '../assets/app-bg-blurred.jpg'
+import appBgBlurred from '../assets/app-bg-blurred-dark.jpg'
 
 interface TasksBadgeResponse {
   system: unknown[]
@@ -107,15 +107,17 @@ export default function TopBar() {
       {/* Heavily-blurred photo + dark wash, behind the arc-ornament below --
           layer order back to front is photo, wash, arc-decor/grain, then
           real content, matching Login's own photo/hero-shade/rings stack.
-          The photo itself is a PRE-blurred static asset (app-bg-blurred.jpg,
-          640x360, ~7KB), never a live CSS filter: blur() -- that would
-          recompute every scroll/repaint, the same category of cost that
-          caused the mobile backdrop-filter stutter on Login's card earlier.
-          Same `decorative` gate and DOM-order-establishes-paint-order
-          technique as .arc-decor immediately below (both z-index: 0 --
-          see index.css's own comment on why this works instead of a
-          negative z-index, which risks painting behind body's own
-          background in some browsers). */}
+          The photo itself is a PRE-blurred static asset (app-bg-blurred-
+          dark.jpg, 640x243, ~2.6KB -- a darker re-grade of the original
+          app-bg-blurred.jpg, downscaled/re-encoded the same way: sharp
+          resize + JPEG re-encode, not the raw 2752x1044 PNG export it
+          started as), never a live CSS filter: blur() -- that would
+          recompute every scroll/repaint, the same category of cost that caused the mobile
+          backdrop-filter stutter on Login's card earlier. Same `decorative`
+          gate as .arc-decor immediately below -- see index.css's own
+          comment on why .app-bg-wash now sits ABOVE this photo (a real
+          scrim, not a loading-state placeholder) and why its opacity is
+          lower than it would need to be over the original, lighter photo. */}
       {decorative && (
         <>
           <img src={appBgBlurred} alt="" aria-hidden="true" className="app-bg-photo" />

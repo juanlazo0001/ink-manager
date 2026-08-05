@@ -7901,4 +7901,30 @@ Dev servers killed (`netstat` + `taskkill` by PID). `apps/web/.env.local` remove
 
 `faf911e` on `main`.
 
+---
+
+# App background photo: swapped to a darker grade, wash now a real overlay
+
+Requested directly: swap `app-bg-blurred.jpg` for a darker version, with a dark overlay on top (since the new photo is already darker, the overlay doesn't need to carry the whole legibility job alone).
+
+## What changed
+
+- New asset `apps/web/src/assets/app-bg-blurred-dark.jpg` (640x243, ~2.6KB) replaces `app-bg-blurred.jpg` as the layer `TopBar.tsx` mounts behind the Editorial Gold app shell (`decorative`-gated, same as `.arc-decor`). The source provided was a raw 2752x1044 PNG export (~4MB) -- resized and re-encoded the same way the original asset was made (`sharp`, downscale + JPEG), matching this codebase's own established reasoning for why this layer is a tiny pre-blurred static file rather than a live `blur()` filter (avoids a continuous GPU recompute on every scroll/repaint).
+- `.app-bg-wash` (`index.css`) previously sat BEHIND the fully-opaque `.app-bg-photo` -- confirmed by the file's own existing comment that this made it purely a loading-state placeholder color, invisible once the photo decoded, not an actual overlay. Since the user asked for a real dark overlay on top of the (now darker) photo, swapped the z-index order (photo 0, wash 1) so the wash is now a genuine scrim actually cast over the image, and reduced its opacity from 0.88 to 0.45 -- the new photo is already close to solid near-black on its own, so a lighter scrim reaches the same legibility floor without crushing out what little texture remains.
+
+## Verification -- live dev web (Editorial Gold preset, the only preset this layer renders under)
+
+Switched the studio's theme preset to Editorial Gold and screenshotted Dashboard and Team -- background reads as a cohesive near-black with faint warm tonal variation, concentric arc rings still visible above it, text fully legible everywhere with no washed-out or overly-bright patches.
+
+## Typechecks
+
+`npx tsc --noEmit -p tsconfig.app.json` (web) and `npm run build` (web) both clean.
+
+## Cleanup
+
+Dev servers: killed this session's own web server; left the other concurrent session's already-running API server on :4000 untouched (not mine to kill). `apps/web/.env.local` removed. Oversized raw PNG deleted (never committed to begin with). Left the other concurrent session's own in-progress, unrelated changes (`inquiries.ts`, `scheduling.ts`, branding assets, etc.) completely untouched -- only this session's three own files staged/committed.
+
+## Commit
+
+`<pending>` on `main`.
 
