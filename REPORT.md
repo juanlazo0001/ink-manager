@@ -8434,7 +8434,9 @@ Migration: `20260806203944_estimate_self_schedule_token_lifecycle` (`previousEst
 
 ## Cleanup
 
-All scratch Prisma scripts (`scratch-create-inquiry.ts` through `scratch-create-inquiry4.ts`, `scratch-expire-schedule.ts`) deleted from `apps/api/src/` after use -- confirmed none remain. Isolated dev servers (API :4099, web :5183) killed. Test data left in place (three test clients/inquiries plus one real completed `Appointment`), per this file's own standing convention that live-verification test data is a real, intentional artifact and not cruft.
+All scratch Prisma scripts (`scratch-create-inquiry.ts` through `scratch-create-inquiry4.ts`, `scratch-expire-schedule.ts`) deleted from `apps/api/src/` after use -- confirmed none remain. Isolated dev servers (API :4099, web :5183) killed.
+
+**Update, same session**: test data (4 clients, 5 inquiries, 1 real `Appointment`, and the 4 auto-created `Conversation` threads that came with them) explicitly requested removed after verification wrapped up, superseding the note above. FK-mapped every table referencing `Client`/`Inquiry`/`Appointment` first (`AppointmentNote`, `AppointmentPhoto`, `GiftCard`, `LiabilityWaiver`, `PlannedSession`, `DepositForm`, `InquiryNote`, `Message`, `ConversationTag`) and deleted bottom-up inside one transaction, guarded by a check that no other client referenced these as a referral/merge target first. Deletion confirmed empty afterward via the same lookup query used to find the rows; scratch scripts removed.
 
 ## Commit
 
