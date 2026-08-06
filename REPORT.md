@@ -8182,3 +8182,57 @@ Same isolated dev servers (`:4099`/`:5183`) restarted for this pass, killed agai
 
 `df8cef8`
 
+---
+
+# Public self-serve signup, Part 1 -- shared creation service + schema
+
+Same session. First real part of the signup epic, following the wizard prerequisite and its closeout above.
+
+## SMS compliance investigation (done first, as the task required)
+
+Outbound client SMS (`lib/clientSms.ts`) is **already fully per-studio**: every send looks up that specific studio's own `StudioIntegration` row (channel `SMS`) for its own encrypted Twilio credentials and connected number, and fails soft (`{ sent: false, reason: "not_connected" }`, no throw) when that row is missing or not connected -- already the exact "app works, message just doesn't send" behavior the task described wanting. `lib/platformSms.ts` (Bird-based) is a separate, not-yet-wired-up platform channel -- its own file comment explicitly says it is "not yet the real client-conversation send path... which stays on Twilio." A self-serve-signup studio starts with zero `StudioIntegration` rows, so it's automatically SMS-safe by construction. Per the task's own instruction ("if SMS is already per-studio, skip the flag and just report"): **no `Studio.smsEnabled` field added.**
+
+## Schema (`20260806122801_public_signup_schema`, `migrate diff` + `migrate deploy`, not `migrate dev`)
+
+- `Studio.setupCompletedAt DateTime?` -- same contract as `Artist.profileSetupCompletedAt` (null = eligible for the first-login setup wizard). Backfilled for every existing studio.
+- `User.emailVerifiedAt DateTime?` + `emailVerificationToken String? @unique` + `emailVerificationTokenExpiresAt DateTime?` -- the established paired-token-and-expiry pattern this file already uses three other times (`inviteToken`, `passwordResetToken`, `emailChangeToken`). Backfilled for every existing user. **Design decision**, not directly stated in the task brief: the actual login gate is `emailVerificationToken` presence, not `emailVerifiedAt` itself -- only a self-serve signup ever has a non-null token; every invite-based path leaves it null from creation, so gating on the token (which self-clears on verify) can never disagree with account state, whereas gating on `emailVerifiedAt` alone would have required every invite-accept path to explicitly set it or a brand-new invite-created account would get wrongly locked out. Implemented that: `invites.ts` (team invite accept) and `artistInvites.ts` (new-identity artist invite accept) now both set `emailVerifiedAt` at accept time -- this was NOT part of the original refactor, it was found and fixed after building the login gate and re-reading my own schema comment's claim against what the code actually did. Verified live for both (see below). `POST /studios/bootstrap` (the separate, pre-existing, secret-header-gated manual escape hatch, explicitly commented "never expose as a public signup flow") was left untouched -- out of scope, and functionally unaffected either way since it never sets `emailVerificationToken`.
+
+## Shared creation service (`lib/studioCreation.ts`)
+
+`createStudioWithOwner()` -- studio + owner User (+ optional Artist/HOME membership for solo) in one transaction, taking an `auth` param that's either `{ mode: "invite", ... }` (unchanged behavior) or `{ mode: "password", ..., emailVerificationToken, emailVerificationTokenExpiresAt }` (new, for self-serve signup). Deliberately does NOT send email or write an audit log -- those differ per caller (different audit action, different email content), so `create-studio.ts` and the new signup route each still own their own.
+
+`create-studio.ts` refactored to call it (same CLI, same output, same invite-email-with-console-fallback behavior) -- regression-tested live: normal run still produces the identical output shape, and the duplicate-email path still aborts cleanly (`StudioCreationError`).
+
+## Public signup API (`routes/auth.ts`)
+
+- `POST /auth/signup` (rate-limited, `express-rate-limit`, new dependency -- nothing homegrown for this existed to reuse, 5/15min per IP): persona `SOLO`/`STUDIO`, studio name (solo defaults it from the owner's own name, no slug-editing step), owner name/email/password/optional phone. Slug collision handled for free by the shared service's existing `generateUniqueSlug`. Duplicate email: `409`, matching this codebase's own existing precedent elsewhere (change-email, team invites) of revealing "that email is taken" directly rather than a forgot-password-style hidden response.
+- `POST /auth/verify-email/:token`: single-use, sets `emailVerifiedAt` + clears the token, returns a real JWT (same shape `/login` and artist-invite-accept return) so Part 2's UI CAN log the owner in directly on success rather than bouncing to `/login` -- that UI call is Part 2's, not decided here.
+- `POST /auth/resend-verification` (rate-limited): forgot-password's exact identical-response-regardless discipline -- a real unverified account, a nonexistent email, and an invite-based account that never needed verification all get the same response. Rotates a fresh token rather than resending the old one.
+- `POST /login`: new block for `user.emailVerificationToken` non-null, same "before the password check" placement and enumeration tradeoff this file's existing `inviteToken` check already established (not a new precedent).
+- dev Bird email verified (again, empirically, not assumed) to still fail on every `@dev-studio.test` address with a real 422 -- the verification URL is unconditionally console-logged outside production so local signup testing has an actual link to use.
+
+## Verified live
+
+Isolated dev servers (`:4099`, web not needed for this API-only pass), real HTTP requests throughout:
+- SOLO signup -> real owner + Artist + HOME membership; `GET /users/me` confirmed `showProfileSetupWizard: true` (feeds directly into the wizard from the prior part) and the new studio's `setupCompletedAt: null`.
+- STUDIO signup -> real owner, confirmed NO artist attached.
+- Duplicate email -> `409`, no second row created.
+- Same studio name twice -> `collision-studio` then `collision-studio-2`.
+- Login blocked pre-verify (`email_not_verified`), unblocked immediately after verify.
+- Verify token confirmed single-use (second call `404`).
+- Resend: identical response for a real unverified account, a nonexistent email, and an already-invite-verified account; old token invalidated the instant a new one is issued, new one works.
+- Rate limiting confirmed active (hit `429` after the request budget).
+- Both invite-accept fixes (`invites.ts`, `artistInvites.ts`) confirmed live: `emailVerifiedAt` is a real timestamp immediately after accept, not still null.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) -- clean.
+
+## Cleanup
+
+Isolated API dev server killed after verification. Scratch DB-lookup scripts (invite token retrieval, same convention as earlier in this file) deleted after use.
+
+## Commit
+
+TBD
+

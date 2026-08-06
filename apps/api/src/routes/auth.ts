@@ -2,6 +2,7 @@ import { Router } from "express";
 import crypto from "node:crypto";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import rateLimit from "express-rate-limit";
 import { prisma } from "../lib/prisma";
 import { JWT_SECRET } from "../lib/jwt";
 import { requireAuth } from "../middleware/auth";
@@ -9,6 +10,8 @@ import type { AuthPayload } from "../middleware/auth";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { sendPlatformEmail } from "../lib/platformEmail";
 import { renderPlatformEmailHtml } from "../lib/emailTemplate";
+import { createStudioWithOwner, StudioCreationError } from "../lib/studioCreation";
+import { logAudit } from "../lib/audit";
 
 const router = Router();
 
@@ -20,6 +23,20 @@ const DUMMY_PASSWORD_HASH = "$2b$10$ty/pJLsBz1GB9M5f62ncJeCjuhSWkSjnEOiYd5dKmTol
 
 const PASSWORD_RESET_TOKEN_TTL_HOURS = 1;
 const EMAIL_CHANGE_TOKEN_TTL_HOURS = 24;
+const EMAIL_VERIFICATION_TOKEN_TTL_HOURS = 24;
+
+// Public, unauthenticated, and the whole point of each is "create real
+// state (a studio, an email send) from one request" -- exactly the shape
+// abuse targets. 5/15min per IP is deliberately tight: a real person only
+// ever needs one of each per signup attempt; genuine retries (typo'd
+// email, slow inbox) are well under that.
+const signupLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 5, standardHeaders: true, legacyHeaders: false });
+const resendVerificationLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // Fire-and-forget on purpose, everywhere in this file: the token/DB state
 // change is the real, durable effect of every route below and always
@@ -59,6 +76,22 @@ router.post("/login", async (req, res) => {
   // admin who sent it and the invitee who received it.
   if (user?.inviteToken) {
     return res.status(401).json({ error: "Check your email to activate your account." });
+  }
+
+  // Public self-serve signup only -- see User.emailVerificationToken's own
+  // schema comment for why this field, not emailVerifiedAt, is the actual
+  // gate. Every invite-based account (team invite, artist invite,
+  // create-studio.ts) never has this set at all, so this branch is a true
+  // no-op for them, same as the inviteToken check above being a no-op for
+  // a password-based account. Checked before the password comparison, same
+  // precedent as inviteToken above -- this app's login flow already reveals
+  // account state distinctly (deactivated, pending invite) rather than
+  // treating every branch as an enumeration risk.
+  if (user?.emailVerificationToken) {
+    return res.status(401).json({
+      error: "Check your email to verify your account before logging in.",
+      code: "email_not_verified",
+    });
   }
 
   const passwordMatches = await bcrypt.compare(password, user?.password ?? DUMMY_PASSWORD_HASH);
@@ -288,6 +321,169 @@ router.post("/auth/change-password", requireAuth, async (req, res) => {
   });
 
   res.json({ message: "Password changed. Please log in again." });
+});
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function verificationEmailContent(verifyUrl: string) {
+  return {
+    subject: "Verify your Ink Manager email",
+    text: `Welcome to Ink Manager! Verify your email to finish setting up your account: ${verifyUrl}\n\nThis link expires in ${EMAIL_VERIFICATION_TOKEN_TTL_HOURS} hours.`,
+    html: renderPlatformEmailHtml({
+      heading: "Verify your email",
+      bodyParagraphs: ["Welcome to Ink Manager! Verify your email address to finish setting up your account and log in."],
+      buttonText: "Verify email",
+      buttonUrl: verifyUrl,
+      footnote: `This link expires in ${EMAIL_VERIFICATION_TOKEN_TTL_HOURS} hours.`,
+    }),
+  };
+}
+
+// dev Bird email doesn't deliver to any address at all in this workspace
+// (confirmed live, repeatedly, this session -- every @dev-studio.test send
+// attempt gets a real 422 RecipientDomainNotAllowed from Bird's API, not a
+// theoretical gap), so the verification link is always also logged
+// server-side outside production -- otherwise local signup testing has no
+// way to actually reach the link at all.
+function logVerificationUrlInDev(email: string, verifyUrl: string): void {
+  if (process.env.NODE_ENV !== "production") {
+    console.log(`[dev] Email verification link for ${email}: ${verifyUrl}`);
+  }
+}
+
+// Public self-serve signup. One creation path (lib/studioCreation.ts) --
+// same transaction create-studio.ts uses, just with a real password +
+// pending email verification instead of an invite token. Persona only
+// changes two things: whether an Artist/HOME membership is attached
+// (SOLO) and studioName's own default.
+router.post("/auth/signup", signupLimiter, async (req, res) => {
+  const { persona, ownerName, email, password, phone } = req.body ?? {};
+  let { studioName } = req.body ?? {};
+
+  if (persona !== "SOLO" && persona !== "STUDIO") {
+    return res.status(400).json({ error: "persona must be SOLO or STUDIO" });
+  }
+  if (typeof ownerName !== "string" || ownerName.trim().length === 0) {
+    return res.status(400).json({ error: "ownerName is required" });
+  }
+  if (typeof email !== "string" || !EMAIL_PATTERN.test(email.trim())) {
+    return res.status(400).json({ error: "A valid email is required" });
+  }
+  if (typeof password !== "string" || password.length < 8) {
+    return res.status(400).json({ error: "password must be at least 8 characters" });
+  }
+  if (persona === "STUDIO" && (typeof studioName !== "string" || studioName.trim().length === 0)) {
+    return res.status(400).json({ error: "studioName is required for a studio account" });
+  }
+  // Solo may default it from their own name -- no slug-editing step at
+  // signup means this doubles as the intake-form/flash-gallery URL's own
+  // display name, so it needs to be something, not blank.
+  if (persona === "SOLO" && (typeof studioName !== "string" || studioName.trim().length === 0)) {
+    studioName = ownerName.trim();
+  }
+
+  const trimmedEmail = email.trim();
+  const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+  const emailVerificationToken = crypto.randomBytes(32).toString("hex");
+  const emailVerificationTokenExpiresAt = new Date(Date.now() + EMAIL_VERIFICATION_TOKEN_TTL_HOURS * 60 * 60 * 1000);
+
+  let studio, owner;
+  try {
+    ({ studio, owner } = await createStudioWithOwner({
+      studioName: studioName.trim(),
+      ownerEmail: trimmedEmail,
+      ownerName: ownerName.trim(),
+      ownerPhone: typeof phone === "string" && phone.trim() ? phone.trim() : null,
+      soloArtist: persona === "SOLO",
+      auth: { mode: "password", passwordHash, emailVerificationToken, emailVerificationTokenExpiresAt },
+    }));
+  } catch (err) {
+    if (err instanceof StudioCreationError) {
+      // Gracefully, not silently -- unlike forgot-password's deliberate
+      // anti-enumeration design, this codebase already reveals "that email
+      // is taken" directly elsewhere (change-email, team invites), so
+      // matching that existing precedent here isn't a new leak surface.
+      return res.status(409).json({ error: "An account with that email already exists. Try logging in instead." });
+    }
+    throw err;
+  }
+
+  await logAudit({
+    studioId: studio.id,
+    actorUserId: null,
+    entityType: "Studio",
+    entityId: studio.id,
+    action: "self_serve_studio_created",
+    changes: { name: studioName, slug: studio.slug, ownerEmail: trimmedEmail, persona },
+  });
+
+  const verifyUrl = `${PUBLIC_APP_URL}/verify-email/${emailVerificationToken}`;
+  sendPlatformEmailBestEffort({ to: trimmedEmail, ...verificationEmailContent(verifyUrl) });
+  logVerificationUrlInDev(trimmedEmail, verifyUrl);
+
+  res.status(201).json({ message: "Check your email to verify your account.", email: trimmedEmail, studioSlug: studio.slug });
+});
+
+// Public -- clicked from an email client, same token-gated discipline as
+// every other public-flow token route in this file. Returns a real JWT
+// (same shape /login and the artist-invite-accept new-identity branch
+// return) so the frontend CAN log the owner in directly on successful
+// verify rather than bouncing to a separate /login step -- Part 2's own
+// call whether to actually use it that way.
+router.post("/auth/verify-email/:token", async (req, res) => {
+  const token = req.params.token as string;
+
+  const user = await prisma.user.findUnique({ where: { emailVerificationToken: token } });
+
+  if (!user) {
+    return res.status(404).json({ error: "This link is invalid." });
+  }
+  if (!user.emailVerificationTokenExpiresAt || user.emailVerificationTokenExpiresAt < new Date()) {
+    return res.status(410).json({ error: "This link has expired. Request a new one from the login page." });
+  }
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { emailVerifiedAt: new Date(), emailVerificationToken: null, emailVerificationTokenExpiresAt: null },
+  });
+
+  const payload: AuthPayload = { userId: user.id, studioId: user.studioId, role: user.role };
+  const jwtToken = jwt.sign(payload, JWT_SECRET, { expiresIn: "7d" });
+
+  res.json({ message: "Email verified.", token: jwtToken });
+});
+
+// Public. Same identical-response-either-way discipline as forgot-password
+// above -- doesn't reveal whether the email belongs to a real account, an
+// already-verified one, or an invite-based one that never needed
+// verification in the first place. Rotates a fresh token each call
+// (rather than resending the same one) so an old, possibly-leaked link
+// stops working the moment a new one is requested.
+router.post("/auth/resend-verification", resendVerificationLimiter, async (req, res) => {
+  const { email } = req.body ?? {};
+
+  if (typeof email !== "string" || !email.trim()) {
+    return res.status(400).json({ error: "email is required" });
+  }
+
+  const trimmedEmail = email.trim();
+  const user = await prisma.user.findUnique({ where: { email: trimmedEmail } });
+
+  if (user?.emailVerificationToken) {
+    const emailVerificationToken = crypto.randomBytes(32).toString("hex");
+    const emailVerificationTokenExpiresAt = new Date(Date.now() + EMAIL_VERIFICATION_TOKEN_TTL_HOURS * 60 * 60 * 1000);
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { emailVerificationToken, emailVerificationTokenExpiresAt },
+    });
+
+    const verifyUrl = `${PUBLIC_APP_URL}/verify-email/${emailVerificationToken}`;
+    sendPlatformEmailBestEffort({ to: trimmedEmail, ...verificationEmailContent(verifyUrl) });
+    logVerificationUrlInDev(trimmedEmail, verifyUrl);
+  }
+
+  res.json({ message: "If that account needs verification, a new link has been sent." });
 });
 
 export default router;

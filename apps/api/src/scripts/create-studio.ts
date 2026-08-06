@@ -1,11 +1,11 @@
 import "dotenv/config";
 import crypto from "node:crypto";
 import { prisma } from "../lib/prisma";
-import { Role } from "../../generated/prisma/enums";
-import { generateUniqueSlug, inviteEmailContent, INVITE_TOKEN_TTL_DAYS } from "../routes/studios";
+import { inviteEmailContent, INVITE_TOKEN_TTL_DAYS } from "../routes/studios";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { sendPlatformEmail } from "../lib/platformEmail";
 import { logAudit } from "../lib/audit";
+import { createStudioWithOwner, StudioCreationError } from "../lib/studioCreation";
 
 // Platform-operator-only mechanism to create a brand new Studio -- there is
 // no UI button or authenticated route for this, on purpose (see the "no
@@ -73,44 +73,26 @@ function parseArgs(argv: string[]): ParsedArgs {
 async function main() {
   const { studioName, ownerEmail, ownerName, ownerPhone, soloArtist } = parseArgs(process.argv.slice(2));
 
-  const existing = await prisma.user.findUnique({ where: { email: ownerEmail } });
-  if (existing) {
-    console.error(`A user with email ${ownerEmail} already exists (id ${existing.id}). Aborting.`);
-    process.exit(1);
-  }
-
-  const slug = await generateUniqueSlug(studioName);
   const inviteToken = crypto.randomBytes(32).toString("hex");
   const inviteTokenExpiresAt = new Date(Date.now() + INVITE_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000);
 
-  const { studio, owner, artist } = await prisma.$transaction(async (tx) => {
-    const studio = await tx.studio.create({ data: { name: studioName, slug } });
-
-    const owner = await tx.user.create({
-      data: {
-        email: ownerEmail,
-        role: Role.OWNER,
-        studioId: studio.id,
-        name: ownerName,
-        phone: ownerPhone,
-        password: null,
-        inviteToken,
-        inviteTokenExpiresAt,
-      },
-    });
-
-    const artist = soloArtist
-      ? await tx.artist.create({ data: { userId: owner.id, specialties: [], portfolioImages: [] } })
-      : null;
-
-    if (artist) {
-      await tx.studioMembership.create({
-        data: { studioId: studio.id, artistId: artist.id, type: "HOME", allowsStudioProfileEdits: true },
-      });
+  let studio, owner, artist;
+  try {
+    ({ studio, owner, artist } = await createStudioWithOwner({
+      studioName,
+      ownerEmail,
+      ownerName,
+      ownerPhone,
+      soloArtist,
+      auth: { mode: "invite", inviteToken, inviteTokenExpiresAt },
+    }));
+  } catch (err) {
+    if (err instanceof StudioCreationError) {
+      console.error(err.message + " Aborting.");
+      process.exit(1);
     }
-
-    return { studio, owner, artist };
-  });
+    throw err;
+  }
 
   await logAudit({
     studioId: studio.id,
@@ -118,7 +100,7 @@ async function main() {
     entityType: "Studio",
     entityId: studio.id,
     action: "platform_studio_created",
-    changes: { name: studioName, slug, ownerEmail, soloArtist },
+    changes: { name: studioName, slug: studio.slug, ownerEmail, soloArtist },
   });
 
   const inviteUrl = `${PUBLIC_APP_URL}/invite/${inviteToken}`;

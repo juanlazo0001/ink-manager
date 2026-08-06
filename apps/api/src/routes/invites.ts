@@ -73,6 +73,11 @@ router.post("/invite/accept/:token", async (req, res) => {
       inviteToken: null,
       inviteTokenExpiresAt: null,
       isActive: true,
+      // Clicking this emailed link IS the ownership proof (see
+      // User.emailVerifiedAt's own schema comment) -- set here rather than
+      // left null, so this field stays honest for every account, not just
+      // self-serve signups.
+      emailVerifiedAt: user!.emailVerifiedAt ?? new Date(),
     },
   });
 

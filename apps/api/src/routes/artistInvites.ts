@@ -84,6 +84,10 @@ router.post("/artist-invite/accept/:token", optionalAuth, async (req, res) => {
           password: passwordHash,
           isActive: true,
           name: invite!.name,
+          // Same reasoning as invites.ts's team-invite accept -- clicking
+          // this emailed link IS the ownership proof (see
+          // User.emailVerifiedAt's own schema comment).
+          emailVerifiedAt: new Date(),
         },
       });
       const artist = await tx.artist.create({ data: { userId: user.id, specialties: [], portfolioImages: [] } });

@@ -260,6 +260,17 @@ model Studio {
   website   String?
   createdAt DateTime @default(now())
 
+  // Studio setup wizard eligibility gate -- same shape and contract as
+  // Artist.profileSetupCompletedAt (see that field's own schema comment):
+  // null means "hasn't finished or explicitly skipped the first-login
+  // wizard," set once on finish OR explicit skip, never on plain
+  // navigation-away. The migration adding this backfills every EXISTING
+  // studio (Black Hive included) to the migration's own timestamp, so only
+  // a Studio created after this deploy -- via public self-serve signup or
+  // the platform-operator create-studio.ts script, both equally unconfigured
+  // -- is ever eligible.
+  setupCompletedAt DateTime?
+
   users                   User[]
   clients                 Client[]
   appointments            Appointment[]
@@ -372,6 +383,21 @@ model User {
   // section both key off, rather than a separate status enum.
   inviteToken          String?   @unique
   inviteTokenExpiresAt DateTime?
+
+  // Public self-serve signup. emailVerifiedAt is set once, either at
+  // invite-accept time for every invite-based path (team invite, artist
+  // invite, the platform-operator create-studio.ts script -- clicking the
+  // emailed link IS the ownership proof there) or via
+  // POST /auth/verify-email/:token for a self-serve signup. The actual
+  // login gate is emailVerificationToken alone, not emailVerifiedAt: only a
+  // self-serve signup ever has this set at creation (every invite-based
+  // path leaves it null, same as it leaves emailVerifiedAt null until
+  // accept), and it's cleared back to null the moment verification
+  // succeeds -- a non-null token IS "pending verification," regardless of
+  // emailVerifiedAt's own value, so the two can never disagree.
+  emailVerifiedAt                 DateTime?
+  emailVerificationToken          String?    @unique
+  emailVerificationTokenExpiresAt DateTime?
 
   // Forgot-password recovery. Deliberately separate from emailChangeToken/
   // inviteToken below (three independent flows, three independent tokens)
