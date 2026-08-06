@@ -8315,3 +8315,46 @@ Both isolated dev servers killed after verification. No scratch scripts left in 
 
 `73db51d`
 
+---
+
+# Public self-serve signup, Part 5 -- adversarial verification
+
+Same session, run against dev while Part 4 (marketing site) stays on hold until Parts 1-3 are actually deployed to production, per the task's own ordering. No code changes -- verification only.
+
+## Premise check: "Black Hive (dev copy)"
+
+No studio named Black Hive has ever existed in the dev database -- confirmed directly against the current DB (`Studio.name` containing "hive": zero rows), matching this same file's own earlier investigation from a prior session (`## Investigated first: how was Black Hive originally created?`, above): it's the real production studio, created once via `POST /studios/bootstrap` back when dev/production shared one database, before the two were ever split apart. There is no "dev copy." Substituted the actual seeded dev studio (`owner@dev-studio.test` / Dev Studio, the one `DEVELOPMENT.md` documents) as the equivalent pre-existing-studio test subject -- real login confirmed `showStudioSetupWizard: false`, `showProfileSetupWizard: false`.
+
+## Adversarial checks, all via real HTTP requests against the dev database
+
+- **Rate limit**: fresh API process (cleared its in-memory counter), 6 real `POST /auth/signup` calls in a row -- exactly 5 succeeded (`201`), the 6th got `429`. Confirmed the limiter is live under actual repeated load, not just theorized from the middleware config.
+- **Duplicate email**: same email, two different signup attempts (different persona, different studio name) -- first `201`, second `409`. Confirmed via a direct DB count afterward: exactly one `User` row for that email, no orphaned `Studio` row left behind from the rejected second attempt (the shared transaction never partially commits).
+- **Token lifecycle, adversarially**: backdated a real signup's `emailVerificationTokenExpiresAt` into the past directly in the DB (no way to wait 24 real hours) -- verify attempt correctly returned `410` with an actionable message ("Request a new one from the login page"), not a generic error or a `500`. Resend still worked for that same expired-but-unverified account, issued a fresh token, and that fresh token verified successfully (`200`, real JWT) -- the full expire -> resend -> succeed cycle confirmed, not just the expiry alone.
+- **Slug collision**: reconfirmed with a clean pair (`collision-studio` / `collision-studio-2` from Part 1's own run) -- both real, distinct studios, no error on the second.
+- **SMS**: confirmed at the data level rather than by sending a real text (deliberately -- an actual Twilio send costs real money and could hit a real phone number for zero additional information, since this session never touched `lib/clientSms.ts` at all). A fresh self-serve studio has **zero** `StudioIntegration` rows for the `SMS` channel -- the exact condition `sendSmsMessage` already treats as `not_connected`/fail-soft, confirmed in Part 1's investigation and unchanged since. `Dev Studio` (the one pre-existing dev studio with a real `CONNECTED` Twilio integration) is completely unaffected -- nothing in this epic touched integration-lookup logic, so its existing send path is exactly as it was before this epic began.
+- **Mobile viewport** (390x844, iPhone-size): signup (persona choice, details form, check-your-email), the studio wizard's first two steps, the artist wizard's first two steps, and the post-signup dashboard -- zero horizontal overflow anywhere (`document.documentElement.scrollWidth` never exceeded `clientWidth`), confirmed both structurally and visually via screenshots (deposit-tier fields reflow to fit, nothing clipped or overlapping).
+- **Fresh install + build**: root `npm ci` (deletes and reinstalls `node_modules` from the lockfile exactly, not an incremental install) followed by `npm run build --workspace=apps/api` (`tsc`) and `npm run build --workspace=apps/web` (`tsc -b && vite build`) -- both clean. `apps/api`'s `postinstall` (`prisma generate`) ran automatically as part of `npm ci`, confirmed implicitly by the API build succeeding (it depends on the generated client's types).
+- **git status**: clean of everything from this epic -- the only uncommitted files are the same pre-existing, unrelated ones (branding logos, a marketing/index.html edit, a screenshot file) present since before this session started and never touched by any part of this work.
+
+## Settings-route field coverage (the second investigate-first item, revisited)
+
+Already covered rigorously in Part 3's own live verification (a real STUDIO signup exercising every wizard field at once, cross-checked field-by-field against a direct API read afterward -- 45min buffer / $25 fee / 5-day / 2-day cadence, all persisted exactly) and in the artist wizard's earlier closeout (working-hours gap found and fixed the same way). Nothing new found in this pass; re-stating rather than re-doing, since re-running an identical check adds no new information.
+
+## Report: verified-live vs. typechecked, judgment calls, findings
+
+**Verified live** (real HTTP requests / real browser, this part): rate limit under real repeated load, duplicate-email DB-level non-duplication, full token expire/resend/succeed cycle, slug collision, SMS data-level state, mobile viewport across every step of both wizards + signup, fresh `npm ci` + build.
+
+**Typechecked only**: nothing new in this part -- no code changed.
+
+**Judgment calls made this session, restated for visibility**: Studio-basics step excludes full location CRUD (noted in-wizard, editable in Settings); Policies step surfaces 2 of 10 rich-text fields (Deposit Policy, Reschedule Policy); Defaults step scoped to exactly the three named fields; SMS send itself not adversarially triggered for real (data-level confirmation instead, to avoid a real-money real-phone side effect); Team step offers front desk or artist only (not a second owner).
+
+**Findings from the two investigate-first items**: SMS is already fully per-studio, no gate needed (Part 1). Every wizard field saves through its real existing route with nothing silently stripped, confirmed both in Part 3's own build and this pass's revisit (no new gaps found here; the one real gap this session found -- `preferredSchedule` missing from the artist wizard -- was already fixed in the wizard closeout, before Part 1 began).
+
+**Real bugs found and fixed this session** (both in Part 3, restated here since Part 5 is where "was verification actually adversarial" gets judged): the `ProtectedRoute` infinite redirect loop for a solo OWNER+Artist account, and the StrictMode double-invoke race in `VerifyEmail.tsx` that silently discarded a valid response. Both caught by a blank page / a hung "Verifying…" screen during real Playwright runs, not by reading the code and reasoning it must be fine -- and both re-verified across multiple fresh signups afterward, not just fixed once and assumed correct.
+
+**Cleanup**: dev servers killed. No test data rolled back (same standing convention this file has used all session -- dozens of test studios/accounts from this epic's own verification are real, intentional artifacts of live testing, not cruft).
+
+## Commit
+
+None -- verification only, no files changed.
+
