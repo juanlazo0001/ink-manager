@@ -6,6 +6,12 @@ import { uploadPortfolioImage } from '../lib/cloudinary'
 import { useUserProfile } from '../context/useUserProfile'
 import SpecialtiesInput from '../components/SpecialtiesInput'
 import ImageUploadSection, { type ImageUploadState } from '../components/ImageUploadSection'
+import ScheduleEditor, {
+  defaultScheduleDays,
+  scheduleDaysToBlocks,
+  scheduleBlocksToDays,
+  type ScheduleBlock,
+} from '../components/ScheduleEditor'
 import { InstagramIcon, FacebookIcon, SparkleIcon } from '../components/icons'
 import { crossfadeVariants, uiSpringTransition } from '../lib/motion'
 
@@ -25,10 +31,18 @@ interface ArtistFull {
   hourlyRateCents: number | null
   flatRateCents: number | null
   schedulingBufferMinutes: number | null
+  preferredSchedule: ScheduleBlock[] | null
   artistServices: { serviceId: string }[]
 }
 
-const STEPS = ['bio', 'portfolio', 'business', 'done'] as const
+// 'schedule' saves through PATCH /:id/preferred-schedule -- a separate,
+// dedicated route (see that route's own comment: self-scoped for ARTIST
+// regardless of allowsStudioProfileEdits, same self-service carve-out as
+// the main PATCH /:id route's own profile fields), not the general
+// PATCH /:id every other step uses. ArtistCreate.tsx already treats
+// preferred schedule as part of "everything a new artist profile needs" --
+// this step exists so the wizard doesn't leave that one field out.
+const STEPS = ['bio', 'portfolio', 'schedule', 'business', 'done'] as const
 type Step = (typeof STEPS)[number]
 
 // Full-screen, first-run wizard for a brand new artist profile -- eligibility
@@ -60,6 +74,7 @@ export default function ArtistWelcomeWizard() {
   const [schedulingBufferMinutes, setSchedulingBufferMinutes] = useState('')
   const [serviceOptions, setServiceOptions] = useState<ServiceOption[]>([])
   const [serviceIds, setServiceIds] = useState<string[]>([])
+  const [scheduleDays, setScheduleDays] = useState(defaultScheduleDays())
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -86,6 +101,7 @@ export default function ArtistWelcomeWizard() {
         )
         setServiceOptions(services)
         setServiceIds(artist.artistServices.map((s) => s.serviceId))
+        setScheduleDays(scheduleBlocksToDays(artist.preferredSchedule))
         setLoaded(true)
       })
       .catch(() => {
@@ -129,11 +145,28 @@ export default function ArtistWelcomeWizard() {
     await apiFetch(`/artists/${artistId}`, { method: 'PATCH', body: JSON.stringify(data) })
   }
 
+  // 'schedule' is the one step that doesn't go through the general
+  // PATCH /:id -- that route doesn't accept preferredSchedule at all (see
+  // ArtistFull/STEPS' own comment), it's PATCH /:id/preferred-schedule.
+  async function saveStep(currentStep: Step) {
+    if (!artistId) return
+    if (currentStep === 'schedule') {
+      const blocks = scheduleDaysToBlocks(scheduleDays)
+      await apiFetch(`/artists/${artistId}/preferred-schedule`, {
+        method: 'PATCH',
+        body: JSON.stringify({ preferredSchedule: blocks.length > 0 ? blocks : null }),
+      })
+      return
+    }
+    const fields = fieldsForStep(currentStep)
+    if (Object.keys(fields).length > 0) await patchArtist(fields)
+  }
+
   async function handleContinue() {
     setError(null)
     setSaving(true)
     try {
-      await patchArtist(fieldsForStep(step))
+      await saveStep(step)
       setStepIndex((i) => Math.min(i + 1, STEPS.length - 1))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save -- try again.')
@@ -146,8 +179,8 @@ export default function ArtistWelcomeWizard() {
     setError(null)
     setSaving(true)
     try {
-      const fields = includeCurrentStepFields ? fieldsForStep(step) : {}
-      await patchArtist({ ...fields, profileSetupCompletedAt: true })
+      if (includeCurrentStepFields) await saveStep(step)
+      await patchArtist({ profileSetupCompletedAt: true })
       await refresh()
       navigate('/dashboard')
     } catch (err) {
@@ -259,6 +292,19 @@ export default function ArtistWelcomeWizard() {
                       />
                     </div>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {step === 'schedule' && (
+              <div>
+                <h1 className="text-xl font-bold text-fg">Working hours</h1>
+                <p className="mt-1 text-sm text-fg-secondary">
+                  Advisory availability only -- doesn't block scheduling, just informs staff.
+                </p>
+
+                <div className="mt-6">
+                  <ScheduleEditor days={scheduleDays} onChange={setScheduleDays} editable />
                 </div>
               </div>
             )}

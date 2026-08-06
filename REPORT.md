@@ -8140,3 +8140,45 @@ Both isolated dev servers killed (`netstat` + `taskkill` by PID) after verificat
 
 `c075f60`
 
+---
+
+# Wizard closeout: migration verification, eligibility matrix, spec-drift fixes
+
+Same session, before starting the signup epic's Part 1 -- the user asked for three things to be closed out on the wizard work above before moving on.
+
+## 1. Migration state
+
+`_prisma_migrations` row for `20260806004913_artist_profile_setup_completed_at`: `applied_steps_count: 1`, `rolled_back_at: null` -- one clean apply, no failed/retried attempt. That table doesn't record *which* CLI command applied a migration, so "via `migrate diff` + `migrate deploy`, not `migrate dev`" isn't directly provable from it alone -- but the corroborating evidence is strong: `migrate dev` still cannot run against this database at all as of this session (same pre-existing `flash_payment` shadow-database checksum block investigated earlier in this file), and the dev database's real test data (26 artists, real appointments, the two prior sessions' own fixtures) is fully intact with no reset having occurred -- which is what `migrate dev` would have forced here. This matches the exact hand-write-SQL-then-`migrate deploy` workaround this codebase has used every other time this same blocker has come up (see this file's "Guest artist invite..." Part 3 note).
+
+Backfill: queried the dev database directly. **0 of 26 artists** have a null `profileSetupCompletedAt` as of this check -- full backfill confirmed. (All 26 are non-null rather than "all but a couple test artists" because the two artists created earlier in this session to verify the wizard, `wizardtest`/`wizardskip`, were run through completion/skip during that verification and are no longer null themselves.)
+
+## 2. Eligibility matrix -- real logins, not code read-through
+
+All four verified via the real `/login` endpoint + the real `GET /users/me` (the exact payload `ProtectedRoute` consumes), with (c) and (d) additionally driven through the actual browser UI via Playwright to confirm the real redirect behavior, not just the flag:
+
+- **(a) new solo artist, `create-studio.ts --solo-artist`**: ran the real script, accepted the real invite it generated → `showProfileSetupWizard: true`. **YES**, as expected.
+- **(b) new person accepting a HOME invite**: sent a real invite via `POST /studios/:id/invites`, accepted as a genuinely new identity → `showProfileSetupWizard: true`. **YES**, as expected.
+- **(c) an EXISTING, already-onboarded artist (`wizardtest`, `profileSetupCompletedAt` already set) accepting a GUEST invite at a second, newly-created studio**: accepted for real (confirmed via a real new `guestMemberships` entry in the response) → `showProfileSetupWizard` stayed `false`. Browser login afterward landed on `/dashboard`, no redirect. **NO**, as expected -- code-level reason: the invite-accept route's existing-identity branch (`artistInvites.ts`) does `findUnique` and only calls `artist.create` `if (!artist)`; an existing artist's already-set flag is never touched.
+- **(d) a pre-existing seeded artist (`artist1@dev-studio.test`) logging in**: `showProfileSetupWizard: false` via the API, confirmed via browser login landing on `/dashboard`. **NO**, as expected -- this is the migration's own backfill at work.
+
+Matrix matches the expected shape exactly on all four.
+
+## 3. Spec drift
+
+- **No photo/name step**: deliberate, not an oversight. Name is already collected and set at account-creation time (invite accept / `create-studio.ts`), before the wizard ever runs -- nothing to re-ask. Avatar (`User.avatarUrl`) is a User-level field edited via a different route entirely, already available on `Profile.tsx` separately from the artist-profile fields this wizard covers; including it here would mean either a third place that edits it or reaching outside the wizard's own `PATCH /artists/:id` contract for one field.
+- **Added "social" and "services" beyond the old banner's copy**: deliberate. The wizard's scope was "every field `PATCH /artists/:id` already treats as the artist's own self-editable profile data" (matching `ArtistDetail.tsx`'s self-edit page, "the single place" for all of it), not just the narrower list the retired banner's copy happened to mention. Instagram/Facebook and services-offered are both already self-editable via that same route today; leaving them out of first-run setup would just mean a mandatory follow-up trip to `ArtistDetail.tsx` for fields that were already right there.
+- **Working-hours scoping**: this one was a genuine miss, not a reasoned exclusion -- no investigation happened, and none was reported, because the wizard was scoped off `PATCH /artists/:id` alone and `preferredSchedule` isn't on that route at all; it's a separate one (`PATCH /:id/preferred-schedule`) that didn't come up until asked about here. Once found: it's self-scoped for `ARTIST` the same way the main profile fields are (that route's own comment: "ARTIST's grant is always self-only, staying in effect regardless of the toggle"), and `ArtistCreate.tsx` already treats it as part of "everything a new artist profile needs, collected in one place." Fixed now, not just reported: added a "Working hours" step (`ScheduleEditor`, `scheduleBlocksToDays`/`scheduleDaysToBlocks` -- both already existed, extracted for exactly this kind of reuse) between Portfolio and Rates, saving through the correct dedicated route.
+- **No-silent-stripping check**: re-verified live with a third fresh artist exercising every field at once (bio, specialties, portfolio socials, both rate fields, buffer, a real service checkbox, and the new working-hours step) -- `GET /artists/:id` afterward showed every single one persisted, nothing missing or silently dropped.
+
+## Verified live
+
+Same isolated dev servers (`:4099`/`:5183`) restarted for this pass, killed again afterward. Real invite flows (owner-created HOME invite, owner-created GUEST invite at a second studio, `create-studio.ts --solo-artist`'s own invite) driven through the actual API, not fabricated tokens -- Bird email fails for `@dev-studio.test` addresses in dev (expected, documented gap), so invite tokens were read directly from the database via a throwaway script (deleted after use, same convention as this file's earlier migration-checksum investigation) rather than from an email that was never going to arrive.
+
+## Typechecks
+
+`npx tsc -b --noEmit` (web) -- clean after adding the working-hours step.
+
+## Commit
+
+TBD
+
