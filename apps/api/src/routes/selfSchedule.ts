@@ -22,17 +22,37 @@ const SELF_SCHEDULE_SEARCH_DAYS = 90;
 // crypto-token + verify/respond pattern as estimates.ts/deposits.ts/
 // waivers.ts. Only reachable for an Inquiry whose assigned artist opted in
 // (Artist.allowsClientSelfScheduling) and that received a token from
-// PATCH /estimates/respond/:token's PROCEED branch.
-function isExpiredOrInvalid(inquiry: { selfScheduleTokenExpiresAt: Date | null } | null) {
-  if (!inquiry) {
-    return { code: "invalid", error: "This link is invalid." } as const;
-  }
+// PATCH /estimates/respond/:token's PROCEED branch (or POST
+// /:id/revise-estimate's own self-scheduling-aware branch, on a resend).
+//
+// Token-lifecycle bug fix: "booked" is checked FIRST and separately from
+// expiry -- selfScheduleToken/selfScheduleTokenExpiresAt are deliberately
+// NO LONGER cleared when a booking completes (see selfScheduleToken's own
+// schema comment), so a client revisiting their own just-used link gets a
+// real "you're all set" message instead of a bare "invalid" 404.
+// selfScheduleBookedAt is the sole authority for that; the token fields
+// themselves stay resolvable purely so this message can be shown.
+type TokenStatus = "ok" | "booked" | "expired" | "invalid";
 
-  if (!inquiry.selfScheduleTokenExpiresAt || inquiry.selfScheduleTokenExpiresAt < new Date()) {
-    return { code: "expired", error: "This link has expired." } as const;
-  }
+function checkSelfScheduleToken(
+  inquiry: { selfScheduleTokenExpiresAt: Date | null; selfScheduleBookedAt: Date | null } | null,
+): TokenStatus {
+  if (!inquiry) return "invalid";
+  if (inquiry.selfScheduleBookedAt) return "booked";
+  if (!inquiry.selfScheduleTokenExpiresAt || inquiry.selfScheduleTokenExpiresAt < new Date()) return "expired";
+  return "ok";
+}
 
-  return null;
+// Token-lifecycle bug fix: a resend (POST /:id/revise-estimate's self-
+// scheduling-aware branch) regenerates selfScheduleToken when an old,
+// not-yet-booked one is still live -- previousSelfScheduleToken (set by
+// that route) lets a client who still has the stale tab open get "a newer
+// link was sent" instead of a bare "invalid."
+async function invalidSelfScheduleResponse(token: string) {
+  const superseded = await prisma.inquiry.findUnique({ where: { previousSelfScheduleToken: token } });
+  return superseded
+    ? ({ status: 409, error: "A newer link was sent -- please use the most recent one." } as const)
+    : ({ status: 404, error: "This link is invalid." } as const);
 }
 
 // Single source of truth for "how long is this inquiry's one session,"
@@ -57,10 +77,22 @@ router.get("/verify/:token", async (req, res) => {
     },
   });
 
-  const invalidity = isExpiredOrInvalid(inquiry);
-  if (invalidity) {
-    const status = invalidity.code === "invalid" ? 404 : 410;
-    return res.status(status).json(invalidity);
+  const check = checkSelfScheduleToken(inquiry);
+  if (check === "invalid") {
+    const { status, error } = await invalidSelfScheduleResponse(token);
+    return res.status(status).json({ error });
+  }
+  if (check === "booked") {
+    return res.json({
+      alreadyBooked: true,
+      clientFirstName: inquiry!.client.firstName,
+      studioName: inquiry!.studio.name,
+      studioSlug: inquiry!.studio.slug,
+      themePreset: inquiry!.studio.settings?.themePreset ?? DEFAULT_THEME_PRESET,
+    });
+  }
+  if (check === "expired") {
+    return res.status(410).json({ error: "This link has expired." });
   }
 
   // Both should be impossible by construction (the token is only ever
@@ -114,10 +146,16 @@ router.get("/slots/:token", async (req, res) => {
 
   const inquiry = await prisma.inquiry.findUnique({ where: { selfScheduleToken: token } });
 
-  const invalidity = isExpiredOrInvalid(inquiry);
-  if (invalidity) {
-    const status = invalidity.code === "invalid" ? 404 : 410;
-    return res.status(status).json(invalidity);
+  const check = checkSelfScheduleToken(inquiry);
+  if (check === "invalid") {
+    const { status, error } = await invalidSelfScheduleResponse(token);
+    return res.status(status).json({ error });
+  }
+  if (check === "booked") {
+    return res.status(409).json({ error: "You've already booked this appointment." });
+  }
+  if (check === "expired") {
+    return res.status(410).json({ error: "This link has expired." });
   }
 
   const durationMinutes = durationMinutesFor(inquiry!);
@@ -152,10 +190,16 @@ router.patch("/respond/:token", async (req, res) => {
     include: { assignedArtist: true, flashPiece: true },
   });
 
-  const invalidity = isExpiredOrInvalid(inquiry);
-  if (invalidity) {
-    const status = invalidity.code === "invalid" ? 404 : 410;
-    return res.status(status).json(invalidity);
+  const check = checkSelfScheduleToken(inquiry);
+  if (check === "invalid") {
+    const { status, error } = await invalidSelfScheduleResponse(token);
+    return res.status(status).json({ error });
+  }
+  if (check === "booked") {
+    return res.status(409).json({ error: "You've already booked this appointment." });
+  }
+  if (check === "expired") {
+    return res.status(410).json({ error: "This link has expired." });
   }
 
   const durationMinutes = durationMinutesFor(inquiry!);
@@ -212,9 +256,13 @@ router.patch("/respond/:token", async (req, res) => {
     },
   });
 
+  // Token-lifecycle bug fix: selfScheduleToken/ExpiresAt are deliberately
+  // left as-is (not nulled) -- see that field's own schema comment.
+  // selfScheduleBookedAt is the real "done" marker now, checked first by
+  // every route above.
   await prisma.inquiry.update({
     where: { id: inquiry!.id },
-    data: { selfScheduleToken: null, selfScheduleTokenExpiresAt: null },
+    data: { selfScheduleBookedAt: new Date() },
   });
 
   // Flash gallery, Part 3: this is the actual moment a one-of-one flash

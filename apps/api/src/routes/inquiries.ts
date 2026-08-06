@@ -1600,6 +1600,15 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
     // fire again for the freshly-resent estimate rather than staying
     // silently blocked by a follow-up that already went out for the old one.
     ...(isResend ? { estimateOpenedAt: null, estimateRespondedAt: null, estimateFollowUpSentAt: null } : {}),
+    // Token-lifecycle bug fix: this route only ever reaches a resend
+    // (isResend) while the inquiry is still pre-response (ESTIMATE_REVISION_
+    // ONLY_STATUSES already blocks it once DEPOSIT_PENDING, which is the
+    // only state a live, already-responded estimateToken could exist in --
+    // see that field's own schema comment) -- so inquiry.estimateToken here
+    // is always either null or a genuinely superseded, not-yet-responded
+    // link. Recorded so that old link shows "a newer link was sent" instead
+    // of a bare "invalid" (see estimateToken's own schema comment).
+    ...(isResend && inquiry.estimateToken ? { previousEstimateToken: inquiry.estimateToken } : {}),
   };
 
   // Bug fix: reconciles PlannedSession rows to match plannedSessionInputs on
@@ -1740,6 +1749,9 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
 });
 
 const REVISION_TOKEN_TTL_DAYS = 7;
+// Same 7-day convention as estimates.ts's own SELF_SCHEDULE_TOKEN_TTL_DAYS
+// -- this route mints a fresh self-schedule token too now (see below).
+const SELF_SCHEDULE_TOKEN_TTL_DAYS = 7;
 
 // The ONLY sanctioned way to change a Project's (already-converted
 // inquiry's) estimate -- PATCH /:id above hard-blocks the estimate fields
@@ -1772,7 +1784,13 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
 
   const inquiry = await prisma.inquiry.findUnique({
     where: { id },
-    include: { plannedSessions: { include: { depositForm: { select: { paidAt: true } } } } },
+    include: {
+      plannedSessions: { include: { depositForm: { select: { paidAt: true } } } },
+      // Token-lifecycle bug fix: needed to re-check self-scheduling
+      // eligibility below, same condition estimates.ts's own PROCEED
+      // branch uses.
+      assignedArtist: { select: { allowsClientSelfScheduling: true } },
+    },
   });
   if (!inquiry || inquiry.studioId !== req.user!.studioId) {
     return res.status(404).json({ error: "Inquiry not found" });
@@ -1955,6 +1973,27 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
   const estimateRevisionToken = crypto.randomBytes(32).toString("hex");
   const estimateRevisionTokenExpiresAt = new Date(Date.now() + REVISION_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000);
 
+  // Token-lifecycle bug fix (Bug B): this route is the ONLY resend
+  // mechanism available once an inquiry reaches DEPOSIT_PENDING (see
+  // POST /:id/send-estimate's own ESTIMATE_REVISION_ONLY_STATUSES guard) --
+  // which includes a self-scheduling-eligible inquiry that's approved but
+  // hasn't booked yet, a state this route was never built to consider
+  // (its whole premise is "already scheduled/deposited"). Re-checks the
+  // SAME eligibility condition as estimates.ts's own PROCEED branch, using
+  // THIS revision's own hasPlan/effective (not the pre-revision values --
+  // staff may be changing the plan as part of this call), and explicitly
+  // excludes a later PROJECT_STATUS (a genuinely converted Project really
+  // is past self-scheduling) and an already-completed booking.
+  const selfScheduleEligible =
+    inquiry.status === InquiryStatus.DEPOSIT_PENDING &&
+    inquiry.selfScheduleBookedAt == null &&
+    inquiry.assignedArtist?.allowsClientSelfScheduling === true &&
+    !hasPlan &&
+    effective.timeEstimateHoursMin != null &&
+    effective.timeEstimateHoursMax != null;
+
+  const freshSelfScheduleToken = selfScheduleEligible ? crypto.randomBytes(32).toString("hex") : null;
+
   const reviseData = {
     priceEstimateLow: effective.priceEstimateLow,
     priceEstimateHigh: effective.priceEstimateHigh,
@@ -1969,6 +2008,19 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
     // approve/flag prompt rather than inheriting a stale response.
     estimateRevisionRespondedAt: null,
     estimateRevisionApproved: null,
+    ...(freshSelfScheduleToken
+      ? {
+          // Superseding an old, still-live, not-yet-booked token -- record
+          // it so that link shows "a newer link was sent" instead of a
+          // bare "invalid" (see previousSelfScheduleToken's own schema
+          // comment). Nothing to record if there wasn't one yet (this
+          // inquiry's very first time reaching self-scheduling eligibility
+          // via a revision, e.g. the artist only just opted in).
+          ...(inquiry.selfScheduleToken ? { previousSelfScheduleToken: inquiry.selfScheduleToken } : {}),
+          selfScheduleToken: freshSelfScheduleToken,
+          selfScheduleTokenExpiresAt: new Date(Date.now() + SELF_SCHEDULE_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000),
+        }
+      : {}),
   };
 
   // Reconcile PlannedSession rows to match plannedSessionInputs, if

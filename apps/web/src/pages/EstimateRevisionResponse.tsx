@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { apiFetch, ApiError } from '../lib/api'
 import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import { applyThemePreset } from '../lib/themePresets'
@@ -8,6 +8,22 @@ import { formatPriceEstimate } from '../lib/format'
 
 type PageState = 'loading' | 'invalid' | 'ready' | 'success'
 type Decision = 'APPROVE' | 'FLAG'
+// Same fix as EstimateResponse.tsx: this heading used to be hardcoded to
+// "expired" regardless of the real reason -- a plain never-existed token
+// (404) got the same misleading label as a genuinely time-expired one
+// (410). This route doesn't (yet) have EstimateResponse.tsx's third
+// "superseded" case (revision resends aren't tracked that way), so only
+// the two that already existed here.
+type InvalidKind = 'invalid' | 'expired'
+
+function invalidKindFromStatus(status: number | undefined): InvalidKind {
+  return status === 410 ? 'expired' : 'invalid'
+}
+
+const INVALID_HEADINGS: Record<InvalidKind, string> = {
+  invalid: 'This link is invalid',
+  expired: 'This link has expired',
+}
 
 interface VerifyResponse {
   clientFirstName: string
@@ -51,7 +67,9 @@ function formatHourRange(min: number | null, max: number | null): string {
 // Project's scheduling/deposit status -- FLAG just tells staff to follow up.
 export default function EstimateRevisionResponse() {
   const { token } = useParams<{ token: string }>()
+  const navigate = useNavigate()
   const [state, setState] = useState<PageState>('loading')
+  const [invalidKind, setInvalidKind] = useState<InvalidKind>('invalid')
   const [invalidMessage, setInvalidMessage] = useState('This link is invalid or has expired.')
   const [verifyData, setVerifyData] = useState<VerifyResponse | null>(null)
   const [respondedAs, setRespondedAs] = useState<Decision | null>(null)
@@ -74,6 +92,7 @@ export default function EstimateRevisionResponse() {
       })
       .catch((err) => {
         if (ignore) return
+        setInvalidKind(invalidKindFromStatus(err instanceof ApiError ? err.status : undefined))
         setInvalidMessage(err instanceof Error ? err.message : 'This link is invalid or has expired.')
         setState('invalid')
       })
@@ -91,10 +110,20 @@ export default function EstimateRevisionResponse() {
     setPendingDecision(decision)
 
     try {
-      await apiFetch(`/estimates/revision/respond/${token}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ decision }),
-      })
+      // Token-lifecycle bug fix (Bug B): a revision on a self-scheduling-
+      // eligible, not-yet-booked inquiry (POST /inquiries/:id/revise-estimate's
+      // own self-scheduling-aware branch) can mint a fresh selfScheduleToken
+      // -- mirrors EstimateResponse.tsx's identical PROCEED-branch redirect,
+      // only ever present on APPROVE, never FLAG.
+      const result = await apiFetch<{ success: true; selfScheduleToken: string | null }>(
+        `/estimates/revision/respond/${token}`,
+        { method: 'PATCH', body: JSON.stringify({ decision }) },
+      )
+
+      if (result.selfScheduleToken) {
+        navigate(`/schedule/${result.selfScheduleToken}`, { replace: true })
+        return
+      }
 
       setRespondedAs(decision)
       setState('success')
@@ -113,7 +142,7 @@ export default function EstimateRevisionResponse() {
 
         {state === 'invalid' && (
           <div className="text-center">
-            <h1 className="text-xl font-semibold text-fg">This link has expired</h1>
+            <h1 className="text-xl font-semibold text-fg">{INVALID_HEADINGS[invalidKind]}</h1>
             <p className="mt-2 text-sm text-fg-secondary">{invalidMessage}</p>
             <p className="mt-4 text-sm text-fg-secondary">Please contact the studio if you have questions.</p>
           </div>

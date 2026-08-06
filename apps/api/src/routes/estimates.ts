@@ -18,16 +18,43 @@ const COLLABORATIVE_DESIGN_POLICY =
 // ESTIMATE_TOKEN_TTL_DAYS/REVISION_TOKEN_TTL_DAYS in inquiries.ts.
 const SELF_SCHEDULE_TOKEN_TTL_DAYS = 7;
 
-function isExpiredOrInvalid(inquiry: { estimateTokenExpiresAt: Date | null } | null) {
-  if (!inquiry) {
-    return { code: "invalid", error: "This link is invalid." } as const;
-  }
+// Token-lifecycle bug fix: the three states an ALREADY-RESPONDED, self-
+// scheduling-eligible estimate can be in -- shared between GET /verify and
+// PATCH /respond (see estimateToken's own schema comment for why this
+// branch is reachable at all now) so a client revisiting their one
+// durable link always lands somewhere sane. `null` means self-scheduling
+// was never applicable to this response (shouldn't be reachable in
+// practice -- every other decision/ineligible outcome clears estimateToken
+// immediately, so this branch is only ever entered when it WAS issued --
+// handled defensively anyway rather than assumed).
+type SelfSchedulePhaseStatus =
+  | { kind: "pending"; selfScheduleToken: string }
+  | { kind: "booked" }
+  | { kind: "expired" };
 
-  if (!inquiry.estimateTokenExpiresAt || inquiry.estimateTokenExpiresAt < new Date()) {
-    return { code: "expired", error: "This link has expired." } as const;
+function selfSchedulePhaseStatus(inquiry: {
+  selfScheduleToken: string | null;
+  selfScheduleTokenExpiresAt: Date | null;
+  selfScheduleBookedAt: Date | null;
+}): SelfSchedulePhaseStatus | null {
+  if (inquiry.selfScheduleBookedAt) return { kind: "booked" };
+  if (!inquiry.selfScheduleToken) return null;
+  if (!inquiry.selfScheduleTokenExpiresAt || inquiry.selfScheduleTokenExpiresAt < new Date()) {
+    return { kind: "expired" };
   }
+  return { kind: "pending", selfScheduleToken: inquiry.selfScheduleToken };
+}
 
-  return null;
+// Token-lifecycle bug fix: a resend (POST /:id/send-estimate) regenerates
+// estimateToken, which used to leave the OLD link a bare "invalid" 404
+// forever. previousEstimateToken (set by that route on resend) lets a
+// client on that stale link get a clear, actionable message instead of a
+// generic error -- checked by both GET /verify and PATCH /respond below.
+async function supersededResponse(token: string) {
+  const superseded = await prisma.inquiry.findUnique({ where: { previousEstimateToken: token } });
+  return superseded
+    ? ({ status: 409, error: "A newer link was sent for this estimate -- please use the most recent one." } as const)
+    : ({ status: 404, error: "This link is invalid." } as const);
 }
 
 // Public: the estimate response link is unauthenticated, same pattern as
@@ -58,10 +85,36 @@ router.get("/verify/:token", async (req, res) => {
     },
   });
 
-  const invalidity = isExpiredOrInvalid(inquiry);
-  if (invalidity) {
-    const status = invalidity.code === "invalid" ? 404 : 410;
-    return res.status(status).json(invalidity);
+  if (!inquiry) {
+    const { status, error } = await supersededResponse(token);
+    return res.status(status).json({ error });
+  }
+
+  // Token-lifecycle bug fix: already responded is now reachable (see
+  // estimateToken's own schema comment) -- redirect back into self-
+  // scheduling, an already-booked message, or a self-scheduling-phase
+  // expiry, never the original decision form again. This inquiry's own
+  // estimateTokenExpiresAt is irrelevant once responded; the self-schedule
+  // phase's own expiry (inside selfSchedulePhaseStatus) governs instead.
+  if (inquiry.estimateRespondedAt) {
+    const phase = selfSchedulePhaseStatus(inquiry);
+    if (phase?.kind === "booked") {
+      return res.json({
+        alreadyBooked: true,
+        clientFirstName: inquiry.client.firstName,
+        studioName: inquiry.studio.name,
+        studioSlug: inquiry.studio.slug,
+        themePreset: inquiry.studio.settings?.themePreset ?? DEFAULT_THEME_PRESET,
+      });
+    }
+    if (phase?.kind === "pending") {
+      return res.json({ alreadyResponded: true, selfScheduleToken: phase.selfScheduleToken });
+    }
+    return res.status(410).json({ error: "This link has expired." });
+  }
+
+  if (!inquiry.estimateTokenExpiresAt || inquiry.estimateTokenExpiresAt < new Date()) {
+    return res.status(410).json({ error: "This link has expired." });
   }
 
   // First open only -- the conditional filter makes this atomic, so two
@@ -124,13 +177,36 @@ router.patch("/respond/:token", async (req, res) => {
     include: { assignedArtist: { select: { allowsClientSelfScheduling: true } } },
   });
 
-  const invalidity = isExpiredOrInvalid(inquiry);
-  if (invalidity) {
-    const status = invalidity.code === "invalid" ? 404 : 410;
-    return res.status(status).json(invalidity);
+  if (!inquiry) {
+    const { status, error } = await supersededResponse(token);
+    return res.status(status).json({ error });
   }
 
-  const clearToken = { estimateToken: null, estimateTokenExpiresAt: null, estimateRespondedAt: new Date() };
+  // Token-lifecycle bug fix: idempotency guard. estimateToken now stays
+  // alive through a pending self-scheduling window (see its own schema
+  // comment), so a second PATCH against the same token is reachable in a
+  // way it never was before (a stale duplicate tab, a double-click before
+  // the redirect fires). The ORIGINAL decision already took effect and is
+  // never re-run or overwritten by a second, possibly different decision
+  // -- same-shaped success response either way, so a harmless duplicate
+  // submit is invisible to the client rather than an error, while a
+  // second, DIFFERENT decision can't retroactively change the first one.
+  if (inquiry.estimateRespondedAt) {
+    const phase = selfSchedulePhaseStatus(inquiry);
+    if (phase?.kind === "pending") {
+      return res.json({ success: true, selfScheduleToken: phase.selfScheduleToken });
+    }
+    if (phase?.kind === "booked") {
+      return res.status(409).json({ error: "You've already booked this appointment." });
+    }
+    return res.status(410).json({ error: "This link has expired." });
+  }
+
+  if (!inquiry.estimateTokenExpiresAt || inquiry.estimateTokenExpiresAt < new Date()) {
+    return res.status(410).json({ error: "This link has expired." });
+  }
+
+  const clearToken = { estimateToken: null, estimateTokenExpiresAt: null };
 
   let selfScheduleToken: string | null = null;
 
@@ -165,7 +241,11 @@ router.patch("/respond/:token", async (req, res) => {
     await prisma.inquiry.update({
       where: { id: inquiry!.id },
       data: {
-        ...clearToken,
+        estimateRespondedAt: new Date(),
+        // Token-lifecycle bug fix: estimateToken/ExpiresAt deliberately
+        // NOT cleared here when self-scheduling is issued -- see that
+        // field's own schema comment. Cleared normally otherwise.
+        ...(selfScheduleToken ? {} : clearToken),
         status: InquiryStatus.DEPOSIT_PENDING,
         ...(selfScheduleToken
           ? {
@@ -178,12 +258,22 @@ router.patch("/respond/:token", async (req, res) => {
   } else if (decision === "BUDGET_TOO_HIGH") {
     await prisma.inquiry.update({
       where: { id: inquiry!.id },
-      data: { ...clearToken, status: InquiryStatus.BUDGET_NEGOTIATION, clientStatedBudget: statedBudget.trim() },
+      data: {
+        ...clearToken,
+        estimateRespondedAt: new Date(),
+        status: InquiryStatus.BUDGET_NEGOTIATION,
+        clientStatedBudget: statedBudget.trim(),
+      },
     });
   } else {
     await prisma.inquiry.update({
       where: { id: inquiry!.id },
-      data: { ...clearToken, status: InquiryStatus.CLOSED_LOST, closedReason: "Client declined the estimate." },
+      data: {
+        ...clearToken,
+        estimateRespondedAt: new Date(),
+        status: InquiryStatus.CLOSED_LOST,
+        closedReason: "Client declined the estimate.",
+      },
     });
   }
 
@@ -310,7 +400,15 @@ router.patch("/revision/respond/:token", async (req, res) => {
 
   emitInvalidation({ type: "inquiry.updated", studioId: inquiry!.studioId, inquiryId: inquiry!.id });
 
-  res.json({ success: true });
+  // Token-lifecycle bug fix (Bug B): mirrors the pre-conversion PROCEED
+  // branch's own selfScheduleToken response -- POST /inquiries/:id/revise-
+  // estimate's self-scheduling-aware branch may have minted a fresh one
+  // for this inquiry (see that route's own comment). Only surfaced on
+  // APPROVE, matching PROCEED's own "only ever present on the accepting
+  // decision" contract; FLAG never touches or returns it.
+  const phase = decision === "APPROVE" ? selfSchedulePhaseStatus(inquiry!) : null;
+
+  res.json({ success: true, selfScheduleToken: phase?.kind === "pending" ? phase.selfScheduleToken : null });
 });
 
 export default router;

@@ -8390,3 +8390,51 @@ Local marketing server killed after verification.
 
 `946e881`
 
+---
+
+# Self-scheduling token lifecycle -- two live client bugs, investigate-first
+
+Same repo, new session. Two related client-facing bugs reported against the estimate-response -> self-scheduling chain, both suspected to share one root cause: how the public-flow token pattern is invalidated. Investigated first, mapped the full lifecycle, then fixed.
+
+## Investigation: the token lifecycle as it actually was
+
+`Inquiry.estimateToken` is minted by `POST /:id/send-estimate`, verified by `GET /estimates/verify/:token`, and consumed by `PATCH /estimates/respond/:token`. For an artist with `allowsClientSelfScheduling: true` and no session plan (a plain hours-range estimate, not per-session), a PROCEED decision additionally mints `Inquiry.selfScheduleToken`, and the client is redirected client-side (`navigate(..., {replace:true})`, never a separately-sent link) to `/schedule/:selfScheduleToken`, handled by `selfSchedule.ts`'s own verify/slots/respond routes. Both tokens previously shared the same failure mode: `PATCH /respond/:token`'s old `clearToken` unconditionally nulled `estimateToken`/`estimateTokenExpiresAt`/`estimateRespondedAt` the instant the client responded, *regardless* of whether a `selfScheduleToken` was also issued alongside it; and `selfSchedule.ts`'s booking-completion handler unconditionally nulled `selfScheduleToken`/`selfScheduleTokenExpiresAt` the instant a real `Appointment` was created. Neither of the two only-durable-link tokens survived past the very first thing that happened to them -- REPORT.md's own signup-epic entries confirm this was never the intended design; the public-flow token pattern elsewhere in the app (deposits, waivers, revisions) invalidates on the *final* action, not the first.
+
+## Bug A root cause: `estimateToken` died on approval, not on booking
+
+The client's *only* durable link is `/estimate/:token` -- the self-schedule URL is reached exclusively via an in-browser redirect and is never itself sent to the client in a message. Approving cleared `estimateToken` immediately, so closing the tab and reclicking the original emailed/texted link hit a dead token -> 404 -> `EstimateResponse.tsx`'s hardcoded "This link has expired" H1, regardless of actual cause. Confirmed live: reproduced the exact reported behavior with a real client before any fix, then re-verified fixed after.
+
+## Bug B root cause: resend never routed through self-scheduling at all
+
+Once PROCEED lands an inquiry on `DEPOSIT_PENDING`, `POST /:id/send-estimate` is deliberately blocked by the pre-existing `ESTIMATE_REVISION_ONLY_STATUSES` guard (protects an already-created/paid deposit form from being silently regressed -- unrelated to this fix, left untouched). The UI correctly redirects staff to "Revise Estimate" instead, but `POST /:id/revise-estimate` -> `PATCH /estimates/revision/respond/:token` -> `EstimateRevisionResponse.tsx` was built exclusively for an already-scheduled/deposited Project and never minted or handled a `selfScheduleToken` at all -- so a resend to a self-scheduling-eligible client just showed the classic static "thanks" message, no picker, ever.
+
+## Fix, and the implementation choice flagged per the task's own ask
+
+Chose **changed invalidation timing** over a separate scheduling-phase token: `estimateToken` now stays alive through the pending self-scheduling window instead of being cleared on response (cleared exactly as before, immediately, for every other decision/ineligible case -- DECLINE, BUDGET_TOO_HIGH, or PROCEED-without-self-scheduling-eligibility -- so single-use stays single-use for every case that doesn't have a second phase to reach). `GET /estimates/verify/:token` now detects the already-responded case and branches on self-scheduling phase status (pending -> redirect info; booked -> a real "you're all set" message; expired -> 410) instead of always re-showing the decision form. `selfScheduleBookedAt` (new column) is the sole "is this done" signal for both routers now -- `selfScheduleToken` itself is deliberately never cleared on booking, since a live `Appointment` already exists regardless and nothing security-sensitive stays reachable through it once `selfScheduleBookedAt` is set (every self-schedule route checks that field first, before any token-match/expiry logic). Once responded, expiry is keyed off `selfScheduleTokenExpiresAt` rather than the estimate's own (shorter, earlier-starting) window, so approving near the end of the estimate's 7-day window doesn't prematurely lock out a self-scheduling window that legitimately starts later. Two new single-hop columns, `previousEstimateToken`/`previousSelfScheduleToken`, record the immediately-prior token whenever a fresh one supersedes a still-live, not-yet-booked one (on resend, and on a self-scheduling-aware revision), so a client who still has the old tab open sees "a newer link was sent" (409) instead of a bare "invalid" (404). Bug B's fix reuses this same revision mechanism rather than building a new resend button: `POST /:id/revise-estimate` now computes self-scheduling eligibility itself and mints a fresh `selfScheduleToken` when eligible, and `EstimateRevisionResponse.tsx` redirects into the picker on approval exactly like the original-send path does -- scoped to the `DEPOSIT_PENDING`-not-yet-booked case only, `PROJECT_STATUSES` explicitly excluded so a genuinely-converted Project's revision behavior is unchanged.
+
+Migration: `20260806203944_estimate_self_schedule_token_lifecycle` (`previousEstimateToken`, `previousSelfScheduleToken`, `selfScheduleBookedAt` -- all nullable, no backfill needed), applied via the established non-interactive `migrate diff` + `migrate deploy` workaround (never `migrate dev`, which hangs on this environment's known reset prompt).
+
+## Verified live vs. typechecked
+
+**Typechecked**: `tsc --noEmit` (apps/api) and `tsc -b --noEmit` (apps/web), both clean after the full set of backend and frontend changes.
+
+**Verified live**, real Playwright browser against isolated dev servers (API :4099, web :5183) and the real dev Postgres, one scenario per required Part 3 item, all passing:
+- Approve -> close tab -> reopen the original estimate link -> lands back on the picker with prior state intact (Bug A).
+- Complete a real booking -> both the original estimate link and the self-schedule link show a permanent "you're all set" message afterward, confirmed at the DB level too (`selfScheduleBookedAt` set, a real `Appointment` row created).
+- Resend via the self-scheduling-aware revision path -> the old self-schedule link shows "a newer link was sent" (409); the new link (reached by approving the revision) shows the real, working picker (Bug B).
+- Expired token, both entry points (direct self-schedule link and the original estimate link, whose expiry now defers to the self-schedule phase) -> a sane "This link has expired" message, not a raw error.
+- Non-self-scheduling regression: a plain artist (`allowsClientSelfScheduling: false`) PROCEED-approving an estimate still shows the classic static "Thanks -- let's get you scheduled!" message with no picker involved, and reopening the same link afterward still shows the original bare "This link is invalid" (no superseded-link message, since nothing superseded it -- confirming the unconditional-clear path for every non-self-scheduling case is completely unchanged).
+
+## Judgment calls flagged
+
+- Changed invalidation timing chosen over a wholly separate scheduling-phase token (see "Fix" above for the reasoning).
+- `PATCH /estimates/respond/:token` made idempotent for a duplicate submission against an already-responded, still-self-scheduling-eligible token -- returns the same success shape rather than erroring on a StrictMode double-invoke or an accidental double-click, while still refusing to let a second, *different* decision retroactively overwrite the first.
+- Expiry for an already-responded estimate keyed off `selfScheduleTokenExpiresAt`, not the original `estimateTokenExpiresAt` -- deliberate, see "Fix" above.
+- `previousEstimateToken`/`previousSelfScheduleToken` are single-hop only (one supersession back, not a full chain) -- sufficient for the stated spec ("the old link shows a sane message"), and matches every other superseded-link pattern already in this codebase.
+
+## Cleanup
+
+All scratch Prisma scripts (`scratch-create-inquiry.ts` through `scratch-create-inquiry4.ts`, `scratch-expire-schedule.ts`) deleted from `apps/api/src/` after use -- confirmed none remain. Isolated dev servers (API :4099, web :5183) killed. Test data left in place (three test clients/inquiries plus one real completed `Appointment`), per this file's own standing convention that live-verification test data is a real, intentional artifact and not cruft.
+
+## Commit
+

@@ -1371,6 +1371,18 @@ model Inquiry {
   updatedAt             DateTime      @updatedAt
   assignedAt            DateTime?
 
+  // Token-lifecycle bug fix: NO LONGER cleared on response when the
+  // response issues a selfScheduleToken (PROCEED + self-scheduling
+  // eligible) -- the client's only durable link IS this one (no separate
+  // self-schedule URL is ever sent to them, only reached via an in-browser
+  // redirect), so it needs to stay resolvable for as long as self-
+  // scheduling is genuinely still pending. GET /estimates/verify/:token
+  // detects the already-responded case (estimateRespondedAt set) and
+  // switches to self-scheduling-phase logic -- redirect info, an
+  // already-booked message, or expiry keyed off selfScheduleTokenExpiresAt
+  // instead of this field's own. Cleared exactly as before (immediately,
+  // unconditionally) for every OTHER decision/ineligible case -- nothing
+  // further for that client to reach, so single-use stays single-use.
   estimateToken          String?   @unique
   estimateTokenExpiresAt DateTime?
   estimateSentAt         DateTime?
@@ -1422,11 +1434,39 @@ model Inquiry {
   // estimateRevisionToken above, issued alongside (never instead of)
   // the normal PROCEED -> DEPOSIT_PENDING transition, only when the
   // assigned artist has opted in (see Artist.allowsClientSelfScheduling)
-  // and this inquiry has a usable single-session time estimate. Cleared
-  // the moment the client either picks a time or the token expires --
-  // never left dangling once acted on.
+  // and this inquiry has a usable single-session time estimate.
+  //
+  // Token-lifecycle bug fix: NO LONGER cleared on a completed booking --
+  // that used to destroy the only lookup path to this record, so a client
+  // revisiting their own just-used link after booking got a bare "invalid"
+  // 404 instead of a real "you're all set" message. selfScheduleBookedAt
+  // below is now the sole source of truth for "is this done"; the token
+  // itself stays resolvable (a real Appointment already exists regardless,
+  // so nothing security-sensitive is still reachable through it once
+  // selfScheduleBookedAt is set -- see selfSchedule.ts's own routes,
+  // which all check that field FIRST, before any expiry/token-match logic).
   selfScheduleToken          String?   @unique
   selfScheduleTokenExpiresAt DateTime?
+  // Set once, at the moment PATCH /self-schedule/respond/:token actually
+  // creates the Appointment -- never cleared. The one authoritative
+  // "self-scheduling is done" signal (see selfScheduleToken's own comment
+  // on why the token's mere presence/nullness stopped being that signal).
+  selfScheduleBookedAt DateTime?
+  // Token-lifecycle bug fix, resend support: holds the IMMEDIATELY prior
+  // selfScheduleToken value whenever a fresh one supersedes a still-live,
+  // not-yet-booked one (see POST /:id/revise-estimate's own self-
+  // scheduling-aware branch) -- lets GET /self-schedule/verify/:token tell
+  // a client on a since-superseded link "a newer link was sent" instead of
+  // a bare "invalid," in the edge case they still have that old tab open.
+  previousSelfScheduleToken String? @unique
+
+  // Token-lifecycle bug fix: holds the IMMEDIATELY prior estimateToken
+  // value whenever POST /inquiries/:id/send-estimate issues a fresh one on
+  // a genuine resend (before the client has responded at all) -- same
+  // "show a newer-link message, not a bare invalid" purpose as
+  // previousSelfScheduleToken above, for the estimate phase instead of the
+  // self-scheduling phase.
+  previousEstimateToken String? @unique
 
   // Soft, reversible hide -- same pattern as Client.archivedAt.
   archivedAt DateTime?

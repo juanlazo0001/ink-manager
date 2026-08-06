@@ -9,7 +9,28 @@ import { applyThemePreset } from '../lib/themePresets'
 import PublicPageFooter from '../components/PublicPageFooter'
 import { toDateString, parseDateString } from '../components/DateAndTimeRangeFields'
 
-type PageState = 'loading' | 'invalid' | 'ready' | 'success'
+// Token-lifecycle bug fix: 'alreadyBooked' is new -- a client revisiting
+// their own link after their booking already completed (see
+// Inquiry.selfScheduleBookedAt's own schema comment) now gets a real
+// "you're all set" message instead of a bare "invalid."
+type PageState = 'loading' | 'invalid' | 'ready' | 'success' | 'alreadyBooked'
+// Same three-way distinction as EstimateResponse.tsx's own fix -- see that
+// file's comment. This picker's own token can genuinely be superseded too
+// (a resend via revise-estimate's self-scheduling-aware branch), unlike
+// the revision-response page's more limited two-way version.
+type InvalidKind = 'invalid' | 'expired' | 'superseded'
+
+function invalidKindFromStatus(status: number | undefined): InvalidKind {
+  if (status === 409) return 'superseded'
+  if (status === 410) return 'expired'
+  return 'invalid'
+}
+
+const INVALID_HEADINGS: Record<InvalidKind, string> = {
+  invalid: 'This link is invalid',
+  expired: 'This link has expired',
+  superseded: 'A newer link was sent',
+}
 
 interface TimeSlot {
   startTime: string
@@ -31,6 +52,14 @@ interface VerifyResponse {
   availableDates: string[]
 }
 
+interface AlreadyBookedResponse {
+  alreadyBooked: true
+  clientFirstName: string
+  studioName: string
+  studioSlug: string
+  themePreset: string
+}
+
 function formatTimeOnly(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
 }
@@ -45,8 +74,10 @@ const CALENDAR_MONTHS_AHEAD = 4
 export default function SelfSchedule() {
   const { token } = useParams<{ token: string }>()
   const [state, setState] = useState<PageState>('loading')
+  const [invalidKind, setInvalidKind] = useState<InvalidKind>('invalid')
   const [invalidMessage, setInvalidMessage] = useState('This link is invalid or has expired.')
   const [verifyData, setVerifyData] = useState<VerifyResponse | null>(null)
+  const [alreadyBookedData, setAlreadyBookedData] = useState<AlreadyBookedResponse | null>(null)
   const [confirmed, setConfirmed] = useState<{ startTime: string; endTime: string } | null>(null)
 
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
@@ -63,15 +94,22 @@ export default function SelfSchedule() {
 
     let ignore = false
 
-    apiFetch<VerifyResponse>(`/self-schedule/verify/${token}`)
+    apiFetch<VerifyResponse | AlreadyBookedResponse>(`/self-schedule/verify/${token}`)
       .then((data) => {
         if (ignore) return
+        if ('alreadyBooked' in data) {
+          applyThemePreset(data.themePreset)
+          setAlreadyBookedData(data)
+          setState('alreadyBooked')
+          return
+        }
         setVerifyData(data)
         applyThemePreset(data.themePreset)
         setState('ready')
       })
       .catch((err) => {
         if (ignore) return
+        setInvalidKind(invalidKindFromStatus(err instanceof ApiError ? err.status : undefined))
         setInvalidMessage(err instanceof Error ? err.message : 'This link is invalid or has expired.')
         setState('invalid')
       })
@@ -130,9 +168,23 @@ export default function SelfSchedule() {
 
         {state === 'invalid' && (
           <div className="text-center">
-            <h1 className="text-xl font-semibold text-fg">This link has expired</h1>
+            <h1 className="text-xl font-semibold text-fg">{INVALID_HEADINGS[invalidKind]}</h1>
             <p className="mt-2 text-sm text-fg-secondary">{invalidMessage}</p>
-            <p className="mt-4 text-sm text-fg-secondary">Please contact the studio to schedule your appointment.</p>
+            <p className="mt-4 text-sm text-fg-secondary">
+              {invalidKind === 'superseded'
+                ? 'Please check your messages for the newest link.'
+                : 'Please contact the studio to schedule your appointment.'}
+            </p>
+          </div>
+        )}
+
+        {state === 'alreadyBooked' && alreadyBookedData && (
+          <div className="text-center">
+            <h1 className="text-xl font-semibold text-fg">You're all set, {alreadyBookedData.clientFirstName}!</h1>
+            <p className="mt-2 text-sm text-fg-secondary">
+              You've already booked your appointment with {alreadyBookedData.studioName}. They'll be in touch if
+              anything changes.
+            </p>
           </div>
         )}
 

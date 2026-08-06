@@ -10,8 +10,17 @@ import PublicPageFooter from '../components/PublicPageFooter'
 const INPUT_CLASS =
   'mt-1 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
 
-type PageState = 'loading' | 'invalid' | 'ready' | 'success'
+// Token-lifecycle bug fix: 'alreadyBooked' is new -- a client revisiting
+// their own link after their self-scheduling booking completed (see
+// Inquiry.selfScheduleBookedAt's own schema comment) now gets a real
+// "you're all set" message instead of falling through to 'invalid'.
+type PageState = 'loading' | 'invalid' | 'ready' | 'success' | 'alreadyBooked'
 type Decision = 'PROCEED' | 'BUDGET_TOO_HIGH' | 'DECLINE'
+// Distinguishes the three shapes an 'invalid' response can actually mean
+// (see estimateToken's own schema comment on why this is now reachable in
+// more ways than a plain "never existed") -- drives the heading, since a
+// resent-past link isn't the same situation as one that time-expired.
+type InvalidKind = 'invalid' | 'expired' | 'superseded'
 
 interface VerifyResponse {
   clientFirstName: string
@@ -42,17 +51,53 @@ interface VerifyResponse {
   collaborativeDesignPolicy: string
 }
 
+// Token-lifecycle bug fix: GET /estimates/verify/:token's new already-
+// responded shapes -- either data (the normal decision-form case, unioned
+// above) or one of these two, never both. alreadyResponded means self-
+// scheduling is still pending (redirect); alreadyBooked means it's done.
+interface AlreadyRespondedResponse {
+  alreadyResponded: true
+  selfScheduleToken: string
+}
+interface AlreadyBookedResponse {
+  alreadyBooked: true
+  clientFirstName: string
+  studioName: string
+  studioSlug: string
+  themePreset: string
+}
+
 function formatHourRange(min: number | null, max: number | null): string {
   if (min == null || max == null) return 'To be discussed'
   return min === max ? `${min} hours` : `${min}–${max} hours`
+}
+
+// Status-code convention this fix introduces across the whole estimate/
+// self-scheduling token chain (estimates.ts, selfSchedule.ts): 404 = never
+// existed, 410 = time-expired, 409 = superseded by a newer link. Kept as
+// one small shared mapping rather than three inline ternaries so the
+// three public pages that now all need it (this one, EstimateRevisionResponse,
+// SelfSchedule) read the same status the same way.
+function invalidKindFromStatus(status: number | undefined): InvalidKind {
+  if (status === 409) return 'superseded'
+  if (status === 410) return 'expired'
+  return 'invalid'
+}
+
+const INVALID_HEADINGS: Record<InvalidKind, string> = {
+  invalid: 'This link is invalid',
+  expired: 'This link has expired',
+  superseded: 'A newer link was sent',
 }
 
 export default function EstimateResponse() {
   const { token } = useParams<{ token: string }>()
   const navigate = useNavigate()
   const [state, setState] = useState<PageState>('loading')
+  const [invalidKind, setInvalidKind] = useState<InvalidKind>('invalid')
   const [invalidMessage, setInvalidMessage] = useState('This link is invalid or has expired.')
   const [verifyData, setVerifyData] = useState<VerifyResponse | null>(null)
+  const [alreadyBookedData, setAlreadyBookedData] = useState<AlreadyBookedResponse | null>(null)
   const [respondedAs, setRespondedAs] = useState<Decision | null>(null)
 
   const [activeForm, setActiveForm] = useState<Decision | null>(null)
@@ -66,15 +111,32 @@ export default function EstimateResponse() {
 
     let ignore = false
 
-    apiFetch<VerifyResponse>(`/estimates/verify/${token}`)
+    apiFetch<VerifyResponse | AlreadyRespondedResponse | AlreadyBookedResponse>(`/estimates/verify/${token}`)
       .then((data) => {
         if (ignore) return
+        // Token-lifecycle bug fix: a client re-opening their own link
+        // after already approving lands here now instead of a bare
+        // "invalid" -- either straight back into the self-scheduling
+        // picker they left, or a real "you're all set" if they already
+        // booked, never the decision form a second time.
+        if ('alreadyResponded' in data) {
+          navigate(`/schedule/${data.selfScheduleToken}`, { replace: true })
+          return
+        }
+        if ('alreadyBooked' in data) {
+          applyThemePreset(data.themePreset)
+          setAlreadyBookedData(data)
+          setState('alreadyBooked')
+          return
+        }
         setVerifyData(data)
         applyThemePreset(data.themePreset)
         setState('ready')
       })
       .catch((err) => {
         if (ignore) return
+        const kind = invalidKindFromStatus(err instanceof ApiError ? err.status : undefined)
+        setInvalidKind(kind)
         setInvalidMessage(err instanceof Error ? err.message : 'This link is invalid or has expired.')
         setState('invalid')
       })
@@ -82,7 +144,7 @@ export default function EstimateResponse() {
     return () => {
       ignore = true
     }
-  }, [token])
+  }, [token, navigate])
 
   async function respond(decision: Decision) {
     if (!token) return
@@ -135,9 +197,23 @@ export default function EstimateResponse() {
 
         {state === 'invalid' && (
           <div className="text-center">
-            <h1 className="text-xl font-semibold text-fg">This link has expired</h1>
+            <h1 className="text-xl font-semibold text-fg">{INVALID_HEADINGS[invalidKind]}</h1>
             <p className="mt-2 text-sm text-fg-secondary">{invalidMessage}</p>
-            <p className="mt-4 text-sm text-fg-secondary">Please contact the studio to request a new estimate.</p>
+            <p className="mt-4 text-sm text-fg-secondary">
+              {invalidKind === 'superseded'
+                ? 'Please check your messages for the newest link.'
+                : 'Please contact the studio to request a new estimate.'}
+            </p>
+          </div>
+        )}
+
+        {state === 'alreadyBooked' && alreadyBookedData && (
+          <div className="text-center">
+            <h1 className="text-xl font-semibold text-fg">You're all set, {alreadyBookedData.clientFirstName}!</h1>
+            <p className="mt-2 text-sm text-fg-secondary">
+              You've already booked your appointment with {alreadyBookedData.studioName}. They'll be in touch if
+              anything changes.
+            </p>
           </div>
         )}
 
