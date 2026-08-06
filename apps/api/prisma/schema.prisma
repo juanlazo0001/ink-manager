@@ -520,6 +520,16 @@ model Artist {
   // seeing their calendar at all.
   allowsClientSelfScheduling Boolean @default(false)
 
+  // Onboarding wizard eligibility gate. Null means "hasn't finished or
+  // explicitly skipped the first-login wizard yet" -- the web app shows it
+  // whenever this is null for the logged-in artist. Set once, on finish OR
+  // explicit skip, never on plain navigation-away (so an abandoned wizard
+  // re-offers next login). The migration adding this column backfills every
+  // EXISTING row to the migration's own timestamp, so only an Artist row
+  // created after this deploy is ever eligible -- an existing artist never
+  // sees a wizard for a profile they already set up.
+  profileSetupCompletedAt DateTime?
+
   userId String @unique
   user   User   @relation(fields: [userId], references: [id])
 

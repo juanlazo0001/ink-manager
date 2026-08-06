@@ -252,6 +252,15 @@ router.patch("/:id", requirePermissionOrSelfArtist("artists.manage"), async (req
     schedulingBufferMinutes,
     allowsClientSelfScheduling,
   } = req.body ?? {};
+  // Onboarding wizard completion (Artist.profileSetupCompletedAt's own
+  // schema comment) -- set-once, self-only, and deliberately outside both
+  // the isHome and canEditProfileFields gates below: it's not studio-owned
+  // data (isHome) and not delegated profile content (allowsStudioProfileEdits),
+  // just "this artist finished or explicitly skipped their own wizard."
+  // Only `true` is accepted (never a caller-supplied timestamp, never a
+  // way to clear it back to null) -- the wizard only ever calls this once,
+  // on finish or explicit skip.
+  const { profileSetupCompletedAt } = req.body ?? {};
 
   const artist = await prisma.artist.findUnique({
     where: { id },
@@ -332,6 +341,15 @@ router.patch("/:id", requirePermissionOrSelfArtist("artists.manage"), async (req
     flatRateCents = undefined;
     schedulingBufferMinutes = undefined;
     serviceIds = undefined;
+  }
+
+  if (profileSetupCompletedAt !== undefined) {
+    if (profileSetupCompletedAt !== true) {
+      return res.status(400).json({ error: "profileSetupCompletedAt only accepts true" });
+    }
+    if (!isSelf) {
+      return res.status(403).json({ error: "Only the artist themselves can complete their own onboarding wizard" });
+    }
   }
 
   if (serviceIds !== undefined) {
@@ -424,6 +442,7 @@ router.patch("/:id", requirePermissionOrSelfArtist("artists.manage"), async (req
     ...(flatRateCents !== undefined ? { flatRateCents } : {}),
     ...(schedulingBufferMinutes !== undefined ? { schedulingBufferMinutes } : {}),
     ...(allowsClientSelfScheduling !== undefined ? { allowsClientSelfScheduling } : {}),
+    ...(profileSetupCompletedAt === true ? { profileSetupCompletedAt: new Date() } : {}),
   };
 
   const nextServiceIds: string[] | undefined = serviceIds !== undefined ? [...new Set(serviceIds as string[])] : undefined;
@@ -459,6 +478,7 @@ router.patch("/:id", requirePermissionOrSelfArtist("artists.manage"), async (req
         "flatRateCents",
         "schedulingBufferMinutes",
         "allowsClientSelfScheduling",
+        "profileSetupCompletedAt",
       ]),
       ...(nextServiceIds !== undefined ? { serviceIds: { from: previousServiceIds, to: nextServiceIds } } : {}),
     },

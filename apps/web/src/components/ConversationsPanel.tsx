@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '../lib/api'
@@ -625,8 +625,15 @@ function ProgressRingAvatar({
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
+// Full-screen, authenticated "wizard" pages (App.tsx) own their entire
+// viewport, same as AuthLayout's pre-login pages -- this app-root-mounted
+// floating trigger has to explicitly opt out of those paths (see TopBar's
+// identical set).
+const FULL_SCREEN_ROUTES = new Set(['/welcome', '/setup'])
+
 export default function ConversationsPanel() {
   const user = useEffectiveUser()
+  const location = useLocation()
   const { profile } = useUserProfile()
   const queryClient = useQueryClient()
   const { isOpen, activeConversationId, openPanel, closePanel } = useConversationPanel()
@@ -768,7 +775,7 @@ export default function ConversationsPanel() {
     refetchInterval: 60_000,
   })
 
-  if (!user) return null
+  if (!user || FULL_SCREEN_ROUTES.has(location.pathname)) return null
 
   return (
     <>

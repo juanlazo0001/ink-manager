@@ -8067,3 +8067,76 @@ Isolated `:4099` API server and this session's own web dev server killed; other 
 
 `c971c45` on `main`.
 
+---
+
+# Prisma migration checksum mismatch — investigated, no mismatch found; no changes made
+
+Single session on `main`. Task premise: a checksum mismatch on `flash_payment` (or similar) blocking `prisma migrate dev`/`migrate status` on the dev database, to be fixed non-destructively without resetting the dev DB (which holds real solo-artist and guest-artist test data from recent sessions).
+
+## Investigation
+
+- 87 migrations exist in `apps/api/prisma/migrations`. The dev database is the single Postgres instance configured in `apps/api/.env` (`DATABASE_URL` → Railway `hopper.proxy.rlwy.net:35513/railway`). `apps/api/.env.production` points at a separate Railway instance (`tokaido.proxy.rlwy.net`) — not touched, not in scope.
+- `npx prisma migrate status` against the dev database reports **"Database schema is up to date!"** with no checksum-mismatch or drift warning, both before and after the investigation below.
+- Queried `_prisma_migrations` directly (via a throwaway `tsx` script using the app's own `PrismaPg` adapter + generated client — no new dependency, deleted after use) for every row, looking specifically for the migration named in the task, `20260801214242_flash_payment`. Found **two** rows for that migration name:
+  - First attempt: checksum `1d346546...`, `finished_at: null`, `rolled_back_at: 2026-08-01T21:43:14.234Z`, `applied_steps_count: 0` — this attempt failed partway and Prisma rolled it back, which is the normal recorded behavior of a failed `migrate dev` run.
+  - Second attempt: checksum `6bacf8a0...`, `finished_at: 2026-08-01T21:43:41.269Z`, `rolled_back_at: null`, `applied_steps_count: 1` — applied 28 seconds later and is the currently-active record for this migration.
+- Computed the SHA-256 of the migration file currently on disk (`apps/api/prisma/migrations/20260801214242_flash_payment/migration.sql`): `6bacf8a0...` — **matches the successful, currently-active row exactly**, not the failed/rolled-back one.
+- `git log --follow` on that migration file shows exactly one commit ever touched it (`956354b`, "Flash gallery Part 3: full prepayment via Stripe + self-scheduling integration") — the file was authored once, at the content that matches the successful apply, and has not been edited since.
+
+**Conclusion**: what happened on 2026-08-01 was an ordinary failed-then-fixed `migrate dev` cycle (the developer's first attempt at this migration failed, Prisma auto-rolled it back, they corrected the SQL and reran, and the corrected version — the one now on disk and in git — applied successfully). Prisma tracks the failed attempt as its own history row but only compares the file's checksum against the **latest, non-rolled-back** row for that migration name, which already matches. There is no checksum mismatch on the dev database today. Whatever mismatch prompted this task must have already been resolved in an earlier session, or the report describing it didn't reflect the database's actual current state.
+
+## Fix
+
+None applied — none needed. No files changed, no `prisma migrate resolve` run, no schema changes, database untouched.
+
+## Verification
+
+- `npx prisma migrate status`: "Database schema is up to date!", no mismatch, no drift.
+- Sanity counts against the dev database confirm existing test data is fully intact: `users: 29`, `studios: 9`, `studioMemberships: 30`.
+- Typechecks clean: `apps/api` (`npx tsc --noEmit`) and `apps/web` (`npx tsc -b --noEmit`).
+
+## Commit
+
+None — no files were changed.
+
+---
+
+# Public self-serve signup, prerequisite: finish the artist onboarding /welcome wizard
+
+Single session on `main`, continuing from the checksum-mismatch investigation above (same session, unrelated task). A large public-signup epic was requested next, whose own Part 1 explicitly assumed "the artist onboarding wizard (`profileSetupCompletedAt` flag and `/welcome` wizard)" was already built and merged. Checked before building on that assumption (per this codebase's own repeated lesson that task premises about existing/merged state don't always hold): `git log --all --grep=wizard` and `git log --all -S profileSetupCompletedAt` both returned zero commits, ever. What actually existed was uncommitted, partial: the `Artist.profileSetupCompletedAt` column + migration, a small `PATCH /artists/:id` + `GET /users/me` API surface, and a `showProfileSetupWizard` field/comment in `user-profile-context.ts` describing a `/welcome` redirect that nothing implemented. No `/welcome` route, no page component. Confirmed with the user this should be finished and committed first, as its own prerequisite piece, before the signup epic's Part 1 begins.
+
+## What was missing, and the design decisions made to fill it
+
+**Layout**: this app had no precedent for a full-screen, *authenticated* page — `AuthLayout` covers full-screen pre-login pages, and every authenticated page lives inside `AppShellLayout` (persistent Sidebar/TopBar). Confirmed with the user before building: `/welcome` should be a full-screen takeover, not a page inside the normal shell. This meant `TopBar` and `ConversationsPanel` — both mounted once at the app root with no pathname-awareness at all — needed their own opt-out. Added a small shared `FULL_SCREEN_ROUTES` set (`/welcome`, now also `/setup` pre-emptively, since the signup epic's Part 3 explicitly said the studio wizard should follow "the same contract as the artist wizard" and will need the identical treatment) to both.
+
+**Redirect**: lives in one place, `ProtectedRoute` — every protected route already funnels through it, so the eligibility check (`profile.showProfileSetupWizard`, gated on `!loading` so a not-yet-loaded profile can't wrongly bounce someone who already finished) and the loop-prevention (excluding the literal `/welcome` path) both live in a single chokepoint rather than being repeated per-page.
+
+**Contract** (none existed before this — now the template Part 3 will copy): four steps (bio & specialties, portfolio & social, rates & services, done), each **optional**. "Continue" on a step saves that step's fields immediately via the *existing* `PATCH /artists/:id` route (the same one `ArtistDetail.tsx`'s self-edit already uses — no parallel wizard-only mutation). "I'll do this later" (available on every step) saves whatever's currently filled in on that step and stamps `profileSetupCompletedAt` in the same request, then routes to `/dashboard`. Plain navigation away (closed tab, back button, direct URL) does neither — `profileSetupCompletedAt` stays `null`, so `ProtectedRoute` sends them right back to `/welcome` next time, and the wizard re-fetches the full `GET /artists/:id` record (not the trimmer `GET /users/me` shape `UserProfile` carries, which only has bio/specialties) to prefill every field with whatever was already saved, so nothing already entered is lost.
+
+**Fields**: every one of `PATCH /artists/:id`'s self-editable profile fields (bio, specialties, portfolio images, Instagram/Facebook, hourly/flat rate, scheduling buffer, services offered) — deliberately excluding the studio-policy fields on that same route (guest window, `allowsClientSelfScheduling`) that aren't the artist's own personal setup. Built entirely from existing, already-styled components (`SpecialtiesInput`, `ImageUploadSection` + `uploadPortfolioImage`) rather than duplicating their markup, and reused the existing `uiSpringTransition`/`crossfadeVariants` motion presets (`lib/motion.ts`) for the step transitions rather than inventing new ones.
+
+**Retired**: `Profile.tsx`'s dismissible "Welcome! Let's set up your artist profile" banner (Part 2 of the earlier "Guest artist invite..." session, `994a1de`) — the exact same trigger condition (empty bio + no specialties) the wizard's redirect now covers, forced rather than dismissible-and-easy-to-ignore. Keeping both would mean two different "set up your profile" prompts pointing at two different destinations. The full profile-editing page (`ArtistDetail.tsx` self-edit, linked from Profile.tsx's "Manage" card) is untouched and still the way to edit any of this later.
+
+## Verified live
+
+Isolated dev servers (API on `:4099`, web on `:5183`, `VITE_API_URL` overridden via env rather than editing the shared `apps/web/.env`, so this didn't disturb whatever the LAN-IP-pointed `.env` is set up for elsewhere) against the real dev database. Two fresh `ARTIST` accounts created via the real `POST /studios/:studioId/users` (so `profileSetupCompletedAt` starts genuinely `null`, not seeded/backfilled). Drove both with Playwright (screenshotted):
+
+- Full happy path: login → real redirect to `/welcome`, confirmed zero Sidebar/TopBar/ConversationsPanel chrome present, all 4 steps filled and advanced, landed on `/dashboard`. Confirmed via direct `GET /artists/:id` afterward that bio/specialties/instagramHandle/hourlyRateCents were all genuinely persisted (not just the final completion stamp) — each step's own `PATCH` call actually took effect, not just the last one.
+- Reload immediately after finishing: stayed on `/dashboard`, no bounce back to `/welcome` (`showProfileSetupWizard` correctly flipped `false`).
+- Resume path: filled step 1, advanced to step 2, then navigated directly to `/dashboard` by URL (simulating a closed tab, not Skip) — `ProtectedRoute` correctly bounced back to `/welcome`. Fresh page reload after that: step 1's bio was still prefilled, proving the resume fetch (not just the redirect) works.
+- Skip path: "I'll do this later" on step 1 → landed on `/dashboard`; a fresh navigation to `/dashboard` afterward stayed there, no loop.
+
+Test artist accounts left in the dev database (this session's own standing convention — live-verification test data isn't rolled back).
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npx tsc -b --noEmit` (web) — both clean.
+
+## Cleanup
+
+Both isolated dev servers killed (`netstat` + `taskkill` by PID) after verification.
+
+## Commit
+
+TBD
+

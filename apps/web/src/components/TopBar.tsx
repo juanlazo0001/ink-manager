@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { apiFetch } from '../lib/api'
 import { useAuth } from '../context/useAuth'
@@ -21,6 +21,12 @@ interface TasksBadgeResponse {
   personal: { completedAt: string | null }[]
 }
 
+// Full-screen, authenticated "wizard" pages (App.tsx) own their entire
+// viewport, same as AuthLayout's pre-login pages -- this app-root-mounted
+// chrome has to explicitly opt out of those paths rather than relying on
+// any per-page unmount, since it isn't nested inside AppShellLayout at all.
+const FULL_SCREEN_ROUTES = new Set(['/welcome', '/setup'])
+
 // Rendered once at the app root (like ConversationsPanel's floating
 // trigger) rather than per-page, so every authenticated page gets the
 // personal cluster without each page needing to include it. Fixed
@@ -28,6 +34,7 @@ interface TasksBadgeResponse {
 export default function TopBar() {
   const { user: realUser, logout } = useAuth()
   const user = useEffectiveUser()
+  const location = useLocation()
   const { target: viewAsTarget } = useViewAs()
   const { profile } = useUserProfile()
   const navigate = useNavigate()
@@ -90,7 +97,7 @@ export default function TopBar() {
   const { shape, decorative } = useThemePreset()
   const isEditorial = shape === 'editorial'
 
-  if (!user) return null
+  if (!user || FULL_SCREEN_ROUTES.has(location.pathname)) return null
 
   const iconBtnClass = isEditorial
     ? 'flex h-11 w-11 items-center justify-center rounded-full border border-border-soft bg-surface-inset/80 text-fg-muted shadow-lg backdrop-blur-sm transition hover:text-fg hover:border-border-strong'

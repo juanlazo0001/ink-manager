@@ -16,6 +16,7 @@ import Calendar from './pages/Calendar'
 import AppointmentDetail from './pages/AppointmentDetail'
 import ArtistDetail from './pages/ArtistDetail'
 import ArtistCreate from './pages/ArtistCreate'
+import ArtistWelcomeWizard from './pages/ArtistWelcomeWizard'
 import Settings from './pages/Settings'
 import Profile from './pages/Profile'
 import Team from './pages/Team'
@@ -187,6 +188,12 @@ function AppRoutes() {
             tab -- redirect so old bookmarks/links survive. Per-artist detail
             (below) is unaffected. */}
         <Route path="/artists" element={<Navigate to="/team?tab=artists" replace />} />
+        {/* Full-screen, no Sidebar/TopBar/ConversationsPanel (see those
+            components' own pathname checks) -- a dedicated first-run moment,
+            same reasoning as AuthLayout, but for an already-authenticated
+            user. ProtectedRoute itself is what redirects a still-eligible
+            artist here from anywhere else in the app. */}
+        <Route path="/welcome" element={<ProtectedRoute><ArtistWelcomeWizard /></ProtectedRoute>} />
         {/* Every authenticated app page shares this one persistent shell
             (Sidebar + page-content fade, see AppShellLayout) -- auth is
             checked once here rather than per-page, and Sidebar mounts once

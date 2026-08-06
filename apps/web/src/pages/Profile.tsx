@@ -6,7 +6,6 @@ import { apiFetch } from '../lib/api'
 import { formatPhoneInput, isValidPhoneDigits, readFileAsDataUrl, MAX_IMAGE_FILE_BYTES } from '../lib/format'
 import { useUserProfile } from '../context/useUserProfile'
 import { useAuth } from '../context/useAuth'
-import { SparkleIcon, CloseIcon } from '../components/icons'
 
 const DELETE_ACCOUNT_CONFIRM_TEXT = 'DELETE'
 
@@ -27,25 +26,6 @@ export default function Profile() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-
-  // Part 2 (guest-artist onboarding): the nudge below already fades away
-  // on its own once bio/specialties are filled in (no "new account" flag
-  // needed -- an empty profile IS the signal), but a deliberate dismiss is
-  // still offered since "encouraging, not nagging" means letting someone
-  // opt out even if they genuinely don't want to fill it in yet. Scoped
-  // per-user (not just per-browser) so a shared/reset browser doesn't
-  // resurface it for someone who already dismissed it, and so it doesn't
-  // leak across accounts on a shared machine either.
-  const [profileNudgeDismissed, setProfileNudgeDismissed] = useState(false)
-  useEffect(() => {
-    if (!profile) return
-    setProfileNudgeDismissed(localStorage.getItem(`ink-manager:profile-nudge-dismissed:${profile.id}`) === '1')
-  }, [profile?.id])
-  function dismissProfileNudge() {
-    if (!profile) return
-    localStorage.setItem(`ink-manager:profile-nudge-dismissed:${profile.id}`, '1')
-    setProfileNudgeDismissed(true)
-  }
 
   // Change email -- a separate, confirmation-gated flow (POST
   // /auth/change-email). The account keeps signing in with the OLD email
@@ -651,46 +631,6 @@ export default function Profile() {
               </div>
             </div>
           )}
-
-          {/* Part 2 (guest-artist onboarding): shown whenever an artist's
-              profile is still genuinely empty (no bio, no specialties) --
-              this naturally covers "first login after a fresh invite
-              accept" without needing a separate stored flag, and just as
-              naturally stops showing the moment either field has real
-              content, dismiss or not. Encouraging, not a hard block: no
-              blocking modal, no forced redirect loop, just a friendly
-              nudge sitting above the card that does the actual editing. */}
-          {profile &&
-            isArtist &&
-            profile.artist &&
-            !profile.artist.bio &&
-            profile.artist.specialties.length === 0 &&
-            !profileNudgeDismissed && (
-              <div className="mt-6 flex items-start gap-3 rounded-2xl border border-accent/30 bg-accent/5 p-5">
-                <SparkleIcon className="mt-0.5 h-5 w-5 shrink-0 text-accent" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-fg">Welcome! Let's set up your artist profile.</p>
-                  <p className="mt-1 text-sm text-fg-secondary">
-                    A bio, specialties, and a few portfolio pieces help clients (and your studio) get to know your
-                    work -- it only takes a couple of minutes, whenever you're ready.
-                  </p>
-                  <Link
-                    to={`/artists/${profile.artist.id}`}
-                    className="mt-3 inline-flex rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover"
-                  >
-                    Complete my profile
-                  </Link>
-                </div>
-                <button
-                  type="button"
-                  onClick={dismissProfileNudge}
-                  aria-label="Dismiss"
-                  className="shrink-0 rounded-full p-1.5 text-fg-muted transition hover:bg-surface hover:text-fg"
-                >
-                  <CloseIcon className="h-4 w-4" />
-                </button>
-              </div>
-            )}
 
           {/* The single place bio/specialties/portfolio/social links/rates/
               scheduling buffer/services offered/preferred schedule are all

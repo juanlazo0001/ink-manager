@@ -32,6 +32,11 @@ export interface UserProfile {
       createdAt: string
       studio: { id: string; name: string }
     }[]
+    // Onboarding wizard: null until the artist finishes or explicitly skips
+    // it (see Artist.profileSetupCompletedAt's own schema comment) -- the
+    // derived showProfileSetupWizard below is what pages should actually
+    // branch on; this raw timestamp is exposed mainly for completeness.
+    profileSetupCompletedAt: string | null
   }
   permissions: string[]
   // Solo artist architecture, Phase 3: true only for an ARTIST-role user
@@ -46,6 +51,10 @@ export interface UserProfile {
   // FRONT_DESK gatekeepers). Drives hiding Team, Conversations' Team tab,
   // and the studio-delegation toggle for every role, not just artists.
   isSoloStudio: boolean
+  // Onboarding wizard eligibility: true for an active artist profile whose
+  // wizard hasn't been finished or explicitly skipped yet -- always false
+  // for a non-artist account. App.tsx redirects to /welcome on this.
+  showProfileSetupWizard: boolean
 }
 
 export interface UserProfileContextValue {

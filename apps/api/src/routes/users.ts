@@ -91,6 +91,7 @@ router.get("/me", async (req, res) => {
           bio: true,
           specialties: true,
           allowsClientSelfScheduling: true,
+          profileSetupCompletedAt: true,
           // Every currently-active membership (HOME and any GUEST rows),
           // split into the two response shapes below in code -- Prisma's
           // `select` can't alias one relation field into two differently-
@@ -159,7 +160,14 @@ router.get("/me", async (req, res) => {
   // from isSoloStudioArtist above) -- drives hiding Team/Conversations'
   // Team tab/the profile-delegation toggle for every role, not just artists.
   const isSoloStudio = await isSoloStudioCheck(user.studioId);
-  res.json({ ...serializeUser(safeUser), permissions, isSoloStudioArtist, isSoloStudio });
+  // Onboarding wizard eligibility (Artist.profileSetupCompletedAt's own
+  // schema comment): an active artist profile whose wizard hasn't been
+  // finished or explicitly skipped yet. Carried here (the payload the web
+  // app already loads at login) rather than a dedicated endpoint -- the
+  // frontend needs this at the exact same moment it already knows who's
+  // logged in.
+  const showProfileSetupWizard = user.artist ? user.artist.profileSetupCompletedAt === null : false;
+  res.json({ ...serializeUser(safeUser), permissions, isSoloStudioArtist, isSoloStudio, showProfileSetupWizard });
 });
 
 const OPTIONAL_TEXT_FIELDS = ["name", "phone"] as const;
