@@ -8269,3 +8269,49 @@ Both isolated dev servers killed after verification.
 
 `1c3d09f`
 
+---
+
+# Public self-serve signup, Part 3 -- studio setup wizard
+
+Same session, immediately after Part 2. Largest part of the epic so far -- investigated Settings.tsx (a ~4000-line file) directly rather than inventing config, reusing the exact fields/routes it already edits.
+
+## Scope decisions (investigated first, not invented)
+
+- **Studio basics**: name/website/logo (Settings' own "Studio Profile" card, `PATCH /studios/:studioId`) for both personas. Locations deliberately **excluded** -- `LocationForm` is a large, non-exported component local to Settings.tsx with its own required-phone and per-day-hours validation that doesn't fit "every field optional"; the step instead notes locations can be added anytime from Settings, same solo-hides-locations rule Settings itself already applies.
+- **Deposit tiers & policies**: Deposit Tiers (full CRUD, `PATCH /studio-settings`) plus two of the ten `POLICY_HTML_FIELDS` rich-text fields (Deposit Policy, Reschedule Policy) -- the two most directly tied to the booking/deposit flow this wizard is otherwise covering. The other eight (refund, waivers, terms, etc.) are real, existing, editable fields, just not asked for here -- noted in-wizard, not silently dropped.
+- **Defaults**: exactly the three fields the task named -- scheduling buffer, deposit processing fee, reminder cadence (`reminderWeekBeforeDays`/`reminderNightBeforeDays`) -- not the full Defaults tab (referral program, gift card expiration, timezone, cold-lead days, sidebar badges all stay Settings-only).
+- **Payments**: real Stripe Connect kickoff. Confirmed live in the code (not assumed) that `POST /integrations/stripe/connect` already reuses an existing `stripeAccountId` rather than creating a second one -- the task's own "standing rule" to verify.
+- **Team**: hidden entirely for solo (`!!profile.artist`, the same signal that distinguishes the two personas everywhere else this session). Shown otherwise: front desk or artist, `POST /studios/:studioId/invites`.
+
+## New/changed backend
+
+- `Studio.setupCompletedAt` (added in Part 1) now actually wired: `PATCH /studios/:studioId` accepts `setupCompletedAt: true` (same only-`true`, no-clearing contract as `Artist.profileSetupCompletedAt`).
+- `GET /users/me` gains `showStudioSetupWizard` (OWNER + null `setupCompletedAt`).
+- `POST /integrations/stripe/connect` gains an optional `from: "wizard"` body field -- everything about existing-account reuse and the audit log is identical either way, only the Account Link's `return_url`/`refresh_url` destination changes (`/setup?stripe=...` vs. the existing `/settings?tab=integrations&stripe=...`), so Stripe's redirect re-enters the wizard at the Payments step instead of landing on Settings.
+- Settings gains a "Setup guide" card (OWNER-only) linking to `/setup` -- a plain link, no reset-the-flag step, since `/setup` is always directly reachable regardless of completion (confirmed: `ProtectedRoute` only ever redirects a protected route *to* `/setup`/`/welcome`, never blocks a direct visit to either).
+
+## Two real bugs found and fixed during live verification (not just reported)
+
+1. **`ProtectedRoute` infinite redirect loop for a solo OWNER+Artist account.** The studio-wizard check excluded only `/setup` from its own redirect; the artist-wizard check excluded only `/welcome`. A solo signup is eligible for both at once -- landing on `/setup` (studio check passes it through) still tripped the artist check (`pathname !== '/welcome'` is true), bouncing to `/welcome`, which then tripped the studio check right back to `/setup`, forever. Found via a literal blank page in Playwright, not a code read-through -- traced through `document.getElementById('root').innerHTML` showing an empty PageFade wrapper. Fixed: both checks now exclude *both* wizard paths, not just their own -- once on either wizard, neither redirects to the other; the studio wizard's own Done step is what actually sequences into `/welcome` next.
+2. **`VerifyEmail.tsx` silently hung forever for some signups.** React StrictMode double-invokes effects in dev; the original `ignore`-flag cleanup pattern (fine for every other, idempotent-GET effect in this app) doesn't hold for a POST that consumes a single-use token. First fix attempt (a `useRef` guard combined with the existing `ignore` closure) stopped the duplicate *request* but introduced a subtler bug: the synthetic cleanup flips the *surviving* request's own `ignore` flag true before its real response arrives, so the success handler silently no-ops and the page hangs on "Verifying…" forever with a valid, discarded JWT. Root-caused via response/request network logging (`page.on('response')`), not guessed -- confirmed exactly one POST fired and it returned 200, yet no navigation happened. Fixed by dropping the `ignore` cancellation entirely (calling `setSession`/navigating after a real unmount is harmless here) and relying solely on the ref to prevent a second request. Re-verified clean across multiple fresh signups after the fix.
+
+## Verified live
+
+Isolated dev servers, real signups end to end (screenshotted):
+- STUDIO persona: full 6-step walkthrough -- basics edited, default deposit tiers accepted as-is, both policy rich-text fields present, defaults changed to distinct real values (45 min / $25 / 5 days / 2 days) and confirmed via a direct API read afterward (not just that the UI advanced), Stripe Connect button present, a real artist invite sent via the Team step (confirmed via a fresh `GET /studio-settings`/invite check), Done -> `/dashboard`, reload stays there.
+- SOLO persona: signup -> `/setup` first (not `/welcome`, confirming studio-checked-first priority) -> skip -> **hands off directly to `/welcome`** -> skip -> `/dashboard` -> reload stays there. Re-run four times after the StrictMode fix to confirm the race was actually gone, not just fixed once by luck.
+- "Setup guide" relaunch: confirmed present in Settings, confirmed it navigates back to `/setup` for an OWNER whose wizard is already complete, confirmed it shows real current data (not a blank form).
+- Ran into my own `/auth/signup` rate limiter mid-testing from rapid-fire signups -- confirms that limiter works under real load, not just a single request; restarted the isolated API process to clear its in-memory counter and continued.
+
+## Typechecks
+
+`npx tsc --noEmit` (api) and `npx tsc -b --noEmit` (web) -- both clean.
+
+## Cleanup
+
+Both isolated dev servers killed after verification. No scratch scripts left in the repo (invite tokens were read from the dev-logged verification URLs already added in Part 1, not a new lookup mechanism).
+
+## Commit
+
+TBD
+

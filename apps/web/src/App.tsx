@@ -19,6 +19,7 @@ import AppointmentDetail from './pages/AppointmentDetail'
 import ArtistDetail from './pages/ArtistDetail'
 import ArtistCreate from './pages/ArtistCreate'
 import ArtistWelcomeWizard from './pages/ArtistWelcomeWizard'
+import StudioSetupWizard from './pages/StudioSetupWizard'
 import Settings from './pages/Settings'
 import Profile from './pages/Profile'
 import Team from './pages/Team'
@@ -198,6 +199,7 @@ function AppRoutes() {
             user. ProtectedRoute itself is what redirects a still-eligible
             artist here from anywhere else in the app. */}
         <Route path="/welcome" element={<ProtectedRoute><ArtistWelcomeWizard /></ProtectedRoute>} />
+        <Route path="/setup" element={<ProtectedRoute><StudioSetupWizard /></ProtectedRoute>} />
         {/* Every authenticated app page shares this one persistent shell
             (Sidebar + page-content fade, see AppShellLayout) -- auth is
             checked once here rather than per-page, and Sidebar mounts once

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import Modal from '../components/Modal'
 import RichTextEditor from '../components/RichTextEditor'
@@ -1711,6 +1711,36 @@ export default function Settings() {
             )}
             </div>
           </div>
+          )}
+
+          {/* Relaunch link -- /setup is always directly reachable
+              regardless of Studio.setupCompletedAt (ProtectedRoute's own
+              redirect only ever sends someone TO /setup when eligible, it
+              never blocks a direct visit), so this is just a plain link,
+              no reset-the-flag step needed. OWNER-only, same as the wizard
+              itself. */}
+          {activeTab === 'general' && isOwner && (
+            <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <h2 className={isEditorial ? 'sc text-[22px]' : 'text-lg font-semibold text-fg'}>Setup guide</h2>
+                  <p className="mt-1 text-sm text-fg-secondary">
+                    Revisit the studio setup wizard -- deposit tiers, defaults, payments, and (for a multi-person
+                    studio) team invites.
+                  </p>
+                </div>
+                <Link
+                  to="/setup"
+                  className={
+                    isEditorial
+                      ? 'editorial-btn-secondary shrink-0 rounded-full border px-4 py-2 transition'
+                      : 'shrink-0 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface'
+                  }
+                >
+                  Relaunch
+                </Link>
+              </div>
+            </div>
           )}
 
           {activeTab === 'general' && canManageTheme && policies && (

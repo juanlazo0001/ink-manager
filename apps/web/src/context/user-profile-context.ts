@@ -55,6 +55,12 @@ export interface UserProfile {
   // wizard hasn't been finished or explicitly skipped yet -- always false
   // for a non-artist account. App.tsx redirects to /welcome on this.
   showProfileSetupWizard: boolean
+  // Studio setup wizard eligibility: true for an OWNER whose studio hasn't
+  // finished or explicitly skipped its own first-login wizard yet -- always
+  // false for any other role. ProtectedRoute checks this BEFORE
+  // showProfileSetupWizard (see that check's own comment) so a solo
+  // OWNER+Artist account always reaches /setup before /welcome.
+  showStudioSetupWizard: boolean
 }
 
 export interface UserProfileContextValue {

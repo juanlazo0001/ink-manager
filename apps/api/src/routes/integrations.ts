@@ -259,8 +259,15 @@ router.post("/stripe/connect", async (req, res) => {
     });
   }
 
-  const returnUrl = `${PUBLIC_APP_URL}/settings?tab=integrations&stripe=return`;
-  const refreshUrl = `${PUBLIC_APP_URL}/settings?tab=integrations&stripe=refresh`;
+  // Studio setup wizard, Payments step: same Account Link mechanics, just
+  // a different return destination so Stripe's redirect re-enters the
+  // wizard (see StudioSetupWizard.tsx's own effect reading ?stripe=) rather
+  // than landing on Settings -- everything above this (existing-account
+  // reuse, audit log) is identical either way.
+  const returnBase = req.body?.from === "wizard" ? "/setup" : "/settings?tab=integrations";
+  const returnJoiner = returnBase.includes("?") ? "&" : "?";
+  const returnUrl = `${PUBLIC_APP_URL}${returnBase}${returnJoiner}stripe=return`;
+  const refreshUrl = `${PUBLIC_APP_URL}${returnBase}${returnJoiner}stripe=refresh`;
 
   let url: string;
   try {

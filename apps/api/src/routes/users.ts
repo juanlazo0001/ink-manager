@@ -167,7 +167,27 @@ router.get("/me", async (req, res) => {
   // frontend needs this at the exact same moment it already knows who's
   // logged in.
   const showProfileSetupWizard = user.artist ? user.artist.profileSetupCompletedAt === null : false;
-  res.json({ ...serializeUser(safeUser), permissions, isSoloStudioArtist, isSoloStudio, showProfileSetupWizard });
+  // Studio setup wizard eligibility (Studio.setupCompletedAt's own schema
+  // comment): OWNER-only (same role the route that stamps it, PATCH
+  // /studios/:studioId, already requires) and null means eligible, same
+  // contract as the artist wizard above. ProtectedRoute checks this BEFORE
+  // showProfileSetupWizard so a solo OWNER+Artist account always reaches
+  // /setup first -- the studio wizard's own Done step is what then hands
+  // off into /welcome, a deliberate single continuous onboarding rather
+  // than the two wizards racing each other on redirect-check order.
+  const showStudioSetupWizard =
+    user.role === Role.OWNER
+      ? (await prisma.studio.findUnique({ where: { id: user.studioId }, select: { setupCompletedAt: true } }))
+          ?.setupCompletedAt === null
+      : false;
+  res.json({
+    ...serializeUser(safeUser),
+    permissions,
+    isSoloStudioArtist,
+    isSoloStudio,
+    showProfileSetupWizard,
+    showStudioSetupWizard,
+  });
 });
 
 const OPTIONAL_TEXT_FIELDS = ["name", "phone"] as const;

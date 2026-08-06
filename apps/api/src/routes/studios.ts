@@ -122,7 +122,20 @@ router.patch("/:studioId", requireAuth, requireRole(Role.OWNER), async (req, res
   }
 
   const body = req.body ?? {};
-  const data: Record<string, string | null> = {};
+  const data: Record<string, string | null | Date> = {};
+
+  // Setup wizard completion (Studio.setupCompletedAt's own schema comment)
+  // -- same contract as Artist.profileSetupCompletedAt on PATCH
+  // /artists/:id: only `true` is ever accepted (never a caller-supplied
+  // timestamp, never a way to clear it back to null), and this route is
+  // already OWNER-only + studio-scoped above, so no separate self-check is
+  // needed the way the artist route's isSelf check is.
+  if (body.setupCompletedAt !== undefined) {
+    if (body.setupCompletedAt !== true) {
+      return res.status(400).json({ error: "setupCompletedAt only accepts true" });
+    }
+    data.setupCompletedAt = new Date();
+  }
 
   if (body.name !== undefined) {
     if (typeof body.name !== "string" || body.name.trim().length === 0) {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { apiFetch } from '../lib/api'
 import { useAuth } from '../context/useAuth'
@@ -21,26 +21,38 @@ export default function VerifyEmail() {
   const { setSession } = useAuth()
   const [state, setState] = useState<PageState>('verifying')
   const [error, setError] = useState('This link is invalid.')
+  // Guards the actual network call -- StrictMode's dev-only double-invoke
+  // (mount -> effect -> synthetic cleanup -> effect again) is harmless for
+  // every other effect in this app (idempotent GETs), but this POST
+  // consumes a single-use token: a real second request would 404 against
+  // an already-cleared token. A ref (not state) survives that synthetic
+  // remount without itself re-triggering a render, so the second
+  // invocation's guard check sees it and never fires a second request.
+  // No `ignore`-flag cleanup on top of that: an early version paired the
+  // ref guard with the usual per-invocation `ignore` closure, but the
+  // synthetic cleanup flips THAT flag true before the real (first
+  // invocation's) response ever arrives -- the request still only fires
+  // once, but its own success handler then silently no-ops, so the JWT
+  // that came back is just discarded and the page hangs on "Verifying…"
+  // forever. Calling setSession/navigate after a real unmount (someone
+  // genuinely navigates away mid-request) is harmless either way -- Router
+  // navigation and the auth context's own setter don't require this
+  // component to still be mounted -- so there's nothing to cancel.
+  const startedRef = useRef(false)
 
   useEffect(() => {
-    if (!token) return
-    let ignore = false
+    if (!token || startedRef.current) return
+    startedRef.current = true
 
     apiFetch<{ token: string }>(`/auth/verify-email/${token}`, { method: 'POST' })
       .then((result) => {
-        if (ignore) return
         setSession(result.token)
         navigate('/dashboard')
       })
       .catch((err) => {
-        if (ignore) return
         setError(err instanceof Error ? err.message : 'This link is invalid.')
         setState('error')
       })
-
-    return () => {
-      ignore = true
-    }
   }, [token, setSession, navigate])
 
   return (
