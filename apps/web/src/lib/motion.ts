@@ -105,4 +105,6 @@ export const ringModeTransform: Record<string, { rotate: number; scale: number }
   'reset-password': { rotate: -4, scale: 0.985 },
   'accept-invite': { rotate: 6, scale: 1.02 },
   'confirm-email-change': { rotate: -6, scale: 0.98 },
+  signup: { rotate: 8, scale: 1.03 },
+  'verify-email': { rotate: -8, scale: 0.97 },
 }

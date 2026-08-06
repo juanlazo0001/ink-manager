@@ -8,6 +8,8 @@ import ResetPassword from './pages/ResetPassword'
 import InviteAccept from './pages/InviteAccept'
 import ArtistInviteAccept from './pages/ArtistInviteAccept'
 import ConfirmEmailChange from './pages/ConfirmEmailChange'
+import Signup from './pages/Signup'
+import VerifyEmail from './pages/VerifyEmail'
 import Dashboard from './pages/Dashboard'
 import Clients from './pages/Clients'
 import ClientImport from './pages/ClientImport'
@@ -134,6 +136,8 @@ function AppRoutes() {
           <Route path="/invite/:token" element={<InviteAccept />} />
           <Route path="/artist-invite/:token" element={<ArtistInviteAccept />} />
           <Route path="/confirm-email-change/:token" element={<ConfirmEmailChange />} />
+          <Route path="/signup" element={<Signup />} />
+          <Route path="/verify-email/:token" element={<VerifyEmail />} />
         </Route>
         <Route path="/inquiry/:studioSlug" element={<IntakeForm />} />
         <Route path="/inquiry/:studioSlug/:formSlug" element={<IntakeForm />} />

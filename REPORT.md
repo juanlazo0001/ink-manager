@@ -8236,3 +8236,36 @@ Isolated API dev server killed after verification. Scratch DB-lookup scripts (in
 
 `8d8eb1e`
 
+---
+
+# Public self-serve signup, Part 2 -- public signup UI
+
+Same session, immediately after Part 1.
+
+## Built
+
+- `/signup` (`pages/Signup.tsx`): persona choice -> details form -> "check your email" confirmation, all ONE component instance across the three steps -- unlike Sign In <-> Forgot Password (two different URLs AuthLayout specially keeps one persistent instance across, see `SignInOrForgotCard`'s own comment), everything here already lives on one route, so "shared elements persist, only step content swaps" falls out of normal React state: the logo/card wrapper never unmounts, only the nested `AnimatePresence` step content does, using the exact same `crossfadeVariants` + `uiSpringTransition` this app's other step-based motion already uses. The `login-panel-surface` card itself only ever gets Framer's `layout` (a resize animation) -- never enter/exit variants -- same discipline `SignInOrForgotCard` already established, since animating a backdrop-filter element's own opacity/transform is what causes flicker.
+- `/verify-email/:token` (`pages/VerifyEmail.tsx`): verifies, then **logs the owner in directly** rather than confirming and bouncing to `/login` -- flagged decision per the task. `POST /auth/verify-email/:token` already returns a real JWT (same shape `/login` returns), the same pattern `ArtistInviteAccept`'s new-identity branch already uses (`setSession` + navigate straight in) -- nothing left to prove by making them retype a password they just chose. `ProtectedRoute`'s existing eligibility check takes it from there: a SOLO signup lands on `/welcome` (verified live below), a STUDIO signup will land on `/setup` once Part 3 exists.
+- Both wired into `AuthLayout`'s existing `AuthMode`/`ringModeTransform` machinery (two new modes, `signup`/`verify-email`) rather than a parallel layout system -- same "fixed platform identity regardless of the logged-in studio's own theme preset" property every other pre-auth page already has, for free.
+- Persona copy: "I run a studio" / "Multiple artists, one shared calendar and client list." and "I'm an independent artist" / "Just you -- your own bookings, clients, and profile."
+
+## Verified live
+
+Isolated dev servers, driven through the real browser with Playwright (screenshotted):
+- Full SOLO flow: persona -> details -> check-email -> (read the real dev-logged verification link, same convention as Part 1) -> `/verify-email/:token` -> auto-login -> **landed on `/welcome`**, the actual artist onboarding wizard from earlier in this session, confirming the full chain (signup -> verify -> wizard) works end to end, not just each piece in isolation.
+- Resend on the check-email screen: real `POST /auth/resend-verification` call, button shows "Email sent", new link logged and confirmed to work.
+- STUDIO persona: confirmed the details step shows the Studio name field (SOLO's doesn't).
+- Invalid verify-email token: confirmed the error state renders ("This link is invalid.") rather than hanging on "Verifying…" or throwing.
+
+## Typechecks
+
+`npx tsc -b --noEmit` (web) -- clean.
+
+## Cleanup
+
+Both isolated dev servers killed after verification.
+
+## Commit
+
+TBD
+

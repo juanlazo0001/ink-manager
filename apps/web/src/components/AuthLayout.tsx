@@ -52,13 +52,22 @@ const AuthCard = forwardRef<HTMLDivElement, { children: ReactNode }>(function Au
   )
 })
 
-type AuthMode = 'sign-in' | 'forgot-password' | 'reset-password' | 'accept-invite' | 'confirm-email-change'
+type AuthMode =
+  | 'sign-in'
+  | 'forgot-password'
+  | 'reset-password'
+  | 'accept-invite'
+  | 'confirm-email-change'
+  | 'signup'
+  | 'verify-email'
 
 function getAuthMode(pathname: string): AuthMode {
   if (pathname.startsWith('/forgot-password')) return 'forgot-password'
   if (pathname.startsWith('/reset-password')) return 'reset-password'
   if (pathname.startsWith('/invite') || pathname.startsWith('/artist-invite')) return 'accept-invite'
   if (pathname.startsWith('/confirm-email-change')) return 'confirm-email-change'
+  if (pathname.startsWith('/signup')) return 'signup'
+  if (pathname.startsWith('/verify-email')) return 'verify-email'
   return 'sign-in'
 }
 
