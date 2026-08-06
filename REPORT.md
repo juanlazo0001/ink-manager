@@ -8358,3 +8358,35 @@ Already covered rigorously in Part 3's own live verification (a real STUDIO sign
 
 None -- verification only, no files changed.
 
+---
+
+# Public self-serve signup, Part 4 -- marketing site: "Request Access" -> "Sign Up"
+
+Same session. Held per the task's own ordering (only after Parts 1-3 are deployed and verified in production) until the user confirmed that had actually happened.
+
+## Located
+
+The marketing site's source lives in this same repo, at `marketing/` (a small static site -- `index.html` + assets, served via `serve` per its own `package.json`) -- "separate Railway service" describes how it *deploys*, not a separate codebase to go find.
+
+## Judgment call: a pre-existing uncommitted change in the same file
+
+`marketing/index.html` already had a small, uncommitted, unrelated-looking diff sitting in the working tree since before this session started (present in the very first `git status` of the conversation) -- a "Log In" nav link (`https://web.inkmanager.app/login`) plus the one CSS tweak needed to keep it visible at the mobile breakpoint. Left alone all session (same discipline as the branding logos / screenshot file / marketing's own `package-lock.json`, still untouched) until now, because it lived in the exact file and exact nav block this part needed to edit -- splitting it out via `git add -p` wasn't clean (adjacent lines, same hunk) and, unlike those other files, it's obviously compatible with and complementary to this part's own change (same domain, same nav bar, "Log In" sitting naturally next to a new "Sign Up"). Committed together, flagged here rather than silently absorbed.
+
+## Changed
+
+All three "Request access" instances found (grepped, not assumed) -- desktop/mobile-shared top nav (this site has no separate hamburger menu; `.top-right`'s own responsive CSS already collapses to just Log In + the button at mobile widths, confirmed live), the hero section's primary CTA, and the bottom `#cta` section's button (previously a `mailto:hello@inkmanager.app` link, the actual "email us to request access" mechanism) -- all now read "Sign Up" and link to the real production signup URL, `https://web.inkmanager.app/signup`. Visual treatment/classes (`btn`, `btn solid`) and placement untouched, exactly as asked.
+
+**Not changed, flagged rather than fixed**: the `#cta` section's supporting copy ("Ink Manager is opening to a small group of studios. Tell us about your shop and we'll walk you through the pipeline.") still describes a manual, gatekept process, which reads oddly now that the button beneath it goes straight to self-serve signup. Out of this task's literal scope ("keep the existing CTA's visual treatment and placement" -- a link/label swap, not a copy rewrite), so left as-is rather than guessing at new marketing copy unprompted.
+
+## Verified live
+
+Local static server (`marketing/`, isolated port). Confirmed via the actual DOM (not just reading the source): nav/hero/bottom-CTA buttons all read "Sign Up" with the correct href; the nav button stays visible and correctly placed at a 390px mobile viewport. **Clicked through for real** -- the nav "Sign Up" button was clicked in a live browser and the page genuinely navigated to `https://web.inkmanager.app/signup`, landing on the real, live, production persona-choice screen from Part 2 (screenshotted) -- not a local/dev copy, the actual production deploy, confirming Parts 1-3 are real and reachable from the marketing site's own real link, not just from dev testing.
+
+## Cleanup
+
+Local marketing server killed after verification.
+
+## Commit
+
+TBD
+
