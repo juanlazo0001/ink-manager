@@ -9099,3 +9099,46 @@ Production, checked twice ~5 minutes apart (same "not just once immediately afte
 ## Cleanup
 
 Local `server.mjs` test process and `marketing/`'s local `serve` process both killed and confirmed gone via `Get-CimInstance`/`Stop-Process`. Scratch Playwright screenshot script removed from the npx cache directory it ran from; screenshots themselves left in this session's scratchpad only, not the repo. Working tree left with only this session's intended files staged/committed -- a concurrent session's own in-progress, unrelated `apps/api/src/routes/inquiries.ts` edit (sharing this same working tree, not an isolated worktree) was explicitly left untouched throughout, confirmed via targeted `git add` (never `-A`/`.`) and a final `git status` check before each commit.
+
+# Fix intake form consent-copy links; investigate claimed SSR regression
+
+Single session, on `main`, `apps/web` only. No schema changes.
+
+## Consent-copy link fix (confirmed, reproducible)
+
+`IntakeForm.tsx`'s two SMS-consent Privacy Policy/Terms links (phone-field helper text and the consent-checkbox label) still pointed at each Studio's own per-studio policy page (`/privacy/:studioSlug`, `/terms/:studioSlug`) -- a prior session had deliberately left these in place after the user explicitly chose "leave per-studio links as-is" when asked. This session's task explicitly reversed that decision, so both links now point at Ink Manager's own platform policy pages instead, and `server.mjs`'s SSR-rendered snippet (which mirrors this exact copy for non-JS requests) was updated to match. The now-unused `react-router` `Link` import was removed in favor of plain `<a>` tags, since these are genuinely cross-origin links now, not in-app routes.
+
+**Domain used: bare `inkmanager.app`, not `www.inkmanager.app` as the task text literally specified.** Checked `www.inkmanager.app` directly before hardcoding anything -- it still returns Railway's edge fallback `404` (the custom-domain-attach step flagged in the prior session's report is still pending). The task's own "confirmed, current state" evidence only actually verified the bare `inkmanager.app/privacy` domain working, not `www`. Hardcoding the new links to a hostname that doesn't resolve would have reproduced the exact "shipped a broken link, verified once, still broken" failure this task exists to fix -- so the bare domain was used instead, with both the JSX and `server.mjs` carrying an explicit comment noting this is provisional pending the `www` domain attach, at which point both will serve identical content from the same Railway service.
+
+For consistency, `server.mjs`'s existing `LEGAL_REDIRECTS` target for the old `web.inkmanager.app/privacy`/`/terms` (a prior session's own 301 redirect, added when the pages moved to the marketing site) was also switched from `www.inkmanager.app` to the bare domain -- it had the identical problem (redirecting to a 404) and leaving it inconsistent with the newly-fixed consent-copy links made no sense given the fix was already in hand.
+
+## SSR regression claim: investigated thoroughly, not reproduced
+
+This task's opening claim was that `https://web.inkmanager.app/inquiry/black-hive-ink` returns an empty SPA shell to a non-JS request, contradicting a prior session's own verified-twice report. Checked this directly, repeatedly, before touching any code:
+
+- **5/5 fresh live checks** (immediately, at the start of this session) all returned the full real SSR content -- studio name, consent copy, everything -- with fast response times (0.22-0.27s each), nowhere near the SSR fetch's 3-second timeout.
+- **URL variants** (trailing slash, with a `formSlug` segment) all returned `200` with real content too.
+- **Direct API health check** (`GET /health` and `GET /studio-settings/public?studioSlug=black-hive-ink` against the production API) both fast and healthy (0.22-0.32s).
+- **git history since the original SSR fix (`47c33d7`)**: `server.mjs`'s SSR path (`fetchStudioName`/`renderInquirySsr`) has zero commits touching it -- the only diffs since then are this session's and the prior session's own `LEGAL_REDIRECTS`-target changes, unrelated to the SSR fetch logic itself. `apps/api/src/routes/studioSettings.ts` and `apps/api/src/index.ts` (route registration) have zero commits since `47c33d7` either. The one API commit that did land in that window (`9006fa4`, a concurrent session's permission-context fix) only touched `artistAccess.ts` and `appointments.ts` -- nothing reachable from the public, unauthenticated `/studio-settings/public` endpoint this SSR path calls.
+- **No caching layer** sits in front of `web.inkmanager.app` (confirmed via response headers -- `Server: railway-hikari`, no Cloudflare, no `Cache-Control`/`cf-cache-status`), ruling out a stale-cached-empty-shell explanation.
+- **No rate limiting** on `/studio-settings/public` -- checked both the route file directly (no limiter middleware) and `index.ts`'s route registration (no app-wide limiter applied before it either), ruling out a hypothesis that a burst of same-IP SSR fetches (since every visitor's server-side fetch originates from the same web-container IP) could have tripped an in-memory rate limiter.
+
+Given all of the above, this session is not claiming to have "fixed" the SSR regression -- there is no evidence it currently exists, and no code-level mechanism found that could explain the reported symptom. Treating it as an unreproduced or transient report (a checking-moment blip, a stale observation, or similar) rather than inventing a speculative change to already-working code. If it recurs, the next most useful diagnostic step neither this nor the prior session had access to: Railway's actual runtime request logs for the exact failing request (this environment has no Railway CLI/API credentials, so this could only be checked from outside this session).
+
+## Verification
+
+Build: `npm run build` (web) clean. `npx tsc --noEmit -p apps/api` clean, both re-run fresh at the end of the session.
+
+Local, before deploying: `server.mjs` run locally against the real production API (`VITE_API_URL` override), confirmed the SSR snippet's links read `inkmanager.app/privacy`/`/terms` and the `/privacy` redirect's `Location` header reads the bare domain too.
+
+Production, checked twice ~5 minutes apart (this task's own explicit "do not repeat the verified-once-still-broken pattern" instruction):
+- **Check 1** (~75s after push, confirmed via background poll): `/inquiry/black-hive-ink` returned full real content with both consent-copy links reading `inkmanager.app/privacy`/`/terms` (no `/privacy/black-hive-ink` or `/terms/black-hive-ink` remnants). Both `web.inkmanager.app/privacy` and `/terms` returned `301` to the bare domain, and that destination returned `200` with real content.
+- **Check 2** (~5 minutes later): identical results on every one of those checks -- same links, same redirects, same working destination content. No regression, no transient state, between checks.
+
+## Commit
+
+`e708a8e` on `main`, pushed to `origin/main`.
+
+## Cleanup
+
+Local test `server.mjs` process killed and confirmed gone via `Get-CimInstance`/`Stop-Process` before the next step. No other scratch files added to the repo this session. Working tree left with only this session's two intended files (`apps/web/server.mjs`, `apps/web/src/pages/IntakeForm.tsx`) staged/committed each time -- a concurrent session's own in-progress, unrelated `apps/api` route edits (sharing this same working tree) were left untouched throughout, confirmed via targeted `git add` and a `git status` check before each commit.
