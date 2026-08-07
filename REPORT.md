@@ -8909,3 +8909,41 @@ All scratch scripts (`scratch-get-verify-token.ts`, `scratch-backdate-token.ts`,
 ## Commit
 
 `c61d3ad` (trust-proxy fix, pushed first, standalone). Remainder (item 6's resend-path fix, item 9's notification feature, item 10's marketing copy) committed and pushed together in this same session.
+
+# Front-desk approval re-verification (feature already existed; premise check first)
+
+New session, asked to build front-desk approval for self-scheduled REQUESTED appointments -- the exact same brief as the "Front-desk approval for self-scheduled (REQUESTED) appointments" entry above (`00e432e`/`0f04c4a`/`374cac7`). Before writing any code, checked git log and the actual files: the whole feature was already implemented and live-verified in that prior session, one day earlier. Per this repo's own standing lesson (verify a task's premise against live code before acting on it), surfaced this to the user instead of re-implementing -- rebuilding Parts 1/2 blind would have risked duplicating or conflicting with working code. User chose: re-verify it still works rather than rebuild.
+
+## What could plausibly have regressed
+
+Three commits touched the feature's own files between the original verification and now: `7d799a9`/`9de8578` (artist-mobility studio-scoping audit) and `0d2fbbf` (artist estimate parity). Diffed all three against `appointments.ts`'s approve/decline routes specifically:
+
+- The studio-scoping audit actually **hardened** this feature's own code -- it had been using `req.user!.studioId` in a few spots (audit log, buffer-check studio settings, both `emitInvalidation` calls, the deposit-form call's `studioId`), exactly the anti-pattern this repo has hit four separate times before. The audit replaced every one of those with `appointment.studioId` behind `callerBelongsToStudio`, matching every other route. Net effect: correctness improvement, not a regression.
+- `lib/deposits.ts` (the shared `generateAndSendDepositForm` this feature's Approve route calls) was untouched by the estimate-parity commit -- confirmed by diff, not assumption.
+- `lib/tasks/registry.ts` still registers `selfScheduledPendingSource`; `realtime/registry.ts`'s `appointment.changed` case still includes `["tasks"]`.
+
+No test suite exists for this feature specifically (unlike `artistMobility.test.ts`/`estimateParity.test.ts` for the neighboring work) -- the original session relied on live verification instead, so a fresh live pass was the only way to actually confirm nothing broke, not just re-reading the diff.
+
+## Live re-verification (real browser via Playwright + real HTTP, isolated dev servers :4099/:5183)
+
+Chromium-cli wasn't available in this Windows environment; used the `playwright` npm package directly against its already-cached Chromium binary (installed ad hoc in the scratchpad, not added to any package.json).
+
+Seeded fresh test data rather than reusing anything from the original session (that data's current state was unknown/stale): reset passwords on three existing dev accounts to a known value, enabled `allowsClientSelfScheduling` for a genuine solo-studio artist (their own setting, off by default), and created three new client/inquiry pairs pre-populated with a valid `selfScheduleToken` (the state `PATCH /estimates/respond/:token`'s PROCEED branch would have produced -- that upstream step is a different feature, out of scope here).
+
+- **Realtime task**: staff Tasks page open in one browser context: badge and "Review requested appointment -- Verify Happy" card appeared within seconds of a second, independent browser context completing a real self-schedule -- no reload. Screenshotted.
+- **Approve, happy path**: Calendar showed the dotted-border "Requested: ..." block distinctly from confirmed appointments (screenshotted), clicked through to `AppointmentDetail`, clicked Approve -- appointment flipped to CONFIRMED, `Inquiry.appointmentId` set, a real `DepositForm` row created with `proposedStartAt/EndAt` matching the confirmed time, and the front-desk task badge cleared immediately (same page, no reload). The SMS itself came back `not_connected` (this seeded studio has no `StudioIntegration` SMS row at all -- a test-data gap, not a code issue) -- so no `Conversations` message was written, since `sendClientSms`'s own contract is "a Message row is created ONLY on provider acceptance." Confirmed by reading `lib/clientSms.ts` and by direct DB query, not assumed. This is the one part of the original ask (SMS logged in Conversations) this pass couldn't positively re-confirm -- the underlying code is unchanged since the original verification (confirmed by diff), so treated as a known gap in this session's test setup rather than a regression.
+- **Conflict case**: self-scheduled a second request, then booked a real overlapping `CONSULTATION` appointment for the same artist via the ordinary staff route (skips the gift-card requirement `TATTOO_SESSION` creation has; `findBufferConflict` itself is deliberately type-agnostic, so it still genuinely conflicts) -- Approve correctly returned 409 with the same "time is no longer available... Decline... or reschedule manually" message, appointment stayed REQUESTED. Decline succeeded, reissued a fresh token (`previousSelfScheduleToken` correctly pointed at the old one), the OLD link correctly returned 409 "A newer link was sent," and the NEW link let a real, different, genuinely available time get picked end-to-end.
+- **Adversarial, real HTTP**: an ARTIST-role account with no `appointments.reschedule` grant (default-false, no override, confirmed via direct `RolePermission` query first) got real 403s on both `/approve` and `/decline`. A genuine solo-studio-of-one ARTIST got 200 on `/approve` via the bypass path.
+- **Regression check**: the pre-existing manual "Send Deposit Form" route, exercised against a fresh classic (non-self-scheduling) inquiry, returned 201 with correct deposit amount math -- unaffected by the `lib/deposits.ts` extraction, as expected from the diff review.
+
+## Judgment call flagged
+
+`hasPermission`/`requirePermissionOrSoloArtist` check the permission matrix keyed on the caller's own **home** `studioId` (from the JWT), not the target record's studio -- this is a pre-existing, repo-wide pattern (every permission-gated route does this, including `isSoloStudioArtist`), not something this feature introduced or something the studio-scoping audit touched. It means a guest artist's approve/decline capability is governed by their home studio's permission matrix, not the guest studio's. Didn't change it -- that would be a permissions-architecture change affecting every gated route in the app, well outside this task's scope -- but flagging it since the task specifically asked about guest-artist scoping and this is the one place scoping still follows the caller's home studio by design.
+
+## Cleanup
+
+All `_verify_*.ts` scratch scripts deleted from `apps/api/src/` after use. Isolated dev servers (API :4099, web :5183) killed, confirmed both ports free. Test data (three new clients/inquiries, one now-CONFIRMED, one now-CANCELLED, two REQUESTED-then-approved appointments, three dev account passwords reset to a known test value, one artist's `allowsClientSelfScheduling` flipped to true) left in place, per this file's own standing convention.
+
+## Commit
+
+This entry only -- no source changes, since the feature under test needed no code changes.
