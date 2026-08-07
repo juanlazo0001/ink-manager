@@ -29,8 +29,6 @@ import FlashPaymentResponse from './pages/FlashPaymentResponse'
 import IntakeForm from './pages/IntakeForm'
 import Policies from './pages/Policies'
 import PublicPolicyPage from './pages/PublicPolicyPage'
-import PlatformPolicyPage from './pages/PlatformPolicyPage'
-import { PLATFORM_PRIVACY_POLICY_HTML, PLATFORM_TERMS_HTML } from './content/platformPolicies'
 import Inquiries from './pages/Inquiries'
 import InquiryDetail from './pages/InquiryDetail'
 import MyInquiries from './pages/MyInquiries'
@@ -144,15 +142,14 @@ function AppRoutes() {
         <Route path="/inquiry/:studioSlug/:formSlug" element={<IntakeForm />} />
         <Route path="/flash/:studioSlug/:artistId" element={<FlashPublicGallery />} />
         <Route path="/policies/:studioSlug" element={<Policies />} />
-        {/* Platform-level (no studioSlug) -- Ink Manager's own Privacy
-            Policy/Terms, distinct from the studio-scoped routes directly
-            below. Live at the exact bare URLs a Twilio A2P 10DLC carrier
-            review checks (https://web.inkmanager.app/privacy, /terms):
-            no auth, no studioSlug segment, so these can't 404/dead-end
-            into "this studio couldn't be found" the way the scoped routes
-            do when visited without one. */}
-        <Route path="/privacy" element={<PlatformPolicyPage title="Privacy Policy" bodyHtml={PLATFORM_PRIVACY_POLICY_HTML} />} />
-        <Route path="/terms" element={<PlatformPolicyPage title="Terms & Conditions" bodyHtml={PLATFORM_TERMS_HTML} />} />
+        {/* No React routes for bare /privacy and /terms anymore -- Ink
+            Manager's own platform-level Privacy Policy/Terms moved to
+            www.inkmanager.app (the marketing site) as their permanent
+            canonical home. web.inkmanager.app/privacy and /terms are now
+            plain HTTP redirects to there, handled in server.mjs before a
+            request ever reaches this router (see that file's own comment).
+            The studio-scoped routes directly below are unrelated -- each
+            Studio's own privacy/terms text, unaffected by this move. */}
         <Route
           path="/privacy/:studioSlug"
           element={<PublicPolicyPage field="privacyPolicy" title="Privacy Policy" />}

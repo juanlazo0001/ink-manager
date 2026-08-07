@@ -6,22 +6,21 @@
 // `rewrites` array still gets re-matched against the catch-all
 // immediately after being applied (see serve-handler's applyRewrites --
 // each successful match recurses on the REMAINING rules against the
-// NEW rewritten path, so "/privacy" -> "/privacy/index.html" -> (now
-// re-checked against "**") -> "/index.html"). Verified this directly
-// against the real serve-handler internals with debug logging before
-// concluding a plain serve.json couldn't do this -- a `/privacy`-before-
-// `**` ordering in serve.json still lost to the catch-all in testing.
+// NEW rewritten path). Every path other than the special cases below
+// gets the standard single-page-app catch-all rewrite, unchanged from
+// `-s`'s prior behavior.
 //
-// Real fix: never hand /privacy or /terms a rewrite at all. Without any
-// matching rewrite rule, serve-handler's cleanUrls resolution (on by
-// default) already finds dist/privacy/index.html / dist/terms/index.html
-// on its own, since those real files exist on disk -- generated at
-// build time by scripts/generate-static-policies.mjs. This is what
-// makes those two routes readable by a crawler that doesn't execute
-// JavaScript (e.g. Twilio's A2P 10DLC carrier review), which was the
-// actual point of this file existing. Every other path still gets the
-// standard single-page-app catch-all rewrite, unchanged from `-s`'s
-// prior behavior.
+// /privacy and /terms used to be served here directly (a build-time
+// static-generation step, back when this file's whole reason for
+// existing was making them readable to a non-JS crawler). Ink Manager's
+// own Privacy Policy/Terms have since moved to www.inkmanager.app (the
+// marketing site) as their permanent canonical home -- these two paths
+// are now plain HTTP 301 redirects there instead, so any stale
+// reference to the old web.inkmanager.app URLs (Twilio's own
+// registration, a bookmark, anything else) still lands somewhere real
+// during the transition rather than 404ing. LEGAL_REDIRECTS is checked
+// before SPA_REWRITES / cleanUrls resolution, so it doesn't matter that
+// dist/privacy and dist/terms no longer exist on disk.
 //
 // /inquiry/:studioSlug (and /inquiry/:studioSlug/:formSlug) needed the
 // same "a non-JS crawler must see real content" fix but CAN'T use the
@@ -58,7 +57,10 @@ const PORT = Number(process.env.PORT) || 3000
 // throwing and taking the whole route down.
 const API_URL = process.env.VITE_API_URL
 
-const STATIC_ROUTES = new Set(['/privacy', '/terms'])
+const LEGAL_REDIRECTS = {
+  '/privacy': 'https://www.inkmanager.app/privacy',
+  '/terms': 'https://www.inkmanager.app/terms',
+}
 const SPA_REWRITES = [{ source: '**', destination: '/index.html' }]
 const INQUIRY_ROUTE = /^\/inquiry\/([^/]+)(?:\/([^/]+))?$/
 
@@ -137,6 +139,14 @@ async function renderInquirySsr(studioSlug, formSlug) {
 const server = http.createServer((req, res) => {
   const pathname = decodeURIComponent(new URL(req.url, 'http://placeholder').pathname).replace(/\/+$/, '') || '/'
 
+  const redirectTarget = LEGAL_REDIRECTS[pathname]
+  if (redirectTarget) {
+    res.statusCode = 301
+    res.setHeader('Location', redirectTarget)
+    res.end()
+    return
+  }
+
   const inquiryMatch = pathname.match(INQUIRY_ROUTE)
   if (inquiryMatch) {
     const [, studioSlug, formSlug] = inquiryMatch
@@ -160,9 +170,7 @@ const server = http.createServer((req, res) => {
     return
   }
 
-  const rewrites = STATIC_ROUTES.has(pathname) ? [] : SPA_REWRITES
-
-  handler(req, res, { public: PUBLIC_DIR, rewrites }).catch((err) => {
+  handler(req, res, { public: PUBLIC_DIR, rewrites: SPA_REWRITES }).catch((err) => {
     console.error(err)
     res.statusCode = 500
     res.end('Internal Server Error')

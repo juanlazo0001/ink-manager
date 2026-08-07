@@ -177,12 +177,9 @@
    entry. .login-shell shares this exact selector (not a separate copy) so
    both sides of the app draw from one definition; see .login-shell's own
    comment further down for why that's safe against the active studio
-   preset. .policy-shell (the platform-level /privacy, /terms pages) joins
-   the same selector for the identical reason -- see PlatformPolicyPage.tsx's
-   own comment. */
+   preset. */
 :root[data-theme="editorial-gold"],
-.login-shell,
-.policy-shell {
+.login-shell {
   --font-sans: 'Outfit', ui-sans-serif, system-ui, sans-serif;
   --font-display: 'Fraunces', ui-serif, serif;
   --font-jura: 'Jura', ui-sans-serif, system-ui, sans-serif;

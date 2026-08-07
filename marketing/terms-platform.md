@@ -1,3 +1,13 @@
+<!--
+Canonical draft for terms/index.html's content. Not parsed or built at
+deploy time (marketing/ has no build step) -- this exists so a diffable,
+checked-in source of truth exists to hand-convert changes from, same
+reasoning as apps/web's old platformPolicies.ts had for these two .md
+files before this move. Edit this file first, then hand-convert the
+change into the matching HTML in terms/index.html -- keep them in sync,
+since nothing enforces that automatically.
+-->
+
 # Ink Manager Terms & Conditions
 
 **Last updated: July 28, 2026**
