@@ -25,6 +25,7 @@ import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { resolveRequiredDepositCents, resolveDepositTiers } from "../lib/depositTiers";
 import { generateAndSendDepositForm } from "../lib/deposits";
+import { generateAndSendEstimate, saveEstimateDraft } from "../lib/estimates";
 import { generateUniqueReferralCode } from "../lib/referrals";
 import { studioHasActiveMembership, callerBelongsToStudio } from "../lib/artistAccess";
 import { SELF_SCHEDULE_TOKEN_TTL_DAYS } from "../lib/selfSchedule";
@@ -37,7 +38,6 @@ import { buildImageMeta, mergeImageMeta, resolveImageMeta } from "../lib/imageMe
 
 const router = Router();
 
-const ESTIMATE_TOKEN_TTL_DAYS = 7;
 // Flash gallery, Part 3: longer than the deposit link's 48h -- a flash
 // booking's reservation (PENDING_APPROVAL, for a one-of-one piece) is
 // already staked out by the time this token goes out, so there's less
@@ -676,7 +676,18 @@ const ARTIST_INQUIRY_SELECT = {
   projectCompletedAt: true,
   client: { select: { firstName: true, lastName: true } },
   assignedArtist: {
-    select: { id: true, user: { select: { id: true, name: true, email: true, avatarUrl: true } } },
+    // hourlyRateCents/flatRateCents: needed for the artist's own Approve
+    // flow to get the same rate auto-suggestion staff's estimate builder
+    // has always had (see EstimateFieldsEditor) -- an artist's own rate is
+    // not one of the "outside the estimate they're authoring" financial
+    // limits scoped elsewhere, since it's the exact number driving the
+    // estimate they're entering right now.
+    select: {
+      id: true,
+      hourlyRateCents: true,
+      flatRateCents: true,
+      user: { select: { id: true, name: true, email: true, avatarUrl: true } },
+    },
   },
   // Artist mobility: lets both /assigned-to-me routes below tell the caller
   // which studio a project actually belongs to -- needed now that
@@ -1295,7 +1306,7 @@ const DECISIONS = ["APPROVE", "DECLINE"] as const;
 // staff explaining why, so it can be reassigned.
 router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), requirePermission("inquiries.enterEstimate"), async (req, res) => {
   const id = req.params.id as string;
-  const { decision, priceEstimateLow, priceEstimateHigh, timeEstimateHoursMin, timeEstimateHoursMax, declineNote } =
+  const { decision, priceEstimateLow, priceEstimateHigh, timeEstimateHoursMin, timeEstimateHoursMax, sessions, declineNote } =
     req.body ?? {};
 
   if (!DECISIONS.includes(decision)) {
@@ -1345,8 +1356,13 @@ router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), requirePermi
       include: INQUIRY_INCLUDE,
     });
 
+    // studioId: inquiry.studioId (the PROJECT's studio), not req.user!.studioId
+    // (this artist's own possibly-different home studio) -- same guest-artist
+    // scoping bug class fixed elsewhere in this file; getting this wrong here
+    // would log the audit entry under the wrong studio and broadcast the live
+    // update to the wrong studio's connected staff.
     await logAudit({
-      studioId: req.user!.studioId,
+      studioId: inquiry.studioId,
       actorUserId: req.user!.userId,
       entityType: "Inquiry",
       entityId: id,
@@ -1354,53 +1370,53 @@ router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), requirePermi
       changes: diffObjects(inquiry, declineData, ["status", "assignedArtistId", "assignedAt", "declineNote"]),
     });
 
-    emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
+    emitInvalidation({ type: "inquiry.updated", studioId: inquiry.studioId, inquiryId: id });
 
     return res.json(updated);
   }
 
-  for (const [field, value] of Object.entries({
+  // Same real send path staff's own Generate & Send Estimate uses (see
+  // lib/estimates.ts) -- gated per-studio by inquiries.artistSendEstimate,
+  // checked against the PROJECT's studio (inquiry.studioId), not this
+  // artist's own home studio, so a guest artist's send behavior follows the
+  // studio they're actually working for. Off: the artist still fully
+  // prepares and saves the same fields (identical validation either way,
+  // see lib/estimates.ts's shared validateEstimateInputs) but nothing is
+  // sent to the client -- front desk picks it up from here via the normal
+  // Estimate section on this same inquiry.
+  const canSendDirectly = await hasPermission(inquiry.studioId, Role.ARTIST, "inquiries.artistSendEstimate");
+
+  if (canSendDirectly) {
+    const result = await generateAndSendEstimate(id, {
+      studioId: inquiry.studioId,
+      actorUserId: req.user!.userId,
+      priceEstimateLow,
+      priceEstimateHigh,
+      timeEstimateHoursMin,
+      timeEstimateHoursMax,
+      sessions,
+    });
+    if (!result.ok) {
+      return res.status(result.status).json({ error: result.error });
+    }
+    const updated = await prisma.inquiry.findUnique({ where: { id }, include: INQUIRY_INCLUDE });
+    return res.status(201).json({ ...updated, estimateUrl: result.estimateUrl, estimateSendResult: result.estimateSendResult });
+  }
+
+  const saved = await saveEstimateDraft(id, {
+    studioId: inquiry.studioId,
+    actorUserId: req.user!.userId,
     priceEstimateLow,
     priceEstimateHigh,
     timeEstimateHoursMin,
     timeEstimateHoursMax,
-  })) {
-    if (value !== undefined && typeof value !== "number") {
-      return res.status(400).json({ error: `${field} must be a number` });
-    }
+    sessions,
+  });
+  if (!saved.ok) {
+    return res.status(saved.status).json({ error: saved.error });
   }
 
-  const approveData = {
-    status: InquiryStatus.AWAITING_CLIENT_RESPONSE,
-    priceEstimateLow: priceEstimateLow ?? null,
-    priceEstimateHigh: priceEstimateHigh ?? null,
-    timeEstimateHoursMin: timeEstimateHoursMin ?? null,
-    timeEstimateHoursMax: timeEstimateHoursMax ?? null,
-  };
-
-  const updated = await prisma.inquiry.update({
-    where: { id },
-    data: approveData,
-    include: INQUIRY_INCLUDE,
-  });
-
-  await logAudit({
-    studioId: req.user!.studioId,
-    actorUserId: req.user!.userId,
-    entityType: "Inquiry",
-    entityId: id,
-    action: "status_change",
-    changes: diffObjects(inquiry, approveData, [
-      "status",
-      "priceEstimateLow",
-      "priceEstimateHigh",
-      "timeEstimateHoursMin",
-      "timeEstimateHoursMax",
-    ]),
-  });
-
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
-
+  const updated = await prisma.inquiry.findUnique({ where: { id }, include: INQUIRY_INCLUDE });
   res.json(updated);
 });
 
@@ -1413,359 +1429,26 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
   const id = req.params.id as string;
   const { priceEstimateLow, priceEstimateHigh, timeEstimateHoursMin, timeEstimateHoursMax, sessions } = req.body ?? {};
 
-  const inquiry = await prisma.inquiry.findUnique({
-    where: { id },
-    include: { plannedSessions: { include: { depositForm: { select: { paidAt: true } } } } },
-  });
+  const inquiry = await prisma.inquiry.findUnique({ where: { id }, select: { studioId: true } });
   if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
 
-  // Deliberately not narrowed to AWAITING_CLIENT_RESPONSE/BUDGET_NEGOTIATION
-  // -- front desk/owner routinely gets a price verbally from the artist
-  // (especially guest artists who never touch the app) and types it in
-  // themselves, often before the artist has "responded" in-app at all.
-  // Only the two terminal statuses are off-limits, same allowlist every
-  // other cross-status inquiry action in this file already uses.
-  if (!NON_TERMINAL_STATUSES.includes(inquiry.status)) {
-    return res.status(400).json({ error: "An estimate can't be sent on a closed or cold-lead inquiry" });
-  }
-
-  // Bug fix: once a deposit form already exists (DEPOSIT_PENDING and
-  // beyond -- see ESTIMATE_REVISION_ONLY_STATUSES's own comment), this
-  // route's unconditional status reset to AWAITING_CLIENT_RESPONSE would
-  // silently regress the pipeline backward past "Deposit requested" while
-  // leaving that deposit form (possibly already paid) untouched and
-  // orphaned underneath. Revise Estimate is the safe route from here on --
-  // it never touches status or the existing deposit form.
-  if (ESTIMATE_REVISION_ONLY_STATUSES.includes(inquiry.status)) {
-    return res.status(400).json({
-      error: "A deposit has already been requested for this inquiry -- use Revise Estimate instead of Generate & Send Estimate.",
-    });
-  }
-
-  // An artist must be assigned before staff can even enter numbers -- the
-  // estimate (price/time, or a whole session plan) is specific to that
-  // artist's own work, and this closes the same "never assigned" gap the
-  // deposit-form gate exists for (an inquiry that reached this route
-  // unassigned used to be able to sail all the way to a paid deposit
-  // before that gate ever caught it).
-  if (!inquiry.assignedArtistId) {
-    return res.status(400).json({ error: "Assign an artist before entering an estimate" });
-  }
-
-  for (const [field, value] of Object.entries({
+  const result = await generateAndSendEstimate(id, {
+    studioId: inquiry.studioId,
+    actorUserId: req.user!.userId,
     priceEstimateLow,
     priceEstimateHigh,
     timeEstimateHoursMin,
     timeEstimateHoursMax,
-  })) {
-    if (value !== undefined && typeof value !== "number") {
-      return res.status(400).json({ error: `${field} must be a number` });
-    }
-  }
-
-  // Multi-session planning: an explicit `sessions` array -- any length,
-  // including 0 or 1 -- means staff is declaring/editing the project's
-  // session plan as part of this send/resend (same "any length counts"
-  // rule POST /:id/revise-estimate already used). Omitting the field
-  // entirely leaves any existing plan untouched. This used to require
-  // length > 1 to do anything at all, which meant collapsing an
-  // already-declared plan back down to a single session (or none) had no
-  // way to actually happen -- the frontend stopped sending `sessions`
-  // once sessionCount dropped to 1, but even an explicit `sessions: []`
-  // would have been silently ignored by this same length > 1 gate,
-  // leaving the old PlannedSession rows behind forever while the
-  // top-level fields moved on -- exactly the "sessions not updating" bug.
-  //
-  // Per-session price: each session also carries its own price range now
-  // (same "sessions replace the top-level field" relationship its hour
-  // range already has) -- the whole-project price below becomes the SUM
-  // of every session's own price, not a separately-typed number.
-  let plannedSessionInputs:
-    | {
-        estimatedHoursMin: number;
-        estimatedHoursMax: number;
-        estimatedPriceLow: number;
-        estimatedPriceHigh: number;
-        showDurationToClient: boolean;
-      }[]
-    | null = null;
-  if (sessions !== undefined) {
-    if (!Array.isArray(sessions)) {
-      return res.status(400).json({ error: "sessions must be an array" });
-    }
-    for (const [index, session] of sessions.entries()) {
-      if (
-        typeof session !== "object" ||
-        session === null ||
-        typeof session.estimatedHoursMin !== "number" ||
-        typeof session.estimatedHoursMax !== "number" ||
-        typeof session.estimatedPriceLow !== "number" ||
-        typeof session.estimatedPriceHigh !== "number"
-      ) {
-        return res.status(400).json({ error: `Session ${index + 1} needs a numeric hour range and price range` });
-      }
-      if (session.estimatedHoursMin <= 0 || session.estimatedHoursMax <= 0) {
-        return res.status(400).json({ error: `Session ${index + 1}'s hour range must be positive` });
-      }
-      if (session.estimatedHoursMin > session.estimatedHoursMax) {
-        return res
-          .status(400)
-          .json({ error: `Session ${index + 1}'s minimum hours must be less than or equal to its maximum` });
-      }
-      if (session.estimatedPriceLow <= 0 || session.estimatedPriceHigh <= 0) {
-        return res.status(400).json({ error: `Session ${index + 1}'s price range must be positive` });
-      }
-      if (session.estimatedPriceLow > session.estimatedPriceHigh) {
-        return res
-          .status(400)
-          .json({ error: `Session ${index + 1}'s minimum price must be less than or equal to its maximum` });
-      }
-      if (session.showDurationToClient !== undefined && typeof session.showDurationToClient !== "boolean") {
-        return res.status(400).json({ error: `Session ${index + 1}'s showDurationToClient must be a boolean` });
-      }
-    }
-    // Flat-rate pricing: defaults true (shown) when omitted, same as the
-    // schema's own default -- so a caller that never learned about this
-    // field yet doesn't need to send it to get today's behavior.
-    plannedSessionInputs = sessions.map((session) => ({
-      ...session,
-      showDurationToClient: session.showDurationToClient ?? true,
-    }));
-  }
-
-  // The actual session count this send/resend ends up with -- a real plan
-  // is only in effect above 1 (same rule as before), but now correctly
-  // reflects an explicit collapse-to-empty submission too, rather than
-  // only ever growing. No locked-session concept here (unlike
-  // revise-estimate) -- POST /:id/deposit-form requires DEPOSIT_PENDING or
-  // later, and this route already refuses to run once
-  // ESTIMATE_REVISION_ONLY_STATUSES is reached, so no session can be
-  // locked yet at this point.
-  const finalSessionCount = plannedSessionInputs ? plannedSessionInputs.length : inquiry.plannedSessions.length;
-  const hasPlan = finalSessionCount > 1;
-
-  // Every session's own price, summed -- this IS the whole-project price
-  // once a plan exists, not a fallback/default for it.
-  const sessionPriceTotals = hasPlan
-    ? {
-        priceEstimateLow: plannedSessionInputs!.reduce((sum, s) => sum + s.estimatedPriceLow, 0),
-        priceEstimateHigh: plannedSessionInputs!.reduce((sum, s) => sum + s.estimatedPriceHigh, 0),
-      }
-    : null;
-
-  // Validate the *effective* range (newly submitted value, falling back to
-  // whatever's already on the inquiry) -- staff can resend without
-  // resubmitting numbers that were already approved by the artist. The
-  // top-level time-estimate pair is skipped entirely once a real session
-  // plan is being declared -- PlannedSession rows are the real per-session
-  // breakdown in that case, and a stale whole-project number left over
-  // here would just be misleading (see the null-out below).
-  const effective = {
-    priceEstimateLow: sessionPriceTotals ? sessionPriceTotals.priceEstimateLow : (priceEstimateLow ?? inquiry.priceEstimateLow),
-    priceEstimateHigh: sessionPriceTotals
-      ? sessionPriceTotals.priceEstimateHigh
-      : (priceEstimateHigh ?? inquiry.priceEstimateHigh),
-    ...(hasPlan
-      ? {}
-      : {
-          timeEstimateHoursMin: timeEstimateHoursMin ?? inquiry.timeEstimateHoursMin,
-          timeEstimateHoursMax: timeEstimateHoursMax ?? inquiry.timeEstimateHoursMax,
-        }),
-  };
-
-  for (const [field, value] of Object.entries(effective)) {
-    if (value == null) {
-      return res.status(400).json({ error: `${field} is required before an estimate can be sent` });
-    }
-    if (value <= 0) {
-      return res.status(400).json({ error: `${field} must be a positive number` });
-    }
-  }
-
-  if (effective.priceEstimateLow! > effective.priceEstimateHigh!) {
-    return res.status(400).json({ error: "priceEstimateLow must be less than or equal to priceEstimateHigh" });
-  }
-
-  if (!hasPlan && effective.timeEstimateHoursMin! > effective.timeEstimateHoursMax!) {
-    return res
-      .status(400)
-      .json({ error: "timeEstimateHoursMin must be less than or equal to timeEstimateHoursMax" });
-  }
-
-  // A prior send/resend already having a sent timestamp is what distinguishes
-  // a resend from a first send -- everything else about the flow is identical.
-  const isResend = inquiry.estimateSentAt != null;
-
-  const estimateToken = crypto.randomBytes(32).toString("hex");
-  const estimateTokenExpiresAt = new Date(Date.now() + ESTIMATE_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000);
-
-  const studioSettings = await prisma.studioSettings.findUnique({ where: { studioId: req.user!.studioId } });
-
-  const sendEstimateData = {
-    estimateToken,
-    estimateTokenExpiresAt,
-    estimateSentAt: new Date(),
-    estimateTermsSnapshot: studioSettings?.estimateTerms ?? null,
-    status: InquiryStatus.AWAITING_CLIENT_RESPONSE,
-    priceEstimateLow: effective.priceEstimateLow,
-    priceEstimateHigh: effective.priceEstimateHigh,
-    timeEstimateHoursMin: hasPlan ? null : effective.timeEstimateHoursMin,
-    timeEstimateHoursMax: hasPlan ? null : effective.timeEstimateHoursMax,
-    // A resend is a new estimate event -- prior open/response timing no
-    // longer describes the estimate the client is about to see. It's still
-    // recoverable from the audit log below if needed. estimateFollowUpSentAt
-    // resets alongside them (Phase 7B-2) so the 24-hour follow-up text can
-    // fire again for the freshly-resent estimate rather than staying
-    // silently blocked by a follow-up that already went out for the old one.
-    ...(isResend ? { estimateOpenedAt: null, estimateRespondedAt: null, estimateFollowUpSentAt: null } : {}),
-    // Token-lifecycle bug fix: this route only ever reaches a resend
-    // (isResend) while the inquiry is still pre-response (ESTIMATE_REVISION_
-    // ONLY_STATUSES already blocks it once DEPOSIT_PENDING, which is the
-    // only state a live, already-responded estimateToken could exist in --
-    // see that field's own schema comment) -- so inquiry.estimateToken here
-    // is always either null or a genuinely superseded, not-yet-responded
-    // link. Recorded so that old link shows "a newer link was sent" instead
-    // of a bare "invalid" (see estimateToken's own schema comment).
-    ...(isResend && inquiry.estimateToken ? { previousEstimateToken: inquiry.estimateToken } : {}),
-  };
-
-  // Bug fix: reconciles PlannedSession rows to match plannedSessionInputs on
-  // EVERY call, not just the first one -- the old "only create if none exist
-  // yet" guard meant a resend on an inquiry that already had a plan silently
-  // dropped every hour/price/count change to the actual rows, while
-  // effective.priceEstimateLow/High above (computed from the submission,
-  // not the stored rows) still got saved onto the Inquiry -- exactly the
-  // "price updates, sessions don't" bug this fixes, and a fresh way to
-  // reproduce the same top-level-vs-session-sum mismatch fixed earlier this
-  // session. Mirrors POST /:id/revise-estimate's own reconciliation
-  // (create/update to match, delete anything beyond the new length) --
-  // locked-session protection is included for consistency even though a
-  // locked session can't actually exist this early (POST /:id/deposit-form
-  // requires DEPOSIT_PENDING or later, and this route already refuses to
-  // run once ESTIMATE_REVISION_ONLY_STATUSES is reached).
-  if (plannedSessionInputs) {
-    const lockedSessions = inquiry.plannedSessions.filter(
-      (ps) => ps.depositForm?.paidAt != null || ps.appointmentId != null,
-    );
-    const lockedSessionNumbers = new Set(lockedSessions.map((s) => s.sessionNumber));
-    const existingByNumber = new Map(inquiry.plannedSessions.map((ps) => [ps.sessionNumber, ps]));
-
-    const toUpdate: {
-      id: string;
-      estimatedHoursMin: number;
-      estimatedHoursMax: number;
-      estimatedPriceLow: number;
-      estimatedPriceHigh: number;
-      showDurationToClient: boolean;
-    }[] = [];
-    const toCreate: {
-      sessionNumber: number;
-      estimatedHoursMin: number;
-      estimatedHoursMax: number;
-      estimatedPriceLow: number;
-      estimatedPriceHigh: number;
-      showDurationToClient: boolean;
-    }[] = [];
-
-    plannedSessionInputs.forEach((session, index) => {
-      const sessionNumber = index + 1;
-      if (lockedSessionNumbers.has(sessionNumber)) return;
-      const existing = existingByNumber.get(sessionNumber);
-      if (existing) {
-        toUpdate.push({
-          id: existing.id,
-          estimatedHoursMin: session.estimatedHoursMin,
-          estimatedHoursMax: session.estimatedHoursMax,
-          estimatedPriceLow: session.estimatedPriceLow,
-          estimatedPriceHigh: session.estimatedPriceHigh,
-          showDurationToClient: session.showDurationToClient,
-        });
-      } else {
-        toCreate.push({
-          sessionNumber,
-          estimatedHoursMin: session.estimatedHoursMin,
-          estimatedHoursMax: session.estimatedHoursMax,
-          estimatedPriceLow: session.estimatedPriceLow,
-          estimatedPriceHigh: session.estimatedPriceHigh,
-          showDurationToClient: session.showDurationToClient,
-        });
-      }
-    });
-
-    const toDeleteIds = inquiry.plannedSessions
-      .filter((ps) => ps.sessionNumber > plannedSessionInputs!.length && !lockedSessionNumbers.has(ps.sessionNumber))
-      .map((ps) => ps.id);
-
-    await prisma.$transaction([
-      ...toUpdate.map((s) =>
-        prisma.plannedSession.update({
-          where: { id: s.id },
-          data: {
-            estimatedHoursMin: s.estimatedHoursMin,
-            estimatedHoursMax: s.estimatedHoursMax,
-            estimatedPriceLow: s.estimatedPriceLow,
-            estimatedPriceHigh: s.estimatedPriceHigh,
-            showDurationToClient: s.showDurationToClient,
-          },
-        }),
-      ),
-      ...(toCreate.length > 0
-        ? [prisma.plannedSession.createMany({ data: toCreate.map((s) => ({ inquiryId: id, ...s })) })]
-        : []),
-      ...(toDeleteIds.length > 0 ? [prisma.plannedSession.deleteMany({ where: { id: { in: toDeleteIds } } })] : []),
-    ]);
-  }
-
-  const updated = await prisma.inquiry.update({
-    where: { id },
-    data: sendEstimateData,
-    include: INQUIRY_INCLUDE,
+    sessions,
   });
+  if (!result.ok) {
+    return res.status(result.status).json({ error: result.error });
+  }
 
-  await logAudit({
-    studioId: req.user!.studioId,
-    actorUserId: req.user!.userId,
-    entityType: "Inquiry",
-    entityId: id,
-    action: isResend ? "estimate_resent" : "estimate_sent",
-    changes: diffObjects(inquiry, sendEstimateData, [
-      "status",
-      "estimateSentAt",
-      "estimateOpenedAt",
-      "estimateRespondedAt",
-      "estimateFollowUpSentAt",
-      "priceEstimateLow",
-      "priceEstimateHigh",
-      "timeEstimateHoursMin",
-      "timeEstimateHoursMax",
-    ]),
-  });
-
-  const estimateUrl = await shortenUrl(`${PUBLIC_APP_URL}/estimate/${estimateToken}`);
-
-  // Auto-send through the same real-SMS path the composer/reminders use --
-  // a Message row lands in this client's actual Conversations thread on
-  // success, exactly like any other outbound text. This is deliberately
-  // best-effort: the estimate itself is already generated and the
-  // inquiry's status already moved forward above regardless of whether
-  // the text goes out, so a skip/failure here doesn't roll any of that
-  // back -- staff still has the link to share manually (the response
-  // below always reports which case happened).
-  const studio = await prisma.studio.findUnique({ where: { id: req.user!.studioId }, select: { name: true } });
-  const estimateSendResult = await sendClientSms({
-    studioId: req.user!.studioId,
-    clientId: updated.clientId,
-    conversationId: (await getOrCreateClientConversation(req.user!.studioId, updated.clientId, req.user!.userId))
-      .conversation.id,
-    body: `Hi ${updated.client.firstName}, here's your tattoo estimate from ${studio?.name ?? "our studio"}: ${estimateUrl}`,
-    actorUserId: req.user!.userId,
-  });
-
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
-
-  res.status(201).json({ ...updated, estimateUrl, estimateSendResult });
+  const updated = await prisma.inquiry.findUnique({ where: { id }, include: INQUIRY_INCLUDE });
+  res.status(201).json({ ...updated, estimateUrl: result.estimateUrl, estimateSendResult: result.estimateSendResult });
 });
 
 const REVISION_TOKEN_TTL_DAYS = 7;

@@ -42,6 +42,7 @@ export const PERMISSION_KEYS = [
   "inquiries.assignArtist",
   "inquiries.enterEstimate",
   "inquiries.sendEstimate",
+  "inquiries.artistSendEstimate",
   "inquiries.markLost",
   "inquiries.notes.manage",
   "inquiries.shareWithArtist",
@@ -218,6 +219,20 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<(typeof CONFIGURABLE_ROLES)[number
     // stays scoped to the artist's own assigned project too, so this
     // single key can't be used to reach a different artist's project.
     "inquiries.enterEstimate",
+
+    // inquiries.artistSendEstimate: judgment call, default TRUE. An artist
+    // who can already enter their own estimate (above) triggering the same
+    // real send -- link minted, SMS sent, logged in Conversations -- that
+    // staff's own Generate & Send Estimate produces is a small step past
+    // that, not a new capability class; today's approve flow already moves
+    // the inquiry to AWAITING_CLIENT_RESPONSE, it just never actually
+    // contacted the client while doing so, which is the more surprising
+    // half of the old behavior. A studio that wants front desk to review
+    // every artist-priced estimate before it reaches a client can flip this
+    // off -- the artist still fully prepares and saves the estimate either
+    // way (PATCH /inquiries/:id/respond, routes/inquiries.ts), submission
+    // just creates a front-desk task instead of sending directly.
+    "inquiries.artistSendEstimate",
 
     "artistSchedules.manage",
 

@@ -27,6 +27,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { key: 'inquiries.assignArtist', label: 'Assign an artist', description: 'Assign or reassign which artist an inquiry goes to.' },
       { key: 'inquiries.enterEstimate', label: 'Enter a price/time estimate', description: 'Fill in the estimated price or time range for a tattoo.' },
       { key: 'inquiries.sendEstimate', label: 'Send an estimate to the client', description: 'Generate and send the estimate link for the client to review.' },
+      { key: 'inquiries.artistSendEstimate', label: 'Artists can send estimates directly', description: 'When approving their own assigned inquiry, an artist generates and sends the estimate link themselves instead of routing it to front desk to send.' },
       { key: 'inquiries.markLost', label: 'Mark an inquiry lost', description: 'Close out an inquiry that didn’t convert.' },
       { key: 'inquiries.notes.manage', label: 'Manage inquiry notes', description: 'Add, edit, or delete internal staff notes on an inquiry.' },
       { key: 'inquiries.shareWithArtist', label: 'Share an inquiry with an artist', description: 'Send a sanitized summary of an inquiry into an artist’s chat.' },
