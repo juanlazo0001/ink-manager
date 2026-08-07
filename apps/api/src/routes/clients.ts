@@ -13,6 +13,7 @@ import { generateUniqueReferralCode } from "../lib/referrals";
 import { clientMatchesPhoneOrEmail, findStudioClientsForMatching } from "../lib/duplicateDetection";
 import { performMerge, validateMergePair } from "../lib/clientMerge";
 import { emitInvalidation } from "../lib/realtime/registry";
+import { callerBelongsToStudio, activeStudioIdsForCaller } from "../lib/artistAccess";
 
 const router = Router();
 
@@ -113,8 +114,13 @@ router.get("/", requirePermission("clients.view"), async (req, res) => {
     });
   }
 
+  // Artist mobility bug fix: if a studio ever grants ARTIST clients.view,
+  // their list spans every studio they have a live relationship with (HOME
+  // + active GUESTs), not just home -- same activeStudioIdsForCaller set
+  // used for conversations.ts's own list scoping.
+  const studioIds = await activeStudioIdsForCaller(req.user!);
   const baseWhere: Prisma.ClientWhereInput = {
-    studioId: req.user!.studioId,
+    studioId: { in: studioIds },
     ...NOT_MERGED,
     ...(includeArchived ? {} : NOT_ARCHIVED),
   };
@@ -145,9 +151,10 @@ router.get("/merge-search", requirePermission("clients.view"), async (req, res) 
   // string (the pitfall in the single-string `OR` the global omnibox search
   // uses, fine there since it's usually a single token).
   const words = q.split(/\s+/).filter(Boolean);
+  const studioIds = await activeStudioIdsForCaller(req.user!);
   const results = await prisma.client.findMany({
     where: {
-      studioId: req.user!.studioId,
+      studioId: { in: studioIds },
       ...NOT_MERGED,
       ...(excludeId ? { id: { not: excludeId } } : {}),
       AND: words.map((word) => {
@@ -284,7 +291,7 @@ router.get("/:id", requirePermission("clients.view"), async (req, res) => {
     },
   });
 
-  if (!client || client.studioId !== req.user!.studioId) {
+  if (!client || !(await callerBelongsToStudio(req.user!, client.studioId))) {
     return res.status(404).json({ error: "Client not found" });
   }
 
@@ -327,7 +334,7 @@ router.get("/:id/notes", requireRole(Role.OWNER, Role.FRONT_DESK), requirePermis
   const id = req.params.id as string;
 
   const client = await prisma.client.findUnique({ where: { id }, select: { studioId: true } });
-  if (!client || client.studioId !== req.user!.studioId) {
+  if (!client || !(await callerBelongsToStudio(req.user!, client.studioId))) {
     return res.status(404).json({ error: "Client not found" });
   }
 
@@ -463,7 +470,7 @@ router.get("/:id/shareable-links", requirePermission("clients.view"), async (req
     },
   });
 
-  if (!client || client.studioId !== req.user!.studioId) {
+  if (!client || !(await callerBelongsToStudio(req.user!, client.studioId))) {
     return res.status(404).json({ error: "Client not found" });
   }
 
@@ -673,7 +680,7 @@ router.get("/:id/potential-duplicates", requirePermission("clients.view"), async
   const id = req.params.id as string;
 
   const client = await prisma.client.findUnique({ where: { id }, include: { phones: true, emails: true } });
-  if (!client || client.studioId !== req.user!.studioId) {
+  if (!client || !(await callerBelongsToStudio(req.user!, client.studioId))) {
     return res.status(404).json({ error: "Client not found" });
   }
 
@@ -726,10 +733,10 @@ router.post("/:id/dismiss-duplicate", requirePermission("clients.edit"), async (
     prisma.client.findUnique({ where: { id: otherClientId } }),
   ]);
 
-  if (!client || client.studioId !== req.user!.studioId) {
+  if (!client || !(await callerBelongsToStudio(req.user!, client.studioId))) {
     return res.status(404).json({ error: "Client not found" });
   }
-  if (!other || other.studioId !== req.user!.studioId) {
+  if (!other || other.studioId !== client.studioId) {
     return res.status(404).json({ error: "Other client not found" });
   }
 
@@ -738,11 +745,11 @@ router.post("/:id/dismiss-duplicate", requirePermission("clients.edit"), async (
   const dismissal = await prisma.dismissedDuplicatePair.upsert({
     where: { clientAId_clientBId: { clientAId, clientBId } },
     update: {},
-    create: { studioId: req.user!.studioId, clientAId, clientBId, dismissedById: req.user!.userId },
+    create: { studioId: client.studioId, clientAId, clientBId, dismissedById: req.user!.userId },
   });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: client.studioId,
     actorUserId: req.user!.userId,
     entityType: "Client",
     entityId: id,
@@ -769,7 +776,7 @@ router.patch("/:id", requirePermission("clients.edit"), async (req, res) => {
   const body = req.body ?? {};
 
   const client = await prisma.client.findUnique({ where: { id } });
-  if (!client || client.studioId !== req.user!.studioId) {
+  if (!client || !(await callerBelongsToStudio(req.user!, client.studioId))) {
     return res.status(404).json({ error: "Client not found" });
   }
 
@@ -822,9 +829,9 @@ router.patch("/:id", requirePermission("clients.edit"), async (req, res) => {
 });
 
 // Shared existence/ownership check for every phone/email sub-route below.
-async function loadOwnedClient(id: string, studioId: string) {
+async function loadOwnedClient(id: string, user: Parameters<typeof callerBelongsToStudio>[0]) {
   const client = await prisma.client.findUnique({ where: { id } });
-  if (!client || client.studioId !== studioId) return null;
+  if (!client || !(await callerBelongsToStudio(user, client.studioId))) return null;
   return client;
 }
 
@@ -850,7 +857,7 @@ router.post("/:id/phones", requirePermission("clients.edit"), async (req, res) =
     return res.status(400).json({ error: "label must be a string or null" });
   }
 
-  const client = await loadOwnedClient(id, req.user!.studioId);
+  const client = await loadOwnedClient(id, req.user!);
   if (!client) return res.status(404).json({ error: "Client not found" });
 
   const normalized = normalizePhone(phone);
@@ -885,7 +892,7 @@ router.delete("/:id/phones/:phoneId", requirePermission("clients.edit"), async (
   const id = req.params.id as string;
   const phoneId = req.params.phoneId as string;
 
-  const client = await loadOwnedClient(id, req.user!.studioId);
+  const client = await loadOwnedClient(id, req.user!);
   if (!client) return res.status(404).json({ error: "Client not found" });
 
   const target = await prisma.clientPhone.findUnique({ where: { id: phoneId } });
@@ -925,7 +932,7 @@ router.post("/:id/phones/:phoneId/make-primary", requirePermission("clients.edit
   const id = req.params.id as string;
   const phoneId = req.params.phoneId as string;
 
-  const client = await loadOwnedClient(id, req.user!.studioId);
+  const client = await loadOwnedClient(id, req.user!);
   if (!client) return res.status(404).json({ error: "Client not found" });
 
   const target = await prisma.clientPhone.findUnique({ where: { id: phoneId } });
@@ -967,7 +974,7 @@ router.post("/:id/emails", requirePermission("clients.edit"), async (req, res) =
     return res.status(400).json({ error: "label must be a string or null" });
   }
 
-  const client = await loadOwnedClient(id, req.user!.studioId);
+  const client = await loadOwnedClient(id, req.user!);
   if (!client) return res.status(404).json({ error: "Client not found" });
 
   const normalized = email.trim().toLowerCase();
@@ -1002,7 +1009,7 @@ router.delete("/:id/emails/:emailId", requirePermission("clients.edit"), async (
   const id = req.params.id as string;
   const emailId = req.params.emailId as string;
 
-  const client = await loadOwnedClient(id, req.user!.studioId);
+  const client = await loadOwnedClient(id, req.user!);
   if (!client) return res.status(404).json({ error: "Client not found" });
 
   const target = await prisma.clientEmail.findUnique({ where: { id: emailId } });
@@ -1042,7 +1049,7 @@ router.post("/:id/emails/:emailId/make-primary", requirePermission("clients.edit
   const id = req.params.id as string;
   const emailId = req.params.emailId as string;
 
-  const client = await loadOwnedClient(id, req.user!.studioId);
+  const client = await loadOwnedClient(id, req.user!);
   if (!client) return res.status(404).json({ error: "Client not found" });
 
   const target = await prisma.clientEmail.findUnique({ where: { id: emailId } });
@@ -1087,7 +1094,17 @@ router.post("/:id/merge", requirePermission("clients.merge"), async (req, res) =
     return res.status(400).json({ error: "sourceClientId is required" });
   }
 
-  const validation = await validateMergePair(req.user!.studioId, id, sourceClientId);
+  // Artist mobility bug fix: verify against the SURVIVOR client's own
+  // studio, then pass THAT confirmed studioId into validateMergePair --
+  // it trusts studioId as already-authenticated the same way
+  // generateAndSendDepositForm does.
+  const survivorForAuth = await prisma.client.findUnique({ where: { id }, select: { studioId: true } });
+  if (!survivorForAuth || !(await callerBelongsToStudio(req.user!, survivorForAuth.studioId))) {
+    return res.status(404).json({ error: "Client not found" });
+  }
+  const studioId = survivorForAuth.studioId;
+
+  const validation = await validateMergePair(studioId, id, sourceClientId);
   if ("error" in validation) {
     return res.status(validation.status).json({ error: validation.error });
   }
@@ -1098,7 +1115,7 @@ router.post("/:id/merge", requirePermission("clients.merge"), async (req, res) =
   );
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId,
     actorUserId: req.user!.userId,
     entityType: "Client",
     entityId: id,
@@ -1116,8 +1133,8 @@ router.post("/:id/merge", requirePermission("clients.merge"), async (req, res) =
   // Both records' worth of collaboratively-viewed data change here -- the
   // survivor gains repointed inquiries/appointments/gift cards, and the
   // source becomes a merged, no-longer-independently-editable record.
-  emitInvalidation({ type: "client.updated", studioId: req.user!.studioId, clientId: id });
-  emitInvalidation({ type: "client.updated", studioId: req.user!.studioId, clientId: sourceClientId });
+  emitInvalidation({ type: "client.updated", studioId, clientId: id });
+  emitInvalidation({ type: "client.updated", studioId, clientId: sourceClientId });
 
   const merged = await prisma.client.findUnique({ where: { id } });
   res.json(merged);
@@ -1128,7 +1145,7 @@ router.post("/:id/merge", requirePermission("clients.merge"), async (req, res) =
 router.post("/:id/archive", requirePermission("clients.archive"), async (req, res) => {
   const id = req.params.id as string;
   const client = await prisma.client.findUnique({ where: { id } });
-  if (!client || client.studioId !== req.user!.studioId) {
+  if (!client || !(await callerBelongsToStudio(req.user!, client.studioId))) {
     return res.status(404).json({ error: "Client not found" });
   }
   if (client.archivedAt) {
@@ -1154,7 +1171,7 @@ router.post("/:id/archive", requirePermission("clients.archive"), async (req, re
 router.post("/:id/unarchive", requirePermission("clients.archive"), async (req, res) => {
   const id = req.params.id as string;
   const client = await prisma.client.findUnique({ where: { id } });
-  if (!client || client.studioId !== req.user!.studioId) {
+  if (!client || !(await callerBelongsToStudio(req.user!, client.studioId))) {
     return res.status(404).json({ error: "Client not found" });
   }
   if (!client.archivedAt) {
@@ -1220,7 +1237,7 @@ async function gatherClientDeletionSummary(clientId: string) {
 router.get("/:id/delete-preview", requireRole(Role.OWNER), async (req, res) => {
   const id = req.params.id as string;
   const client = await prisma.client.findUnique({ where: { id } });
-  if (!client || client.studioId !== req.user!.studioId) {
+  if (!client || !(await callerBelongsToStudio(req.user!, client.studioId))) {
     return res.status(404).json({ error: "Client not found" });
   }
 
@@ -1246,7 +1263,7 @@ router.delete("/:id", requireRole(Role.OWNER), async (req, res) => {
   }
 
   const client = await prisma.client.findUnique({ where: { id } });
-  if (!client || client.studioId !== req.user!.studioId) {
+  if (!client || !(await callerBelongsToStudio(req.user!, client.studioId))) {
     return res.status(404).json({ error: "Client not found" });
   }
 

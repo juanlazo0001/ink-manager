@@ -13,6 +13,7 @@ import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 import { getChargeableConnectedAccountId } from "../lib/stripeConnect";
 import { createDirectChargeCheckoutSession } from "../lib/stripe";
 import { emitInvalidation } from "../lib/realtime/registry";
+import { callerBelongsToStudio } from "../lib/artistAccess";
 
 const GIFT_CARD_DETAIL_INCLUDE = {
   // Stackable gift cards: giftCards here is every OTHER card (this one
@@ -84,7 +85,6 @@ router.use(requireAuth);
 router.post("/", requirePermission("giftCards.issue"), async (req, res) => {
   const body = req.body ?? {};
   const { clientId, amountCents, appointmentId, expiresAt, paymentMethod } = body;
-  const studioId = req.user!.studioId;
 
   if (!clientId || typeof amountCents !== "number" || amountCents <= 0) {
     return res.status(400).json({ error: "clientId and a positive amountCents are required" });
@@ -99,9 +99,14 @@ router.post("/", requirePermission("giftCards.issue"), async (req, res) => {
   }
 
   const client = await prisma.client.findUnique({ where: { id: clientId } });
-  if (!client || client.studioId !== studioId || client.mergedIntoId) {
+  // Artist mobility bug fix: resolve studioId from the CLIENT's own studio,
+  // then verify the caller actually belongs there (HOME or GUEST) -- not
+  // req.user!.studioId, which is only the caller's home and would reject
+  // a guest artist issuing a card for their own guest-studio client.
+  if (!client || client.mergedIntoId || !(await callerBelongsToStudio(req.user!, client.studioId))) {
     return res.status(400).json({ error: "clientId must belong to an active client in your studio" });
   }
+  const studioId = client.studioId;
 
   // Stackable gift cards: no "this appointment already has a card" guard
   // here anymore -- several cards can legitimately share one appointmentId
@@ -168,7 +173,6 @@ router.post("/", requirePermission("giftCards.issue"), async (req, res) => {
 router.post("/checkout-session", requirePermission("giftCards.issue"), async (req, res) => {
   const body = req.body ?? {};
   const { clientId, amountCents, appointmentId, expiresAt } = body;
-  const studioId = req.user!.studioId;
 
   if (!clientId || typeof amountCents !== "number" || amountCents <= 0) {
     return res.status(400).json({ error: "clientId and a positive amountCents are required" });
@@ -179,9 +183,12 @@ router.post("/checkout-session", requirePermission("giftCards.issue"), async (re
   }
 
   const client = await prisma.client.findUnique({ where: { id: clientId } });
-  if (!client || client.studioId !== studioId || client.mergedIntoId) {
+  // Artist mobility bug fix: same as POST / above -- resolve studioId from
+  // the client's own studio, verify caller membership against THAT.
+  if (!client || client.mergedIntoId || !(await callerBelongsToStudio(req.user!, client.studioId))) {
     return res.status(400).json({ error: "clientId must belong to an active client in your studio" });
   }
+  const studioId = client.studioId;
 
   if (appointmentId) {
     const appointment = await prisma.appointment.findUnique({ where: { id: appointmentId } });
@@ -333,7 +340,7 @@ router.get("/:id", requirePermission("giftCards.view"), async (req, res) => {
   const id = req.params.id as string;
 
   const card = await prisma.giftCard.findUnique({ where: { id }, include: GIFT_CARD_DETAIL_INCLUDE });
-  if (!card || card.studioId !== req.user!.studioId) {
+  if (!card || !(await callerBelongsToStudio(req.user!, card.studioId))) {
     return res.status(404).json({ error: "Gift card not found" });
   }
 
@@ -357,15 +364,15 @@ const TEXT_RECEIPT_ERROR_MESSAGES: Record<string, string> = {
 
 router.post("/:id/text-receipt", requirePermission("giftCards.issue"), async (req, res) => {
   const id = req.params.id as string;
-  const studioId = req.user!.studioId;
 
   const card = await prisma.giftCard.findUnique({
     where: { id },
     include: { studio: { select: { name: true } } },
   });
-  if (!card || card.studioId !== studioId) {
+  if (!card || !(await callerBelongsToStudio(req.user!, card.studioId))) {
     return res.status(404).json({ error: "Gift card not found" });
   }
+  const studioId = card.studioId;
 
   const synced = await syncExpiredStatus(card);
   if (synced.status !== GiftCardStatus.ACTIVE) {
@@ -411,7 +418,7 @@ router.patch("/:id/attachment", requirePermission("giftCards.issue"), async (req
   }
 
   const card = await prisma.giftCard.findUnique({ where: { id } });
-  if (!card || card.studioId !== req.user!.studioId) {
+  if (!card || !(await callerBelongsToStudio(req.user!, card.studioId))) {
     return res.status(404).json({ error: "Gift card not found" });
   }
 
@@ -430,7 +437,7 @@ router.patch("/:id/attachment", requirePermission("giftCards.issue"), async (req
   if (appointmentId) {
     const appointment = await prisma.appointment.findUnique({ where: { id: appointmentId } });
 
-    if (!appointment || appointment.studioId !== req.user!.studioId || appointment.clientId !== card.clientId) {
+    if (!appointment || appointment.studioId !== card.studioId || appointment.clientId !== card.clientId) {
       return res.status(400).json({ error: "appointmentId must belong to this card's client in your studio" });
     }
   }
@@ -463,7 +470,7 @@ router.post("/:id/void", requirePermission("giftCards.void"), async (req, res) =
   const id = req.params.id as string;
 
   const card = await prisma.giftCard.findUnique({ where: { id } });
-  if (!card || card.studioId !== req.user!.studioId) {
+  if (!card || !(await callerBelongsToStudio(req.user!, card.studioId))) {
     return res.status(404).json({ error: "Gift card not found" });
   }
 
@@ -479,7 +486,7 @@ router.post("/:id/void", requirePermission("giftCards.void"), async (req, res) =
   });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: card.studioId,
     actorUserId: req.user!.userId,
     entityType: "GiftCard",
     entityId: id,
@@ -487,7 +494,7 @@ router.post("/:id/void", requirePermission("giftCards.void"), async (req, res) =
     changes: { status: { from: card.status, to: GiftCardStatus.VOID }, detachedFromAppointment: formerAppointmentId },
   });
 
-  emitInvalidation({ type: "giftcard.changed", studioId: req.user!.studioId, clientId: card.clientId });
+  emitInvalidation({ type: "giftcard.changed", studioId: card.studioId, clientId: card.clientId });
 
   res.json(updated);
 });

@@ -26,7 +26,7 @@ import { emitInvalidation } from "../lib/realtime/registry";
 import { resolveRequiredDepositCents, resolveDepositTiers } from "../lib/depositTiers";
 import { generateAndSendDepositForm } from "../lib/deposits";
 import { generateUniqueReferralCode } from "../lib/referrals";
-import { studioHasActiveMembership } from "../lib/artistAccess";
+import { studioHasActiveMembership, callerBelongsToStudio } from "../lib/artistAccess";
 import { SELF_SCHEDULE_TOKEN_TTL_DAYS } from "../lib/selfSchedule";
 import { IntakeFieldKind } from "../../generated/prisma/enums";
 import { NOTE_AUTHOR_SELECT, canModifyNote, isBlankHtml, isValidAttachments } from "../lib/notes";
@@ -1127,7 +1127,7 @@ router.patch("/:id", requireAuth, requirePermission("inquiries.edit"), async (re
     where: { id },
     include: { _count: { select: { plannedSessions: true } } },
   });
-  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+  if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
 
@@ -1235,7 +1235,7 @@ router.patch("/:id/assign", requireAuth, requirePermission("inquiries.assignArti
   }
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
-  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+  if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
 
@@ -1305,11 +1305,25 @@ router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), requirePermi
   const artist = await prisma.artist.findUnique({ where: { userId: req.user!.userId } });
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
 
-  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+  if (!inquiry) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
 
-  if (!artist || inquiry.assignedArtistId !== artist.id) {
+  // Artist mobility bug fix: req.user!.studioId is this caller's own HOME
+  // studio (copied from User.studioId at login, same value artist.user.studioId
+  // would return) -- a plain equality against inquiry.studioId alone always
+  // 404'd a guest artist responding to their own assigned project at a
+  // guest studio, before the assignedArtistId check below even ran. Same
+  // studioHasActiveMembership(HOME or GUEST) pattern as PATCH /:id/assign.
+  const artistBelongsToProjectStudio =
+    artist != null &&
+    (req.user!.studioId === inquiry.studioId || (await studioHasActiveMembership(inquiry.studioId, artist.id)));
+
+  if (!artistBelongsToProjectStudio) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  if (inquiry.assignedArtistId !== artist!.id) {
     return res.status(403).json({ error: "This inquiry is not assigned to you" });
   }
 
@@ -1403,7 +1417,7 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
     where: { id },
     include: { plannedSessions: { include: { depositForm: { select: { paidAt: true } } } } },
   });
-  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+  if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
 
@@ -2170,7 +2184,7 @@ router.post("/:id/schedule", requireAuth, requirePermission("inquiries.edit"), a
   }
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id }, include: { service: true } });
-  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+  if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
 
@@ -2273,7 +2287,7 @@ router.post("/:id/waitlist", requireAuth, requirePermission("inquiries.edit"), a
   }
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
-  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+  if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
 
@@ -2311,7 +2325,7 @@ router.post("/:id/unwaitlist", requireAuth, requirePermission("inquiries.edit"),
   const id = req.params.id as string;
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
-  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+  if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
 
@@ -2355,7 +2369,7 @@ router.post("/:id/mark-lost", requireAuth, requirePermission("inquiries.markLost
   }
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
-  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+  if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
 
@@ -2401,7 +2415,7 @@ router.post("/:id/flash/approve", requireAuth, requirePermission("inquiries.edit
     where: { id },
     include: { client: true, flashPiece: true },
   });
-  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+  if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
 
@@ -2475,7 +2489,7 @@ router.post("/:id/flash/decline", requireAuth, requirePermission("inquiries.mark
   }
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id }, include: { flashPiece: true } });
-  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+  if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
 
@@ -2537,7 +2551,7 @@ router.post("/:id/reopen", requireAuth, requirePermission("inquiries.edit"), asy
   }
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
-  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+  if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
 
@@ -2577,7 +2591,7 @@ router.post("/:id/mark-good-candidate", requireAuth, requirePermission("inquirie
   const id = req.params.id as string;
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
-  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+  if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
 
@@ -2615,7 +2629,7 @@ router.post("/:id/complete-project", requireAuth, requirePermission("inquiries.e
   const id = req.params.id as string;
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
-  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+  if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
 
@@ -2653,7 +2667,7 @@ router.post("/:id/reopen-project", requireAuth, requirePermission("inquiries.edi
   const id = req.params.id as string;
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
-  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+  if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
 
@@ -2704,8 +2718,20 @@ router.post("/:id/deposit-form", requireAuth, requirePermission("inquiries.edit"
     return res.status(400).json({ error: "plannedSessionId must be a string" });
   }
 
+  // Artist mobility bug fix: verify the caller against the PROJECT's own
+  // studio, then pass THAT confirmed studioId through -- generateAndSendDepositForm
+  // trusts studioId as already-authenticated (its own comment) and uses it
+  // for every write inside (deposit form, conversation, gift-card studioId),
+  // so this must be the inquiry's real studio, not blindly req.user!.studioId
+  // (which is only the caller's HOME studio and would wrongly 404 a
+  // legitimately guest-assigned artist).
+  const inquiry = await prisma.inquiry.findUnique({ where: { id }, select: { studioId: true } });
+  if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
   const result = await generateAndSendDepositForm(id, {
-    studioId: req.user!.studioId,
+    studioId: inquiry.studioId,
     actorUserId: req.user!.userId,
     proposedStartAt: typeof proposedStartAt === "string" ? proposedStartAt : undefined,
     proposedEndAt: typeof proposedEndAt === "string" ? proposedEndAt : undefined,
@@ -2746,7 +2772,7 @@ router.patch(
       where: { id },
       include: { depositForms: { where: { signedAt: null }, orderBy: { sessionNumber: "desc" }, take: 1 } },
     });
-    if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+    if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
       return res.status(404).json({ error: "Inquiry not found" });
     }
     const pending = inquiry.depositForms[0];
@@ -2812,7 +2838,7 @@ router.post("/:id/attach-gift-card", requireAuth, requirePermission("inquiries.e
   // most one DepositForm row can exist for this inquiry at this point --
   // Package M's multi-session rows only ever get created post-conversion.
   const inquiry = await prisma.inquiry.findUnique({ where: { id }, include: { depositForms: true } });
-  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+  if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
 
@@ -2906,7 +2932,7 @@ router.get("/:id/share-to-artist/preview", requireAuth, requirePermission("inqui
   const id = req.params.id as string;
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
-  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+  if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
 
@@ -2924,7 +2950,7 @@ router.get("/:id/share-to-artist/preview", requireAuth, requirePermission("inqui
 // fields, not about staff's own wording.
 router.post("/:id/share-to-artist", requireAuth, requirePermission("inquiries.shareWithArtist"), async (req, res) => {
   const id = req.params.id as string;
-  const { studioId, userId } = req.user!;
+  const { userId } = req.user!;
   const { artistUserId, body: customBody } = req.body ?? {};
 
   if (typeof artistUserId !== "string" || artistUserId.trim().length === 0) {
@@ -2936,12 +2962,21 @@ router.post("/:id/share-to-artist", requireAuth, requirePermission("inquiries.sh
   }
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
-  if (!inquiry || inquiry.studioId !== studioId) {
+  if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
+  // Artist mobility bug fix: everything below is scoped to the PROJECT's
+  // own studio (which the check above just confirmed the caller has a real
+  // relationship with -- HOME or GUEST), not the caller's own req.user!.studioId
+  // -- those two only ever differ for a guest-artist caller, and using the
+  // caller's home studio here would create the conversation/message/audit
+  // log under the wrong studio and wrongly reject a guest target artist too.
+  const studioId = inquiry.studioId;
 
   const artist = await prisma.artist.findUnique({ where: { userId: artistUserId }, include: { user: true } });
-  if (!artist || artist.user.studioId !== studioId || artist.user.role !== Role.ARTIST) {
+  const targetArtistBelongsToStudio =
+    artist != null && (artist.user.studioId === studioId || (await studioHasActiveMembership(studioId, artist.id)));
+  if (!targetArtistBelongsToStudio || artist!.user.role !== Role.ARTIST) {
     return res.status(400).json({ error: "artistUserId must be an artist in your studio" });
   }
 
@@ -2991,7 +3026,7 @@ router.post("/:id/share-to-artist", requireAuth, requirePermission("inquiries.sh
 router.post("/:id/archive", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
   const id = req.params.id as string;
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
-  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+  if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
   if (inquiry.archivedAt) {
@@ -3001,7 +3036,7 @@ router.post("/:id/archive", requireAuth, requirePermission("inquiries.edit"), as
   const updated = await prisma.inquiry.update({ where: { id }, data: { archivedAt: new Date() } });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: inquiry.studioId,
     actorUserId: req.user!.userId,
     entityType: "Inquiry",
     entityId: id,
@@ -3015,7 +3050,7 @@ router.post("/:id/archive", requireAuth, requirePermission("inquiries.edit"), as
 router.post("/:id/unarchive", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
   const id = req.params.id as string;
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
-  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+  if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
   if (!inquiry.archivedAt) {
@@ -3025,7 +3060,7 @@ router.post("/:id/unarchive", requireAuth, requirePermission("inquiries.edit"), 
   const updated = await prisma.inquiry.update({ where: { id }, data: { archivedAt: null } });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: inquiry.studioId,
     actorUserId: req.user!.userId,
     entityType: "Inquiry",
     entityId: id,
@@ -3163,7 +3198,7 @@ router.get("/:id/notes", requireAuth, requirePermission("inquiries.notes.manage"
   const id = req.params.id as string;
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id }, select: { studioId: true } });
-  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+  if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
 
@@ -3193,13 +3228,13 @@ router.post("/:id/notes", requireAuth, requirePermission("inquiries.notes.manage
   }
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id }, select: { studioId: true } });
-  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
+  if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
 
   const note = await prisma.inquiryNote.create({
     data: {
-      studioId: req.user!.studioId,
+      studioId: inquiry.studioId,
       inquiryId: id,
       authorId: req.user!.userId,
       bodyHtml: bodyHtml.trim(),
@@ -3210,7 +3245,7 @@ router.post("/:id/notes", requireAuth, requirePermission("inquiries.notes.manage
   });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: inquiry.studioId,
     actorUserId: req.user!.userId,
     entityType: "InquiryNote",
     entityId: note.id,
@@ -3218,7 +3253,7 @@ router.post("/:id/notes", requireAuth, requirePermission("inquiries.notes.manage
     changes: { inquiryId: id },
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
+  emitInvalidation({ type: "inquiry.updated", studioId: inquiry.studioId, inquiryId: id });
 
   res.status(201).json(note);
 });
@@ -3241,7 +3276,7 @@ router.patch("/:id/notes/:noteId", requireAuth, requirePermission("inquiries.not
   }
 
   const note = await prisma.inquiryNote.findUnique({ where: { id: noteId } });
-  if (!note || note.studioId !== req.user!.studioId || note.inquiryId !== id) {
+  if (!note || note.inquiryId !== id || !(await callerBelongsToStudio(req.user!, note.studioId))) {
     return res.status(404).json({ error: "Note not found" });
   }
 
@@ -3283,7 +3318,7 @@ router.delete("/:id/notes/:noteId", requireAuth, requirePermission("inquiries.no
   const noteId = req.params.noteId as string;
 
   const note = await prisma.inquiryNote.findUnique({ where: { id: noteId } });
-  if (!note || note.studioId !== req.user!.studioId || note.inquiryId !== id) {
+  if (!note || note.inquiryId !== id || !(await callerBelongsToStudio(req.user!, note.studioId))) {
     return res.status(404).json({ error: "Note not found" });
   }
 

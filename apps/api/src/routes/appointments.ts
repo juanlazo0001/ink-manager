@@ -17,7 +17,7 @@ import {
   DEFAULT_SCHEDULING_BUFFER_MS,
 } from "../lib/schedulingConflict";
 import { ensureLiabilityWaiver } from "../lib/waivers";
-import { studioHasActiveMembership } from "../lib/artistAccess";
+import { studioHasActiveMembership, callerBelongsToStudio } from "../lib/artistAccess";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { getOrCreateClientConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
@@ -79,7 +79,28 @@ router.post("/", requirePermissionOrSoloArtist("appointments.create"), async (re
     return res.status(400).json({ error: "startTime and endTime must be valid dates, with startTime before endTime" });
   }
 
-  const studioId = req.user!.studioId;
+  const [artist, client, inquiry] = await Promise.all([
+    prisma.artist.findUnique({ where: { id: artistId }, include: { user: true } }),
+    prisma.client.findUnique({ where: { id: clientId } }),
+    prisma.inquiry.findUnique({ where: { id: inquiryId }, include: { service: true } }),
+  ]);
+
+  // Artist mobility bug fix: the studio this appointment belongs to is
+  // whichever studio the client/inquiry actually live at -- never assumed
+  // to be req.user!.studioId, which for a guest artist (or a front desk
+  // granting one appointments.create) is only their HOME studio and can
+  // legitimately differ from the guest studio this booking is for. Every
+  // studio-scoped lookup below (settings/timezone, buffer, gift-card
+  // validation, the created row itself) uses this resolved studioId, not
+  // the caller's own.
+  if (!client || !inquiry || inquiry.clientId !== clientId || client.studioId !== inquiry.studioId) {
+    return res.status(400).json({ error: "inquiryId must belong to this client in your studio" });
+  }
+  const studioId = client.studioId;
+
+  if (!(await callerBelongsToStudio(req.user!, studioId))) {
+    return res.status(400).json({ error: "clientId must belong to your studio" });
+  }
 
   const studioSettings = await prisma.studioSettings.findUnique({
     where: { studioId },
@@ -88,12 +109,6 @@ router.post("/", requirePermissionOrSoloArtist("appointments.create"), async (re
   if (!isSameCalendarDay(start, end, studioSettings?.timezone ?? "America/New_York")) {
     return res.status(400).json({ error: "An appointment cannot span more than one day" });
   }
-
-  const [artist, client, inquiry] = await Promise.all([
-    prisma.artist.findUnique({ where: { id: artistId }, include: { user: true } }),
-    prisma.client.findUnique({ where: { id: clientId } }),
-    prisma.inquiry.findUnique({ where: { id: inquiryId }, include: { service: true } }),
-  ]);
 
   // Artist mobility, Part 2: a studio can also book its own active GUEST
   // artists, not just HOME ones -- the whole point of inviting a guest is
@@ -118,14 +133,6 @@ router.post("/", requirePermissionOrSoloArtist("appointments.create"), async (re
 
   // Artist's own override (if set) takes precedence over the studio default.
   const bufferMs = resolveSchedulingBufferMs(artist.schedulingBufferMinutes, studioSettings?.schedulingBufferMinutes);
-
-  if (!client || client.studioId !== studioId) {
-    return res.status(400).json({ error: "clientId must belong to your studio" });
-  }
-
-  if (!inquiry || inquiry.studioId !== studioId || inquiry.clientId !== clientId) {
-    return res.status(400).json({ error: "inquiryId must belong to this client in your studio" });
-  }
 
   // Multi-session planning: optional -- an appointment can still be booked
   // completely un-planned (ad hoc, or a project with no session plan at
@@ -254,7 +261,15 @@ router.get("/", requirePermission("appointments.view"), async (req, res) => {
 
   const appointments = await prisma.appointment.findMany({
     where: {
-      studioId,
+      // Artist mobility bug fix: an ARTIST's own calendar is scoped by
+      // artistId alone, not studioId -- same "no studio scoping at all"
+      // convention GET /inquiries/assigned-to-me already uses. A guest
+      // artist's own sessions booked at a GUEST studio have a different
+      // appointment.studioId than their home studio, so ANDing home
+      // studioId in here silently dropped every one of them from their own
+      // calendar. OWNER/FRONT_DESK stay studio-scoped exactly as before --
+      // they only ever see their own single studio's board.
+      ...(role === Role.ARTIST ? {} : { studioId }),
       ...NOT_ARCHIVED,
       ...(clientId ? { clientId } : {}),
       ...(artistId ? { artistId } : {}),
@@ -348,15 +363,17 @@ router.get("/:id", requirePermission("appointments.view"), async (req, res) => {
 
   const appointment = await prisma.appointment.findUnique({ where: { id }, include: APPOINTMENT_DETAIL_INCLUDE });
 
-  if (!appointment || appointment.studioId !== req.user!.studioId) {
+  if (!appointment || !(await callerBelongsToStudio(req.user!, appointment.studioId))) {
     return res.status(404).json({ error: "Appointment not found" });
   }
 
   // Gates the checkout-complete panel's "share your referral code" callout
   // -- default true (StudioSettings.referralProgramEnabled) matches every
-  // studio's always-on behavior before this flag existed.
+  // studio's always-on behavior before this flag existed. Reads the
+  // APPOINTMENT's own studio settings, not req.user!.studioId -- those
+  // differ for a guest artist viewing an appointment at their guest studio.
   const studioSettings = await prisma.studioSettings.findUnique({
-    where: { studioId: req.user!.studioId },
+    where: { studioId: appointment.studioId },
     select: { referralProgramEnabled: true },
   });
 
@@ -387,7 +404,7 @@ router.get("/:id", requirePermission("appointments.view"), async (req, res) => {
 router.post("/:id/archive", requirePermissionOrSoloArtist("appointments.reschedule"), async (req, res) => {
   const id = req.params.id as string;
   const appointment = await prisma.appointment.findUnique({ where: { id } });
-  if (!appointment || appointment.studioId !== req.user!.studioId) {
+  if (!appointment || !(await callerBelongsToStudio(req.user!, appointment.studioId))) {
     return res.status(404).json({ error: "Appointment not found" });
   }
   if (req.viaSoloArtistBypass) {
@@ -403,7 +420,7 @@ router.post("/:id/archive", requirePermissionOrSoloArtist("appointments.reschedu
   const updated = await prisma.appointment.update({ where: { id }, data: { archivedAt: new Date() } });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: appointment.studioId,
     actorUserId: req.user!.userId,
     entityType: "Appointment",
     entityId: id,
@@ -411,7 +428,7 @@ router.post("/:id/archive", requirePermissionOrSoloArtist("appointments.reschedu
     changes: { archivedAt: updated.archivedAt },
   });
 
-  emitInvalidation({ type: "appointment.changed", studioId: req.user!.studioId });
+  emitInvalidation({ type: "appointment.changed", studioId: appointment.studioId });
 
   res.json(updated);
 });
@@ -419,7 +436,7 @@ router.post("/:id/archive", requirePermissionOrSoloArtist("appointments.reschedu
 router.post("/:id/unarchive", requirePermissionOrSoloArtist("appointments.reschedule"), async (req, res) => {
   const id = req.params.id as string;
   const appointment = await prisma.appointment.findUnique({ where: { id } });
-  if (!appointment || appointment.studioId !== req.user!.studioId) {
+  if (!appointment || !(await callerBelongsToStudio(req.user!, appointment.studioId))) {
     return res.status(404).json({ error: "Appointment not found" });
   }
   if (req.viaSoloArtistBypass) {
@@ -435,7 +452,7 @@ router.post("/:id/unarchive", requirePermissionOrSoloArtist("appointments.resche
   const updated = await prisma.appointment.update({ where: { id }, data: { archivedAt: null } });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: appointment.studioId,
     actorUserId: req.user!.userId,
     entityType: "Appointment",
     entityId: id,
@@ -443,7 +460,7 @@ router.post("/:id/unarchive", requirePermissionOrSoloArtist("appointments.resche
     changes: { archivedAt: null },
   });
 
-  emitInvalidation({ type: "appointment.changed", studioId: req.user!.studioId });
+  emitInvalidation({ type: "appointment.changed", studioId: appointment.studioId });
 
   res.json(updated);
 });
@@ -545,12 +562,11 @@ router.delete("/:id", requireRole(Role.OWNER), async (req, res) => {
 // against the client's physical ID (POST /waivers/:id/verify).
 router.post("/:id/waiver", requirePermission("waivers.generate"), async (req, res) => {
   const id = req.params.id as string;
-  const studioId = req.user!.studioId;
   const { autoSend } = req.body ?? {};
 
   const existing = await prisma.appointment.findUnique({
     where: { id },
-    select: { liabilityWaiver: true, clientId: true, client: { select: { firstName: true } } },
+    select: { studioId: true, liabilityWaiver: true, clientId: true, client: { select: { firstName: true } } },
   });
   if (existing?.liabilityWaiver) {
     return res.status(400).json({ error: "A waiver already exists for this appointment" });
@@ -558,6 +574,14 @@ router.post("/:id/waiver", requirePermission("waivers.generate"), async (req, re
   if (!existing) {
     return res.status(404).json({ error: "Appointment not found" });
   }
+  // Artist mobility bug fix: verify against the APPOINTMENT's own studio,
+  // then pass THAT confirmed studioId through -- ensureLiabilityWaiver
+  // trusts it as already-authenticated the same way generateAndSendDepositForm
+  // does, and uses it for the created waiver's own studioId.
+  if (!(await callerBelongsToStudio(req.user!, existing.studioId))) {
+    return res.status(404).json({ error: "Appointment not found" });
+  }
+  const studioId = existing.studioId;
 
   const result = await ensureLiabilityWaiver(id, studioId, req.user!.userId);
 
@@ -598,7 +622,6 @@ router.post("/:id/waiver", requirePermission("waivers.generate"), async (req, re
 // resolve manually rather than something to paper over.
 router.post("/:id/checkout", requirePermission("appointments.checkout"), async (req, res) => {
   const id = req.params.id as string;
-  const studioId = req.user!.studioId;
   const body = req.body ?? {};
   const { finalCostCents, decisions, closeoutNotes } = body;
 
@@ -621,9 +644,16 @@ router.post("/:id/checkout", requirePermission("appointments.checkout"), async (
 
   const appointment = await prisma.appointment.findUnique({ where: { id }, include: { giftCards: true } });
 
-  if (!appointment || appointment.studioId !== studioId) {
+  // Artist mobility bug fix: verify against the APPOINTMENT's own studio,
+  // then use THAT confirmed studioId for everything below (gift-card
+  // validation/settlement, Stripe Connect account lookup) -- req.user!.studioId
+  // is only the caller's HOME studio and would both wrongly 404 a
+  // legitimately guest-assigned artist and, if merely relaxed, run the rest
+  // of checkout against the wrong studio's settings/gift cards.
+  if (!appointment || !(await callerBelongsToStudio(req.user!, appointment.studioId))) {
     return res.status(404).json({ error: "Appointment not found" });
   }
+  const studioId = appointment.studioId;
 
   if (appointment.appointmentType === AppointmentType.CONSULTATION) {
     return res.status(400).json({
@@ -889,12 +919,12 @@ router.post("/:id/checkout", requirePermission("appointments.checkout"), async (
 // (either way) is a 400 rather than a silent no-op re-charge.
 router.patch("/:id/mark-charged", requirePermission("appointments.checkout"), async (req, res) => {
   const id = req.params.id as string;
-  const studioId = req.user!.studioId;
 
   const appointment = await prisma.appointment.findUnique({ where: { id }, include: { giftCards: true } });
-  if (!appointment || appointment.studioId !== studioId) {
+  if (!appointment || !(await callerBelongsToStudio(req.user!, appointment.studioId))) {
     return res.status(404).json({ error: "Appointment not found" });
   }
+  const studioId = appointment.studioId;
   if (!appointment.checkedOutAt || appointment.finalCostCents == null) {
     return res.status(400).json({ error: "This appointment hasn't been checked out yet" });
   }
@@ -938,7 +968,6 @@ router.patch("/:id/mark-charged", requirePermission("appointments.checkout"), as
 // above), so there's nothing to reconcile here.
 router.post("/:id/complete-consultation", requirePermission("appointments.checkout"), async (req, res) => {
   const id = req.params.id as string;
-  const studioId = req.user!.studioId;
   const { notes } = req.body ?? {};
 
   if (notes !== undefined && notes !== null && typeof notes !== "string") {
@@ -947,9 +976,10 @@ router.post("/:id/complete-consultation", requirePermission("appointments.checko
 
   const appointment = await prisma.appointment.findUnique({ where: { id } });
 
-  if (!appointment || appointment.studioId !== studioId) {
+  if (!appointment || !(await callerBelongsToStudio(req.user!, appointment.studioId))) {
     return res.status(404).json({ error: "Appointment not found" });
   }
+  const studioId = appointment.studioId;
 
   if (appointment.appointmentType !== AppointmentType.CONSULTATION) {
     return res.status(400).json({
@@ -1004,7 +1034,7 @@ router.post("/:id/photos", requirePermission("appointments.photos.manage"), asyn
   }
 
   const appointment = await prisma.appointment.findUnique({ where: { id }, select: { studioId: true } });
-  if (!appointment || appointment.studioId !== req.user!.studioId) {
+  if (!appointment || !(await callerBelongsToStudio(req.user!, appointment.studioId))) {
     return res.status(404).json({ error: "Appointment not found" });
   }
 
@@ -1018,7 +1048,7 @@ router.post("/:id/photos", requirePermission("appointments.photos.manage"), asyn
   );
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: appointment.studioId,
     actorUserId: req.user!.userId,
     entityType: "Appointment",
     entityId: id,
@@ -1040,14 +1070,14 @@ router.delete("/:id/photos/:photoId", requirePermission("appointments.photos.man
     include: { appointment: { select: { studioId: true } } },
   });
 
-  if (!photo || photo.appointmentId !== id || photo.appointment.studioId !== req.user!.studioId) {
+  if (!photo || photo.appointmentId !== id || !(await callerBelongsToStudio(req.user!, photo.appointment.studioId))) {
     return res.status(404).json({ error: "Photo not found" });
   }
 
   await prisma.appointmentPhoto.delete({ where: { id: photoId } });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: photo.appointment.studioId,
     actorUserId: req.user!.userId,
     entityType: "Appointment",
     entityId: id,
@@ -1055,7 +1085,7 @@ router.delete("/:id/photos/:photoId", requirePermission("appointments.photos.man
     changes: { photoId, url: photo.url },
   });
 
-  emitInvalidation({ type: "appointment.changed", studioId: req.user!.studioId });
+  emitInvalidation({ type: "appointment.changed", studioId: photo.appointment.studioId });
 
   res.json({ success: true });
 });
@@ -1085,7 +1115,7 @@ router.patch("/:id", requirePermissionOrSoloArtist("appointments.reschedule"), a
 
   const appointment = await prisma.appointment.findUnique({ where: { id } });
 
-  if (!appointment || appointment.studioId !== req.user!.studioId) {
+  if (!appointment || !(await callerBelongsToStudio(req.user!, appointment.studioId))) {
     return res.status(404).json({ error: "Appointment not found" });
   }
 
@@ -1119,7 +1149,7 @@ router.patch("/:id", requirePermissionOrSoloArtist("appointments.reschedule"), a
 
     const [studioSettingsForDayCheck, artistForBuffer] = await Promise.all([
       prisma.studioSettings.findUnique({
-        where: { studioId: req.user!.studioId },
+        where: { studioId: appointment.studioId },
         select: { timezone: true, schedulingBufferMinutes: true },
       }),
       // artistId is never accepted by this route (see comment below), so
@@ -1142,7 +1172,7 @@ router.patch("/:id", requirePermissionOrSoloArtist("appointments.reschedule"), a
   const updated = await prisma.appointment.update({ where: { id }, data });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: appointment.studioId,
     actorUserId: req.user!.userId,
     entityType: "Appointment",
     entityId: id,
@@ -1158,7 +1188,7 @@ router.patch("/:id", requirePermissionOrSoloArtist("appointments.reschedule"), a
       ? await findBufferConflict(updated.artistId, data.startTime, data.endTime, id, bufferMs)
       : null;
 
-  emitInvalidation({ type: "appointment.changed", studioId: req.user!.studioId });
+  emitInvalidation({ type: "appointment.changed", studioId: appointment.studioId });
 
   res.json({ ...updated, bufferWarning: formatBufferWarning(conflict, bufferMs) });
 });
@@ -1188,7 +1218,7 @@ router.post("/:id/approve", requirePermissionOrSoloArtist("appointments.reschedu
   const id = req.params.id as string;
 
   const appointment = await prisma.appointment.findUnique({ where: { id } });
-  if (!appointment || appointment.studioId !== req.user!.studioId) {
+  if (!appointment || !(await callerBelongsToStudio(req.user!, appointment.studioId))) {
     return res.status(404).json({ error: "Appointment not found" });
   }
 
@@ -1223,7 +1253,7 @@ router.post("/:id/approve", requirePermissionOrSoloArtist("appointments.reschedu
 
   const [studioSettings, artist] = await Promise.all([
     prisma.studioSettings.findUnique({
-      where: { studioId: req.user!.studioId },
+      where: { studioId: appointment.studioId },
       select: { schedulingBufferMinutes: true },
     }),
     prisma.artist.findUnique({ where: { id: appointment.artistId }, select: { schedulingBufferMinutes: true } }),
@@ -1250,7 +1280,7 @@ router.post("/:id/approve", requirePermissionOrSoloArtist("appointments.reschedu
   ]);
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: appointment.studioId,
     actorUserId: req.user!.userId,
     entityType: "Appointment",
     entityId: id,
@@ -1258,11 +1288,11 @@ router.post("/:id/approve", requirePermissionOrSoloArtist("appointments.reschedu
     changes: { status: AppointmentStatus.CONFIRMED },
   });
 
-  emitInvalidation({ type: "appointment.changed", studioId: req.user!.studioId });
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: inquiry.id });
+  emitInvalidation({ type: "appointment.changed", studioId: appointment.studioId });
+  emitInvalidation({ type: "inquiry.updated", studioId: appointment.studioId, inquiryId: inquiry.id });
 
   const depositResult = await generateAndSendDepositForm(inquiry.id, {
-    studioId: req.user!.studioId,
+    studioId: appointment.studioId,
     actorUserId: req.user!.userId,
     proposedStartAt: updated.startTime.toISOString(),
     proposedEndAt: updated.endTime.toISOString(),
@@ -1319,7 +1349,7 @@ router.post("/:id/decline", requirePermissionOrSoloArtist("appointments.reschedu
       },
     },
   });
-  if (!appointment || appointment.studioId !== req.user!.studioId) {
+  if (!appointment || !(await callerBelongsToStudio(req.user!, appointment.studioId))) {
     return res.status(404).json({ error: "Appointment not found" });
   }
 
@@ -1341,7 +1371,7 @@ router.post("/:id/decline", requirePermissionOrSoloArtist("appointments.reschedu
 
   await prisma.appointmentNote.create({
     data: {
-      studioId: req.user!.studioId,
+      studioId: appointment.studioId,
       appointmentId: id,
       authorId: req.user!.userId,
       bodyHtml: `<p>Declined requested time: ${trimmedReason.replace(/</g, "&lt;")}</p>`,
@@ -1349,7 +1379,7 @@ router.post("/:id/decline", requirePermissionOrSoloArtist("appointments.reschedu
   });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: appointment.studioId,
     actorUserId: req.user!.userId,
     entityType: "Appointment",
     entityId: id,
@@ -1357,7 +1387,7 @@ router.post("/:id/decline", requirePermissionOrSoloArtist("appointments.reschedu
     changes: { status: AppointmentStatus.CANCELLED, reason: trimmedReason },
   });
 
-  emitInvalidation({ type: "appointment.changed", studioId: req.user!.studioId });
+  emitInvalidation({ type: "appointment.changed", studioId: appointment.studioId });
 
   // Same eligibility shape as estimates.ts's PROCEED branch and
   // inquiries.ts's revise-estimate resend branch, minus their own
@@ -1389,18 +1419,19 @@ router.post("/:id/decline", requirePermissionOrSoloArtist("appointments.reschedu
   });
 
   const scheduleUrl = await shortenUrl(`${PUBLIC_APP_URL}/schedule/${freshSelfScheduleToken}`);
-  const studio = await prisma.studio.findUnique({ where: { id: req.user!.studioId }, select: { name: true } });
+  const studio = await prisma.studio.findUnique({ where: { id: appointment.studioId }, select: { name: true } });
 
   const scheduleSendResult = await sendClientSms({
-    studioId: req.user!.studioId,
+    studioId: appointment.studioId,
     clientId: updatedInquiry.clientId,
-    conversationId: (await getOrCreateClientConversation(req.user!.studioId, updatedInquiry.clientId, req.user!.userId))
-      .conversation.id,
+    conversationId: (
+      await getOrCreateClientConversation(appointment.studioId, updatedInquiry.clientId, req.user!.userId)
+    ).conversation.id,
     body: `Hi ${inquiry.client.firstName}, unfortunately your requested time with ${studio?.name ?? "us"} didn't work out. Please pick a new time here: ${scheduleUrl} (expires in 7 days)`,
     actorUserId: req.user!.userId,
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: inquiry.id });
+  emitInvalidation({ type: "inquiry.updated", studioId: appointment.studioId, inquiryId: inquiry.id });
 
   res.json({ appointment: updated, selfScheduleReissued: true, scheduleUrl, scheduleSendResult });
 });

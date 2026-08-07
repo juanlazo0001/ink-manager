@@ -9,6 +9,7 @@ import { normalizePhone } from "../lib/phone";
 import { syncPrimaryEmail, syncPrimaryPhone } from "../lib/clientContacts";
 import { generateUniqueReferralCode } from "../lib/referrals";
 import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
+import { studioHasActiveMembership, callerBelongsToStudio } from "../lib/artistAccess";
 
 const router = Router();
 
@@ -41,7 +42,11 @@ router.get("/public", async (req, res) => {
   }
 
   const artist = await prisma.artist.findUnique({ where: { id: artistId }, include: { user: true } });
-  if (!artist || artist.user.studioId !== studio.id) {
+  // Artist mobility bug fix: a guest artist's public gallery page at their
+  // GUEST studio was 404ing (their user.studioId is only ever their HOME).
+  const artistBelongsToStudio =
+    artist != null && (artist.user.studioId === studio.id || (await studioHasActiveMembership(studio.id, artist.id)));
+  if (!artistBelongsToStudio) {
     return res.status(404).json({ error: "Artist not found" });
   }
 
@@ -268,7 +273,16 @@ router.get("/", requirePermission("flashGallery.manage"), async (req, res) => {
   }
 
   const pieces = await prisma.flashPiece.findMany({
-    where: { studioId, ...(artistId ? { artistId } : {}) },
+    where: {
+      // Artist mobility bug fix: an ARTIST's own list is scoped by artistId
+      // alone, not studioId -- same "no studio scoping" convention as
+      // GET /inquiries/assigned-to-me and appointments.ts's own GET / list.
+      // Without this, a guest artist's flash pieces living under a GUEST
+      // studio's studioId were silently invisible on their own list.
+      // OWNER/FRONT_DESK stay studio-scoped exactly as before.
+      ...(req.user!.role === Role.ARTIST ? {} : { studioId }),
+      ...(artistId ? { artistId } : {}),
+    },
     include: FLASH_PIECE_INCLUDE,
     orderBy: { createdAt: "desc" },
   });
@@ -311,7 +325,15 @@ router.post("/", requirePermission("flashGallery.manage"), async (req, res) => {
   }
 
   const artist = await prisma.artist.findUnique({ where: { id: artistId }, include: { user: true } });
-  if (!artist || artist.user.studioId !== studioId) {
+  // Artist mobility bug fix: a studio can also create a flash piece for its
+  // own active GUEST artists, not just HOME ones -- same
+  // studioHasActiveMembership pattern as every other artistId-ownership
+  // check in the codebase (see lib/artistAccess.ts). Without this, staff at
+  // a guest studio couldn't create a flash piece on behalf of their own
+  // currently-guesting artist at all.
+  const artistBelongsToStudio =
+    artist != null && (artist.user.studioId === studioId || (await studioHasActiveMembership(studioId, artist.id)));
+  if (!artistBelongsToStudio) {
     return res.status(400).json({ error: "artistId must belong to your studio" });
   }
 
@@ -353,12 +375,12 @@ router.post("/", requirePermission("flashGallery.manage"), async (req, res) => {
 
 router.patch("/:id", requirePermission("flashGallery.manage"), async (req, res) => {
   const id = req.params.id as string;
-  const studioId = req.user!.studioId;
 
   const existing = await prisma.flashPiece.findUnique({ where: { id }, include: { artist: true } });
-  if (!existing || existing.studioId !== studioId) {
+  if (!existing || !(await callerBelongsToStudio(req.user!, existing.studioId))) {
     return res.status(404).json({ error: "Flash piece not found" });
   }
+  const studioId = existing.studioId;
 
   if (req.user!.role === Role.ARTIST && existing.artist.userId !== req.user!.userId) {
     return res.status(403).json({ error: "Forbidden" });
@@ -413,12 +435,12 @@ router.patch("/:id", requirePermission("flashGallery.manage"), async (req, res) 
 // singular action rather than a raw status field write.
 router.post("/:id/retire", requirePermission("flashGallery.manage"), async (req, res) => {
   const id = req.params.id as string;
-  const studioId = req.user!.studioId;
 
   const existing = await prisma.flashPiece.findUnique({ where: { id }, include: { artist: true } });
-  if (!existing || existing.studioId !== studioId) {
+  if (!existing || !(await callerBelongsToStudio(req.user!, existing.studioId))) {
     return res.status(404).json({ error: "Flash piece not found" });
   }
+  const studioId = existing.studioId;
 
   if (req.user!.role === Role.ARTIST && existing.artist.userId !== req.user!.userId) {
     return res.status(403).json({ error: "Forbidden" });

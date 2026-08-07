@@ -11,6 +11,7 @@ import { redactedSessionHours } from "../lib/plannedSessions";
 import { getOrCreateClientConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
 import { emitInvalidation } from "../lib/realtime/registry";
+import { studioHasActiveMembership } from "../lib/artistAccess";
 
 // Exact SOP wording, in the order the client must agree to each one.
 const TERMS = [
@@ -406,15 +407,36 @@ staffRouter.get("/:id/pdf", requireAuth, requirePermission("inquiries.view"), as
     },
   });
 
-  if (!depositForm || depositForm.inquiry.studioId !== req.user!.studioId) {
+  if (!depositForm) {
     return res.status(404).json({ error: "Deposit form not found" });
   }
 
+  // Artist mobility bug fix: authorize against the PROJECT's own studio
+  // (depositForm.inquiry.studioId), not the caller's home studio
+  // (req.user!.studioId) -- a guest artist's assigned project lives at a
+  // studio that isn't their `user.studioId`, so the old plain equality
+  // check 404'd every legitimate guest-artist request before the
+  // ARTIST-specific ownership check below even ran. Same
+  // studioHasActiveMembership(HOME or GUEST) pattern already used for
+  // every other "does this artist belong to this studio" check in the
+  // codebase (see lib/artistAccess.ts and its callers). Staff (OWNER/
+  // FRONT_DESK) have no membership concept -- they belong to exactly one
+  // studio -- so a plain equality check is still correct and sufficient
+  // for them.
   if (req.user!.role === Role.ARTIST) {
-    const artist = await prisma.artist.findUnique({ where: { userId: req.user!.userId }, select: { id: true } });
-    if (!artist || depositForm.inquiry.assignedArtistId !== artist.id) {
+    const artist = await prisma.artist.findUnique({
+      where: { userId: req.user!.userId },
+      select: { id: true, user: { select: { studioId: true } } },
+    });
+    const artistBelongsToProjectStudio =
+      artist != null &&
+      (artist.user.studioId === depositForm.inquiry.studioId ||
+        (await studioHasActiveMembership(depositForm.inquiry.studioId, artist.id)));
+    if (!artistBelongsToProjectStudio || depositForm.inquiry.assignedArtistId !== artist!.id) {
       return res.status(404).json({ error: "Deposit form not found" });
     }
+  } else if (depositForm.inquiry.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Deposit form not found" });
   }
 
   if (!depositForm.signedAt) {

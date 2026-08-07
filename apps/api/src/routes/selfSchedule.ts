@@ -112,7 +112,10 @@ router.get("/verify/:token", async (req, res) => {
   // up front (a SELF_SCHEDULE_SEARCH_DAYS-day search window's worth of
   // times, all at once, is both wasted work for the ~90 dates never
   // clicked and a much bigger response than this page needs at load time).
-  const availableDates = await getAvailableDates(inquiry!.assignedArtistId, durationMinutes, {
+  // Artist mobility bug fix: pass the PROJECT's own studio, not the
+  // artist's home -- a guest artist's available dates for this client must
+  // reflect the guest studio's own timezone/buffer settings.
+  const availableDates = await getAvailableDates(inquiry!.assignedArtistId, durationMinutes, inquiry!.studioId, {
     searchDays: SELF_SCHEDULE_SEARCH_DAYS,
   });
 
@@ -163,7 +166,7 @@ router.get("/slots/:token", async (req, res) => {
     return res.status(404).json({ error: "This link is invalid." });
   }
 
-  const slots = await getSlotsForDate(inquiry!.assignedArtistId, durationMinutes, date);
+  const slots = await getSlotsForDate(inquiry!.assignedArtistId, durationMinutes, date, inquiry!.studioId);
   res.json({ slots });
 });
 

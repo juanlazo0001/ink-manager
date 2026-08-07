@@ -70,7 +70,15 @@ router.get("/dashboard", async (req, res) => {
   const artistScope = scopingArtist ? { assignedArtistId: scopingArtist.id } : {};
 
   const inquiryBaseWhere = {
-    studioId,
+    // Artist mobility bug fix: an ARTIST's own dashboard scope drops the
+    // studioId filter entirely and relies on assignedArtistId alone --
+    // same "no studio scoping" convention GET /inquiries/assigned-to-me
+    // already uses. A guest artist's own assigned projects at a GUEST
+    // studio have a different Inquiry.studioId than their home studio, so
+    // ANDing it in here silently zeroed out that whole slice of their own
+    // performance numbers. OWNER/FRONT_DESK keep the unchanged studio-wide
+    // scope.
+    ...(scopingArtist ? {} : { studioId }),
     archivedAt: null,
     createdAt: { gte: start, lte: end },
     ...artistScope,
@@ -130,7 +138,8 @@ router.get("/dashboard", async (req, res) => {
     prisma.appointment.groupBy({
       by: ["artistId"],
       where: {
-        studioId,
+        // Same artist-mobility fix as inquiryBaseWhere above.
+        ...(scopingArtist ? {} : { studioId }),
         archivedAt: null,
         startTime: { gte: start, lte: end },
         // Appointment carries its own direct artistId (not just via
@@ -143,7 +152,7 @@ router.get("/dashboard", async (req, res) => {
     }),
     // All-time by design -- see comment above the route.
     prisma.depositForm.findMany({
-      where: { inquiry: { studioId, archivedAt: null, ...artistScope } },
+      where: { inquiry: { archivedAt: null, ...(scopingArtist ? {} : { studioId }), ...artistScope } },
       select: { createdAt: true, paidManually: true, paidAt: true },
     }),
     // Gift card liability has no natural per-artist scope -- a card belongs
@@ -170,7 +179,8 @@ router.get("/dashboard", async (req, res) => {
     // sync if the set of "Project" statuses ever changes.
     prisma.inquiry.count({
       where: {
-        studioId,
+        // Same artist-mobility fix as inquiryBaseWhere above.
+        ...(scopingArtist ? {} : { studioId }),
         archivedAt: null,
         status: { in: [InquiryStatus.SCHEDULING, InquiryStatus.WAITLISTED, InquiryStatus.CONFIRMED] },
         appointmentId: null,

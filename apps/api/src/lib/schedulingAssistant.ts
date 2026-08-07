@@ -82,12 +82,18 @@ interface AvailabilityContext {
   guestEndDate: Date | null;
 }
 
-async function resolveAvailabilityContext(artistId: string): Promise<AvailabilityContext | null> {
+// studioId: the studio this scheduling operation is actually FOR (the
+// caller's own studio for staff, the project's studio for a client's
+// self-scheduling link) -- artist mobility bug fix: this used to always
+// read artist.user.studioId (the artist's HOME), so a guest artist's
+// available times were computed against their home studio's timezone/
+// buffer settings even while booking at a different, guest studio.
+async function resolveAvailabilityContext(artistId: string, studioId: string): Promise<AvailabilityContext | null> {
   const artist = await prisma.artist.findUnique({ where: { id: artistId }, include: { user: true } });
   if (!artist) return null;
 
   const studioSettings = await prisma.studioSettings.findUnique({
-    where: { studioId: artist.user.studioId },
+    where: { studioId },
     select: { timezone: true, schedulingBufferMinutes: true },
   });
 
@@ -216,6 +222,7 @@ function dateKeyForOffset(anchor: number, dayOffset: number): { dateKey: string;
 export async function getSuggestedTimes(
   artistId: string,
   durationMinutes: number,
+  studioId: string,
   options: GetSuggestedTimesOptions = {},
 ): Promise<SuggestedTimeCandidate[]> {
   const {
@@ -225,7 +232,7 @@ export async function getSuggestedTimes(
     excludeAppointmentId,
   } = options;
 
-  const context = await resolveAvailabilityContext(artistId);
+  const context = await resolveAvailabilityContext(artistId, studioId);
   if (!context) return [];
 
   const searchStart = now;
@@ -286,11 +293,12 @@ export interface GetAvailableDatesOptions {
 export async function getAvailableDates(
   artistId: string,
   durationMinutes: number,
+  studioId: string,
   options: GetAvailableDatesOptions = {},
 ): Promise<string[]> {
   const { now = new Date(), searchDays = DEFAULT_SEARCH_DAYS, excludeAppointmentId } = options;
 
-  const context = await resolveAvailabilityContext(artistId);
+  const context = await resolveAvailabilityContext(artistId, studioId);
   if (!context) return [];
 
   const searchEnd = new Date(now.getTime() + searchDays * 86_400_000);
@@ -343,11 +351,12 @@ export async function getSlotsForDate(
   artistId: string,
   durationMinutes: number,
   dateKey: string,
+  studioId: string,
   options: GetSlotsForDateOptions = {},
 ): Promise<SuggestedTimeCandidate[]> {
   const { now = new Date(), excludeAppointmentId } = options;
 
-  const context = await resolveAvailabilityContext(artistId);
+  const context = await resolveAvailabilityContext(artistId, studioId);
   if (!context) return [];
 
   const [year, month, day] = dateKey.split("-").map(Number);

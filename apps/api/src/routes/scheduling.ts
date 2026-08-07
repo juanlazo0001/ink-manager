@@ -43,7 +43,10 @@ router.get("/suggested-times", async (req, res) => {
     return res.status(404).json({ error: "Artist not found" });
   }
 
-  const candidates = await getSuggestedTimes(artistId, durationMinutes, { excludeAppointmentId });
+  // Artist mobility bug fix: pass THIS studio (the one suggesting the
+  // time), not the artist's own home -- a guest artist's suggested times
+  // must reflect the guest studio's own timezone/buffer settings.
+  const candidates = await getSuggestedTimes(artistId, durationMinutes, req.user!.studioId, { excludeAppointmentId });
   res.json(candidates);
 });
 

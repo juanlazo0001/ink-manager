@@ -3,6 +3,7 @@ import { ConversationType, Role } from "../../generated/prisma/enums";
 import type { Prisma } from "../../generated/prisma/client";
 import { logAudit } from "./audit";
 import { hasPermission } from "./permissions";
+import { callerBelongsToStudio, activeStudioIdsForCaller } from "./artistAccess";
 
 // Computed ONCE per request (see routes/conversations.ts's own middleware)
 // rather than re-derived inside visibleConversationWhere/canViewConversation
@@ -35,8 +36,14 @@ export async function getConversationVisibilityFlags(
 // rule, but OWNER's own unconditional access and ARTIST's "-own" scoping
 // on STAFF/GROUP threads are unchanged -- flags just gates whether each
 // thread-type clause is included at all.
+// studioIds: every studio the caller has a live relationship with (HOME +
+// active GUESTs for an ARTIST, just their one studio for staff -- see
+// activeStudioIdsForCaller). Artist mobility bug fix: this used to take a
+// single studioId (always the caller's HOME), so a guest artist's own
+// STAFF/GROUP thread living under a GUEST studio's Conversation.studioId
+// never matched at all -- invisible on their own list, permanently.
 export function visibleConversationWhere(
-  studioId: string,
+  studioIds: string[],
   userId: string,
   role: Role,
   flags: ConversationVisibilityFlags,
@@ -64,12 +71,12 @@ export function visibleConversationWhere(
 
   // Neither toggle is on -- matches nothing, rather than falling back to
   // an unfiltered { studioId } that would silently ignore both flags.
-  if (clauses.length === 0) return { studioId, id: "__no_visible_conversations__" };
+  if (clauses.length === 0) return { studioId: { in: studioIds }, id: "__no_visible_conversations__" };
 
-  return { studioId, OR: clauses };
+  return { studioId: { in: studioIds }, OR: clauses };
 }
 
-export function canViewConversation(
+export async function canViewConversation(
   conversation: {
     studioId: string;
     type: ConversationType;
@@ -80,8 +87,12 @@ export function canViewConversation(
   userId: string,
   role: Role,
   flags: ConversationVisibilityFlags,
-): boolean {
-  if (conversation.studioId !== studioId) return false;
+): Promise<boolean> {
+  // Artist mobility bug fix: HOME or active GUEST membership at the
+  // CONVERSATION's own studio, not a plain equality against the caller's
+  // home studioId -- a guest artist's own staff thread at their guest
+  // studio was otherwise unreachable even via a direct link/notification.
+  if (!(await callerBelongsToStudio({ studioId, role, userId }, conversation.studioId))) return false;
 
   if (conversation.type === ConversationType.CLIENT) {
     return flags.canViewClientThreads;
@@ -126,8 +137,9 @@ export async function getUnreadConversationCount(studioId: string, userId: strin
   // short-circuits true for OWNER without a DB round-trip, so no separate
   // OWNER case is needed here.
   const flags = await getConversationVisibilityFlags(studioId, role);
+  const studioIds = await activeStudioIdsForCaller({ studioId, role, userId });
   const conversations = await prisma.conversation.findMany({
-    where: visibleConversationWhere(studioId, userId, role, flags),
+    where: visibleConversationWhere(studioIds, userId, role, flags),
     select: { id: true },
   });
 

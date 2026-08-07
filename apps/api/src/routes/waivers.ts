@@ -12,6 +12,7 @@ import { shortenUrl } from "../lib/shortLinks";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { generateWaiverPdf } from "../lib/pdf";
 import { emitInvalidation } from "../lib/realtime/registry";
+import { studioHasActiveMembership } from "../lib/artistAccess";
 
 function isExpiredOrInvalid(waiver: { signedAt: Date | null; tokenExpiresAt: Date | null } | null) {
   if (!waiver) {
@@ -245,15 +246,29 @@ staffRouter.get("/:id/status", requirePermission("waivers.viewStatus"), async (r
     },
   });
 
-  if (!waiver || waiver.studioId !== req.user!.studioId) {
+  if (!waiver) {
     return res.status(404).json({ error: "Waiver not found" });
   }
 
+  // Artist mobility bug fix: authorize against the WAIVER's own studio
+  // (studioHasActiveMembership, HOME or GUEST), not a plain equality
+  // against the caller's home studio -- the old check ran BEFORE the
+  // artistId ownership check below and 404'd a legitimately guest-assigned
+  // artist's own waiver before that check ever ran. Same
+  // deposits.ts GET /:id/pdf fix, same shape.
   if (req.user!.role === Role.ARTIST) {
-    const artist = await prisma.artist.findUnique({ where: { userId: req.user!.userId }, select: { id: true } });
-    if (!artist || waiver.appointment.artistId !== artist.id) {
+    const artist = await prisma.artist.findUnique({
+      where: { userId: req.user!.userId },
+      select: { id: true, user: { select: { studioId: true } } },
+    });
+    const artistBelongsToStudio =
+      artist != null &&
+      (artist.user.studioId === waiver.studioId || (await studioHasActiveMembership(waiver.studioId, artist.id)));
+    if (!artistBelongsToStudio || waiver.appointment.artistId !== artist!.id) {
       return res.status(404).json({ error: "Waiver not found" });
     }
+  } else if (waiver.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Waiver not found" });
   }
 
   res.json({ id: waiver.id, status: waiver.status, signedAt: waiver.signedAt, verifiedAt: waiver.verifiedAt });
