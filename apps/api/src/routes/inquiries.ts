@@ -27,7 +27,7 @@ import { resolveRequiredDepositCents, resolveDepositTiers } from "../lib/deposit
 import { generateAndSendDepositForm } from "../lib/deposits";
 import { generateAndSendEstimate, saveEstimateDraft } from "../lib/estimates";
 import { generateUniqueReferralCode } from "../lib/referrals";
-import { studioHasActiveMembership, callerBelongsToStudio } from "../lib/artistAccess";
+import { studioHasActiveMembership, callerBelongsToStudio, hasPermissionAt } from "../lib/artistAccess";
 import { SELF_SCHEDULE_TOKEN_TTL_DAYS } from "../lib/selfSchedule";
 import { IntakeFieldKind } from "../../generated/prisma/enums";
 import { NOTE_AUTHOR_SELECT, canModifyNote, isBlankHtml, isValidAttachments } from "../lib/notes";
@@ -987,6 +987,11 @@ router.get("/", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), requirePe
 // opening up either staff-only route. Default (no scope param) behavior
 // is completely unchanged, so MyInquiries.tsx's existing approve/decline
 // inbox is unaffected.
+// Permission-context fix inventory: intentionally left on the plain,
+// home-studio-scoped requirePermission, same reasoning as appointments.ts's
+// GET / -- this is a multi-studio LIST (assignedArtistId alone, no studio
+// filter at all, per this route's own comment above) with no single record
+// to check a matrix against.
 router.get("/assigned-to-me", requireAuth, requireRole(Role.ARTIST), requirePermission("inquiries.view"), async (req, res) => {
   const artist = await prisma.artist.findUnique({ where: { userId: req.user!.userId } });
   if (!artist) {
@@ -1032,7 +1037,6 @@ router.get(
   "/assigned-to-me/:id",
   requireAuth,
   requireRole(Role.ARTIST, Role.OWNER),
-  requirePermission("inquiries.view"),
   async (req, res) => {
     const artist = await prisma.artist.findUnique({ where: { userId: req.user!.userId } });
     if (!artist) {
@@ -1046,6 +1050,14 @@ router.get(
 
     if (!inquiry) {
       return res.status(404).json({ error: "Inquiry not found" });
+    }
+
+    // Permission-context fix: evaluated at the inquiry's own studio -- this
+    // route can genuinely return a GUEST-studio inquiry (see
+    // fromGuestStudio below), so view rights follow that studio, not the
+    // caller's home.
+    if (!(await hasPermissionAt(req.user!, inquiry.studio.id, "inquiries.view"))) {
+      return res.status(403).json({ error: "Forbidden" });
     }
 
     const { studio, ...rest } = inquiry;
@@ -1126,7 +1138,7 @@ const IMAGE_META_FIELDS = {
   placementImages: "placementImagesMeta",
 } as const;
 
-router.patch("/:id", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
+router.patch("/:id", requireAuth, async (req, res) => {
   const id = req.params.id as string;
   const body = req.body ?? {};
 
@@ -1140,6 +1152,11 @@ router.patch("/:id", requireAuth, requirePermission("inquiries.edit"), async (re
   });
   if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  // Permission-context fix: evaluated at the inquiry's own studio.
+  if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.edit"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   // Package H: once converted to a Project, the estimate is what the
@@ -1237,7 +1254,7 @@ router.patch("/:id", requireAuth, requirePermission("inquiries.edit"), async (re
 // distinct piece of state, not owned by "who's assigned" alone) or any
 // appointment already booked (Appointment.artistId is independent --
 // scheduling assigns its own artist, not derived from the inquiry's).
-router.patch("/:id/assign", requireAuth, requirePermission("inquiries.assignArtist"), async (req, res) => {
+router.patch("/:id/assign", requireAuth, async (req, res) => {
   const id = req.params.id as string;
   const { artistId } = req.body ?? {};
 
@@ -1248,6 +1265,11 @@ router.patch("/:id/assign", requireAuth, requirePermission("inquiries.assignArti
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
   if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  // Permission-context fix: evaluated at the inquiry's own studio.
+  if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.assignArtist"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   if (!NON_TERMINAL_STATUSES.includes(inquiry.status)) {
@@ -1304,7 +1326,7 @@ const DECISIONS = ["APPROVE", "DECLINE"] as const;
 // artist's own estimate and hands it back to staff (AWAITING_CLIENT_RESPONSE).
 // DECLINE unassigns it and puts it back in the pool (NEW) with a note for
 // staff explaining why, so it can be reassigned.
-router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), requirePermission("inquiries.enterEstimate"), async (req, res) => {
+router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), async (req, res) => {
   const id = req.params.id as string;
   const { decision, priceEstimateLow, priceEstimateHigh, timeEstimateHoursMin, timeEstimateHoursMax, sessions, declineNote } =
     req.body ?? {};
@@ -1336,6 +1358,14 @@ router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), requirePermi
 
   if (inquiry.assignedArtistId !== artist!.id) {
     return res.status(403).json({ error: "This inquiry is not assigned to you" });
+  }
+
+  // Permission-context fix: evaluated at the PROJECT's studio (same one
+  // artistBelongsToProjectStudio just confirmed), not req.user!.studioId --
+  // a guest artist's ability to enter their own estimate follows the
+  // studio the project actually lives at.
+  if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.enterEstimate"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   if (decision === "DECLINE") {
@@ -1384,7 +1414,7 @@ router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), requirePermi
   // see lib/estimates.ts's shared validateEstimateInputs) but nothing is
   // sent to the client -- front desk picks it up from here via the normal
   // Estimate section on this same inquiry.
-  const canSendDirectly = await hasPermission(inquiry.studioId, Role.ARTIST, "inquiries.artistSendEstimate");
+  const canSendDirectly = await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.artistSendEstimate");
 
   if (canSendDirectly) {
     const result = await generateAndSendEstimate(id, {
@@ -1425,13 +1455,18 @@ router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), requirePermi
 // BUDGET_NEGOTIATION (resend after the client pushed back on price) — either
 // way it lands the client back in AWAITING_CLIENT_RESPONSE to review the
 // (possibly updated) numbers.
-router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.sendEstimate"), async (req, res) => {
+router.post("/:id/send-estimate", requireAuth, async (req, res) => {
   const id = req.params.id as string;
   const { priceEstimateLow, priceEstimateHigh, timeEstimateHoursMin, timeEstimateHoursMax, sessions } = req.body ?? {};
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id }, select: { studioId: true } });
   if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  // Permission-context fix: evaluated at the inquiry's own studio.
+  if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.sendEstimate"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   const result = await generateAndSendEstimate(id, {
@@ -1847,7 +1882,7 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
 // back to the Inquiry, and attaches the gift card in the same transaction.
 // Doesn't block on a tight same-day schedule for the artist — just flags
 // it via bufferWarning so staff can decide.
-router.post("/:id/schedule", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
+router.post("/:id/schedule", requireAuth, async (req, res) => {
   const id = req.params.id as string;
   const { startTime, endTime, giftCardIds } = req.body ?? {};
 
@@ -1869,6 +1904,11 @@ router.post("/:id/schedule", requireAuth, requirePermission("inquiries.edit"), a
   const inquiry = await prisma.inquiry.findUnique({ where: { id }, include: { service: true } });
   if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  // Permission-context fix: evaluated at the inquiry's own studio.
+  if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.edit"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   if (inquiry.status !== InquiryStatus.SCHEDULING) {
@@ -1961,7 +2001,7 @@ router.post("/:id/schedule", requireAuth, requirePermission("inquiries.edit"), a
 // scheduling without losing it, for a client who wants to wait for a
 // specific slot. The optional note is stored the same way an artist's
 // decline note is -- a single "most recent status note" field.
-router.post("/:id/waitlist", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
+router.post("/:id/waitlist", requireAuth, async (req, res) => {
   const id = req.params.id as string;
   const { note } = req.body ?? {};
 
@@ -1972,6 +2012,11 @@ router.post("/:id/waitlist", requireAuth, requirePermission("inquiries.edit"), a
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
   if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  // Permission-context fix: evaluated at the inquiry's own studio.
+  if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.edit"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   if (inquiry.status !== InquiryStatus.SCHEDULING) {
@@ -2004,12 +2049,17 @@ router.post("/:id/waitlist", requireAuth, requirePermission("inquiries.edit"), a
 // reverse. Symmetric with it: the only thing this undoes is that exact
 // transition, back to SCHEDULING (never straight to CONFIRMED -- picking an
 // actual time slot stays its own deliberate step through /schedule).
-router.post("/:id/unwaitlist", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
+router.post("/:id/unwaitlist", requireAuth, async (req, res) => {
   const id = req.params.id as string;
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
   if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  // Permission-context fix: evaluated at the inquiry's own studio.
+  if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.edit"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   if (inquiry.status !== InquiryStatus.WAITLISTED) {
@@ -2043,7 +2093,7 @@ router.post("/:id/unwaitlist", requireAuth, requirePermission("inquiries.edit"),
 // confirmed project can still fall through). Deliberately conversation-
 // agnostic: a separate workstream adds a chat-side entry point that calls
 // this same route, so nothing here assumes it was reached from a thread.
-router.post("/:id/mark-lost", requireAuth, requirePermission("inquiries.markLost"), async (req, res) => {
+router.post("/:id/mark-lost", requireAuth, async (req, res) => {
   const id = req.params.id as string;
   const { reason } = req.body ?? {};
 
@@ -2054,6 +2104,11 @@ router.post("/:id/mark-lost", requireAuth, requirePermission("inquiries.markLost
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
   if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  // Permission-context fix: evaluated at the inquiry's own studio.
+  if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.markLost"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   if (!NON_TERMINAL_STATUSES.includes(inquiry.status)) {
@@ -2091,7 +2146,7 @@ router.post("/:id/mark-lost", requireAuth, requirePermission("inquiries.markLost
 // same general "make a staff-side change to an inquiry" key FRONT_DESK
 // already has by default -- flash approval isn't meaningfully a different
 // capability from any other inquiry edit.
-router.post("/:id/flash/approve", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
+router.post("/:id/flash/approve", requireAuth, async (req, res) => {
   const id = req.params.id as string;
 
   const inquiry = await prisma.inquiry.findUnique({
@@ -2100,6 +2155,11 @@ router.post("/:id/flash/approve", requireAuth, requirePermission("inquiries.edit
   });
   if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  // Permission-context fix: evaluated at the inquiry's own studio.
+  if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.edit"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   if (inquiry.status !== InquiryStatus.FLASH_PENDING_APPROVAL) {
@@ -2163,7 +2223,7 @@ router.post("/:id/flash/approve", requireAuth, requirePermission("inquiries.edit
 // made for its own token: see REPORT.md), so this is the manual escape
 // hatch staff needs for a one-of-one piece stuck reserved behind a booking
 // that's genuinely never going to complete.
-router.post("/:id/flash/decline", requireAuth, requirePermission("inquiries.markLost"), async (req, res) => {
+router.post("/:id/flash/decline", requireAuth, async (req, res) => {
   const id = req.params.id as string;
   const { reason } = req.body ?? {};
 
@@ -2174,6 +2234,11 @@ router.post("/:id/flash/decline", requireAuth, requirePermission("inquiries.mark
   const inquiry = await prisma.inquiry.findUnique({ where: { id }, include: { flashPiece: true } });
   if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  // Permission-context fix: evaluated at the inquiry's own studio.
+  if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.markLost"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   if (inquiry.status !== InquiryStatus.FLASH_PENDING_APPROVAL && inquiry.status !== InquiryStatus.FLASH_PAYMENT_PENDING) {
@@ -2225,7 +2290,7 @@ router.post("/:id/flash/decline", requireAuth, requirePermission("inquiries.mark
 // one reopen path. status is an explicit target rather than a fixed
 // "back to NEW": staff know best where an inquiry should resume (one that
 // was CONFIRMED before going cold shouldn't have to restart the pipeline).
-router.post("/:id/reopen", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
+router.post("/:id/reopen", requireAuth, async (req, res) => {
   const id = req.params.id as string;
   const { status } = req.body ?? {};
 
@@ -2236,6 +2301,11 @@ router.post("/:id/reopen", requireAuth, requirePermission("inquiries.edit"), asy
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
   if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  // Permission-context fix: evaluated at the inquiry's own studio.
+  if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.edit"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   if (inquiry.status !== InquiryStatus.CLOSED_LOST && inquiry.status !== InquiryStatus.COLD_LEAD) {
@@ -2270,12 +2340,17 @@ router.post("/:id/reopen", requireAuth, requirePermission("inquiries.edit"), asy
 // appointmentType: CONSULTATION) without touching this inquiry's status at
 // all -- it stays in CANDIDACY_REVIEW until staff return to make the final
 // call.
-router.post("/:id/mark-good-candidate", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
+router.post("/:id/mark-good-candidate", requireAuth, async (req, res) => {
   const id = req.params.id as string;
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
   if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  // Permission-context fix: evaluated at the inquiry's own studio.
+  if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.edit"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   if (inquiry.status !== InquiryStatus.CANDIDACY_REVIEW) {
@@ -2308,12 +2383,17 @@ router.post("/:id/mark-good-candidate", requireAuth, requirePermission("inquirie
 // projectCompletedAt/projectCompletedById -- a converted project's status
 // stays SCHEDULING/WAITLISTED/CONFIRMED throughout, whether or not it's
 // been marked complete.
-router.post("/:id/complete-project", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
+router.post("/:id/complete-project", requireAuth, async (req, res) => {
   const id = req.params.id as string;
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
   if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  // Permission-context fix: evaluated at the inquiry's own studio.
+  if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.edit"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   if (!PROJECT_STATUSES.includes(inquiry.status)) {
@@ -2346,12 +2426,17 @@ router.post("/:id/complete-project", requireAuth, requirePermission("inquiries.e
 // click made by mistake, or a client returning for further work after
 // being marked complete) -- clears exactly the two fields
 // complete-project set, nothing else.
-router.post("/:id/reopen-project", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
+router.post("/:id/reopen-project", requireAuth, async (req, res) => {
   const id = req.params.id as string;
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
   if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  // Permission-context fix: evaluated at the inquiry's own studio.
+  if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.edit"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   if (!inquiry.projectCompletedAt) {
@@ -2393,7 +2478,7 @@ router.post("/:id/reopen-project", requireAuth, requirePermission("inquiries.edi
 // attach-gift-card (skipping the deposit-form flow entirely for its first
 // session) and only reaches this route for the first time on session 2 --
 // "latest row missing" is true there too, so it still creates session 1.
-router.post("/:id/deposit-form", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
+router.post("/:id/deposit-form", requireAuth, async (req, res) => {
   const id = req.params.id as string;
   const { proposedStartAt, proposedEndAt, autoSend, plannedSessionId } = req.body ?? {};
 
@@ -2411,6 +2496,11 @@ router.post("/:id/deposit-form", requireAuth, requirePermission("inquiries.edit"
   const inquiry = await prisma.inquiry.findUnique({ where: { id }, select: { studioId: true } });
   if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  // Permission-context fix: evaluated at the inquiry's own studio.
+  if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.edit"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   const result = await generateAndSendDepositForm(id, {
@@ -2440,7 +2530,6 @@ router.post("/:id/deposit-form", requireAuth, requirePermission("inquiries.edit"
 router.patch(
   "/:id/deposit-form/proposed-time",
   requireAuth,
-  requirePermission("inquiries.edit"),
   async (req, res) => {
     const id = req.params.id as string;
     const body = req.body ?? {};
@@ -2457,6 +2546,11 @@ router.patch(
     });
     if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
       return res.status(404).json({ error: "Inquiry not found" });
+    }
+
+    // Permission-context fix: evaluated at the inquiry's own studio.
+    if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.edit"))) {
+      return res.status(403).json({ error: "Forbidden" });
     }
     const pending = inquiry.depositForms[0];
     if (!pending) {
@@ -2509,7 +2603,7 @@ router.patch(
 // discarded). An unsigned one gets deleted here rather than left behind, so
 // its public link can't still be signed for an inquiry that's already
 // moved on without it.
-router.post("/:id/attach-gift-card", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
+router.post("/:id/attach-gift-card", requireAuth, async (req, res) => {
   const id = req.params.id as string;
   const { giftCardId } = req.body ?? {};
 
@@ -2523,6 +2617,11 @@ router.post("/:id/attach-gift-card", requireAuth, requirePermission("inquiries.e
   const inquiry = await prisma.inquiry.findUnique({ where: { id }, include: { depositForms: true } });
   if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  // Permission-context fix: evaluated at the inquiry's own studio.
+  if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.edit"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   if (inquiry.status !== InquiryStatus.DEPOSIT_PENDING) {
@@ -2611,12 +2710,17 @@ function buildSharedInquiryProjection(inquiry: {
 // it, so the frontend's confirmation modal can show this ahead of send (and
 // let staff edit it there before sending -- see the optional body override
 // below).
-router.get("/:id/share-to-artist/preview", requireAuth, requirePermission("inquiries.shareWithArtist"), async (req, res) => {
+router.get("/:id/share-to-artist/preview", requireAuth, async (req, res) => {
   const id = req.params.id as string;
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
   if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  // Permission-context fix: evaluated at the inquiry's own studio.
+  if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.shareWithArtist"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   res.json(buildSharedInquiryProjection(inquiry));
@@ -2631,7 +2735,7 @@ router.get("/:id/share-to-artist/preview", requireAuth, requirePermission("inqui
 // the PII risk the original fixed-projection-only design was guarding
 // against -- that guard was about auto-including client-identifying
 // fields, not about staff's own wording.
-router.post("/:id/share-to-artist", requireAuth, requirePermission("inquiries.shareWithArtist"), async (req, res) => {
+router.post("/:id/share-to-artist", requireAuth, async (req, res) => {
   const id = req.params.id as string;
   const { userId } = req.user!;
   const { artistUserId, body: customBody } = req.body ?? {};
@@ -2647,6 +2751,11 @@ router.post("/:id/share-to-artist", requireAuth, requirePermission("inquiries.sh
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
   if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  // Permission-context fix: evaluated at the inquiry's own studio.
+  if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.shareWithArtist"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
   // Artist mobility bug fix: everything below is scoped to the PROJECT's
   // own studio (which the check above just confirmed the caller has a real
@@ -2706,12 +2815,18 @@ router.post("/:id/share-to-artist", requireAuth, requirePermission("inquiries.sh
 });
 
 // Archive: soft, reversible hide -- same treatment as Client.archivedAt.
-router.post("/:id/archive", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
+router.post("/:id/archive", requireAuth, async (req, res) => {
   const id = req.params.id as string;
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
   if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
+
+  // Permission-context fix: evaluated at the inquiry's own studio.
+  if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.edit"))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
   if (inquiry.archivedAt) {
     return res.json(inquiry);
   }
@@ -2730,12 +2845,18 @@ router.post("/:id/archive", requireAuth, requirePermission("inquiries.edit"), as
   res.json(updated);
 });
 
-router.post("/:id/unarchive", requireAuth, requirePermission("inquiries.edit"), async (req, res) => {
+router.post("/:id/unarchive", requireAuth, async (req, res) => {
   const id = req.params.id as string;
   const inquiry = await prisma.inquiry.findUnique({ where: { id } });
   if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
   }
+
+  // Permission-context fix: evaluated at the inquiry's own studio.
+  if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.edit"))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
   if (!inquiry.archivedAt) {
     return res.json(inquiry);
   }
@@ -2877,12 +2998,17 @@ router.get("/:id/delete-preview", requireAuth, requireRole(Role.OWNER), async (r
 // Same OWNER/FRONT_DESK gate as GET /:id itself (Package L: "ARTIST has no
 // access, matches page-level gating") -- an ARTIST can't load the inquiry
 // detail page at all, so they never reach this route either.
-router.get("/:id/notes", requireAuth, requirePermission("inquiries.notes.manage"), async (req, res) => {
+router.get("/:id/notes", requireAuth, async (req, res) => {
   const id = req.params.id as string;
 
   const inquiry = await prisma.inquiry.findUnique({ where: { id }, select: { studioId: true } });
   if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  // Permission-context fix: evaluated at the inquiry's own studio.
+  if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.notes.manage"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   const notes = await prisma.inquiryNote.findMany({
@@ -2894,7 +3020,7 @@ router.get("/:id/notes", requireAuth, requirePermission("inquiries.notes.manage"
   res.json(notes);
 });
 
-router.post("/:id/notes", requireAuth, requirePermission("inquiries.notes.manage"), async (req, res) => {
+router.post("/:id/notes", requireAuth, async (req, res) => {
   const id = req.params.id as string;
   const { bodyHtml, attachments, visibleToArtist } = req.body ?? {};
 
@@ -2913,6 +3039,11 @@ router.post("/:id/notes", requireAuth, requirePermission("inquiries.notes.manage
   const inquiry = await prisma.inquiry.findUnique({ where: { id }, select: { studioId: true } });
   if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  // Permission-context fix: evaluated at the inquiry's own studio.
+  if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.notes.manage"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   const note = await prisma.inquiryNote.create({
@@ -2941,7 +3072,7 @@ router.post("/:id/notes", requireAuth, requirePermission("inquiries.notes.manage
   res.status(201).json(note);
 });
 
-router.patch("/:id/notes/:noteId", requireAuth, requirePermission("inquiries.notes.manage"), async (req, res) => {
+router.patch("/:id/notes/:noteId", requireAuth, async (req, res) => {
   const id = req.params.id as string;
   const noteId = req.params.noteId as string;
   const { bodyHtml, attachments, visibleToArtist } = req.body ?? {};
@@ -2961,6 +3092,11 @@ router.patch("/:id/notes/:noteId", requireAuth, requirePermission("inquiries.not
   const note = await prisma.inquiryNote.findUnique({ where: { id: noteId } });
   if (!note || note.inquiryId !== id || !(await callerBelongsToStudio(req.user!, note.studioId))) {
     return res.status(404).json({ error: "Note not found" });
+  }
+
+  // Permission-context fix: evaluated at the note's own studio.
+  if (!(await hasPermissionAt(req.user!, note.studioId, "inquiries.notes.manage"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   if (!canModifyNote(note, req)) {
@@ -2996,13 +3132,18 @@ router.patch("/:id/notes/:noteId", requireAuth, requirePermission("inquiries.not
   res.json(updated);
 });
 
-router.delete("/:id/notes/:noteId", requireAuth, requirePermission("inquiries.notes.manage"), async (req, res) => {
+router.delete("/:id/notes/:noteId", requireAuth, async (req, res) => {
   const id = req.params.id as string;
   const noteId = req.params.noteId as string;
 
   const note = await prisma.inquiryNote.findUnique({ where: { id: noteId } });
   if (!note || note.inquiryId !== id || !(await callerBelongsToStudio(req.user!, note.studioId))) {
     return res.status(404).json({ error: "Note not found" });
+  }
+
+  // Permission-context fix: evaluated at the note's own studio.
+  if (!(await hasPermissionAt(req.user!, note.studioId, "inquiries.notes.manage"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   if (!canModifyNote(note, req)) {
