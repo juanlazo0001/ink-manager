@@ -8442,3 +8442,61 @@ All scratch Prisma scripts (`scratch-create-inquiry.ts` through `scratch-create-
 
 `5ae184f`
 
+---
+
+# Front-desk approval for self-scheduled (REQUESTED) appointments
+
+Same repo, new session, runs after the token-lifecycle fixes above were merged. A client self-scheduling their own time already created a real `Appointment` (status `REQUESTED`) -- but nothing actionable ever surfaced for staff, so the process silently stalled with no deposit form, no confirmation, nothing.
+
+## Part 1 -- surfacing it
+
+**Task**: a derived system-task type for exactly this (`SELF_SCHEDULED_PENDING`, `lib/tasks/selfScheduledPending.ts`) already existed and was already registered/shown to front desk -- this wasn't a gap to build, just to find. Retitled it to match this task's own framing (`Review requested appointment -- {client}`, was `Confirm requested time: {description}`).
+
+**Realtime**: the actual gap. `emitInvalidation({type: "appointment.changed", ...})` (fired by `selfSchedule.ts`'s own respond route on every client self-pick, unchanged) never invalidated the `["tasks"]` React Query key -- only `["appointments"]`/`["nav-counts"]` -- so a brand-new REQUESTED appointment never live-updated the Tasks page or its badge for anyone already looking at it, only a manual reload would show it. Fixed by adding `["tasks"]` to that one case in `lib/realtime/registry.ts`'s `keysFor`. Verified live: a staff Tasks page left open in one browser context picked up a brand-new task the instant a second, separate client self-scheduled a time in another context -- no reload.
+
+**Visual state**: investigated both surfaces named in the task.
+- **Project detail** (`InquiryDetail.tsx`'s Appointments widget): already fine, no code change -- `inquiry.sessions` already lists every appointment with its own `StatusPill`, and REQUESTED already had its own distinct tone (`info`/blue) there, separate from CONFIRMED's green. Confirmed live with a screenshot, not just read from the code.
+- **Calendar** (`Calendar.tsx`): the actual gap -- every appointment block is colored purely by artist, with a dashed accent border reserved for CONSULTATION type; a REQUESTED tattoo-session block looked pixel-identical to a CONFIRMED one. Fixed with a dotted border in the theme's own `--color-info` (same blue `StatusPill` already uses for REQUESTED everywhere else -- no new fill color, Editorial Gold-safe) plus a "Requested: " title prefix, mirroring the existing "Consult: " pattern. The two treatments never actually collide in practice (self-scheduling only ever creates TATTOO_SESSION rows), so REQUESTED takes precedence when they would. Verified live via screenshot.
+
+## Part 2 -- Approve / Decline
+
+**Judgment call, flagged per the task's own ask**: chose to extend the existing token-lifecycle mechanism and existing deposit-form route rather than build anything new-shaped, for two separate reasons:
+
+- **Deposit form**: extracted `POST /inquiries/:id/deposit-form`'s entire body (inquiries.ts) into `generateAndSendDepositForm` (new export, `lib/deposits.ts`), called identically by the original route (now a thin wrapper, byte-identical response shape) and the new `POST /appointments/:id/approve`. Same token/expiry minting, same amount math, same real-SMS auto-send via `sendClientSms`, same Conversations logging -- literally the same function, not a parallel copy that could drift. The manual "Send Deposit Form" button is completely untouched behaviorally (re-verified live after the extraction).
+- **Resend link**: deliberately did **NOT** call `POST /inquiries/:id/revise-estimate` (Bug B's own fix from the prior session) for the decline path, even though the task called it "the just-fixed resend flow" -- that route is for an actual price/hours revision and sends an SMS saying so ("the estimate ... has been updated to $X-$Y"), which would be an actively wrong, confusing message when nothing about the estimate changed, only the requested time. Instead reused the exact underlying *mechanism* that fix established (`selfScheduleToken`/`previousSelfScheduleToken`/`selfScheduleTokenExpiresAt`, minted the same way, superseding the same way) directly in the new decline route, with wording that actually matches what happened.
+
+**APPROVE** (`POST /appointments/:id/approve`, `requirePermissionOrSoloArtist("appointments.reschedule")` -- reused, not invented, exactly matching `PATCH /appointments/:id`'s own existing gate):
+1. Price-estimate presence checked **before** any mutation (an approved-but-unpayable appointment would just be a different stall).
+2. Buffer/conflict re-checked fresh (`findBufferConflict`, excluding itself) -- the client's slot was clean when they picked it, but staff may not act right away.
+3. `REQUESTED -> CONFIRMED`, plus `Inquiry.appointmentId` set to this appointment (same singular-slot field `POST /inquiries/:id/schedule` sets for the classic flow) -- **this one mattered**: without it, `lib/deposits.ts`'s own `issueGiftCardForPaidDeposit` (unrelated, pre-existing payment code) would have found `plannedSession` null and `alreadyBooked` false when this deposit form eventually gets paid, and auto-booked a **second**, duplicate `Appointment` for the exact same slot alongside the real one. Found by reading that function's own logic before writing any new code, not live -- fixed by widening its `alreadyBooked` check to also honor `Inquiry.appointmentId` in the un-planned branch.
+4. Deposit form generated + sent through the shared function above.
+
+**DECLINE** (`POST /appointments/:id/decline`, same permission gate): requires a reason (stored via `AppointmentNote`, matching the existing internal-commentary pattern rather than a new schema column); cancels the appointment (`CANCELLED`); if the artist still allows self-scheduling, clears `selfScheduleBookedAt` (this is what actually reopens the flow -- every self-schedule route checks it first) and mints a fresh token the same way the token-lifecycle fix's own resend path does, texting the client a new link. If the artist no longer allows self-scheduling, declines anyway and says so plainly ("reschedule this manually") instead of erroring.
+
+**Frontend** (`AppointmentDetail.tsx`): Approve/Decline buttons shown only for `status === 'REQUESTED'` and only to `canReschedule` (existing `appointments.reschedule` permission check, already OR'd with the solo-artist bypass flag on this exact page). The pre-existing raw status dropdown stays exactly as it was -- an unrestricted manual override/backup for every transition, not just this one.
+
+## Part 3 -- verification (live, real browser + real HTTP, isolated dev servers)
+
+- **Realtime task**: confirmed above (Part 1).
+- **Approve, happy path**: real client self-scheduled a time -> task appeared live -> Approve clicked on `AppointmentDetail` -> appointment `CONFIRMED`, `Inquiry.appointmentId` set (checked directly against the DB, not just the API response), a real `DepositForm` row created with `proposedStartAt/EndAt` matching the now-confirmed appointment's own time, a real Twilio send attempted. The send itself came back `send_failed` / "Invalid 'To' Phone Number" -- confirmed this is a pre-existing environment limit, not a regression, by checking that the SAME client's earlier, completely untouched estimate-send SMS failed with the identical Twilio error for the identical synthetic `555` test number. Frontend correctly hid the Approve/Decline buttons and showed CONFIRMED on the next load (an early screenshot taken immediately after the click briefly caught the pre-refetch UI state -- a test-script timing artifact, not a product bug, re-confirmed by re-loading fresh).
+- **Conflict case**: booked a second, real, overlapping appointment for the same artist via the ordinary staff booking route -- Approve on the original request correctly returned 409 with "This time is no longer available... Decline this request... or reschedule it manually," and left the appointment untouched (still REQUESTED, confirmed). Decline on that same appointment succeeded, reissued a fresh self-scheduling link -- the OLD link correctly showed "A newer link was sent," and the NEW link correctly let the client pick a genuinely different, real, available time end-to-end.
+- **Adversarial, real HTTP**: logged in as an existing ARTIST-role account with no `appointments.reschedule` grant (default-false, unchanged) in a multi-staff studio -- a direct `POST /appointments/:id/approve` and `/decline` both returned real 403s. Logged in as a genuine ARTIST-role (not OWNER-role) sole staff member of their own studio -- the exact `requirePermissionOrSoloArtist` exceptional case -- and the same `approve` call succeeded (200, appointment confirmed, deposit form generated).
+- **Regression check**: the pre-existing, untouched manual "Send Deposit Form" button, exercised live against a classic (non-self-scheduling) inquiry after the `lib/deposits.ts` extraction -- generated and attempted to send exactly as before.
+- Screenshots captured for every scenario above (self-scheduled picker, realtime task appearance, Calendar's REQUESTED styling, Project page's REQUESTED styling, approve success, conflict block, decline modal + success, superseded old link, fresh working link, manual deposit-form regression check).
+
+## Judgment calls flagged
+
+- Reused the underlying self-scheduling token mechanism for decline's resend, not the `revise-estimate` HTTP route itself -- see Part 2's own reasoning.
+- `Inquiry.appointmentId` set on approve (not previously set anywhere in the self-scheduling flow) -- required a matching fix to `issueGiftCardForPaidDeposit`'s duplicate-booking guard, found by reading, not by reproducing a live bug.
+- A missing price estimate blocks Approve outright (400, before any mutation) rather than confirming the appointment and leaving deposit generation to fail silently after the fact.
+- Found, and fixed as a small aside, a genuine pre-existing gap while extracting `generateAndSendDepositForm`: the original inline route never emitted any realtime invalidation at all -- another staff member with the same project open never saw a deposit form appear live. Added `emitInvalidation({type: "inquiry.updated", ...})` to the shared function, matching this feature's own "every mutation broadcasts" standing rule, since both callers now share this exact code.
+- Decline reason stored via `AppointmentNote` rather than a new schema column -- reuses an existing, already-visible mechanism instead of adding a migration for one string field.
+
+## Cleanup
+
+All scratch scripts (client/inquiry/appointment seeding, password resets for test accounts, DB-state checks) deleted from `apps/api/src/` after use -- confirmed none remain. Isolated dev servers (API :4099, web :5183) killed. Test data (several new clients/inquiries/appointments, two existing dev accounts' passwords reset to a known test value for login) left in place, per this file's own standing convention.
+
+## Commits
+
+Part 1: `00e432e`. Part 2: `0f04c4a`. This entry: below.
+
