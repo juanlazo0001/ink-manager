@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { prisma } from "./prisma";
 import { InquiryStatus, AppointmentStatus, AppointmentType } from "../../generated/prisma/enums";
 import { diffObjects, logAudit } from "./audit";
@@ -10,9 +11,188 @@ import { PUBLIC_APP_URL } from "./publicUrl";
 import { getChargeableConnectedAccountId } from "./stripeConnect";
 import { createDirectChargeCheckoutSession } from "./stripe";
 import { findBufferConflict, resolveSchedulingBufferMs } from "./schedulingConflict";
+import { resolveDepositAmounts, resolveDepositTiers } from "./depositTiers";
 import { emitInvalidation } from "./realtime/registry";
 
 export type PaidVia = "STRIPE" | "MANUAL";
+
+const DEPOSIT_TOKEN_TTL_HOURS = 48;
+
+// Mirrors inquiries.ts's own PROJECT_STATUSES exactly (SCHEDULING/
+// WAITLISTED/CONFIRMED) -- duplicated as a literal here rather than
+// imported, since that constant lives in a route file and a lib module
+// importing from a route would invert this codebase's usual dependency
+// direction. DEPOSIT_PENDING is deliberately not included, same reasoning
+// as inquiries.ts's own comment on PROJECT_STATUSES: it's checked
+// separately below.
+const DEPOSIT_FORM_ALLOWED_STATUSES: InquiryStatus[] = [
+  InquiryStatus.SCHEDULING,
+  InquiryStatus.WAITLISTED,
+  InquiryStatus.CONFIRMED,
+];
+
+export interface GenerateAndSendDepositFormOptions {
+  studioId: string;
+  actorUserId: string;
+  proposedStartAt?: string;
+  proposedEndAt?: string;
+  autoSend?: boolean;
+  plannedSessionId?: string;
+}
+
+export type GenerateAndSendDepositFormResult =
+  | {
+      ok: true;
+      depositForm: Awaited<ReturnType<typeof prisma.depositForm.create>>;
+      depositUrl: string;
+      depositSendResult: Awaited<ReturnType<typeof sendClientSms>> | null;
+    }
+  | { ok: false; status: number; error: string };
+
+// Extracted from POST /inquiries/:id/deposit-form (Package M) so a second
+// caller -- the front-desk approval flow's APPROVE action (routes/
+// appointments.ts), confirming a client's self-scheduled REQUESTED
+// appointment -- generates and sends a deposit form through the EXACT
+// same path (same token/expiry minting, same amount math, same real-SMS
+// auto-send, same Conversations logging) rather than a second copy of it.
+// Same "called identically by two call sites" precedent as
+// issueGiftCardForPaidDeposit above. Auth/permission checks stay at each
+// route's own middleware layer -- this function trusts studioId/
+// actorUserId as already-authenticated.
+export async function generateAndSendDepositForm(
+  inquiryId: string,
+  opts: GenerateAndSendDepositFormOptions,
+): Promise<GenerateAndSendDepositFormResult> {
+  const { studioId, actorUserId, proposedStartAt, proposedEndAt, autoSend, plannedSessionId } = opts;
+
+  const inquiry = await prisma.inquiry.findUnique({
+    where: { id: inquiryId },
+    include: {
+      depositForms: { orderBy: { sessionNumber: "desc" }, take: 1 },
+      client: true,
+      service: true,
+      plannedSessions: true,
+    },
+  });
+  if (!inquiry || inquiry.studioId !== studioId) {
+    return { ok: false, status: 404, error: "Inquiry not found" };
+  }
+
+  if (inquiry.status !== InquiryStatus.DEPOSIT_PENDING && !DEPOSIT_FORM_ALLOWED_STATUSES.includes(inquiry.status)) {
+    return {
+      ok: false,
+      status: 400,
+      error: "A deposit form can only be sent while DEPOSIT_PENDING or after the inquiry has converted to a Project",
+    };
+  }
+
+  if (!inquiry.assignedArtistId) {
+    return { ok: false, status: 400, error: "Assign an artist before requesting a deposit" };
+  }
+
+  if (inquiry.priceEstimateLow == null || inquiry.priceEstimateHigh == null) {
+    return { ok: false, status: 400, error: "This inquiry is missing a price estimate" };
+  }
+
+  let plannedSession: (typeof inquiry.plannedSessions)[number] | null = null;
+  if (plannedSessionId !== undefined) {
+    plannedSession = inquiry.plannedSessions.find((s) => s.id === plannedSessionId) ?? null;
+    if (!plannedSession) {
+      return { ok: false, status: 400, error: "plannedSessionId must belong to this project's session plan" };
+    }
+  }
+
+  let latest: { id: string; signedAt: Date | null; sessionNumber: number } | undefined;
+  let isNewSession: boolean;
+  let sessionNumber: number;
+
+  if (plannedSession) {
+    if (plannedSession.depositFormId) {
+      const linkedForm = await prisma.depositForm.findUnique({ where: { id: plannedSession.depositFormId } });
+      if (linkedForm?.signedAt) {
+        return { ok: false, status: 400, error: "This planned session's deposit form has already been signed" };
+      }
+      latest = linkedForm ?? undefined;
+    }
+    isNewSession = !latest;
+    sessionNumber = plannedSession.sessionNumber;
+  } else {
+    latest = inquiry.depositForms[0];
+    isNewSession = !latest || latest.signedAt != null;
+    sessionNumber = (latest?.sessionNumber ?? 0) + 1;
+  }
+
+  let proposedStart: Date | null = null;
+  let proposedEnd: Date | null = null;
+  if (isNewSession) {
+    if (typeof proposedStartAt !== "string" || typeof proposedEndAt !== "string") {
+      return { ok: false, status: 400, error: "A tentative appointment time is required before generating a deposit form" };
+    }
+    proposedStart = new Date(proposedStartAt);
+    proposedEnd = new Date(proposedEndAt);
+    if (Number.isNaN(proposedStart.getTime()) || Number.isNaN(proposedEnd.getTime()) || proposedStart >= proposedEnd) {
+      return { ok: false, status: 400, error: "proposedStartAt must be a valid date before proposedEndAt" };
+    }
+  }
+
+  const settings = await prisma.studioSettings.findUnique({ where: { studioId } });
+  const tiers = resolveDepositTiers(settings?.depositTiers);
+
+  const average = (inquiry.priceEstimateLow + inquiry.priceEstimateHigh) / 2;
+  const { depositAmount, totalCharged } = resolveDepositAmounts(inquiry.service, average, tiers, settings?.depositFeeCents);
+  const feeAmount = totalCharged - depositAmount;
+
+  const token = crypto.randomBytes(32).toString("hex");
+  const tokenExpiresAt = new Date(Date.now() + DEPOSIT_TOKEN_TTL_HOURS * 60 * 60 * 1000);
+
+  const depositForm = isNewSession
+    ? await prisma.depositForm.create({
+        data: {
+          inquiryId,
+          sessionNumber,
+          token,
+          tokenExpiresAt,
+          depositAmount,
+          feeAmount,
+          totalCharged,
+          proposedStartAt: proposedStart,
+          proposedEndAt: proposedEnd,
+        },
+      })
+    : await prisma.depositForm.update({
+        where: { id: latest!.id },
+        data: { token, tokenExpiresAt, depositAmount, feeAmount, totalCharged },
+      });
+
+  if (plannedSession && isNewSession) {
+    await prisma.plannedSession.update({ where: { id: plannedSession.id }, data: { depositFormId: depositForm.id } });
+  }
+
+  const depositUrl = await shortenUrl(`${PUBLIC_APP_URL}/deposit/${token}`);
+
+  let depositSendResult: Awaited<ReturnType<typeof sendClientSms>> | null = null;
+  if (autoSend !== false) {
+    const studio = await prisma.studio.findUnique({ where: { id: studioId }, select: { name: true } });
+    depositSendResult = await sendClientSms({
+      studioId,
+      clientId: inquiry.clientId,
+      conversationId: (await getOrCreateClientConversation(studioId, inquiry.clientId, actorUserId)).conversation.id,
+      body: `Hi ${inquiry.client.firstName}, here's your deposit form to secure your appointment with ${studio?.name ?? "our studio"}: ${depositUrl} (expires in 48 hours)`,
+      actorUserId,
+    });
+  }
+
+  // Real-time audit gap, found while extracting this function: the
+  // original inline route never broadcast anything -- another staff
+  // member with this same project open never saw a freshly generated/
+  // resent deposit form appear live. Fixed here rather than left alone,
+  // since this is the exact function both the manual button and the new
+  // approve flow now share, and "every mutation broadcasts" is this
+  // feature's own standing rule.
+  emitInvalidation({ type: "inquiry.updated", studioId, inquiryId });
+
+  return { ok: true, depositForm, depositUrl, depositSendResult };
+}
 
 export type IssueGiftCardResult =
   | { ok: true; giftCardId: string; alreadyProcessed: boolean }
@@ -318,7 +498,18 @@ export async function issueGiftCardForPaidDeposit(
     // Already booked -- e.g. staff manually booked this exact session in
     // the narrow window between the client signing and this payment
     // confirming. Never double-book on top of that.
-    const alreadyBooked = plannedSession?.appointmentId != null;
+    //
+    // Front-desk approval, Part 2: the un-planned (!plannedSession) branch
+    // used to be able to assume freshInquiry.appointmentId was always null
+    // here -- true for the classic flow, where no real Appointment exists
+    // until THIS auto-book creates one. That stopped holding once a client
+    // could self-schedule their own REQUESTED appointment, then staff
+    // approves it (setting Inquiry.appointmentId) and generates this exact
+    // deposit form with proposedStartAt/EndAt equal to that already-real
+    // appointment's own time -- without this OR, a later payment would
+    // find plannedSession null, alreadyBooked false, and create a SECOND,
+    // duplicate Appointment for the same slot alongside the real one.
+    const alreadyBooked = plannedSession ? plannedSession.appointmentId != null : freshInquiry?.appointmentId != null;
 
     if (freshInquiry?.assignedArtistId && !alreadyBooked) {
       const assignedArtist = await prisma.artist.findUnique({

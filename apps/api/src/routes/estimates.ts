@@ -6,6 +6,7 @@ import { logAudit } from "../lib/audit";
 import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 import { redactedSessionHours } from "../lib/plannedSessions";
 import { emitInvalidation } from "../lib/realtime/registry";
+import { SELF_SCHEDULE_TOKEN_TTL_DAYS } from "../lib/selfSchedule";
 
 const router = Router();
 
@@ -13,10 +14,6 @@ const router = Router();
 // every estimate — adjust here if the studio's actual policy text changes.
 const COLLABORATIVE_DESIGN_POLICY =
   "No design is drawn in advance — it is created together with the client on the day of the appointment.";
-
-// Client self-scheduling exploration: same 7-day convention as
-// ESTIMATE_TOKEN_TTL_DAYS/REVISION_TOKEN_TTL_DAYS in inquiries.ts.
-const SELF_SCHEDULE_TOKEN_TTL_DAYS = 7;
 
 // Token-lifecycle bug fix: the three states an ALREADY-RESPONDED, self-
 // scheduling-eligible estimate can be in -- shared between GET /verify and

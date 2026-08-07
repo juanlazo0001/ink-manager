@@ -1,4 +1,5 @@
 import { Router } from "express";
+import crypto from "node:crypto";
 import { prisma } from "../lib/prisma";
 import { Prisma } from "../../generated/prisma/client";
 import { requireAuth, requireRole } from "../middleware/auth";
@@ -7,6 +8,7 @@ import { requirePermission, requirePermissionOrSoloArtist } from "../lib/permiss
 import { diffObjects, logAudit } from "../lib/audit";
 import { validateGiftCardsForAttachment, generateUniqueGiftCardCode, computeGiftCardExpiration } from "../lib/giftCards";
 import { resolveRequiredDepositCents, resolveDepositTiers } from "../lib/depositTiers";
+import { generateAndSendDepositForm } from "../lib/deposits";
 import { isSameCalendarDay } from "../lib/dateRange";
 import {
   findBufferConflict,
@@ -24,6 +26,8 @@ import { NOTE_AUTHOR_SELECT, canModifyNote, isBlankHtml, isValidAttachments } fr
 import { getChargeableConnectedAccountId } from "../lib/stripeConnect";
 import { createDirectChargeCheckoutSession } from "../lib/stripe";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
+import { shortenUrl } from "../lib/shortLinks";
+import { SELF_SCHEDULE_TOKEN_TTL_DAYS } from "../lib/selfSchedule";
 
 const router = Router();
 
@@ -1157,6 +1161,248 @@ router.patch("/:id", requirePermissionOrSoloArtist("appointments.reschedule"), a
   emitInvalidation({ type: "appointment.changed", studioId: req.user!.studioId });
 
   res.json({ ...updated, bufferWarning: formatBufferWarning(conflict, bufferMs) });
+});
+
+// Front-desk approval, Part 2: the confirm side of the client self-
+// scheduling flow -- a client picking their own time only ever creates a
+// REQUESTED appointment (see selfSchedule.ts's own respond route), staff
+// still has to actively confirm it. One step from the staff's
+// perspective: re-checks the buffer/conflict window fresh (time has
+// passed since the request -- another appointment could have taken it),
+// flips REQUESTED -> CONFIRMED, links it as the Inquiry's own singular
+// appointmentId (same field POST /inquiries/:id/schedule sets for the
+// classic flow -- see lib/deposits.ts's own alreadyBooked comment for why
+// this matters), and generates + sends the deposit form through the EXACT
+// same mechanism (lib/deposits.ts's generateAndSendDepositForm) staff's
+// existing manual "Send Deposit Form" button already uses -- same link,
+// same real-SMS auto-send, same Conversations logging. That manual button
+// stays completely untouched as a backup if this ever needs a retry.
+//
+// Same requirePermissionOrSoloArtist("appointments.reschedule") gate as
+// PATCH /:id above -- reusing the existing scheduling-related matrix key
+// rather than inventing a new one, per this feature's own spec. A studio
+// that hasn't granted an ARTIST scheduling rights still can't approve
+// anything; a genuine solo studio's own artist still can, same exception
+// PATCH /:id already relies on.
+router.post("/:id/approve", requirePermissionOrSoloArtist("appointments.reschedule"), async (req, res) => {
+  const id = req.params.id as string;
+
+  const appointment = await prisma.appointment.findUnique({ where: { id } });
+  if (!appointment || appointment.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Appointment not found" });
+  }
+
+  if (req.viaSoloArtistBypass) {
+    const ownArtist = await prisma.artist.findUnique({ where: { userId: req.user!.userId }, select: { id: true } });
+    if (!ownArtist || appointment.artistId !== ownArtist.id) {
+      return res.status(403).json({ error: "As a solo artist, you can only manage your own appointments" });
+    }
+  }
+
+  if (appointment.status !== AppointmentStatus.REQUESTED) {
+    return res.status(400).json({ error: "Only a requested appointment can be approved" });
+  }
+
+  const inquiry = await prisma.inquiry.findUnique({
+    where: { id: appointment.inquiryId },
+    select: { id: true, appointmentId: true, priceEstimateLow: true, priceEstimateHigh: true },
+  });
+  if (!inquiry) {
+    return res.status(404).json({ error: "This appointment's project was not found" });
+  }
+
+  // Checked BEFORE any mutation -- approving an appointment whose deposit
+  // form can't actually be generated (missing price estimate; extremely
+  // rare, but possible: PATCH /estimates/respond/:token never strictly
+  // required one) would leave a CONFIRMED appointment with no way for the
+  // client to pay, exactly the "stalled process" this feature exists to
+  // fix. Staff fixes the price (e.g. via Revise Estimate) and retries.
+  if (inquiry.priceEstimateLow == null || inquiry.priceEstimateHigh == null) {
+    return res.status(400).json({ error: "This inquiry is missing a price estimate -- add one before approving" });
+  }
+
+  const [studioSettings, artist] = await Promise.all([
+    prisma.studioSettings.findUnique({
+      where: { studioId: req.user!.studioId },
+      select: { schedulingBufferMinutes: true },
+    }),
+    prisma.artist.findUnique({ where: { id: appointment.artistId }, select: { schedulingBufferMinutes: true } }),
+  ]);
+  const bufferMs = resolveSchedulingBufferMs(artist?.schedulingBufferMinutes, studioSettings?.schedulingBufferMinutes);
+
+  // The client's slot was checked for conflicts at the moment they picked
+  // it (selfSchedule.ts's own respond route) -- re-checked here too, since
+  // staff may not act on this task right away and another appointment for
+  // the same artist could have been booked in the meantime. Excludes this
+  // appointment itself so it never conflicts with its own row.
+  const conflict = await findBufferConflict(appointment.artistId, appointment.startTime, appointment.endTime, id, bufferMs);
+  if (conflict) {
+    return res.status(409).json({
+      error: "This time is no longer available -- another appointment now conflicts with it. Decline this request so the client can pick a new time, or reschedule it manually.",
+    });
+  }
+
+  const [updated] = await prisma.$transaction([
+    prisma.appointment.update({ where: { id }, data: { status: AppointmentStatus.CONFIRMED } }),
+    ...(inquiry.appointmentId == null
+      ? [prisma.inquiry.update({ where: { id: inquiry.id }, data: { appointmentId: id } })]
+      : []),
+  ]);
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Appointment",
+    entityId: id,
+    action: "approve_requested_appointment",
+    changes: { status: AppointmentStatus.CONFIRMED },
+  });
+
+  emitInvalidation({ type: "appointment.changed", studioId: req.user!.studioId });
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: inquiry.id });
+
+  const depositResult = await generateAndSendDepositForm(inquiry.id, {
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    proposedStartAt: updated.startTime.toISOString(),
+    proposedEndAt: updated.endTime.toISOString(),
+  });
+
+  if (!depositResult.ok) {
+    // The appointment is already confirmed regardless (price was
+    // pre-validated above, so this branch should only ever be reached by a
+    // genuine, unexpected failure) -- surface it separately rather than
+    // rolling back a real confirmation, same best-effort philosophy as the
+    // deposit form's own SMS send. Staff still has the manual "Send
+    // Deposit Form" button as a backup.
+    return res.status(200).json({ appointment: updated, depositForm: null, depositFormError: depositResult.error });
+  }
+
+  res.json({
+    appointment: updated,
+    depositForm: depositResult.depositForm,
+    depositUrl: depositResult.depositUrl,
+    depositSendResult: depositResult.depositSendResult,
+  });
+});
+
+// Front-desk approval, Part 2: the decline side -- the requested time
+// doesn't work (already covered by another appointment, artist's not
+// actually available then, etc.). Cancels the request and, reusing the
+// exact selfScheduleToken/previousSelfScheduleToken mechanism Bug B's
+// token-lifecycle fix established (see estimates.ts's PROCEED branch and
+// inquiries.ts's revise-estimate resend branch), reopens self-scheduling
+// with a fresh link so the client can pick a different time -- without
+// this, selfScheduleBookedAt would stay permanently set from their first
+// (now-declined) pick and every self-schedule route would keep reporting
+// "already booked" forever. Deliberately NOT a call to POST
+// /inquiries/:id/revise-estimate -- that route is for an actual price/
+// hours change and sends an SMS saying so ("the estimate ... has been
+// updated to $X-$Y"), which would be a wrong, confusing message here
+// where nothing about the estimate itself changed.
+router.post("/:id/decline", requirePermissionOrSoloArtist("appointments.reschedule"), async (req, res) => {
+  const id = req.params.id as string;
+  const { reason } = req.body ?? {};
+
+  if (typeof reason !== "string" || reason.trim().length === 0) {
+    return res.status(400).json({ error: "A reason is required to decline a requested appointment" });
+  }
+
+  const appointment = await prisma.appointment.findUnique({
+    where: { id },
+    include: {
+      inquiryProject: {
+        include: {
+          client: { select: { firstName: true } },
+          assignedArtist: { select: { allowsClientSelfScheduling: true } },
+        },
+      },
+    },
+  });
+  if (!appointment || appointment.studioId !== req.user!.studioId) {
+    return res.status(404).json({ error: "Appointment not found" });
+  }
+
+  if (req.viaSoloArtistBypass) {
+    const ownArtist = await prisma.artist.findUnique({ where: { userId: req.user!.userId }, select: { id: true } });
+    if (!ownArtist || appointment.artistId !== ownArtist.id) {
+      return res.status(403).json({ error: "As a solo artist, you can only manage your own appointments" });
+    }
+  }
+
+  if (appointment.status !== AppointmentStatus.REQUESTED) {
+    return res.status(400).json({ error: "Only a requested appointment can be declined" });
+  }
+
+  const trimmedReason = reason.trim();
+  const inquiry = appointment.inquiryProject;
+
+  const updated = await prisma.appointment.update({ where: { id }, data: { status: AppointmentStatus.CANCELLED } });
+
+  await prisma.appointmentNote.create({
+    data: {
+      studioId: req.user!.studioId,
+      appointmentId: id,
+      authorId: req.user!.userId,
+      bodyHtml: `<p>Declined requested time: ${trimmedReason.replace(/</g, "&lt;")}</p>`,
+    },
+  });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Appointment",
+    entityId: id,
+    action: "decline_requested_appointment",
+    changes: { status: AppointmentStatus.CANCELLED, reason: trimmedReason },
+  });
+
+  emitInvalidation({ type: "appointment.changed", studioId: req.user!.studioId });
+
+  // Same eligibility shape as estimates.ts's PROCEED branch and
+  // inquiries.ts's revise-estimate resend branch, minus their own
+  // "selfScheduleBookedAt == null" gate -- that field being SET is exactly
+  // why we're here (the client already booked once; we're about to
+  // deliberately un-book it below so they can try again).
+  const selfScheduleEligible =
+    inquiry.assignedArtist?.allowsClientSelfScheduling === true &&
+    inquiry.timeEstimateHoursMin != null &&
+    inquiry.timeEstimateHoursMax != null;
+
+  if (!selfScheduleEligible) {
+    return res.json({
+      appointment: updated,
+      selfScheduleReissued: false,
+      message: "This artist no longer allows client self-scheduling -- reschedule this manually.",
+    });
+  }
+
+  const freshSelfScheduleToken = crypto.randomBytes(32).toString("hex");
+  const updatedInquiry = await prisma.inquiry.update({
+    where: { id: inquiry.id },
+    data: {
+      selfScheduleBookedAt: null,
+      ...(inquiry.selfScheduleToken ? { previousSelfScheduleToken: inquiry.selfScheduleToken } : {}),
+      selfScheduleToken: freshSelfScheduleToken,
+      selfScheduleTokenExpiresAt: new Date(Date.now() + SELF_SCHEDULE_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000),
+    },
+  });
+
+  const scheduleUrl = await shortenUrl(`${PUBLIC_APP_URL}/schedule/${freshSelfScheduleToken}`);
+  const studio = await prisma.studio.findUnique({ where: { id: req.user!.studioId }, select: { name: true } });
+
+  const scheduleSendResult = await sendClientSms({
+    studioId: req.user!.studioId,
+    clientId: updatedInquiry.clientId,
+    conversationId: (await getOrCreateClientConversation(req.user!.studioId, updatedInquiry.clientId, req.user!.userId))
+      .conversation.id,
+    body: `Hi ${inquiry.client.firstName}, unfortunately your requested time with ${studio?.name ?? "us"} didn't work out. Please pick a new time here: ${scheduleUrl} (expires in 7 days)`,
+    actorUserId: req.user!.userId,
+  });
+
+  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: inquiry.id });
+
+  res.json({ appointment: updated, selfScheduleReissued: true, scheduleUrl, scheduleSendResult });
 });
 
 // Manually-written commentary log scoped to this one session -- same

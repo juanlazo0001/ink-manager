@@ -23,9 +23,11 @@ import { syncPrimaryEmail, syncPrimaryPhone } from "../lib/clientContacts";
 import { findBufferConflict, formatBufferWarning, resolveSchedulingBufferMs } from "../lib/schedulingConflict";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { emitInvalidation } from "../lib/realtime/registry";
-import { resolveDepositAmounts, resolveRequiredDepositCents, resolveDepositTiers } from "../lib/depositTiers";
+import { resolveRequiredDepositCents, resolveDepositTiers } from "../lib/depositTiers";
+import { generateAndSendDepositForm } from "../lib/deposits";
 import { generateUniqueReferralCode } from "../lib/referrals";
 import { studioHasActiveMembership } from "../lib/artistAccess";
+import { SELF_SCHEDULE_TOKEN_TTL_DAYS } from "../lib/selfSchedule";
 import { IntakeFieldKind } from "../../generated/prisma/enums";
 import { NOTE_AUTHOR_SELECT, canModifyNote, isBlankHtml, isValidAttachments } from "../lib/notes";
 import { getEffectiveIntakeFormFields, validateCustomFieldAnswers } from "../lib/intakeFormFields";
@@ -36,7 +38,6 @@ import { buildImageMeta, mergeImageMeta, resolveImageMeta } from "../lib/imageMe
 const router = Router();
 
 const ESTIMATE_TOKEN_TTL_DAYS = 7;
-const DEPOSIT_TOKEN_TTL_HOURS = 48;
 // Flash gallery, Part 3: longer than the deposit link's 48h -- a flash
 // booking's reservation (PENDING_APPROVAL, for a one-of-one piece) is
 // already staked out by the time this token goes out, so there's less
@@ -1749,9 +1750,6 @@ router.post("/:id/send-estimate", requireAuth, requirePermission("inquiries.send
 });
 
 const REVISION_TOKEN_TTL_DAYS = 7;
-// Same 7-day convention as estimates.ts's own SELF_SCHEDULE_TOKEN_TTL_DAYS
-// -- this route mints a fresh self-schedule token too now (see below).
-const SELF_SCHEDULE_TOKEN_TTL_DAYS = 7;
 
 // The ONLY sanctioned way to change a Project's (already-converted
 // inquiry's) estimate -- PATCH /:id above hard-blocks the estimate fields
@@ -2697,165 +2695,24 @@ router.post("/:id/deposit-form", requireAuth, requirePermission("inquiries.edit"
   const id = req.params.id as string;
   const { proposedStartAt, proposedEndAt, autoSend, plannedSessionId } = req.body ?? {};
 
-  const inquiry = await prisma.inquiry.findUnique({
-    where: { id },
-    include: {
-      depositForms: { orderBy: { sessionNumber: "desc" }, take: 1 },
-      client: true,
-      service: true,
-      plannedSessions: true,
-    },
+  if (plannedSessionId !== undefined && typeof plannedSessionId !== "string") {
+    return res.status(400).json({ error: "plannedSessionId must be a string" });
+  }
+
+  const result = await generateAndSendDepositForm(id, {
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    proposedStartAt: typeof proposedStartAt === "string" ? proposedStartAt : undefined,
+    proposedEndAt: typeof proposedEndAt === "string" ? proposedEndAt : undefined,
+    autoSend,
+    plannedSessionId,
   });
-  if (!inquiry || inquiry.studioId !== req.user!.studioId) {
-    return res.status(404).json({ error: "Inquiry not found" });
+
+  if (!result.ok) {
+    return res.status(result.status).json({ error: result.error });
   }
 
-  if (inquiry.status !== InquiryStatus.DEPOSIT_PENDING && !PROJECT_STATUSES.includes(inquiry.status)) {
-    return res.status(400).json({
-      error: "A deposit form can only be sent while DEPOSIT_PENDING or after the inquiry has converted to a Project",
-    });
-  }
-
-  // An artist must be assigned before ANY deposit form -- the first
-  // session's or a later one's -- can be requested. Covers both call
-  // shapes this one route handles (the original single-deposit flow and
-  // Package M's "send another deposit form" for a later planned session).
-  if (!inquiry.assignedArtistId) {
-    return res.status(400).json({ error: "Assign an artist before requesting a deposit" });
-  }
-
-  if (inquiry.priceEstimateLow == null || inquiry.priceEstimateHigh == null) {
-    return res.status(400).json({ error: "This inquiry is missing a price estimate" });
-  }
-
-  // Multi-session planning: when a specific planned session is named, THAT
-  // session (not "the latest row across the whole inquiry") decides
-  // whether this is a fresh generation or a resend, and its own declared
-  // sessionNumber is used verbatim instead of an incrementing counter --
-  // this is what lets staff generate session 3's deposit form before
-  // session 2's even exists, with no forced sequencing.
-  let plannedSession: (typeof inquiry.plannedSessions)[number] | null = null;
-  if (plannedSessionId !== undefined) {
-    if (typeof plannedSessionId !== "string") {
-      return res.status(400).json({ error: "plannedSessionId must be a string" });
-    }
-    plannedSession = inquiry.plannedSessions.find((s) => s.id === plannedSessionId) ?? null;
-    if (!plannedSession) {
-      return res.status(400).json({ error: "plannedSessionId must belong to this project's session plan" });
-    }
-  }
-
-  let latest: { id: string; signedAt: Date | null; sessionNumber: number } | undefined;
-  let isNewSession: boolean;
-  let sessionNumber: number;
-
-  if (plannedSession) {
-    if (plannedSession.depositFormId) {
-      const linkedForm = await prisma.depositForm.findUnique({ where: { id: plannedSession.depositFormId } });
-      if (linkedForm?.signedAt) {
-        return res.status(400).json({ error: "This planned session's deposit form has already been signed" });
-      }
-      latest = linkedForm ?? undefined;
-    }
-    isNewSession = !latest;
-    sessionNumber = plannedSession.sessionNumber;
-  } else {
-    // Existing un-planned behavior, completely unchanged.
-    latest = inquiry.depositForms[0];
-    isNewSession = !latest || latest.signedAt != null;
-    sessionNumber = (latest?.sessionNumber ?? 0) + 1;
-  }
-
-  // A tentative time is required whenever this creates a fresh session --
-  // staff must commit to some proposed slot (suggested or hand-picked)
-  // before that session's client-facing link is created at all. Resending
-  // the current unsigned session's form (token rotation only, below)
-  // leaves whatever tentative time is already set untouched -- PATCH
-  // .../deposit-form/proposed-time is the only way to change it after the
-  // fact, since that route doesn't rotate the token and so never
-  // invalidates a link already shared with the client.
-  let proposedStart: Date | null = null;
-  let proposedEnd: Date | null = null;
-  if (isNewSession) {
-    if (typeof proposedStartAt !== "string" || typeof proposedEndAt !== "string") {
-      return res.status(400).json({ error: "A tentative appointment time is required before generating a deposit form" });
-    }
-    proposedStart = new Date(proposedStartAt);
-    proposedEnd = new Date(proposedEndAt);
-    if (Number.isNaN(proposedStart.getTime()) || Number.isNaN(proposedEnd.getTime()) || proposedStart >= proposedEnd) {
-      return res.status(400).json({ error: "proposedStartAt must be a valid date before proposedEndAt" });
-    }
-  }
-
-  const settings = await prisma.studioSettings.findUnique({ where: { studioId: req.user!.studioId } });
-  const tiers = resolveDepositTiers(settings?.depositTiers);
-
-  const average = (inquiry.priceEstimateLow + inquiry.priceEstimateHigh) / 2;
-  const { depositAmount, totalCharged } = resolveDepositAmounts(
-    inquiry.service,
-    average,
-    tiers,
-    settings?.depositFeeCents,
-  );
-  const feeAmount = totalCharged - depositAmount;
-
-  const token = crypto.randomBytes(32).toString("hex");
-  const tokenExpiresAt = new Date(Date.now() + DEPOSIT_TOKEN_TTL_HOURS * 60 * 60 * 1000);
-
-  const depositForm = isNewSession
-    ? await prisma.depositForm.create({
-        data: {
-          inquiryId: id,
-          sessionNumber,
-          token,
-          tokenExpiresAt,
-          depositAmount,
-          feeAmount,
-          totalCharged,
-          proposedStartAt: proposedStart,
-          proposedEndAt: proposedEnd,
-        },
-      })
-    : await prisma.depositForm.update({
-        where: { id: latest!.id },
-        data: { token, tokenExpiresAt, depositAmount, feeAmount, totalCharged },
-      });
-
-  // Only ever runs once per planned session -- isNewSession is only true
-  // for a planned session when it had no depositFormId yet (see above),
-  // and the unique constraint on PlannedSession.depositFormId means this
-  // can never silently double-link.
-  if (plannedSession && isNewSession) {
-    await prisma.plannedSession.update({ where: { id: plannedSession.id }, data: { depositFormId: depositForm.id } });
-  }
-
-  const depositUrl = await shortenUrl(`${PUBLIC_APP_URL}/deposit/${token}`);
-
-  // Auto-send through the same real-SMS path as the estimate auto-send --
-  // "Send Deposit Form"/"Resend Deposit Form" across InquiryDetail/
-  // ClientDetail otherwise generated a link with nothing to show for it in
-  // Conversations. Best-effort, same as the estimate: the form itself is
-  // already generated above regardless of whether the text goes out, so
-  // staff still has depositUrl to share manually if this skips/fails.
-  // autoSend: false is the composer's own "create-then-insert-link" flow
-  // (ConversationsPanel) opting out -- it inserts the link into the draft
-  // for staff to compose their own message around before sending, so an
-  // automatic send here would just duplicate what the composer's own Send
-  // button is about to do.
-  let depositSendResult: Awaited<ReturnType<typeof sendClientSms>> | null = null;
-  if (autoSend !== false) {
-    const studio = await prisma.studio.findUnique({ where: { id: req.user!.studioId }, select: { name: true } });
-    depositSendResult = await sendClientSms({
-      studioId: req.user!.studioId,
-      clientId: inquiry.clientId,
-      conversationId: (await getOrCreateClientConversation(req.user!.studioId, inquiry.clientId, req.user!.userId))
-        .conversation.id,
-      body: `Hi ${inquiry.client.firstName}, here's your deposit form to secure your appointment with ${studio?.name ?? "our studio"}: ${depositUrl} (expires in 48 hours)`,
-      actorUserId: req.user!.userId,
-    });
-  }
-
-  res.status(201).json({ ...depositForm, depositUrl, depositSendResult });
+  res.status(201).json({ ...result.depositForm, depositUrl: result.depositUrl, depositSendResult: result.depositSendResult });
 });
 
 // Package D: staff picks (or clears) a tentative, informational-only time

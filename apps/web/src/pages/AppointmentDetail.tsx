@@ -233,6 +233,16 @@ export default function AppointmentDetail() {
   const [updatingStatus, setUpdatingStatus] = useState(false)
   const [statusError, setStatusError] = useState<string | null>(null)
 
+  // Front-desk approval, Part 2.
+  const [approving, setApproving] = useState(false)
+  const [approveError, setApproveError] = useState<string | null>(null)
+  const [approveNotice, setApproveNotice] = useState<string | null>(null)
+  const [showDeclineModal, setShowDeclineModal] = useState(false)
+  const [declineReason, setDeclineReason] = useState('')
+  const [declining, setDeclining] = useState(false)
+  const [declineError, setDeclineError] = useState<string | null>(null)
+  const [declineNotice, setDeclineNotice] = useState<string | null>(null)
+
   const [showMoreMenu, setShowMoreMenu] = useState(false)
   const moreMenuButtonRef = useRef<HTMLButtonElement>(null)
 
@@ -545,6 +555,74 @@ export default function AppointmentDetail() {
     }
   }
 
+  async function handleApprove() {
+    if (!id) return
+    setApproving(true)
+    setApproveError(null)
+    setApproveNotice(null)
+
+    try {
+      const result = await apiFetch<{
+        depositForm: unknown
+        depositUrl: string | null
+        depositSendResult: ClientSendResult | null
+        depositFormError?: string
+      }>(`/appointments/${id}/approve`, { method: 'POST' })
+
+      if (result.depositFormError) {
+        setApproveError(`Confirmed, but the deposit form couldn't be generated: ${result.depositFormError} — use Send Deposit Form on the project instead.`)
+      } else {
+        setApproveNotice(describeSendResult('Deposit form', result.depositSendResult))
+      }
+
+      if (user) queryClient.invalidateQueries({ queryKey: appointmentsQueryKey(user.studioId) })
+      setRefreshIndex((i) => i + 1)
+    } catch (err) {
+      setApproveError(err instanceof Error ? err.message : 'Failed to approve this appointment')
+    } finally {
+      setApproving(false)
+    }
+  }
+
+  function openDeclineModal() {
+    setDeclineReason('')
+    setDeclineError(null)
+    setShowDeclineModal(true)
+  }
+
+  async function handleDecline(event: FormEvent) {
+    event.preventDefault()
+    if (!id) return
+    if (declineReason.trim().length === 0) {
+      setDeclineError('A reason is required.')
+      return
+    }
+
+    setDeclining(true)
+    setDeclineError(null)
+
+    try {
+      const result = await apiFetch<{
+        selfScheduleReissued: boolean
+        scheduleSendResult: ClientSendResult | null
+        message?: string
+      }>(`/appointments/${id}/decline`, { method: 'POST', body: JSON.stringify({ reason: declineReason.trim() }) })
+
+      setDeclineNotice(
+        result.selfScheduleReissued
+          ? describeSendResult('A new scheduling link', result.scheduleSendResult)
+          : (result.message ?? 'Declined.'),
+      )
+      setShowDeclineModal(false)
+      if (user) queryClient.invalidateQueries({ queryKey: appointmentsQueryKey(user.studioId) })
+      setRefreshIndex((i) => i + 1)
+    } catch (err) {
+      setDeclineError(err instanceof Error ? err.message : 'Failed to decline this appointment')
+    } finally {
+      setDeclining(false)
+    }
+  }
+
   function openRescheduleModal() {
     if (!appointment) return
     const start = new Date(appointment.startTime)
@@ -744,6 +822,35 @@ export default function AppointmentDetail() {
                         <span className="hidden text-xs font-medium md:inline">Message</span>
                       </button>
                     )}
+                    {/* Front-desk approval, Part 2: the primary, recommended
+                        path for a client-self-scheduled REQUESTED
+                        appointment -- re-checks for conflicts, confirms,
+                        and auto-sends the deposit form (Approve), or
+                        cancels and reopens self-scheduling with a fresh
+                        link (Decline). The raw status dropdown just below
+                        still works as a manual override/backup for every
+                        other transition (and for REQUESTED too, if staff
+                        genuinely wants to skip straight past this). */}
+                    {canReschedule && appointment.status === 'REQUESTED' && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={handleApprove}
+                          disabled={approving}
+                          className="rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-bg transition hover:opacity-90 disabled:opacity-60"
+                        >
+                          {approving ? 'Approving…' : 'Approve'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={openDeclineModal}
+                          disabled={approving}
+                          className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg-secondary transition hover:bg-surface disabled:opacity-60"
+                        >
+                          Decline
+                        </button>
+                      </>
+                    )}
                     {canReschedule ? (
                       <>
                         <select
@@ -839,6 +946,10 @@ export default function AppointmentDetail() {
 
                 {statusError && <p className="mt-2 text-sm text-danger">{statusError}</p>}
                 {archiveError && <p className="mt-2 text-sm text-danger">{archiveError}</p>}
+                {approveError && <p className="mt-2 text-sm text-danger">{approveError}</p>}
+                {approveNotice && <p className="mt-2 text-sm text-success">{approveNotice}</p>}
+                {declineError && <p className="mt-2 text-sm text-danger">{declineError}</p>}
+                {declineNotice && <p className="mt-2 text-sm text-success">{declineNotice}</p>}
 
                 {appointment.archivedAt && (
                   <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
@@ -1585,6 +1696,46 @@ export default function AppointmentDetail() {
                       className="w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
                     >
                       {rescheduling ? 'Rescheduling…' : 'Confirm New Time'}
+                    </button>
+                  </form>
+                </Modal>
+              )}
+
+              {showDeclineModal && (
+                <Modal
+                  title="Decline Requested Time"
+                  onClose={() => {
+                    setShowDeclineModal(false)
+                    setDeclineError(null)
+                  }}
+                >
+                  <form onSubmit={handleDecline} className="space-y-4">
+                    <p className="text-sm text-fg-secondary">
+                      This cancels the requested time. If this artist still allows client self-scheduling, we'll text
+                      the client a fresh link to pick a different one.
+                    </p>
+                    <div>
+                      <label htmlFor="decline-reason" className="mb-1 block text-xs font-medium text-fg-secondary">
+                        Reason (required)
+                      </label>
+                      <textarea
+                        id="decline-reason"
+                        value={declineReason}
+                        onChange={(event) => setDeclineReason(event.target.value)}
+                        disabled={declining}
+                        rows={3}
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-60"
+                      />
+                    </div>
+
+                    {declineError && <p className="text-sm text-danger">{declineError}</p>}
+
+                    <button
+                      type="submit"
+                      disabled={declining}
+                      className="w-full rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                    >
+                      {declining ? 'Declining…' : 'Decline & Notify Client'}
                     </button>
                   </form>
                 </Modal>
