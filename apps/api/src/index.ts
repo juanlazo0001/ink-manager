@@ -48,6 +48,22 @@ import { initRealtime } from "./lib/realtime/io";
 const app = express();
 const port = process.env.PORT || 4000;
 
+// Found live against production, not theorized: without this, Express's
+// req.ip resolves to the immediate TCP peer -- behind Railway's edge
+// proxy, that's an internal hop, not the real client, and it wasn't even
+// stable across requests from the same real client. The two IP-keyed
+// rate limiters below (routes/auth.ts's signupLimiter/
+// resendVerificationLimiter) use express-rate-limit's default
+// req.ip-based keyGenerator, so every request was silently landing in
+// its own fresh bucket -- confirmed via a live signup burst against
+// production returning `ratelimit-remaining: 4` on what should have been
+// well past the limit. `1` trusts exactly the one hop Railway's edge
+// itself adds, so req.ip becomes the real client IP -- and stays safe
+// against a client spoofing its own X-Forwarded-For, since Railway's
+// edge appends (never blindly forwards) the real connecting IP as that
+// trusted hop.
+app.set("trust proxy", 1);
+
 app.use(cors());
 app.use(compression());
 // Stripe webhook signature verification (stripe.webhooks.constructEvent,
