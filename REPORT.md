@@ -8947,3 +8947,47 @@ All `_verify_*.ts` scratch scripts deleted from `apps/api/src/` after use. Isola
 ## Commit
 
 This entry only -- no source changes, since the feature under test needed no code changes.
+
+# Fix: public intake form page invisible to non-JS crawlers (Twilio A2P rejection root cause)
+
+Single session, on `main`. Confirmed the reported problem directly first (not assumed): a plain `curl` against `https://web.inkmanager.app/inquiry/black-hive-ink` returned nothing but the empty SPA shell (`<div id="root"></div>`) -- exactly the failure mode that caused the earlier `/privacy`/`/terms` Twilio A2P 10DLC carrier rejection ("a compliant privacy policy can not be verified"), on a route (`/inquiry/:studioSlug`) that never got the same fix.
+
+## Why this route couldn't reuse the `/privacy`/`/terms` fix as-is
+
+`generate-static-policies.mjs` pre-renders `/privacy` and `/terms` once at build time because their content (`platformPolicies.ts`) is fixed developer copy with no studio in the picture at all. `/inquiry/:studioSlug` is different on both axes: it's per-studio (a build-time snapshot would need to enumerate every active studio slug and go stale the moment a studio edits its form same-day) and there's no natural "redeploy to refresh" cadence for it the way there is for platform copy.
+
+## Approach chosen: request-time SSR in `apps/web/server.mjs`
+
+Went with true request-time server-side rendering (option 2 in the task brief) over a build-time snapshot (option 1), because this app already runs a small custom Node HTTP server in production (`server.mjs`, built for the exact same `/privacy`/`/terms` fix) rather than a static host -- a server-side `fetch()` at request time was a natural fit, not new infrastructure. It's also strictly more correct with no added staleness window: a build-time snapshot needs a list of "known active studio slugs" baked in and goes stale between deploys or when a new studio signs up; request-time SSR handles a brand-new studio's `/inquiry/:slug` correctly from the moment their account exists, zero extra work.
+
+Deliberately shallow: only `studioName` is fetched live (`GET {VITE_API_URL}/studio-settings/public?studioSlug=...`, the exact same public endpoint the client itself calls -- no new API surface). The SMS-consent checkbox and its disclosure language -- the actual thing a carrier reviewer checks for -- is fixed copy in `IntakeForm.tsx`, not studio-configurable, so reproducing the full dynamic field list server-side would have been a second render path for content a crawler doesn't need. `index.html` uses `createRoot(...).render(...)` (not `hydrateRoot`), confirmed by reading `main.tsx`, so injecting this into `#root` is safe: React fully replaces it on mount rather than reconciling against server markup -- no hydration-mismatch risk.
+
+Fails closed to today's behavior: a 3-second timeout, any non-200 from the API, or a missing `VITE_API_URL` all fall back to serving the plain SPA shell unchanged (the client-side "we couldn't find this studio" state still handles an unknown slug correctly) -- an SSR bug or API hiccup degrades to the pre-existing behavior, never a 500 or broken page for a real visitor.
+
+`VITE_API_URL` (already set on Railway for the Vite build step) is read server-side via `process.env.VITE_API_URL` -- same env var, no new config, since Railway exposes service env vars to both the build and the running process.
+
+## Related gap found, not fixed (out of this task's scope)
+
+The consent copy's own links -- both in the always-visible SMS disclosure and the page footer (`PublicPageFooter.tsx`) -- point to `/privacy/:studioSlug` and `/terms/:studioSlug` (the **studio's own** configured policy pages, `PublicPolicyPage.tsx`), not the platform-level `/privacy`/`/terms` that already got the static-generation fix. Those per-studio routes are still client-side-only SPA routes with the identical empty-shell problem this session just fixed for `/inquiry/:studioSlug` -- confirmed the links exist and resolve (200) in the rendered markup, which is what this task asked to verify, but a crawler that actually *follows* those links without executing JS would still see an empty shell. Also noted in passing: `black-hive-ink`'s own `privacyPolicy`/`termsAndConditions` fields are currently `null` (per a direct `GET /studio-settings/public` check), so even a JS-executing visitor sees no real policy text there today -- a content gap, not a code bug. Flagging both since they're the next-most-likely source of a repeat carrier rejection, not fixing them here since the task explicitly scoped this session to the intake form page itself.
+
+## Verification
+
+Build: `npm run build` (web, `tsc -b && vite build && node scripts/generate-static-policies.mjs`) clean. `npx tsc --noEmit -p apps/api` clean.
+
+Local, before deploying: rebuilt with `VITE_API_URL` pointed at the real production API and ran `server.mjs` locally --
+- `curl` against `/inquiry/black-hive-ink` (no JS) returned real content: studio name in the `<title>` and `<h1>`, the exact SMS-consent sentence from `IntakeForm.tsx`, working `<a href>` links to `/privacy/black-hive-ink` and `/terms/black-hive-ink`.
+- `curl` against an unknown slug fell back cleanly to the plain shell (200, no SSR content) -- confirms the fail-closed path works, not just the happy path.
+- Real browser via Playwright (`chromium`, package resolved from an existing npx cache dir since it isn't a project dependency): page loaded, React mounted over the SSR content with **zero console errors**, all 6 real form inputs present and interactive -- confirms the SSR injection doesn't break the live client-rendered form for real visitors.
+- `/privacy` and `/terms` (200, both) unaffected by the `server.mjs` change -- confirmed the existing `STATIC_ROUTES` path still short-circuits before the new inquiry-route branch.
+
+Production, checked twice, ~5 minutes apart (not just once immediately after deploying, per this task's explicit instruction given this exact bug category's history of being checked once and assumed fixed):
+- **Check 1** (~60s after push, confirmed via a background poll rather than a blind guess at deploy timing): `https://web.inkmanager.app/inquiry/black-hive-ink` returned real content -- `<title>Black Hive Ink and Arts — Ink Manager</title>`, the `<h1>`, the full consent sentence, both privacy/terms links. `/privacy` and `/terms` both 200 with correct titles. An unknown-slug inquiry URL returned 200 with a clean shell fallback.
+- **Check 2** (~5 minutes later): identical output on all three URLs -- byte-for-byte same SSR content on `/inquiry/black-hive-ink`, same 200s and titles on `/privacy`/`/terms`. No transient deploy-in-progress state, no regression between checks.
+
+## Commit
+
+`47c33d7` on `main`, pushed to `origin/main` (Railway auto-deploys from this branch).
+
+## Cleanup
+
+Local `.env`-driven test build/server (`PORT=5701`) and its background process killed and confirmed gone via `Get-CimInstance`/`Stop-Process`; scratch Playwright test script removed from both the repo root and the npx cache directory it was run from. `apps/web/.env` and `dist/` left exactly as they were (gitignored, rebuilt locally afterward with the real dev `VITE_API_URL` to restore normal dev state). No other working-tree changes touched.
