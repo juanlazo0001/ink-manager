@@ -118,8 +118,15 @@ function keysFor(event: InvalidationEvent): unknown[][] {
         ["nav-counts"],
         ...(event.inquiryId ? [["inquiry", event.inquiryId]] : []),
       ];
+    // Front-desk approval, Part 1: SELF_SCHEDULED_PENDING (lib/tasks/
+    // selfScheduledPending.ts) is derived live from Appointment rows with
+    // status REQUESTED -- without ["tasks"] here, a client self-scheduling
+    // a time (or staff approving/declining one) never live-updated the
+    // Tasks page/badge for anyone else looking at it, only "appointments"
+    // itself. Same standing rule as every other mutation in this registry:
+    // every real state change broadcasts to every query it could affect.
     case "appointment.changed":
-      return [["appointments"], ["nav-counts"]];
+      return [["appointments"], ["nav-counts"], ["tasks"]];
     case "client.updated":
       return [["clients"], ["client", event.clientId]];
     case "client.imported":

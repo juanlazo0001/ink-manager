@@ -13,13 +13,13 @@ import { truncate, type SystemTask, type TaskSource } from "./types";
 async function fetch(studioId: string, _userId: string): Promise<SystemTask[]> {
   const pending = await prisma.appointment.findMany({
     where: { studioId, status: AppointmentStatus.REQUESTED, archivedAt: null },
-    select: { id: true, createdAt: true, inquiryProject: { select: { description: true } } },
+    select: { id: true, createdAt: true, client: { select: { firstName: true, lastName: true } } },
     orderBy: { createdAt: "asc" },
   });
 
   return pending.map((appt) => ({
     type: "SELF_SCHEDULED_PENDING",
-    title: `Confirm requested time: ${truncate(appt.inquiryProject.description)}`,
+    title: `Review requested appointment — ${truncate(`${appt.client.firstName} ${appt.client.lastName}`)}`,
     entityType: "Appointment",
     entityId: appt.id,
     dismissalKey: appt.id,

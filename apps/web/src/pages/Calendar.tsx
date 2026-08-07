@@ -581,7 +581,7 @@ export default function Calendar() {
     () =>
       (appointments ?? []).map((appt) => ({
         id: appt.id,
-        title: `${appt.appointmentType === 'CONSULTATION' ? 'Consult: ' : ''}${appt.client ? `${appt.client.firstName} ${appt.client.lastName}` : 'Unknown client'}`,
+        title: `${appt.status === 'REQUESTED' ? 'Requested: ' : appt.appointmentType === 'CONSULTATION' ? 'Consult: ' : ''}${appt.client ? `${appt.client.firstName} ${appt.client.lastName}` : 'Unknown client'}`,
         start: new Date(appt.startTime),
         end: new Date(appt.endTime),
         resourceId: appt.artist.id,
@@ -825,12 +825,29 @@ export default function Calendar() {
     // real tattoo session at a glance -- no separate legend needed, same
     // as this grid already relies on artist-chip colors being self-
     // explanatory rather than a legend.
+    //
+    // Front-desk approval, Part 1: a client-self-scheduled REQUESTED
+    // appointment previously looked IDENTICAL to a real CONFIRMED one here
+    // (same artist color, no border unless it happened to be a
+    // consultation) -- nothing on the Calendar itself signaled "this still
+    // needs a staff decision." Takes precedence over the consultation
+    // border (self-scheduling only ever creates TATTOO_SESSION rows today,
+    // so the two never actually collide) -- dotted rather than dashed, and
+    // the theme's own --color-info (already used for REQUESTED's
+    // StatusPill tone everywhere else) rather than the accent color, so
+    // it's not mistaken for a consultation at a glance. No new fill color,
+    // just a border -- Editorial Gold rule.
     eventPropGetter: (event: CalEvent) => ({
       style: {
         backgroundColor: colorForArtistId(event.appointment.artist.id),
-        borderColor: event.appointment.appointmentType === 'CONSULTATION' ? 'var(--color-accent)' : 'transparent',
-        borderWidth: event.appointment.appointmentType === 'CONSULTATION' ? '2px' : undefined,
-        borderStyle: event.appointment.appointmentType === 'CONSULTATION' ? 'dashed' : undefined,
+        borderColor:
+          event.appointment.status === 'REQUESTED'
+            ? 'var(--color-info)'
+            : event.appointment.appointmentType === 'CONSULTATION'
+              ? 'var(--color-accent)'
+              : 'transparent',
+        borderWidth: event.appointment.status === 'REQUESTED' || event.appointment.appointmentType === 'CONSULTATION' ? '2px' : undefined,
+        borderStyle: event.appointment.status === 'REQUESTED' ? 'dotted' : event.appointment.appointmentType === 'CONSULTATION' ? 'dashed' : undefined,
       },
     }),
     slotPropGetter,
