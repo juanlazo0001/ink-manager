@@ -60,6 +60,11 @@ Concise operating rules, not a project history — see REPORT.md for history.
   reuses the established token pattern already in this codebase (random token + expiry column on
   the relevant model, verified server-side) rather than inventing a new auth mechanism.
 
+## Rate limiting
+
+- Rate limiting is in-memory per process — before scaling API replicas above one, move it to a
+  shared store.
+
 ## Environment
 
 - This environment is Windows/PowerShell. Use `Invoke-RestMethod`/`Invoke-WebRequest` or
