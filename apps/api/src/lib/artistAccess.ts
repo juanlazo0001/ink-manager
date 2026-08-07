@@ -1,6 +1,8 @@
 import { prisma } from "./prisma";
 import { Role } from "../../generated/prisma/enums";
 import type { AuthPayload } from "../middleware/auth";
+import { hasPermission, type PermissionKey } from "./permissions";
+import { isSoloStudioArtist } from "./soloStudio";
 
 // Artist mobility, Part 2: "does this studio have any live relationship
 // with this artist at all" -- HOME or GUEST, doesn't matter which. Broader
@@ -85,4 +87,73 @@ export async function activeStudioIdsForCaller(
     select: { studioId: true },
   });
   return [...new Set([artist.user.studioId, ...memberships.map((m) => m.studioId)])];
+}
+
+// Permission-context fix (REPORT.md: "permission-context investigation"
+// and its fix entry): a permission is evaluated against the studio that
+// OWNS the record being acted on, never the caller's own studioId claim --
+// the same rule callerBelongsToStudio above already enforces for bare
+// membership, extended to the permission MATRIX lookup. Before this,
+// `hasPermission(req.user.studioId, ...)` meant a guest artist's
+// capabilities at a host studio were governed by their HOME studio's
+// matrix, not the host's -- confirmed exploitable with real HTTP (a guest
+// artist granted appointments.reschedule only at their home studio could
+// approve/confirm appointments at a host studio that denies ARTIST that
+// permission entirely).
+//
+// Deliberately re-checks membership here (not just re-using an
+// already-computed `callerBelongsToStudio` result from the caller) -- this
+// function needs to be safe to call on its own, the same "self-contained
+// primitive" precedent every other function in this file already follows.
+export async function hasPermissionAt(
+  user: Pick<AuthPayload, "studioId" | "role" | "userId">,
+  recordStudioId: string,
+  key: PermissionKey,
+): Promise<boolean> {
+  if (!(await callerBelongsToStudio(user, recordStudioId))) return false;
+  return hasPermission(recordStudioId, user.role, key);
+}
+
+export interface PermissionAtResult {
+  allowed: boolean;
+  // Mirrors req.viaSoloArtistBypass's own purpose (lib/permissions.ts's
+  // requirePermissionOrSoloArtist) -- lets the caller apply the extra
+  // "only your own appointments" restriction that path specifically needs,
+  // without re-deriving solo status itself.
+  viaSoloArtistBypass: boolean;
+}
+
+// requirePermissionOrSoloArtist's record-scoped equivalent. The solo
+// bypass is narrower than the plain permission check above: solo autonomy
+// exists because there's no OWNER/FRONT_DESK gatekeeper left to protect --
+// that's only true at the artist's OWN studio-of-one, never at a studio
+// they're merely guesting at (which, by definition, has other staff who
+// invited them and are the actual gatekeepers there). So the bypass
+// requires BOTH that the record's studio genuinely IS the caller's own
+// home studio -- re-read fresh from the database, never the JWT's own
+// (possibly stale) studioId claim, same rule callerBelongsToStudio already
+// applies -- AND that home studio is solo. A solo artist guesting
+// elsewhere gets neither a real grant nor the bypass at the host, exactly
+// like a brand-new, ungranted ARTIST there would.
+export async function hasPermissionOrSoloArtistAt(
+  user: Pick<AuthPayload, "studioId" | "role" | "userId">,
+  recordStudioId: string,
+  key: PermissionKey,
+): Promise<PermissionAtResult> {
+  if (!(await callerBelongsToStudio(user, recordStudioId))) {
+    return { allowed: false, viaSoloArtistBypass: false };
+  }
+  if (await hasPermission(recordStudioId, user.role, key)) {
+    return { allowed: true, viaSoloArtistBypass: false };
+  }
+  if (user.role === Role.ARTIST) {
+    const artist = await prisma.artist.findUnique({
+      where: { userId: user.userId },
+      select: { user: { select: { studioId: true } } },
+    });
+    if (artist?.user.studioId === recordStudioId && (await isSoloStudioArtist(recordStudioId, user.userId))) {
+      return { allowed: true, viaSoloArtistBypass: true };
+    }
+  }
+  return { allowed: false, viaSoloArtistBypass: false };
 }

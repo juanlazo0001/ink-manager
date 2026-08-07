@@ -4,7 +4,7 @@ import { prisma } from "../lib/prisma";
 import { Prisma } from "../../generated/prisma/client";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { Role, AppointmentStatus, AppointmentType, GiftCardStatus } from "../../generated/prisma/enums";
-import { requirePermission, requirePermissionOrSoloArtist } from "../lib/permissions";
+import { requirePermission } from "../lib/permissions";
 import { diffObjects, logAudit } from "../lib/audit";
 import { validateGiftCardsForAttachment, generateUniqueGiftCardCode, computeGiftCardExpiration } from "../lib/giftCards";
 import { resolveRequiredDepositCents, resolveDepositTiers } from "../lib/depositTiers";
@@ -17,7 +17,13 @@ import {
   DEFAULT_SCHEDULING_BUFFER_MS,
 } from "../lib/schedulingConflict";
 import { ensureLiabilityWaiver } from "../lib/waivers";
-import { studioHasActiveMembership, callerBelongsToStudio, activeStudioIdsForCaller } from "../lib/artistAccess";
+import {
+  studioHasActiveMembership,
+  callerBelongsToStudio,
+  activeStudioIdsForCaller,
+  hasPermissionAt,
+  hasPermissionOrSoloArtistAt,
+} from "../lib/artistAccess";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { getOrCreateClientConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
@@ -47,7 +53,7 @@ const NOT_ARCHIVED = { archivedAt: null } as const;
 // session. A client with no available card (or not enough of one) can't
 // get a TATTOO_SESSION booked here; the error says so explicitly rather
 // than a generic 400.
-router.post("/", requirePermissionOrSoloArtist("appointments.create"), async (req, res) => {
+router.post("/", async (req, res) => {
   const body = req.body ?? {};
 
   const missing = ["artistId", "clientId", "startTime", "endTime", "inquiryId"].filter((field) => !body[field]);
@@ -102,6 +108,17 @@ router.post("/", requirePermissionOrSoloArtist("appointments.create"), async (re
     return res.status(400).json({ error: "clientId must belong to your studio" });
   }
 
+  // Permission-context fix: evaluated against THIS studio (the client/
+  // inquiry's own, resolved above), not req.user!.studioId -- a guest
+  // artist's ability to create an appointment here follows the studio
+  // they're actually booking into, never a grant that only exists at their
+  // home studio (see lib/artistAccess.ts's own comment for the confirmed
+  // exploit this closes).
+  const createPermission = await hasPermissionOrSoloArtistAt(req.user!, studioId, "appointments.create");
+  if (!createPermission.allowed) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
   const studioSettings = await prisma.studioSettings.findUnique({
     where: { studioId },
     select: { timezone: true, depositTiers: true, schedulingBufferMinutes: true },
@@ -127,7 +144,7 @@ router.post("/", requirePermissionOrSoloArtist("appointments.create"), async (re
   // explicitly granted ARTIST role this permission via the real Settings
   // matrix (req.viaSoloArtistBypass false in that case) is unaffected --
   // this only tightens the bypass path itself.
-  if (req.viaSoloArtistBypass && artist.userId !== req.user!.userId) {
+  if (createPermission.viaSoloArtistBypass && artist.userId !== req.user!.userId) {
     return res.status(403).json({ error: "As a solo artist, you can only create your own appointments" });
   }
 
@@ -235,6 +252,20 @@ router.post("/", requirePermissionOrSoloArtist("appointments.create"), async (re
 // role scoping (ARTIST sees only their own) never has two places to get
 // out of sync. Without a range, keeps the pre-Phase-UI-5 "latest 100"
 // behavior (Sidebar's prefetch and any other no-range caller).
+//
+// Permission-context fix inventory: intentionally left on the plain,
+// home-studio-scoped requirePermission rather than converted to the
+// record-scoped helper below -- this is a multi-studio LIST (an ARTIST's
+// results already span every studio in activeStudioIdsForCaller, home +
+// every active guest, in one query), not a single record with one owning
+// studio to check against. Converting properly would mean filtering that
+// studio set down per-studio by hasPermission before querying, which would
+// also change a staff caller's 403-on-denied into a 200-with-empty-list --
+// a real behavior change this fix's own rule 4 (staff semantics unchanged)
+// rules out doing casually. appointments.view defaults TRUE for ARTIST
+// everywhere and overriding it off at exactly one of an artist's several
+// studios is a narrow, unusual configuration -- flagged as a residual,
+// low-severity (read-only) gap for a future pass, not fixed here.
 router.get("/", requirePermission("appointments.view"), async (req, res) => {
   const { studioId, role, userId } = req.user!;
   const clientId = typeof req.query.clientId === "string" ? req.query.clientId : undefined;
@@ -362,13 +393,20 @@ const APPOINTMENT_DETAIL_INCLUDE = {
   },
 } as const;
 
-router.get("/:id", requirePermission("appointments.view"), async (req, res) => {
+router.get("/:id", async (req, res) => {
   const id = req.params.id as string;
 
   const appointment = await prisma.appointment.findUnique({ where: { id }, include: APPOINTMENT_DETAIL_INCLUDE });
 
   if (!appointment || !(await callerBelongsToStudio(req.user!, appointment.studioId))) {
     return res.status(404).json({ error: "Appointment not found" });
+  }
+
+  // Permission-context fix: evaluated against the appointment's own
+  // studio, not req.user!.studioId -- a guest artist's view rights follow
+  // the studio the appointment actually lives at.
+  if (!(await hasPermissionAt(req.user!, appointment.studioId, "appointments.view"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   // Gates the checkout-complete panel's "share your referral code" callout
@@ -405,13 +443,21 @@ router.get("/:id", requirePermission("appointments.view"), async (req, res) => {
 
 // Archive: soft, reversible hide -- same treatment as Client.archivedAt /
 // Inquiry.archivedAt.
-router.post("/:id/archive", requirePermissionOrSoloArtist("appointments.reschedule"), async (req, res) => {
+router.post("/:id/archive", async (req, res) => {
   const id = req.params.id as string;
   const appointment = await prisma.appointment.findUnique({ where: { id } });
   if (!appointment || !(await callerBelongsToStudio(req.user!, appointment.studioId))) {
     return res.status(404).json({ error: "Appointment not found" });
   }
-  if (req.viaSoloArtistBypass) {
+  const { allowed, viaSoloArtistBypass } = await hasPermissionOrSoloArtistAt(
+    req.user!,
+    appointment.studioId,
+    "appointments.reschedule",
+  );
+  if (!allowed) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  if (viaSoloArtistBypass) {
     const ownArtist = await prisma.artist.findUnique({ where: { userId: req.user!.userId }, select: { id: true } });
     if (!ownArtist || appointment.artistId !== ownArtist.id) {
       return res.status(403).json({ error: "As a solo artist, you can only manage your own appointments" });
@@ -437,13 +483,21 @@ router.post("/:id/archive", requirePermissionOrSoloArtist("appointments.reschedu
   res.json(updated);
 });
 
-router.post("/:id/unarchive", requirePermissionOrSoloArtist("appointments.reschedule"), async (req, res) => {
+router.post("/:id/unarchive", async (req, res) => {
   const id = req.params.id as string;
   const appointment = await prisma.appointment.findUnique({ where: { id } });
   if (!appointment || !(await callerBelongsToStudio(req.user!, appointment.studioId))) {
     return res.status(404).json({ error: "Appointment not found" });
   }
-  if (req.viaSoloArtistBypass) {
+  const { allowed, viaSoloArtistBypass } = await hasPermissionOrSoloArtistAt(
+    req.user!,
+    appointment.studioId,
+    "appointments.reschedule",
+  );
+  if (!allowed) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  if (viaSoloArtistBypass) {
     const ownArtist = await prisma.artist.findUnique({ where: { userId: req.user!.userId }, select: { id: true } });
     if (!ownArtist || appointment.artistId !== ownArtist.id) {
       return res.status(403).json({ error: "As a solo artist, you can only manage your own appointments" });
@@ -564,7 +618,7 @@ router.delete("/:id", requireRole(Role.OWNER), async (req, res) => {
 // Day-of liability waiver: one per appointment, front desk creates it and
 // hands the client the link; front desk later verifies the signed result
 // against the client's physical ID (POST /waivers/:id/verify).
-router.post("/:id/waiver", requirePermission("waivers.generate"), async (req, res) => {
+router.post("/:id/waiver", async (req, res) => {
   const id = req.params.id as string;
   const { autoSend } = req.body ?? {};
 
@@ -586,6 +640,11 @@ router.post("/:id/waiver", requirePermission("waivers.generate"), async (req, re
     return res.status(404).json({ error: "Appointment not found" });
   }
   const studioId = existing.studioId;
+
+  // Permission-context fix: evaluated at the appointment's own studio.
+  if (!(await hasPermissionAt(req.user!, studioId, "waivers.generate"))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
 
   const result = await ensureLiabilityWaiver(id, studioId, req.user!.userId);
 
@@ -624,7 +683,7 @@ router.post("/:id/waiver", requirePermission("waivers.generate"), async (req, re
 // appointment should have at least one attached gift card, but the guard
 // below still checks -- if it's somehow missing, that's a data problem to
 // resolve manually rather than something to paper over.
-router.post("/:id/checkout", requirePermission("appointments.checkout"), async (req, res) => {
+router.post("/:id/checkout", async (req, res) => {
   const id = req.params.id as string;
   const body = req.body ?? {};
   const { finalCostCents, decisions, closeoutNotes } = body;
@@ -658,6 +717,11 @@ router.post("/:id/checkout", requirePermission("appointments.checkout"), async (
     return res.status(404).json({ error: "Appointment not found" });
   }
   const studioId = appointment.studioId;
+
+  // Permission-context fix: evaluated at the appointment's own studio.
+  if (!(await hasPermissionAt(req.user!, studioId, "appointments.checkout"))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
 
   if (appointment.appointmentType === AppointmentType.CONSULTATION) {
     return res.status(400).json({
@@ -921,7 +985,7 @@ router.post("/:id/checkout", requirePermission("appointments.checkout"), async (
 // convention as deposits (routes/deposits.ts's mark-paid): this sets
 // "MANUAL", the webhook-driven Stripe path sets "STRIPE", already-paid
 // (either way) is a 400 rather than a silent no-op re-charge.
-router.patch("/:id/mark-charged", requirePermission("appointments.checkout"), async (req, res) => {
+router.patch("/:id/mark-charged", async (req, res) => {
   const id = req.params.id as string;
 
   const appointment = await prisma.appointment.findUnique({ where: { id }, include: { giftCards: true } });
@@ -929,6 +993,12 @@ router.patch("/:id/mark-charged", requirePermission("appointments.checkout"), as
     return res.status(404).json({ error: "Appointment not found" });
   }
   const studioId = appointment.studioId;
+
+  // Permission-context fix: evaluated at the appointment's own studio.
+  if (!(await hasPermissionAt(req.user!, studioId, "appointments.checkout"))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
   if (!appointment.checkedOutAt || appointment.finalCostCents == null) {
     return res.status(400).json({ error: "This appointment hasn't been checked out yet" });
   }
@@ -970,7 +1040,7 @@ router.patch("/:id/mark-charged", requirePermission("appointments.checkout"), as
 // no gift-card redeem/roll decisions, no overage card issuance. A
 // consultation never has an attached gift card to begin with (see POST /
 // above), so there's nothing to reconcile here.
-router.post("/:id/complete-consultation", requirePermission("appointments.checkout"), async (req, res) => {
+router.post("/:id/complete-consultation", async (req, res) => {
   const id = req.params.id as string;
   const { notes } = req.body ?? {};
 
@@ -984,6 +1054,11 @@ router.post("/:id/complete-consultation", requirePermission("appointments.checko
     return res.status(404).json({ error: "Appointment not found" });
   }
   const studioId = appointment.studioId;
+
+  // Permission-context fix: evaluated at the appointment's own studio.
+  if (!(await hasPermissionAt(req.user!, studioId, "appointments.checkout"))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
 
   if (appointment.appointmentType !== AppointmentType.CONSULTATION) {
     return res.status(400).json({
@@ -1029,7 +1104,7 @@ router.post("/:id/complete-consultation", requirePermission("appointments.checko
 // route once the appointment is already COMPLETED -- no status
 // requirement here, since "forgot at checkout" is exactly the case this
 // needs to keep working for.
-router.post("/:id/photos", requirePermission("appointments.photos.manage"), async (req, res) => {
+router.post("/:id/photos", async (req, res) => {
   const id = req.params.id as string;
   const { urls } = req.body ?? {};
 
@@ -1040,6 +1115,11 @@ router.post("/:id/photos", requirePermission("appointments.photos.manage"), asyn
   const appointment = await prisma.appointment.findUnique({ where: { id }, select: { studioId: true } });
   if (!appointment || !(await callerBelongsToStudio(req.user!, appointment.studioId))) {
     return res.status(404).json({ error: "Appointment not found" });
+  }
+
+  // Permission-context fix: evaluated at the appointment's own studio.
+  if (!(await hasPermissionAt(req.user!, appointment.studioId, "appointments.photos.manage"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   const photos = await prisma.$transaction(
@@ -1065,7 +1145,7 @@ router.post("/:id/photos", requirePermission("appointments.photos.manage"), asyn
   res.status(201).json(photos);
 });
 
-router.delete("/:id/photos/:photoId", requirePermission("appointments.photos.manage"), async (req, res) => {
+router.delete("/:id/photos/:photoId", async (req, res) => {
   const id = req.params.id as string;
   const photoId = req.params.photoId as string;
 
@@ -1076,6 +1156,11 @@ router.delete("/:id/photos/:photoId", requirePermission("appointments.photos.man
 
   if (!photo || photo.appointmentId !== id || !(await callerBelongsToStudio(req.user!, photo.appointment.studioId))) {
     return res.status(404).json({ error: "Photo not found" });
+  }
+
+  // Permission-context fix: evaluated at the photo's own appointment's studio.
+  if (!(await hasPermissionAt(req.user!, photo.appointment.studioId, "appointments.photos.manage"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   await prisma.appointmentPhoto.delete({ where: { id: photoId } });
@@ -1105,7 +1190,7 @@ router.delete("/:id/photos/:photoId", requirePermission("appointments.photos.man
 // exact same key before this expansion, so folding them into one new key
 // keeps their access identical rather than inventing a key the task's own
 // list didn't ask for.
-router.patch("/:id", requirePermissionOrSoloArtist("appointments.reschedule"), async (req, res) => {
+router.patch("/:id", async (req, res) => {
   const id = req.params.id as string;
   const { status, startTime, endTime } = req.body ?? {};
 
@@ -1123,7 +1208,16 @@ router.patch("/:id", requirePermissionOrSoloArtist("appointments.reschedule"), a
     return res.status(404).json({ error: "Appointment not found" });
   }
 
-  if (req.viaSoloArtistBypass) {
+  const { allowed, viaSoloArtistBypass } = await hasPermissionOrSoloArtistAt(
+    req.user!,
+    appointment.studioId,
+    "appointments.reschedule",
+  );
+  if (!allowed) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  if (viaSoloArtistBypass) {
     const ownArtist = await prisma.artist.findUnique({ where: { userId: req.user!.userId }, select: { id: true } });
     if (!ownArtist || appointment.artistId !== ownArtist.id) {
       return res.status(403).json({ error: "As a solo artist, you can only manage your own appointments" });
@@ -1212,13 +1306,14 @@ router.patch("/:id", requirePermissionOrSoloArtist("appointments.reschedule"), a
 // same real-SMS auto-send, same Conversations logging. That manual button
 // stays completely untouched as a backup if this ever needs a retry.
 //
-// Same requirePermissionOrSoloArtist("appointments.reschedule") gate as
+// Same hasPermissionOrSoloArtistAt("appointments.reschedule") gate as
 // PATCH /:id above -- reusing the existing scheduling-related matrix key
 // rather than inventing a new one, per this feature's own spec. A studio
 // that hasn't granted an ARTIST scheduling rights still can't approve
 // anything; a genuine solo studio's own artist still can, same exception
-// PATCH /:id already relies on.
-router.post("/:id/approve", requirePermissionOrSoloArtist("appointments.reschedule"), async (req, res) => {
+// PATCH /:id already relies on -- evaluated at the appointment's own
+// studio (permission-context fix), not the caller's home.
+router.post("/:id/approve", async (req, res) => {
   const id = req.params.id as string;
 
   const appointment = await prisma.appointment.findUnique({ where: { id } });
@@ -1226,7 +1321,16 @@ router.post("/:id/approve", requirePermissionOrSoloArtist("appointments.reschedu
     return res.status(404).json({ error: "Appointment not found" });
   }
 
-  if (req.viaSoloArtistBypass) {
+  const { allowed, viaSoloArtistBypass } = await hasPermissionOrSoloArtistAt(
+    req.user!,
+    appointment.studioId,
+    "appointments.reschedule",
+  );
+  if (!allowed) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  if (viaSoloArtistBypass) {
     const ownArtist = await prisma.artist.findUnique({ where: { userId: req.user!.userId }, select: { id: true } });
     if (!ownArtist || appointment.artistId !== ownArtist.id) {
       return res.status(403).json({ error: "As a solo artist, you can only manage your own appointments" });
@@ -1334,7 +1438,7 @@ router.post("/:id/approve", requirePermissionOrSoloArtist("appointments.reschedu
 // hours change and sends an SMS saying so ("the estimate ... has been
 // updated to $X-$Y"), which would be a wrong, confusing message here
 // where nothing about the estimate itself changed.
-router.post("/:id/decline", requirePermissionOrSoloArtist("appointments.reschedule"), async (req, res) => {
+router.post("/:id/decline", async (req, res) => {
   const id = req.params.id as string;
   const { reason } = req.body ?? {};
 
@@ -1357,7 +1461,16 @@ router.post("/:id/decline", requirePermissionOrSoloArtist("appointments.reschedu
     return res.status(404).json({ error: "Appointment not found" });
   }
 
-  if (req.viaSoloArtistBypass) {
+  const { allowed, viaSoloArtistBypass } = await hasPermissionOrSoloArtistAt(
+    req.user!,
+    appointment.studioId,
+    "appointments.reschedule",
+  );
+  if (!allowed) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  if (viaSoloArtistBypass) {
     const ownArtist = await prisma.artist.findUnique({ where: { userId: req.user!.userId }, select: { id: true } });
     if (!ownArtist || appointment.artistId !== ownArtist.id) {
       return res.status(403).json({ error: "As a solo artist, you can only manage your own appointments" });
