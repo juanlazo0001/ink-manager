@@ -8554,3 +8554,48 @@ Dev servers (API :4000, web :5173) started for this session's verification were 
 
 `aafadb9`
 
+---
+
+# One-off cleanup script: review-and-delete all client-side records for a studio (production)
+
+New session. A reviewable, two-phase (dry-run-then-confirm) script to delete every client-side record for one named studio -- built as "the seed of the future in-app bulk-delete feature" per the task's own framing, then used once, live, against a real production studio whose data was confirmed fake/test.
+
+## Relation map
+
+Built from a full `information_schema` foreign-key scan of the live schema (46 models), not from memory -- every table transitively reachable from Client/Inquiry/Appointment/Conversation is handled explicitly:
+
+- **Appointment-rooted**: AppointmentNote, AppointmentPhoto, LiabilityWaiver, PlannedSession.
+- **Inquiry-rooted**: DepositForm, InquiryNote, PlannedSession (again, via its own `inquiryId`).
+- **Client-rooted**: ClientEmail, ClientPhone, GiftCard, LiabilityWaiver (again, via its own `clientId`), Conversation (CLIENT type only -- `clientId` is null-by-construction on every STAFF/GROUP thread, confirmed from the schema itself, not assumed).
+- **Conversation-rooted**: Message (MessageReaction cascades automatically, schema-level `onDelete: Cascade`), ConversationTag, ConversationParticipant, ConversationRead, PrefillDraft (`conversationId` nulled, not deleted -- see judgment calls).
+- **Cross-references found by the FK scan, not guessed**: `ConversationTag.entityType`/`entityId` is a plain polymorphic string (same pattern as `AuditLog`) -- a tag placed on an unrelated STAFF Team-chat thread could point at an Inquiry/Appointment being deleted here, so tag cleanup is scoped by `entityType`/`entityId` match, independent of which conversation it's attached to, not just by the client conversations already being deleted. `GiftCard.derivedFromGiftCardId` (self-referential rollover chain) and `Client.referredByClientId`/`mergedIntoId`/`referralRewardGiftCardId` (client-to-client) are nulled in a first pass before any deletes, breaking cycles cleanly regardless of Postgres's per-row FK-check ordering within a single statement.
+- **Explicit guard**: before deleting, checks for any Client *outside* the current deletion batch (a kept/protected client, or in principle a different studio) that references one of the target clients via `referredByClientId`/`mergedIntoId`. If found, those specific referenced clients are excluded from the run and reported, rather than silently mutating a record outside the operation's own scope.
+
+## Judgment calls flagged (also documented inline in the script itself)
+
+- **Protection is scoped per client, not per inquiry.** A client with a mix of protected and unprotected inquiries stays fully intact until `--include-protected` is used -- surgically deleting only some of one client's own history seemed far more likely to produce a confusing half-deleted state than "this whole client waits."
+- **`AuditLog` and `TaskDismissal` are left alone.** Neither has a real foreign key to the deleted entities (`entityId` is a polymorphic string on both) -- no constraint risk, and preserving the studio's own audit trail after the thing it references is gone matches the exact precedent already set by `Message.authorUserId`/`GiftCard.issuedById` surviving a deleted staff account.
+- **`ImportRow.matchedClientId` is nulled, not deleted with the client** -- it's the mass-import tool's own operational log, not itself "client data."
+- **A CUSTOMER-role `User` tied to a deleted `Client` via `Client.userId` survives**, now pointing at nothing -- exactly what "must not touch user accounts" requires, flagged since it's a real, visible (if inert) consequence.
+- **Backup method substituted, with the user's explicit sign-off.** Neither `pg_dump` nor the Railway CLI is installed in this execution environment, and no Railway API token is configured -- asked the user directly rather than silently substituting; they chose an application-level Prisma export (`backup-studio-data.ts`, new companion script, same relation map) over triggering a Railway dashboard snapshot themselves.
+
+## Verification, before ever touching production
+
+Dry run against **dev**'s real, large `dev-studio` tenant (116 clients, extensive referral/merge/multi-session/gift-card test data accumulated across many past sessions) -- correctly classified 95 standard / 21 protected with accurate per-trigger counts, zero errors. Then a full `--confirm --include-protected` delete against a small, genuinely disposable dev tenant (`dev-studio-2`, 2 clients) -- re-ran the dry run afterward and confirmed zero remained, and confirmed `dev-studio`'s own 116 clients were completely unaffected (cross-studio isolation holds).
+
+## The production run itself
+
+1. **Dry run** against production for `black-hive-ink` (user-supplied slug) -- 24 clients, 11 standard / 13 protected, full report (client-by-client, aggregate totals) given to the user. Reported, then stopped -- no deletion, exactly as the task's own procedure required.
+2. **Backup**: ran `backup-studio-data.ts` against production for the same studio first -- wrote a ~1MB JSON snapshot of all 24 clients and every row under them (24 inquiries, 16 appointments, 20 deposit forms, 34 gift cards, 3 waivers, 21 conversations, plus every note/photo/tag/reaction/read/prefill-draft table) to a local file outside the repo, confirmed it exists and is valid JSON with matching counts before proceeding.
+3. **User confirmed**: "delete all of these listed" -- both sections.
+4. **Deletion**: `--confirm --confirm-studio=black-hive-ink --include-protected` -- deleted 24 clients, 24 inquiries, 16 appointments, 20 deposit forms, 34 gift cards, 3 waivers, 21 conversation threads. Counts matched the dry-run report and the backup exactly. No warnings (no blocked cross-references).
+5. **Post-deletion checks**: re-ran the dry run -- both sections report zero. Confirmed all 8 studios in the production database still exist (none deleted, only client-side data within one), and every other studio's client count is identical to the pre-deletion listing (all were 0 before and remain 0). Live browser spot-check of the studio's Clients/Inquiries/Projects pages was **not** done by this agent -- no production staff login is available in this environment, and creating/resetting one for a real account wasn't judged an acceptable substitute for the DB-level verification already completed; left to the user to do directly if wanted.
+
+## Cleanup
+
+Both scripts (`cleanup-studio-data.ts`, `backup-studio-data.ts`) are committed -- intentionally kept, not scratch. The dev-side validation backup file was deleted after use. The production backup file is **kept**, deliberately -- it lives outside the repo (never committed, contains real client PII) and was not touched as part of "cleanup"; the user was told exactly where it is and to move/secure it.
+
+## Commits
+
+Scripts: `07e0ecb` (cleanup-studio-data.ts), `c8242be` (backup-studio-data.ts). This entry: below.
+
