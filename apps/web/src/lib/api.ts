@@ -4,10 +4,18 @@ const API_URL = import.meta.env.VITE_API_URL
 
 export class ApiError extends Error {
   status: number
+  // Machine-readable discriminator for the rare error response that needs
+  // more than "show this message" -- e.g. /login's email_not_verified,
+  // which the caller needs to distinguish from a plain wrong-password 401
+  // to offer a "resend verification" action instead of just an error
+  // banner. Optional: most error bodies have no `code` field at all, and
+  // this stays undefined for those, same as before this field existed.
+  code?: string
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, code?: string) {
     super(message)
     this.status = status
+    this.code = code
   }
 }
 
@@ -48,7 +56,7 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
 
   if (!response.ok) {
     const body = await response.json().catch(() => null)
-    throw new ApiError(body?.error ?? `Request failed with status ${response.status}`, response.status)
+    throw new ApiError(body?.error ?? `Request failed with status ${response.status}`, response.status, body?.code)
   }
 
   if (response.status === 204) {
@@ -77,7 +85,7 @@ export async function downloadFile(path: string, filename: string): Promise<void
 
   if (!response.ok) {
     const body = await response.json().catch(() => null)
-    throw new ApiError(body?.error ?? `Request failed with status ${response.status}`, response.status)
+    throw new ApiError(body?.error ?? `Request failed with status ${response.status}`, response.status, body?.code)
   }
 
   const blob = await response.blob()

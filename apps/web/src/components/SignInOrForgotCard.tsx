@@ -2,7 +2,7 @@ import { forwardRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useAuth } from '../context/useAuth'
-import { apiFetch } from '../lib/api'
+import { apiFetch, ApiError } from '../lib/api'
 import { blurTextVariants, crossfadeVariants } from '../lib/motion'
 
 export type SignInOrForgotMode = 'sign-in' | 'forgot-password'
@@ -64,7 +64,14 @@ const SignInOrForgotCard = forwardRef<HTMLDivElement, SignInOrForgotCardProps>(f
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [signInError, setSignInError] = useState<string | null>(null)
+  // Set only for /login's email_not_verified response -- lets the error
+  // banner below offer a real "resend verification" action instead of
+  // just displaying the message text (the backend already distinguishes
+  // this case with a machine-readable `code`; nothing previously read it).
+  const [signInErrorCode, setSignInErrorCode] = useState<string | null>(null)
   const [signInSubmitting, setSignInSubmitting] = useState(false)
+  const [resendingVerification, setResendingVerification] = useState(false)
+  const [verificationResent, setVerificationResent] = useState(false)
 
   const [forgotSubmitting, setForgotSubmitting] = useState(false)
   // Deliberately a single "done" flag, not a distinct success/error state
@@ -76,6 +83,8 @@ const SignInOrForgotCard = forwardRef<HTMLDivElement, SignInOrForgotCardProps>(f
   async function handleSignIn(event: FormEvent) {
     event.preventDefault()
     setSignInError(null)
+    setSignInErrorCode(null)
+    setVerificationResent(false)
     setSignInSubmitting(true)
 
     try {
@@ -83,8 +92,29 @@ const SignInOrForgotCard = forwardRef<HTMLDivElement, SignInOrForgotCardProps>(f
       navigate('/dashboard')
     } catch (err) {
       setSignInError(err instanceof Error ? err.message : 'Login failed')
+      setSignInErrorCode(err instanceof ApiError ? (err.code ?? null) : null)
     } finally {
       setSignInSubmitting(false)
+    }
+  }
+
+  // Same identical-response-regardless endpoint forgot-password already
+  // uses (POST /auth/resend-verification) -- this is just a second,
+  // pre-filled-email entry point into it, reachable directly from a
+  // blocked sign-in attempt instead of only from the post-signup
+  // "check your email" screen.
+  async function handleResendVerification() {
+    setResendingVerification(true)
+    try {
+      await apiFetch('/auth/resend-verification', { method: 'POST', body: JSON.stringify({ email }) })
+    } catch {
+      // Same fire-and-forget-from-the-UI's-perspective discipline as
+      // forgot-password above -- the endpoint's response is identical
+      // whether or not anything was actually sent, so there's nothing
+      // more specific to show on failure either.
+    } finally {
+      setResendingVerification(false)
+      setVerificationResent(true)
     }
   }
 
@@ -131,7 +161,22 @@ const SignInOrForgotCard = forwardRef<HTMLDivElement, SignInOrForgotCardProps>(f
             <motion.div key="sign-in-fields" layout variants={crossfadeVariants} initial="initial" animate="animate" exit="exit">
               {signInError && (
                 <div className="mb-4 rounded-md border border-red-900/40 bg-red-950/40 px-3 py-2 text-sm text-red-300">
-                  {signInError}
+                  <p>{signInError}</p>
+                  {signInErrorCode === 'email_not_verified' &&
+                    (verificationResent ? (
+                      <p className="mt-1.5 text-[var(--login-cream)]">
+                        If that account needs verification, a new link has been sent.
+                      </p>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleResendVerification}
+                        disabled={resendingVerification}
+                        className="mt-1.5 font-semibold text-[var(--login-gold)] underline hover:text-[var(--login-gold-hi)] disabled:opacity-60"
+                      >
+                        {resendingVerification ? 'Sending…' : 'Resend verification email'}
+                      </button>
+                    ))}
                 </div>
               )}
 

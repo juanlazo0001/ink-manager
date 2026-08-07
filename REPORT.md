@@ -8840,3 +8840,72 @@ Part 2 (frontend shared component + artist rate fields): `3bfd52f`
 Part 3 (backend send-path extraction, permission gate, task source) + Part 4 (tests, verification): `0d2fbbf`
 
 Pushed together rather than after Part 2 alone: Part 2's frontend already exposes full multi-session planning to artists, and without Part 3's backend `sessions[]` handling in `/respond`, an artist submitting a multi-session draft would have silently saved `null` price/time fields — a real regression window on `main` between the two pushes. Committed as two commits for a clean history; pushed once both landed.
+
+---
+
+# Public self-serve signup, Part 5 redone -- production verification (the dev-only run was never actually adversarial to prod)
+
+New session. Part 5's own text above says it plainly: "run against dev... No studio named Black Hive has ever existed in the dev database." The endpoint has been publicly reachable at `https://api.inkmanager.app` for days and had never once been exercised against the real production database or the real production infrastructure (Railway's edge proxy, real replica count). This session redid every item against production, plus two small additions.
+
+## Real bug #1: the production rate limiter was completely non-functional
+
+Found live, not theorized. A signup burst against `https://api.inkmanager.app/auth/signup` showed `ratelimit-remaining: 4` on every single request regardless of how many had already been sent -- the limiter was never decrementing. Root cause: Express's `req.ip` resolves to the immediate TCP peer. Behind Railway's edge proxy that's an internal hop, not the real client, and it isn't even stable across requests from the same real client -- so `routes/auth.ts`'s two IP-keyed limiters (`signupLimiter`, `resendVerificationLimiter`, both using `express-rate-limit`'s default `req.ip`-based `keyGenerator`) were silently landing every request in its own fresh bucket. Confirmed via grep that `req.ip`/`rateLimit(` are used nowhere else in the API, so the fix is safely scoped to exactly this.
+
+Fix (`apps/api/src/index.ts`, right after `const app = express()`): `app.set("trust proxy", 1)` -- trusts exactly the one hop Railway's edge itself adds, so `req.ip` becomes the real client IP, and stays safe against a client spoofing its own `X-Forwarded-For` since Railway's edge appends (never blindly forwards) the real connecting IP as that trusted hop. Committed and pushed separately (`c61d3ad`) since it was the highest-priority finding and didn't need to wait on anything else.
+
+**Verified after deploy**: a 12-request burst showed genuine blocking (`429`s interspersed with `201`s); a second 12-request burst immediately after got `429` on all 12. The limiter is now genuinely active in production.
+
+**Residual finding, deliberately NOT fixed**: even after the trust-proxy fix, the effective budget before universal blocking was higher than the configured limit of 5, and `ratelimit-remaining` jumped non-monotonically across a tight burst (e.g. 2 → 4 → 1 → 0) -- strong evidence of multiple Railway replicas, each keeping its own independent in-memory `express-rate-limit` counter (there's no shared/distributed store -- Redis, Postgres-backed, etc. -- configured anywhere in this codebase). I have no Railway CLI/API access from this environment to confirm the exact replica count or rule out an alternate cause. This is a real architectural gap, not a rounding error, and fixing it means picking a new dependency (Redis) or a custom shared store or reducing to a single replica -- a call outside "verify what's already built," left for the user to decide.
+
+## Real bug #2: the unverified-login "resend" path was entirely dead code on the frontend
+
+`POST /login`'s `email_not_verified` response body has always included a `code` field (confirmed reading `routes/auth.ts`), but nothing on the frontend ever read it: `ApiError` (`apps/web/src/lib/api.ts`) didn't carry a `code` property, `apiFetch` discarded it when constructing the error, and `AuthContext.tsx`'s `login()` doesn't even go through `apiFetch` -- it predates that helper and does its own raw `fetch()`, throwing a plain `Error` with no status and no code at all. The result: a real unverified-login attempt showed a generic error banner with no way to resend, in both dev and production.
+
+Fixed across three files:
+- `lib/api.ts`: `ApiError` gained an optional `code?: string`; both `apiFetch`/`downloadFile` throw sites now pass `body?.code` through.
+- `context/AuthContext.tsx`: `login()`'s error path now throws `ApiError` (same shape `apiFetch` throws) instead of a plain `Error`.
+- `components/SignInOrForgotCard.tsx`: captures `err.code` from a caught `ApiError`; when it's `email_not_verified`, the error banner now shows a "Resend verification email" link (calls the existing `POST /auth/resend-verification`, already rate-limited server-side) that flips to a confirmation message once clicked.
+
+**Verified live against production**: built the web app pointed at `https://api.inkmanager.app` (`VITE_API_URL=https://api.inkmanager.app npx vite build`, since it's baked in at build time), served it locally, and drove it with Playwright against a real unverified production account. Screenshots show the real production login page, the blocked-login message, the resend link, and the post-click confirmation. A direct production DB query confirmed a genuinely new `emailVerificationToken` was issued on click, not just a UI-only state flip.
+
+## Items verified against production, with evidence
+
+1. **Rate limit** -- covered above (real burst, real `429`s, real headers).
+2. **Duplicate email** -- signup with an already-registered production email returned `409` with the existing "An account with that email already exists" message; no duplicate `User`/`Studio` row created.
+3. **Verification token lifecycle** -- against real production data: backdated a real token's `emailVerificationTokenExpiresAt` directly in the production DB, confirmed the verify attempt returns `410` (not a generic error), confirmed resend issues a genuinely new token, confirmed that new token verifies successfully. Resend-rate-limiting reconfirmed live.
+4. **Slug collision** -- two studios signed up with the identical name in production landed on distinct slugs (`collision-verify-studio` / `collision-verify-studio-2`), both real, no error on the second.
+5. **Dev Black Hive-equivalent owner login** -- same substitution Part 5 already made (no "Black Hive (dev copy)" has ever existed; confirmed again this session there's still no such studio) -- `owner@dev-studio.test` login returns `showStudioSetupWizard: false`.
+6. **Unverified login block** -- covered above as real bug #2; now blocks with a clear message and a working resend path, verified against a real production account.
+7. **Mobile viewport (390×844)** -- `/signup` (persona choice + details form), `/verify-email` (invalid-token render state), `/setup` (studio wizard first step) -- zero horizontal overflow anywhere (`document.documentElement.scrollWidth` never exceeded `clientWidth`), confirmed via screenshots.
+8. **Fresh build + clean git status** -- see "Build verification" below.
+9. **New-signup platform notification** -- see below.
+
+## Item 9: new-signup notification email
+
+Every self-serve signup already sent the owner a verification email via `sendPlatformEmailBestEffort` (the established fire-and-forget wrapper -- never awaited, `.catch()` logs and swallows, so a notification failure can never break signup itself). Added a second, parallel send to the platform team on the same event: `newSignupNotificationContent()` in `routes/auth.ts` builds a plain internal email (studio name, persona, owner email, slug) via the existing `renderPlatformEmailHtml` template, sent to `PLATFORM_NOTIFICATION_ADDRESS = "hello@inkmanager.app"` right alongside (never instead of) the owner's own verification email in `POST /auth/signup`.
+
+**Verified**: live in dev, a real signup triggers both sends (the `@dev-studio.test` verification leg correctly fails domain validation and is swallowed, exactly as fire-and-forget should behave); a direct isolated call to `sendPlatformEmail` targeting `hello@inkmanager.app` confirmed Bird genuinely accepts and would deliver to that real address.
+
+## Item 10: marketing CTA copy
+
+Replaced the `#cta` section's supporting copy in `marketing/index.html`, which still read "Ink Manager is opening to a small group of studios. Tell us about your shop and we'll walk you through the pipeline." -- leftover "request access, we'll reach out" framing from before self-serve signup existed, sitting right above a button that already links straight to `/signup`. New copy (provided by the user): "Create your studio in minutes. Free to get started — invite your team, take deposits, and manage your whole pipeline from day one."
+
+## Build verification
+
+Root `npm ci` against the shared repo directory hit `EPERM` unlinking two different native binaries (`esbuild.exe`, then `bcrypt.node`) on retry -- both held open by processes this session doesn't own (a live server on port 4000 belonging to a different concurrent session in this same shared environment). The first `npm ci` attempt had already partially deleted the shared `node_modules` (npm ci wipes it unconditionally before reinstalling) before failing, which would have broken that other session too -- fixed immediately with a non-destructive `npm install` (incremental, doesn't force-delete existing correct packages) to restore it before doing anything else.
+
+Rather than risk the shared directory again, the actual fresh-build check ran in an isolated `git worktree` (own directory, own `node_modules`, no contention with any other session's live processes): `git worktree add` off `HEAD`, this session's five uncommitted files copied in, `npm ci` (clean, 617 packages, no errors), then `npm run build --workspace=apps/api` (`tsc`, clean) and `--workspace=apps/web` (`tsc -b && vite build`, clean -- only a pre-existing chunk-size advisory, not an error). Worktree removed afterward.
+
+**git status**: clean of everything from this session -- the only uncommitted files left are the same pre-existing, unrelated ones present before this session started (branding logos, `marketing/package-lock.json`, a restyle screenshot HTML file) and never touched by any part of this work.
+
+## Production test tenant cleanup
+
+16 studios created during this session's own adversarial testing (the `signup-verify-{timestamp}-*@example.com` family, both `Collision Verify Studio` rows, the `Burst`/`Burst2` timed bursts) were listed, confirmed to have zero business data (clients/appointments/locations/rolePermissions/inquiries/conversations/integrations all zero -- pure signup-flow artifacts, nothing a real user ever touched), and deleted: `StudioMembership` → `Artist` → `AuditLog` → `User` → `Studio`, in one transaction per confirmed-empty batch, dry-run first. Re-run afterward confirmed all 16 target IDs no longer resolve. Every other studio in production (including `Black Hive Ink and Arts` and several pre-existing test studios from before this session, e.g. `Katie Jones Tattoo`, `Justin Tattoo`) was left untouched -- this cleanup was scoped strictly to tenants this session's own testing created, not a general database sweep.
+
+## Cleanup
+
+All scratch scripts (`scratch-get-verify-token.ts`, `scratch-backdate-token.ts`, `scratch-list-test-studios.ts`, `scratch-cleanup-signup-test-tenants.ts`) deleted from `apps/api/src` after use -- none committed. All dev/preview servers and stray build-tool processes started by this session were killed. The isolated build-check worktree was removed.
+
+## Commit
+
+`c61d3ad` (trust-proxy fix, pushed first, standalone). Remainder (item 6's resend-path fix, item 9's notification feature, item 10's marketing copy) committed and pushed together in this same session.

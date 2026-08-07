@@ -339,6 +339,36 @@ function verificationEmailContent(verifyUrl: string) {
   };
 }
 
+// Internal, operational -- not client-facing. Goes out alongside (never
+// instead of) the owner's own verification email, on every self-serve
+// signup, so the team notices new signups without having to poll the DB.
+// Same PLATFORM_NOTIFICATION_ADDRESS-agnostic pattern as everything else
+// in this file: built via the same renderPlatformEmailHtml/
+// sendPlatformEmailBestEffort pair, so a Bird outage degrades this to "no
+// notification email," never to a broken/slowed signup -- the studio/
+// owner/audit-log creation above already fully committed before this is
+// ever called.
+const PLATFORM_NOTIFICATION_ADDRESS = "hello@inkmanager.app";
+
+function newSignupNotificationContent(params: { studioName: string; slug: string; persona: string; ownerEmail: string }) {
+  const personaLabel = params.persona === "SOLO" ? "Independent artist" : "Studio";
+  return {
+    subject: `New signup: ${params.studioName}`,
+    text: `A new studio signed up for Ink Manager.\n\nStudio: ${params.studioName} (${params.slug})\nPersona: ${personaLabel}\nOwner email: ${params.ownerEmail}`,
+    html: renderPlatformEmailHtml({
+      heading: "New studio signup",
+      bodyParagraphs: [
+        `${params.studioName} just signed up for Ink Manager.`,
+        `Persona: ${personaLabel}`,
+        `Owner email: ${params.ownerEmail}`,
+        `Slug: ${params.slug}`,
+      ],
+      buttonText: "Open Ink Manager",
+      buttonUrl: PUBLIC_APP_URL,
+    }),
+  };
+}
+
 // dev Bird email doesn't deliver to any address at all in this workspace
 // (confirmed live, repeatedly, this session -- every @dev-studio.test send
 // attempt gets a real 422 RecipientDomainNotAllowed from Bird's API, not a
@@ -419,6 +449,10 @@ router.post("/auth/signup", signupLimiter, async (req, res) => {
 
   const verifyUrl = `${PUBLIC_APP_URL}/verify-email/${emailVerificationToken}`;
   sendPlatformEmailBestEffort({ to: trimmedEmail, ...verificationEmailContent(verifyUrl) });
+  sendPlatformEmailBestEffort({
+    to: PLATFORM_NOTIFICATION_ADDRESS,
+    ...newSignupNotificationContent({ studioName, slug: studio.slug, persona, ownerEmail: trimmedEmail }),
+  });
   logVerificationUrlInDev(trimmedEmail, verifyUrl);
 
   res.status(201).json({ message: "Check your email to verify your account.", email: trimmedEmail, studioSlug: studio.slug });

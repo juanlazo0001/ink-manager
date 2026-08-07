@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { AuthContext, TOKEN_STORAGE_KEY, type AuthUser } from './auth-context'
+import { ApiError } from '../lib/api'
 
 const API_URL = import.meta.env.VITE_API_URL
 
@@ -49,7 +50,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     if (!response.ok) {
       const body = await response.json().catch(() => null)
-      throw new Error(body?.error ?? 'Login failed')
+      // ApiError (not a plain Error), matching apiFetch's own error shape --
+      // this route predates apiFetch's existence, so it grew its own raw
+      // fetch instead. /login's email_not_verified `code` needs to survive
+      // to the caller (SignInOrForgotCard) so it can offer a "resend
+      // verification" action instead of a bare error banner.
+      throw new ApiError(body?.error ?? 'Login failed', response.status, body?.code)
     }
 
     const data = await response.json()
