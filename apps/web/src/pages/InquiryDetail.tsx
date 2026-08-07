@@ -24,13 +24,15 @@ import DateAndTimeRangeFields, {
   isValidTimeRange,
   type DateAndTimeRangeValue,
 } from '../components/DateAndTimeRangeFields'
-import SessionHoursRows, {
-  SessionCountField,
-  HOUR_OPTIONS,
-  suggestSessionPrice,
-  type LockedSession,
-  type SessionHoursRow,
-} from '../components/SessionBreakdownEditor'
+import { type LockedSession } from '../components/SessionBreakdownEditor'
+import EstimateFieldsEditor, {
+  emptyEstimateDraft,
+  estimateDraftFromInquiry,
+  validateEstimateDraft,
+  estimateDraftToSessionsPayload,
+  estimateDraftToRequestFields,
+  type EstimateDraft,
+} from '../components/EstimateFieldsEditor'
 import { apiFetch, ApiError, downloadFile } from '../lib/api'
 import { formatDateTime, formatDuration, formatPhoneInput, formatStatus, describeInquiryStatus, formatPriceEstimate } from '../lib/format'
 import { describeSendResult, type ClientSendResult } from '../lib/sendResult'
@@ -689,80 +691,14 @@ export default function InquiryDetail() {
   // editable inputs even while just viewing an inquiry that already has an
   // estimate out).
   const [editingEstimate, setEditingEstimate] = useState(false)
-  const [estimateForm, setEstimateForm] = useState({
-    priceEstimateLow: '',
-    priceEstimateHigh: '',
-    timeEstimateHoursMin: '',
-    timeEstimateHoursMax: '',
-  })
-  // Multi-session planning: 1 (the default, meaning "no plan -- use the
-  // fields above") behaves with zero change from today. Only above 1 does
-  // sessionHours below replace the single top-level time-estimate fields
-  // (and, per-session prices below, the single top-level price fields).
-  const [sessionCount, setSessionCount] = useState(1)
-  const [sessionHours, setSessionHours] = useState<SessionHoursRow[]>([
-    { min: '', max: '', priceLow: '', priceHigh: '', isFlat: false, showDurationToClient: true },
-  ])
-  // Per-estimate flat/range choice -- independent of the Service's own
-  // pricingModel (seeded from it as a default, below, but freely
-  // overridable per estimate). Governs both the top-level price field(s)
-  // when there's no session plan, and every session row's price field(s)
-  // once there is one.
-  const [estimateIsFlat, setEstimateIsFlat] = useState(false)
-  // Same concept as SessionHoursRow's own showDurationToClient, just for
-  // the no-plan (single top-level price/hours) path -- only meaningful
-  // once estimateIsFlat is checked, same as the per-session version. Sent
-  // as a synthetic 1-row `sessions` array in handleSendEstimate below so
-  // it persists onto a real PlannedSession row (the API already supports
-  // any session-array length, including 1) rather than needing its own
-  // top-level Inquiry column.
-  const [estimateShowDurationToClient, setEstimateShowDurationToClient] = useState(true)
-
-  // No-session-plan path's own version of SessionHoursRows' updateRow --
-  // same suggestion (assigned artist's hourly/flat rate), same "only
-  // pre-fill, never override" guard, just against the single top-level
-  // price/hours fields instead of a per-session row. Bug fix: this
-  // suggestion previously only existed inside SessionHoursRows, which
-  // is a no-op for sessionCount <= 1 (the default, single-session case)
-  // -- so an assigned artist's rate never suggested anything unless staff
-  // had already bumped "Number of sessions" above 1.
-  function updateEstimateTimeField(field: 'timeEstimateHoursMin' | 'timeEstimateHoursMax', value: string) {
-    setEstimateForm((current) => {
-      const next = { ...current, [field]: value }
-      if (
-        inquiry?.assignedArtist &&
-        !next.priceEstimateLow &&
-        !next.priceEstimateHigh &&
-        next.timeEstimateHoursMin &&
-        next.timeEstimateHoursMax
-      ) {
-        const suggestion = suggestSessionPrice(
-          inquiry.assignedArtist,
-          Number(next.timeEstimateHoursMin),
-          Number(next.timeEstimateHoursMax),
-          estimateIsFlat,
-        )
-        if (suggestion) {
-          next.priceEstimateLow = suggestion.low
-          next.priceEstimateHigh = suggestion.high
-        }
-      }
-      return next
-    })
-  }
-
-  // Resizes sessionHours to match, preserving already-entered rows --
-  // dropping the count back down never loses data for the rows still in
-  // range, just hides the ones beyond it.
-  function handleSessionCountChange(count: number) {
-    setSessionCount(count)
-    setSessionHours((current) => {
-      const next = [...current]
-      while (next.length < count) next.push({ min: '', max: '', priceLow: '', priceHigh: '', isFlat: false, showDurationToClient: true })
-      next.length = count
-      return next
-    })
-  }
+  // Estimate parity: every field (flat/range, hide-duration, session count,
+  // per-session rows, hours, price) now lives in one shared draft object,
+  // rendered by the shared EstimateFieldsEditor -- see that component's own
+  // header comment for why (this used to be five separate useState calls
+  // and a hand-rolled JSX block, duplicated a second time for Revise
+  // Estimate below, and a THIRD time, reduced, in MyInquiries.tsx's own
+  // artist Approve modal).
+  const [estimateDraft, setEstimateDraft] = useState<EstimateDraft>(emptyEstimateDraft(false))
 
   const [sendingEstimate, setSendingEstimate] = useState(false)
   const [sendEstimateError, setSendEstimateError] = useState<string | null>(null)
@@ -774,68 +710,16 @@ export default function InquiryDetail() {
   // reason (unlike Mark as Lost's optional one) and never touches
   // `status`, unlike Generate & Send Estimate.
   const [showReviseEstimateModal, setShowReviseEstimateModal] = useState(false)
-  const [reviseEstimateForm, setReviseEstimateForm] = useState({
-    priceEstimateLow: '',
-    priceEstimateHigh: '',
-    timeEstimateHoursMin: '',
-    timeEstimateHoursMax: '',
-  })
+  // Same shared EstimateDraft shape as estimateDraft above, keyed to this
+  // modal's own state -- prefilled from the inquiry's existing
+  // PlannedSession rows (if any) in openReviseEstimateModal below, since a
+  // revision on a project that already has a session plan should show
+  // that plan, not start from 1.
+  const [reviseEstimateDraft, setReviseEstimateDraft] = useState<EstimateDraft>(emptyEstimateDraft(false))
   const [reviseReasonInput, setReviseReasonInput] = useState('')
   const [revisingEstimate, setRevisingEstimate] = useState(false)
   const [reviseEstimateError, setReviseEstimateError] = useState<string | null>(null)
   const [revisionSendNotice, setRevisionSendNotice] = useState<string | null>(null)
-
-  // Multi-session planning: same shape/rules as sessionCount/sessionHours
-  // above, just keyed to the Revise Estimate modal's own state instead --
-  // prefilled from the inquiry's existing PlannedSession rows (if any) in
-  // openReviseEstimateModal below, since a revision on a project that
-  // already has a session plan should show that plan, not start from 1.
-  const [reviseSessionCount, setReviseSessionCount] = useState(1)
-  const [reviseSessionHours, setReviseSessionHours] = useState<SessionHoursRow[]>([
-    { min: '', max: '', priceLow: '', priceHigh: '', isFlat: false, showDurationToClient: true },
-  ])
-  // Same per-estimate flat/range choice as estimateIsFlat above, keyed to
-  // this modal's own state -- seeded in openReviseEstimateModal below.
-  const [reviseIsFlat, setReviseIsFlat] = useState(false)
-  // Same as estimateShowDurationToClient above, keyed to this modal.
-  const [reviseShowDurationToClient, setReviseShowDurationToClient] = useState(true)
-
-  // Same bug fix and same reasoning as updateEstimateTimeField above,
-  // keyed to this modal's own state.
-  function updateReviseTimeField(field: 'timeEstimateHoursMin' | 'timeEstimateHoursMax', value: string) {
-    setReviseEstimateForm((current) => {
-      const next = { ...current, [field]: value }
-      if (
-        inquiry?.assignedArtist &&
-        !next.priceEstimateLow &&
-        !next.priceEstimateHigh &&
-        next.timeEstimateHoursMin &&
-        next.timeEstimateHoursMax
-      ) {
-        const suggestion = suggestSessionPrice(
-          inquiry.assignedArtist,
-          Number(next.timeEstimateHoursMin),
-          Number(next.timeEstimateHoursMax),
-          reviseIsFlat,
-        )
-        if (suggestion) {
-          next.priceEstimateLow = suggestion.low
-          next.priceEstimateHigh = suggestion.high
-        }
-      }
-      return next
-    })
-  }
-
-  function handleReviseSessionCountChange(count: number) {
-    setReviseSessionCount(count)
-    setReviseSessionHours((current) => {
-      const next = [...current]
-      while (next.length < count) next.push({ min: '', max: '', priceLow: '', priceHigh: '', isFlat: false, showDurationToClient: true })
-      next.length = count
-      return next
-    })
-  }
 
   const [editingDetails, setEditingDetails] = useState(false)
   const [detailsForm, setDetailsForm] = useState({
@@ -1067,25 +951,8 @@ export default function InquiryDetail() {
   const [seededEstimateForId, setSeededEstimateForId] = useState<string | null>(null)
   if (inquiry && inquiry.id !== seededEstimateForId) {
     setSeededEstimateForId(inquiry.id)
-    setEstimateForm({
-      priceEstimateLow: inquiry.priceEstimateLow?.toString() ?? '',
-      priceEstimateHigh: inquiry.priceEstimateHigh?.toString() ?? '',
-      timeEstimateHoursMin: inquiry.timeEstimateHoursMin?.toString() ?? '',
-      timeEstimateHoursMax: inquiry.timeEstimateHoursMax?.toString() ?? '',
-    })
+    setEstimateDraft(estimateDraftFromInquiry(inquiry))
     setEditingEstimate(!inquiry.estimateSentAt && !!inquiry.assignedArtist)
-    // A never-yet-sent estimate defaults to the Service's own pricing
-    // model; re-editing one already sent instead reflects what was
-    // actually sent (inferred from low === high -- see the module comment
-    // on isFlatPricing below for why no separate persisted flag is needed).
-    setEstimateIsFlat(
-      inquiry.estimateSentAt
-        ? inquiry.priceEstimateLow != null && inquiry.priceEstimateLow === inquiry.priceEstimateHigh
-        : inquiry.service.pricingModel === 'FLAT',
-    )
-    setEstimateShowDurationToClient(
-      inquiry.plannedSessions.length === 1 ? inquiry.plannedSessions[0].showDurationToClient : true,
-    )
     setDetailsForm({
       description: inquiry.description,
       colorOrBlackGrey: inquiry.colorOrBlackGrey,
@@ -1098,84 +965,25 @@ export default function InquiryDetail() {
 
   // Service lines: a FLAT-pricing service (e.g. Powder Brows) defaults a
   // never-yet-sent estimate to a single flat price instead of a low/high
-  // range -- but this is now just estimateIsFlat/reviseIsFlat's seeded
-  // starting value (see the seed effect above), not a hard rule: staff can
-  // freely toggle either estimate to flat or range regardless of the
-  // Service's own pricingModel. Reading a value already sent/saved instead
-  // infers flatness from priceEstimateLow === priceEstimateHigh -- no
-  // separate persisted flag exists for it, since a flat estimate IS just
-  // one where both ends of the range happen to be the same number.
+  // range -- but this is now just estimateDraft/reviseEstimateDraft's
+  // seeded starting value (see estimateDraftFromInquiry / the seed effect
+  // above), not a hard rule: staff can freely toggle either estimate to
+  // flat or range regardless of the Service's own pricingModel. Reading a
+  // value already sent/saved instead infers flatness from
+  // priceEstimateLow === priceEstimateHigh -- no separate persisted flag
+  // exists for it, since a flat estimate IS just one where both ends of
+  // the range happen to be the same number.
   const sentEstimateIsFlat = inquiry?.priceEstimateLow != null && inquiry.priceEstimateLow === inquiry.priceEstimateHigh
-
-  // Multi-session planning: sessionCount 1 (the default) is today's
-  // behavior with zero change -- the single top-level time-estimate and
-  // price fields are what's required/sent. Only above 1 does the
-  // per-session sessionHours breakdown replace BOTH entirely (see the
-  // backend's own identical branch in POST /:id/send-estimate) -- the
-  // whole-project price becomes the sum of every session's own price.
-  const isMultiSession = sessionCount > 1
-
-  const sessionPriceSum = sessionHours.slice(0, sessionCount).reduce(
-    (sum, row) => ({
-      low: sum.low + (row?.priceLow ? Number(row.priceLow) : 0),
-      high: sum.high + (row?.priceHigh ? Number(row.priceHigh) : 0),
-    }),
-    { low: 0, high: 0 },
-  )
 
   // Mirrors the backend's own validation, so staff get instant feedback
   // instead of a round trip for something obviously incomplete.
-  const effectiveEstimate = {
-    priceEstimateLow: isMultiSession
-      ? sessionPriceSum.low
-      : estimateForm.priceEstimateLow
-        ? Number(estimateForm.priceEstimateLow)
-        : inquiry?.priceEstimateLow,
-    priceEstimateHigh: isMultiSession
-      ? sessionPriceSum.high
-      : estimateForm.priceEstimateHigh
-        ? Number(estimateForm.priceEstimateHigh)
-        : inquiry?.priceEstimateHigh,
-    ...(isMultiSession
-      ? {}
-      : {
-          timeEstimateHoursMin: estimateForm.timeEstimateHoursMin
-            ? Number(estimateForm.timeEstimateHoursMin)
-            : inquiry?.timeEstimateHoursMin,
-          timeEstimateHoursMax: estimateForm.timeEstimateHoursMax
-            ? Number(estimateForm.timeEstimateHoursMax)
-            : inquiry?.timeEstimateHoursMax,
-        }),
+  const estimateFallback = {
+    priceEstimateLow: inquiry?.priceEstimateLow ?? null,
+    priceEstimateHigh: inquiry?.priceEstimateHigh ?? null,
+    timeEstimateHoursMin: inquiry?.timeEstimateHoursMin ?? null,
+    timeEstimateHoursMax: inquiry?.timeEstimateHoursMax ?? null,
   }
-
-  const estimateValidationError = (() => {
-    if (isMultiSession) {
-      for (let i = 0; i < sessionCount; i++) {
-        const row = sessionHours[i]
-        if (!row || !row.min || !row.max) return `Session ${i + 1} needs an hour range.`
-        if (Number(row.min) <= 0 || Number(row.max) <= 0) return 'All session hour ranges must be positive.'
-        if (Number(row.min) > Number(row.max)) {
-          return `Session ${i + 1}'s minimum hours must be less than or equal to its maximum.`
-        }
-        if (!row.priceLow || !row.priceHigh) return `Session ${i + 1} needs a price range.`
-        if (Number(row.priceLow) <= 0 || Number(row.priceHigh) <= 0) return 'All session price ranges must be positive.'
-        if (Number(row.priceLow) > Number(row.priceHigh)) {
-          return `Session ${i + 1}'s minimum price must be less than or equal to its maximum.`
-        }
-      }
-      return null
-    }
-    const values = Object.values(effectiveEstimate)
-    if (values.some((v) => v == null)) return 'Price and time ranges are required before sending an estimate.'
-    if (values.some((v) => v! <= 0)) return 'All range values must be positive.'
-    if (effectiveEstimate.priceEstimateLow! > effectiveEstimate.priceEstimateHigh!) {
-      return 'Price low must be less than or equal to price high.'
-    }
-    if (effectiveEstimate.timeEstimateHoursMin! > effectiveEstimate.timeEstimateHoursMax!) {
-      return 'Minimum hours must be less than or equal to maximum hours.'
-    }
-    return null
-  })()
+  const estimateValidationError = validateEstimateDraft(estimateDraft, estimateFallback)
 
   // Multi-session planning, revision side: a session already backed by a
   // paid deposit or a booked appointment can't be silently altered or
@@ -1194,85 +1002,9 @@ export default function InquiryDetail() {
       reason: ps.appointment != null ? 'appointment booked' : 'deposit paid',
     }))
 
-  const isReviseMultiSession = reviseSessionCount > 1
-
-  // Every final session's own price, summed -- same rule as
-  // sessionPriceSum above, but a locked session's price comes from
-  // whatever's already stored for it (untouchable, same as its hours)
-  // rather than from reviseSessionHours.
-  const reviseSessionPriceSum = (() => {
-    let low = 0
-    let high = 0
-    for (let i = 0; i < reviseSessionCount; i++) {
-      const sessionNumber = i + 1
-      const locked = reviseLockedSessions.find((s) => s.sessionNumber === sessionNumber)
-      if (locked) {
-        low += locked.estimatedPriceLow ?? 0
-        high += locked.estimatedPriceHigh ?? 0
-        continue
-      }
-      const row = reviseSessionHours[i]
-      low += row?.priceLow ? Number(row.priceLow) : 0
-      high += row?.priceHigh ? Number(row.priceHigh) : 0
-    }
-    return { low, high }
-  })()
-
-  // Same shape as effectiveEstimate/estimateValidationError above, keyed to
-  // the separate Revise Estimate modal's own form state instead.
-  const effectiveRevisedEstimate = {
-    priceEstimateLow: isReviseMultiSession
-      ? reviseSessionPriceSum.low
-      : reviseEstimateForm.priceEstimateLow
-        ? Number(reviseEstimateForm.priceEstimateLow)
-        : inquiry?.priceEstimateLow,
-    priceEstimateHigh: isReviseMultiSession
-      ? reviseSessionPriceSum.high
-      : reviseEstimateForm.priceEstimateHigh
-        ? Number(reviseEstimateForm.priceEstimateHigh)
-        : inquiry?.priceEstimateHigh,
-    ...(isReviseMultiSession
-      ? {}
-      : {
-          timeEstimateHoursMin: reviseEstimateForm.timeEstimateHoursMin
-            ? Number(reviseEstimateForm.timeEstimateHoursMin)
-            : inquiry?.timeEstimateHoursMin,
-          timeEstimateHoursMax: reviseEstimateForm.timeEstimateHoursMax
-            ? Number(reviseEstimateForm.timeEstimateHoursMax)
-            : inquiry?.timeEstimateHoursMax,
-        }),
-  }
-
   const reviseEstimateValidationError = (() => {
     if (reviseReasonInput.trim().length === 0) return 'A reason is required to revise the estimate.'
-    if (isReviseMultiSession) {
-      for (let i = 0; i < reviseSessionCount; i++) {
-        const sessionNumber = i + 1
-        if (reviseLockedSessions.some((s) => s.sessionNumber === sessionNumber)) continue
-        const row = reviseSessionHours[i]
-        if (!row || !row.min || !row.max) return `Session ${sessionNumber} needs an hour range.`
-        if (Number(row.min) <= 0 || Number(row.max) <= 0) return 'All session hour ranges must be positive.'
-        if (Number(row.min) > Number(row.max)) {
-          return `Session ${sessionNumber}'s minimum hours must be less than or equal to its maximum.`
-        }
-        if (!row.priceLow || !row.priceHigh) return `Session ${sessionNumber} needs a price range.`
-        if (Number(row.priceLow) <= 0 || Number(row.priceHigh) <= 0) return 'All session price ranges must be positive.'
-        if (Number(row.priceLow) > Number(row.priceHigh)) {
-          return `Session ${sessionNumber}'s minimum price must be less than or equal to its maximum.`
-        }
-      }
-      return null
-    }
-    const values = Object.values(effectiveRevisedEstimate)
-    if (values.some((v) => v == null)) return 'Price and time ranges are required.'
-    if (values.some((v) => v! <= 0)) return 'All range values must be positive.'
-    if (effectiveRevisedEstimate.priceEstimateLow! > effectiveRevisedEstimate.priceEstimateHigh!) {
-      return 'Price low must be less than or equal to price high.'
-    }
-    if (effectiveRevisedEstimate.timeEstimateHoursMin! > effectiveRevisedEstimate.timeEstimateHoursMax!) {
-      return 'Minimum hours must be less than or equal to maximum hours.'
-    }
-    return null
+    return validateEstimateDraft(reviseEstimateDraft, estimateFallback, reviseLockedSessions)
   })()
 
   // Re-seeds every field the estimate form edits from the CURRENT inquiry
@@ -1284,38 +1016,7 @@ export default function InquiryDetail() {
   // to "no plan" instead of being preserved for further editing.
   function openEditEstimate() {
     if (!inquiry) return
-    setEstimateForm({
-      priceEstimateLow: inquiry.priceEstimateLow?.toString() ?? '',
-      priceEstimateHigh: inquiry.priceEstimateHigh?.toString() ?? '',
-      timeEstimateHoursMin: inquiry.timeEstimateHoursMin?.toString() ?? '',
-      timeEstimateHoursMax: inquiry.timeEstimateHoursMax?.toString() ?? '',
-    })
-    setEstimateIsFlat(
-      inquiry.estimateSentAt
-        ? inquiry.priceEstimateLow != null && inquiry.priceEstimateLow === inquiry.priceEstimateHigh
-        : inquiry.service.pricingModel === 'FLAT',
-    )
-    setEstimateShowDurationToClient(
-      inquiry.plannedSessions.length === 1 ? inquiry.plannedSessions[0].showDurationToClient : true,
-    )
-    if (inquiry.plannedSessions.length > 0) {
-      setSessionCount(inquiry.plannedSessions.length)
-      setSessionHours(
-        inquiry.plannedSessions.map((ps) => ({
-          min: ps.estimatedHoursMin.toString(),
-          max: ps.estimatedHoursMax.toString(),
-          priceLow: ps.estimatedPriceLow != null ? ps.estimatedPriceLow.toString() : '',
-          priceHigh: ps.estimatedPriceHigh != null ? ps.estimatedPriceHigh.toString() : '',
-          // Same inference the top-level estimateIsFlat seed uses: a
-          // session IS flat when its stored low/high already match.
-          isFlat: ps.estimatedPriceLow != null && ps.estimatedPriceLow === ps.estimatedPriceHigh,
-          showDurationToClient: ps.showDurationToClient,
-        })),
-      )
-    } else {
-      setSessionCount(1)
-      setSessionHours([{ min: '', max: '', priceLow: '', priceHigh: '', isFlat: false, showDurationToClient: true }])
-    }
+    setEstimateDraft(estimateDraftFromInquiry(inquiry))
     setSendEstimateError(null)
     setEditingEstimate(true)
   }
@@ -1368,60 +1069,8 @@ export default function InquiryDetail() {
       }>(`/inquiries/${id}/send-estimate`, {
         method: 'POST',
         body: JSON.stringify({
-          priceEstimateLow: isMultiSession
-            ? undefined
-            : estimateForm.priceEstimateLow
-              ? Number(estimateForm.priceEstimateLow)
-              : undefined,
-          priceEstimateHigh: isMultiSession
-            ? undefined
-            : estimateForm.priceEstimateHigh
-              ? Number(estimateForm.priceEstimateHigh)
-              : undefined,
-          timeEstimateHoursMin: isMultiSession
-            ? undefined
-            : estimateForm.timeEstimateHoursMin
-              ? Number(estimateForm.timeEstimateHoursMin)
-              : undefined,
-          timeEstimateHoursMax: isMultiSession
-            ? undefined
-            : estimateForm.timeEstimateHoursMax
-              ? Number(estimateForm.timeEstimateHoursMax)
-              : undefined,
-          sessions: isMultiSession
-            ? sessionHours.map((row) => ({
-                estimatedHoursMin: Number(row.min),
-                estimatedHoursMax: Number(row.max),
-                estimatedPriceLow: Number(row.priceLow),
-                estimatedPriceHigh: Number(row.priceHigh),
-                showDurationToClient: row.showDurationToClient,
-              }))
-            : estimateIsFlat
-              ? // A flat-rate single-session estimate still needs a real
-                // (1-row) session so showDurationToClient has somewhere to
-                // persist -- the API already reconciles any array length,
-                // including 1, onto a matching PlannedSession row without
-                // touching the top-level price/hours fields sent above.
-                [
-                  {
-                    estimatedHoursMin: Number(estimateForm.timeEstimateHoursMin),
-                    estimatedHoursMax: Number(estimateForm.timeEstimateHoursMax),
-                    estimatedPriceLow: Number(estimateForm.priceEstimateLow),
-                    estimatedPriceHigh: Number(estimateForm.priceEstimateHigh),
-                    showDurationToClient: estimateShowDurationToClient,
-                  },
-                ]
-              : // Bug fix: collapsing sessionCount back down to 1 needs to
-                // actually say so -- omitting `sessions` entirely (as before)
-                // left an already-declared plan's rows sitting untouched in
-                // the database forever, even though the top-level price/hours
-                // above had already moved on to the newly-submitted single
-                // values. Only sent when a plan currently exists; an ordinary
-                // single-session inquiry that never had one shouldn't send an
-                // empty array for no reason.
-                (inquiry?.plannedSessions.length ?? 0) > 0
-                ? []
-                : undefined,
+          ...estimateDraftToRequestFields(estimateDraft),
+          sessions: estimateDraftToSessionsPayload(estimateDraft, (inquiry?.plannedSessions.length ?? 0) > 0),
         }),
       })
 
@@ -1437,37 +1086,11 @@ export default function InquiryDetail() {
 
   function openReviseEstimateModal() {
     if (!inquiry) return
-    setReviseEstimateForm({
-      priceEstimateLow: inquiry.priceEstimateLow?.toString() ?? '',
-      priceEstimateHigh: inquiry.priceEstimateHigh?.toString() ?? '',
-      timeEstimateHoursMin: inquiry.timeEstimateHoursMin?.toString() ?? '',
-      timeEstimateHoursMax: inquiry.timeEstimateHoursMax?.toString() ?? '',
-    })
-    // Reflects what's actually currently saved -- same inference
-    // estimateIsFlat's own seed effect uses for an already-sent estimate.
-    setReviseIsFlat(inquiry.priceEstimateLow != null && inquiry.priceEstimateLow === inquiry.priceEstimateHigh)
-    setReviseShowDurationToClient(
-      inquiry.plannedSessions.length === 1 ? inquiry.plannedSessions[0].showDurationToClient : true,
-    )
-    // Prefill from the project's existing session plan, if it has one --
-    // a revision on a multi-session project should show that plan ready to
-    // edit, not silently reset it back down to 1.
-    if (inquiry.plannedSessions.length > 0) {
-      setReviseSessionCount(inquiry.plannedSessions.length)
-      setReviseSessionHours(
-        inquiry.plannedSessions.map((ps) => ({
-          min: ps.estimatedHoursMin.toString(),
-          max: ps.estimatedHoursMax.toString(),
-          priceLow: ps.estimatedPriceLow != null ? ps.estimatedPriceLow.toString() : '',
-          priceHigh: ps.estimatedPriceHigh != null ? ps.estimatedPriceHigh.toString() : '',
-          isFlat: ps.estimatedPriceLow != null && ps.estimatedPriceLow === ps.estimatedPriceHigh,
-          showDurationToClient: ps.showDurationToClient,
-        })),
-      )
-    } else {
-      setReviseSessionCount(1)
-      setReviseSessionHours([{ min: '', max: '', priceLow: '', priceHigh: '', isFlat: false, showDurationToClient: true }])
-    }
+    // Reflects what's actually currently saved (estimateDraftFromInquiry's
+    // own estimateSentAt branch) -- this modal only ever opens post-send,
+    // so that's always the inference used here, prefilled from the
+    // project's existing session plan when it has one.
+    setReviseEstimateDraft(estimateDraftFromInquiry(inquiry))
     setReviseReasonInput('')
     setReviseEstimateError(null)
     setShowReviseEstimateModal(true)
@@ -1492,70 +1115,12 @@ export default function InquiryDetail() {
       }>(`/inquiries/${id}/revise-estimate`, {
         method: 'POST',
         body: JSON.stringify({
-          priceEstimateLow: isReviseMultiSession
-            ? undefined
-            : reviseEstimateForm.priceEstimateLow
-              ? Number(reviseEstimateForm.priceEstimateLow)
-              : undefined,
-          priceEstimateHigh: isReviseMultiSession
-            ? undefined
-            : reviseEstimateForm.priceEstimateHigh
-              ? Number(reviseEstimateForm.priceEstimateHigh)
-              : undefined,
-          timeEstimateHoursMin: isReviseMultiSession
-            ? undefined
-            : reviseEstimateForm.timeEstimateHoursMin
-              ? Number(reviseEstimateForm.timeEstimateHoursMin)
-              : undefined,
-          timeEstimateHoursMax: isReviseMultiSession
-            ? undefined
-            : reviseEstimateForm.timeEstimateHoursMax
-              ? Number(reviseEstimateForm.timeEstimateHoursMax)
-              : undefined,
-          sessions: isReviseMultiSession
-            ? reviseSessionHours
-                .slice(0, reviseSessionCount)
-                .map((row, index) => {
-                  const sessionNumber = index + 1
-                  const locked = reviseLockedSessions.find((s) => s.sessionNumber === sessionNumber)
-                  return locked
-                    ? {
-                        estimatedHoursMin: locked.estimatedHoursMin,
-                        estimatedHoursMax: locked.estimatedHoursMax,
-                        estimatedPriceLow: locked.estimatedPriceLow ?? 0,
-                        estimatedPriceHigh: locked.estimatedPriceHigh ?? 0,
-                      }
-                    : {
-                        estimatedHoursMin: Number(row.min),
-                        estimatedHoursMax: Number(row.max),
-                        estimatedPriceLow: Number(row.priceLow),
-                        estimatedPriceHigh: Number(row.priceHigh),
-                        showDurationToClient: row.showDurationToClient,
-                      }
-                })
-            : reviseIsFlat
-              ? // Same reasoning as the Generate & Send Estimate flow's own
-                // synthetic 1-row session -- gives showDurationToClient
-                // somewhere to persist even without a real multi-session
-                // plan. Safe even if this single slot happens to be locked:
-                // the reconciliation above already ignores whatever's
-                // submitted for a locked sessionNumber.
-                [
-                  {
-                    estimatedHoursMin: Number(reviseEstimateForm.timeEstimateHoursMin),
-                    estimatedHoursMax: Number(reviseEstimateForm.timeEstimateHoursMax),
-                    estimatedPriceLow: Number(reviseEstimateForm.priceEstimateLow),
-                    estimatedPriceHigh: Number(reviseEstimateForm.priceEstimateHigh),
-                    showDurationToClient: reviseShowDurationToClient,
-                  },
-                ]
-              : // Only explicitly collapse the plan back to an empty array when
-                // one currently exists (locked sessions, if any, are preserved
-                // server-side regardless) -- an ordinary project that never
-                // had a plan shouldn't send a `sessions` field at all.
-                (inquiry?.plannedSessions.length ?? 0) > 0
-                ? []
-                : undefined,
+          ...estimateDraftToRequestFields(reviseEstimateDraft),
+          sessions: estimateDraftToSessionsPayload(
+            reviseEstimateDraft,
+            (inquiry?.plannedSessions.length ?? 0) > 0,
+            reviseLockedSessions,
+          ),
           reason: reviseReasonInput.trim(),
         }),
       })
@@ -2873,128 +2438,9 @@ export default function InquiryDetail() {
 
                   {!isTerminal && !canReviseEstimate && canSendEstimate && editingEstimate && (
                     <>
-                      {/* Once a session plan exists, flat/range is a
-                          per-session choice (see SessionHoursRows below)
-                          rather than one global toggle -- this checkbox
-                          only still applies to the single top-level price
-                          field used when there's no plan. */}
-                      {!isMultiSession && (
-                        <>
-                          <label className="mt-4 flex items-center gap-2 text-xs font-medium text-fg-secondary">
-                            <input
-                              type="checkbox"
-                              checked={estimateIsFlat}
-                              onChange={(e) => setEstimateIsFlat(e.target.checked)}
-                              className="h-3.5 w-3.5 rounded border-border bg-surface-inset accent-accent"
-                            />
-                            Flat rate (single price instead of a range)
-                          </label>
-                          {estimateIsFlat && (
-                            <label className="mt-1.5 flex items-center gap-1.5 text-xs text-fg-muted">
-                              <input
-                                type="checkbox"
-                                checked={estimateShowDurationToClient}
-                                onChange={(e) => setEstimateShowDurationToClient(e.target.checked)}
-                                className="h-3.5 w-3.5 rounded border-border bg-surface-inset accent-accent"
-                              />
-                              Show this session's hour range to the client (staff always sees it either way)
-                            </label>
-                          )}
-                        </>
-                      )}
-
-                      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                        {/* Sessions, then Time, then Price -- Price comes
-                            last for a single-session estimate since entering
-                            Time is what suggests it (see
-                            updateEstimateTimeField above); asking for a
-                            price before the field that fills it in reads
-                            backwards. The multi-session sum stays at the
-                            top regardless -- it's a read-only rollup of the
-                            per-session rows below, not something Time here
-                            feeds into directly. */}
-                        {isMultiSession && (
-                          <div className="sm:col-span-2">
-                            <p className="mb-1 block text-xs font-medium text-fg-secondary">
-                              Price estimate (sum of every session below)
-                            </p>
-                            <p className="text-sm text-fg">
-                              {formatPriceEstimate(sessionPriceSum.low, sessionPriceSum.high) ?? 'Not provided'}
-                            </p>
-                          </div>
-                        )}
-                        <SessionCountField sessionCount={sessionCount} onSessionCountChange={handleSessionCountChange} />
-                        {!isMultiSession && (
-                          <>
-                            <div>
-                              <label className="mb-1 block text-xs font-medium text-fg-secondary">Time min (hours)</label>
-                              <select
-                                value={estimateForm.timeEstimateHoursMin}
-                                onChange={(e) => updateEstimateTimeField('timeEstimateHoursMin', e.target.value)}
-                                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                              >
-                                <option value="">Select…</option>
-                                {HOUR_OPTIONS.map((hours) => (
-                                  <option key={hours} value={hours}>
-                                    {hours} {hours === 1 ? 'hour' : 'hours'}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                            <div>
-                              <label className="mb-1 block text-xs font-medium text-fg-secondary">Time max (hours)</label>
-                              <select
-                                value={estimateForm.timeEstimateHoursMax}
-                                onChange={(e) => updateEstimateTimeField('timeEstimateHoursMax', e.target.value)}
-                                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                              >
-                                <option value="">Select…</option>
-                                {HOUR_OPTIONS.map((hours) => (
-                                  <option key={hours} value={hours}>
-                                    {hours} {hours === 1 ? 'hour' : 'hours'}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                            {estimateIsFlat ? (
-                              <div className="sm:col-span-2">
-                                <label className="mb-1 block text-xs font-medium text-fg-secondary">Price</label>
-                                <CurrencyInput
-                                  value={estimateForm.priceEstimateLow}
-                                  onChange={(digits) =>
-                                    setEstimateForm({ ...estimateForm, priceEstimateLow: digits, priceEstimateHigh: digits })
-                                  }
-                                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                                />
-                              </div>
-                            ) : (
-                              <>
-                                <div>
-                                  <label className="mb-1 block text-xs font-medium text-fg-secondary">Price low</label>
-                                  <CurrencyInput
-                                    value={estimateForm.priceEstimateLow}
-                                    onChange={(digits) => setEstimateForm({ ...estimateForm, priceEstimateLow: digits })}
-                                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="mb-1 block text-xs font-medium text-fg-secondary">Price high</label>
-                                  <CurrencyInput
-                                    value={estimateForm.priceEstimateHigh}
-                                    onChange={(digits) => setEstimateForm({ ...estimateForm, priceEstimateHigh: digits })}
-                                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                                  />
-                                </div>
-                              </>
-                            )}
-                          </>
-                        )}
-                      </div>
-
-                      <SessionHoursRows
-                        sessionCount={sessionCount}
-                        sessionHours={sessionHours}
-                        onSessionHoursChange={setSessionHours}
+                      <EstimateFieldsEditor
+                        value={estimateDraft}
+                        onChange={setEstimateDraft}
                         assignedArtist={inquiry.assignedArtist}
                       />
 
@@ -4528,128 +3974,11 @@ export default function InquiryDetail() {
                       and requires their approval.
                     </p>
 
-                    {/* Same reasoning as the Generate & Send Estimate flow
-                        above: once a session plan exists, flat/range is
-                        chosen per session instead. */}
-                    {!isReviseMultiSession && (
-                      <>
-                        <label className="flex items-center gap-2 text-xs font-medium text-fg-secondary">
-                          <input
-                            type="checkbox"
-                            checked={reviseIsFlat}
-                            onChange={(e) => setReviseIsFlat(e.target.checked)}
-                            className="h-3.5 w-3.5 rounded border-border bg-surface-inset accent-accent"
-                          />
-                          Flat rate (single price instead of a range)
-                        </label>
-                        {reviseIsFlat && (
-                          <label className="mt-1.5 flex items-center gap-1.5 text-xs text-fg-muted">
-                            <input
-                              type="checkbox"
-                              checked={reviseShowDurationToClient}
-                              onChange={(e) => setReviseShowDurationToClient(e.target.checked)}
-                              className="h-3.5 w-3.5 rounded border-border bg-surface-inset accent-accent"
-                            />
-                            Show this session's hour range to the client (staff always sees it either way)
-                          </label>
-                        )}
-                      </>
-                    )}
-
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      {/* Sessions, then Time, then Price -- same reasoning
-                          as the original estimate flow above (see its own
-                          comment): Time is what suggests Price for a
-                          single-session estimate, so it comes first. The
-                          multi-session sum stays at the top, unchanged. */}
-                      {isReviseMultiSession && (
-                        <div className="sm:col-span-2">
-                          <p className="mb-1 block text-xs font-medium text-fg-secondary">
-                            Price estimate (sum of every session below)
-                          </p>
-                          <p className="text-sm text-fg">
-                            {formatPriceEstimate(reviseSessionPriceSum.low, reviseSessionPriceSum.high) ?? 'Not provided'}
-                          </p>
-                        </div>
-                      )}
-                      <SessionCountField
-                        sessionCount={reviseSessionCount}
-                        onSessionCountChange={handleReviseSessionCountChange}
-                        lockedSessions={reviseLockedSessions}
-                      />
-                      {!isReviseMultiSession && (
-                        <>
-                          <div>
-                            <label className="mb-1 block text-xs font-medium text-fg-secondary">Time min (hours)</label>
-                            <select
-                              value={reviseEstimateForm.timeEstimateHoursMin}
-                              onChange={(e) => updateReviseTimeField('timeEstimateHoursMin', e.target.value)}
-                              className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                            >
-                              <option value="">Select…</option>
-                              {HOUR_OPTIONS.map((hours) => (
-                                <option key={hours} value={hours}>
-                                  {hours} {hours === 1 ? 'hour' : 'hours'}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                          <div>
-                            <label className="mb-1 block text-xs font-medium text-fg-secondary">Time max (hours)</label>
-                            <select
-                              value={reviseEstimateForm.timeEstimateHoursMax}
-                              onChange={(e) => updateReviseTimeField('timeEstimateHoursMax', e.target.value)}
-                              className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                            >
-                              <option value="">Select…</option>
-                              {HOUR_OPTIONS.map((hours) => (
-                                <option key={hours} value={hours}>
-                                  {hours} {hours === 1 ? 'hour' : 'hours'}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                          {reviseIsFlat ? (
-                            <div className="sm:col-span-2">
-                              <label className="mb-1 block text-xs font-medium text-fg-secondary">Price</label>
-                              <CurrencyInput
-                                value={reviseEstimateForm.priceEstimateLow}
-                                onChange={(digits) =>
-                                  setReviseEstimateForm({ ...reviseEstimateForm, priceEstimateLow: digits, priceEstimateHigh: digits })
-                                }
-                                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                              />
-                            </div>
-                          ) : (
-                            <>
-                              <div>
-                                <label className="mb-1 block text-xs font-medium text-fg-secondary">Price low</label>
-                                <CurrencyInput
-                                  value={reviseEstimateForm.priceEstimateLow}
-                                  onChange={(digits) => setReviseEstimateForm({ ...reviseEstimateForm, priceEstimateLow: digits })}
-                                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                                />
-                              </div>
-                              <div>
-                                <label className="mb-1 block text-xs font-medium text-fg-secondary">Price high</label>
-                                <CurrencyInput
-                                  value={reviseEstimateForm.priceEstimateHigh}
-                                  onChange={(digits) => setReviseEstimateForm({ ...reviseEstimateForm, priceEstimateHigh: digits })}
-                                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                                />
-                              </div>
-                            </>
-                          )}
-                        </>
-                      )}
-                    </div>
-
-                    <SessionHoursRows
-                      sessionCount={reviseSessionCount}
-                      sessionHours={reviseSessionHours}
-                      onSessionHoursChange={setReviseSessionHours}
-                      lockedSessions={reviseLockedSessions}
+                    <EstimateFieldsEditor
+                      value={reviseEstimateDraft}
+                      onChange={setReviseEstimateDraft}
                       assignedArtist={inquiry?.assignedArtist}
+                      lockedSessions={reviseLockedSessions}
                     />
 
                     <div>

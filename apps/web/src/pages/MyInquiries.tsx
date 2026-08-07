@@ -11,6 +11,13 @@ import { formatDateTime, formatStatus } from '../lib/format'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useMarkSectionSeen } from '../lib/useMarkSectionSeen'
 import { assignedInquiriesQueryKey } from '../lib/queryKeys'
+import EstimateFieldsEditor, {
+  emptyEstimateDraft,
+  estimateDraftToRequestFields,
+  estimateDraftToSessionsPayload,
+  validateEstimateDraft,
+  type EstimateDraft,
+} from '../components/EstimateFieldsEditor'
 
 interface Inquiry {
   id: string
@@ -35,7 +42,14 @@ interface Inquiry {
   updatedAt: string
   priceEstimateLow: number | null
   priceEstimateHigh: number | null
-  assignedArtist: { id: string; user: { email: string; name: string | null; avatarUrl: string | null } } | null
+  assignedArtist:
+    | {
+        id: string
+        hourlyRateCents: number | null
+        flatRateCents: number | null
+        user: { email: string; name: string | null; avatarUrl: string | null }
+      }
+    | null
   service: { id: string; name: string; pricingModel: 'RANGE' | 'FLAT' }
   // Also already returned by INQUIRY_INCLUDE (this route's include, same
   // as the Project detail page's own) -- declared here so
@@ -80,13 +94,6 @@ function ImageGrid({ images }: { images: string[] }) {
   )
 }
 
-const EMPTY_APPROVE_FORM = {
-  priceEstimateLow: '',
-  priceEstimateHigh: '',
-  timeEstimateHoursMin: '',
-  timeEstimateHoursMax: '',
-}
-
 export default function MyInquiries() {
   const user = useEffectiveUser()
   const navigate = useNavigate()
@@ -94,7 +101,7 @@ export default function MyInquiries() {
   useMarkSectionSeen('inquiries')
 
   const [approvingInquiry, setApprovingInquiry] = useState<Inquiry | null>(null)
-  const [approveForm, setApproveForm] = useState(EMPTY_APPROVE_FORM)
+  const [approveDraft, setApproveDraft] = useState<EstimateDraft>(emptyEstimateDraft(false))
   const [approveError, setApproveError] = useState<string | null>(null)
   const [approveSubmitting, setApproveSubmitting] = useState(false)
 
@@ -177,13 +184,30 @@ export default function MyInquiries() {
 
   function openApprove(inquiry: Inquiry) {
     setApprovingInquiry(inquiry)
-    setApproveForm(EMPTY_APPROVE_FORM)
+    setApproveDraft(emptyEstimateDraft(inquiry.service.pricingModel === 'FLAT'))
     setApproveError(null)
   }
+
+  // A fresh ARTIST_ASSIGNED inquiry never has a session plan yet (that only
+  // exists once an estimate has actually been sent), so hadExistingPlan is
+  // always false and there's never a lockedSessions list here.
+  const approveValidationError = approvingInquiry
+    ? validateEstimateDraft(approveDraft, {
+        priceEstimateLow: approvingInquiry.priceEstimateLow,
+        priceEstimateHigh: approvingInquiry.priceEstimateHigh,
+        timeEstimateHoursMin: null,
+        timeEstimateHoursMax: null,
+      })
+    : null
 
   async function handleApproveSubmit(event: FormEvent) {
     event.preventDefault()
     if (!approvingInquiry) return
+
+    if (approveValidationError) {
+      setApproveError(approveValidationError)
+      return
+    }
 
     setApproveError(null)
     setApproveSubmitting(true)
@@ -193,14 +217,8 @@ export default function MyInquiries() {
         method: 'PATCH',
         body: JSON.stringify({
           decision: 'APPROVE',
-          priceEstimateLow: approveForm.priceEstimateLow ? Number(approveForm.priceEstimateLow) : undefined,
-          priceEstimateHigh: approveForm.priceEstimateHigh ? Number(approveForm.priceEstimateHigh) : undefined,
-          timeEstimateHoursMin: approveForm.timeEstimateHoursMin
-            ? Number(approveForm.timeEstimateHoursMin)
-            : undefined,
-          timeEstimateHoursMax: approveForm.timeEstimateHoursMax
-            ? Number(approveForm.timeEstimateHoursMax)
-            : undefined,
+          ...estimateDraftToRequestFields(approveDraft),
+          sessions: estimateDraftToSessionsPayload(approveDraft, false),
         }),
       })
 
@@ -448,89 +466,11 @@ export default function MyInquiries() {
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-3">
-              {approvingInquiry.service.pricingModel === 'FLAT' ? (
-                <div className="col-span-2">
-                  <label htmlFor="priceLow" className="mb-1 block text-sm font-medium text-fg-secondary">
-                    Price ($)
-                  </label>
-                  <input
-                    id="priceLow"
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={approveForm.priceEstimateLow}
-                    onChange={(event) =>
-                      setApproveForm({ ...approveForm, priceEstimateLow: event.target.value, priceEstimateHigh: event.target.value })
-                    }
-                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                  />
-                </div>
-              ) : (
-                <>
-                  <div>
-                    <label htmlFor="priceLow" className="mb-1 block text-sm font-medium text-fg-secondary">
-                      Price low ($)
-                    </label>
-                    <input
-                      id="priceLow"
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={approveForm.priceEstimateLow}
-                      onChange={(event) => setApproveForm({ ...approveForm, priceEstimateLow: event.target.value })}
-                      className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                    />
-                  </div>
-
-                  <div>
-                    <label htmlFor="priceHigh" className="mb-1 block text-sm font-medium text-fg-secondary">
-                      Price high ($)
-                    </label>
-                    <input
-                      id="priceHigh"
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={approveForm.priceEstimateHigh}
-                      onChange={(event) => setApproveForm({ ...approveForm, priceEstimateHigh: event.target.value })}
-                      className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                    />
-                  </div>
-                </>
-              )}
-            </div>
-
-            <div className="mt-3 grid grid-cols-2 gap-3">
-              <div>
-                <label htmlFor="timeHoursMin" className="mb-1 block text-sm font-medium text-fg-secondary">
-                  Time min (hours)
-                </label>
-                <input
-                  id="timeHoursMin"
-                  type="number"
-                  min="0"
-                  step="0.5"
-                  value={approveForm.timeEstimateHoursMin}
-                  onChange={(event) => setApproveForm({ ...approveForm, timeEstimateHoursMin: event.target.value })}
-                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                />
-              </div>
-              <div>
-                <label htmlFor="timeHoursMax" className="mb-1 block text-sm font-medium text-fg-secondary">
-                  Time max (hours)
-                </label>
-                <input
-                  id="timeHoursMax"
-                  type="number"
-                  min="0"
-                  step="0.5"
-                  value={approveForm.timeEstimateHoursMax}
-                  onChange={(event) => setApproveForm({ ...approveForm, timeEstimateHoursMax: event.target.value })}
-                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                />
-              </div>
-            </div>
+            <EstimateFieldsEditor
+              value={approveDraft}
+              onChange={setApproveDraft}
+              assignedArtist={approvingInquiry.assignedArtist}
+            />
 
             <button
               type="submit"

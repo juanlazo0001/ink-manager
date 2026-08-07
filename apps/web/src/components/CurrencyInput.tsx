@@ -6,6 +6,7 @@ interface CurrencyInputProps {
   onChange: (digits: string) => void
   placeholder?: string
   className?: string
+  disabled?: boolean
 }
 
 // Same value/onChange contract as PhoneInput: value/onChange always carry
@@ -13,7 +14,7 @@ interface CurrencyInputProps {
 // commas -- matching Inquiry.priceEstimateLow/High's Int columns), while
 // the field displays a live "$1,500"-style mask. Whole dollars only (no
 // cents) since nothing this feeds accepts a decimal amount.
-export default function CurrencyInput({ id, value, onChange, placeholder, className }: CurrencyInputProps) {
+export default function CurrencyInput({ id, value, onChange, placeholder, className, disabled }: CurrencyInputProps) {
   return (
     <input
       id={id}
@@ -23,6 +24,7 @@ export default function CurrencyInput({ id, value, onChange, placeholder, classN
       value={formatCurrencyInput(value)}
       onChange={(event) => onChange(event.target.value.replace(/\D/g, ''))}
       className={className}
+      disabled={disabled}
     />
   )
 }
