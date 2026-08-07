@@ -22,21 +22,47 @@ export async function studioHasActiveMembership(studioId: string, artistId: stri
 // equivalents): a whole family of routes was written as a plain
 // `record.studioId === req.user!.studioId` check, before StudioMembership
 // existed. For a staff caller (OWNER/FRONT_DESK, who only ever belong to
-// one studio, no membership concept) that's correct and this short-circuits
-// on the first branch with no extra query. For an ARTIST caller,
-// `req.user!.studioId` is only their HOME studio (copied from User.studioId
-// at login) -- this resolves their own artist row and additionally checks
-// an active GUEST membership at the record's actual studio, so a legitimately
-// guest-assigned artist isn't 404'd out of their own work. Every other role
-// (CUSTOMER) simply has no membership concept and falls through to false.
+// one studio, no membership concept) that's correct -- their JWT's studioId
+// claim never changes across the token's lifetime, so this short-circuits
+// on the first branch with no extra query. For an ARTIST caller, this
+// resolves their own artist row and checks BOTH their current (freshly
+// read, not JWT-cached) home studio and an active GUEST membership at the
+// record's actual studio, so a legitimately guest-assigned artist isn't
+// 404'd out of their own work.
+//
+// Ghost-access regression, caught before it shipped: an EARLIER version of
+// this function short-circuited on `user.studioId === recordStudioId`
+// (the raw JWT claim) for every role, ARTIST included. That's exactly the
+// same "ended membership still grants access" bug class as the historical
+// GET /artists roster bug (see studioHasActiveMembership's own comment) --
+// go-solo and artist-invite-accept (routes/artists.ts, routes/
+// artistInvites.ts) both explicitly document that a caller's EXISTING JWT
+// keeps the OLD home studioId until they receive and apply a freshly-
+// minted token, which can be up to the full 7-day token lifetime away on a
+// second device/tab that never refreshes. During that window the old
+// home's StudioMembership row is already `endedAt`-set, but the stale JWT
+// claim alone would have granted ghost access to it via the equality
+// shortcut, bypassing the active-membership check entirely. Fixed by never
+// trusting the ARTIST caller's OWN studioId claim -- User.studioId is
+// re-read fresh from the DB instead (kept in sync with the current HOME by
+// both transfer routes, in the same transaction that ends the old
+// membership), so this is the artist-mobility-safe equivalent of the
+// existing "record's own home OR active GUEST" pattern used everywhere the
+// codebase resolves a DIFFERENT artist's studio (e.g. PATCH /inquiries/:id/assign).
 export async function callerBelongsToStudio(
   user: Pick<AuthPayload, "studioId" | "role" | "userId">,
   recordStudioId: string,
 ): Promise<boolean> {
-  if (user.studioId === recordStudioId) return true;
-  if (user.role !== Role.ARTIST) return false;
-  const artist = await prisma.artist.findUnique({ where: { userId: user.userId }, select: { id: true } });
-  return artist != null && (await studioHasActiveMembership(recordStudioId, artist.id));
+  if (user.role !== Role.ARTIST) return user.studioId === recordStudioId;
+
+  const artist = await prisma.artist.findUnique({
+    where: { userId: user.userId },
+    select: { id: true, user: { select: { studioId: true } } },
+  });
+  return (
+    artist != null &&
+    (artist.user.studioId === recordStudioId || (await studioHasActiveMembership(recordStudioId, artist.id)))
+  );
 }
 
 // Same bug class, list-query shape: every studio a caller has a live

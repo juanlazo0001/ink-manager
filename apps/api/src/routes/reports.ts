@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma";
 import { AppointmentStatus, InquiryStatus, GiftCardStatus, Role } from "../../generated/prisma/enums";
 import { requireAuth } from "../middleware/auth";
 import { hasPermission, requirePermission } from "../lib/permissions";
+import { activeStudioIdsForCaller } from "../lib/artistAccess";
 
 const router = Router();
 router.use(requireAuth);
@@ -68,17 +69,20 @@ router.get("/dashboard", async (req, res) => {
   const scopingArtist =
     role === Role.ARTIST ? await prisma.artist.findUnique({ where: { userId }, select: { id: true } }) : null;
   const artistScope = scopingArtist ? { assignedArtistId: scopingArtist.id } : {};
+  // Artist mobility bug fix: an ARTIST's own dashboard spans every studio
+  // they CURRENTLY belong to (HOME + active GUESTs), not just home -- a
+  // guest artist's own assigned projects at a GUEST studio have a
+  // different Inquiry.studioId than home, so ANDing home studioId alone
+  // silently zeroed out that whole slice of their own numbers. But it must
+  // stay scoped to ACTIVE memberships, not open up to every studio they
+  // were ever assignedArtistId at regardless of current status -- once a
+  // GUEST membership ends, that studio's work must stop counting toward
+  // "your performance" going forward, same reasoning as the calendar/
+  // flash-gallery list fixes right next to this one.
+  const artistStudioIds = scopingArtist ? await activeStudioIdsForCaller(req.user!) : null;
 
   const inquiryBaseWhere = {
-    // Artist mobility bug fix: an ARTIST's own dashboard scope drops the
-    // studioId filter entirely and relies on assignedArtistId alone --
-    // same "no studio scoping" convention GET /inquiries/assigned-to-me
-    // already uses. A guest artist's own assigned projects at a GUEST
-    // studio have a different Inquiry.studioId than their home studio, so
-    // ANDing it in here silently zeroed out that whole slice of their own
-    // performance numbers. OWNER/FRONT_DESK keep the unchanged studio-wide
-    // scope.
-    ...(scopingArtist ? {} : { studioId }),
+    ...(artistStudioIds ? { studioId: { in: artistStudioIds } } : { studioId }),
     archivedAt: null,
     createdAt: { gte: start, lte: end },
     ...artistScope,
@@ -139,7 +143,7 @@ router.get("/dashboard", async (req, res) => {
       by: ["artistId"],
       where: {
         // Same artist-mobility fix as inquiryBaseWhere above.
-        ...(scopingArtist ? {} : { studioId }),
+        ...(artistStudioIds ? { studioId: { in: artistStudioIds } } : { studioId }),
         archivedAt: null,
         startTime: { gte: start, lte: end },
         // Appointment carries its own direct artistId (not just via
@@ -152,7 +156,13 @@ router.get("/dashboard", async (req, res) => {
     }),
     // All-time by design -- see comment above the route.
     prisma.depositForm.findMany({
-      where: { inquiry: { archivedAt: null, ...(scopingArtist ? {} : { studioId }), ...artistScope } },
+      where: {
+        inquiry: {
+          archivedAt: null,
+          ...(artistStudioIds ? { studioId: { in: artistStudioIds } } : { studioId }),
+          ...artistScope,
+        },
+      },
       select: { createdAt: true, paidManually: true, paidAt: true },
     }),
     // Gift card liability has no natural per-artist scope -- a card belongs
@@ -180,7 +190,7 @@ router.get("/dashboard", async (req, res) => {
     prisma.inquiry.count({
       where: {
         // Same artist-mobility fix as inquiryBaseWhere above.
-        ...(scopingArtist ? {} : { studioId }),
+        ...(artistStudioIds ? { studioId: { in: artistStudioIds } } : { studioId }),
         archivedAt: null,
         status: { in: [InquiryStatus.SCHEDULING, InquiryStatus.WAITLISTED, InquiryStatus.CONFIRMED] },
         appointmentId: null,

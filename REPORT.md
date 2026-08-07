@@ -8665,3 +8665,55 @@ No dev servers started this session (all verification was via `node:test` agains
 
 `7d799a9`
 
+---
+
+# Artist-mobility audit follow-ups: ended-membership regression tests, a caught-before-shipping ghost-access bug, live guest-artist verification, DatePickerField risk check
+
+Same repo, new session. Three follow-ups on the previous session's audit.
+
+## 1. Confirm active-membership filtering + negative regression tests -- found and fixed a real bug in the process
+
+Before writing tests, re-read `callerBelongsToStudio`/`studioHasActiveMembership`/`activeStudioIdsForCaller` end to end rather than assuming last session's implementation was airtight. `studioHasActiveMembership` was already correct (`endedAt: null` in its own `where`). But `callerBelongsToStudio`'s equality shortcut -- `if (user.studioId === recordStudioId) return true`, checked for every role before even branching on ARTIST -- trusts the CALLER's own JWT `studioId` claim. For staff that's fine (their studioId never changes). For an ARTIST, that claim is only correct as of their last login/token refresh: `routes/artists.ts`'s `POST /:id/go-solo` and `routes/artistInvites.ts`'s accept-invite both explicitly comment that a caller's existing JWT keeps the OLD home studioId until they receive and apply a freshly-minted token, specifically because `requireAuth` never re-validates studioId/role live (only `isActive`/`deactivatedAt`/`passwordChangedAt`). On a second device/tab that never refreshes, that stale claim can persist for the token's full 7-day lifetime.
+
+**Wrote a reproduction before fixing anything**: created a real artist with an ENDED HOME membership at a "former home" studio and an ACTIVE HOME membership at a "current home" studio (exactly the DB state right after a real go-solo), then called `callerBelongsToStudio` with a token payload still claiming the FORMER home. It returned `true` -- ghost access to an already-ended membership, the same failure shape as the historical `GET /artists` roster bug, now reintroduced through this session's own new helper. Fixed: the equality shortcut now only applies to non-ARTIST callers; for ARTIST, `User.studioId` is re-read fresh from the DB (confirmed both transfer routes update it atomically in the same transaction that ends the old membership, so a fresh read is always authoritative) before falling back to `studioHasActiveMembership`. Re-ran the reproduction -- now correctly `false`. `activeStudioIdsForCaller` was already doing the fresh-read version and didn't need this fix (only its own degenerate "artist row missing entirely" fallback still reads the JWT claim, an edge case with no membership rows to check regardless).
+
+**A second, related gap found while writing the "sees none of its data in list endpoints" tests**: three of last session's own fixes (appointments.ts `GET /`, flashPieces.ts `GET /`, reports.ts `GET /dashboard`) had widened an ARTIST's scope from "home studio only" to "artistId/assignedArtistId only, no studio filter at all" -- correct for the *access* bug (a guest artist's data was invisible), but too wide in the other direction: it meant an artist's calendar/gallery/dashboard would keep reflecting a studio's data **forever**, even after their membership there ended, since these queries never checked StudioMembership at all. Tightened all three to `studioId: { in: activeStudioIdsForCaller(...) }` instead of dropping the studio filter entirely -- scoped to every CURRENTLY-active studio (home + guests), not every studio ever touched. `conversations.ts` and `clients.ts` already used `activeStudioIdsForCaller` correctly from the start and needed no change.
+
+**Regression tests added** (`apps/api/src/routes/artistMobility.test.ts`, extended from 9 to 31 total): a full second fixture scenario (an artist with a real ENDED guest membership, and real leftover records -- an Inquiry, Appointment, Conversation, FlashPiece -- from while it was active) proves the deposit-form PDF, calendar, conversations, flash gallery, and dashboard all correctly show zero access/data once that membership ends. A third fixture scenario (an artist mid HOME transfer, DB state already "after" but a request carrying a deliberately stale JWT) proves the ghost-access fix directly, both via the bare function and via a real HTTP call to `GET /flash-pieces` with the stale token. All 31 pass; re-run twice to confirm idempotency (fresh `Date.now()`-keyed fixtures each run) and re-verified zero leftover rows via a direct DB query after `after()` runs.
+
+## 2. Live browser verification, real guest artist at their guest studio
+
+Seeded real, lasting dev-DB fixtures (kept, per this file's own standing convention for live-session test data) rather than reusing an existing artist account with unrelated history: a fresh `guestverify-artist@dev-studio.test`, HOME at Dev Studio, granted an ACTIVE GUEST membership at Dev Studio 2 -- which was given its own distinct `StudioSettings` (timezone `America/Los_Angeles` + 15-min buffer, vs. Dev Studio's own `America/New_York` + 90-min) specifically so a wrong-studio computation would be impossible to miss. A real CONFIRMED project, signed+paid deposit form, upcoming appointment, STAFF conversation thread (with a real message from Dev Studio 2's owner), flash piece, and self-scheduling token were all created at Dev Studio 2 and assigned to this artist.
+
+**A seeding bug (not a product bug) caught mid-verification**: the first calendar screenshot showed zero appointments -- the appointment row still carried a stale `artistId` from an earlier, discarded version of the seed script (originally built around a reused existing artist, then switched to a dedicated fresh one, but the appointment's `artistId` wasn't re-pointed on the second run). Fixed the fixture directly, re-verified.
+
+**Confirmed live, screenshotted**:
+- **Calendar**: the Dev Studio 2 appointment renders on this artist's own calendar (appointments.ts's `GET /` fix).
+- **Dashboard**: "Your Inquiry Funnel" shows Received 1/Confirmed 1, from the Dev Studio 2 project (reports.ts's fix).
+- **Staff thread**: the Dev Studio 2 conversation, with the real seeded message from "Owner Two," opens normally (conversations.ts's fix).
+- **Flash Gallery**: the Dev Studio 2 flash piece appears in this artist's own gallery (flashPieces.ts's fix).
+- **Scheduling assistant**: checked two ways. Precisely, via direct API calls to `GET /self-schedule/slots/:token` -- the returned slots begin at `2026-08-10T16:00:00.000Z`, which is exactly **9:00 AM Pacific** (Dev Studio 2's own configured hours) and **12:00 PM Eastern** (what the bug would have produced, reading the artist's home studio instead) -- unambiguous proof the fix reads the right studio's settings. Visually, via a real browser screenshot of the actual client-facing `/schedule/:token` picker page, correctly labeled "Dev Studio 2" with only weekdays selectable (matching the artist's Mon-Fri `preferredSchedule`).
+- **HOME-only artist, regression check**: `artist1@dev-studio.test` (no guest memberships at all) -- Calendar and Dashboard both load normally, no errors, no behavior change from before this audit.
+
+## 3. DatePickerField.tsx risk investigation -- no live risk found
+
+Traced the file's actual state rather than assuming the worst from "uncommitted": it's a previously-committed, tracked file (history back to `06bdafc`) with *uncommitted local edits* sitting in the working tree, not a brand-new untracked file. The uncommitted edits (two new optional props, `formatValue`/`buttonClassName`) belong to a cohesive, clearly-labeled-in-its-own-comments "Tasks mobile row redesign" spanning `DatePickerField.tsx`, `Tasks.tsx`, and `lib/format.ts` (a new `formatCompactDueDate` helper) -- all three uncommitted together and mutually consistent with each other.
+
+**The actual question -- does any COMMITTED code reference these uncommitted additions (the shape of the two real past incidents)** -- checked directly: `git show HEAD:apps/web/src/pages/Tasks.tsx` has zero references to `formatCompactDueDate`/`buttonClassName`/`formatValue`; the committed `DatePickerField.tsx` only has its original five props; committed `format.ts` has no `formatCompactDueDate`. The currently-deployed state is self-consistent. Confirmed with a genuinely clean build, not just a read of the diff: created an isolated `git worktree` at `origin/main` (a separate directory, zero risk to the real working tree's in-progress edits), ran `npm ci` (617 packages, no errors) followed by `npm run build` in both `apps/web` (includes `tsc -b`) and `apps/api` -- both succeeded with zero errors. Copied the real `.env` in to also run the full API test suite there: 18/18 pass (the version of `artistMobility.test.ts` that was on `origin/main` before this session's own additions). Worktree removed after.
+
+**Self-scheduling token-lifecycle fix, confirmed complete and pushed**: commit `5ae184f` is an ancestor of `origin/main` (`git merge-base --is-ancestor` confirmed), and `npx prisma migrate status` reports "Database schema is up to date" -- the migration is applied, not just committed as a file.
+
+**Not touched**: the uncommitted Tasks/DatePickerField/format.ts feature itself -- it's someone else's in-progress work, not part of this task, and (per the above) not a live risk as it currently sits uncommitted.
+
+## Cleanup
+
+Also handled per this task's own explicit ask: killed a still-running background shell left over from the previous session (a crashed `tsx watch` process the harness still reported as "running" after an `EADDRINUSE` failure), and re-confirmed `apps/web/.env` is gitignored with zero git history (unchanged from last session's check). Dev servers started for this session's live verification were stopped afterward. Scratch scripts (a hypothesis-confirmation script for the ghost-access bug, the guest-artist data seed script) deleted after use. The seeded guest-artist verification data itself (`guestverify-artist@dev-studio.test`, Dev Studio 2's new settings, the project/appointment/conversation/flash piece) was **left in place**, per this file's standing live-verification convention -- all clearly tagged `[GUEST VERIFY]`.
+
+## Typechecks
+
+`npx tsc --noEmit` (apps/api) -- clean.
+
+## Commit
+
+`PENDING`
+

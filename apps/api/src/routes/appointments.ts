@@ -17,7 +17,7 @@ import {
   DEFAULT_SCHEDULING_BUFFER_MS,
 } from "../lib/schedulingConflict";
 import { ensureLiabilityWaiver } from "../lib/waivers";
-import { studioHasActiveMembership, callerBelongsToStudio } from "../lib/artistAccess";
+import { studioHasActiveMembership, callerBelongsToStudio, activeStudioIdsForCaller } from "../lib/artistAccess";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { getOrCreateClientConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
@@ -248,6 +248,17 @@ router.get("/", requirePermission("appointments.view"), async (req, res) => {
   // overrides this with their own id regardless, so this only ever narrows
   // what OWNER/FRONT_DESK see, never widens an artist's own view.
   let artistId: string | undefined = typeof req.query.artistId === "string" ? req.query.artistId : undefined;
+  // Artist mobility bug fix: an ARTIST's own calendar spans every studio
+  // they CURRENTLY belong to (HOME + active GUESTs), not just home -- a
+  // guest artist's own sessions booked at a GUEST studio have a different
+  // appointment.studioId than home, so ANDing home studioId alone silently
+  // dropped every one of them. But it must still be studio-scoped to
+  // ACTIVE memberships, not dropped entirely: once a GUEST membership
+  // ends, that studio's appointments must stop appearing on this artist's
+  // calendar going forward, same as they'd stop appearing in the studio's
+  // own Team roster (see the historical GET /artists roster bug this
+  // matches) -- an ended relationship, not just a different one.
+  let artistStudioIds: string[] | null = null;
 
   if (role === Role.ARTIST) {
     const artist = await prisma.artist.findUnique({ where: { userId } });
@@ -257,19 +268,12 @@ router.get("/", requirePermission("appointments.view"), async (req, res) => {
     }
 
     artistId = artist.id;
+    artistStudioIds = await activeStudioIdsForCaller(req.user!);
   }
 
   const appointments = await prisma.appointment.findMany({
     where: {
-      // Artist mobility bug fix: an ARTIST's own calendar is scoped by
-      // artistId alone, not studioId -- same "no studio scoping at all"
-      // convention GET /inquiries/assigned-to-me already uses. A guest
-      // artist's own sessions booked at a GUEST studio have a different
-      // appointment.studioId than their home studio, so ANDing home
-      // studioId in here silently dropped every one of them from their own
-      // calendar. OWNER/FRONT_DESK stay studio-scoped exactly as before --
-      // they only ever see their own single studio's board.
-      ...(role === Role.ARTIST ? {} : { studioId }),
+      ...(artistStudioIds ? { studioId: { in: artistStudioIds } } : { studioId }),
       ...NOT_ARCHIVED,
       ...(clientId ? { clientId } : {}),
       ...(artistId ? { artistId } : {}),

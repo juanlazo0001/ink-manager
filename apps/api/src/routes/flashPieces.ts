@@ -9,7 +9,7 @@ import { normalizePhone } from "../lib/phone";
 import { syncPrimaryEmail, syncPrimaryPhone } from "../lib/clientContacts";
 import { generateUniqueReferralCode } from "../lib/referrals";
 import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
-import { studioHasActiveMembership, callerBelongsToStudio } from "../lib/artistAccess";
+import { studioHasActiveMembership, callerBelongsToStudio, activeStudioIdsForCaller } from "../lib/artistAccess";
 
 const router = Router();
 
@@ -266,21 +266,23 @@ async function resolveOwnArtistId(userId: string): Promise<string | null> {
 router.get("/", requirePermission("flashGallery.manage"), async (req, res) => {
   const studioId = req.user!.studioId;
   let artistId = typeof req.query.artistId === "string" ? req.query.artistId : undefined;
+  // Artist mobility bug fix: an ARTIST's own list spans every studio they
+  // CURRENTLY belong to (HOME + active GUESTs), not just home -- but still
+  // scoped to ACTIVE memberships, not dropped entirely, so a piece living
+  // under a studio this artist has since left/been removed from stops
+  // appearing on their own list going forward (same "ended relationship,
+  // not just a different one" reasoning as appointments.ts's GET / list).
+  let artistStudioIds: string[] | null = null;
 
   if (req.user!.role === Role.ARTIST) {
     const ownArtistId = await resolveOwnArtistId(req.user!.userId);
     artistId = ownArtistId ?? "__none__";
+    artistStudioIds = await activeStudioIdsForCaller(req.user!);
   }
 
   const pieces = await prisma.flashPiece.findMany({
     where: {
-      // Artist mobility bug fix: an ARTIST's own list is scoped by artistId
-      // alone, not studioId -- same "no studio scoping" convention as
-      // GET /inquiries/assigned-to-me and appointments.ts's own GET / list.
-      // Without this, a guest artist's flash pieces living under a GUEST
-      // studio's studioId were silently invisible on their own list.
-      // OWNER/FRONT_DESK stay studio-scoped exactly as before.
-      ...(req.user!.role === Role.ARTIST ? {} : { studioId }),
+      ...(artistStudioIds ? { studioId: { in: artistStudioIds } } : { studioId }),
       ...(artistId ? { artistId } : {}),
     },
     include: FLASH_PIECE_INCLUDE,
