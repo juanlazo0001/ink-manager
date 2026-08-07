@@ -9053,3 +9053,49 @@ Re-read `REPORT.md`'s "Front-desk approval, Part 3" entry closely. Its "Approve,
 ## Commit
 
 This entry only -- investigation and adversarial testing produced findings and reverted-after-use test fixtures, no source changes, per the task's explicit "no fixes this session" instruction.
+
+# Move Privacy Policy / Terms to the marketing site (www.inkmanager.app) as the new canonical home
+
+Single session, on `main`, touching both `apps/web` and `marketing/`. No schema changes.
+
+## 1. Marketing site rendering investigation (done first, before moving anything)
+
+Confirmed directly, not assumed: `marketing/` does **not** have the client-side-rendering-only problem that drove the whole `/privacy`/`/terms`/intake-form crawler-visibility saga on the portal side. It's a single, hand-authored, framework-free `index.html` -- no build step (`package.json`'s only script is `serve . -l tcp://...`, no bundler, no `-s`/`--single` flag), and every real piece of content (headings, pipeline copy, all three pricing tiers) is literal text already in the raw markup. The one inline `<script>` at the bottom is pure progressive enhancement (scroll-reveal, nav-highlight-on-scroll, the monthly/annual pricing toggle) -- it mutates content that's already there, never creates it from nothing. Verified live: a zero-JS `curl` against `https://inkmanager.app/` returned the full ~34KB page with real content. No fix needed here -- moving the legal pages onto this site did not require repeating any of the SSR/build-time-generation work the portal side needed.
+
+## 2. Canonical content moved to marketing/
+
+- `marketing/privacy/index.html` and `marketing/terms/index.html` -- new physical static files carrying the exact same content that used to live in `apps/web/src/content/platformPolicies.ts` (`PLATFORM_PRIVACY_POLICY_HTML`/`PLATFORM_TERMS_HTML`), restyled to the marketing site's own visual identity (Fraunces/Jura/Outfit, the `--ink`/`--gold`/`--cream`/`--smoke` palette) rather than the portal's `.policy-shell` editorial-gold theme -- it's genuinely the marketing site's page now, not an embed of the portal's look.
+- These resolve via `serve-handler`'s default `cleanUrls` (on by default, and marketing's `serve` invocation has no `-s`/`--single` flag) -- `/privacy` -> `privacy/index.html` with zero new server config. Confirmed locally: `serve .` on a fresh port, `curl /privacy` and `/terms` both returned full real content with zero JS execution, matching every other page in this saga's verification bar.
+- The checked-in canonical `.md` drafts (`privacy-policy-platform.md`, `terms-platform.md`) moved from `apps/web/src/content/` to `marketing/` alongside the HTML they back -- same "diffable source of truth so drift is at least detectable" reasoning `platformPolicies.ts`'s own header comment gave for why those files existed in the first place (a real past incident: a carrier-compliance disclosure existed in the live page but not the checked-in draft, undetected until an explicit audit).
+- Added `Privacy`/`Terms` links to the marketing homepage's own footer and to a small nav on both new pages -- internal discoverability, not just direct-URL reachability, the same "reinforces these are real, live pages" reasoning `PublicPageFooter.tsx` already used on the portal side.
+- `apps/web`'s now-dead platform-policy machinery removed: `scripts/generate-static-policies.mjs` (and its `npm run build` step), `src/content/platformPolicies.ts`, `src/pages/PlatformPolicyPage.tsx`, the bare `/privacy`/`/terms` React routes in `App.tsx`, and `.policy-shell` pulled out of `index.css`'s shared editorial-gold/login-shell selector (confirmed via grep it had exactly one consumer, this page, before removing it -- `.login-shell` and the theme preset itself are untouched).
+
+## 3. Old portal URLs: redirects, not removal
+
+`apps/web/server.mjs`'s existing `/privacy`/`/terms` special-case (previously: skip the SPA rewrite so `serve-handler` could find the build-time-generated static files) now does a plain HTTP **301** to `https://www.inkmanager.app/privacy` / `/terms` instead -- checked before `SPA_REWRITES`/`cleanUrls` resolution even runs, so it doesn't matter that `dist/privacy` and `dist/terms` no longer exist on disk. Verified locally and in production (`curl -I`): both return `301` with the correct `Location` header.
+
+## IntakeForm.tsx: premise correction, left untouched
+
+The task's step 3 asked to "update the intake form's SMS-consent disclosure copy to link directly to the new canonical www.inkmanager.app URLs." Checked the live component before touching it, per this repo's own house rule about verifying task premises against real code: both consent-copy locations in `IntakeForm.tsx` (the phone-field helper text and the SMS-consent checkbox label) actually link to `/privacy/${studioSlug}` and `/terms/${studioSlug}` -- each Studio's own, separately-authored policy pages (`PublicPolicyPage.tsx`, backed by `StudioSettings.privacyPolicy`/`termsAndConditions`) -- not the bare platform pages this task moved. No link anywhere in the intake form ever pointed at the platform pages to begin with. Flagged this discrepancy and asked the user directly rather than guessing given the real product tradeoff (switching would make a Studio's own custom-authored policy unreachable from their own consent checkbox); the user chose to leave the per-studio links exactly as they are. `IntakeForm.tsx` has zero diff this session as a result -- confirmed via `git diff --stat` before committing.
+
+## Verification
+
+Build: `npm run build` (web, now just `tsc -b && vite build`, no static-generation step) clean. `npx tsc --noEmit -p apps/api` clean, both re-run fresh at the end of the session after all edits.
+
+Local, before deploying: `apps/web/server.mjs` redirect behavior (`curl -I` on both `/privacy` and `/terms`, both correct `301`s) and `marketing/`'s new pages served locally via the real `serve` CLI (both real content, zero JS, `cleanUrls` resolving exactly as expected with no extra config) -- plus a Playwright screenshot of both new pages to check the visual restyle against the marketing site's identity before shipping it.
+
+Production, checked twice ~5 minutes apart (same "not just once immediately after deploying" bar every fix in this saga has used):
+- **Check 1** (~90s after push, confirmed via background poll): `https://inkmanager.app/privacy` and `/terms` both returned real content (`<title>`, `<h1>`, first `<h2>` of real body copy) over a zero-JS `curl`. `https://web.inkmanager.app/privacy` and `/terms` both returned `301` with the correct `Location: https://www.inkmanager.app/...` header.
+- **Check 2** (~5 minutes later): identical results on `inkmanager.app/privacy`, `/terms`, and both `web.inkmanager.app` redirects -- no transient deploy-in-progress state, no regression between checks.
+
+## Infrastructure gap found: www.inkmanager.app isn't attached to any Railway service
+
+`www.inkmanager.app` returns Railway's own edge fallback `404` (`x-railway-fallback: true`) on both verification passes, not the marketing site -- no Railway service currently has that hostname as an attached custom domain, only the bare `inkmanager.app` apex does. Checked whether this was a DNS problem before flagging it as one: `nslookup www.inkmanager.app` resolves to the exact same Cloudflare anycast IPs as the working `inkmanager.app` apex (`104.21.40.166`/`172.67.187.113`), meaning DNS already correctly routes `www` to Railway's edge -- the only missing piece is adding `www.inkmanager.app` as a custom domain on the marketing Railway service itself, a dashboard action outside this session's reach (no Railway CLI/API credentials available in this environment). Flagged to the user directly, not just here, since it has a real consequence in the meantime: the new `web.inkmanager.app` redirects deployed this session point at a hostname that currently 404s until that step is done -- worse than the old behavior (which served real content directly) for anyone hitting those URLs in the gap. Still unattached as of the second (~5-minutes-later) check.
+
+## Commit
+
+`6a68463` on `main`, pushed to `origin/main`.
+
+## Cleanup
+
+Local `server.mjs` test process and `marketing/`'s local `serve` process both killed and confirmed gone via `Get-CimInstance`/`Stop-Process`. Scratch Playwright screenshot script removed from the npx cache directory it ran from; screenshots themselves left in this session's scratchpad only, not the repo. Working tree left with only this session's intended files staged/committed -- a concurrent session's own in-progress, unrelated `apps/api/src/routes/inquiries.ts` edit (sharing this same working tree, not an isolated worktree) was explicitly left untouched throughout, confirmed via targeted `git add` (never `-A`/`.`) and a final `git status` check before each commit.
