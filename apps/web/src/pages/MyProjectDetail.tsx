@@ -1,12 +1,13 @@
+import { useState } from 'react'
 import { Link, Navigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { apiFetch, ApiError } from '../lib/api'
+import { apiFetch, ApiError, downloadFile } from '../lib/api'
 import { formatDateTime, formatPriceEstimate, formatStatus } from '../lib/format'
 import { sanitizeHtml } from '../lib/sanitizeHtml'
 import { deriveProjectStage, PROJECT_STAGE_LABELS } from '../lib/kanban'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import StatusPill from '../components/StatusPill'
-import { ArrowLeftIcon, DocumentIcon, GiftCardIcon } from '../components/icons'
+import { ArrowLeftIcon, DocumentIcon, DownloadIcon, GiftCardIcon } from '../components/icons'
 import { AttachmentChip } from '../components/NotesSection'
 import type { NoteAttachment } from '../lib/cloudinary'
 
@@ -92,8 +93,21 @@ function ImageGrid({ images }: { images: string[] }) {
 // Deposit/financial specifics (amounts, payment method, gift card codes,
 // signature image) never reach this page at all -- ARTIST_INQUIRY_SELECT
 // (routes/inquiries.ts) already strips them server-side. This only ever
-// renders the signed/paid status that IS included.
-function DepositStatusRow({ form }: { form: DepositForm }) {
+// renders the signed/paid status that IS included. The PDF download below
+// still works though: GET /deposit-forms/:id/pdf isn't behind a health-data
+// floor like waivers are (see deposits.ts's own comment) -- it's scoped to
+// the artist's own assigned project the same way this whole page is, so an
+// artist can pull the full branded PDF for their own client even though the
+// on-page summary above deliberately stays reduced.
+function DepositStatusRow({
+  form,
+  onDownload,
+  downloading,
+}: {
+  form: DepositForm
+  onDownload: (id: string, filename: string) => void
+  downloading: boolean
+}) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border px-3 py-2 text-sm">
       <span className="font-medium text-fg">Session {form.sessionNumber}</span>
@@ -102,6 +116,18 @@ function DepositStatusRow({ form }: { form: DepositForm }) {
           {form.signedAt ? `Signed ${formatDateTime(form.signedAt)}` : 'Not signed yet'}
         </span>
         <span className={form.paidAt ? 'text-fg' : 'text-fg-muted'}>{form.paidAt ? 'Paid' : 'Not paid yet'}</span>
+        {form.signedAt && (
+          <button
+            type="button"
+            onClick={() => onDownload(form.id, `deposit-form-session-${form.sessionNumber}.pdf`)}
+            disabled={downloading}
+            aria-label="Download PDF"
+            title="Download PDF"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-border text-fg-secondary transition hover:bg-surface hover:text-fg disabled:opacity-60"
+          >
+            <DownloadIcon className="h-3.5 w-3.5" />
+          </button>
+        )}
       </span>
     </div>
   )
@@ -128,6 +154,21 @@ export default function MyProjectDetail() {
   // OWNER with no Artist row, same as it always has for a role-ARTIST
   // caller with none.
   const canViewOwnAssignments = user?.role === 'ARTIST' || user?.role === 'OWNER'
+
+  const [downloadingPdfId, setDownloadingPdfId] = useState<string | null>(null)
+  const [pdfDownloadError, setPdfDownloadError] = useState<string | null>(null)
+
+  async function handleDownloadDepositPdf(depositFormId: string, filename: string) {
+    setDownloadingPdfId(depositFormId)
+    setPdfDownloadError(null)
+    try {
+      await downloadFile(`/deposit-forms/${depositFormId}/pdf`, filename)
+    } catch (err) {
+      setPdfDownloadError(err instanceof ApiError ? err.message : 'Failed to download PDF')
+    } finally {
+      setDownloadingPdfId(null)
+    }
+  }
 
   const {
     data: project,
@@ -293,12 +334,18 @@ export default function MyProjectDetail() {
               <GiftCardIcon className="h-3.5 w-3.5" />
               Signed/paid status only -- amounts and payment details are managed by the studio.
             </div>
+            {pdfDownloadError && <p className="mb-3 text-sm text-danger">{pdfDownloadError}</p>}
             {project.depositForms.length === 0 ? (
               <p className="text-sm text-fg-secondary">No deposit forms yet.</p>
             ) : (
               <div className="space-y-2">
                 {project.depositForms.map((form) => (
-                  <DepositStatusRow key={form.id} form={form} />
+                  <DepositStatusRow
+                    key={form.id}
+                    form={form}
+                    onDownload={handleDownloadDepositPdf}
+                    downloading={downloadingPdfId === form.id}
+                  />
                 ))}
               </div>
             )}

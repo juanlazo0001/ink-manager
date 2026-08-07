@@ -543,7 +543,12 @@ const INQUIRY_INCLUDE = {
       // earliest not-yet-checked-out one -- derived client-side from this
       // same already-ordered (startTime asc) array, no separate fetch.
       checkedOutAt: true,
-      liabilityWaiver: { select: { status: true } },
+      // id/signedAt added (alongside the pre-existing status) so the
+      // Project detail page's Appointments widget can offer the same
+      // branded waiver PDF download ClientDetail.tsx already has -- still
+      // no health answers/ID image/signature here, those stay behind
+      // GET /waivers/:id's own OWNER/FRONT_DESK floor untouched.
+      liabilityWaiver: { select: { id: true, status: true, signedAt: true } },
       // Package N: checkout/finished-tattoo photos, grouped by the session
       // that produced them -- this is what lets the Project page show
       // "Session 1 -- [date]" with its own photos rather than one flat

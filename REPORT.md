@@ -8500,3 +8500,57 @@ All scratch scripts (client/inquiry/appointment seeding, password resets for tes
 
 Part 1: `00e432e`. Part 2: `0f04c4a`. This entry: `374cac7`.
 
+---
+
+# Two small UX fixes: PDF exports on Inquiry/Project pages, artist Projects list scheduled date
+
+Same repo, new session. Two independent, unrelated fixes bundled per the task's own framing.
+
+## 1. Signed deposit form / waiver PDF exports on Inquiry & Project detail pages
+
+**Existing mechanism found and reused, no new generation path.** `ClientDetail.tsx` already has the full pattern: `downloadFile('/${kind}/${id}/pdf', filename)` (`lib/api.ts`), a shared `downloadingPdfId`/`pdfDownloadError` state pair, and a per-record Download button. Two backend routes already exist and were **not touched**: `GET /deposit-forms/:id/pdf` and `GET /waivers/:id/pdf`.
+
+**The two routes have deliberately different permission shapes -- this mattered for where buttons could safely go**:
+- `deposit-forms/:id/pdf`: gated by `requirePermission("inquiries.view")` plus manual inline `role === ARTIST` row-scoping (own `assignedArtistId` only) -- no hard role floor, since deposit amounts aren't health data.
+- `waivers/:id/pdf`: registered on `waiversStaffRouter` after `staffRouter.use(requireRole(Role.OWNER, Role.FRONT_DESK))` -- a permanent, non-configurable floor. No permission toggle can ever expose it to ARTIST.
+
+**Staff page** (`InquiryDetail.tsx`, itself already `GET /inquiries/:id`-gated to `requireRole(OWNER, FRONT_DESK)`):
+- Deposit widget: Download button added next to each signed session's status pill, no extra client-side gate (matches `ClientDetail.tsx`'s own deposit-form button, which also has none -- the page-level floor is the real gate for both).
+- Appointments widget: Download button added next to each session's `StatusPill`, shown only when that session's waiver is signed and `canDownloadWaiverPdf` (`user?.role === 'OWNER' || 'FRONT_DESK'`) -- copied verbatim from `ClientDetail.tsx`'s own gate, kept even though the whole page already has a server-side floor, for the same "stays correct if that ever changes" reasoning the original comment gives. Extended `INQUIRY_INCLUDE`'s `sessions.liabilityWaiver` select (`routes/inquiries.ts`) from `{ status }` to `{ id, status, signedAt }` -- still zero health answers/ID image/signature reaching this payload, those stay behind `GET /waivers/:id`'s own untouched floor.
+
+**Artist page** (`MyProjectDetail.tsx`, `/my-inquiries/:id`): deposit-form PDF button added to each row of the existing "Deposit status" card -- the backend already permits this for the artist's own assigned project (confirmed live, see Verification), so this surfaces an existing capability rather than granting a new one. No waiver button added anywhere on this page -- the hard `requireRole` floor makes it structurally impossible regardless of any client-side code, so there was nothing to gate, only to leave alone.
+
+**Pre-existing issues found and flagged, not fixed (out of this task's scope)**:
+- `deposit-forms/:id/pdf`'s studio-scoping check (`depositForm.inquiry.studioId !== req.user!.studioId`) uses the caller's own home-studio, not the project's studio -- 404s for a "guest artist" (the `fromGuestStudio` mobility feature) working an assigned project at a studio other than their home one. Found via a real HTTP test with `artist1@dev-studio.test` (whose seeded home studio differs from the dev studio the test projects live in) against their own genuinely-assigned deposit form -- got a 404 where 200 was expected. Re-verified with `artist2@dev-studio.test` (same home studio as the test data) against an equivalent deposit form -- 200, confirming the row-scoping logic itself is correct and this is specifically a guest-studio gap, not a regression from this session's change (the route was not modified). Not fixed since it predates and is unrelated to this task.
+- `apps/web/.env`'s `VITE_API_URL` pointed at a stale LAN IP (`192.168.22.174`) that no longer matches this machine's current address (`192.168.4.79` per `ipconfig`) -- every browser-side API call silently hung. Fixed to `http://localhost:4000` to make live verification possible at all; gitignored, so not part of this commit, flagging here since the user's own dev environment needed it.
+
+## 2. Artist Projects list: scheduled date instead of submitted date
+
+`MyInquiries.tsx` (ARTIST's `/my-inquiries`, List + Board) unconditionally showed "Submitted {date} via {channel}" on every card regardless of tab -- staff's own `Inquiries.tsx` already special-cases its Projects tab column header to "Scheduled Date" (line 919), so this was purely a gap in the artist-facing page, not an intentional difference.
+
+**Fix**: added `findNextSession(sessions)` (`sessions.find(s => !s.checkedOutAt) ?? null`) -- the same "earliest not-yet-checked-out session" convention `deriveProjectStage` (`lib/kanban.ts`) and `InquiryDetail.tsx`'s own `findCurrentSession` already use, not a new one. Projects tab now shows `Scheduled {date}` from that session's `startTime`, or an em-dash when none exists (both suggested in the task, both adopted): the project stays visible either way, nothing hidden. Inquiries tab is untouched (`kanbanTab === 'projects'` gates the swap).
+
+**Sort order** (also suggested in the task, adopted): Projects tab (both List and Board) now sorts by that same next-session date ascending, nulls (no scheduled session) sorted last but still visible. Inquiries tab keeps its existing `updatedAt desc` order from the backend, untouched.
+
+## Verified live
+
+Real Playwright browser against the local dev stack (`apps/api` :4000, `apps/web` :5173, real dev Postgres) plus direct `curl` calls with real login tokens for the actual safety-floor check:
+
+- **OWNER & FRONT_DESK**, real login: both see and successfully use the waiver Download button on a signed-waiver session (`InquiryDetail.tsx`'s Appointments widget) and the deposit Download button on a signed deposit form (Deposit widget) -- confirmed via `page.waitForEvent('download')` actually firing with the expected filename, not just button visibility.
+- **ARTIST, real role (not View As), real HTTP**: `GET /waivers/:id/pdf` with a real ARTIST token (not even the assigned artist) returned `403 {"error":"Forbidden"}` -- the router-level `requireRole` floor, confirmed live, not just read from source. Direct navigation to the staff `/inquiries/:id` route as ARTIST correctly 403s at the API level (`GET /inquiries/:id` returned 403 three times per React Query's retry) and never renders any download button.
+- **ARTIST, own project** (`/my-inquiries/:id`): 2 deposit Download buttons rendered for a 2-deposit-form project, both work end to end (real download); 0 waiver-related buttons anywhere on the page (there's no code path that could render one). Cross-checked server-side too: `GET /deposit-forms/:id/pdf` with the assigned artist's token on their own project returned `200 application/pdf`; the same call with a different artist's token on someone else's project returned `404`.
+- **Artist Projects list** (`/my-inquiries`, artist1): 6 real seeded projects rendered sorted `Jul 20 -> Jul 27 -> Aug 4 (x2) -> Aug 5 -> em-dash`, matching each project's actual next-session data queried directly beforehand. Inquiries tab (same account) confirmed still showing unsorted `Submitted ... via ...` lines, unchanged.
+- Screenshots taken for every scenario above.
+
+## Typechecks
+
+`npx tsc --noEmit` clean in both `apps/api` and `apps/web`.
+
+## Cleanup
+
+Dev servers (API :4000, web :5173) started for this session's verification were stopped afterward. Scratch Prisma debug scripts (`apps/api/_tmp_find_waiver.ts`, `_tmp_debug*.ts`, `_tmp_find_artist.ts`) deleted after use -- confirmed none remain. No test data was created or modified (read-only verification against existing seed/dev data).
+
+## Commit
+
+`PENDING`
+

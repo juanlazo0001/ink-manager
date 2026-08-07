@@ -50,6 +50,14 @@ interface Inquiry {
 type ViewMode = 'list' | 'kanban'
 type PipelineTab = 'inquiries' | 'projects'
 
+// Same "earliest not-yet-checked-out session" convention as
+// deriveProjectStage (lib/kanban.ts) and InquiryDetail.tsx's own
+// findCurrentSession -- sessions are already startTime-ascending from the
+// backend, so this is "the next session the artist needs to show up for."
+function findNextSession(sessions: Inquiry['sessions']) {
+  return sessions.find((session) => !session.checkedOutAt) ?? null
+}
+
 function ImageGrid({ images }: { images: string[] }) {
   if (images.length === 0) {
     return <p className="text-sm text-fg-secondary">None uploaded.</p>
@@ -119,6 +127,25 @@ export default function MyInquiries() {
   const kanbanTabStatuses: readonly string[] =
     kanbanTab === 'projects' ? PROJECT_TAB_COLUMNS.flatMap((c) => c.statuses) : INQUIRY_TAB_COLUMNS.flatMap((c) => c.statuses)
   const kanbanFilteredInquiries = kanbanInquiries?.filter((inquiry) => kanbanTabStatuses.includes(inquiry.status))
+
+  // Projects tab: soonest upcoming session first -- that's what the artist
+  // actually needs to prep for next. Projects with no scheduled session yet
+  // sort to the end but stay visible (nothing to prioritize by, not a
+  // reason to hide them). Inquiries tab is untouched -- already
+  // most-recently-updated first from the backend.
+  const sortedFilteredInquiries =
+    kanbanTab === 'projects'
+      ? kanbanFilteredInquiries
+          ?.slice()
+          .sort((a, b) => {
+            const aTime = findNextSession(a.sessions)?.startTime
+            const bTime = findNextSession(b.sessions)?.startTime
+            if (!aTime && !bTime) return 0
+            if (!aTime) return 1
+            if (!bTime) return -1
+            return new Date(aTime).getTime() - new Date(bTime).getTime()
+          })
+      : kanbanFilteredInquiries
 
   // The artist's only forward action from a Kanban drag is approving an
   // ARTIST_ASSIGNED card into Estimate Sent -- everything else on their
@@ -279,7 +306,7 @@ export default function MyInquiries() {
               {!kanbanLoading && (
                 <InquiryKanbanBoard
                   key={kanbanTab}
-                  inquiries={kanbanFilteredInquiries ?? []}
+                  inquiries={sortedFilteredInquiries ?? []}
                   columns={kanbanTab === 'projects' ? PROJECT_TAB_COLUMNS : INQUIRY_TAB_COLUMNS}
                   interactiveColumnKeys={kanbanTab === 'projects' ? [] : ['Artist assigned']}
                   resolveTransition={(params) =>
@@ -302,19 +329,24 @@ export default function MyInquiries() {
             <p className="mt-6 text-sm text-fg-secondary">Loading…</p>
           )}
 
-          {viewMode === 'list' && !kanbanIsError && !kanbanLoading && kanbanFilteredInquiries && kanbanFilteredInquiries.length === 0 && (
+          {viewMode === 'list' && !kanbanIsError && !kanbanLoading && sortedFilteredInquiries && sortedFilteredInquiries.length === 0 && (
             <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-5">
               <p className="text-sm text-fg-secondary">Nothing assigned to you right now.</p>
             </div>
           )}
 
-          {viewMode === 'list' && !kanbanIsError && !kanbanLoading && kanbanFilteredInquiries && kanbanFilteredInquiries.length > 0 && (
+          {viewMode === 'list' && !kanbanIsError && !kanbanLoading && sortedFilteredInquiries && sortedFilteredInquiries.length > 0 && (
             <div className="mt-6 space-y-5">
-              {kanbanFilteredInquiries.map((inquiry) => {
+              {sortedFilteredInquiries.map((inquiry) => {
                 // Same "a Project shows its pipeline stage, not the raw
                 // status" rule as InquiryKanbanCard's own pill -- keeps the
                 // List row and this same item's Board card in agreement.
                 const projectStage = deriveProjectStage(inquiry)
+                // Projects tab: the artist cares about when they next need
+                // to show up, not when the client originally submitted the
+                // request -- staff's own Inquiries.tsx makes the same swap
+                // for its Projects tab date column.
+                const nextSession = kanbanTab === 'projects' ? findNextSession(inquiry.sessions) : null
                 return (
                 <div key={inquiry.id} className="rounded-2xl card-surface border border-border bg-surface p-5">
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -323,7 +355,11 @@ export default function MyInquiries() {
                         {inquiry.client.firstName} {inquiry.client.lastName}
                       </h2>
                       <p className="mt-1 text-sm text-fg-secondary">
-                        Submitted {formatDateTime(inquiry.createdAt)} via {formatStatus(inquiry.channel)}
+                        {kanbanTab === 'projects'
+                          ? nextSession
+                            ? `Scheduled ${formatDateTime(nextSession.startTime)}`
+                            : '—'
+                          : `Submitted ${formatDateTime(inquiry.createdAt)} via ${formatStatus(inquiry.channel)}`}
                       </p>
                       <StatusPill
                         className="mt-2"

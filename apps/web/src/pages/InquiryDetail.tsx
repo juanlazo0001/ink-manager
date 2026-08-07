@@ -31,7 +31,7 @@ import SessionHoursRows, {
   type LockedSession,
   type SessionHoursRow,
 } from '../components/SessionBreakdownEditor'
-import { apiFetch, ApiError } from '../lib/api'
+import { apiFetch, ApiError, downloadFile } from '../lib/api'
 import { formatDateTime, formatDuration, formatPhoneInput, formatStatus, describeInquiryStatus, formatPriceEstimate } from '../lib/format'
 import { describeSendResult, type ClientSendResult } from '../lib/sendResult'
 import {
@@ -42,6 +42,7 @@ import {
   ClientsIcon,
   ClockIcon,
   CopyIcon,
+  DownloadIcon,
   MessageIcon,
   MoreIcon,
   PencilIcon,
@@ -141,7 +142,7 @@ interface Inquiry {
     // from these two on whichever session is the earliest not-yet-checked-
     // out one (sessions is already startTime-ascending from the backend).
     checkedOutAt: string | null
-    liabilityWaiver: { status: string } | null
+    liabilityWaiver: { id: string; status: string; signedAt: string | null } | null
     // Package N: checkout/finished-tattoo photos for this one session.
     photos: {
       id: string
@@ -440,6 +441,30 @@ export default function InquiryDetail() {
   // OR'd in here directly.
   const canCreateAppointment = (profile?.permissions.includes('appointments.create') ?? false) || (profile?.isSoloStudioArtist ?? false)
   const [startingConversation, setStartingConversation] = useState(false)
+
+  // GET /waivers/:id/pdf is behind the router's own permanent OWNER/
+  // FRONT_DESK-only floor gate (health data/ID reference), same as
+  // GET /waivers/:id itself -- matched client-side here exactly as
+  // ClientDetail.tsx's own canDownloadWaiverPdf does, even though this
+  // whole page is already OWNER/FRONT_DESK-only (belt and suspenders, and
+  // it stays correct if that ever changes). Deposit forms have no such
+  // floor (see deposits.ts's own comment), so their download button below
+  // isn't gated at all -- same asymmetry as ClientDetail.tsx.
+  const canDownloadWaiverPdf = user?.role === 'OWNER' || user?.role === 'FRONT_DESK'
+  const [downloadingPdfId, setDownloadingPdfId] = useState<string | null>(null)
+  const [pdfDownloadError, setPdfDownloadError] = useState<string | null>(null)
+
+  async function handleDownloadPdf(kind: 'deposit-forms' | 'waivers', pdfId: string, filename: string) {
+    setDownloadingPdfId(pdfId)
+    setPdfDownloadError(null)
+    try {
+      await downloadFile(`/${kind}/${pdfId}/pdf`, filename)
+    } catch (err) {
+      setPdfDownloadError(err instanceof ApiError ? err.message : 'Failed to download PDF')
+    } finally {
+      setDownloadingPdfId(null)
+    }
+  }
 
   async function handleMessage() {
     if (!inquiry) return
@@ -3144,6 +3169,12 @@ export default function InquiryDetail() {
                   }
                 >
 
+                  {pdfDownloadError && (
+                    <div className="mt-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+                      {pdfDownloadError}
+                    </div>
+                  )}
+
                   {/* Package M: every deposit form ever generated for this
                       project, oldest first -- each session's own status,
                       signature, and (once paid) the gift card it issued. */}
@@ -3153,8 +3184,24 @@ export default function InquiryDetail() {
                         <li key={form.id} className="rounded-lg border border-border p-3">
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <span className="text-sm font-semibold text-fg">Session {form.sessionNumber}</span>
-                            <span className="text-xs font-medium text-fg-muted">
-                              {form.paidManually ? 'Paid' : form.signedAt ? 'Signed, awaiting payment' : 'Awaiting signature'}
+                            <span className="flex items-center gap-2">
+                              <span className="text-xs font-medium text-fg-muted">
+                                {form.paidManually ? 'Paid' : form.signedAt ? 'Signed, awaiting payment' : 'Awaiting signature'}
+                              </span>
+                              {form.signedAt && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleDownloadPdf('deposit-forms', form.id, `deposit-form-session-${form.sessionNumber}.pdf`)
+                                  }
+                                  disabled={downloadingPdfId === form.id}
+                                  aria-label="Download PDF"
+                                  title="Download PDF"
+                                  className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-border text-fg-secondary transition hover:bg-surface hover:text-fg disabled:opacity-60"
+                                >
+                                  <DownloadIcon className="h-3.5 w-3.5" />
+                                </button>
+                              )}
                             </span>
                           </div>
 
@@ -3562,6 +3609,12 @@ export default function InquiryDetail() {
                   <p className="mt-4 text-sm text-fg-secondary">No appointments booked for this project yet.</p>
                 )}
 
+                {pdfDownloadError && (
+                  <div className="mt-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+                    {pdfDownloadError}
+                  </div>
+                )}
+
                 {inquiry.sessions.length > 0 && (
                   <div className="mt-4 divide-y divide-border">
                     {inquiry.sessions.map((session) => (
@@ -3577,7 +3630,25 @@ export default function InquiryDetail() {
                             with {artistLabel(session.artist)}
                           </p>
                         </div>
-                        <StatusPill status={session.status} />
+                        <span className="flex items-center gap-2">
+                          {canDownloadWaiverPdf && session.liabilityWaiver?.signedAt && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.preventDefault()
+                                e.stopPropagation()
+                                handleDownloadPdf('waivers', session.liabilityWaiver!.id, `waiver-${session.liabilityWaiver!.id}.pdf`)
+                              }}
+                              disabled={downloadingPdfId === session.liabilityWaiver.id}
+                              aria-label="Download Waiver PDF"
+                              title="Download Waiver PDF"
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-border text-fg-secondary transition hover:bg-surface hover:text-fg disabled:opacity-60"
+                            >
+                              <DownloadIcon className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          <StatusPill status={session.status} />
+                        </span>
                       </Link>
                     ))}
                   </div>
