@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { useParams, useSearchParams } from 'react-router-dom'
 import { apiFetch, ApiError } from '../lib/api'
 import PhoneInput from '../components/PhoneInput'
 import CurrencyInput from '../components/CurrencyInput'
@@ -390,27 +390,39 @@ export default function IntakeForm() {
               {asterisk}
             </label>
             <PhoneInput value={phone} onChange={setPhone} className={INPUT_CLASS} />
+            {/* Links to Ink Manager's own platform Privacy Policy/Terms
+                (moved to the marketing site), not the per-Studio
+                /privacy/:studioSlug page -- that's a different,
+                separately-authored document this consent copy
+                deliberately doesn't link to. Points at the bare
+                inkmanager.app domain, not www.inkmanager.app: as of this
+                writing www isn't yet attached as a custom domain on the
+                marketing Railway service (still 404s -- see REPORT.md),
+                so the apex domain is the only one actually confirmed
+                live. Both will serve identical content once www is
+                attached; switch this back to www at that point for the
+                canonical hostname. */}
             <p className="mt-1 text-[11px] leading-snug text-fg-muted">
               {field.helpText ||
                 'By providing your phone number, you consent to receive SMS messages about your inquiry and appointment. Message and data rates may apply. Reply STOP to opt out.'}{' '}
               See our{' '}
-              <Link
-                to={`/privacy/${studioSlug}`}
+              <a
+                href="https://inkmanager.app/privacy"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="underline hover:text-fg-secondary"
               >
                 Privacy Policy
-              </Link>{' '}
+              </a>{' '}
               and{' '}
-              <Link
-                to={`/terms/${studioSlug}`}
+              <a
+                href="https://inkmanager.app/terms"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="underline hover:text-fg-secondary"
               >
                 Terms
-              </Link>
+              </a>
               .
             </p>
           </div>
@@ -795,23 +807,23 @@ export default function IntakeForm() {
               <span>
                 I agree to receive text messages from {studioName || 'the studio'} regarding my appointment,
                 including reminders and updates. Message and data rates may apply. Reply STOP to opt out. View our{' '}
-                <Link
-                  to={`/privacy/${studioSlug}`}
+                <a
+                  href="https://inkmanager.app/privacy"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="underline hover:text-fg"
                 >
                   Privacy Policy
-                </Link>{' '}
+                </a>{' '}
                 and{' '}
-                <Link
-                  to={`/terms/${studioSlug}`}
+                <a
+                  href="https://inkmanager.app/terms"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="underline hover:text-fg"
                 >
                   Terms
-                </Link>
+                </a>
                 .
               </span>
             </label>

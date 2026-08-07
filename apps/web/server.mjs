@@ -13,14 +13,23 @@
 // /privacy and /terms used to be served here directly (a build-time
 // static-generation step, back when this file's whole reason for
 // existing was making them readable to a non-JS crawler). Ink Manager's
-// own Privacy Policy/Terms have since moved to www.inkmanager.app (the
-// marketing site) as their permanent canonical home -- these two paths
-// are now plain HTTP 301 redirects there instead, so any stale
-// reference to the old web.inkmanager.app URLs (Twilio's own
-// registration, a bookmark, anything else) still lands somewhere real
-// during the transition rather than 404ing. LEGAL_REDIRECTS is checked
-// before SPA_REWRITES / cleanUrls resolution, so it doesn't matter that
-// dist/privacy and dist/terms no longer exist on disk.
+// own Privacy Policy/Terms have since moved to the marketing site as
+// their permanent canonical home -- these two paths are now plain HTTP
+// 301 redirects there instead, so any stale reference to the old
+// web.inkmanager.app URLs (Twilio's own registration, a bookmark,
+// anything else) still lands somewhere real during the transition
+// rather than 404ing. LEGAL_REDIRECTS is checked before SPA_REWRITES /
+// cleanUrls resolution, so it doesn't matter that dist/privacy and
+// dist/terms no longer exist on disk.
+//
+// Redirect target is the bare inkmanager.app domain, not
+// www.inkmanager.app: as of this writing www isn't yet attached as a
+// custom domain on the marketing Railway service (confirmed live --
+// Railway edge fallback 404 -- see REPORT.md), even though DNS already
+// points it at the same place. Redirecting to a hostname that itself
+// 404s would be strictly worse than the old behavior. Switch back to
+// the www hostname once it's attached; both serve identical content
+// from the same Railway service either way.
 //
 // /inquiry/:studioSlug (and /inquiry/:studioSlug/:formSlug) needed the
 // same "a non-JS crawler must see real content" fix but CAN'T use the
@@ -58,8 +67,8 @@ const PORT = Number(process.env.PORT) || 3000
 const API_URL = process.env.VITE_API_URL
 
 const LEGAL_REDIRECTS = {
-  '/privacy': 'https://www.inkmanager.app/privacy',
-  '/terms': 'https://www.inkmanager.app/terms',
+  '/privacy': 'https://inkmanager.app/privacy',
+  '/terms': 'https://inkmanager.app/terms',
 }
 const SPA_REWRITES = [{ source: '**', destination: '/index.html' }]
 const INQUIRY_ROUTE = /^\/inquiry\/([^/]+)(?:\/([^/]+))?$/
@@ -109,10 +118,14 @@ async function renderInquirySsr(studioSlug, formSlug) {
   if (!studioName) return null
 
   const safeName = escapeHtml(studioName)
-  const safeSlug = encodeURIComponent(studioSlug)
   // Mirrors IntakeForm.tsx's own fixed copy (both the warning banner and
   // the consent-checkbox label) -- not a paraphrase, so a crawler and a
-  // JS-rendered visitor see the same disclosure text.
+  // JS-rendered visitor see the same disclosure text. The Privacy/Terms
+  // links point at Ink Manager's own platform policy pages, matching
+  // IntakeForm.tsx's own links -- not a per-studio /privacy/:studioSlug
+  // path, which is a different, separately-authored document this
+  // consent copy deliberately doesn't link to. Bare inkmanager.app, not
+  // www.inkmanager.app -- see this file's header comment for why.
   const content = `
       <div style="max-width:42rem;margin:0 auto;padding:2.5rem 1.5rem 4rem;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;color:#f2ece0">
         <h1 style="font-family:Georgia,'Times New Roman',serif;font-size:1.75rem;margin:0 0 0.5rem">${safeName} — Tattoo Inquiry</h1>
@@ -121,8 +134,8 @@ async function renderInquirySsr(studioSlug, formSlug) {
         <label style="display:flex;gap:0.5rem;align-items:flex-start;color:#c7bea9;font-size:0.875rem;margin-top:1.5rem">
           <input type="checkbox" disabled />
           <span>I agree to receive text messages from ${safeName} regarding my appointment, including reminders and updates. Message and data rates may apply. Reply STOP to opt out. View our
-            <a href="/privacy/${safeSlug}" style="color:#c99a5b">Privacy Policy</a> and
-            <a href="/terms/${safeSlug}" style="color:#c99a5b">Terms</a>.</span>
+            <a href="https://inkmanager.app/privacy" style="color:#c99a5b">Privacy Policy</a> and
+            <a href="https://inkmanager.app/terms" style="color:#c99a5b">Terms</a>.</span>
         </label>
       </div>`
 
