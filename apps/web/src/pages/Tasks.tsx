@@ -1,9 +1,9 @@
-import { useState, type FormEvent } from 'react'
+import { useState, type FormEvent, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '../lib/api'
-import { formatDateTime } from '../lib/format'
+import { formatDateTime, formatCompactDueDate } from '../lib/format'
 import { uiSpringTransition } from '../lib/motion'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useUserProfile } from '../context/useUserProfile'
@@ -11,6 +11,7 @@ import { useViewAs } from '../context/useViewAs'
 import { tasksQueryKey } from '../lib/queryKeys'
 import { PlusIcon, CloseIcon, CheckIcon, FilterIcon, SortIcon } from '../components/icons'
 import DatePickerField from '../components/DatePickerField'
+import { toDateString } from '../components/DateAndTimeRangeFields'
 import { useThemePreset } from '../lib/useThemePreset'
 import Eyebrow from '../components/Eyebrow'
 import PillMenu from '../components/PillMenu'
@@ -109,6 +110,81 @@ type AssignedToMeSort = (typeof ASSIGNED_TO_ME_SORT_OPTIONS)[number]['value']
 
 function isOverdue(task: { dueAt: string | null; completedAt: string | null }): boolean {
   return !!task.dueAt && !task.completedAt && new Date(task.dueAt) < new Date()
+}
+
+// Mobile row redesign: shared "compact due date pill" look, used both by
+// the editable DatePickerField trigger (Assigned to Me -- the creator/
+// assignee can change it) and the plain read-only pill (Assigned by Me --
+// the backend only lets the assignee edit dueAt, so the assigner only
+// ever gets a static display; see PATCH /tasks/personal/:id's own scoping).
+// No existing overdue treatment was found anywhere on these rows before
+// this redesign (isOverdue was only ever used for the "Overdue" filter
+// dropdown, never a visual cue) -- this is a new, minimal one, kept to
+// the same "thin border + text color, never a fill" restraint every other
+// danger-tone chip in this app already follows (see StatusPill).
+function dueDatePillClass(overdue: boolean): string {
+  return `shrink-0 whitespace-nowrap rounded-full border px-2.5 py-1 text-left text-xs transition ${
+    overdue ? 'border-danger/40 text-danger' : 'border-border text-fg-secondary'
+  }`
+}
+
+// Mobile row redesign, shared across every personal-task row shape in this
+// file (Assigned to Me incomplete/completed, Assigned by Me incomplete/
+// completed -- four near-identical layouts that had already diverged from
+// each other before this fix; see REPORT.md for the full investigation).
+// Line 1 is checkbox (optional) + title ONLY, wrapping up to 2 lines
+// before ellipsis -- the title gets the whole line to itself now, rather
+// than sharing it with a squeezed-in date input. Line 2 (mobile only, via
+// `sm:contents` unwrapping back into the single desktop row) carries
+// every other bit of metadata this row has: "Assigned by/to X" first,
+// then the due-date pill, then delete, always pinned to the end via
+// `ml-auto`. A row with neither (today, only the completed-assigned-by-Me
+// list) skips line 2 entirely -- delete sits right after the title.
+interface TaskRowContentProps {
+  checkbox?: ReactNode
+  title: ReactNode
+  metaLeft?: ReactNode
+  dueDate?: ReactNode
+  onDelete: () => void
+  deleteDisabled?: boolean
+}
+
+function TaskRowContent({ checkbox, title, metaLeft, dueDate, onDelete, deleteDisabled }: TaskRowContentProps) {
+  const deleteButton = (
+    <button
+      type="button"
+      onClick={onDelete}
+      disabled={deleteDisabled}
+      aria-label="Delete task"
+      className="shrink-0 rounded-full p-1 text-fg-muted transition hover:bg-surface hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      <CloseIcon className="h-3.5 w-3.5" />
+    </button>
+  )
+
+  if (!metaLeft && !dueDate) {
+    return (
+      <>
+        {checkbox}
+        <div className="min-w-0 flex-1">{title}</div>
+        {deleteButton}
+      </>
+    )
+  }
+
+  return (
+    <>
+      {checkbox}
+      <div className="min-w-0 flex-1">{title}</div>
+      <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:contents">
+        {metaLeft && <span className="min-w-0 flex-1 truncate text-xs text-fg-muted sm:order-1 sm:flex-none">{metaLeft}</span>}
+        <div className="ml-auto flex shrink-0 items-center gap-2 sm:order-2 sm:ml-0">
+          {dueDate}
+          {deleteButton}
+        </div>
+      </div>
+    </>
+  )
 }
 
 function sortPersonalTasks<T extends { title: string; dueAt: string | null; createdAt: string }>(
@@ -248,6 +324,7 @@ export default function Tasks() {
   }
 
   function renderPersonalTaskItem(task: PersonalTask) {
+    const overdue = isOverdue(task)
     return (
       <motion.li
         key={task.id}
@@ -256,67 +333,79 @@ export default function Tasks() {
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         transition={uiSpringTransition}
-        className="flex items-center gap-3 rounded-lg border border-border p-3 text-sm"
+        className="flex flex-wrap items-start gap-x-3 gap-y-2 rounded-lg border border-border p-3 text-sm sm:flex-nowrap sm:items-center"
       >
-        <button
-          type="button"
-          onClick={() => toggleComplete(task)}
-          disabled={!!viewAsTarget}
-          aria-label="Mark complete"
-          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border text-transparent transition hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <CheckIcon className="h-3 w-3" />
-        </button>
-
-        {editingId === task.id ? (
-          <input
-            type="text"
-            autoFocus
-            value={editTitle}
-            onChange={(e) => setEditTitle(e.target.value)}
-            onBlur={() => saveEdit(task.id)}
-            onKeyDown={(e) => e.key === 'Enter' && saveEdit(task.id)}
-            className="min-w-0 flex-1 rounded-xl border border-border bg-surface-inset px-2 py-1 text-sm text-fg focus:outline-none"
-          />
-        ) : (
-          <div className="min-w-0 flex-1">
+        <TaskRowContent
+          checkbox={
             <button
               type="button"
-              onClick={() => startEdit(task)}
-              className="block w-full truncate text-left text-fg hover:underline"
+              onClick={() => toggleComplete(task)}
+              disabled={!!viewAsTarget}
+              aria-label="Mark complete"
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border text-transparent transition hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {task.title}
+              <CheckIcon className="h-3 w-3" />
             </button>
-            {task.createdBy?.id !== user?.userId && (
-              <p className="mt-0.5 text-xs text-fg-muted">
-                Assigned by {task.createdBy ? (task.createdBy.name ?? task.createdBy.email) : 'a deleted user'}
-              </p>
-            )}
-          </div>
-        )}
-
-        <div className="w-[9.5rem] shrink-0 text-xs [&_button]:px-2 [&_button]:py-1">
-          <label htmlFor={`due-date-${task.id}`} className="sr-only">
-            Due date
-          </label>
-          <DatePickerField
-            id={`due-date-${task.id}`}
-            value={task.dueAt ? task.dueAt.slice(0, 10) : ''}
-            onChange={(value) => updateDueDate(task.id, value)}
-            disabled={!!viewAsTarget}
-            placeholder="Due date"
-          />
-        </div>
-
-        <button
-          type="button"
-          onClick={() => deleteMutation.mutate(task.id)}
-          disabled={!!viewAsTarget}
-          aria-label="Delete task"
-          className="shrink-0 rounded-full p-1 text-fg-muted transition hover:bg-surface hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <CloseIcon className="h-3.5 w-3.5" />
-        </button>
+          }
+          title={
+            editingId === task.id ? (
+              <input
+                type="text"
+                autoFocus
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                onBlur={() => saveEdit(task.id)}
+                onKeyDown={(e) => e.key === 'Enter' && saveEdit(task.id)}
+                className="min-w-0 w-full rounded-xl border border-border bg-surface-inset px-2 py-1 text-sm text-fg focus:outline-none"
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => startEdit(task)}
+                className="w-full line-clamp-2 text-left text-fg hover:underline sm:line-clamp-1"
+              >
+                {task.title}
+              </button>
+            )
+          }
+          metaLeft={
+            task.createdBy?.id !== user?.userId
+              ? `Assigned by ${task.createdBy ? (task.createdBy.name ?? task.createdBy.email) : 'a deleted user'}`
+              : undefined
+          }
+          dueDate={
+            <>
+              <label htmlFor={`due-date-${task.id}`} className="sr-only">
+                Due date
+              </label>
+              <DatePickerField
+                id={`due-date-${task.id}`}
+                // Pre-existing bug, fixed here since the new compact
+                // "Today"/"Tomorrow" wording is far more exposed to it
+                // than the old full-date format was: task.dueAt.slice(0, 10)
+                // took the UTC calendar day directly from the stored ISO
+                // timestamp, but DatePickerField's parseDateString/
+                // toDateString pair always treats a Y-M-D string as LOCAL
+                // components -- near a timezone boundary (e.g. any evening
+                // hour in a negative-UTC-offset zone) those two calendar
+                // days genuinely differ, so the picker showed the wrong
+                // day entirely. toDateString(new Date(...)) matches the
+                // LOCAL convention parseDateString expects. The onChange/
+                // save path (updateDueDate) has its own separate, deeper
+                // UTC-vs-local mismatch -- out of this fix's scope, see
+                // REPORT.md.
+                value={task.dueAt ? toDateString(new Date(task.dueAt)) : ''}
+                onChange={(value) => updateDueDate(task.id, value)}
+                disabled={!!viewAsTarget}
+                placeholder="Due date"
+                formatValue={(d) => formatCompactDueDate(d.toISOString())}
+                buttonClassName={`${dueDatePillClass(overdue)} bg-surface-inset focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-60`}
+              />
+            </>
+          }
+          onDelete={() => deleteMutation.mutate(task.id)}
+          deleteDisabled={!!viewAsTarget}
+        />
       </motion.li>
     )
   }
@@ -557,7 +646,18 @@ export default function Tasks() {
                     placeholder="Add a task…"
                     value={form.title}
                     onChange={(e) => setForm({ ...form, title: e.target.value })}
-                    className="min-w-0 flex-1 rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                    // basis-full: found live while verifying the composer's
+                    // mobile stacking -- shrinking the due-date field to a
+                    // compact pill (below) freed up just enough row width
+                    // that flex-wrap started packing this input onto the
+                    // same line as the assignee <select> instead of
+                    // wrapping, squeezing it down to ~29px wide and
+                    // effectively unusable. Forcing this input onto its own
+                    // full-width row is robust regardless of how much room
+                    // its siblings need, rather than relying on flex-wrap
+                    // arithmetic that a future sibling-width change could
+                    // silently break again.
+                    className="min-w-0 grow basis-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent sm:basis-auto"
                   />
                   {canAssign && (
                     <select
@@ -575,7 +675,7 @@ export default function Tasks() {
                         ))}
                     </select>
                   )}
-                  <div className="w-40">
+                  <div>
                     <label htmlFor="new-task-due-date" className="sr-only">
                       Due date
                     </label>
@@ -584,6 +684,8 @@ export default function Tasks() {
                       value={form.dueAt}
                       onChange={(value) => setForm({ ...form, dueAt: value })}
                       placeholder="Due date"
+                      formatValue={(d) => formatCompactDueDate(d.toISOString())}
+                      buttonClassName="rounded-full border border-border bg-surface-inset px-3 py-2 text-left text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-60"
                     />
                   </div>
                   <button
@@ -650,26 +752,25 @@ export default function Tasks() {
                             animate={{ opacity: 0.6 }}
                             exit={{ opacity: 0 }}
                             transition={uiSpringTransition}
-                            className="flex items-center gap-3 rounded-lg border border-border p-3 text-sm"
+                            className="flex items-start gap-3 rounded-lg border border-border p-3 text-sm"
                           >
-                            <button
-                              type="button"
-                              onClick={() => toggleComplete(task)}
-                              disabled={!!viewAsTarget}
-                              aria-label="Mark incomplete"
-                              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-accent bg-accent text-bg disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              <CheckIcon className="h-3 w-3" />
-                            </button>
-                            <span className="min-w-0 flex-1 truncate text-fg-secondary line-through">{task.title}</span>
-                            <button
-                              type="button"
-                              onClick={() => deleteMutation.mutate(task.id)}
-                              aria-label="Delete task"
-                              className="shrink-0 rounded-full p-1 text-fg-muted transition hover:bg-surface hover:text-fg"
-                            >
-                              <CloseIcon className="h-3.5 w-3.5" />
-                            </button>
+                            <TaskRowContent
+                              checkbox={
+                                <button
+                                  type="button"
+                                  onClick={() => toggleComplete(task)}
+                                  disabled={!!viewAsTarget}
+                                  aria-label="Mark incomplete"
+                                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-accent bg-accent text-bg disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  <CheckIcon className="h-3 w-3" />
+                                </button>
+                              }
+                              title={
+                                <span className="w-full line-clamp-2 text-fg-secondary line-through">{task.title}</span>
+                              }
+                              onDelete={() => deleteMutation.mutate(task.id)}
+                            />
                           </motion.li>
                         ))}
                         </AnimatePresence>
@@ -701,30 +802,19 @@ export default function Tasks() {
                           animate={{ opacity: 1 }}
                           exit={{ opacity: 0 }}
                           transition={uiSpringTransition}
-                          className="flex items-center gap-3 rounded-lg border border-border p-3 text-sm"
+                          className="flex flex-wrap items-start gap-x-3 gap-y-2 rounded-lg border border-border p-3 text-sm sm:flex-nowrap sm:items-center"
                         >
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-fg">{task.title}</p>
-                            <p className="mt-0.5 text-xs text-fg-muted">
-                              Assigned to {task.user.name ?? task.user.email}
-                            </p>
-                          </div>
-
-                          {task.dueAt && (
-                            <span className="shrink-0 text-xs text-fg-muted">
-                              Due {new Date(task.dueAt).toLocaleDateString()}
-                            </span>
-                          )}
-
-                          <button
-                            type="button"
-                            onClick={() => deleteMutation.mutate(task.id)}
-                            disabled={!!viewAsTarget}
-                            aria-label="Delete task"
-                            className="shrink-0 rounded-full p-1 text-fg-muted transition hover:bg-surface hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            <CloseIcon className="h-3.5 w-3.5" />
-                          </button>
+                          <TaskRowContent
+                            title={<p className="line-clamp-2 text-fg sm:line-clamp-1">{task.title}</p>}
+                            metaLeft={`Assigned to ${task.user.name ?? task.user.email}`}
+                            dueDate={
+                              task.dueAt ? (
+                                <span className={dueDatePillClass(isOverdue(task))}>{formatCompactDueDate(task.dueAt)}</span>
+                              ) : undefined
+                            }
+                            onDelete={() => deleteMutation.mutate(task.id)}
+                            deleteDisabled={!!viewAsTarget}
+                          />
                         </motion.li>
                       ))}
                       </AnimatePresence>
@@ -752,22 +842,13 @@ export default function Tasks() {
                               animate={{ opacity: 0.6 }}
                               exit={{ opacity: 0 }}
                               transition={uiSpringTransition}
-                              className="flex items-center gap-3 rounded-lg border border-border p-3 text-sm"
+                              className="flex flex-wrap items-start gap-x-3 gap-y-2 rounded-lg border border-border p-3 text-sm sm:flex-nowrap sm:items-center"
                             >
-                              <div className="min-w-0 flex-1">
-                                <p className="truncate text-fg-secondary line-through">{task.title}</p>
-                                <p className="mt-0.5 text-xs text-fg-muted">
-                                  Assigned to {task.user.name ?? task.user.email}
-                                </p>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => deleteMutation.mutate(task.id)}
-                                aria-label="Delete task"
-                                className="shrink-0 rounded-full p-1 text-fg-muted transition hover:bg-surface hover:text-fg"
-                              >
-                                <CloseIcon className="h-3.5 w-3.5" />
-                              </button>
+                              <TaskRowContent
+                                title={<p className="line-clamp-2 text-fg-secondary line-through">{task.title}</p>}
+                                metaLeft={`Assigned to ${task.user.name ?? task.user.email}`}
+                                onDelete={() => deleteMutation.mutate(task.id)}
+                              />
                             </motion.li>
                           ))}
                           </AnimatePresence>

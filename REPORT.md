@@ -8717,3 +8717,59 @@ Also handled per this task's own explicit ask: killed a still-running background
 
 `9de8578`
 
+---
+
+# Tasks — mobile row redesign, title-first
+
+New session. No schema changes.
+
+## Investigation, before touching anything
+
+**"Is the task row a single shared component across the Dashboard 'Assigned to me' widget and the Tasks page?"** -- premise didn't hold: `Dashboard.tsx` has zero task references at all (it's a metrics-only page -- Lost/Cold Rate, Response Time, Deposit Conversion, etc.). "Assigned to Me" is a section that lives entirely inside `pages/Tasks.tsx` itself, alongside "Studio Queue" (derived system tasks) and "Assigned by Me" (tasks this viewer handed to someone else).
+
+Worse than not being shared with a Dashboard widget that doesn't exist, the row markup had already diverged **within Tasks.tsx itself** into four near-identical, independently-copy-pasted layouts: `renderPersonalTaskItem` (Assigned to Me, incomplete -- checkbox, editable title, editable `DatePickerField`, delete), an inline block for Assigned to Me *completed* (checkbox pre-filled, strikethrough, no due date shown at all), and two more inline blocks for Assigned by Me incomplete/completed (no checkbox -- the backend only lets the assignee edit `dueAt`, so the assigner only ever sees a plain "Due {date}" *string*, not an editable field). The bug as reported ("checkbox + title + a full-width date input + delete crammed into one line") describes `renderPersonalTaskItem` exactly; the other three rows had the same title-squeeze problem in a slightly different shape. Studio Queue and the artist-invite rows are a genuinely different shape (no checkbox, no date input, `Link` + "Respond"/"Dismiss" pills, titles that already wrap since they never had a `truncate` class) -- confirmed via reading the render code, not assumed, and left untouched since they don't exhibit the bug.
+
+Fixed at the shared level as asked: extracted one presentational component, `TaskRowContent` (checkbox?/title/metaLeft?/dueDate?/onDelete), used by all four row shapes now instead of four copies.
+
+## Part 1 -- mobile stacking
+
+Line 1: checkbox (when present) + title only, `line-clamp-2` mobile / `line-clamp-1` desktop (`sm:`). Line 2 (mobile only): "Assigned by/to X" (when present) + the due-date pill + delete, pinned to the row's end via `ml-auto`; `sm:contents` on the line-2 wrapper un-wraps the exact same markup back into the single desktop row with no second JSX branch. A row with neither piece of metadata (only the completed-personal-tasks list) skips line 2 entirely -- delete sits right after the title on every viewport, since there was never a fixed-width element there causing a squeeze.
+
+**Judgment call**: the spec's "Line 2: metadata -- compact due date pill + any other existing metadata" reads as *consolidating* everything onto one line, not leaving "Assigned by X" as a title subtitle (where it already lived, unsquashed, before this fix) -- went with consolidation since it gives the title the full width of line 1 to itself.
+
+**Real bug found and fixed, not by me introducing it but by exposing it**: `line-clamp-2` combined with an explicit `block` utility class on the same element silently loses the clamp (`display: block` wins the cascade over `display: -webkit-box`) -- caught live, a long title rendered fully unclamped (6 lines) instead of 2. Removed the redundant `block` (unnecessary -- `line-clamp`'s own display value already does the job) on both title elements that had it.
+
+## Part 2 -- compact date format
+
+`formatCompactDueDate` (new, `lib/format.ts`): "Today"/"Tomorrow", else `Aug 7` (year appended only when it isn't the current year). No "Yesterday"/"N days ago" wording for overdue -- an overdue date is still just a short date, distinguished by color, not different wording.
+
+**Real, pre-existing bug found and fixed** (in scope, since it directly corrupted the new "Today"/"Tomorrow" wording): `renderPersonalTaskItem` fed `DatePickerField` a raw `task.dueAt.slice(0, 10)` -- the **UTC** calendar day sliced straight off the stored ISO timestamp -- while `DatePickerField`'s own `parseDateString`/`toDateString` pair (used everywhere else in the app) always treats a Y-M-D string as **local** components. Near any evening hour in a negative-UTC-offset timezone those two calendar days genuinely differ, so the picker showed the wrong day outright. Invisible under the old full-date format (nobody double-checks "Fri, Aug 8" against "should be Fri, Aug 7"); glaringly wrong under "Tomorrow" shown for a task actually due today. Fixed the read path only (`toDateString(new Date(task.dueAt))`), matching the local-component convention `parseDateString` already expects -- did **not** touch `updateDueDate`'s own save path, which has a separate, deeper UTC-vs-local mismatch (`new Date(value).toISOString()` treats a bare Y-M-D string as UTC, the opposite convention), out of this fix's scope; flagged here for a dedicated follow-up.
+
+**Overdue treatment**: no existing visual treatment was found anywhere -- `isOverdue` existed only as the "Overdue" filter dropdown's predicate, never applied to a row's own styling. Added one, minimal: `border-danger/40 text-danger`, no fill, matching the same "thin border + text color only" restraint every other danger-tone chip in this app already follows (`StatusPill`). Confirmed via computed style, not eyeballed: overdue pill text `rgb(224, 130, 114)`, background `rgb(18, 15, 11)` (the app's plain base background, not a red fill); non-overdue pill text `rgb(199, 190, 169)`, visibly distinct.
+
+`DatePickerField` extended with two new optional props (`formatValue`, `buttonClassName`) so the calendar-popover editing interaction underneath is completely unchanged -- only the trigger button's resting text/shape. Both fall back to the exact original expressions when omitted; the other four call sites (`DateAndTimeRangeFields`, `ArtistCreate`, `ArtistDetail`, `Calendar`) pass neither and are provably unaffected -- confirmed by grep (none pass the new props) plus a clean `tsc -b` across the whole app.
+
+## Part 3 -- desktop
+
+Single-line layout preserved (`sm:flex-nowrap sm:items-center`, `sm:contents` unwrap, `sm:line-clamp-1`), now also showing the compact date format. Verified live: a long title's row measured 52px tall on a 1280px viewport (single-line height, not wrapped), compact pills sit inline with the rest of the row exactly as before. Not flagging anything left un-adopted here -- the compact format sits well on desktop too, no reason to keep the old verbose one there.
+
+## Part 4 -- mobile composer (optional judgment call)
+
+Did **not** implement the "one field revealing assignee/date on focus" interaction pattern -- a real interaction redesign (new state, blur/focus edge cases, keyboard-nav/accessibility considerations) is meaningfully higher-risk than the rest of this task, which the spec's own "if a low-risk cleaner pattern exists... otherwise leave it and say so" phrasing anticipates. Leaving it.
+
+Did make the one clearly low-risk change: gave the composer's own due-date field the same compact-pill treatment as the row pills (was a fixed `w-40` full box). This is a cosmetic consistency win, not a row-count reduction on its own -- the composer still stacks into the same 3 rows (title, assignee, date+Add) as before.
+
+**Real regression found and fixed during verification**: that same compact-pill change freed up just enough row width that `flex-wrap` started packing the title `<input>` onto the *same* line as the assignee `<select>` instead of wrapping it -- measured live at 29px wide, functionally unusable. Fixed by forcing the title input onto its own full-width row explicitly (`basis-full`, `sm:basis-auto` to still participate normally in the single desktop row) rather than continuing to rely on flex-wrap arithmetic that a sibling's width change could silently break again. Verified via exact child bounding-box positions before and after (2 distinct row `top` values with the bug present -- input squeezed onto the select's row; 3 afterward -- title/select/date+Add each on their own line where expected), not just a screenshot glance.
+
+## Verification (live, real 390px mobile viewport + 1280px desktop, isolated dev servers)
+
+Test data covered every case the task asked for: a long title (confirmed 2-line clamp + ellipsis, not the initial 6-line un-clamped bug), a short title, no due date, due today (both the trivially-overdue and the still-pending "later today" cases -- these must be visually distinct and were, confirmed via computed color), due tomorrow, an arbitrary future date (year correctly omitted, same year), and completed (checkbox filled, strikethrough, 2-line wrap). `document.documentElement.scrollWidth === clientWidth` at 390px -- no horizontal overflow anywhere on the page, including Studio Queue's much longer, unrelated rows.
+
+**Environmental note, not a product bug**: mid-verification, another concurrent session actively editing files under `apps/api/src` (confirmed via that session's own commits landing on `main` while this work was in progress -- `7d799a9`/`9de8578`, an unrelated artist-mobility studio-scoping fix) repeatedly triggered my own isolated `tsx watch` dev server's auto-restart, intermittently producing "Reconnecting..."/stuck-loading screenshots unrelated to anything in this change. Waited out/retried past it each time; one planned regression screenshot (Calendar's own jump-to-date `DatePickerField`, a different consumer of the same component) never stabilized in time -- substituted a code-level check instead (grepped all four other call sites, confirmed none pass the two new optional props, so they're provably running the exact original code path; backed by a clean `tsc -b` across the whole web app).
+
+## Cleanup
+
+Isolated dev servers (API :4199, web :5283 -- chosen specifically to avoid the concurrent session's own :4099 server) killed. No scratch source files were created in the repo this session (only ad-hoc Playwright verification scripts in the scratchpad directory, which isn't part of the repo). Test data (several personal tasks under the dev owner account, tagged descriptively -- "Overdue reminder call," "Due tomorrow task," etc.) left in place, per this file's own standing convention.
+
+## Commit
+

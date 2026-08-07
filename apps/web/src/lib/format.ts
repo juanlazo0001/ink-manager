@@ -125,6 +125,33 @@ export function formatRelativeTime(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
+// Compact due-date display for task rows (mobile row redesign): "Today"/
+// "Tomorrow", else a short date ("Aug 7"), with the year appended only
+// when it isn't the current year. Deliberately no "Yesterday"/"N days
+// ago" wording -- an overdue task's date still just reads as a plain
+// short date, distinguished by color (see the task row's own overdue
+// styling), not by a different word. Browser-local calendar day -- tasks
+// have no per-studio timezone concept the way appointments/settings do
+// (a plain <input type="date">, already compared client-side elsewhere
+// in Tasks.tsx's own isOverdue).
+export function formatCompactDueDate(iso: string): string {
+  const date = new Date(iso)
+  const now = new Date()
+  const dateDay = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const dayDiff = Math.round((dateDay - today) / 86_400_000)
+
+  if (dayDiff === 0) return 'Today'
+  if (dayDiff === 1) return 'Tomorrow'
+
+  const includeYear = date.getFullYear() !== now.getFullYear()
+  return date.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    ...(includeYear ? { year: 'numeric' as const } : {}),
+  })
+}
+
 // The civil (calendar) date of `date` as observed in `timeZone` -- needed
 // because "today"/"yesterday" depend on the studio's own timezone, not the
 // browser's, and not a naive UTC day boundary either.
