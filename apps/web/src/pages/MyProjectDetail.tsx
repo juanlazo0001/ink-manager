@@ -45,23 +45,34 @@ interface Project {
   placement: string
   estimatedSize: string
   hasBeenTattooedBefore: boolean
-  budget: string | null
+  // Phase 5: absent (not null) when "Pricing & financial detail" is
+  // hidden -- already safe at its one call site (`??` treats undefined
+  // and null identically), typed optional here just for accuracy.
+  budget?: string | null
   desiredTiming: string | null
   referenceImages: string[]
   placementImages: string[]
   createdAt: string
   status: string
-  priceEstimateLow: number | null
-  priceEstimateHigh: number | null
-  timeEstimateHoursMin: number | null
-  timeEstimateHoursMax: number | null
+  // Phase 5: absent entirely (not null) when the studio has switched off
+  // "Pricing & financial detail" for artists at this project's own studio
+  // -- see lib/artistFieldVisibility.ts (API). Optional here, not
+  // `| null`, to match that real "key missing" shape rather than a value
+  // that was fetched and found empty.
+  priceEstimateLow?: number | null
+  priceEstimateHigh?: number | null
+  timeEstimateHoursMin?: number | null
+  timeEstimateHoursMax?: number | null
   projectCompletedAt: string | null
   client: { firstName: string; lastName: string }
   service: { id: string; name: string; pricingModel: 'RANGE' | 'FLAT' }
   appointment: { id: string; startTime: string; endTime: string; status: string } | null
   sessions: Session[]
-  depositForms: DepositForm[]
-  notes: Note[]
+  // Phase 5: same "absent, not empty" shape as the price/time estimate
+  // fields above -- depositForms hidden by "Pricing & financial detail",
+  // notes hidden by its own separate "Internal notes" toggle.
+  depositForms?: DepositForm[]
+  notes?: Note[]
   // Artist mobility: set only when this project belongs to a studio where
   // the viewer is an active GUEST rather than their own home studio -- see
   // Inquiries.tsx's own fromGuestStudio comment for the fuller context.
@@ -185,7 +196,9 @@ export default function MyProjectDetail() {
   }
 
   const projectStage = project ? deriveProjectStage(project) : null
-  const estimateRange = project ? formatPriceEstimate(project.priceEstimateLow, project.priceEstimateHigh) : null
+  const estimateRange = project
+    ? formatPriceEstimate(project.priceEstimateLow ?? null, project.priceEstimateHigh ?? null)
+    : null
   const timeRange =
     project && project.timeEstimateHoursMin != null && project.timeEstimateHoursMax != null
       ? project.timeEstimateHoursMin === project.timeEstimateHoursMax
@@ -265,10 +278,16 @@ export default function MyProjectDetail() {
                 <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Color</p>
                 <p className="mt-1 text-sm text-fg">{project.colorOrBlackGrey}</p>
               </div>
-              <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Budget</p>
-                <p className="mt-1 text-sm text-fg">{project.budget ?? 'Not provided'}</p>
-              </div>
+              {/* Phase 5: absent entirely (not just null) when "Pricing &
+                  financial detail" is hidden -- omitted outright rather
+                  than showing "Not provided," which would misleadingly
+                  imply the client never gave one. */}
+              {project.budget !== undefined && (
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Budget</p>
+                  <p className="mt-1 text-sm text-fg">{project.budget ?? 'Not provided'}</p>
+                </div>
+              )}
               <div>
                 <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Service</p>
                 <p className="mt-1 text-sm text-fg">{project.service.name}</p>
@@ -329,28 +348,37 @@ export default function MyProjectDetail() {
             )}
           </Card>
 
-          <Card title="Deposit status">
-            <div className="mb-3 flex items-center gap-2 text-xs text-fg-muted">
-              <GiftCardIcon className="h-3.5 w-3.5" />
-              Signed/paid status only -- amounts and payment details are managed by the studio.
-            </div>
-            {pdfDownloadError && <p className="mb-3 text-sm text-danger">{pdfDownloadError}</p>}
-            {project.depositForms.length === 0 ? (
-              <p className="text-sm text-fg-secondary">No deposit forms yet.</p>
-            ) : (
-              <div className="space-y-2">
-                {project.depositForms.map((form) => (
-                  <DepositStatusRow
-                    key={form.id}
-                    form={form}
-                    onDownload={handleDownloadDepositPdf}
-                    downloading={downloadingPdfId === form.id}
-                  />
-                ))}
+          {/* Phase 5: absent entirely (not an empty array) when this
+              project's own studio has "Pricing & financial detail" switched
+              off for artists -- the whole card disappears rather than
+              showing an empty/misleading "No deposit forms yet." */}
+          {project.depositForms !== undefined && (
+            <Card title="Deposit status">
+              <div className="mb-3 flex items-center gap-2 text-xs text-fg-muted">
+                <GiftCardIcon className="h-3.5 w-3.5" />
+                Signed/paid status only -- amounts and payment details are managed by the studio.
               </div>
-            )}
-          </Card>
+              {pdfDownloadError && <p className="mb-3 text-sm text-danger">{pdfDownloadError}</p>}
+              {project.depositForms.length === 0 ? (
+                <p className="text-sm text-fg-secondary">No deposit forms yet.</p>
+              ) : (
+                <div className="space-y-2">
+                  {project.depositForms.map((form) => (
+                    <DepositStatusRow
+                      key={form.id}
+                      form={form}
+                      onDownload={handleDownloadDepositPdf}
+                      downloading={downloadingPdfId === form.id}
+                    />
+                  ))}
+                </div>
+              )}
+            </Card>
+          )}
 
+          {/* Phase 5: same "absent means hide the card" treatment, gated by
+              the separate "Internal notes" toggle. */}
+          {project.notes !== undefined && (
           <Card title="Notes">
             <div className="mb-3 flex items-center gap-2 text-xs text-fg-muted">
               <DocumentIcon className="h-3.5 w-3.5" />
@@ -384,6 +412,7 @@ export default function MyProjectDetail() {
               </ul>
             )}
           </Card>
+          )}
         </div>
       )}
     </div>
