@@ -9,7 +9,7 @@ import { sendClientSms } from "./clientSms";
 import { shortenUrl } from "./shortLinks";
 import { PUBLIC_APP_URL } from "./publicUrl";
 import { getChargeableConnectedAccountId } from "./stripeConnect";
-import { createDirectChargeCheckoutSession, createOrRetrieveDirectChargePaymentIntent } from "./stripe";
+import { computeApplicationFeeCents, createDirectChargeCheckoutSession, createOrRetrieveDirectChargePaymentIntent } from "./stripe";
 import { findBufferConflict, resolveSchedulingBufferMs } from "./schedulingConflict";
 import { resolveDepositAmounts, resolveDepositTiers } from "./depositTiers";
 import { emitInvalidation } from "./realtime/registry";
@@ -711,6 +711,7 @@ export async function createOrRetrieveDepositPaymentIntent(depositFormId: string
       connectedAccountId: stripeAccountId,
       existingPaymentIntentId: depositForm.stripePaymentIntentId,
       amountCents: totalCents,
+      applicationFeeCents: computeApplicationFeeCents(totalCents),
       metadata: { depositFormId: depositForm.id },
     });
   } catch (err) {

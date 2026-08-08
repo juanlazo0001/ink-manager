@@ -1343,6 +1343,14 @@ model Appointment {
   // no other logic attached to it, so checkout formalizes what that value
   // already meant rather than repurposing something with different meaning.
   finalCostCents Int?
+  // Tipping (embedded payments UX redesign): recorded distinctly from
+  // finalCostCents (the service price) so it's never blended into the
+  // service amount, and attributed to the artist via this same
+  // appointment's existing artistId -- no separate attribution field
+  // needed. null means the tip step never ran (pre-tipping appointments,
+  // or embeddedPaymentsEnabled off); 0 means the client explicitly chose
+  // no tip -- these two states must stay distinguishable, so no default.
+  tipCents       Int?
   closeoutNotes  String?
   checkedOutAt   DateTime?
   checkedOutById String?

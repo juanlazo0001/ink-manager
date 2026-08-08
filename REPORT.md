@@ -11222,3 +11222,93 @@ mobile-viewport, real-Stripe-test-mode walkthrough screenshots are Part 3.
 
 No scratch scripts used in this part. REPORT.md line count before this entry: 11138 (verified via
 `git show HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Embedded payment UX redesign, Part 2: tipping at session checkout
+
+15/18/20%/Custom/No-tip step, session checkout only (deposits/flash explicitly excluded -- flash
+tipping flagged as a future question, not decided here). One PaymentIntent for subtotal+tip;
+the platform's `application_fee_amount` is computed on the pre-tip subtotal only, so the platform
+takes no cut of tips.
+
+## Schema
+
+`Appointment.tipCents Int?` (nullable, no default), next to the existing `finalCostCents` --
+`null` means the tip step never ran (pre-tipping appointments, or `embeddedPaymentsEnabled` off),
+`0` means the client explicitly chose no tip. These two states must stay distinguishable (future
+tip-adoption reporting needs to tell "never asked" apart from "asked, declined"), so a `0` default
+would have quietly erased that distinction. Migration generated per CLAUDE.md's rule (never
+`prisma migrate dev`): `prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma
+--script` against the live dev database directly (no shadow-database config exists in this repo,
+so diffing from the migrations directory itself isn't available here -- diffing from the live
+datasource sidesteps that requirement entirely), hand-placed into a new
+`20260809020000_appointment_tip_cents` folder, applied via `prisma migrate deploy`.
+
+## Money mechanics: the fee-basis refactor
+
+Both direct-charge PaymentIntent helpers in `apps/api/src/lib/stripe.ts`
+(`createDirectChargePaymentIntent`, `createOrRetrieveDirectChargePaymentIntent`) used to derive
+`application_fee_amount` internally from the same `amountCents` being charged --
+`computeApplicationFeeCents(params.amountCents)`, called in three places including the
+reuse-and-update path. That assumption breaks the moment a charge amount can include a tip: it
+would have handed the platform a cut of every tip. Refactored both functions to take an explicit
+`applicationFeeCents` param instead, supplied by the caller. `deposits.ts` and `flashPayments.ts`
+now pass `computeApplicationFeeCents(amountCents)` themselves (behavior-preserving -- same value,
+just made explicit at the call site instead of implicit inside the helper). `appointments.ts`'s
+existing `POST /:id/checkout` does the same for its own tip-less PaymentIntent creation. The new
+`POST /:id/tip` (below) is the one caller that actually diverges: `applicationFeeCents:
+computeApplicationFeeCents(amountDueCents)` while `amountCents: amountDueCents + tipCents` --
+the fee basis and the charge amount are no longer the same number.
+
+## New endpoint: `POST /appointments/:id/tip`
+
+Architecture decision: `POST /:id/checkout` keeps creating its tip-less PaymentIntent exactly as
+before (no change to its own gating). `/tip` is the only place a tip ever enters the picture, and
+reuses `createOrRetrieveDirectChargePaymentIntent`'s existing "update the amount if it changed"
+path against that same PaymentIntent -- no new Stripe object types, no special-casing for the
+`amountDueCents === 0`-but-tipping case (falls through to that function's own create-fallback
+naturally).
+
+Same studio-scoping pattern as every other checkout-adjacent route in this file
+(`callerBelongsToStudio` against the *appointment's own* `studioId`, never the caller's token
+`studioId`, then `hasPermissionAt(..., "appointments.checkout")`) -- required by CLAUDE.md's
+artist-studio-scoping rule, and this route is a fresh place that rule could have been gotten wrong
+again. `amountDueCents` is always recomputed server-side from the appointment's own
+`finalCostCents` and its own redeemed gift cards -- the request body's `tipCents` is the only
+field ever read from it. A generous abuse-guardrail cap (`finalCostCents * 3`) rejects a
+manipulated/runaway `tipCents` before any Stripe call.
+
+**A real gap found by the live-Stripe verification step, not by review**: the first version of
+this route had no `embeddedPaymentsEnabled` check at all. In practice the frontend only reaches
+the tip step after `/checkout` already returned a PaymentIntent (itself flag-gated), so this
+wasn't reachable through the UI -- but the route itself is a direct API surface, and calling it
+against `dev-studio` (which has the flag off) during the live-Stripe proof (Part 3) went through
+anyway. Fixed by adding the same `studioSettings.embeddedPaymentsEnabled` gate
+`deposits.ts`/`flashPayments.ts`/`/:id/checkout` already apply, in the same position (before the
+Stripe-account lookup, after the persistence-relevant checks). Re-verified live afterward.
+
+## Surfacing
+
+**Staff**: a "Tip" tile added to `AppointmentDetail.tsx`'s checked-out summary grid, shown once
+`appointment.tipCents != null`.
+
+**Artist**: added `tipCents: true` to `ARTIST_INQUIRY_SELECT`'s `sessions.select` in
+`routes/inquiries.ts`, and rendered in `MyProjectDetail.tsx`'s session list. Deliberately *not*
+added to `lib/artistFieldVisibility.ts`'s delete-list -- confirmed by reading
+`applyArtistFieldVisibility` that it only strips an explicit named set of fields
+(`priceEstimateLow/High`, `budget`, `depositForms`, etc.) when a studio's "Pricing & financial
+detail" toggle is off, so `tipCents` survives that redaction untouched. This is a deliberate
+asymmetry from every other financial field on that page (which the same file's own copy already
+tells the artist are "managed by the studio," never shown) -- a tip is the artist's own money, not
+studio economics, so it's shown regardless of that toggle. Full tip-reporting dashboards are
+out of scope for this work, noted as a deferred follow-up.
+
+**Webhook**: no change needed. `payment_intent.succeeded`'s Appointment branch only sets
+`paidVia: "STRIPE"` keyed on `stripePaymentIntentId`, agnostic to what the charge amount was made
+of -- `tipCents` is already durably persisted before the PaymentIntent is ever confirmed.
+
+## CLAUDE.md hygiene
+
+No scratch scripts left in the repo (the live-Stripe proof script used in Part 3's verification
+was deleted after use, along with a second throwaway script that confirmed cleanup). REPORT.md
+line count before this entry: 11224 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure
+addition.
