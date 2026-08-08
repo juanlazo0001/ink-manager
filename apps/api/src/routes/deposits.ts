@@ -141,6 +141,11 @@ publicRouter.get("/verify/:token", async (req, res) => {
     referralProgramEnabled: inquiry.studio.settings?.referralProgramEnabled ?? true,
     studioName: inquiry.studio.name,
     studioSlug: inquiry.studio.slug,
+    // OG-preview infra: same field the pre-sign verify response already
+    // returns further down this file -- was missing here, so a deposit
+    // link's preview fell back to the platform's generic mark for every
+    // studio once the client had already signed, not just before.
+    studioLogoUrl: inquiry.studio.logoUrl,
     themePreset: inquiry.studio.settings?.themePreset ?? DEFAULT_THEME_PRESET,
     artistName: inquiry.assignedArtist?.user.name ?? null,
     artistAvatarUrl: inquiry.assignedArtist?.user.avatarUrl ?? null,

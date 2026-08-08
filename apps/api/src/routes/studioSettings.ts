@@ -51,6 +51,11 @@ publicRouter.get("/public", async (req, res) => {
 
   res.json({
     studioName: studio.name,
+    // OG-preview infra: server.mjs's /inquiry SSR handler uses this the
+    // same way every other public route's own verify endpoint does --
+    // just the presence/absence, never the raw data: URL itself (see
+    // routes/publicAssets.ts).
+    studioLogoUrl: studio.logoUrl,
     formName: form.name,
     privacyPolicy: settings?.privacyPolicy ?? null,
     termsAndConditions: settings?.termsAndConditions ?? null,

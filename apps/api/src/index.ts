@@ -10,6 +10,7 @@ import artistInvitesRouter from "./routes/artistInvites";
 import usersRouter from "./routes/users";
 import artistsRouter from "./routes/artists";
 import artistPublicProfileRouter from "./routes/artistPublicProfile";
+import publicAssetsRouter from "./routes/publicAssets";
 import flashPiecesRouter from "./routes/flashPieces";
 import residenciesRouter from "./routes/residencies";
 import flashPaymentsRouter from "./routes/flashPayments";
@@ -113,6 +114,7 @@ app.use("/users", usersRouter);
 // above -- defensive convention, not a real collision here (see
 // artistPublicProfile.ts's own comment).
 app.use("/artists", artistPublicProfileRouter);
+app.use("/public-assets", publicAssetsRouter);
 app.use("/artists", artistsRouter);
 app.use("/flash-pieces", flashPiecesRouter);
 app.use("/residencies", residenciesRouter);
