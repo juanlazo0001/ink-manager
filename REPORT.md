@@ -10191,3 +10191,178 @@ entries (two branding PNGs, `marketing/package-lock.json`, one unrelated HTML mo
 
 Part 1: `3a9f867`. Part 2: `304e076`. Part 3: `62ade74`. Part 4: this entry's own commit
 (below).
+
+# 6a Epic Part 5: verification
+
+Final part of the epic. Priority order per the task: cross-studio availability evidence first
+(the only genuinely new computation this epic adds, and the one place ordinary scheduling could
+silently regress), then overlap-ordering adversarial coverage, accept-flow visibility,
+location-first end-to-end booking, publish-toggle gating, live browser walkthroughs across all
+four personas, and a mobile pass.
+
+## Priority 1: cross-studio availability (`src/lib/residencyAvailabilityHttp.test.ts`, 5 tests)
+
+Part 3's own `residencyAvailability.test.ts` already proved the residency gate at the function
+level (`getSuggestedTimes` called directly with an injected `now`). This file proves the same
+rule holds over the real wire -- actual HTTP requests against actual Express routers with actual
+JWTs -- for both the staff-facing consumer (`GET /scheduling/suggested-times`) and the public
+client-facing one (`GET /self-schedule/verify/:token`), plus the two-timezone and regression
+proofs the task specifically called out:
+
+- **Real HTTP refusal / success**: a confirmed residency at a west-coast home / east-coast host
+  pair, with the residency window sized to cover both routes' own default search windows in
+  full (21 days for staff, 90 for self-schedule) so the result holds regardless of which real
+  calendar day the suite happens to run on. Home staff's `GET /scheduling/suggested-times` ->
+  `[]`. Host staff's own call -> non-empty.
+- **Real HTTP refusal, the public/client-facing route**: a real `Inquiry` created at the artist's
+  HOME studio with a live self-schedule token; `GET /self-schedule/verify/:token` (the actual
+  route a client's browser hits, no auth at all) returns `availableDates: []` for the entire
+  duration of the host residency -- proving the gate reaches the client-facing consumer too, not
+  just the staff one.
+- **Two-timezone proof**: function-level (not real-HTTP, deliberately -- neither route accepts a
+  `now` override, and pinning `now` removes "did the real wall clock already eat into today's
+  9am-5pm window" flakiness a live-clock version of this exact assertion would otherwise have).
+  With the artist's preferred hours set to 09:00-17:00 and the host studio's timezone set to
+  `America/New_York`, the first suggested time during the residency is asserted to equal
+  `zonedTimeToUtc(dateKey, "09:00", "America/New_York")` exactly, and explicitly NOT equal to
+  the same wall-clock time interpreted in `America/Los_Angeles` (home's timezone) -- proving
+  "global preferred hours" are genuinely reinterpreted in whichever studio is asking, not carried
+  over from home.
+- **Regression, the priority item**: a separate, fully isolated artist with ZERO `Residency` rows
+  ever, at their own home studio -- real HTTP call returns real, non-empty suggested times
+  (nothing broke). Backed by a direct mathematical proof that the new gate is a true no-op for
+  this exact case: `isArtistBookableAtStudioOnDate(homeId, homeId, [], dateKey)` returns `true`
+  for every date key tried (2020, 2026, 2030, 1999), because `getConfirmedResidenciesForArtist`
+  returns `[]` when no rows exist, so the gate's `find` never matches and it falls through to
+  `targetStudioId === homeStudioId`. Combined with a direct diff of the two commits
+  (`git diff 304e076 62ade74 -- apps/api/src/lib/schedulingAssistant.ts`), which shows the ONLY
+  change `dayWindow` received is this gate's own early-return -- every other line (the `isGuest`
+  window check, the `preferredSchedule` match, the default-window fallback) is byte-for-byte
+  identical text before and after Part 3. A gate that is mathematically always-`true` for this
+  case, wrapping code that is textually unchanged, cannot have altered this case's behavior.
+
+## Overlap rejection, both orderings (`src/routes/residencyVerification.test.ts`, 8 tests)
+
+Part 2's own `residencies.test.ts` proved "overlap rejected at CREATE" and "overlap rejected at
+ACCEPT" each with exactly one chronological ordering (the new stint starting after and extending
+past an existing one; an earlier-dated PENDING stint later conflicting with a
+later-created-but-overlapping CONFIRMED one). `findResidencyOverlapConflict`'s own boolean check
+(`!(endKey < candidateStartKey || startKey > candidateEndKey)`) is direction-agnostic by
+construction, but Part 5 proves that empirically rather than trusting the algebra alone:
+
+- CREATE, reverse ordering: new stint starts BEFORE and extends INTO an existing confirmed
+  window -> 409.
+- CREATE: new stint fully ENCOMPASSES an existing confirmed one -> 409.
+- CREATE: new stint fully NESTED inside an existing confirmed one -> 409.
+- Boundary: adjacent, non-overlapping windows (ends the day before the next starts) -> 201,
+  ALLOWED -- proves the inclusive-both-ends rule doesn't over-reject a clean handoff.
+- Boundary: sharing exactly one calendar day (new starts the same day an existing one ends) ->
+  409, REJECTED -- both ends are genuinely inclusive.
+- ACCEPT, reverse ordering: two overlapping PENDING stints exist (one earlier-dated, one
+  later-dated); the LATER one is accepted first (nothing confirmed yet to conflict with,
+  succeeds), then accepting the EARLIER one is still blocked (409) by the now-confirmed later
+  one -- proves the accept-time check is about what's actually CONFIRMED at accept time, with no
+  dependency on proposal order or which side's dates come first chronologically.
+
+## Accept-flow visibility (same file, 1 test)
+
+Part 3 already proved a PENDING residency unlocks nothing in availability. New here: a PENDING
+residency is confirmed genuinely invisible on the public artist page too (`upcomingResidencies`
+has zero entries for that studio while PENDING), and appears the instant -- and only the
+instant -- it's actually accepted (`status: CONFIRMED`), same fixture re-fetched twice with a
+status flip in between, real HTTP both times.
+
+## Location-first end-to-end booking (same file, 1 test)
+
+Extends Part 4's own booking test (which used the artist's HOME studio) to the genuinely novel
+case: booking through a CONFIRMED residency at a HOST studio, not home. Fetches the public page
+exactly like the frontend's BOOK picker would, confirms the host studio is actually listed as an
+option with the right slug, then POSTs to `/inquiries` with that host's own `studioSlug` and
+`formSlug` (a deliberately distinct intake form/service from home's, so landing on the host's own
+pipeline is unambiguous) plus `bookingArtistId`. Asserts the created inquiry's `studioId` is the
+HOST (not home), `assignedArtistId`/`status: ARTIST_ASSIGNED` are set, and `serviceId` belongs to
+the host's own service -- proving the whole downstream chain (studio resolution, intake
+form/service, pre-assignment) genuinely follows whichever studio the client picked.
+
+Two test-environment bugs found and fixed while getting this file green (same class as Part 4's
+own cleanup fixes, logged for the next person): the booking POST needed an explicit `formSlug`
+(without it, `resolveIntakeForm` falls back to the studio's own auto-created default form, which
+has no service pointed at it, producing a 500 "no service configured" -- exactly Part 4's own
+fix, just needed again for a second studio in this file); and `after()` cleanup needed
+`clientEmail`/`clientPhone` deleted before `client` (the same `syncPrimaryEmail`-created-row
+FK-ordering lesson as Part 4).
+
+## Live browser walkthroughs (real Chromium via Playwright, isolated dev servers `:4099`/`:5183`, screenshots not committed)
+
+Seeded two real studios (a west-coast "home" and an east-coast "host," both real DB rows,
+deleted after) with a published guest-touring artist ("Sasha Lee," a real CONFIRMED residency at
+the host running today through +14 days) and a second, deliberately location-less artist
+("Nolan/Jordan Rivers," used specifically to demo the blocked-publish state) --
+
+- **Anonymous client**: visited the public page cold, saw the Editorial Gold platform treatment
+  (never studio-themed, confirmed visually), both home and host locations listed with the
+  residency's real date range, opened the BOOK picker, picked the HOST option, and landed on
+  that host's own intake form URL (`/inquiry/{hostSlug}?bookingArtistId=...`) -- confirmed via
+  the browser's own resolved URL after the click, matching the automated test's proof of the
+  same mechanism.
+- **Publish-toggle gating, live**: a location-less artist's Publish attempt showed the
+  "needs at least one location" explanation proactively (not just after a failed attempt) with
+  the Publish button visibly blocked; visiting a page that was never published (or doesn't
+  exist) 404s with a clean "This page isn't available" card, never leaking which case it is.
+  After adding a real `Location` to that same artist's home studio out-of-band, the identical
+  Publish action succeeded, the resulting live URL rendered the real public page, and clicking
+  Unpublish immediately reverted that same URL to the same clean 404 -- the full lifecycle, live,
+  on one artist.
+- **The artist** (Sasha, already published with an active residency): profile shows the live
+  public link and a "My residencies" section mentioning the guest stint.
+- **Host staff**: Team -> Artists tab lists the guesting artist; Calendar's Week view shows both
+  artists as columns (Jordan/home-only and Sasha/guesting) -- the grey "away" shading itself is
+  visually subtle against this app's near-black theme and wasn't conclusively confirmed by eye
+  from a static screenshot, so this is supplementary confirmation on top of, not a replacement
+  for, the automated real-HTTP proof above, which is definitive either way.
+- **Home staff**: same Calendar Week view and Team -> Artists tab, from the home side.
+- **Mobile viewport** (390x844): the public artist page and its BOOK picker both render cleanly
+  with no horizontal scroll or clipped content.
+
+One fixture mistake caught and fixed mid-walkthrough, logged for the record: the first attempt at
+the "no-location blocked" demo shared a home studio between the two seeded artists, so adding a
+`Location` for one (needed for a different step) accidentally unblocked the other too -- fixed by
+giving the location-less demo artist their own, fully separate studio. Also caught a bug in the
+walkthrough script itself (not the product): a `button:has-text("Publish")` locator
+substring-matched the "Unpublish" button too (`"Unpublish".includes("Publish")` is true,
+case-insensitively) and silently clicked the wrong button on a rerun -- fixed with an exact-text
+`getByRole` match. Neither of these were product defects; both are noted since they're easy
+mistakes to repeat in a future session's own throwaway scripts.
+
+## Judgment call carried forward from Part 4: no-JS/crawler rendering still deferred
+
+Re-confirmed, not re-litigated: `/artist/:publicSlug` still isn't in `server.mjs`'s
+request-time-SSR special case (only `/inquiry/:studioSlug` is), so a non-JS fetch against it
+still gets the bare SPA shell -- same status Part 4's report already flagged and deferred, in the
+same company as the still-open `/privacy/:studioSlug`/`/terms/:studioSlug` gap. Nothing in Part 5
+changed this; noted again here only so this file's own evidence report doesn't read as silently
+dropping a previously-flagged item.
+
+## Full suite and typecheck
+
+`npm test` inside `apps/api`: **98/98 passing** (85 pre-existing + 13 new across the two files
+above). `npx tsc --noEmit -p apps/api` and `npx tsc --noEmit -p apps/web`: both clean.
+
+## CLAUDE.md hygiene
+
+`prisma migrate dev` never used -- no schema changes this part. No database reset offered or
+accepted. REPORT.md line count before this entry: 10193 (verified via `git show HEAD:REPORT.md |
+wc -l`) -- pure addition. All seed/patch/cleanup scripts for the live walkthrough
+(`_p5_seed.ts`, `_p5_patch3.ts`, `_p5_patch4.ts`, `_p5_cleanup.ts`) created directly in
+`apps/api/src` for import convenience, and every row they created (3 studios, their users,
+artists, memberships, residencies, locations, services, intake forms) deleted from the real dev
+DB before this session ended -- confirmed via the cleanup script's own count output, not just
+assumed. Both isolated dev servers (`:4099` API, `:5183` web, the latter launched with
+`VITE_API_URL` pointed at the former) killed and reconfirmed via `Get-NetTCPConnection -State
+Listen` before ending the session. Working tree confirmed clean except the same four
+pre-existing, untouched-since-before-this-session files noted throughout this file's recent
+entries.
+
+## Commits
+
+This entry's own commit (below) -- the two new test files plus this report.
