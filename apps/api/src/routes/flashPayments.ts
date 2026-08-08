@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
-import { createFlashPaymentCheckoutSession } from "../lib/flashPayments";
+import { createFlashPaymentCheckoutSession, createOrRetrieveFlashPaymentIntent } from "../lib/flashPayments";
 import { getChargeableConnectedAccountId } from "../lib/stripeConnect";
 
 // Public, unauthenticated: same crypto-token + verify/checkout pattern as
@@ -39,7 +39,7 @@ router.get("/verify/:token", async (req, res) => {
     where: { flashPaymentToken: token },
     include: {
       client: true,
-      studio: { include: { settings: { select: { themePreset: true } } } },
+      studio: { include: { settings: { select: { themePreset: true, embeddedPaymentsEnabled: true } } } },
       assignedArtist: { include: { user: true } },
       flashPiece: true,
     },
@@ -65,6 +65,7 @@ router.get("/verify/:token", async (req, res) => {
     pieceImageUrl: inquiry!.flashPiece?.imageUrl ?? null,
     priceCents: inquiry!.flashPiece?.priceCents ?? null,
     stripeConnected: stripeAccountId !== null,
+    embeddedPaymentsEnabled: inquiry!.studio.settings?.embeddedPaymentsEnabled ?? false,
     // Set only once the checkout.session.completed webhook has actually
     // confirmed payment -- the frontend's own success state and its
     // redirect into the existing self-scheduling flow are both driven off
@@ -89,6 +90,24 @@ router.post("/checkout/:token", async (req, res) => {
   }
 
   res.json({ url: result.url });
+});
+
+// Embedded payments migration: the Payment Element sibling of
+// POST /checkout/:token above.
+router.post("/payment-intent/:token", async (req, res) => {
+  const token = req.params.token as string;
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { flashPaymentToken: token }, select: { id: true } });
+  if (!inquiry) {
+    return res.status(404).json({ error: "This link is invalid." });
+  }
+
+  const result = await createOrRetrieveFlashPaymentIntent(inquiry.id);
+  if (!result.ok) {
+    return res.status(result.status).json({ error: result.error });
+  }
+
+  res.json({ clientSecret: result.clientSecret, connectedAccountId: result.connectedAccountId });
 });
 
 export default router;

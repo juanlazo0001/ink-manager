@@ -576,12 +576,13 @@ router.post("/stripe", async (req, res) => {
   // Embedded payments migration: the Payment Element's own success/failure
   // signal, parallel to checkout.session.completed above but for
   // PaymentIntents created directly (never through Checkout). Same
-  // four-model-lookup shape as that branch, keyed on stripePaymentIntentId
-  // instead of stripeCheckoutSessionId -- Part 2 wires the DepositForm
-  // lookup only (the one flow embedded payments covers so far); Part 3
-  // adds the remaining three models alongside their own PaymentIntent
-  // creation, exactly mirroring how checkout.session.completed grew its
-  // four branches over Phase 7C/7D/Part 3 rather than landing all at once.
+  // three-model-lookup shape as that branch (DepositForm, Appointment,
+  // Inquiry/flash), keyed on stripePaymentIntentId instead of
+  // stripeCheckoutSessionId -- the standalone gift-card purchase link
+  // (routes/giftCards.ts) is deliberately NOT included here, since the
+  // embedded-payments task never put that flow in scope (Parts 2/3 cover
+  // deposit, flash prepayment, and session checkout only); it stays
+  // Checkout-only regardless of the embeddedPaymentsEnabled flag.
   if (event.type === "payment_intent.succeeded") {
     const paymentIntent = event.data.object;
 
@@ -611,6 +612,60 @@ router.post("/stripe", async (req, res) => {
         });
         emitInvalidation({ type: "inquiry.updated", studioId, inquiryId: depositForm.inquiryId });
       }
+    }
+
+    // Session/appointment checkout "amount due" (Part 3) -- same shape as
+    // this event's DepositForm branch above, mirroring checkout.session.completed's
+    // own Appointment lookup. No gift card to issue here (that only
+    // happens on deposits); this just records the payment.
+    const appointment = await prisma.appointment.findFirst({
+      where: { stripePaymentIntentId: paymentIntent.id },
+    });
+
+    if (appointment && !appointment.paidVia) {
+      await prisma.appointment.update({
+        where: { id: appointment.id },
+        data: { paidVia: "STRIPE" },
+      });
+      await logAudit({
+        studioId,
+        actorUserId: null,
+        entityType: "Appointment",
+        entityId: appointment.id,
+        action: "stripe_payment_confirmed",
+        changes: { stripePaymentIntentId: paymentIntent.id, embedded: true },
+      });
+      emitInvalidation({ type: "appointment.changed", studioId });
+    }
+
+    // Flash gallery prepayment (Part 3) -- same shape as
+    // checkout.session.completed's own flash branch (full comment there):
+    // records payment, advances status to SCHEDULING, mints a self-schedule
+    // token deliberately bypassing Artist.allowsClientSelfScheduling.
+    const flashInquiry = await prisma.inquiry.findFirst({
+      where: { stripePaymentIntentId: paymentIntent.id },
+    });
+
+    if (flashInquiry && flashInquiry.status === InquiryStatus.FLASH_PAYMENT_PENDING && !flashInquiry.flashPaidAt) {
+      const selfScheduleToken = crypto.randomBytes(32).toString("hex");
+      await prisma.inquiry.update({
+        where: { id: flashInquiry.id },
+        data: {
+          flashPaidAt: new Date(),
+          status: InquiryStatus.SCHEDULING,
+          selfScheduleToken,
+          selfScheduleTokenExpiresAt: new Date(Date.now() + SELF_SCHEDULE_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000),
+        },
+      });
+      await logAudit({
+        studioId,
+        actorUserId: null,
+        entityType: "Inquiry",
+        entityId: flashInquiry.id,
+        action: "flash_payment_confirmed",
+        changes: { stripePaymentIntentId: paymentIntent.id, status: { from: "FLASH_PAYMENT_PENDING", to: "SCHEDULING" }, embedded: true },
+      });
+      emitInvalidation({ type: "inquiry.updated", studioId, inquiryId: flashInquiry.id });
     }
   }
 

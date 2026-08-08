@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
+import { loadStripe, type Stripe } from '@stripe/stripe-js'
+import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js'
 import AuditTrail from '../components/AuditTrail'
 import Modal from '../components/Modal'
 import DropdownPortal from '../components/DropdownPortal'
@@ -212,12 +214,25 @@ export default function AppointmentDetail() {
   const [checkoutError, setCheckoutError] = useState<string | null>(null)
   const [checkoutResult, setCheckoutResult] = useState<{
     checkoutUrl: string | null
+    // Embedded payments migration: present instead of checkoutUrl when the
+    // studio's StudioSettings.embeddedPaymentsEnabled flag is on -- mounts
+    // a Payment Element inline in this same card rather than opening a
+    // new tab to a Stripe-hosted page.
+    paymentIntentClientSecret: string | null
+    paymentIntentConnectedAccountId: string | null
     amountDueCents: number
     overageCents: number
     newGiftCard: { id: string; code: string; amountCents: number } | null
   } | null>(null)
   const [markingCharged, setMarkingCharged] = useState(false)
   const [markChargedError, setMarkChargedError] = useState<string | null>(null)
+  // Embedded payments migration: true while polling for the
+  // payment_intent.succeeded webhook to land after an in-place
+  // confirmation -- same "webhook is usually near-instant but not
+  // guaranteed yet" reasoning as DepositResponse/FlashPaymentResponse's
+  // own poll, just refetching this appointment via refreshIndex instead
+  // of a public verify endpoint.
+  const [confirmingAppointmentPayment, setConfirmingAppointmentPayment] = useState(false)
   // Package N: staged during checkout (optional -- staff can skip and add
   // later), plus a second, always-available upload for "forgot at
   // checkout" or just adding more later. Two independent pickers so
@@ -416,6 +431,8 @@ export default function AppointmentDetail() {
     try {
       const result = await apiFetch<{
         checkoutUrl: string | null
+        paymentIntentClientSecret: string | null
+        paymentIntentConnectedAccountId: string | null
         amountDueCents: number
         overageCents: number
         newGiftCard: { id: string; code: string; amountCents: number } | null
@@ -480,6 +497,22 @@ export default function AppointmentDetail() {
     } finally {
       setMarkingCharged(false)
     }
+  }
+
+  function handleEmbeddedAppointmentPaid() {
+    setConfirmingAppointmentPayment(true)
+    if (user) queryClient.invalidateQueries({ queryKey: appointmentsQueryKey(user.studioId) })
+    let attempts = 0
+    const poll = () => {
+      setRefreshIndex((i) => i + 1)
+      attempts += 1
+      if (attempts < 5) {
+        setTimeout(poll, 1500)
+      } else {
+        setConfirmingAppointmentPayment(false)
+      }
+    }
+    poll()
   }
 
   async function handleCompleteConsultation(event: FormEvent) {
@@ -1511,6 +1544,20 @@ export default function AppointmentDetail() {
                             <p className="text-success">
                               {formatCents(checkoutAmountDue)} paid via {appointment.paidVia === 'STRIPE' ? 'Stripe' : 'manual/cash'}.
                             </p>
+                          ) : confirmingAppointmentPayment ? (
+                            <p className="text-fg-secondary">Confirming payment…</p>
+                          ) : checkoutResult?.paymentIntentClientSecret && checkoutResult.paymentIntentConnectedAccountId ? (
+                            <div className="space-y-2">
+                              <p className="text-fg-secondary">
+                                Have {appointment.client.firstName} pay {formatCents(checkoutAmountDue)} on this device
+                                now, or collect it another way and mark it charged below.
+                              </p>
+                              <AppointmentPaymentElement
+                                clientSecret={checkoutResult.paymentIntentClientSecret}
+                                connectedAccountId={checkoutResult.paymentIntentConnectedAccountId}
+                                onPaid={handleEmbeddedAppointmentPaid}
+                              />
+                            </div>
                           ) : checkoutResult?.checkoutUrl ? (
                             <div className="space-y-2">
                               <p className="text-fg-secondary">
@@ -1820,5 +1867,93 @@ export default function AppointmentDetail() {
             </>
           )}
     </div>
+  )
+}
+
+// Embedded payments migration: mounted inline in the checkout card above,
+// inside this already-authenticated, studio-themed staff page -- unlike
+// the standalone public deposit/flash pages (which switch to the fixed
+// Editorial Gold platform treatment because they ARE the platform's own
+// page), this is a small widget living inside a page that's already
+// wearing the studio's own theme. Deliberately left on the Payment
+// Element's own default appearance rather than hand-matching every
+// studio's arbitrary preset colors -- there's no single "right" palette
+// to chase here the way there is for the platform's own fixed Editorial
+// Gold pages, and Stripe's default already renders cleanly regardless of
+// the surrounding theme.
+function AppointmentPaymentElementForm({ onPaid }: { onPaid: () => void }) {
+  const stripe = useStripe()
+  const elements = useElements()
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault()
+    if (!stripe || !elements) return
+
+    setSubmitting(true)
+    setError(null)
+
+    const { error: submitError } = await elements.submit()
+    if (submitError) {
+      setError(submitError.message ?? 'Please check the payment details.')
+      setSubmitting(false)
+      return
+    }
+
+    const { error: confirmError, paymentIntent } = await stripe.confirmPayment({
+      elements,
+      confirmParams: {
+        return_url: `${window.location.origin}/appointments/pay-complete?status=success`,
+      },
+      redirect: 'if_required',
+    })
+
+    if (confirmError) {
+      setError(confirmError.message ?? 'Something went wrong. Please try again.')
+      setSubmitting(false)
+      return
+    }
+
+    if (paymentIntent && (paymentIntent.status === 'succeeded' || paymentIntent.status === 'processing')) {
+      onPaid()
+    } else {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-3">
+      <PaymentElement />
+      {error && <p className="text-sm text-danger">{error}</p>}
+      <button
+        type="submit"
+        disabled={!stripe || !elements || submitting}
+        className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
+      >
+        {submitting ? 'Processing…' : 'Charge card'}
+      </button>
+    </form>
+  )
+}
+
+function AppointmentPaymentElement({
+  clientSecret,
+  connectedAccountId,
+  onPaid,
+}: {
+  clientSecret: string
+  connectedAccountId: string
+  onPaid: () => void
+}) {
+  const stripePromise = useMemo<Promise<Stripe | null>>(
+    () => loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY, { stripeAccount: connectedAccountId }),
+    [connectedAccountId],
+  )
+
+  return (
+    <Elements stripe={stripePromise} options={{ clientSecret }}>
+      <AppointmentPaymentElementForm onPaid={onPaid} />
+    </Elements>
   )
 }

@@ -30,7 +30,7 @@ import { sendClientSms } from "../lib/clientSms";
 import { resolveImageMeta } from "../lib/imageMeta";
 import { NOTE_AUTHOR_SELECT, canModifyNote, isBlankHtml, isValidAttachments } from "../lib/notes";
 import { getChargeableConnectedAccountId } from "../lib/stripeConnect";
-import { createDirectChargeCheckoutSession } from "../lib/stripe";
+import { createDirectChargeCheckoutSession, createOrRetrieveDirectChargePaymentIntent } from "../lib/stripe";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { shortenUrl } from "../lib/shortLinks";
 import { SELF_SCHEDULE_TOKEN_TTL_DAYS } from "../lib/selfSchedule";
@@ -835,7 +835,7 @@ router.post("/:id/checkout", async (req, res) => {
   // uniqueness-checking DB read, which shouldn't run inside a transaction
   // it doesn't need to be part of.
   const [studioSettings, overageCode] = await Promise.all([
-    prisma.studioSettings.findUnique({ where: { studioId }, select: { giftCardDefaultExpirationDays: true } }),
+    prisma.studioSettings.findUnique({ where: { studioId }, select: { giftCardDefaultExpirationDays: true, embeddedPaymentsEnabled: true } }),
     overageCents > 0 ? generateUniqueGiftCardCode() : Promise.resolve(null),
   ]);
 
@@ -991,29 +991,57 @@ router.post("/:id/checkout", async (req, res) => {
   // change in behavior from before this feature existed.
   let checkoutUrl: string | null = null;
   let stripeCheckoutSessionId: string | null = null;
+  // Embedded payments migration: when the studio has the flag on, hand the
+  // staff UI a PaymentIntent client secret to mount inline instead of a
+  // Checkout Session URL to open in a new tab -- same "have the client pay
+  // on a device now" moment, just without leaving this page to do it.
+  let paymentIntentClientSecret: string | null = null;
+  let paymentIntentConnectedAccountId: string | null = null;
   if (amountDueCents > 0) {
     const stripeAccountId = await getChargeableConnectedAccountId(studioId);
     if (stripeAccountId) {
-      try {
-        const session = await createDirectChargeCheckoutSession({
-          connectedAccountId: stripeAccountId,
-          amountCents: amountDueCents,
-          productName: "Tattoo session balance",
-          successUrl: `${PUBLIC_APP_URL}/appointments/pay-complete?status=success`,
-          cancelUrl: `${PUBLIC_APP_URL}/appointments/pay-complete?status=canceled`,
-          metadata: { appointmentId: id },
-        });
-        await prisma.appointment.update({
-          where: { id },
-          data: { stripeCheckoutSessionId: session.id },
-        });
-        checkoutUrl = session.url;
-        stripeCheckoutSessionId = session.id;
-      } catch (err) {
-        console.error("[appointments/checkout] Failed to create Stripe Checkout Session", {
-          appointmentId: id,
-          error: err instanceof Error ? err.message : err,
-        });
+      if (studioSettings?.embeddedPaymentsEnabled) {
+        try {
+          const intent = await createOrRetrieveDirectChargePaymentIntent({
+            connectedAccountId: stripeAccountId,
+            existingPaymentIntentId: appointment.stripePaymentIntentId,
+            amountCents: amountDueCents,
+            metadata: { appointmentId: id },
+          });
+          await prisma.appointment.update({
+            where: { id },
+            data: { stripePaymentIntentId: intent.id },
+          });
+          paymentIntentClientSecret = intent.clientSecret;
+          paymentIntentConnectedAccountId = stripeAccountId;
+        } catch (err) {
+          console.error("[appointments/checkout] Failed to create Stripe PaymentIntent", {
+            appointmentId: id,
+            error: err instanceof Error ? err.message : err,
+          });
+        }
+      } else {
+        try {
+          const session = await createDirectChargeCheckoutSession({
+            connectedAccountId: stripeAccountId,
+            amountCents: amountDueCents,
+            productName: "Tattoo session balance",
+            successUrl: `${PUBLIC_APP_URL}/appointments/pay-complete?status=success`,
+            cancelUrl: `${PUBLIC_APP_URL}/appointments/pay-complete?status=canceled`,
+            metadata: { appointmentId: id },
+          });
+          await prisma.appointment.update({
+            where: { id },
+            data: { stripeCheckoutSessionId: session.id },
+          });
+          checkoutUrl = session.url;
+          stripeCheckoutSessionId = session.id;
+        } catch (err) {
+          console.error("[appointments/checkout] Failed to create Stripe Checkout Session", {
+            appointmentId: id,
+            error: err instanceof Error ? err.message : err,
+          });
+        }
       }
     }
   }
@@ -1025,7 +1053,16 @@ router.post("/:id/checkout", async (req, res) => {
   emitInvalidation({ type: "appointment.changed", studioId });
   emitInvalidation({ type: "giftcard.changed", studioId, clientId: appointment.clientId });
 
-  res.json({ ...updated, stripeCheckoutSessionId, amountDueCents, overageCents, newGiftCard, checkoutUrl });
+  res.json({
+    ...updated,
+    stripeCheckoutSessionId,
+    amountDueCents,
+    overageCents,
+    newGiftCard,
+    checkoutUrl,
+    paymentIntentClientSecret,
+    paymentIntentConnectedAccountId,
+  });
 });
 
 // Manual fallback for collecting the amount due at checkout -- cash/comp,

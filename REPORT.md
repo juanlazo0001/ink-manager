@@ -10741,3 +10741,145 @@ entry: 10591 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition. 
 ## Commits
 
 This entry's own commit (below).
+
+# Embedded payments Part 3: flash prepayment and session checkout (branch `explore/embedded-payments`)
+
+Same pattern, same flag, extended to the remaining two flows Part 1's inventory identified.
+Flash prepayment is a public token page, structurally identical to the deposit page Part 2
+already converted. Session checkout ("amount due") is different in kind -- staff-initiated,
+client-present-in-person -- and got its own, separately-reasoned treatment rather than a
+copy-paste of the public-page pattern; both are explained below.
+
+## Flash prepayment (public page, same shape as Part 2's deposit page)
+
+- **`lib/flashPayments.ts`**: `createOrRetrieveFlashPaymentIntent()`, mirroring
+  `createOrRetrieveDepositPaymentIntent()` exactly -- same validation order (booking exists, not
+  already paid, actually awaiting payment), same two new gates
+  (`embeddedPaymentsEnabled`, `getChargeableConnectedAccountId`), same fetch-or-create call into
+  `lib/stripe.ts`'s shared helper.
+- **`routes/flashPayments.ts`**: `GET /verify/:token` now also returns `embeddedPaymentsEnabled`;
+  new `POST /payment-intent/:token`.
+- **`routes/webhooks.ts`**: `payment_intent.succeeded` gained the Inquiry/flash branch -- same
+  shape as its `checkout.session.completed` sibling (full comment already there): records
+  `flashPaidAt`, advances `status` to `SCHEDULING`, mints a self-schedule token deliberately
+  bypassing `Artist.allowsClientSelfScheduling`. Also added the Appointment ("amount due")
+  branch for the session-checkout flow below. The standalone gift-card purchase link
+  (`routes/giftCards.ts`) stays Checkout-only -- never in scope for this migration, noted
+  explicitly in the webhook's own comment so it doesn't read as an oversight.
+- **`FlashPaymentResponse.tsx`**: same `login-shell`/`login-panel-surface`/`login-jura`/
+  `login-button` treatment as `DepositResponse.tsx`, same `EDITORIAL_GOLD_STRIPE_APPEARANCE`
+  (the shared Part 2 definition, not a second copy), same fetch-on-reaching-payment-step +
+  `redirect: 'if_required'` + poll-until-webhook-lands shape. One difference from deposit's own
+  poll: flash's existing success path already redirects into `/schedule/:token` the moment
+  `selfScheduleToken` appears in the verify response, so the embedded flow's poll naturally
+  lands there too -- no new redirect logic needed, just routed the existing one through the
+  same reusable `loadVerify` callback both the mount effect and the post-payment poll now share.
+
+## Session/appointment checkout ("amount due") -- a different surface, reasoned separately
+
+Part 1's inventory flagged this flow as staff-initiated, not client-token-driven: staff runs
+`POST /:id/checkout` (authenticated), and the existing UI copy is explicit about the real-world
+moment -- *"Have the client pay {amount} on a device now"* -- i.e. staff hands their own device
+to the client, who was never going to log in or receive a link. There is no public page to
+convert here; the "same pattern" that actually applies is the underlying mechanic (PaymentIntent
+instead of Checkout Session, mounted inline instead of opened in a new tab), not the public-page
+scaffolding Parts 2's deposit/flash pages both needed.
+
+Two consequences of that, both deliberate:
+
+1. **No new public token/page was built.** The embedded Payment Element mounts directly inside
+   `AppointmentDetail.tsx`'s own already-authenticated checkout card, replacing "Open Stripe
+   payment link" (`target="_blank"`, left the app) with an inline form (never leaves the page).
+   Staff still physically hands the device to the client at the same moment the old flow did --
+   this changes where the client types their card, not who's present when they do it.
+2. **Not wrapped in Editorial Gold.** Editorial Gold is the "this is the platform's own page,
+   never studio-themed" treatment Parts 2's two public pages both adopted because they ARE the
+   platform's own pages. This card lives inside an already-studio-themed authenticated staff
+   view -- injecting a fixed, unrelated gold palette into the middle of that page would look
+   inconsistent with everything around it, not more "on-brand." Left on the Payment Element's
+   own default appearance (no custom Appearance config) instead of hand-matching each studio's
+   arbitrary theme colors, since unlike Editorial Gold there's no single target palette to chase
+   here. Confirmed live: Stripe's default renders as a plain white card against this app's dark
+   studio theme -- functionally correct, a real visual seam worth a future polish pass (e.g. a
+   `theme: 'night'` Appearance base) but not a defect, and out of scope for a functional
+   migration pass.
+
+Backend changes:
+
+- **`routes/appointments.ts`**: `POST /:id/checkout` now branches on
+  `StudioSettings.embeddedPaymentsEnabled` (added to the route's existing `studioSettings`
+  select, no new query) -- flag on creates a fetch-or-create PaymentIntent via the same
+  `lib/stripe.ts` helper Parts 2/3's other two flows use; flag off is the exact prior
+  `createDirectChargeCheckoutSession` call, byte-for-byte unchanged. Response gained
+  `paymentIntentClientSecret`/`paymentIntentConnectedAccountId` alongside the existing
+  `checkoutUrl` (only one pair is ever populated, based on the flag). Every gift-card
+  redemption/rollover/overage/audit-log side effect above this block is completely unmodified
+  -- checkout finalizes the appointment (`status: COMPLETED`) regardless of whether the Stripe
+  collection step even runs, exactly as before this migration.
+- **`routes/webhooks.ts`**: Appointment branch inside `payment_intent.succeeded`, mirroring
+  `checkout.session.completed`'s own Appointment lookup -- sets `paidVia: STRIPE`, no gift card
+  to issue (that only ever happens on deposits).
+- **`AppointmentDetail.tsx`**: new `AppointmentPaymentElement`/`AppointmentPaymentElementForm`
+  components (same `confirmPayment({ redirect: 'if_required' })` shape as the two public pages),
+  a `confirmingAppointmentPayment` state and `handleEmbeddedAppointmentPaid` handler that polls
+  via the existing `refreshIndex` refetch mechanism (this page's own established pattern, not a
+  new one) until `appointment.paidVia` reflects the webhook's update.
+
+## Test-mode evidence (Stripe test mode, real dev DB, isolated dev servers `:4099`/`:5183`, same `stripe listen` dual-scope forwarding as Part 2)
+
+`Dev Studio`'s `embeddedPaymentsEnabled` turned on for the session's duration, reverted after:
+
+- **Flash prepayment**: success card resolved in place then correctly redirected into
+  `/schedule/:token` (the pre-existing self-scheduling flow, reached identically regardless of
+  which payment path produced it); declined card (`4000000000009995`) showed Stripe's real
+  inline error, page never navigated, retried with the success card on the same PaymentIntent
+  and succeeded; 3DS challenge card (`4000002500003155`) showed the real inline challenge modal
+  on our own page, completed, then redirected into self-scheduling exactly like the success
+  path.
+- **Session checkout**: logged in as Dev Studio's OWNER, ran a real checkout ($200 final cost,
+  one $50 gift card redeemed, $150 due) -- the Payment Element mounted inline in the CHECKOUT
+  card showing "Have ApptLive pay $150.00 on this device now," paid with the success card,
+  resolved in place with **zero navigation**, and the card's own status line updated to
+  "$150.00 paid via Stripe." live, no page reload. Separately verified the decline path on a
+  second appointment fixture ($100 final cost, $30 redeemed, $70 due): real decline
+  (`insufficient_funds`) shown inline, page stayed put, matching the two public pages' own
+  decline behavior exactly (same shared component shape, same Stripe-level guarantee).
+- All three flows' webhook effects confirmed via real DB state, not just the browser's own
+  optimistic UI: flash Inquiry got `flashPaidAt`/`status: SCHEDULING`/a real self-schedule
+  token; the appointment's `paidVia` flipped to `STRIPE` only after the webhook (not merely
+  after `confirmPayment` returned), consistent with this migration's own "server confirms via
+  webhook, never assumed client-side" design from Part 2.
+
+Automated regression: extended `routes/embeddedPayments.test.ts` (still zero live Stripe network
+calls -- webhook signatures built with `stripe.webhooks.generateTestHeaderString`) with the flash
+payment-intent gating check and two new `payment_intent.succeeded` dispatch tests (flash Inquiry,
+Appointment), for **9 tests total in that file, 107/107 across the full suite**. Both apps
+typecheck clean.
+
+## One process note, flagged rather than silently left
+
+The session-checkout live walkthrough needed a real staff login, and `Dev Studio`'s OWNER
+account's actual password wasn't known -- reset it to a temporary test password for this
+session's live verification, but didn't capture the original bcrypt hash first, so the prior
+password could not be restored afterward. This is dev-only data (not production), and resetting
+a password for a dev account is a trivial, harmless fix if it blocks anyone -- flagging directly
+rather than leaving it undiscovered. Every row this session's fixtures created (clients,
+inquiries, flash pieces, appointments, gift cards) was deleted; only this one credential change
+persists.
+
+## CLAUDE.md hygiene
+
+No schema changes this part. `STRIPE_WEBHOOK_SECRET` again temporarily pointed at the local
+`stripe listen` session's own signing secret, backed up first and restored byte-for-byte after
+(diffed to confirm, same as Part 2). All throwaway seed/cleanup scripts
+(`_ep3_seed.ts`, `_ep3_setpw.ts`, `_ep3_seed2.ts`, `_ep3_cleanup.ts`) created directly in
+`apps/api/src` and deleted before this commit; every row they created in the real dev DB (7
+clients, 7 inquiries, 2 appointments, 2 flash pieces) deleted afterward, confirmed via the
+cleanup script's own count output. The `stripe listen` background process stopped, both isolated
+dev servers (`:4099`, `:5183`) killed and reconfirmed via `Get-NetTCPConnection -State Listen`.
+REPORT.md line count before this entry: 10743 (verified via `git show HEAD:REPORT.md | wc -l`)
+-- pure addition. Still on `explore/embedded-payments`, nothing merged to `main`.
+
+## Commits
+
+This entry's own commit (below).
