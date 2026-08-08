@@ -179,6 +179,16 @@ export async function generateAndSendDepositForm(
       conversationId: (await getOrCreateClientConversation(studioId, inquiry.clientId, actorUserId)).conversation.id,
       body: `Hi ${inquiry.client.firstName}, here's your deposit form to secure your appointment with ${studio?.name ?? "our studio"}: ${depositUrl} (expires in 48 hours)`,
       actorUserId,
+      // Conversations-logging gap (REPORT.md: "Conversations logging on
+      // sent forms"): this is a one-shot, staff/system-initiated send
+      // (Approve, or the manual "Generate & Send" button), never a
+      // retried background job -- unlike reminderTicker.ts, there's no
+      // risk of this logging the same failed attempt over and over. The
+      // deposit form + its URL/token exist in the DB regardless of SMS
+      // outcome; Conversations should reflect that an attempt was made
+      // even when the channel itself failed or isn't connected, so staff
+      // aren't left thinking nothing happened.
+      logAttemptEvenOnFailure: true,
     });
   }
 

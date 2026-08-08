@@ -9252,3 +9252,73 @@ This means `564a2ed`'s `isHome`/`isGuestHere` widening was actively harmful, not
 ## Commits
 
 `564a2ed` (the wrong fix), `e774f35` (the revert + correct reasoning documented).
+
+# Recovery: Conversations-logging fix verified and shipped; solo-guest 403 investigated
+
+Previous session crashed mid-task. Ground truth first: `git status` showed two real,
+uncommitted files (`apps/api/src/lib/clientSms.ts`, `apps/api/src/lib/deposits.ts`, both
+modified today) plus four unrelated files (two branding PNGs, `marketing/package-lock.json`,
+a desktop screenshot mockup) all dated days before this session started -- the prior session's
+own last report entry had already called those four "pre-existing, untouched-by-this-session,"
+so they were left alone again here. One orphaned `node` process was still listening on
+`:4099` (the isolated-dev-server port convention this repo's sessions use) with nothing on
+`:5183` -- killed and confirmed via a port recheck. `REPORT.md` itself had no entry yet for
+either of the two crash-interrupted tasks, so all of the following was unverified,
+uncommitted work-in-progress.
+
+## Task 1: Conversations logging on sent forms -- verified, tests pass, committed
+
+The crashed session had already written a complete fix, with its own reasoning already
+documented inline via comments (see `clientSms.ts`, `deposits.ts` diffs in commit below).
+Design: `sendSmsMessage`'s internal `failed()` path gained an opt-in `logAttemptEvenOnFailure`
+flag; when set, a `not_connected`/`send_failed`/credential-parse failure now creates the same
+Message row a successful send would (via a new shared `createOutboundSmsMessage` helper),
+with `metadata: { deliveryStatus: "failed" }` -- the exact shape `ConversationsPanel.tsx`'s
+`smsStatusLabel` already renders as "Not delivered." Deliberately opt-in, not the new default:
+`reminderTicker.ts`'s retry-until-success cadence never sets this flag, so a background retry
+for a studio without SMS connected won't spam a fresh "Not delivered" message into the
+client's thread on every tick. Only `lib/deposits.ts`'s `generateAndSendDepositForm` (the
+Approve-triggered and manual "Generate & Send" auto-send) opts in.
+
+This session's job was to verify it, not write it -- two prior verification passes had never
+positively observed the row. Confirmed instead of assumed:
+
+- `npx tsc --noEmit` on `apps/api`: clean.
+- Found the dev DB already had a ready-made repro: a `DEPOSIT_PENDING` inquiry (client "Inv",
+  studio "Dev Studio 2") at a studio with **no** `CONNECTED` SMS `StudioIntegration` row --
+  the dev DB's one connected SMS integration belongs to a different studio entirely. Called
+  `generateAndSendDepositForm` directly against this inquiry (via a throwaway script, deleted
+  after use, run from `apps/api` so it could import the app's own `lib/prisma`/`lib/deposits`
+  modules and reuse the real `DATABASE_URL`/Prisma client rather than a second hand-rolled one).
+- **Positively observed the row**: message count for that client's conversation went from 0 to
+  1. The new row: `channel: SMS`, `direction: OUTBOUND`, `metadata: { deliveryStatus: "failed" }`,
+  `depositSendResult: { sent: false, reason: "not_connected" }` -- exactly the design intent.
+  Confirmed `emitInvalidation`'s "never throws" contract (`realtime/registry.ts:159-168`,
+  explicit comment: safe when the realtime server isn't up, e.g. in a script/test context) so
+  the console errors from running outside a real server were expected noise, not a fault.
+  Confirmed `ConversationsPanel.tsx:407`'s `smsStatusLabel` really does map
+  `deliveryStatus === 'failed'` to "Not delivered," matching the fix's own inline claim rather
+  than trusting the comment at face value.
+- Full API suite (`npm test`, 41 tests): all pass, no regression from this change.
+- Scope check on sibling `sendClientSms` call sites: `deposits.ts:389`'s manual "resend payment
+  link" button and `deposits.ts:470`'s referral-reward text are both one-shot, user/system-
+  triggered sends that could arguably want the same treatment, but neither was part of the
+  observed gap (Approve -> deposit form) this task named -- left unopted-in, not silently
+  matched, consistent with the fix's own narrow, named scope.
+
+Committed as-is (crashed session's implementation, this session's verification) -- no code
+changes made beyond what was already there.
+
+## Task 2: Solo-guest 403 -- investigation only, see next entry
+
+Findings below; no fix applied per the task's explicit "investigation only, review before
+building" instruction.
+
+## Cleanup
+
+Both throwaway inspection/verification scripts deleted from `apps/api` after use (confirmed
+via `git status`). Orphaned `:4099` node process killed and reconfirmed absent. No dev servers
+were left running by this session. Working tree at the end of Task 1: only `clientSms.ts`/
+`deposits.ts` (now committed) plus the same four pre-existing, untouched files noted above.
+REPORT.md line count increased versus `HEAD` before this commit (confirmed:
+`git show HEAD:REPORT.md | wc -l` was 9254 before this append).
