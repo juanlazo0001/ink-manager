@@ -9,6 +9,16 @@ import { useAuth } from '../context/useAuth'
 
 const DELETE_ACCOUNT_CONFIRM_TEXT = 'DELETE'
 
+// 6a Epic: GET /residencies/mine's own shape.
+interface ProfileResidency {
+  id: string
+  startDate: string
+  endDate: string
+  status: 'PENDING' | 'CONFIRMED' | 'DECLINED' | 'CANCELLED'
+  membershipType: 'HOME' | 'GUEST'
+  studio: { id: string; name: string }
+}
+
 const EMPTY_FORM = { name: '', phone: '' }
 
 export default function Profile() {
@@ -72,6 +82,42 @@ export default function Profile() {
   // ever being toggled at a time.
   const [guestDelegationSubmittingId, setGuestDelegationSubmittingId] = useState<string | null>(null)
   const [guestDelegationError, setGuestDelegationError] = useState<string | null>(null)
+
+  // 6a Epic: every residency this artist has, across every studio, any
+  // status -- their own view is never permission-gated (inalienable, see
+  // routes/residencies.ts).
+  const [residencies, setResidencies] = useState<ProfileResidency[] | null>(null)
+  const [residencyActionError, setResidencyActionError] = useState<string | null>(null)
+  const [residencyActionId, setResidencyActionId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!isArtist) return
+    let ignore = false
+    apiFetch<ProfileResidency[]>('/residencies/mine')
+      .then((data) => {
+        if (!ignore) setResidencies(data)
+      })
+      .catch(() => {
+        // Best-effort -- an artist with no residencies at all (the
+        // overwhelming majority) never even needs this section to render.
+      })
+    return () => {
+      ignore = true
+    }
+  }, [isArtist])
+
+  async function handleResidencyDecision(id: string, action: 'accept' | 'decline') {
+    setResidencyActionId(id)
+    setResidencyActionError(null)
+    try {
+      const updated = await apiFetch<ProfileResidency>(`/residencies/${id}/${action}`, { method: 'POST' })
+      setResidencies((prev) => (prev ? prev.map((r) => (r.id === id ? { ...r, status: updated.status } : r)) : prev))
+    } catch (err) {
+      setResidencyActionError(err instanceof Error ? err.message : `Failed to ${action}`)
+    } finally {
+      setResidencyActionId(null)
+    }
+  }
 
   // Artist mobility, Part 1: hits POST /artists/:id/go-solo, self-only, no
   // staff bypass -- same shape as profile-delegation above. Success returns
@@ -626,6 +672,75 @@ export default function Profile() {
                         ].join(' ')}
                       />
                     </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 6a Epic: every residency this artist has, across every studio.
+              Never permission-gated -- accept/decline is theirs alone, no
+              matrix can remove it (same "inalienable artist right" family
+              as go-solo/delete-account below). */}
+          {profile && isArtist && residencies && residencies.length > 0 && (
+            <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-6">
+              <p className="text-xs font-semibold uppercase tracking-wider text-fg-muted">My residencies</p>
+              <p className="mt-1 text-xs text-fg-secondary">
+                Scheduled guest stints across every studio. Accepting confirms you'll be bookable there -- and blocked
+                everywhere else, home included -- for those exact dates.
+              </p>
+
+              {residencyActionError && <p className="mt-2 text-xs text-danger">{residencyActionError}</p>}
+
+              <div className="mt-4 space-y-3">
+                {residencies.map((r) => (
+                  <div
+                    key={r.id}
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface-inset px-4 py-3"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-fg">
+                        {r.studio.name}
+                        {r.membershipType === 'HOME' && <span className="ml-1.5 text-xs text-fg-muted">(home)</span>}
+                      </p>
+                      <p className="mt-0.5 text-xs text-fg-muted">
+                        {r.startDate.slice(0, 10)} – {r.endDate.slice(0, 10)}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={[
+                          'rounded-full px-2 py-0.5 text-[10px] font-medium',
+                          r.status === 'CONFIRMED'
+                            ? 'bg-accent/10 text-accent'
+                            : r.status === 'PENDING'
+                              ? 'bg-surface text-fg-secondary border border-border'
+                              : 'bg-danger/10 text-danger',
+                        ].join(' ')}
+                      >
+                        {r.status}
+                      </span>
+                      {r.status === 'PENDING' && (
+                        <>
+                          <button
+                            type="button"
+                            disabled={residencyActionId === r.id}
+                            onClick={() => handleResidencyDecision(r.id, 'accept')}
+                            className="rounded-full bg-accent px-3 py-1 text-xs font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                          >
+                            Accept
+                          </button>
+                          <button
+                            type="button"
+                            disabled={residencyActionId === r.id}
+                            onClick={() => handleResidencyDecision(r.id, 'decline')}
+                            className="rounded-full border border-border px-3 py-1 text-xs font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                          >
+                            Decline
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>

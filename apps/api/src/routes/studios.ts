@@ -20,6 +20,7 @@ import { sendPlatformEmail } from "../lib/platformEmail";
 import { renderPlatformEmailHtml } from "../lib/emailTemplate";
 import { emitInvalidation, emitUserInvalidation } from "../lib/realtime/registry";
 import { createArtistMembershipInvite, resendArtistMembershipInvite } from "../lib/artistMembershipInvites";
+import { findResidencyOverlapConflict, residencyOverlapErrorMessage } from "../lib/residencies";
 
 const router = Router();
 
@@ -393,6 +394,28 @@ router.post("/:studioId/invites", requireAuth, requirePermission("team.manage"),
       return res.status(400).json({ error: "membershipType must be HOME or GUEST when inviting an Artist" });
     }
 
+    // 6a Epic: residency dates are MANDATORY for a GUEST invite -- there is
+    // no "invite now, schedule the stint later" for the first one; the
+    // dates travel with the invite itself (ArtistMembershipInvite's own
+    // residencyStartDate/residencyEndDate) and become the artist's first
+    // Residency, landing CONFIRMED, the moment they accept (see
+    // artistInvites.ts). Not applicable to a HOME invite -- home isn't a
+    // scheduled stint.
+    let residencyStartDate: Date | undefined;
+    let residencyEndDate: Date | undefined;
+    if (membershipType === "GUEST") {
+      const { residencyStartDate: startRaw, residencyEndDate: endRaw } = body;
+      const start = typeof startRaw === "string" || startRaw instanceof Date ? new Date(startRaw) : null;
+      const end = typeof endRaw === "string" || endRaw instanceof Date ? new Date(endRaw) : null;
+      if (!start || Number.isNaN(start.getTime()) || !end || Number.isNaN(end.getTime()) || start > end) {
+        return res.status(400).json({
+          error: "residencyStartDate and residencyEndDate are required for a guest invite, with start on or before end",
+        });
+      }
+      residencyStartDate = start;
+      residencyEndDate = end;
+    }
+
     // Caught here, with a clear message, rather than only surfacing as a
     // raw partial-unique-index violation at accept time (days later, on
     // the INVITEE's side) -- an existing identity who already has an
@@ -403,6 +426,24 @@ router.post("/:studioId/invites", requireAuth, requirePermission("team.manage"),
     });
     if (existingArtistMembership) {
       return res.status(409).json({ error: "This artist already has an active membership at your studio." });
+    }
+
+    // 6a Epic: fail fast at invite-send, not only at accept days later --
+    // an EXISTING identity's overlap can be checked right now (a brand-new
+    // identity has no Artist row yet to check against, so this is a no-op
+    // for that case, not an error). This is in addition to, never a
+    // replacement for, the real enforcement point (accept, in
+    // artistInvites.ts) -- an artist could still confirm a DIFFERENT
+    // conflicting residency in the days between this invite being sent
+    // and accepted, which only the accept-time check can catch.
+    if (membershipType === "GUEST" && residencyStartDate && residencyEndDate) {
+      const existingArtist = await prisma.artist.findFirst({ where: { user: { email: trimmedEmail } } });
+      if (existingArtist) {
+        const conflict = await findResidencyOverlapConflict(existingArtist.id, residencyStartDate, residencyEndDate);
+        if (conflict) {
+          return res.status(409).json({ error: residencyOverlapErrorMessage(conflict) });
+        }
+      }
     }
 
     const studioForInvite = await prisma.studio.findUniqueOrThrow({ where: { id: studioId }, select: { name: true } });
@@ -416,6 +457,8 @@ router.post("/:studioId/invites", requireAuth, requirePermission("team.manage"),
       // column to hold it, so a new identity's name never survived past
       // this request even though it was right here in the body.
       name: typeof name === "string" && name.trim() ? name.trim() : null,
+      residencyStartDate,
+      residencyEndDate,
     });
 
     await logAudit({

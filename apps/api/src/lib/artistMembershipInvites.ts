@@ -56,14 +56,29 @@ export async function createArtistMembershipInvite(params: {
   email: string;
   membershipType: StudioMembershipType;
   name?: string | null;
+  // 6a Epic: required by the caller (routes/studios.ts) when
+  // membershipType is GUEST -- carried here only to survive until accept,
+  // where they become the artist's first Residency (see
+  // routes/artistInvites.ts).
+  residencyStartDate?: Date;
+  residencyEndDate?: Date;
 }) {
-  const { studioId, studioName, email, membershipType, name } = params;
+  const { studioId, studioName, email, membershipType, name, residencyStartDate, residencyEndDate } = params;
 
   const token = crypto.randomBytes(32).toString("hex");
   const tokenExpiresAt = new Date(Date.now() + ARTIST_INVITE_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000);
 
   const invite = await prisma.artistMembershipInvite.create({
-    data: { studioId, email, membershipType, token, tokenExpiresAt, name: name ?? null },
+    data: {
+      studioId,
+      email,
+      membershipType,
+      token,
+      tokenExpiresAt,
+      name: name ?? null,
+      residencyStartDate: residencyStartDate ?? null,
+      residencyEndDate: residencyEndDate ?? null,
+    },
   });
 
   sendArtistInviteEmail({ inviteId: invite.id, email, studioName, membershipType, token });

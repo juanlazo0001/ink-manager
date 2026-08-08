@@ -37,8 +37,16 @@ interface ArtistCard {
   // roster, GUEST for an artist visiting from elsewhere. Distinct from
   // isGuest above (an older, single-studio "temporarily visiting" display
   // flag, unrelated to StudioMembership) -- both can be true independently.
-  memberships: { type: 'HOME' | 'GUEST'; allowsStudioProfileEdits: boolean }[]
+  memberships: { id: string; type: 'HOME' | 'GUEST'; allowsStudioProfileEdits: boolean }[]
   user: { id: string; email: string; name: string | null; avatarUrl: string | null }
+}
+
+// 6a Epic: one scheduled stint within a GUEST membership.
+interface ResidencyRow {
+  id: string
+  startDate: string
+  endDate: string
+  status: 'PENDING' | 'CONFIRMED' | 'DECLINED' | 'CANCELLED'
 }
 
 interface ArtistInvite {
@@ -232,12 +240,18 @@ export default function Team() {
   // creation -- so it gets its own small entry point rather than being
   // bolted onto either existing one.
   const [showInviteArtistModal, setShowInviteArtistModal] = useState(false)
-  const [inviteArtistForm, setInviteArtistForm] = useState({ email: '', name: '', membershipType: 'HOME' })
+  const [inviteArtistForm, setInviteArtistForm] = useState({
+    email: '',
+    name: '',
+    membershipType: 'HOME',
+    residencyStartDate: '',
+    residencyEndDate: '',
+  })
   const [inviteArtistFormError, setInviteArtistFormError] = useState<string | null>(null)
   const [inviteArtistSubmitting, setInviteArtistSubmitting] = useState(false)
 
   function openInviteArtist() {
-    setInviteArtistForm({ email: '', name: '', membershipType: 'HOME' })
+    setInviteArtistForm({ email: '', name: '', membershipType: 'HOME', residencyStartDate: '', residencyEndDate: '' })
     setInviteArtistFormError(null)
     setShowInviteArtistModal(true)
   }
@@ -250,6 +264,9 @@ export default function Team() {
     setInviteArtistSubmitting(true)
 
     try {
+      // residencyStartDate/residencyEndDate ride along unconditionally --
+      // harmless for a HOME invite (the API only reads them when
+      // membershipType is GUEST).
       await apiFetch(`/studios/${user.studioId}/invites`, {
         method: 'POST',
         body: JSON.stringify({ ...inviteArtistForm, role: 'ARTIST' }),
@@ -280,6 +297,97 @@ export default function Team() {
   const [removingArtist, setRemovingArtist] = useState<ArtistCard | null>(null)
   const [removeArtistError, setRemoveArtistError] = useState<string | null>(null)
   const [removeArtistSubmitting, setRemoveArtistSubmitting] = useState(false)
+
+  // 6a Epic: residency management panel for one guest membership.
+  const [managingResidenciesFor, setManagingResidenciesFor] = useState<ArtistCard | null>(null)
+  const [residencies, setResidencies] = useState<ResidencyRow[] | null>(null)
+  const [residenciesError, setResidenciesError] = useState<string | null>(null)
+  const [newResidencyForm, setNewResidencyForm] = useState({ startDate: '', endDate: '' })
+  const [residencyActionError, setResidencyActionError] = useState<string | null>(null)
+  const [residencySubmitting, setResidencySubmitting] = useState(false)
+  const [editingResidency, setEditingResidency] = useState<ResidencyRow | null>(null)
+  const [editResidencyForm, setEditResidencyForm] = useState({ startDate: '', endDate: '' })
+
+  const managingMembershipId = managingResidenciesFor?.memberships.find((m) => m.type === 'GUEST')?.id ?? null
+
+  useEffect(() => {
+    if (!managingMembershipId) {
+      setResidencies(null)
+      return
+    }
+    let ignore = false
+    setResidenciesError(null)
+    apiFetch<ResidencyRow[]>(`/residencies?membershipId=${managingMembershipId}`)
+      .then((data) => {
+        if (!ignore) setResidencies(data)
+      })
+      .catch((err) => {
+        if (!ignore) setResidenciesError(err instanceof Error ? err.message : 'Failed to load residencies')
+      })
+    return () => {
+      ignore = true
+    }
+  }, [managingMembershipId])
+
+  async function refreshResidencies() {
+    if (!managingMembershipId) return
+    try {
+      const data = await apiFetch<ResidencyRow[]>(`/residencies?membershipId=${managingMembershipId}`)
+      setResidencies(data)
+    } catch (err) {
+      setResidenciesError(err instanceof Error ? err.message : 'Failed to load residencies')
+    }
+  }
+
+  async function handleCreateResidency(event: FormEvent) {
+    event.preventDefault()
+    if (!managingMembershipId) return
+    setResidencySubmitting(true)
+    setResidencyActionError(null)
+    try {
+      await apiFetch('/residencies', {
+        method: 'POST',
+        body: JSON.stringify({ membershipId: managingMembershipId, ...newResidencyForm }),
+      })
+      setNewResidencyForm({ startDate: '', endDate: '' })
+      await refreshResidencies()
+    } catch (err) {
+      setResidencyActionError(err instanceof Error ? err.message : 'Failed to create residency')
+    } finally {
+      setResidencySubmitting(false)
+    }
+  }
+
+  async function handleCancelResidency(id: string) {
+    setResidencyActionError(null)
+    try {
+      await apiFetch(`/residencies/${id}`, { method: 'PATCH', body: JSON.stringify({ cancel: true }) })
+      await refreshResidencies()
+    } catch (err) {
+      setResidencyActionError(err instanceof Error ? err.message : 'Failed to cancel residency')
+    }
+  }
+
+  function startEditingResidency(residency: ResidencyRow) {
+    setEditingResidency(residency)
+    setEditResidencyForm({ startDate: residency.startDate.slice(0, 10), endDate: residency.endDate.slice(0, 10) })
+    setResidencyActionError(null)
+  }
+
+  async function handleEditResidencySave() {
+    if (!editingResidency) return
+    setResidencySubmitting(true)
+    setResidencyActionError(null)
+    try {
+      await apiFetch(`/residencies/${editingResidency.id}`, { method: 'PATCH', body: JSON.stringify(editResidencyForm) })
+      setEditingResidency(null)
+      await refreshResidencies()
+    } catch (err) {
+      setResidencyActionError(err instanceof Error ? err.message : 'Failed to save changes')
+    } finally {
+      setResidencySubmitting(false)
+    }
+  }
 
   async function handleConfirmRemoveArtist() {
     if (!user?.studioId || !removingArtist) return
@@ -1257,6 +1365,25 @@ export default function Team() {
                               Delete
                             </button>
                           )}
+                          {/* 6a Epic: opens the residency-management panel
+                              for this guest's membership at this studio.
+                              Gated on the real residencies.manage
+                              permission (OWNER always has it), not just
+                              isOwner -- matches the matrix key's own
+                              default of TRUE for FRONT_DESK too. */}
+                          {artist.memberships[0]?.type === 'GUEST' &&
+                            (isOwner || profile?.permissions.includes('residencies.manage')) && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setManagingResidenciesFor(artist)
+                                }}
+                                className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                              >
+                                Residencies
+                              </button>
+                            )}
                           {/* Part 4: the guest-facing counterpart to Delete
                               above -- ends the membership only, never the
                               account. */}
@@ -1658,6 +1785,44 @@ export default function Team() {
               </select>
             </div>
 
+            {/* 6a Epic: mandatory for a GUEST invite -- there's no
+                "invite now, schedule later" for the first stint. Accepting
+                the invite confirms these exact dates directly. */}
+            {inviteArtistForm.membershipType === 'GUEST' && (
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <div>
+                  <label htmlFor="inviteResidencyStart" className="mb-1 block text-sm font-medium text-fg-secondary">
+                    Residency start
+                  </label>
+                  <input
+                    id="inviteResidencyStart"
+                    type="date"
+                    required
+                    value={inviteArtistForm.residencyStartDate}
+                    onChange={(event) => setInviteArtistForm({ ...inviteArtistForm, residencyStartDate: event.target.value })}
+                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="inviteResidencyEnd" className="mb-1 block text-sm font-medium text-fg-secondary">
+                    Residency end
+                  </label>
+                  <input
+                    id="inviteResidencyEnd"
+                    type="date"
+                    required
+                    value={inviteArtistForm.residencyEndDate}
+                    onChange={(event) => setInviteArtistForm({ ...inviteArtistForm, residencyEndDate: event.target.value })}
+                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                  />
+                </div>
+                <p className="col-span-2 text-xs text-fg-muted">
+                  This becomes their first confirmed residency the moment they accept -- accepting the invite is
+                  their consent to these exact dates.
+                </p>
+              </div>
+            )}
+
             <button
               type="submit"
               disabled={inviteArtistSubmitting}
@@ -1666,6 +1831,136 @@ export default function Team() {
               {inviteArtistSubmitting ? 'Sending…' : 'Send invite'}
             </button>
           </form>
+        </Modal>
+      )}
+
+      {managingResidenciesFor && (
+        <Modal
+          title={`Residencies — ${managingResidenciesFor.user.name || managingResidenciesFor.user.email}`}
+          onClose={() => {
+            setManagingResidenciesFor(null)
+            setEditingResidency(null)
+            setResidencyActionError(null)
+          }}
+        >
+          <p className="mb-4 text-sm text-fg-secondary">
+            A stint you create here starts pending -- {managingResidenciesFor.user.name || 'they'} accept or decline it
+            themselves; you can still edit dates or cancel at any point either way.
+          </p>
+
+          {residenciesError && <p className="mb-3 text-sm text-danger">{residenciesError}</p>}
+          {residencyActionError && <p className="mb-3 text-sm text-danger">{residencyActionError}</p>}
+
+          {editingResidency ? (
+            <div className="mb-4 rounded-lg border border-border p-3">
+              <p className="mb-2 text-sm font-medium text-fg">Edit stint</p>
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  type="date"
+                  value={editResidencyForm.startDate}
+                  onChange={(e) => setEditResidencyForm({ ...editResidencyForm, startDate: e.target.value })}
+                  className="rounded-lg border border-border bg-surface-inset px-2 py-1.5 text-sm text-fg"
+                />
+                <input
+                  type="date"
+                  value={editResidencyForm.endDate}
+                  onChange={(e) => setEditResidencyForm({ ...editResidencyForm, endDate: e.target.value })}
+                  className="rounded-lg border border-border bg-surface-inset px-2 py-1.5 text-sm text-fg"
+                />
+              </div>
+              {editingResidency.status === 'CONFIRMED' && (
+                <p className="mt-2 text-xs text-fg-muted">
+                  Changing dates on a confirmed stint resets it to pending -- they'll need to re-confirm.
+                </p>
+              )}
+              <div className="mt-3 flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleEditResidencySave}
+                  disabled={residencySubmitting}
+                  className="rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                >
+                  Save
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingResidency(null)}
+                  className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <form onSubmit={handleCreateResidency} className="mb-4 rounded-lg border border-border p-3">
+              <p className="mb-2 text-sm font-medium text-fg">New stint</p>
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  type="date"
+                  required
+                  value={newResidencyForm.startDate}
+                  onChange={(e) => setNewResidencyForm({ ...newResidencyForm, startDate: e.target.value })}
+                  className="rounded-lg border border-border bg-surface-inset px-2 py-1.5 text-sm text-fg"
+                />
+                <input
+                  type="date"
+                  required
+                  value={newResidencyForm.endDate}
+                  onChange={(e) => setNewResidencyForm({ ...newResidencyForm, endDate: e.target.value })}
+                  className="rounded-lg border border-border bg-surface-inset px-2 py-1.5 text-sm text-fg"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={residencySubmitting}
+                className="mt-3 rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+              >
+                {residencySubmitting ? 'Creating…' : 'Propose stint'}
+              </button>
+            </form>
+          )}
+
+          <div className="divide-y divide-border">
+            {(residencies ?? []).length === 0 && <p className="text-sm text-fg-secondary">No stints yet.</p>}
+            {(residencies ?? []).map((r) => (
+              <div key={r.id} className="flex items-center justify-between gap-3 py-2 text-sm">
+                <div>
+                  <span className="text-fg">
+                    {r.startDate.slice(0, 10)} – {r.endDate.slice(0, 10)}
+                  </span>
+                  <span
+                    className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                      r.status === 'CONFIRMED'
+                        ? 'bg-accent/10 text-accent'
+                        : r.status === 'PENDING'
+                          ? 'bg-surface-inset text-fg-secondary'
+                          : 'bg-danger/10 text-danger'
+                    }`}
+                  >
+                    {r.status}
+                  </span>
+                </div>
+                {(r.status === 'PENDING' || r.status === 'CONFIRMED') && (
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => startEditingResidency(r)}
+                      className="rounded-full border border-border px-2.5 py-1 text-xs font-medium text-fg transition hover:bg-surface"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleCancelResidency(r.id)}
+                      className="rounded-full border border-danger/40 px-2.5 py-1 text-xs font-medium text-danger transition hover:bg-danger/10"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </Modal>
       )}
 

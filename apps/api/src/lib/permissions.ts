@@ -88,6 +88,12 @@ export const PERMISSION_KEYS = [
   // Team & Locations (locations.manage already existed, listed above)
   "team.manage",
   "artistSchedules.manage",
+  // 6a Epic: create/edit/cancel a guest's residency stints at this studio
+  // -- grouped alongside artistSchedules.manage (same "scheduling-adjacent
+  // staff capability" family), never the artist's own accept/decline
+  // (inalienable, no permission key governs it -- see
+  // routes/residencies.ts).
+  "residencies.manage",
 
   // Settings
   "settings.managePolicies",
@@ -188,6 +194,11 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<(typeof CONFIGURABLE_ROLES)[number
 
     // team.manage: FALSE -- was requireRole(OWNER) only.
     "artistSchedules.manage",
+    // 6a Epic: default TRUE for FRONT_DESK, same as artistSchedules.manage
+    // right above -- a genuinely new capability (there was no residency
+    // concept before this epic), defaulted to match the scheduling-adjacent
+    // capability it's grouped with rather than defaulting closed.
+    "residencies.manage",
 
     // settings.managePolicies/manageDefaults/manageTheme/manageReferral:
     // all FALSE -- the combined studio-settings PATCH was requireRole(OWNER)

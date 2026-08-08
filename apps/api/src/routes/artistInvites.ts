@@ -9,6 +9,8 @@ import { optionalAuth } from "../middleware/auth";
 import { isExpiredOrInvalidArtistInvite } from "../lib/artistMembershipInvites";
 import { logAudit } from "../lib/audit";
 import { emitInvalidation } from "../lib/realtime/registry";
+import { findResidencyOverlapConflict, residencyOverlapErrorMessage } from "../lib/residencies";
+import { ResidencyStatus } from "../../generated/prisma/enums";
 
 const router = Router();
 
@@ -91,9 +93,27 @@ router.post("/artist-invite/accept/:token", optionalAuth, async (req, res) => {
         },
       });
       const artist = await tx.artist.create({ data: { userId: user.id, specialties: [], portfolioImages: [] } });
-      await tx.studioMembership.create({
+      const membership = await tx.studioMembership.create({
         data: { studioId: invite!.studioId, artistId: artist.id, type: invite!.membershipType, allowsStudioProfileEdits: false },
       });
+      // 6a Epic: a brand-new identity's first GUEST stint lands CONFIRMED
+      // directly -- accepting the invite IS the artist's consent, per this
+      // epic's own design. No overlap check needed here specifically (a
+      // brand-new Artist row has zero prior residencies to conflict with
+      // by construction), but the shared function is still called for
+      // consistency and defense -- see the existing-identity branch below
+      // for the case where it can actually fire.
+      if (invite!.membershipType === "GUEST" && invite!.residencyStartDate && invite!.residencyEndDate) {
+        await tx.residency.create({
+          data: {
+            membershipId: membership.id,
+            artistId: artist.id,
+            startDate: invite!.residencyStartDate,
+            endDate: invite!.residencyEndDate,
+            status: ResidencyStatus.CONFIRMED,
+          },
+        });
+      }
       await tx.artistMembershipInvite.delete({ where: { id: invite!.id } });
       // Part 2 (guest-artist onboarding): a real, skippable-not-blocking
       // nudge on a genuinely new identity's own task list -- createdById
@@ -125,6 +145,9 @@ router.post("/artist-invite/accept/:token", optionalAuth, async (req, res) => {
 
     emitInvalidation({ type: "team.changed", studioId: invite!.studioId });
     emitInvalidation({ type: "artist.changed", studioId: invite!.studioId, artistId: artist.id });
+    if (invite!.membershipType === "GUEST") {
+      emitInvalidation({ type: "residency.changed", studioId: invite!.studioId, artistId: artist.id });
+    }
 
     const payload: AuthPayload = { userId: user.id, studioId: invite!.studioId, role: Role.ARTIST };
     const jwtToken = jwt.sign(payload, JWT_SECRET, { expiresIn: "7d" });
@@ -140,6 +163,25 @@ router.post("/artist-invite/accept/:token", optionalAuth, async (req, res) => {
   }
 
   const oldStudioId = existingUser.studioId;
+
+  // 6a Epic: overlap validation on accept, checked BEFORE the transaction
+  // so a conflict is a clean 409 with nothing created, not a rollback.
+  // Only meaningful for an EXISTING identity -- they may already have
+  // other CONFIRMED residencies to conflict with, unlike a brand-new
+  // identity (handled above, where this can never fire).
+  if (invite!.membershipType === "GUEST" && invite!.residencyStartDate && invite!.residencyEndDate) {
+    const existingArtistForOverlap = await prisma.artist.findUnique({ where: { userId: existingUser.id } });
+    if (existingArtistForOverlap) {
+      const conflict = await findResidencyOverlapConflict(
+        existingArtistForOverlap.id,
+        invite!.residencyStartDate,
+        invite!.residencyEndDate,
+      );
+      if (conflict) {
+        return res.status(409).json({ error: residencyOverlapErrorMessage(conflict) });
+      }
+    }
+  }
 
   const { artist, freshToken } = await prisma.$transaction(async (tx) => {
     let artist = await tx.artist.findUnique({ where: { userId: existingUser.id } });
@@ -169,9 +211,26 @@ router.post("/artist-invite/accept/:token", optionalAuth, async (req, res) => {
       // GUEST: purely additive -- existingUser.studioId/role untouched,
       // whatever HOME membership they already have (here or elsewhere) is
       // completely unaffected.
-      await tx.studioMembership.create({
+      const membership = await tx.studioMembership.create({
         data: { studioId: invite!.studioId, artistId: artist.id, type: "GUEST", allowsStudioProfileEdits: false },
       });
+      // 6a Epic: the first stint, CONFIRMED directly -- accepting the
+      // invite IS the consent. Re-checked against the DB-level EXCLUDE
+      // constraint too (this create can still throw if the pre-transaction
+      // check above raced with another confirmation) -- an unhandled
+      // throw here aborts the whole transaction, which is the correct
+      // outcome: no membership left behind with no valid residency.
+      if (invite!.residencyStartDate && invite!.residencyEndDate) {
+        await tx.residency.create({
+          data: {
+            membershipId: membership.id,
+            artistId: artist.id,
+            startDate: invite!.residencyStartDate,
+            endDate: invite!.residencyEndDate,
+            status: ResidencyStatus.CONFIRMED,
+          },
+        });
+      }
     }
 
     await tx.artistMembershipInvite.delete({ where: { id: invite!.id } });
@@ -193,6 +252,9 @@ router.post("/artist-invite/accept/:token", optionalAuth, async (req, res) => {
   if (invite!.membershipType === "HOME" && oldStudioId !== invite!.studioId) {
     emitInvalidation({ type: "team.changed", studioId: oldStudioId });
     emitInvalidation({ type: "artist.changed", studioId: oldStudioId, artistId: artist.id });
+  }
+  if (invite!.membershipType === "GUEST") {
+    emitInvalidation({ type: "residency.changed", studioId: invite!.studioId, artistId: artist.id });
   }
 
   res.json({ token: freshToken, membershipType: invite!.membershipType });

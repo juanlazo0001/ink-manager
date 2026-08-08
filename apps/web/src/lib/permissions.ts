@@ -96,6 +96,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { key: 'artists.manage', label: 'Manage artist profiles', description: 'Add and edit artist bios, specialties, and portfolio.' },
       { key: 'artists.view', label: 'View the artists list', description: 'See the studio’s roster of artists.' },
       { key: 'artistSchedules.manage', label: 'Manage artist schedules', description: 'Set an artist’s preferred working hours.' },
+      { key: 'residencies.manage', label: 'Manage guest residencies', description: 'Create, edit, and cancel a guest artist’s scheduled residency stints at your studio.' },
     ],
   },
   {

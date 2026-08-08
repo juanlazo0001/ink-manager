@@ -84,7 +84,11 @@ function membershipInclude(viewerStudioId: string) {
   return {
     memberships: {
       where: { studioId: viewerStudioId, endedAt: null },
-      select: { allowsStudioProfileEdits: true, type: true },
+      // id: 6a Epic -- Team.tsx's residency-management panel needs the
+      // real membershipId to create/list stints against
+      // (POST/GET /residencies), not just the type/delegation flags this
+      // select previously stopped at.
+      select: { id: true, allowsStudioProfileEdits: true, type: true },
     },
   } as const;
 }

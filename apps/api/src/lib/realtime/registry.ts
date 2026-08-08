@@ -79,7 +79,15 @@ export type InvalidationEvent =
   // FlashPiece -- studio-wide, no single-piece detail view exists yet to
   // target individually (the management page is a flat list, same
   // "no single-item view" shape as team.changed/locations.changed above).
-  | { type: "flash.changed"; studioId: string };
+  | { type: "flash.changed"; studioId: string }
+  // 6a Epic: any create/edit/cancel/accept/decline on a Residency --
+  // studio-wide for the HOST studio's own team-management view (see
+  // keysFor below). The artist's own cross-studio "my residencies" view
+  // is pushed separately via emitUserInvalidation (routes/residencies.ts),
+  // not this studio-scoped event -- a residency can change at a studio the
+  // artist isn't currently connected "as," so studio-room broadcast alone
+  // would miss them.
+  | { type: "residency.changed"; studioId: string; artistId: string };
 
 function keysFor(event: InvalidationEvent): unknown[][] {
   switch (event.type) {
@@ -153,6 +161,8 @@ function keysFor(event: InvalidationEvent): unknown[][] {
       return [["sms-integration-status"]];
     case "flash.changed":
       return [["flash-pieces"]];
+    case "residency.changed":
+      return [["residencies", event.studioId], ["artist", event.artistId], ["team-users"]];
   }
 }
 

@@ -778,6 +778,18 @@ model ArtistMembershipInvite {
   name           String?
   membershipType StudioMembershipType
 
+  // 6a Epic: mandatory when membershipType is GUEST (validated in
+  // routes/studios.ts's invite-creation route, not here -- Prisma has no
+  // conditional-required concept), null/unused for HOME. Carried on the
+  // invite itself (not a Residency row -- no StudioMembership exists yet
+  // to hang one off) so the dates survive from invite-send to accept, up
+  // to the full token TTL later. Consumed exactly once, at accept
+  // (routes/artistInvites.ts), to create the artist's own first
+  // Residency, landing CONFIRMED directly -- accepting the invite IS the
+  // artist's consent, so there is no separate PENDING step for this one.
+  residencyStartDate DateTime?
+  residencyEndDate   DateTime?
+
   token          String    @unique
   tokenExpiresAt DateTime
 
