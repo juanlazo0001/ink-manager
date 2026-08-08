@@ -2,14 +2,14 @@ import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { Channel, FlashPieceStatus, InquiryStatus, Role } from "../../generated/prisma/enums";
 import { requireAuth } from "../middleware/auth";
-import { requirePermission } from "../lib/permissions";
+import { hasPermission, requirePermission } from "../lib/permissions";
 import { diffObjects, logAudit } from "../lib/audit";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { normalizePhone } from "../lib/phone";
 import { syncPrimaryEmail, syncPrimaryPhone } from "../lib/clientContacts";
 import { generateUniqueReferralCode } from "../lib/referrals";
 import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
-import { studioHasActiveMembership, callerBelongsToStudio, activeStudioIdsForCaller, hasPermissionAt } from "../lib/artistAccess";
+import { studioHasActiveMembership, activeStudioIdsForCaller, effectiveRoleAt } from "../lib/artistAccess";
 
 const router = Router();
 
@@ -389,7 +389,8 @@ router.patch("/:id", async (req, res) => {
   const id = req.params.id as string;
 
   const existing = await prisma.flashPiece.findUnique({ where: { id }, include: { artist: true } });
-  if (!existing || !(await callerBelongsToStudio(req.user!, existing.studioId))) {
+  const role = existing ? await effectiveRoleAt(req.user!, existing.studioId) : null;
+  if (!existing || !role) {
     return res.status(404).json({ error: "Flash piece not found" });
   }
   const studioId = existing.studioId;
@@ -403,11 +404,18 @@ router.patch("/:id", async (req, res) => {
   // (unchanged from before this fix) -- only staff manage on another
   // artist's behalf, gated by flashGallery.manage evaluated at the piece's
   // own studio (permission-context fix).
+  //
+  // Solo-guest fix: checked against `role` (the caller's EFFECTIVE role AT
+  // this piece's own studio), never their raw global role -- a solo OWNER
+  // guesting at this studio is exactly as much "just an ARTIST" here as any
+  // other guest, so they must hit the same hard block on a different
+  // artist's piece, not fall through to a staff flashGallery.manage check
+  // their OWNER-at-home role has nothing to do with.
   if (!isSelf) {
-    if (req.user!.role === Role.ARTIST) {
+    if (role === Role.ARTIST) {
       return res.status(403).json({ error: "Forbidden" });
     }
-    if (!(await hasPermissionAt(req.user!, studioId, "flashGallery.manage"))) {
+    if (!(await hasPermission(studioId, role, "flashGallery.manage"))) {
       return res.status(403).json({ error: "Forbidden" });
     }
   }
@@ -463,7 +471,8 @@ router.post("/:id/retire", async (req, res) => {
   const id = req.params.id as string;
 
   const existing = await prisma.flashPiece.findUnique({ where: { id }, include: { artist: true } });
-  if (!existing || !(await callerBelongsToStudio(req.user!, existing.studioId))) {
+  const role = existing ? await effectiveRoleAt(req.user!, existing.studioId) : null;
+  if (!existing || !role) {
     return res.status(404).json({ error: "Flash piece not found" });
   }
   const studioId = existing.studioId;
@@ -473,12 +482,14 @@ router.post("/:id/retire", async (req, res) => {
   // -- retiring your OWN piece is never gated by any studio's permission
   // matrix. An ARTIST still can never touch a DIFFERENT artist's piece;
   // staff retiring on another artist's behalf stays gated by
-  // flashGallery.manage, evaluated at the piece's own studio.
+  // flashGallery.manage, evaluated at the piece's own studio. Solo-guest
+  // fix: `role` is the caller's EFFECTIVE role at this studio, same
+  // reasoning as PATCH /:id above.
   if (!isSelf) {
-    if (req.user!.role === Role.ARTIST) {
+    if (role === Role.ARTIST) {
       return res.status(403).json({ error: "Forbidden" });
     }
-    if (!(await hasPermissionAt(req.user!, studioId, "flashGallery.manage"))) {
+    if (!(await hasPermission(studioId, role, "flashGallery.manage"))) {
       return res.status(403).json({ error: "Forbidden" });
     }
   }

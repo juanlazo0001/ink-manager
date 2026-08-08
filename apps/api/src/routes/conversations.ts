@@ -16,11 +16,9 @@ import { diffObjects, logAudit } from "../lib/audit";
 import { emitInvalidation } from "../lib/realtime/registry";
 import {
   canViewConversation,
-  getConversationVisibilityFlags,
   getOrCreateStaffConversation,
   getUnreadCountForConversation,
   visibleConversationWhere,
-  type ConversationVisibilityFlags,
 } from "../lib/conversations";
 import { TAGGABLE_ENTITY_TYPES, resolveTagLabel, validateTaggableEntity } from "../lib/conversationTags";
 import { sanitizePrefillPayload } from "../lib/prefill";
@@ -28,28 +26,10 @@ import { sendClientSms } from "../lib/clientSms";
 import { decryptSecret } from "../lib/secrets";
 import { getRfc822MessageId, getValidAccessToken, sendGmailMessage } from "../lib/gmail";
 import { hasPermission } from "../lib/permissions";
-import { activeStudioIdsForCaller } from "../lib/artistAccess";
-
-declare global {
-  namespace Express {
-    interface Locals {
-      conversationFlags?: ConversationVisibilityFlags;
-    }
-  }
-}
 
 const router = Router();
 router.use(requireAuth);
 router.use(requireRole(Role.OWNER, Role.FRONT_DESK, Role.ARTIST));
-
-// Computed once per request, right after the role gate -- every route below
-// that calls visibleConversationWhere/canViewConversation reads
-// res.locals.conversationFlags instead of each re-deriving it (a DB
-// round-trip) independently.
-router.use(async (req, res, next) => {
-  res.locals.conversationFlags = await getConversationVisibilityFlags(req.user!.studioId, req.user!.role);
-  next();
-});
 
 const DRAFT_INQUIRY_MESSAGE_CAP = 50;
 
@@ -283,9 +263,8 @@ router.get("/", async (req, res) => {
         }
       : undefined;
 
-  const studioIds = await activeStudioIdsForCaller({ studioId, role, userId });
   const where: Prisma.ConversationWhereInput = {
-    ...visibleConversationWhere(studioIds, userId, role, res.locals.conversationFlags!),
+    ...(await visibleConversationWhere({ studioId, role, userId })),
     ...typeWhere,
     ...(entityTypeFilter ? { tags: { some: { entityType: entityTypeFilter } } } : {}),
     ...(artistIdFilter ? { client: { inquiries: { some: { assignedArtistId: artistIdFilter } } } } : {}),
@@ -533,7 +512,7 @@ router.get("/:id/messages", async (req, res) => {
     where: { id },
     include: { ...COUNTERPART_SELECT, tags: true },
   });
-  if (!conversation || !(await canViewConversation(conversation, studioId, userId, role, res.locals.conversationFlags!))) {
+  if (!conversation || !(await canViewConversation(conversation, studioId, userId, role))) {
     return res.status(404).json({ error: "Conversation not found" });
   }
 
@@ -596,7 +575,7 @@ router.post("/:id/tags", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, r
   const { entityType, entityId } = req.body ?? {};
 
   const conversation = await prisma.conversation.findUnique({ where: { id } });
-  if (!conversation || !(await canViewConversation(conversation, studioId, userId, role, res.locals.conversationFlags!))) {
+  if (!conversation || !(await canViewConversation(conversation, studioId, userId, role))) {
     return res.status(404).json({ error: "Conversation not found" });
   }
 
@@ -645,7 +624,7 @@ router.delete("/:id/tags/:tagId", requireRole(Role.OWNER, Role.FRONT_DESK), asyn
   const { studioId, userId, role } = req.user!;
 
   const conversation = await prisma.conversation.findUnique({ where: { id } });
-  if (!conversation || !(await canViewConversation(conversation, studioId, userId, role, res.locals.conversationFlags!))) {
+  if (!conversation || !(await canViewConversation(conversation, studioId, userId, role))) {
     return res.status(404).json({ error: "Conversation not found" });
   }
 
@@ -696,7 +675,7 @@ router.post("/:id/archive", async (req, res) => {
   const { studioId, userId, role } = req.user!;
 
   const conversation = await prisma.conversation.findUnique({ where: { id } });
-  if (!conversation || !(await canViewConversation(conversation, studioId, userId, role, res.locals.conversationFlags!))) {
+  if (!conversation || !(await canViewConversation(conversation, studioId, userId, role))) {
     return res.status(404).json({ error: "Conversation not found" });
   }
 
@@ -725,7 +704,7 @@ router.post("/:id/unarchive", async (req, res) => {
   const { studioId, userId, role } = req.user!;
 
   const conversation = await prisma.conversation.findUnique({ where: { id } });
-  if (!conversation || !(await canViewConversation(conversation, studioId, userId, role, res.locals.conversationFlags!))) {
+  if (!conversation || !(await canViewConversation(conversation, studioId, userId, role))) {
     return res.status(404).json({ error: "Conversation not found" });
   }
 
@@ -758,7 +737,7 @@ router.post("/:id/messages", async (req, res) => {
     where: { id },
     include: { participants: { select: { userId: true } } },
   });
-  if (!conversation || !(await canViewConversation(conversation, studioId, userId, role, res.locals.conversationFlags!))) {
+  if (!conversation || !(await canViewConversation(conversation, studioId, userId, role))) {
     return res.status(404).json({ error: "Conversation not found" });
   }
 
@@ -1105,7 +1084,7 @@ router.patch("/:id/messages/:messageId", async (req, res) => {
     where: { id },
     include: { participants: { select: { userId: true } } },
   });
-  if (!conversation || !(await canViewConversation(conversation, studioId, userId, role, res.locals.conversationFlags!))) {
+  if (!conversation || !(await canViewConversation(conversation, studioId, userId, role))) {
     return res.status(404).json({ error: "Conversation not found" });
   }
 
@@ -1180,7 +1159,7 @@ router.put("/:id/messages/:messageId/reaction", async (req, res) => {
     where: { id },
     include: { participants: { select: { userId: true } } },
   });
-  if (!conversation || !(await canViewConversation(conversation, studioId, userId, role, res.locals.conversationFlags!))) {
+  if (!conversation || !(await canViewConversation(conversation, studioId, userId, role))) {
     return res.status(404).json({ error: "Conversation not found" });
   }
 
@@ -1213,7 +1192,7 @@ router.delete("/:id/messages/:messageId/reaction", async (req, res) => {
     where: { id },
     include: { participants: { select: { userId: true } } },
   });
-  if (!conversation || !(await canViewConversation(conversation, studioId, userId, role, res.locals.conversationFlags!))) {
+  if (!conversation || !(await canViewConversation(conversation, studioId, userId, role))) {
     return res.status(404).json({ error: "Conversation not found" });
   }
 
@@ -1238,7 +1217,7 @@ router.get("/:id/context", requireRole(Role.OWNER, Role.FRONT_DESK), async (req,
   const { studioId, userId, role } = req.user!;
 
   const conversation = await prisma.conversation.findUnique({ where: { id } });
-  if (!conversation || !(await canViewConversation(conversation, studioId, userId, role, res.locals.conversationFlags!)) || conversation.type !== ConversationType.CLIENT) {
+  if (!conversation || !(await canViewConversation(conversation, studioId, userId, role)) || conversation.type !== ConversationType.CLIENT) {
     return res.status(404).json({ error: "Conversation not found" });
   }
 
@@ -1323,7 +1302,7 @@ router.post("/:id/attach-image", requireRole(Role.OWNER, Role.FRONT_DESK), async
   const { imageUrl, inquiryId } = req.body ?? {};
 
   const conversation = await prisma.conversation.findUnique({ where: { id } });
-  if (!conversation || !(await canViewConversation(conversation, studioId, userId, role, res.locals.conversationFlags!)) || conversation.type !== ConversationType.CLIENT) {
+  if (!conversation || !(await canViewConversation(conversation, studioId, userId, role)) || conversation.type !== ConversationType.CLIENT) {
     return res.status(404).json({ error: "Conversation not found" });
   }
 
@@ -1383,7 +1362,7 @@ router.post("/:id/draft-inquiry", requireRole(Role.OWNER, Role.FRONT_DESK), asyn
   const { studioId, userId, role } = req.user!;
 
   const conversation = await prisma.conversation.findUnique({ where: { id } });
-  if (!conversation || !(await canViewConversation(conversation, studioId, userId, role, res.locals.conversationFlags!)) || conversation.type !== ConversationType.CLIENT) {
+  if (!conversation || !(await canViewConversation(conversation, studioId, userId, role)) || conversation.type !== ConversationType.CLIENT) {
     return res.status(404).json({ error: "Conversation not found" });
   }
 
@@ -1440,7 +1419,7 @@ router.post("/:id/read", async (req, res) => {
     where: { id },
     include: { participants: { select: { userId: true } } },
   });
-  if (!conversation || !(await canViewConversation(conversation, studioId, userId, role, res.locals.conversationFlags!))) {
+  if (!conversation || !(await canViewConversation(conversation, studioId, userId, role))) {
     return res.status(404).json({ error: "Conversation not found" });
   }
 

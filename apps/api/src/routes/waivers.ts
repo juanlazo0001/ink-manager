@@ -12,7 +12,7 @@ import { shortenUrl } from "../lib/shortLinks";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { generateWaiverPdf } from "../lib/pdf";
 import { emitInvalidation } from "../lib/realtime/registry";
-import { studioHasActiveMembership, hasPermissionAt } from "../lib/artistAccess";
+import { effectiveRoleAt, hasPermissionAt } from "../lib/artistAccess";
 
 function isExpiredOrInvalid(waiver: { signedAt: Date | null; tokenExpiresAt: Date | null } | null) {
   if (!waiver) {
@@ -250,25 +250,26 @@ staffRouter.get("/:id/status", async (req, res) => {
     return res.status(404).json({ error: "Waiver not found" });
   }
 
-  // Artist mobility bug fix: authorize against the WAIVER's own studio
-  // (studioHasActiveMembership, HOME or GUEST), not a plain equality
-  // against the caller's home studio -- the old check ran BEFORE the
+  // Artist mobility bug fix, solo-guest fix: authorize against the
+  // WAIVER's own studio via the caller's EFFECTIVE role there
+  // (effectiveRoleAt), not a plain equality against the caller's raw home
+  // studioId or their raw global role -- the old check ran BEFORE the
   // artistId ownership check below and 404'd a legitimately guest-assigned
-  // artist's own waiver before that check ever ran. Same
-  // deposits.ts GET /:id/pdf fix, same shape.
-  if (req.user!.role === Role.ARTIST) {
-    const artist = await prisma.artist.findUnique({
-      where: { userId: req.user!.userId },
-      select: { id: true, user: { select: { studioId: true } } },
-    });
-    const artistBelongsToStudio =
-      artist != null &&
-      (artist.user.studioId === waiver.studioId || (await studioHasActiveMembership(waiver.studioId, artist.id)));
-    if (!artistBelongsToStudio || waiver.appointment.artistId !== artist!.id) {
+  // artist's own waiver before that check ever ran. Branching on raw
+  // `role === ARTIST` had the same blind spot every other primitive this
+  // fix touches did: a solo OWNER-with-Artist-profile guesting at this
+  // waiver's studio has global role OWNER, so it took the plain-equality
+  // staff branch and 404'd even though they're the waiver's actual
+  // assigned artist. Same deposits.ts GET /:id/pdf fix, same shape.
+  const roleAtStudio = await effectiveRoleAt(req.user!, waiver.studioId);
+  if (!roleAtStudio) {
+    return res.status(404).json({ error: "Waiver not found" });
+  }
+  if (roleAtStudio === Role.ARTIST) {
+    const artist = await prisma.artist.findUnique({ where: { userId: req.user!.userId }, select: { id: true } });
+    if (waiver.appointment.artistId !== artist?.id) {
       return res.status(404).json({ error: "Waiver not found" });
     }
-  } else if (waiver.studioId !== req.user!.studioId) {
-    return res.status(404).json({ error: "Waiver not found" });
   }
 
   // Permission-context fix: evaluated at the waiver's own studio, AFTER the

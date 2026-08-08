@@ -1,9 +1,10 @@
 import { prisma } from "./prisma";
 import { ConversationType, Role } from "../../generated/prisma/enums";
 import type { Prisma } from "../../generated/prisma/client";
+import type { AuthPayload } from "../middleware/auth";
 import { logAudit } from "./audit";
 import { hasPermission } from "./permissions";
-import { callerBelongsToStudio, activeStudioIdsForCaller } from "./artistAccess";
+import { effectiveRoleAt, rolesByStudioForCaller } from "./artistAccess";
 
 // Computed ONCE per request (see routes/conversations.ts's own middleware)
 // rather than re-derived inside visibleConversationWhere/canViewConversation
@@ -36,44 +37,60 @@ export async function getConversationVisibilityFlags(
 // rule, but OWNER's own unconditional access and ARTIST's "-own" scoping
 // on STAFF/GROUP threads are unchanged -- flags just gates whether each
 // thread-type clause is included at all.
-// studioIds: every studio the caller has a live relationship with (HOME +
-// active GUESTs for an ARTIST, just their one studio for staff -- see
-// activeStudioIdsForCaller). Artist mobility bug fix: this used to take a
-// single studioId (always the caller's HOME), so a guest artist's own
-// STAFF/GROUP thread living under a GUEST studio's Conversation.studioId
-// never matched at all -- invisible on their own list, permanently.
-export function visibleConversationWhere(
-  studioIds: string[],
-  userId: string,
-  role: Role,
-  flags: ConversationVisibilityFlags,
-): Prisma.ConversationWhereInput {
-  const clauses: Prisma.ConversationWhereInput[] = [];
+//
+// Solo-guest fix: self-contained (takes the caller, not a pre-resolved
+// studioId list) and builds one clause GROUP PER STUDIO, each evaluated
+// with that studio's own role and that studio's own permission flags --
+// never one role/one flags pair applied uniformly across every studio the
+// caller can see. A flat approach broke exactly for a solo OWNER-with-
+// Artist-profile: their home flags (OWNER always sees both thread types)
+// would have leaked into a GUEST studio's clause too, potentially
+// surfacing that host's private staff 1:1s/groups even where the host's
+// OWN ARTIST matrix denies conversations.viewStaffThreads. Every active
+// guest studio is always governed by Role.ARTIST (rolesByStudioForCaller),
+// exactly like effectiveRoleAt/hasPermissionAt -- staff roles never travel.
+export async function visibleConversationWhere(
+  user: Pick<AuthPayload, "studioId" | "role" | "userId">,
+): Promise<Prisma.ConversationWhereInput> {
+  const rolesByStudio = await rolesByStudioForCaller(user);
 
-  if (flags.canViewClientThreads) {
-    clauses.push({ type: ConversationType.CLIENT });
-  }
+  const groups = await Promise.all(
+    [...rolesByStudio].map(async ([studioId, role]) => {
+      const flags = await getConversationVisibilityFlags(studioId, role);
+      const clauses: Prisma.ConversationWhereInput[] = [];
 
-  if (flags.canViewStaffThreads) {
-    if (role === Role.ARTIST) {
-      // "-own" scoping stays in effect regardless of the toggle -- an
-      // artist's staff-thread visibility is always just their own 1:1
-      // thread plus any GROUP thread they've been added to, never another
-      // staff member's.
-      clauses.push(
-        { type: ConversationType.STAFF, staffUserId: userId },
-        { type: ConversationType.GROUP, participants: { some: { userId } } },
-      );
-    } else {
-      clauses.push({ type: ConversationType.STAFF }, { type: ConversationType.GROUP });
-    }
-  }
+      if (flags.canViewClientThreads) {
+        clauses.push({ type: ConversationType.CLIENT });
+      }
 
-  // Neither toggle is on -- matches nothing, rather than falling back to
-  // an unfiltered { studioId } that would silently ignore both flags.
-  if (clauses.length === 0) return { studioId: { in: studioIds }, id: "__no_visible_conversations__" };
+      if (flags.canViewStaffThreads) {
+        if (role === Role.ARTIST) {
+          // "-own" scoping stays in effect regardless of the toggle -- an
+          // artist's staff-thread visibility is always just their own 1:1
+          // thread plus any GROUP thread they've been added to, never
+          // another staff member's.
+          clauses.push(
+            { type: ConversationType.STAFF, staffUserId: user.userId },
+            { type: ConversationType.GROUP, participants: { some: { userId: user.userId } } },
+          );
+        } else {
+          clauses.push({ type: ConversationType.STAFF }, { type: ConversationType.GROUP });
+        }
+      }
 
-  return { studioId: { in: studioIds }, OR: clauses };
+      const group: Prisma.ConversationWhereInput | null = clauses.length > 0 ? { studioId, OR: clauses } : null;
+      return group;
+    }),
+  );
+
+  const nonEmptyGroups = groups.filter((g): g is Prisma.ConversationWhereInput => g !== null);
+
+  // No studio has either toggle on -- matches nothing, rather than falling
+  // back to an unfiltered `{ studioId: { in: [...] } }` that would
+  // silently ignore both flags everywhere.
+  if (nonEmptyGroups.length === 0) return { id: "__no_visible_conversations__" };
+
+  return { OR: nonEmptyGroups };
 }
 
 export async function canViewConversation(
@@ -86,13 +103,23 @@ export async function canViewConversation(
   studioId: string,
   userId: string,
   role: Role,
-  flags: ConversationVisibilityFlags,
 ): Promise<boolean> {
-  // Artist mobility bug fix: HOME or active GUEST membership at the
-  // CONVERSATION's own studio, not a plain equality against the caller's
-  // home studioId -- a guest artist's own staff thread at their guest
-  // studio was otherwise unreachable even via a direct link/notification.
-  if (!(await callerBelongsToStudio({ studioId, role, userId }, conversation.studioId))) return false;
+  // Artist mobility bug fix, solo-guest fix: the caller's EFFECTIVE role AT
+  // the conversation's own studio -- HOME or active GUEST membership, and
+  // never the caller's raw global role once resolved. A guest artist's own
+  // staff thread at their guest studio was otherwise unreachable even via
+  // a direct link/notification (the original artist-mobility fix); a solo
+  // OWNER's own global role must not leak OWNER-level staff-thread
+  // visibility into a studio they only guest at (this fix).
+  const effectiveRole = await effectiveRoleAt({ studioId, role, userId }, conversation.studioId);
+  if (!effectiveRole) return false;
+
+  // Flags re-derived fresh against the CONVERSATION's own studio and the
+  // caller's effective role there -- never the once-per-request flags
+  // computed against the caller's home, which would otherwise apply a
+  // solo OWNER's home-granted visibility to a guest studio's own,
+  // possibly-stricter ARTIST matrix.
+  const flags = await getConversationVisibilityFlags(conversation.studioId, effectiveRole);
 
   if (conversation.type === ConversationType.CLIENT) {
     return flags.canViewClientThreads;
@@ -100,7 +127,7 @@ export async function canViewConversation(
 
   if (!flags.canViewStaffThreads) return false;
 
-  if (role === Role.ARTIST) {
+  if (effectiveRole === Role.ARTIST) {
     if (conversation.type === ConversationType.STAFF) return conversation.staffUserId === userId;
     if (conversation.type === ConversationType.GROUP) {
       return (conversation.participants ?? []).some((p) => p.userId === userId);
@@ -133,13 +160,8 @@ export async function getUnreadCountForConversation(conversationId: string, user
 // created-after-seen sections in navCounts.ts (see the section-strategy
 // pattern there).
 export async function getUnreadConversationCount(studioId: string, userId: string, role: Role): Promise<number> {
-  // hasPermission (inside getConversationVisibilityFlags) already
-  // short-circuits true for OWNER without a DB round-trip, so no separate
-  // OWNER case is needed here.
-  const flags = await getConversationVisibilityFlags(studioId, role);
-  const studioIds = await activeStudioIdsForCaller({ studioId, role, userId });
   const conversations = await prisma.conversation.findMany({
-    where: visibleConversationWhere(studioIds, userId, role, flags),
+    where: await visibleConversationWhere({ studioId, role, userId }),
     select: { id: true },
   });
 

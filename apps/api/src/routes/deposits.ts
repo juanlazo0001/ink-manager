@@ -10,7 +10,7 @@ import { redactedSessionHours } from "../lib/plannedSessions";
 import { getOrCreateClientConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
 import { emitInvalidation } from "../lib/realtime/registry";
-import { studioHasActiveMembership, callerBelongsToStudio, hasPermissionAt } from "../lib/artistAccess";
+import { callerBelongsToStudio, effectiveRoleAt, hasPermissionAt } from "../lib/artistAccess";
 
 // Exact SOP wording, in the order the client must agree to each one.
 const TERMS = [
@@ -428,32 +428,30 @@ staffRouter.get("/:id/pdf", requireAuth, async (req, res) => {
     return res.status(404).json({ error: "Deposit form not found" });
   }
 
-  // Artist mobility bug fix: authorize against the PROJECT's own studio
-  // (depositForm.inquiry.studioId), not the caller's home studio
-  // (req.user!.studioId) -- a guest artist's assigned project lives at a
-  // studio that isn't their `user.studioId`, so the old plain equality
-  // check 404'd every legitimate guest-artist request before the
-  // ARTIST-specific ownership check below even ran. Same
-  // studioHasActiveMembership(HOME or GUEST) pattern already used for
-  // every other "does this artist belong to this studio" check in the
-  // codebase (see lib/artistAccess.ts and its callers). Staff (OWNER/
-  // FRONT_DESK) have no membership concept -- they belong to exactly one
-  // studio -- so a plain equality check is still correct and sufficient
-  // for them.
-  if (req.user!.role === Role.ARTIST) {
-    const artist = await prisma.artist.findUnique({
-      where: { userId: req.user!.userId },
-      select: { id: true, user: { select: { studioId: true } } },
-    });
-    const artistBelongsToProjectStudio =
-      artist != null &&
-      (artist.user.studioId === depositForm.inquiry.studioId ||
-        (await studioHasActiveMembership(depositForm.inquiry.studioId, artist.id)));
-    if (!artistBelongsToProjectStudio || depositForm.inquiry.assignedArtistId !== artist!.id) {
+  // Artist mobility bug fix, solo-guest fix: authorize against the
+  // PROJECT's own studio (depositForm.inquiry.studioId) via the caller's
+  // EFFECTIVE role there (effectiveRoleAt), not the caller's raw global
+  // role or home studioId -- a guest artist's assigned project lives at a
+  // studio that isn't their `user.studioId`, so a plain equality check
+  // 404'd every legitimate guest-artist request before the ARTIST-specific
+  // ownership check below even ran. Branching on raw `role === ARTIST` had
+  // the same blind spot as every other primitive this fix touches: a solo
+  // OWNER-with-Artist-profile guesting at this project's studio has global
+  // role OWNER, so it took the plain-equality staff branch and 404'd even
+  // though they're the project's actual assigned artist. effectiveRoleAt
+  // resolves HOME-or-active-GUEST membership AND the correct per-studio
+  // role in one call; staff (OWNER/FRONT_DESK with no Artist profile) get
+  // identical behavior to before, since effectiveRoleAt reduces to the same
+  // plain home-equality check for them.
+  const roleAtProject = await effectiveRoleAt(req.user!, depositForm.inquiry.studioId);
+  if (!roleAtProject) {
+    return res.status(404).json({ error: "Deposit form not found" });
+  }
+  if (roleAtProject === Role.ARTIST) {
+    const artist = await prisma.artist.findUnique({ where: { userId: req.user!.userId }, select: { id: true } });
+    if (depositForm.inquiry.assignedArtistId !== artist?.id) {
       return res.status(404).json({ error: "Deposit form not found" });
     }
-  } else if (depositForm.inquiry.studioId !== req.user!.studioId) {
-    return res.status(404).json({ error: "Deposit form not found" });
   }
 
   // Permission-context fix: evaluated at the deposit form's own inquiry's

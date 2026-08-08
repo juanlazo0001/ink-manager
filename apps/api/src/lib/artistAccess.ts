@@ -19,52 +19,92 @@ export async function studioHasActiveMembership(studioId: string, artistId: stri
   return membership !== null;
 }
 
-// Bug-class fix (4th instance -- deposit-forms/:id/pdf, waivers/:id/status,
-// inquiries.ts's various requirePermission-only routes, appointments.ts
-// equivalents): a whole family of routes was written as a plain
-// `record.studioId === req.user!.studioId` check, before StudioMembership
-// existed. For a staff caller (OWNER/FRONT_DESK, who only ever belong to
-// one studio, no membership concept) that's correct -- their JWT's studioId
-// claim never changes across the token's lifetime, so this short-circuits
-// on the first branch with no extra query. For an ARTIST caller, this
-// resolves their own artist row and checks BOTH their current (freshly
-// read, not JWT-cached) home studio and an active GUEST membership at the
-// record's actual studio, so a legitimately guest-assigned artist isn't
-// 404'd out of their own work.
+// Solo-guest fix (REPORT.md: "Solo-guest 403 investigation" ->
+// "Build the solo-guest access fix"): the caller's role is PER-STUDIO, not
+// a single global fact -- a solo studio-of-one's own account is commonly
+// role: OWNER (lib/soloStudio.ts's own comment), but that same User row can
+// also have an Artist profile and guest at other studios, where they are
+// necessarily just an ARTIST (guest relationships are artist-only by
+// construction; there is no such thing as a "guest OWNER"). Every
+// access/permission primitive in this file now resolves through this one
+// function rather than branching on `user.role` directly, so "does this
+// studio have any relationship with this caller, and what role governs it"
+// is answered in exactly one place.
 //
-// Ghost-access regression, caught before it shipped: an EARLIER version of
-// this function short-circuited on `user.studioId === recordStudioId`
-// (the raw JWT claim) for every role, ARTIST included. That's exactly the
-// same "ended membership still grants access" bug class as the historical
-// GET /artists roster bug (see studioHasActiveMembership's own comment) --
-// go-solo and artist-invite-accept (routes/artists.ts, routes/
-// artistInvites.ts) both explicitly document that a caller's EXISTING JWT
-// keeps the OLD home studioId until they receive and apply a freshly-
-// minted token, which can be up to the full 7-day token lifetime away on a
-// second device/tab that never refreshes. During that window the old
-// home's StudioMembership row is already `endedAt`-set, but the stale JWT
-// claim alone would have granted ghost access to it via the equality
-// shortcut, bypassing the active-membership check entirely. Fixed by never
-// trusting the ARTIST caller's OWN studioId claim -- User.studioId is
-// re-read fresh from the DB instead (kept in sync with the current HOME by
-// both transfer routes, in the same transaction that ends the old
-// membership), so this is the artist-mobility-safe equivalent of the
-// existing "record's own home OR active GUEST" pattern used everywhere the
-// codebase resolves a DIFFERENT artist's studio (e.g. PATCH /inquiries/:id/assign).
-export async function callerBelongsToStudio(
+// UNION, not either/or: a caller can hold BOTH a staff hat (at their own
+// home, whatever role that is) and an artist hat (at every studio where
+// they have an active membership, home or guest) at once. This resolves
+// which hat applies to ONE specific studio -- home equality never widens
+// for a caller with no Artist profile at all (a pure OWNER/FRONT_DESK), and
+// a real guest relationship is never invisible just because the caller's
+// OWN role elsewhere happens not to be literally ARTIST.
+//
+// Bug-class history this replaces: earlier versions dispatched on
+// `user.role !== Role.ARTIST` to decide whether to do this DB-backed
+// resolution at all -- correct for a plain ARTIST or plain OWNER/FRONT_DESK
+// with no Artist row, but silently wrong for a solo OWNER who ALSO has an
+// Artist profile: their global role took the bare-equality branch, so an
+// active GUEST membership elsewhere was invisible to every primitive built
+// on it (list routes that query StudioMembership directly, like
+// inquiries.ts's GET /, were never affected -- only the shared
+// callerBelongsToStudio/hasPermissionAt primitives were blind to it).
+//
+// Ghost-access regression, caught before it shipped (still enforced here):
+// an EARLIER version of this function short-circuited on
+// `user.studioId === recordStudioId` (the raw JWT claim) for every role,
+// ARTIST included. That's the same "ended membership still grants access"
+// bug class as the historical GET /artists roster bug (see
+// studioHasActiveMembership's own comment) -- go-solo and
+// artist-invite-accept (routes/artists.ts, routes/artistInvites.ts) both
+// explicitly document that a caller's EXISTING JWT keeps the OLD home
+// studioId until they receive and apply a freshly-minted token, up to the
+// full 7-day token lifetime away on a second device/tab that never
+// refreshes. Anyone with an Artist profile has their home re-read fresh
+// from the DB below, never trusted from the JWT.
+export async function effectiveRoleAt(
   user: Pick<AuthPayload, "studioId" | "role" | "userId">,
   recordStudioId: string,
-): Promise<boolean> {
-  if (user.role !== Role.ARTIST) return user.studioId === recordStudioId;
-
+): Promise<Role | null> {
   const artist = await prisma.artist.findUnique({
     where: { userId: user.userId },
     select: { id: true, user: { select: { studioId: true } } },
   });
-  return (
-    artist != null &&
-    (artist.user.studioId === recordStudioId || (await studioHasActiveMembership(recordStudioId, artist.id)))
-  );
+
+  // No Artist profile at all -- pure staff, whose User.studioId never
+  // changes post-creation (only artist mobility -- transfers, go-solo --
+  // ever moves a User to a different home), so the JWT claim is already
+  // accurate. Home equality only, exactly as before this fix: this is the
+  // "must NOT widen" half of the union.
+  if (!artist) {
+    return user.studioId === recordStudioId ? user.role : null;
+  }
+
+  // Has an Artist profile: their fresh (never JWT-cached) home studio
+  // governs whether recordStudioId even IS home.
+  if (artist.user.studioId === recordStudioId) {
+    // At home, their real global role is fully in effect, whatever it is
+    // (OWNER/FRONT_DESK/ARTIST) -- staff roles are never diminished at the
+    // studio they actually own/work at.
+    return user.role;
+  }
+
+  // Not home. The only relationship that can exist at a DIFFERENT studio is
+  // an active GUEST membership -- guest relationships are always
+  // artist-only, regardless of what the caller's role is at their own home.
+  // A solo OWNER guesting elsewhere is exactly as much "just an ARTIST"
+  // there as anyone else guesting there -- their OWNER hat never travels.
+  if (await studioHasActiveMembership(recordStudioId, artist.id)) {
+    return Role.ARTIST;
+  }
+
+  return null;
+}
+
+export async function callerBelongsToStudio(
+  user: Pick<AuthPayload, "studioId" | "role" | "userId">,
+  recordStudioId: string,
+): Promise<boolean> {
+  return (await effectiveRoleAt(user, recordStudioId)) !== null;
 }
 
 // Same bug class, list-query shape: every studio a caller has a live
@@ -72,21 +112,39 @@ export async function callerBelongsToStudio(
 // clause instead of a single equality -- used by conversations.ts's own
 // list/visibility helpers, whose "which studio(s) can this caller see
 // data from" question can't be answered with one studioId for an ARTIST.
-// Staff (OWNER/FRONT_DESK) only ever have the one.
+// Dispatches on "has an Artist profile," same as effectiveRoleAt above --
+// not on literal role, so a solo OWNER's guest studios are included too.
 export async function activeStudioIdsForCaller(
   user: Pick<AuthPayload, "studioId" | "role" | "userId">,
 ): Promise<string[]> {
-  if (user.role !== Role.ARTIST) return [user.studioId];
+  return [...(await rolesByStudioForCaller(user)).keys()];
+}
+
+// Superset of activeStudioIdsForCaller for a consumer that needs the
+// PER-STUDIO role too, not just the id list -- e.g. conversations.ts's
+// visibility scoping, which must not apply a caller's home-role-derived
+// clause (or home-derived permission flags) uniformly across a studio
+// they only GUEST at. Same union-of-hats rule as effectiveRoleAt: home
+// keeps the caller's real global role, every active guest studio is
+// always Role.ARTIST.
+export async function rolesByStudioForCaller(
+  user: Pick<AuthPayload, "studioId" | "role" | "userId">,
+): Promise<Map<string, Role>> {
   const artist = await prisma.artist.findUnique({
     where: { userId: user.userId },
     select: { id: true, user: { select: { studioId: true } } },
   });
-  if (!artist) return [user.studioId];
+  if (!artist) return new Map([[user.studioId, user.role]]);
+
+  const roles = new Map<string, Role>([[artist.user.studioId, user.role]]);
   const memberships = await prisma.studioMembership.findMany({
     where: { artistId: artist.id, endedAt: null },
     select: { studioId: true },
   });
-  return [...new Set([artist.user.studioId, ...memberships.map((m) => m.studioId)])];
+  for (const membership of memberships) {
+    if (!roles.has(membership.studioId)) roles.set(membership.studioId, Role.ARTIST);
+  }
+  return roles;
 }
 
 // Permission-context fix (REPORT.md: "permission-context investigation"
@@ -101,17 +159,26 @@ export async function activeStudioIdsForCaller(
 // approve/confirm appointments at a host studio that denies ARTIST that
 // permission entirely).
 //
-// Deliberately re-checks membership here (not just re-using an
-// already-computed `callerBelongsToStudio` result from the caller) -- this
-// function needs to be safe to call on its own, the same "self-contained
-// primitive" precedent every other function in this file already follows.
+// Solo-guest fix: evaluates the permission matrix using the caller's
+// EFFECTIVE role AT recordStudioId, never their raw `user.role` claim.
+// This matters even more than it looks: `hasPermission` short-circuits
+// `true` unconditionally for OWNER (see lib/permissions.ts). If this
+// passed a solo OWNER's global role straight through once
+// effectiveRoleAt/callerBelongsToStudio correctly recognized their guest
+// membership, they would get UNCONDITIONAL, matrix-bypassing access to
+// every permission at every studio they merely guest at -- the opposite,
+// far worse failure mode from the 403 this whole fix exists to close.
+// effectiveRoleAt returns Role.ARTIST for a guest studio specifically to
+// prevent this: a solo OWNER guesting elsewhere is governed by the host's
+// real ARTIST matrix, exactly like any other guest artist.
 export async function hasPermissionAt(
   user: Pick<AuthPayload, "studioId" | "role" | "userId">,
   recordStudioId: string,
   key: PermissionKey,
 ): Promise<boolean> {
-  if (!(await callerBelongsToStudio(user, recordStudioId))) return false;
-  return hasPermission(recordStudioId, user.role, key);
+  const role = await effectiveRoleAt(user, recordStudioId);
+  if (!role) return false;
+  return hasPermission(recordStudioId, role, key);
 }
 
 export interface PermissionAtResult {
@@ -140,13 +207,18 @@ export async function hasPermissionOrSoloArtistAt(
   recordStudioId: string,
   key: PermissionKey,
 ): Promise<PermissionAtResult> {
-  if (!(await callerBelongsToStudio(user, recordStudioId))) {
+  const role = await effectiveRoleAt(user, recordStudioId);
+  if (!role) {
     return { allowed: false, viaSoloArtistBypass: false };
   }
-  if (await hasPermission(recordStudioId, user.role, key)) {
+  // Same reasoning as hasPermissionAt above: the EFFECTIVE role at this
+  // studio, never the caller's raw global role -- a solo OWNER guesting
+  // elsewhere must be checked as an ARTIST there, not get OWNER's
+  // unconditional matrix bypass.
+  if (await hasPermission(recordStudioId, role, key)) {
     return { allowed: true, viaSoloArtistBypass: false };
   }
-  if (user.role === Role.ARTIST) {
+  if (role === Role.ARTIST) {
     const artist = await prisma.artist.findUnique({
       where: { userId: user.userId },
       select: { user: { select: { studioId: true } } },
