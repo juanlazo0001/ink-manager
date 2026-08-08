@@ -1,6 +1,11 @@
 import { prisma } from "./prisma";
 import { resolveSchedulingBufferMs } from "./schedulingConflict";
 import { civilDateKey, zonedTimeToUtc } from "./studioTime";
+import {
+  getConfirmedResidenciesForArtist,
+  isArtistBookableAtStudioOnDate,
+  type ConfirmedResidencyWindow,
+} from "./residencies";
 
 // Same shape family as Calendar.tsx's ScheduleBlock / AppointmentForm.tsx's
 // client-side equivalent (both now superseded by this one server-side
@@ -80,6 +85,14 @@ interface AvailabilityContext {
   isGuest: boolean;
   guestStartDate: Date | null;
   guestEndDate: Date | null;
+  // 6a Epic Part 3: the studio this context's own `timeZone`/`bufferMs`
+  // were resolved FOR (already the parameter passed into
+  // resolveAvailabilityContext below) -- kept on the context itself so
+  // dayWindow can compare it against homeStudioId/confirmedResidencies
+  // without threading a second parameter through every call site.
+  studioId: string;
+  homeStudioId: string;
+  confirmedResidencies: ConfirmedResidencyWindow[];
 }
 
 // studioId: the studio this scheduling operation is actually FOR (the
@@ -97,6 +110,13 @@ async function resolveAvailabilityContext(artistId: string, studioId: string): P
     select: { timezone: true, schedulingBufferMinutes: true },
   });
 
+  // 6a Epic Part 3: fresh from the DB, never the JWT -- same "ghost
+  // access"-safe rule every other cross-studio primitive in this codebase
+  // follows (see lib/artistAccess.ts). artist.user.studioId is already
+  // being read fresh here (the `include: { user: true }` above), reused
+  // rather than re-fetched.
+  const confirmedResidencies = await getConfirmedResidenciesForArtist(artistId);
+
   return {
     artistId,
     timeZone: studioSettings?.timezone ?? DEFAULT_TIMEZONE,
@@ -105,6 +125,9 @@ async function resolveAvailabilityContext(artistId: string, studioId: string): P
     isGuest: artist.isGuest,
     guestStartDate: artist.guestStartDate,
     guestEndDate: artist.guestEndDate,
+    studioId,
+    homeStudioId: artist.user.studioId,
+    confirmedResidencies,
   };
 }
 
@@ -116,6 +139,18 @@ async function resolveAvailabilityContext(artistId: string, studioId: string): P
 // shorter than the requested session" is a per-duration question, not a
 // per-day one.
 function dayWindow(context: AvailabilityContext, dateKey: string, dayOfWeek: number): { start: string; end: string } | null {
+  // 6a Epic Part 3: the residency gate runs FIRST, ahead of every other
+  // rule below -- during a CONFIRMED residency at host B, the artist is
+  // bookable at B and BLOCKED at home and everywhere else; outside any
+  // residency window, bookable at home only. This is a genuinely new axis
+  // (which STUDIO, not just which dates), layered on top of -- never
+  // replacing -- the legacy isGuest window and preferredSchedule checks
+  // below, both of which stay artist-global and keep applying once this
+  // gate says "yes, this studio, this day" is even in play.
+  if (!isArtistBookableAtStudioOnDate(context.homeStudioId, context.studioId, context.confirmedResidencies, dateKey)) {
+    return null;
+  }
+
   if (context.isGuest) {
     if (context.guestStartDate && dateKey < civilDateKey(context.guestStartDate, "UTC")) return null;
     if (context.guestEndDate && dateKey > civilDateKey(context.guestEndDate, "UTC")) return null;

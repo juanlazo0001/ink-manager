@@ -73,6 +73,60 @@ export function residencyOverlapErrorMessage(conflict: ResidencyOverlapConflict)
   return `This artist already has a confirmed residency at ${conflict.studioName} from ${start} to ${end}, which overlaps these dates.`;
 }
 
+// 6a Epic Part 3: the residency-aware availability gate -- during a
+// CONFIRMED residency at host B, the artist is bookable at B and BLOCKED
+// at home and everywhere else; outside any residency window, bookable at
+// home only. This is the ONE function every availability computation in
+// the app (lib/schedulingAssistant.ts's getSuggestedTimes/
+// getAvailableDates/getSlotsForDate) calls to decide whether a given civil
+// day even has a working window to consider at THIS studio for THIS
+// artist, before preferredSchedule/buffers/existing-appointments ever
+// enter the picture -- see that file's own resolveAvailabilityContext for
+// where this plugs in.
+export interface ConfirmedResidencyWindow {
+  studioId: string;
+  startDate: Date;
+  endDate: Date;
+}
+
+export async function getConfirmedResidenciesForArtist(artistId: string): Promise<ConfirmedResidencyWindow[]> {
+  const rows = await prisma.residency.findMany({
+    where: { artistId, status: ResidencyStatus.CONFIRMED },
+    select: { startDate: true, endDate: true, membership: { select: { studioId: true } } },
+  });
+  return rows.map((r) => ({ studioId: r.membership.studioId, startDate: r.startDate, endDate: r.endDate }));
+}
+
+// dateKey: a civil "YYYY-MM-DD" already resolved in whatever timezone the
+// caller cares about (studioTime.ts's civilDateKey) -- residency windows
+// are compared as plain calendar dates (UTC-anchored, same as the overlap
+// check above), not specific instants, so no further timezone conversion
+// happens here.
+export function isArtistBookableAtStudioOnDate(
+  homeStudioId: string,
+  targetStudioId: string,
+  confirmedResidencies: ConfirmedResidencyWindow[],
+  dateKey: string,
+): boolean {
+  const activeResidency = confirmedResidencies.find((r) => {
+    const startKey = civilDateKey(r.startDate, "UTC");
+    const endKey = civilDateKey(r.endDate, "UTC");
+    return dateKey >= startKey && dateKey <= endKey;
+  });
+
+  if (activeResidency) {
+    // On residency somewhere -- bookable ONLY at that studio, home
+    // included if that's not it. A residency at home itself (nothing in
+    // the schema prevents one, see the Residency model's own comment) is
+    // simply the degenerate case where activeResidency.studioId ===
+    // homeStudioId, handled by the exact same equality check.
+    return activeResidency.studioId === targetStudioId;
+  }
+
+  // No residency active anywhere on this date -- bookable at home only.
+  return targetStudioId === homeStudioId;
+}
+
 // Postgres exclusion_violation -- thrown if the DB-level EXCLUDE constraint
 // ever catches something the application-layer check above missed (a
 // genuine race, or a future direct-DB write). Never expected in normal

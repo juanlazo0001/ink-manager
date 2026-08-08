@@ -46,6 +46,14 @@ interface ScheduleBlock {
   endTime: string
 }
 
+// 6a Epic Part 3: CONFIRMED-only (see routes/artists.ts's own comment) --
+// a PENDING/DECLINED/CANCELLED stint has no bearing on today's calendar.
+interface ConfirmedResidencyOption {
+  startDate: string
+  endDate: string
+  membership: { studioId: string; studio: { name: string } }
+}
+
 interface ArtistOption {
   id: string
   user: { name: string | null; email: string; avatarUrl: string | null }
@@ -53,6 +61,7 @@ interface ArtistOption {
   guestStartDate: string | null
   guestEndDate: string | null
   preferredSchedule: ScheduleBlock[] | null
+  residencies: ConfirmedResidencyOption[]
 }
 
 // isGuest/guestStartDate/guestEndDate are the "Limited Availability Window"
@@ -152,6 +161,26 @@ function isOutsideGuestWindow(date: Date, artist: ArtistOption): boolean {
   if (artist.guestStartDate && key < artist.guestStartDate.slice(0, 10)) return true
   if (artist.guestEndDate && key > artist.guestEndDate.slice(0, 10)) return true
   return false
+}
+
+// 6a Epic Part 3: this studio's own calendar shows the artist as away for
+// the full window of any CONFIRMED residency at a DIFFERENT studio --
+// simple "Guest residency" state, per the task's own explicit allowance,
+// not a full re-derivation of the real server-side booking gate
+// (lib/schedulingAssistant.ts's dayWindow, the actual enforcement point --
+// this is display-only, greys the calendar so staff aren't surprised when
+// a booking attempt is refused, never itself what blocks one). Same
+// plain-string date comparison as isOutsideGuestWindow above, for the
+// same reason (guestStartDate/guestEndDate's own UTC-midnight-ISO-string
+// off-by-one trap applies identically to Residency.startDate/endDate).
+function awayOnResidencyElsewhere(date: Date, artist: ArtistOption, viewingStudioId: string): ConfirmedResidencyOption | null {
+  const key = dateKey(date)
+  return (
+    artist.residencies.find((r) => {
+      if (r.membership.studioId === viewingStudioId) return false
+      return key >= r.startDate.slice(0, 10) && key <= r.endDate.slice(0, 10)
+    }) ?? null
+  )
 }
 
 interface AppointmentApi {
@@ -754,7 +783,12 @@ export default function Calendar() {
 
     if (typeof resourceId === 'string') {
       const artist = visibleArtistOptions?.find((a) => a.id === resourceId)
-      if (artist && (isArtistUnavailable(date, artist.preferredSchedule) || isOutsideGuestWindow(date, artist))) {
+      if (
+        artist &&
+        (isArtistUnavailable(date, artist.preferredSchedule) ||
+          isOutsideGuestWindow(date, artist) ||
+          (user?.studioId && awayOnResidencyElsewhere(date, artist, user.studioId)))
+      ) {
         return GREY_STYLE
       }
     }
@@ -779,7 +813,8 @@ export default function Calendar() {
     if (filteredSingleArtist) {
       if (
         isArtistUnavailableAllDay(date.getDay(), filteredSingleArtist.preferredSchedule) ||
-        isOutsideGuestWindow(date, filteredSingleArtist)
+        isOutsideGuestWindow(date, filteredSingleArtist) ||
+        (user?.studioId && awayOnResidencyElsewhere(date, filteredSingleArtist, user.studioId))
       ) {
         return GREY_STYLE
       }

@@ -139,6 +139,19 @@ function artistListSelect(viewerStudioId: string) {
     // the list view too, not just the detail page.
     artistServices: { select: { serviceId: true } },
     user: { select: { id: true, email: true, name: true, avatarUrl: true } },
+    // 6a Epic Part 3: same "Calendar needs this in the list view too" reason
+    // as preferredSchedule above -- CONFIRMED-only (a PENDING/DECLINED/
+    // CANCELLED stint has no bearing on today's availability), so
+    // Calendar.tsx's own grey-shading can tell "away on a residency
+    // elsewhere" apart from a real working day without a second request.
+    // Deliberately not scoped to "at a different studio" here -- the
+    // frontend already knows which studio IT is (the viewer's own), so it
+    // does that comparison itself, same division of labor as the legacy
+    // isGuest/guestStartDate/guestEndDate fields above.
+    residencies: {
+      where: { status: "CONFIRMED" },
+      select: { startDate: true, endDate: true, membership: { select: { studioId: true, studio: { select: { name: true } } } } },
+    },
     ...membershipInclude(viewerStudioId),
   } as const;
 }
