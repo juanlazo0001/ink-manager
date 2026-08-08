@@ -9493,3 +9493,188 @@ Both throwaway scripts (the dev repro, the production census) deleted after use.
 files touched this section. `git status` confirmed clean except the same pre-existing,
 untouched files noted throughout this session. REPORT.md line count increased versus `HEAD`
 before this commit (was 9324).
+
+# Solo-guest access fix: built, tested, and live-verified
+
+Follow-up to the investigation above (`d9a0c81`). Built to the decided design: access
+primitives grant the UNION of a caller's hats (a real staff role at home, an artist role at
+every studio reached only via an active GUEST membership), dispatching on "does this caller
+have an Artist profile and a live relationship with this studio," never on their literal JWT
+role. Four parts.
+
+## Part 1 (`c1a0b95`): the core primitive fix
+
+`lib/artistAccess.ts` gained `effectiveRoleAt(user, recordStudioId)`, the single place that
+resolves which role governs a caller at a specific studio: their real global role AT HOME
+(re-read fresh from the DB, never the JWT), or `Role.ARTIST` at any studio reached only via an
+active GUEST membership (guest relationships are artist-only by construction -- there is no
+such thing as a "guest OWNER"). `callerBelongsToStudio`, `activeStudioIdsForCaller`,
+`hasPermissionAt`, and `hasPermissionOrSoloArtistAt` were all rewritten to go through it.
+
+**The direction that matters more than the one everyone notices**: `hasPermission`
+short-circuits `true` unconditionally for OWNER. Fixing only the membership-recognition half
+(so a solo owner's guest membership is no longer invisible) while still passing their raw
+global OWNER role into the permission check would have turned the original 403 into
+*unconditional, matrix-bypassing OWNER access at every studio they merely guest at* -- a far
+worse failure than the bug this fix exists to close. `effectiveRoleAt` returns `Role.ARTIST`
+for every non-home studio specifically to prevent this.
+
+**Three more instances of the identical anti-pattern**, found by grepping every
+`role === Role.ARTIST` / `role !== Role.ARTIST` in the API and checking each one against
+"is this evaluated against a record's OWN studio, or the caller's home" -- fixed alongside the
+primitive since leaving them would have left the bug half-closed:
+
+- `flashPieces.ts` `PATCH /:id` / `POST /:id/retire`: the "an ARTIST can never touch a
+  different artist's piece" hard block checked `req.user!.role === Role.ARTIST` directly --
+  invisible to a solo-owner guest (global role OWNER), who could otherwise fall through to a
+  staff `flashGallery.manage` grant at the host. Now keyed off `effectiveRoleAt`.
+- `lib/conversations.ts`'s `visibleConversationWhere`/`canViewConversation`: applied ONE flat
+  role and ONE home-computed permission-flags pair across every studio a caller can see at
+  all (the unioned home+guest list) -- a solo owner's home OWNER flags (full staff-thread
+  visibility) would have leaked into a guest studio's own, possibly-stricter ARTIST matrix,
+  the same over-permission direction as the OWNER-bypass risk above. Rewritten (new
+  `rolesByStudioForCaller` helper) to resolve role AND permission flags PER STUDIO, building
+  one `OR` clause group per studio rather than one flat clause applied everywhere.
+- `deposits.ts` `GET /:id/pdf` and `waivers.ts` `GET /:id/status`: branched on raw role to
+  choose the artist-ownership-scoped check vs. the staff-home-equality check -- a solo-owner
+  guest took the staff branch and got 404'd out of their own assigned work, the same
+  under-permission bug as the original report, just in two more files. Simplified: one
+  `effectiveRoleAt` call replaces the old manual re-derivation of home-or-guest membership.
+
+Verification at this point: full pre-existing 41-test suite passing unchanged.
+
+## Part 2 (`a6d635b`): regression tests, both directions
+
+`src/routes/soloGuestAccess.test.ts`, 21 new tests, real HTTP against real Express routers with
+self-contained Prisma fixtures (same convention as `permissionContext.test.ts`). Four personas
+(solo owner-artist guest, plain guest-artist control, home-only-artist control, host-OWNER
+control) exercised across inquiries, appointments, conversations, flash pieces, deposit forms,
+and waivers:
+
+- **The original bug, confirmed fixed**: solo owner-artist's host-assigned inquiry/appointment/
+  own staff-thread/own flash piece/own deposit form/own waiver all reachable (LIST blends them
+  in; DETAIL returns 200 where it used to 404/403).
+- **The over-permission direction, verified directly** (the test most worth reading): the
+  host's real ARTIST matrix denies `appointments.reschedule`; the solo owner's `POST
+  approve` on their own host appointment returns 403, NOT 200 -- proving the fix didn't
+  accidentally hand them their home OWNER role's unconditional bypass. Same shape verified for
+  flash pieces (cannot edit a *different* host artist's piece -- 403, not a staff
+  `flashGallery.manage` fallback) and conversations (cannot see a *different* host staff
+  member's private thread -- 404, not full staff-thread visibility).
+- **Controls unchanged**: the plain guest-artist and home-only-artist personas pass the
+  identical assertions the solo owner does, proving the already-correct paths weren't
+  disturbed. The host OWNER control passes at their own studio throughout.
+
+**Found while writing the appointments test, fixed alongside**: `GET /appointments/` only ever
+called the (already-fixed) `activeStudioIdsForCaller` when the caller's role was *literally*
+`ARTIST` -- one more instance of "dispatch on literal role before ever reaching the fixed
+primitive," this time in a list route rather than a permission check. A solo owner's own
+guest-studio appointments were silently never blended into their calendar. Fixed to match
+`inquiries.ts`'s own `GET /` precedent exactly: run the caller's normal query first, then
+separately blend in their own active-guest-studio-assigned appointments whenever they have an
+Artist profile, regardless of role.
+
+Full suite after this part: **62/62 passing** (41 pre-existing + 21 new), zero regressions.
+
+## Part 3: frontend dispatch verification
+
+Checked whether the UI chooses the artist experience vs. the staff experience per studio
+(rule 3) rather than from the caller's global role, focusing on the inquiry-detail click path
+named as the original symptom.
+
+**Already correctly built, verified by reading the code (not touched)**:
+`Inquiries.tsx:327` routes a card to `/my-inquiries/:id` (the reduced, artist-facing detail
+page) whenever that specific row's `fromGuestStudio` field is set, and to `/inquiries/:id`
+(the full staff view) otherwise -- a per-RECORD decision, never a per-caller one.
+`MyProjectDetail.tsx` already special-cases OWNER explicitly (`canViewOwnAssignments`
+includes it; `backTo`/`backLabel` route an OWNER back to "Inquiries & Projects" instead of
+"My Inquiries") -- comments in both files show this was already built anticipating exactly
+the solo-owner-guest shape, it just couldn't work end-to-end until the backend recognized the
+guest membership at all. `ProtectedRoute.tsx` has no role-based route gating that could have
+blocked an OWNER from reaching `/my-inquiries/:id`.
+
+**Appointments/conversations/flash-pieces need no equivalent frontend split**: unlike
+inquiries, none of these have a separate artist-facing route+page pair -- each is a single
+unified page/route reading `hasPermissionAt`/`hasPermissionOrSoloArtistAt`/
+`activeStudioIdsForCaller` directly, so Part 1's backend fix alone makes them correct with
+zero frontend changes.
+
+**Found, deliberately NOT fixed (flagged for a future UX pass, not a security issue)**:
+`AppointmentDetail.tsx`'s `canManage` (`= user?.role === 'OWNER' || user?.role ===
+'FRONT_DESK'`) and two more `user?.role === 'OWNER'` checks gate UI *visibility* (the "..."
+menu's Delete Permanently option, several manage-mode panels) on the caller's raw global role,
+not per-record. Now that the backend correctly lets a solo owner-artist reach a host
+appointment's detail page at all, they will see some staff-level controls (the live
+walkthrough below shows the full internal Notes/Checkout/manage-mode panel rendering, not the
+reduced view a plain ARTIST guest would see) that the backend independently, correctly
+rejects if actually invoked -- confirmed live (see Part 4's Approve-button test: the button
+renders, clicking it returns a real 403 from the server). This is a dead-click UX
+inconsistency, not a security hole: every one of `canManage`'s 11 call sites in this one file
+gates a *request*, and every one of those requests is independently enforced server-side
+(either a home-equality check unaffected by this fix, or `hasPermissionAt`/
+`hasPermissionOrSoloArtistAt` now correctly enforcing the host's real matrix). Not fixed here
+because `canManage` gates 11 different UI sections including the waiver-management panel, and
+correctly narrowing it needs a per-record signal the API doesn't currently return (an
+`isHomeRecord`/`fromGuestStudio`-equivalent field on `GET /appointments/:id`, which
+`inquiries.ts` already has and `appointments.ts` doesn't) -- a real but separate follow-up,
+not a one-line change safe to make under this task's own scope.
+
+## Part 4: live browser walkthrough (real Chromium via Playwright, isolated dev servers `:4099`/`:5183`)
+
+Reproduced the exact production scenario end to end, as a genuinely seeded solo owner-artist
+(one `OWNER`-role `User` with an attached `Artist` profile, the only active user at their own
+studio) with an active `GUEST` membership at a real, separate, non-solo, multi-staff host
+studio whose `ARTIST` role permission matrix explicitly denies `appointments.reschedule`.
+
+- **List**: logged in, navigated to `/inquiries` (the staff Inquiries & Projects page, since
+  this caller's role is OWNER) -- the host studio's assigned inquiry appeared in the list with
+  a "Host Studio Demo..." guest-studio badge, blended in via the fix's union logic.
+- **Detail (the original bug)**: clicked the card. The app navigated to
+  `/my-inquiries/:id` (confirming the per-record frontend dispatch from Part 3 fires
+  correctly, not `/inquiries/:id`), and the reduced artist-facing project detail page loaded
+  successfully -- no 403, no 404, no error text anywhere on the page. Top-right correctly
+  shows "Solo Owner Artist / Owner," proving this was the caller's real global role the whole
+  time, not a test performed as a plain ARTIST.
+- **Normal artist work at the host**: navigated directly to a separately-seeded `REQUESTED`
+  appointment for this same artist at the same host studio. The detail page loaded fully
+  (client name, project description, all sections) -- the second confirmation of the original
+  bug's fix, on a completely different record type through a completely different route.
+- **The critical over-permission check, live**: clicked "Approve" on that appointment. The
+  host's real ARTIST matrix denies `appointments.reschedule` (seeded deliberately), so despite
+  the caller's home role being OWNER, the click produced a real, visible red "Forbidden" error
+  in the UI and the appointment's status pill stayed "Requested," confirmed unchanged.
+  Server console logs showed the actual `403` response. This is Part 1's central safety
+  property (never let a solo owner's home OWNER role travel to a host as an unconditional
+  bypass), demonstrated end to end in a real browser, not just asserted in a unit test.
+
+No fix was made to the found `AppointmentDetail.tsx` UI-visibility gap during this walkthrough
+-- it was left exactly as found (see Part 3), and the walkthrough screenshots are themselves
+the evidence that it exists and that it stops at the UI layer.
+
+## CLAUDE.md hygiene
+
+No `prisma migrate dev` used anywhere this session -- this fix is entirely route/lib logic and
+test additions, no schema changes. No database reset offered or accepted. REPORT.md
+append-only; line count increased at every commit in this fix (verified against
+`git show HEAD:REPORT.md | wc -l` before each append: 9254 -> 9324 -> 9495 -> this entry).
+Every throwaway script this session (`_verify_solo_guest_403.ts`,
+`_prod_census_solo_guest.ts` from the investigation; `_verify_solo_guest_seed.ts`,
+`_verify_solo_guest_fixup.ts`, `_verify_solo_guest_appt_seed.ts`,
+`_walkthrough.mjs`/`solo_guest_walkthrough.cjs` from this build) was created outside the
+committed tree or deleted immediately after use, confirmed via `git status` showing only the
+intended files at each commit. Both isolated dev servers (`:4099` API, `:5183` web) killed and
+reconfirmed via a port check (`Get-NetTCPConnection -State Listen`) before ending the session.
+Working tree confirmed clean except the same four pre-existing, untouched-since-before-this-
+session files noted throughout (`logo-black-512.png`, `logo-white-512.png`,
+`marketing/package-lock.json`, the desktop screenshot mockup).
+
+The dev-DB fixtures the live walkthrough created (two new throwaway studios, their users/
+artists, two inquiries, one appointment, one RolePermission override) were left in place as
+inert leaf data -- same "leave test data" convention every prior session in this file has
+used -- since none of it is a config mutation on a shared, reused fixture; it's a fresh,
+disposable studio pair created solely for this walkthrough.
+
+## Commits
+
+Part 1: `c1a0b95`. Part 2: `a6d635b`. This entry (Parts 3 and 4, investigation-only,
+documentation): itself, no further source changes.
