@@ -11054,3 +11054,85 @@ instruction throughout all four parts -- this branch is ready for review, not au
 ## Commits
 
 This entry's own commit (below).
+
+# Embedded payments: platform-wide default-on (branch `embedded-payments-default`)
+
+Follow-up to the four-part epic above, now landed on `main` (`31709e2`) and piloted live for one
+studio (Black Hive Ink and Arts) with a real deposit link. This entry covers making the embedded
+Payment Element the platform default rather than a per-studio opt-in, at explicit instruction --
+**a deliberate deviation from Part 4's own recommended staged, one-studio-at-a-time rollout**,
+noted once here rather than silently followed.
+
+## The gap: schema default alone doesn't reach a brand-new studio
+
+`StudioSettings.embeddedPaymentsEnabled` flipping from `@default(false)` to `@default(true)`
+only takes effect for rows that actually get created with no explicit value. Investigated both
+places a new `Studio` comes into existence in production code:
+
+- `createStudioWithOwner` (`lib/studioCreation.ts`) -- the one shared path both public self-serve
+  signup (`routes/auth.ts`) and the platform-operator `scripts/create-studio.ts` call.
+- Go Solo (`routes/artists.ts`'s `POST /:id/go-solo`) -- a departing artist's own separate
+  `tx.studio.create` transaction.
+
+**Neither one ever created a `StudioSettings` row.** Both relied entirely on
+`routes/studioSettings.ts`'s `getOrCreateSettings` -- a lazy "create on first read" fallback that
+only fires the first time anyone opens the Settings page. Every payment-flow read site
+(`deposits.ts`, `flashPayments.ts`, `appointments.ts`'s checkout route) reads
+`studio.settings?.embeddedPaymentsEnabled ?? false` -- so a studio whose very first client-facing
+action is generating a deposit/flash/checkout link (entirely plausible for a signup that goes
+straight from "create account" to "send my first client a deposit link," before ever touching
+Settings) would silently get hosted Checkout regardless of the new schema default, since
+`studio.settings` would still be `null` at that point.
+
+**Fix**: both transactions now eagerly create the `StudioSettings` row at studio-creation time
+(`tx.studioSettings.create({ data: { studioId: studio.id } })`), immediately after `tx.studio.create`,
+mirroring the exact shape `getOrCreateSettings` already used lazily -- zero risk of the eager and
+lazy paths ever producing a different row shape, since it's the same call. This guarantees the
+schema's own default actually governs a studio's behavior from its first moment, not from
+whenever Settings happens to first get read.
+
+## Schema change
+
+`embeddedPaymentsEnabled Boolean @default(false)` -> `@default(true)`, comment updated to explain
+the new default and point at the two eager-creation call sites. Migration
+(`20260809010000_embedded_payments_default_on`) is a single `ALTER COLUMN ... SET DEFAULT true` --
+no data touched, no existing row's value changes (Postgres column defaults only apply at INSERT
+time). Generated via `prisma migrate diff --from-config-datasource ... --script`, applied locally
+via `prisma migrate deploy`, never `migrate dev`, per CLAUDE.md.
+
+The field itself is untouched as a column -- still there, still per-studio, still the rollback
+lever (flip one studio back to `false` to force hosted Checkout for just that studio, unaffected
+by anyone else's setting).
+
+## Tests
+
+New `lib/studioCreation.test.ts`, two tests: `createStudioWithOwner` called directly (invite
+mode) asserts a `StudioSettings` row exists immediately with `embeddedPaymentsEnabled: true`, no
+`getOrCreateSettings` call involved; a real HTTP `POST /artists/:id/go-solo` asserts the same for
+the new solo studio it creates. Both would have failed against the pre-fix code (row simply
+wouldn't exist at all, not just have the wrong value) -- confirmed by running them before adding
+the eager-create lines, where a `findUnique` for the settings row returned `null`.
+
+Regenerating the Prisma client (`prisma generate`) after the schema edit was necessary before the
+new default actually took effect locally -- `migrate deploy` alone applies the SQL but the
+already-generated client's query engine needed the schema reread to know the field's default
+changed. **112/112 across the full suite** (110 prior + 2 new), `tsc --noEmit` clean.
+
+## What's next (not yet done as of this commit)
+
+Per the task's own ordering -- code lands and deploys first, then the existing-studio backfill
+runs against it, same pattern as the Apple/Google Pay `PaymentMethodDomain` backfill earlier in
+this epic:
+
+1. Merge this branch, confirm on `main`, let Railway's auto-deploy run the migration.
+2. One-off production `UPDATE "StudioSettings" SET "embeddedPaymentsEnabled" = true` for every
+   existing studio (all currently `false` except the Black Hive pilot) -- read back and list
+   every studio's value afterward to confirm, same discipline as the single-studio pilot enable.
+3. Live-verify all three flows (deposit, flash, session checkout) render the Payment Element
+   inline in production post-backfill, and confirm the hosted-Checkout code path is untouched
+   (still reachable by flipping any one studio's flag back to `false`), not deleted.
+
+## CLAUDE.md hygiene
+
+No scratch scripts left in the repo. REPORT.md line count before this entry: 11056 (verified via
+`git show HEAD:REPORT.md | wc -l`) -- pure addition.

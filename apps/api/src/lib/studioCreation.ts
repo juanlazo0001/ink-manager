@@ -59,6 +59,16 @@ export async function createStudioWithOwner(params: CreateStudioParams) {
   return prisma.$transaction(async (tx) => {
     const studio = await tx.studio.create({ data: { name: studioName, slug } });
 
+    // Created eagerly rather than left to getOrCreateSettings' lazy
+    // fallback (routes/studioSettings.ts) -- a brand new studio's very
+    // first client-facing payment link can be created before anyone ever
+    // opens the Settings page, and every payment-flow read path falls
+    // back to `?? false` when this row doesn't exist yet. Eagerly
+    // creating it here means the schema's own embeddedPaymentsEnabled
+    // default actually takes effect from the studio's first moment, not
+    // just from whenever Settings happens to first get read.
+    await tx.studioSettings.create({ data: { studioId: studio.id } });
+
     const owner = await tx.user.create({
       data: {
         email: ownerEmail,

@@ -1888,13 +1888,19 @@ model StudioSettings {
   referralAllowRepeatRedemption Boolean  @default(false)
   // Embedded payments migration: per-studio opt-in for the in-app Payment
   // Element (deposit/flash-prepayment/session-checkout all gate on this
-  // same flag) -- default false so no studio's client-facing payment flow
-  // changes until an OWNER explicitly turns it on. Hosted Stripe Checkout
-  // stays fully intact as the fallback whenever this is off, and Stripe
-  // Connect mechanics (Standard, direct charges, application_fee_amount)
-  // are identical either way -- this only changes where the customer types
+  // same flag). Defaulted true as of the platform-wide rollout -- every
+  // studio's client-facing payment flow uses the embedded Payment Element
+  // now, both existing studios (backfilled by a one-off production update)
+  // and every studio created from here on (this default covers it, since
+  // both studio-creation paths -- createStudioWithOwner and go-solo --
+  // eagerly create this row at creation time rather than relying on
+  // getOrCreateSettings' lazy fallback). The field itself stays as the
+  // rollback lever: flip it false for one studio to force hosted Stripe
+  // Checkout, which remains fully intact as a fallback. Stripe Connect
+  // mechanics (Standard, direct charges, application_fee_amount) are
+  // identical either way -- this only changes where the customer types
   // their card number, never who's charged or how fees are split.
-  embeddedPaymentsEnabled       Boolean  @default(false)
+  embeddedPaymentsEnabled       Boolean  @default(true)
   // Settings "Defaults" tab audit: three more values that were previously
   // hardcoded constants (see REPORT.md's Part 1 proposal), now studio-level
   // defaults on the same model, same pattern as every field above --

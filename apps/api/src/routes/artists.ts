@@ -861,6 +861,11 @@ router.post("/:id/go-solo", requireAuth, async (req, res) => {
   const { studio, membership } = await prisma.$transaction(async (tx) => {
     const studio = await tx.studio.create({ data: { name: studioName.trim(), slug } });
 
+    // Same reasoning as createStudioWithOwner's own eager create -- see
+    // that function's comment. A departing artist can generate a payment
+    // link at their new solo studio before ever touching Settings there.
+    await tx.studioSettings.create({ data: { studioId: studio.id } });
+
     await tx.user.update({ where: { id: artist.userId }, data: { studioId: studio.id, role: Role.OWNER } });
 
     // Ends whatever active HOME membership this artist had (there is
