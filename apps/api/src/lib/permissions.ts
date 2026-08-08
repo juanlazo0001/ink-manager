@@ -95,6 +95,11 @@ export const PERMISSION_KEYS = [
   "settings.manageTheme",
   "audit.view",
   "settings.manageReferral",
+  // Phase 5: gates the artist field-visibility toggles (Pricing &
+  // financial detail / Internal notes) the same way every other settings
+  // domain has its own key -- see studioSettings.ts's
+  // presentSettingsPermissionGroups.
+  "settings.manageArtistVisibility",
 
   // Reports
   "reports.viewDashboard",
@@ -186,7 +191,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<(typeof CONFIGURABLE_ROLES)[number
 
     // settings.managePolicies/manageDefaults/manageTheme/manageReferral:
     // all FALSE -- the combined studio-settings PATCH was requireRole(OWNER)
-    // only for every field it accepts.
+    // only for every field it accepts. settings.manageArtistVisibility
+    // (Phase 5, new) follows the same default -- OWNER-only until an
+    // OWNER explicitly grants it, same as every other settings.* key.
     "audit.view",
 
     // reports.viewDashboard: see below -- corrected default.

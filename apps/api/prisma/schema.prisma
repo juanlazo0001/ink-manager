@@ -1793,6 +1793,16 @@ model StudioSettings {
   // at 0 days -- see REPORT.md for why that one wasn't made configurable.
   reminderWeekBeforeDays        Int      @default(7)
   reminderNightBeforeDays       Int      @default(1)
+  // Phase 5: studio-level, ARTIST-effective-role field visibility on
+  // Inquiry/Project responses -- extends the pre-existing hardcoded
+  // ARTIST_INQUIRY_SELECT projection (routes/inquiries.ts) with two
+  // studio-configurable toggles on top of it, never a replacement for its
+  // own already-reduced baseline. Null/missing keys default to `true`
+  // (current, pre-feature behavior) -- see
+  // lib/artistFieldVisibility.ts's own DEFAULT_ARTIST_FIELD_VISIBILITY,
+  // the single source of truth for these defaults and key names.
+  // Shape: { pricingDetail?: boolean, internalNotes?: boolean }
+  artistFieldVisibility         Json?
   createdAt                     DateTime @default(now())
   updatedAt                     DateTime @updatedAt
 

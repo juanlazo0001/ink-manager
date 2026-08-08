@@ -28,6 +28,11 @@ import { generateAndSendDepositForm } from "../lib/deposits";
 import { generateAndSendEstimate, saveEstimateDraft } from "../lib/estimates";
 import { generateUniqueReferralCode } from "../lib/referrals";
 import { studioHasActiveMembership, callerBelongsToStudio, hasPermissionAt } from "../lib/artistAccess";
+import {
+  applyArtistFieldVisibility,
+  getArtistFieldVisibility,
+  getArtistFieldVisibilityForStudios,
+} from "../lib/artistFieldVisibility";
 import { SELF_SCHEDULE_TOKEN_TTL_DAYS } from "../lib/selfSchedule";
 import { IntakeFieldKind } from "../../generated/prisma/enums";
 import { NOTE_AUTHOR_SELECT, canModifyNote, isBlankHtml, isValidAttachments } from "../lib/notes";
@@ -955,9 +960,10 @@ router.get("/", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), requirePe
     });
 
     if (guestMemberships.length > 0) {
+      const guestStudioIds = guestMemberships.map((m) => m.studioId);
       const guestRows = await prisma.inquiry.findMany({
         where: {
-          studioId: { in: guestMemberships.map((m) => m.studioId) },
+          studioId: { in: guestStudioIds },
           assignedArtistId: requestingArtist!.id,
           ...NOT_ARCHIVED,
           ...(statusValues.length > 0 ? { status: { in: statusValues } } : {}),
@@ -968,7 +974,18 @@ router.get("/", requireAuth, requireRole(Role.OWNER, Role.FRONT_DESK), requirePe
         take: 100,
       });
 
-      const guestInquiries = guestRows.map(({ studio, ...rest }) => ({ ...rest, fromGuestStudio: studio }));
+      // Phase 5: these rows describe a studio where THIS caller's
+      // effective role is ARTIST (a guest membership, never a home
+      // relationship) regardless of their real role at their own home --
+      // same "effective role at the record's studio" rule the solo-guest
+      // access fix established. Each row gets its OWN guest studio's
+      // visibility settings, since a caller can guest at several studios
+      // with different toggles at once.
+      const visibilityByStudio = await getArtistFieldVisibilityForStudios(guestStudioIds);
+      const guestInquiries = guestRows.map(({ studio, ...rest }) => ({
+        ...applyArtistFieldVisibility(rest, visibilityByStudio.get(studio.id)!),
+        fromGuestStudio: studio,
+      }));
       combined = [...combined, ...guestInquiries].sort(sortComparator(sort)).slice(0, 100);
     }
   }
@@ -1009,13 +1026,19 @@ router.get("/assigned-to-me", requireAuth, requireRole(Role.ARTIST), requirePerm
     orderBy: scopeAll ? { updatedAt: "desc" } : { assignedAt: "desc" },
   });
 
+  // Phase 5: this route has no studio scoping at all (see its own comment
+  // above), so a single response can span several studios with different
+  // visibility settings -- batched per distinct studioId, not one lookup
+  // per row.
+  const visibilityByStudio = await getArtistFieldVisibilityForStudios(inquiries.map((i) => i.studio.id));
+
   // Same fromGuestStudio convention as GET / -- null for a project at the
   // caller's own home studio, { id, name } for one at a studio where
   // they're only an active GUEST (this route has no studio scoping at all,
   // see its own comment above, so both are always possible here).
   res.json(
     inquiries.map(({ studio, ...rest }) => ({
-      ...rest,
+      ...applyArtistFieldVisibility(rest, visibilityByStudio.get(studio.id)!),
       fromGuestStudio: studio.id !== req.user!.studioId ? studio : null,
     })),
   );
@@ -1061,7 +1084,11 @@ router.get(
     }
 
     const { studio, ...rest } = inquiry;
-    res.json({ ...rest, fromGuestStudio: studio.id !== req.user!.studioId ? studio : null });
+    const visibility = await getArtistFieldVisibility(studio.id);
+    res.json({
+      ...applyArtistFieldVisibility(rest, visibility),
+      fromGuestStudio: studio.id !== req.user!.studioId ? studio : null,
+    });
   },
 );
 

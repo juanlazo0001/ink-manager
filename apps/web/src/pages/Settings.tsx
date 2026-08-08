@@ -153,6 +153,20 @@ interface StudioSettingsData {
   // Master on/off for the whole referral program -- default true (matches
   // every studio's always-on behavior before this flag existed).
   referralProgramEnabled: boolean
+  // Phase 5: which Inquiry/Project detail field groups an ARTIST-effective
+  // caller can see -- both default true (current, pre-feature behavior).
+  // Always materialized by the API (never actually null in a real
+  // response), typed optional here only because a stale cached response
+  // from before this field existed could theoretically lack it.
+  artistFieldVisibility?: ArtistFieldVisibilityData
+}
+
+// Phase 5: see lib/artistFieldVisibility.ts (API) for the authoritative
+// shape/defaults -- kept in sync by hand, same as every other
+// StudioSettings JSON field's frontend mirror in this file.
+interface ArtistFieldVisibilityData {
+  pricingDetail: boolean
+  internalNotes: boolean
 }
 
 // Phase 7B-2: the SMS reminder cadence's own editable templates/times --
@@ -416,6 +430,13 @@ export default function Settings() {
   const canManagePolicies = profile?.permissions.includes('settings.managePolicies') ?? false
   const canManageDefaults = profile?.permissions.includes('settings.manageDefaults') ?? false
   const canManageReferral = profile?.permissions.includes('settings.manageReferral') ?? false
+  // Phase 5: meaningless for a solo studio-of-one (there's no other artist
+  // for the toggle to govern -- the owner-artist sees everything in their
+  // own studio regardless, same as every other artist-facing control in
+  // this codebase's established solo-UI convention), so the section is
+  // hidden outright for one rather than shown disabled/no-op.
+  const canManageArtistVisibility =
+    (profile?.permissions.includes('settings.manageArtistVisibility') ?? false) && !profile?.isSoloStudio
   const canManageTemplates = profile?.permissions.includes('conversations.manageTemplates') ?? false
   const canManageDepositTiers = profile?.permissions.includes('depositTiers.manage') ?? false
   // OWNER only, matching GET/POST /jobs's own requireRole(Role.OWNER) --
@@ -811,6 +832,16 @@ export default function Settings() {
   const [themeSavingKey, setThemeSavingKey] = useState<string | null>(null)
   const [themeError, setThemeError] = useState<string | null>(null)
 
+  // Phase 5: artist field visibility -- same own-card, own-Edit-toggle
+  // treatment as Deposit Tiers/Reminder Send Times above.
+  const [editingArtistVisibility, setEditingArtistVisibility] = useState(false)
+  const [artistVisibilityDraft, setArtistVisibilityDraft] = useState<ArtistFieldVisibilityData>({
+    pricingDetail: true,
+    internalNotes: true,
+  })
+  const [artistVisibilitySaving, setArtistVisibilitySaving] = useState(false)
+  const [artistVisibilityError, setArtistVisibilityError] = useState<string | null>(null)
+
   useEffect(() => {
     if (!canViewPolicies) return
     let ignore = false
@@ -998,6 +1029,32 @@ export default function Settings() {
       setDepositTiersError(err instanceof Error ? err.message : 'Failed to save deposit tiers')
     } finally {
       setDepositTiersSaving(false)
+    }
+  }
+
+  function startEditingArtistVisibility() {
+    setArtistVisibilityDraft({
+      pricingDetail: policies?.artistFieldVisibility?.pricingDetail ?? true,
+      internalNotes: policies?.artistFieldVisibility?.internalNotes ?? true,
+    })
+    setArtistVisibilityError(null)
+    setEditingArtistVisibility(true)
+  }
+
+  async function handleArtistVisibilitySave() {
+    setArtistVisibilitySaving(true)
+    setArtistVisibilityError(null)
+    try {
+      const updated = await apiFetch<StudioSettingsData>('/studio-settings', {
+        method: 'PATCH',
+        body: JSON.stringify({ artistFieldVisibility: artistVisibilityDraft }),
+      })
+      setPolicies(updated)
+      setEditingArtistVisibility(false)
+    } catch (err) {
+      setArtistVisibilityError(err instanceof Error ? err.message : 'Failed to save')
+    } finally {
+      setArtistVisibilitySaving(false)
     }
   }
 
@@ -2771,6 +2828,136 @@ export default function Settings() {
                         ? 'editorial-btn-secondary rounded-full border px-4 py-2 transition disabled:opacity-60'
                         : 'rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60'
                     }
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Phase 5: which Inquiry/Project detail fields an ARTIST-effective
+              caller can see -- hidden entirely for a solo studio (see
+              canManageArtistVisibility's own comment), never shown
+              disabled/no-op, matching this codebase's established solo-UI
+              convention. */}
+          {activeTab === 'defaults' && canManageArtistVisibility && policies && (
+            <div className="mt-6 card-surface rounded-2xl border border-border bg-surface p-6">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className={isEditorial ? 'sc text-[22px]' : 'text-lg font-semibold text-fg'}>
+                    Artist Field Visibility
+                  </h2>
+                  <p className="mt-1 text-sm text-fg-secondary">
+                    Choose which project detail groups your artists can see on their own assigned
+                    inquiries/projects. A guest artist's visibility here is set by whichever studio
+                    they're viewing the project at -- their home studio's choice never follows them
+                    to a studio they're only guesting at.
+                  </p>
+                </div>
+                {!editingArtistVisibility && (
+                  <button
+                    type="button"
+                    onClick={startEditingArtistVisibility}
+                    className={
+                      isEditorial
+                        ? 'editorial-btn-secondary shrink-0 rounded-full border px-3 py-1.5 transition'
+                        : 'shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface'
+                    }
+                  >
+                    Edit
+                  </button>
+                )}
+              </div>
+
+              {!editingArtistVisibility && (
+                <div className="mt-4 divide-y divide-border">
+                  <div className="flex items-center justify-between gap-3 py-3 text-sm">
+                    <span className="text-fg">Pricing &amp; financial detail</span>
+                    <span className="font-medium text-fg">
+                      {(policies.artistFieldVisibility?.pricingDetail ?? true) ? 'Visible' : 'Hidden'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 py-3 text-sm">
+                    <span className="text-fg">Internal notes</span>
+                    <span className="font-medium text-fg">
+                      {(policies.artistFieldVisibility?.internalNotes ?? true) ? 'Visible' : 'Hidden'}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {editingArtistVisibility && (
+                <div className="mt-4 space-y-4">
+                  <div>
+                    <label className="flex items-start gap-2 text-sm text-fg">
+                      <input
+                        type="checkbox"
+                        checked={artistVisibilityDraft.pricingDetail}
+                        onChange={(e) =>
+                          setArtistVisibilityDraft((prev) => ({ ...prev, pricingDetail: e.target.checked }))
+                        }
+                        className="mt-0.5 h-4 w-4 shrink-0 rounded border-border bg-surface-inset accent-accent"
+                      />
+                      <span>
+                        Pricing &amp; financial detail
+                        <span className="block text-xs text-fg-muted">
+                          Price/time estimate range, client-stated budget, planned-session estimates,
+                          and deposit signed/paid status. Off: an artist entering their own estimate
+                          (if your studio lets them) won't see the range they're quoting against --
+                          only turn this off if you're comfortable with that trade-off.
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+                  <div>
+                    <label className="flex items-start gap-2 text-sm text-fg">
+                      <input
+                        type="checkbox"
+                        checked={artistVisibilityDraft.internalNotes}
+                        onChange={(e) =>
+                          setArtistVisibilityDraft((prev) => ({ ...prev, internalNotes: e.target.checked }))
+                        }
+                        className="mt-0.5 h-4 w-4 shrink-0 rounded border-border bg-surface-inset accent-accent"
+                      />
+                      <span>
+                        Internal notes
+                        <span className="block text-xs text-fg-muted">
+                          On top of each note's own "share with artist" toggle -- a note must be
+                          BOTH marked shareable AND this switched on to ever reach an artist.
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+
+                  {artistVisibilityError && <p className="text-sm text-danger">{artistVisibilityError}</p>}
+
+                  <div className="flex gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={handleArtistVisibilitySave}
+                      disabled={artistVisibilitySaving}
+                      className={
+                        isEditorial
+                          ? 'editorial-btn-primary rounded-full bg-accent px-4 py-2 text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                          : 'rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60'
+                      }
+                    >
+                      {artistVisibilitySaving ? 'Saving…' : 'Save'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingArtistVisibility(false)
+                        setArtistVisibilityError(null)
+                      }}
+                      disabled={artistVisibilitySaving}
+                      className={
+                        isEditorial
+                          ? 'editorial-btn-secondary rounded-full border px-4 py-2 transition disabled:opacity-60'
+                          : 'rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60'
+                      }
                     >
                       Cancel
                     </button>

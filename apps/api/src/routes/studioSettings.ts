@@ -8,6 +8,8 @@ import { THEME_PRESET_KEYS, isValidThemePreset } from "../lib/themePresets";
 import { getEffectiveIntakeFormFields } from "../lib/intakeFormFields";
 import { resolveIntakeForm } from "../lib/intakeForms";
 import { hasPermission, type PermissionKey } from "../lib/permissions";
+import { emitInvalidation } from "../lib/realtime/registry";
+import { normalizeArtistFieldVisibility } from "../lib/artistFieldVisibility";
 
 // Public: /privacy/:studioSlug and /terms/:studioSlug (unauthenticated) need
 // to read these two fields by slug, same "public sub-router mounted first"
@@ -92,7 +94,10 @@ staffRouter.get("/", requireRole(Role.OWNER, Role.FRONT_DESK, Role.ARTIST), asyn
   const depositTiers = Array.isArray(settings.depositTiers) && settings.depositTiers.length > 0
     ? settings.depositTiers
     : DEFAULT_DEPOSIT_TIERS;
-  res.json({ ...settings, depositTiers });
+  // Same materialize-the-default treatment as depositTiers above -- the
+  // Settings UI renders two real checkboxes, not a tri-state "unset" one.
+  const artistFieldVisibility = normalizeArtistFieldVisibility(settings.artistFieldVisibility);
+  res.json({ ...settings, depositTiers, artistFieldVisibility });
 });
 
 const TEXT_FIELDS = [
@@ -207,6 +212,20 @@ function isValidReminderSendTimes(value: unknown): boolean {
   );
 }
 
+// Phase 5: both keys optional (a partial update -- e.g. flipping only
+// pricingDetail -- must not require re-sending internalNotes too) and, when
+// present, must be a real boolean -- an unrecognized key is silently
+// ignored rather than rejected, same tolerance normalizeArtistFieldVisibility
+// (lib/artistFieldVisibility.ts) already has for a stored value predating a
+// future third key.
+function isValidArtistFieldVisibility(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  if (v.pricingDetail !== undefined && typeof v.pricingDetail !== "boolean") return false;
+  if (v.internalNotes !== undefined && typeof v.internalNotes !== "boolean") return false;
+  return true;
+}
+
 function isValidMessageTemplates(value: unknown): boolean {
   if (!Array.isArray(value)) return false;
 
@@ -270,6 +289,7 @@ function presentSettingsPermissionGroups(body: Record<string, unknown>): Set<Per
   if (body.messageTemplates !== undefined) groups.add("conversations.manageTemplates");
   if (body.depositTiers !== undefined) groups.add("depositTiers.manage");
   if (body.themePreset !== undefined) groups.add("settings.manageTheme");
+  if (body.artistFieldVisibility !== undefined) groups.add("settings.manageArtistVisibility");
 
   return groups;
 }
@@ -448,7 +468,32 @@ staffRouter.patch("/", async (req, res) => {
     data.themePreset = body.themePreset;
   }
 
+  if (body.artistFieldVisibility !== undefined) {
+    if (body.artistFieldVisibility !== null && !isValidArtistFieldVisibility(body.artistFieldVisibility)) {
+      return res.status(400).json({
+        error: "artistFieldVisibility must be an object with optional boolean pricingDetail/internalNotes keys",
+      });
+    }
+    // Merged with the current stored value, not overwritten wholesale --
+    // a request touching only one key (e.g. flipping pricingDetail alone)
+    // must not silently reset the other back to its default.
+    data.artistFieldVisibility = {
+      ...normalizeArtistFieldVisibility(existing.artistFieldVisibility),
+      ...(body.artistFieldVisibility ?? {}),
+    };
+  }
+
   const updated = await prisma.studioSettings.update({ where: { studioId: req.user!.studioId }, data });
+
+  if (body.artistFieldVisibility !== undefined) {
+    // Realtime standing rule: a connected artist's already-open Inquiries
+    // list/detail must pick up the new field visibility without a
+    // redeploy or manual refresh. Reuses the existing studio-wide
+    // inquiry.updated event (no specific inquiryId -- this can affect
+    // every inquiry in the studio, not one) rather than adding a new
+    // event type solely for this.
+    emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+  }
 
   await logAudit({
     studioId: req.user!.studioId,
@@ -478,10 +523,11 @@ staffRouter.patch("/", async (req, res) => {
       "reminderNightBeforeDays",
       "referralAllowRepeatRedemption",
       "referralProgramEnabled",
+      "artistFieldVisibility",
     ] as (keyof typeof existing)[]),
   });
 
-  res.json(updated);
+  res.json({ ...updated, artistFieldVisibility: normalizeArtistFieldVisibility(updated.artistFieldVisibility) });
 });
 
 // GET/PUT for a specific form's own field list moved to routes/

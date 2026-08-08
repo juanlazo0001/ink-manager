@@ -106,6 +106,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { key: 'settings.manageTheme', label: 'Manage theme', description: 'Change the studio portal’s color theme.' },
       { key: 'audit.view', label: 'View the audit log', description: 'See the history of changes made to a record.' },
       { key: 'settings.manageReferral', label: 'Manage referral program', description: 'Set the reward amount for client referrals.' },
+      { key: 'settings.manageArtistVisibility', label: 'Manage artist field visibility', description: 'Choose which project detail fields (pricing/financial detail, internal notes) artists can see.' },
     ],
   },
   {
