@@ -11136,3 +11136,57 @@ this epic:
 
 No scratch scripts left in the repo. REPORT.md line count before this entry: 11056 (verified via
 `git show HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Embedded payments default-on: merged, backfilled, and live-verified
+
+Merge (`b2e7758`, fast-forward, no conflicts), Railway auto-deploy of both `api` and `web`
+confirmed back online, then the two remaining steps from the previous entry's "what's next":
+
+**Production backfill**: `UPDATE "StudioSettings" SET "embeddedPaymentsEnabled" = true` with no
+`WHERE` (every studio, this time, not a single pilot) -- read back and listed by name and id
+afterward. All 9 studios now `true` (Black Hive was already `true` from its own pilot enable
+earlier in this session; the other 8 flipped from `false`). Column default confirmed `true` via
+`information_schema.columns` before running the update, confirming the migration itself had
+already applied from the merge.
+
+**Live verification, deposit**: already covered by the pilot-enable work earlier this session
+(Black Hive's real deposit link, Payment Element mounted, Apple/Google Pay wallets present).
+
+**Live verification, flash prepayment**: only Black Hive has a connected Stripe account in
+production (confirmed via `StudioIntegration` -- the other 8 studios have the flag on now but no
+Stripe connection, so there's no embedded-vs-hosted distinction to observe for them yet; the flag
+being on is inert without a connected account). Created a synthetic, obviously-fake QA client +
+flash piece + flash-payment-pending inquiry directly against production (same self-contained
+seed/cleanup pattern as Part 4's dev-mode scripts, just pointed at prod since that's where the
+connected account lives) -- loaded the real link on a real mobile-emulated browser: Payment
+Element mounted (`Secure payment input frame` present), no redirect to `checkout.stripe.com`, no
+console errors. Deleted the inquiry, flash piece, and client immediately after, confirmed by the
+cleanup script's own printed ids.
+
+**Session checkout: verified by code review + Part 4's existing live evidence, not a fresh
+production run.** This flow is staff-embedded, not a public token-based page -- exercising it live
+in Black Hive's real production account would require either using the studio owner's actual
+login (not available, not appropriate to ask for) or creating a synthetic staff `User` row in a
+real tenant's account, a meaningfully bigger and riskier step than the two public, token-scoped
+flows above. Two things make a fresh production run unnecessary rather than skipped outright:
+this commit's diff touched only `schema.prisma`, `studioCreation.ts`, and `artists.ts`'s go-solo
+transaction (confirmed via `git diff 31709e2 b2e7758 --stat`) -- `appointments.ts`'s checkout
+route, the actual embedded-vs-hosted branching logic for this flow, is byte-for-byte unchanged;
+and Part 4 already produced live Stripe test-mode evidence of this exact same code path correctly
+rendering the Payment Element under the identical gating condition (`embeddedPaymentsEnabled:
+true`, real connected account). Today's change only widens which studios reach that condition, it
+doesn't touch the condition or what happens on either side of it.
+
+**Hosted Checkout fallback confirmed intact, not deleted**: same `git diff --stat` evidence --
+`createDepositCheckoutSession`, `createFlashPaymentCheckoutSession`, and the non-embedded branch
+of `appointments.ts`'s checkout route are all untouched files in this change. Flipping any single
+studio's `embeddedPaymentsEnabled` back to `false` still routes that one studio to hosted
+Checkout, unaffected by every other studio's value -- verified by reading, not by re-running,
+since the code itself didn't move.
+
+## CLAUDE.md hygiene
+
+No scratch scripts left in the repo (`_seed_flash_verify.ts` / `_cleanup_flash_verify.ts` created
+directly in `apps/api/src`, both deleted after use; production rows they created were deleted by
+the cleanup script itself before the files were removed). REPORT.md line count before this entry:
+11138 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition.
