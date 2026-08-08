@@ -66,6 +66,15 @@ export default function IntakeForm() {
   const { studioSlug, formSlug } = useParams<{ studioSlug: string; formSlug?: string }>()
   const [searchParams] = useSearchParams()
   const draftToken = searchParams.get('draft')
+  // 6a Epic Part 4: set only when arriving from an artist's own public
+  // page BOOK flow -- see ArtistPublicPage.tsx. Distinct from the
+  // configurable preferredArtistId form field below (a soft, studio-
+  // enabled-or-not customer preference that never auto-assigns): this
+  // always assigns the artist directly, server-side, regardless of that
+  // studio's own intake-form configuration -- reused, not reinvented, from
+  // the exact same "the artist chose this deep link, not the studio" logic
+  // the backend's own POST /inquiries applies.
+  const bookingArtistId = searchParams.get('bookingArtistId')
 
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
@@ -320,6 +329,7 @@ export default function IntakeForm() {
           budget: budget ? formatCurrencyInput(budget) : undefined,
           desiredTiming: desiredTiming || undefined,
           preferredArtistId: preferredArtistId || undefined,
+          bookingArtistId: bookingArtistId || undefined,
           referenceImages: referenceImages.urls,
           placementImages: placementImages.urls,
           draftToken: draftToken || undefined,

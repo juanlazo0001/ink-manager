@@ -252,6 +252,29 @@ router.post("/", optionalAuth, async (req, res) => {
     }
   }
 
+  // 6a Epic Part 4: the artist's own public page's BOOK flow -- distinct
+  // from preferredArtistId above, which is a soft, customer-stated
+  // preference gated behind the studio's own intake-form field
+  // configuration (isShown("preferredArtist")) and never auto-assigns.
+  // Clicking through FROM the artist's own page is a deliberate,
+  // artist-initiated deep link, not a generic form field a studio may or
+  // may not have enabled -- so this ALWAYS assigns directly, regardless of
+  // that studio's intake-form configuration, reusing the exact same
+  // assignedArtistId/assignedAt/ARTIST_ASSIGNED shape PATCH /:id/assign's
+  // own first-assignment branch already uses (see below), just applied at
+  // creation instead of as a separate later staff action.
+  let bookingArtistId: string | null = null;
+  if (typeof body.bookingArtistId === "string" && body.bookingArtistId) {
+    const bookingArtist = await prisma.artist.findUnique({ where: { id: body.bookingArtistId }, include: { user: true } });
+    const bookingArtistBelongsToStudio =
+      bookingArtist != null &&
+      (bookingArtist.user.studioId === studio.id || (await studioHasActiveMembership(studio.id, bookingArtist.id)));
+    if (!bookingArtistBelongsToStudio) {
+      return res.status(400).json({ error: "bookingArtistId must belong to this studio" });
+    }
+    bookingArtistId = body.bookingArtistId;
+  }
+
   // Package O: "A friend referred me" -- only meaningful for channel ===
   // REFERRAL (any referralCode riding along on a different channel is
   // ignored, not honored, so a client can't backdoor a referral relationship
@@ -441,7 +464,16 @@ router.post("/", optionalAuth, async (req, res) => {
       // Powder Brows) lands in CANDIDACY_REVIEW instead of the default NEW
       // -- before the normal pricing/estimate stage. False (Tattoo) never
       // sets this, same default NEW as before this feature existed.
-      status: service.requiresCandidacyReview ? InquiryStatus.CANDIDACY_REVIEW : InquiryStatus.NEW,
+      // bookingArtistId (6a Epic Part 4) takes the SAME precedence a
+      // studio's own manual first-assignment would (ARTIST_ASSIGNED),
+      // except candidacy review still wins if this service requires it --
+      // an orthogonal, pre-existing gate this deep link doesn't bypass,
+      // even though the artist becomes assigned either way.
+      status: service.requiresCandidacyReview
+        ? InquiryStatus.CANDIDACY_REVIEW
+        : bookingArtistId
+          ? InquiryStatus.ARTIST_ASSIGNED
+          : InquiryStatus.NEW,
       channel,
       description,
       colorOrBlackGrey,
@@ -451,6 +483,8 @@ router.post("/", optionalAuth, async (req, res) => {
       budget,
       desiredTiming,
       preferredArtistId,
+      assignedArtistId: bookingArtistId,
+      assignedAt: bookingArtistId ? new Date() : null,
       referenceImages,
       placementImages,
       referenceImagesMeta: buildImageMeta(referenceImages, imageUploaderId) as unknown as Prisma.InputJsonValue,

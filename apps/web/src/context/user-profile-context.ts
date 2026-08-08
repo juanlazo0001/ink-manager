@@ -37,6 +37,11 @@ export interface UserProfile {
     // derived showProfileSetupWizard below is what pages should actually
     // branch on; this raw timestamp is exposed mainly for completeness.
     profileSetupCompletedAt: string | null
+    // 6a Epic Part 4: the public artist page. publishedAt null = never
+    // published (default) or currently unpublished -- Profile.tsx's own
+    // publish toggle is the only writer of either field.
+    publicSlug: string | null
+    publishedAt: string | null
   }
   permissions: string[]
   // Solo artist architecture, Phase 3: true only for an ARTIST-role user

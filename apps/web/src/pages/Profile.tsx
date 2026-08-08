@@ -106,6 +106,42 @@ export default function Profile() {
     }
   }, [isArtist])
 
+  // 6a Epic Part 4: publish/unpublish the public artist page.
+  const [publishSlugDraft, setPublishSlugDraft] = useState('')
+  const [publishSubmitting, setPublishSubmitting] = useState(false)
+  const [publishError, setPublishError] = useState<string | null>(null)
+
+  async function handlePublish() {
+    if (!profile?.artist) return
+    setPublishSubmitting(true)
+    setPublishError(null)
+    try {
+      await apiFetch(`/artists/${profile.artist.id}/publish`, {
+        method: 'PATCH',
+        body: JSON.stringify({ publish: true, publicSlug: publishSlugDraft }),
+      })
+      await refresh()
+    } catch (err) {
+      setPublishError(err instanceof Error ? err.message : 'Failed to publish')
+    } finally {
+      setPublishSubmitting(false)
+    }
+  }
+
+  async function handleUnpublish() {
+    if (!profile?.artist) return
+    setPublishSubmitting(true)
+    setPublishError(null)
+    try {
+      await apiFetch(`/artists/${profile.artist.id}/publish`, { method: 'PATCH', body: JSON.stringify({ publish: false }) })
+      await refresh()
+    } catch (err) {
+      setPublishError(err instanceof Error ? err.message : 'Failed to unpublish')
+    } finally {
+      setPublishSubmitting(false)
+    }
+  }
+
   async function handleResidencyDecision(id: string, action: 'accept' | 'decline') {
     setResidencyActionId(id)
     setResidencyActionError(null)
@@ -770,6 +806,74 @@ export default function Profile() {
                   Manage
                 </Link>
               </div>
+            </div>
+          )}
+
+          {/* 6a Epic Part 4: publishing is artist-controlled, full stop --
+              no staff bypass exists on the backend, so there's nothing for
+              a studio's own Settings to show here either. */}
+          {profile && isArtist && profile.artist && (
+            <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-6">
+              <p className="text-xs font-semibold uppercase tracking-wider text-fg-muted">Public artist page</p>
+              <p className="mt-2 text-sm text-fg-secondary">
+                A public page clients can find and book you from directly -- your photo, bio, specialties, and
+                upcoming locations (home base plus any confirmed guest residencies).
+              </p>
+
+              {publishError && <p className="mt-3 text-sm text-danger">{publishError}</p>}
+
+              {profile.artist.publishedAt ? (
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface-inset px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="text-xs text-fg-muted">Live at</p>
+                    <a
+                      href={`/artist/${profile.artist.publicSlug}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="truncate text-sm font-medium text-accent hover:underline"
+                    >
+                      /artist/{profile.artist.publicSlug}
+                    </a>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleUnpublish}
+                    disabled={publishSubmitting}
+                    className="shrink-0 rounded-full border border-danger/40 px-4 py-2 text-sm font-medium text-danger transition hover:bg-danger/10 disabled:opacity-60"
+                  >
+                    Unpublish
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-4">
+                  <label htmlFor="publicSlug" className="mb-1 block text-sm font-medium text-fg-secondary">
+                    Page URL
+                  </label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm text-fg-muted">/artist/</span>
+                    <input
+                      id="publicSlug"
+                      type="text"
+                      value={publishSlugDraft}
+                      onChange={(e) => setPublishSlugDraft(e.target.value)}
+                      placeholder="your-name"
+                      className="min-w-0 flex-1 rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                    />
+                    <button
+                      type="button"
+                      onClick={handlePublish}
+                      disabled={publishSubmitting || !publishSlugDraft.trim()}
+                      className="shrink-0 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                    >
+                      {publishSubmitting ? 'Publishing…' : 'Publish'}
+                    </button>
+                  </div>
+                  <p className="mt-2 text-xs text-fg-muted">
+                    Your home studio needs at least one location on file before you can publish -- ask your studio's
+                    owner to add one in Settings if this fails.
+                  </p>
+                </div>
+              )}
             </div>
           )}
 

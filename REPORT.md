@@ -9920,3 +9920,274 @@ after the walkthrough -- inert, since that studio is disposable and never reused
 
 Part 1 (investigation): `95622e0`. Part 2 (build): `37266fd`. Part 3 (verification + the
 frontend crash fix it caught): `884bcfb`.
+
+# 6a Epic Parts 1-4: guest residencies + location-aware artist booking page
+
+Design decided with Juan ahead of time; five parts, commit and push per part. This entry covers
+Parts 1-4 in one pass -- Parts 1-3 shipped in `3a9f867`/`304e076`/`62ade74` without their own
+REPORT.md entries (a hygiene miss against this file's own append-per-part convention, corrected
+here rather than left silent) alongside Part 4's own build. Part 5 (verification) is separate,
+not-yet-started work.
+
+## Part 1 (`3a9f867`): schema, solo session
+
+New `Residency` model: `membershipId` (the ongoing `StudioMembership` relationship) plus a
+denormalized `artistId` -- required because Postgres `EXCLUDE` constraints can't join, and the
+overlap invariant below needs to compare across an artist's memberships at different studios,
+not within one membership. `startDate`/`endDate` (both required from the moment a stint exists,
+per Part 2's own mandatory-dates rule), `status` (`PENDING`/`CONFIRMED`/`DECLINED`/`CANCELLED`,
+default `PENDING`). Many rows per membership -- the membership is the relationship, each
+Residency is one scheduled stint inside it.
+
+`Artist` additions: `publicSlug` (unique, nullable) and `publishedAt` (nullable timestamp, same
+flag-via-nullable-timestamp convention as `profileSetupCompletedAt`), for Part 4's public page.
+Both default to unset, so this commit alone changes nothing for any existing artist.
+
+Overlap invariant, belt-and-suspenders: an application-layer check (real enforcement, produces a
+friendly error) plus a hand-authored Postgres `EXCLUDE` constraint as a second, DB-level line of
+defense --
+
+```sql
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+ALTER TABLE "Residency" ADD CONSTRAINT "residency_no_overlap_confirmed"
+  EXCLUDE USING gist (
+    "artistId" WITH =,
+    daterange("startDate"::date, "endDate"::date, '[]') WITH &&
+  )
+  WHERE (status = 'CONFIRMED');
+```
+
+Scoped to `CONFIRMED` only -- multiple `PENDING` proposals are allowed to overlap (a host can
+propose dates before the artist has decided anything; the moment of truth is acceptance, not
+proposal). Verified directly against the real dev DB with a throwaway script (deleted after
+use): an overlapping `CONFIRMED` insert is rejected, a non-overlapping `CONFIRMED` insert
+succeeds, an overlapping `PENDING` insert succeeds.
+
+Migrated the standing way -- `prisma migrate diff --from-config-datasource prisma.config.ts
+--to-schema prisma/schema.prisma --script` then `prisma migrate deploy` -- never `migrate dev`.
+
+## Part 2 (`304e076`): residency management
+
+Small additive schema change riding along in this still-solo session:
+`ArtistMembershipInvite.residencyStartDate`/`residencyEndDate` (both nullable at the column
+level, but enforced as mandatory in the route layer specifically for a `GUEST` invite -- a
+`HOME` invite has no residency at all).
+
+- **Invite flow**: `routes/studios.ts`'s invite-creation route now rejects a `GUEST` invite with
+  no residency dates. The dates ride on the invite itself (not a `Residency` row yet -- no
+  `StudioMembership` exists to hang one off until the invite is accepted) plus a fail-fast
+  overlap check at send time against the *existing* identity's other confirmed residencies
+  (skipped for a brand-new identity, which can't conflict with anything yet).
+- **Accepting is consent**: both accept branches (`routes/artistInvites.ts`, new-identity and
+  existing-identity) create the first stint as `CONFIRMED` directly, inside the same transaction
+  that creates the `StudioMembership` -- overlap re-checked immediately before that transaction,
+  since time has passed since the invite was sent and a new conflict could have appeared.
+- **`lib/residencies.ts`**: `findResidencyOverlapConflict`, `residencyOverlapErrorMessage`,
+  `isResidencyExclusionViolation` (string-matches the constraint name, the app-layer check's
+  belt to the DB constraint's suspenders).
+- **`routes/residencies.ts`** (new router): `GET /mine` (the artist's own stints across every
+  studio, ungated -- an artist always sees all of their own stints, this is inalienable), `GET
+  /?membershipId=` (host staff view), `POST /` (create `PENDING`, gated behind the new
+  `residencies.manage` permission key -- `TRUE` by default for `FRONT_DESK`, same tier as the
+  other scheduling keys), `PATCH /:id` (edit dates or `cancel: true`), `POST /:id/accept` /
+  `POST /:id/decline` (artist-only, no permission gate needed since it's the artist's own
+  inalienable choice, not a staff-grantable capability).
+- **Judgment call, built as recommended**: editing a `CONFIRMED` stint's dates resets it to
+  `PENDING` -- a date change to an already-accepted stint is a new proposal, not a silent
+  mutation of something the artist already consented to; the artist has to accept the new dates
+  too.
+- **Frontend**: `Team.tsx` gained the conditional residency-date fields on the Invite Artist
+  modal (`GUEST` only) and a full "Residencies" management modal per guest membership
+  (propose/edit/cancel). `Profile.tsx` gained a "My residencies" card (accept/decline for
+  `PENDING`, across every studio the artist has a stint at).
+- **Realtime**: new `residency.changed` event type, wired into the registry's `keysFor`.
+- `src/routes/residencies.test.ts`, 6 tests -- invite validation, accept-creates-`CONFIRMED` for
+  both a new and an existing identity, host-staff CRUD with `residencies.manage` enforcement,
+  the CONFIRMED-edit-resets-to-PENDING behavior, overlap rejected at create, overlap rejected at
+  accept.
+
+## Part 3 (`62ade74`): residency-aware availability, no fork
+
+Traced every real caller of `getSuggestedTimes`/`getAvailableDates`/`getSlotsForDate` before
+touching anything, confirming they're all downstream of exactly one shared function
+(`resolveAvailabilityContext`/`dayWindow` in `lib/schedulingAssistant.ts`) -- the staff
+scheduling assistant, client self-scheduling, flash booking (via `selfSchedule.ts`, which
+doesn't have independent availability logic either), and the deposit-form "suggest a time"
+action. Fixing this one place satisfies "reuse, don't fork" for all four consumers at once.
+
+`lib/residencies.ts` gained `getConfirmedResidenciesForArtist` and the core gate:
+
+```ts
+export function isArtistBookableAtStudioOnDate(
+  homeStudioId: string,
+  targetStudioId: string,
+  confirmedResidencies: ConfirmedResidencyWindow[],
+  dateKey: string,
+): boolean {
+  const activeResidency = confirmedResidencies.find((r) => {
+    const startKey = civilDateKey(r.startDate, "UTC");
+    const endKey = civilDateKey(r.endDate, "UTC");
+    return dateKey >= startKey && dateKey <= endKey;
+  });
+  if (activeResidency) {
+    return activeResidency.studioId === targetStudioId;
+  }
+  return targetStudioId === homeStudioId;
+}
+```
+
+During a `CONFIRMED` residency at host B: bookable at B, blocked at home and everywhere else.
+Outside any residency: bookable at home only -- a residency AT home is the simple degenerate
+case of the same rule, not special-cased. This check runs FIRST in `dayWindow`, ahead of the
+pre-existing guest-window/`preferredSchedule` checks, so it fully overrides them rather than
+composing with them during an active residency. Reuses `studioTime.ts`'s `civilDateKey`
+convention (UTC-anchored civil-date comparison, inclusive both ends) -- the same convention
+already established for guest-window checks, not a new date-comparison scheme.
+
+`artists.ts`'s `artistListSelect` gained a `residencies` field (CONFIRMED only) so
+`Calendar.tsx` can grey-shade an artist as "away on residency" at their home studio's calendar
+during a confirmed stint elsewhere -- reuses the existing `isOutsideGuestWindow` grey-shading
+pattern, doesn't invent a new one.
+
+`src/lib/residencyAvailability.test.ts`, 4 tests calling `getSuggestedTimes` directly: outside
+residency (home yes / host no), during a CONFIRMED residency (host yes / home no), a PENDING
+stint unlocks nothing, after the window ends it reverts to home-only.
+
+## Part 4: the public artist page
+
+### Backend
+
+- **`routes/artistPublicProfile.ts`** (new, public, no auth): `GET /public/:publicSlug` --
+  404s identically (never distinguishing why, same principle as any other public 404 in this
+  codebase) whether the slug doesn't exist or the artist has never published. Returns name,
+  avatar, bio, specialties, home studio, and every upcoming `CONFIRMED` residency
+  (`endDate >= now`) with its studio -- `PENDING`/`DECLINED`/`CANCELLED` stints never leak here,
+  only a real, accepted commitment is client-facing. Mounted in `index.ts` BEFORE the
+  authenticated `artistsRouter`, same public-router-mounts-first convention as every other
+  public/staff route pair in this codebase (`artists.ts` has a blanket `requireAuth`).
+- **`PATCH /artists/:id/publish`** (in `artists.ts`, self-only -- `artist.userId !==
+  req.user!.userId` is a 404, not a 403, so a curious OWNER can't even confirm the route exists
+  for someone else's artist row): validates a `publicSlug` via the existing `slugify()` helper,
+  checks slug uniqueness, and enforces **publishable-requires-location**: the artist's HOME
+  studio (looked up fresh from the DB via `artist.user.studioId`, never trusted from the JWT --
+  same standing rule as every other studio-scoping check in this codebase) needs at least one
+  `Location` on file, or the publish attempt 400s with an explanation ("Your home studio needs
+  at least one location on file before you can publish your page. Ask your studio's owner to add
+  one in Settings."). Unpublishing (`publish: false`) has no such gate -- turning a page off is
+  always allowed. No staff bypass at all, matching the existing profile-delegation toggle's own
+  "this is the artist's, not the studio's" precedent directly above it in the same file.
+- **`bookingArtistId`** (in `routes/inquiries.ts`'s public `POST /`): a new, distinct mechanism
+  from the existing `preferredArtistId` (a soft, studio-configurable customer preference gated
+  behind `isShown("preferredArtist")` that never auto-assigns). Clicking BOOK from an artist's
+  own public page is a deliberate, artist-initiated deep link, not a generic form field a studio
+  may or may not have enabled -- so `bookingArtistId` always force-assigns
+  (`assignedArtistId`/`assignedAt`/`status: ARTIST_ASSIGNED`), the exact same shape
+  `PATCH /:id/assign`'s own first-assignment branch already uses, just applied at creation.
+  Validated the same way `preferredArtistId` is (`studioHasActiveMembership`, home-or-guest).
+  Candidacy-review services still win over this -- an orthogonal pre-existing gate this deep
+  link doesn't bypass, even though the artist ends up assigned either way once review clears.
+- `GET /users/me` now exposes `publicSlug`/`publishedAt` on the artist payload (`Profile.tsx`'s
+  publish UI needs to know current state on load).
+
+### Frontend
+
+- **`ArtistPublicPage.tsx`** (new route, `/artist/:publicSlug`): wrapped in `login-shell`, the
+  same fixed dark-gold-cream "Editorial Gold platform identity" class Login/Signup/AuthLayout
+  already use -- deliberately never studio-themed, since this is the artist's own page, not any
+  one studio's, per the task's explicit instruction. Shows avatar/name/specialties/bio, a "Where
+  to find me" panel (home studio + every upcoming confirmed residency with its date range), and
+  two CTAs: **BOOK** (opens a picker of home vs. each upcoming residency; picking one navigates
+  to `/inquiry/{studio.slug}?bookingArtistId={artist.id}` -- location-first, so everything
+  downstream belongs to THAT studio's own intake form, pipeline, policies, and payments, with
+  zero new pipeline built) and **FLASH** (links straight to the artist's existing public flash
+  gallery, `/flash/{homeStudio.slug}/{artistId}`, already-shipped functionality reused as-is).
+- **`IntakeForm.tsx`**: reads `bookingArtistId` off the query string and passes it straight
+  through in the `POST /inquiries` body -- one line of glue, not a new form path.
+- **`Profile.tsx`**: new "Public artist page" card -- published state shows the live link and an
+  Unpublish button; unpublished state shows a slug input, a Publish button, and a note about the
+  location requirement up front (so an artist hits the explanation before the 400, not only
+  after).
+- A bug in my own first draft of `ArtistPublicPage.tsx` (referenced undefined placeholder
+  variables instead of the artist's real id for the BOOK link) was caught by TypeScript before
+  ever running the app -- fixed by adding `id` to both the backend response and the frontend
+  interface and using it directly.
+
+### Judgment call, flagged per the task's own instruction: the page is invisible to a non-JS fetch
+
+The task called this out explicitly ("public page = potential crawler audience (marketing);
+note how it renders to a no-JS fetch, per the /privacy static-HTML lesson -- full prerendering
+may be deferred but say so explicitly"). Checked directly rather than assumed, the same way the
+original `/inquiry/:studioSlug` bug was confirmed before fixing it:
+
+- Built `apps/web` for real (`npm run build`) and ran the actual production server
+  (`apps/web/server.mjs`) against the built `dist/` on an isolated port.
+- `curl` against `/artist/some-slug` (no JS execution) returned the bare SPA shell --
+  `<title>ink-manager</title>`, `<div id="root"></div>`, nothing else. Identical failure mode to
+  `/inquiry/:studioSlug`'s pre-fix state and to the still-open `/privacy/:studioSlug`/
+  `/terms/:studioSlug` gap flagged (not fixed) two sessions ago.
+- Read `server.mjs` directly to confirm why: it special-cases exactly one route
+  (`INQUIRY_ROUTE`) for request-time SSR; `/artist/:publicSlug` isn't in that list, so it falls
+  straight through to the plain `SPA_REWRITES` catch-all.
+
+**Deferring the fix, not doing it in this part**: the task's own instruction anticipates this
+("may be deferred but say so explicitly"), and `/inquiry/:studioSlug`'s existing SSR
+implementation is the template to extend if/when this gets picked up -- add a second regex
+branch to `server.mjs` that fetches `GET /artists/public/:publicSlug` (the exact endpoint this
+part already built) and injects name/bio/specialties into `#root`, the same shallow
+enough-for-a-crawler approach already proven for the inquiry route. Not building it now because
+it's a distinct, separately-scoped SSR task, the same shape as two things already
+explicitly out-of-scope-until-later in this codebase's own history (`/privacy/:studioSlug`,
+`/terms/:studioSlug`), not something this part's own build naturally produces as a side effect.
+
+### Verification (Part 4 scope; full adversarial/live-browser pass is Part 5)
+
+`src/routes/artistPublicProfile.test.ts`, 5 tests, real HTTP against real Express routers with
+self-contained Prisma fixtures (established convention): a never-published slug 404s; publish
+is blocked with a location-mentioning error when the home studio has no `Location`; publish
+succeeds once a location exists, the public page becomes reachable, and unpublishing makes it
+404 again; a different artist (even the studio's own OWNER) cannot publish/unpublish someone
+else's page; booking through the public-page BOOK flow sets `assignedArtistId`/
+`status: ARTIST_ASSIGNED` directly, proving `bookingArtistId` really does force-assign rather
+than behaving like the soft `preferredArtistId`.
+
+Two real bugs found and fixed while getting this file green, both artifacts of the test
+environment rather than the feature itself, worth logging for the next person writing a
+similar fixture:
+- The booking POST initially 400'd on "Missing required field(s)" -- the intake form's default
+  required fields (`channel`, `referenceImages`, `placementImages`) weren't in the test payload;
+  fixed by adding them.
+- Then 400'd on "SMS consent is required" -- fixed by adding `smsConsent: true`.
+- The file's `after()` cleanup then failed deleting `Studio` twice in a row, each time on a
+  different downstream FK: first `Client_studioId_fkey` (a `Client` row created by the booking
+  test wasn't in the tracked `clientIds` array in every code path), then
+  `ClientEmail_clientId_fkey` (an artifact of `syncPrimaryEmail`, which always creates a
+  `ClientEmail` row alongside a new `Client`, matching the exact same cleanup-ordering pattern
+  already established in `routes/clients.ts` and `scripts/cleanup-studio-data.ts`). Fixed by
+  making cleanup studio-scoped rather than tracking-array-based for `Inquiry`/`Client` (more
+  robust against exactly this class of bookkeeping miss) and adding an explicit
+  `clientEmail`/`clientPhone` deleteMany, ordered before `client.deleteMany`.
+
+Full suite: `npm test` inside `apps/api` -- **85/85 passing**, no regressions from any of Parts
+1-4's changes. `npx tsc --noEmit -p apps/api` and `npx tsc --noEmit -p apps/web` -- both clean.
+
+## CLAUDE.md hygiene
+
+`prisma migrate dev` never used across any of the four parts -- `migrate diff` + `migrate
+deploy` only, against the dev DB. No database reset offered or accepted. REPORT.md line count
+before this entry: 9922 (verified via `git show HEAD:REPORT.md | wc -l` before appending) --
+this entry is pure addition, nothing above it edited or removed; the Parts 1-3 reporting gap is
+corrected by adding this retrospective section, not by rewriting history. One leftover isolated
+dev-server process from earlier in this session (port 4099, started 10:33am, orphaned across the
+context-compaction boundary) found still listening and killed before the no-JS verification
+above; both isolated ports (`4099` API, `5701` web-server.mjs, used only for the SSR check) freed
+and reconfirmed via `Get-NetTCPConnection -State Listen` before ending this part. The debug
+`console.error` line added mid-session to diagnose the booking test's 500 was removed before
+committing. `apps/web/dist` (gitignored, rebuilt locally for the no-JS check) left as a normal
+local build artifact, not committed. Working tree confirmed clean at commit time except the same
+four pre-existing, untouched-since-before-this-session files noted throughout this file's recent
+entries (two branding PNGs, `marketing/package-lock.json`, one unrelated HTML mockup file).
+
+## Commits
+
+Part 1: `3a9f867`. Part 2: `304e076`. Part 3: `62ade74`. Part 4: this entry's own commit
+(below).

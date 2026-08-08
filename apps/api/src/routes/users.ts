@@ -92,6 +92,10 @@ router.get("/me", async (req, res) => {
           specialties: true,
           allowsClientSelfScheduling: true,
           profileSetupCompletedAt: true,
+          // 6a Epic Part 4: so Profile.tsx's own publish toggle can read
+          // current state without a second request.
+          publicSlug: true,
+          publishedAt: true,
           // Every currently-active membership (HOME and any GUEST rows),
           // split into the two response shapes below in code -- Prisma's
           // `select` can't alias one relation field into two differently-

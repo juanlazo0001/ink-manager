@@ -25,6 +25,7 @@ import Profile from './pages/Profile'
 import Team from './pages/Team'
 import FlashGallery from './pages/FlashGallery'
 import FlashPublicGallery from './pages/FlashPublicGallery'
+import ArtistPublicPage from './pages/ArtistPublicPage'
 import FlashPaymentResponse from './pages/FlashPaymentResponse'
 import IntakeForm from './pages/IntakeForm'
 import Policies from './pages/Policies'
@@ -141,6 +142,7 @@ function AppRoutes() {
         <Route path="/inquiry/:studioSlug" element={<IntakeForm />} />
         <Route path="/inquiry/:studioSlug/:formSlug" element={<IntakeForm />} />
         <Route path="/flash/:studioSlug/:artistId" element={<FlashPublicGallery />} />
+        <Route path="/artist/:publicSlug" element={<ArtistPublicPage />} />
         <Route path="/policies/:studioSlug" element={<Policies />} />
         {/* No React routes for bare /privacy and /terms anymore -- Ink
             Manager's own platform-level Privacy Policy/Terms moved to

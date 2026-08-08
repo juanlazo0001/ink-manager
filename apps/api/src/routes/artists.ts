@@ -12,6 +12,7 @@ import { emitInvalidation } from "../lib/realtime/registry";
 import { isSoloStudioArtist } from "../lib/soloStudio";
 import { studioHasActiveMembership } from "../lib/artistAccess";
 import { generateUniqueSlug } from "./studios";
+import { slugify } from "../lib/slug";
 import { JWT_SECRET } from "../lib/jwt";
 
 const router = Router();
@@ -622,6 +623,82 @@ router.patch("/:id/self-scheduling", requireAuth, async (req, res) => {
     entityId: id,
     action: "update",
     changes: diffObjects(artist, { allowsClientSelfScheduling }, ["allowsClientSelfScheduling"]),
+  });
+
+  emitInvalidation({ type: "artist.changed", studioId: req.user!.studioId, artistId: id });
+
+  res.json(updated);
+});
+
+// 6a Epic Part 4: publishing the public artist page is artist-controlled,
+// full stop -- same "no staff bypass at all" shape as profile-delegation
+// below, for the same reason: this is the artist's own public presence,
+// not something a studio should be able to switch on or off for them.
+// Default OFF (Artist.publishedAt starts null) -- unaffected until an
+// artist explicitly opts in here.
+router.patch("/:id/publish", requireAuth, async (req, res) => {
+  const id = req.params.id as string;
+  const artist = await prisma.artist.findUnique({ where: { id }, include: { user: true } });
+
+  if (!artist || artist.userId !== req.user!.userId) {
+    return res.status(404).json({ error: "Artist not found" });
+  }
+
+  const { publish } = req.body ?? {};
+
+  if (publish === false) {
+    const updated = await prisma.artist.update({ where: { id }, data: { publishedAt: null } });
+    await logAudit({
+      studioId: req.user!.studioId,
+      actorUserId: req.user!.userId,
+      entityType: "Artist",
+      entityId: id,
+      action: "unpublish_public_page",
+    });
+    emitInvalidation({ type: "artist.changed", studioId: req.user!.studioId, artistId: id });
+    return res.json(updated);
+  }
+
+  if (publish !== true) {
+    return res.status(400).json({ error: "publish must be true or false" });
+  }
+
+  const { publicSlug: rawSlug } = req.body ?? {};
+  if (typeof rawSlug !== "string" || !rawSlug.trim()) {
+    return res.status(400).json({ error: "publicSlug is required to publish" });
+  }
+  const slug = slugify(rawSlug);
+  if (!slug) {
+    return res.status(400).json({ error: "publicSlug must contain at least one letter or number" });
+  }
+
+  const slugTaken = await prisma.artist.findUnique({ where: { publicSlug: slug }, select: { id: true } });
+  if (slugTaken && slugTaken.id !== id) {
+    return res.status(409).json({ error: "This page URL is already taken -- try a different one." });
+  }
+
+  // Publishable-requires-location rule: the artist's HOME studio (fresh
+  // from the DB, never the JWT) needs at least one Location on file --
+  // the public page's "upcoming locations" section needs somewhere real
+  // to point a client at for the home-base option, and a studio with zero
+  // locations has nothing to show there at all.
+  const homeLocationCount = await prisma.location.count({ where: { studioId: artist.user.studioId } });
+  if (homeLocationCount === 0) {
+    return res.status(400).json({
+      error:
+        "Your home studio needs at least one location on file before you can publish your page. Ask your studio's owner to add one in Settings.",
+    });
+  }
+
+  const updated = await prisma.artist.update({ where: { id }, data: { publicSlug: slug, publishedAt: new Date() } });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Artist",
+    entityId: id,
+    action: "publish_public_page",
+    changes: { publicSlug: slug },
   });
 
   emitInvalidation({ type: "artist.changed", studioId: req.user!.studioId, artistId: id });

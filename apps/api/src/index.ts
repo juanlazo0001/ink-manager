@@ -9,6 +9,7 @@ import invitesRouter from "./routes/invites";
 import artistInvitesRouter from "./routes/artistInvites";
 import usersRouter from "./routes/users";
 import artistsRouter from "./routes/artists";
+import artistPublicProfileRouter from "./routes/artistPublicProfile";
 import flashPiecesRouter from "./routes/flashPieces";
 import residenciesRouter from "./routes/residencies";
 import flashPaymentsRouter from "./routes/flashPayments";
@@ -108,6 +109,10 @@ app.use(authRouter);
 app.use(invitesRouter);
 app.use(artistInvitesRouter);
 app.use("/users", usersRouter);
+// Public router first, same reasoning as gift-cards/waivers/custom-policies
+// above -- defensive convention, not a real collision here (see
+// artistPublicProfile.ts's own comment).
+app.use("/artists", artistPublicProfileRouter);
 app.use("/artists", artistsRouter);
 app.use("/flash-pieces", flashPiecesRouter);
 app.use("/residencies", residenciesRouter);
