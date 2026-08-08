@@ -556,6 +556,24 @@ model Artist {
   // sees a wizard for a profile they already set up.
   profileSetupCompletedAt DateTime?
 
+  // 6a Epic: public artist page. Unique but nullable -- most artists never
+  // publish one. Chosen by the artist (or defaulted, see routes/artists.ts),
+  // used as the sole public lookup key (GET /artists/public/:publicSlug),
+  // so it's never reused even after an artist unpublishes/republishes with
+  // a new one (the old slug just starts 404ing, same "URLs are forever"
+  // convention Studio.slug already follows).
+  publicSlug String? @unique
+  // Null = unpublished (default -- every existing artist stays exactly as
+  // invisible as before this feature shipped). Set to the publish moment,
+  // cleared on unpublish -- same nullable-timestamp-as-flag convention as
+  // profileSetupCompletedAt/Studio.setupCompletedAt above, not a separate
+  // boolean, so "when did this go live" is never a second field to keep in
+  // sync. Publishing additionally requires publicSlug to be set AND the
+  // artist's home studio to have at least one Location on file
+  // (publishable-requires-location rule, enforced in the route, not here --
+  // see routes/artists.ts).
+  publishedAt DateTime?
+
   userId String @unique
   user   User   @relation(fields: [userId], references: [id])
 
@@ -570,6 +588,10 @@ model Artist {
   matchedImportRows  ImportRow[]
   artistServices     ArtistService[]
   flashPieces        FlashPiece[]
+  // 6a Epic: denormalized from Residency.membership.artistId -- see that
+  // field's own comment for why (the cross-studio overlap invariant is a
+  // per-artist question a DB constraint can't express through a join).
+  residencies        Residency[]
 
   // Solo artist architecture, Phase 1: the real Studio<->Artist affiliation
   // model, replacing the implicit single-valued Artist.user.studioId chain
@@ -647,6 +669,85 @@ model StudioMembership {
   //     application-level as Phase 1 originally deferred it.
   @@index([artistId])
   @@index([studioId])
+
+  // 6a Epic: a membership is the ONGOING relationship (an artist has been
+  // invited/accepted as a guest at this studio, full stop); residencies are
+  // the individual SCHEDULED STINTS within it -- many per membership, e.g.
+  // a touring guest artist who visits the same host every summer gets one
+  // membership and a new Residency each year, not a new membership each
+  // time. See Residency's own comment for the accept/overlap rules.
+  residencies Residency[]
+}
+
+enum ResidencyStatus {
+  // Host-created stint, not yet acted on by the artist -- see
+  // routes/residencies.ts for who can create one in this state (host
+  // staff, matrix-gated) vs. who lands directly in CONFIRMED (the artist's
+  // own first stint, created by their OWN invite-acceptance -- consent is
+  // implicit in accepting the invite at all).
+  PENDING
+  // Artist has accepted -- the one state the overlap invariant and
+  // Part 3's availability computation actually key off. Reversible: an
+  // already-CONFIRMED stint can still be CANCELLED later (a change of
+  // plans), but never silently -- see routes/residencies.ts.
+  CONFIRMED
+  // Artist explicitly declined a host-created PENDING stint. Terminal --
+  // same "audited, reversible only by creating a brand new row" philosophy
+  // as Inquiry.closedReason's own mark-lost/reopen pair, except a declined
+  // residency has no "reopen," since the artist's decision is theirs alone
+  // (see this epic's own "inalienable artist right" framing).
+  DECLINED
+  // Cancelled after having been PENDING or CONFIRMED -- either side backed
+  // out (a host cancelling a booked stint, or an artist backing out of one
+  // they'd already accepted). Terminal, same as DECLINED.
+  CANCELLED
+}
+
+// One SCHEDULED, DATE-BOUNDED stint within a StudioMembership (almost
+// always a GUEST one -- nothing stops a HOME membership from having a
+// residency too, but nothing in this epic's own design needs that shape,
+// so it's simply not prevented rather than specifically supported).
+//
+// The cross-studio overlap invariant (an artist can have no
+// date-overlapping CONFIRMED residencies across ANY studios, home
+// included) is enforced at the APPLICATION layer on create and on accept
+// (routes/residencies.ts) -- the actual requirement per this epic's own
+// task. Also enforced at the DATABASE layer via a hand-authored Postgres
+// EXCLUDE constraint in this model's own migration SQL (not representable
+// in Prisma's schema DSL, same reason StudioMembership's own two partial
+// unique indexes above are hand-authored) -- belt-and-suspenders against a
+// bug or a future direct-DB write, never the primary enforcement point.
+model Residency {
+  id String @id @default(cuid())
+
+  membershipId String
+  membership   StudioMembership @relation(fields: [membershipId], references: [id])
+
+  // Denormalized from membership.artistId, set once at creation and never
+  // changed (a residency's membership -- and therefore its artist -- is
+  // fixed for its lifetime). Needed because the overlap invariant is
+  // fundamentally per-ARTIST ("this person can't be in two places at
+  // once"), not per-membership, and a Postgres EXCLUDE constraint can't
+  // reach through a join to StudioMembership to get there.
+  artistId String
+  artist   Artist @relation(fields: [artistId], references: [id])
+
+  // Calendar dates (compared as civil dates, UTC-anchored -- same
+  // convention Artist.guestStartDate/guestEndDate already established),
+  // not specific instants. Both required: unlike the legacy guest window
+  // fields they supersede for the multi-stint case, a residency is always
+  // a fully-bounded stint from the moment it's proposed, per Part 2's own
+  // "dates become MANDATORY" rule for the invite flow.
+  startDate DateTime
+  endDate   DateTime
+
+  status ResidencyStatus @default(PENDING)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([membershipId])
+  @@index([artistId, status])
 }
 
 // Artist mobility, Part 2: a studio-initiated invite specifically for an
