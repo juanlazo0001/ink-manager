@@ -497,16 +497,21 @@ router.patch("/:id/preferred-schedule", requirePermission("artistSchedules.manag
   const { preferredSchedule } = req.body ?? {};
 
   const artist = await prisma.artist.findUnique({ where: { id }, include: { user: true } });
-  // Artist-mobility gap fix: this was a plain equality against the
-  // caller's own HOME studio, the same bug class as GET /:id and PATCH
-  // /:id just above (both already use isHome/isGuestHere) -- this route
-  // just never got the fix. Under-permissive, not over-permissive: it
-  // silently 404'd a legitimate GUEST studio's staff trying to set their
-  // own guest artist's schedule. Same studioHasActiveMembership(HOME or
-  // GUEST) pattern as its siblings in this file.
-  const isHome = artist?.user.studioId === req.user!.studioId;
-  const isGuestHere = !isHome && artist && (await studioHasActiveMembership(req.user!.studioId, id));
-  if (!artist || (!isHome && !isGuestHere)) {
+  // Deliberately HOME-only, NOT the isHome/isGuestHere pattern GET /:id and
+  // PATCH /:id use -- checked first this time (a prior pass here got this
+  // wrong). preferredSchedule (like schedulingBufferMinutes) is a single
+  // field on Artist itself, not per-StudioMembership: one artist has
+  // exactly one weekly-availability value, shared across every studio they
+  // work at. Widening this to "any studio with an active membership" would
+  // let a GUEST studio's staff overwrite hours that also govern that
+  // artist's HOME studio and every other guest stint -- broadening WRITE
+  // access to a global resource through a narrower relationship, the
+  // opposite of what the isHome/isGuestHere pattern is for (which only
+  // ever widens READ/action access to a per-studio-owned record). Real
+  // per-studio schedules would need their own design (StudioMembership-
+  // level residency dates, distinct from Artist.isGuest/guestStartDate/
+  // guestEndDate's own artist-global window) -- flagged, not built here.
+  if (!artist || artist.user.studioId !== req.user!.studioId) {
     return res.status(404).json({ error: "Artist not found" });
   }
 
