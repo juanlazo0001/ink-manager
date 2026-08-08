@@ -10366,3 +10366,226 @@ entries.
 ## Commits
 
 This entry's own commit (below) -- the two new test files plus this report.
+
+# Embedded payments Part 1: investigation and migration map (branch `explore/embedded-payments`)
+
+Goal: replace Stripe Checkout redirects with an in-app Payment Element, Editorial Gold styling,
+no redirect, platform mechanics (Connect Standard, direct charges, `application_fee_amount`)
+unchanged. This entry is investigation only -- no product code changed. Working on a dedicated
+branch per the task's own instruction; merge to `main` only after review.
+
+## 1. Every Checkout Session creation point
+
+One shared helper, `createDirectChargeCheckoutSession()` (`apps/api/src/lib/stripe.ts:46-83`),
+is the only place `stripe.checkout.sessions.create` is called. Always `mode: "payment"`, always a
+direct charge (`{ stripeAccount: connectedAccountId }` as the SDK's request-options argument,
+never the platform account), `application_fee_amount` set via `computeApplicationFeeCents()`
+(`stripe.ts:34-38`, one flat `PLATFORM_FEE_PERCENT` env var, no per-studio override yet).
+
+Four callers, all sharing that one helper:
+
+| Flow | Creation site | Resend/staff-facing site | Success/cancel URL | Row the session id lands on |
+|---|---|---|---|---|
+| Deposit payment | `lib/deposits.ts:615-660` (`createDepositCheckoutSession`), called from public `routes/deposits.ts:269-283` | `POST /deposit-forms/:id/checkout-link`, `routes/deposits.ts:347-373` (staff resend) | `/deposit/:token?paid=1` / `?canceled=1` | `DepositForm.stripeCheckoutSessionId` |
+| Flash prepayment | `lib/flashPayments.ts:20-63`, called from public `routes/flashPayments.ts:78-92` | none (public retry only) | `/flash-payment/:token?paid=1` / `?canceled=1` | `Inquiry.stripeCheckoutSessionId` |
+| Gift card purchase | `routes/giftCards.ts:242-258` (staff-authenticated) | n/a (one-shot issuance) | `/gift-card/:code?paid=1` / `?canceled=1` | `GiftCard.stripeCheckoutSessionId` |
+| Session/appointment checkout ("amount due") | `routes/appointments.ts:998-1011`, inside `POST /:id/checkout` | n/a | `/appointments/pay-complete?status=success` / `?status=canceled` | `Appointment.stripeCheckoutSessionId` |
+
+**Amounts are already 100% server-derived** in every case (`depositForm.totalCharged`, the
+flash piece's own price, the gift card amount staff enters, the appointment's own computed
+balance) -- nothing here trusts a client-submitted amount today, which is exactly the property
+Part 4's adversarial check needs to confirm still holds after the migration, not something the
+migration needs to newly establish.
+
+**Correlation mechanic**: `metadata` on each session is effectively unused for webhook
+processing -- the real join key is the session id itself, stored back onto the owning row
+immediately after creation, then looked up by `stripeCheckoutSessionId` in the webhook. This
+matters directly for the migration shape below.
+
+**Resendable checkout link**: every "resend" action (`routes/deposits.ts:347-373`'s staff
+button, and the public retry path) mints a **brand-new session every time**, never reuses one --
+there is no caching/reuse today, old sessions are simply abandoned. This is the piece the task
+calls out as needing rework ("becomes a link to our own payment page") -- see the migration map
+below for the proposed replacement.
+
+## 2. The webhook handler
+
+Single endpoint, `POST /webhooks/stripe` (`routes/webhooks.ts:356-568`), raw-body-special-cased
+in `index.ts:79-82` so signature verification gets real bytes. Verifies
+`stripe-signature`/`STRIPE_WEBHOOK_SECRET` via `constructEvent`, then resolves which studio the
+event belongs to via the event's own top-level `account` field (Connect events carry this
+automatically) against `StudioIntegration.metadata.stripeAccountId` (`webhooks.ts:371-392`) --
+**this confirms the existing webhook endpoint is already Connect-scoped** (it already correctly
+receives and routes direct-charge events via `event.account`), which matters a lot for the
+migration: **no new webhook endpoint or Connect webhook registration is needed** for
+`payment_intent.*` events -- they'll arrive at this exact same endpoint, in the exact same
+Connect scope, and just need new event-type branches added to the existing `if` chain.
+
+Only two event types are handled today (confirmed via a full grep across the backend -- these
+are the only two `event.type ===` comparisons that exist): `checkout.session.completed`
+(gated on `payment_status === "paid"`, four independent `stripeCheckoutSessionId` lookups
+against DepositForm/Appointment/GiftCard/Inquiry) and `account.updated` (refreshes
+`StudioIntegration.metadata`'s `chargesEnabled`/`payoutsEnabled` for the Settings page). Neither
+`checkout.session.expired` nor `payment_intent.succeeded`/`payment_intent.payment_failed` is
+handled anywhere -- not a gap to preserve, just the honest starting point.
+
+## 3. Downstream effects (the part that must stay identical)
+
+All the real complexity lives in `issueGiftCardForPaidDeposit()` (`lib/deposits.ts:234-599`),
+shared between the webhook path and the staff-manual "mark paid" path -- gift card issuance
+(`deposits.ts:312-328`), double idempotency guards (a pre-check plus a second check inside the
+transaction, `deposits.ts:252-254, 307-310`), the referral-reward flow
+(`deposits.ts:270-409`, gated by `StudioSettings.referralProgramEnabled`), and auto-book-on-
+deposit-payment (`deposits.ts:479-596`, conflict-checked via `findBufferConflict`, logs
+`auto_book_conflict` rather than force-booking on a clash). The webhook's `checkout.session.completed`
+branch is a thin wrapper that just looks the row up and calls this function -- **this function
+itself needs zero changes** for the migration; only what triggers it (the lookup key) changes.
+
+The other three branches (appointment amount-due, gift-card purchase, flash prepayment) are
+similarly thin -- each just flips a status/timestamp field and emits a realtime invalidation.
+Flash prepayment additionally mints a self-schedule token deliberately bypassing
+`Artist.allowsClientSelfScheduling` (`webhooks.ts:497-509`, a previously-made product decision,
+not something this migration touches).
+
+## 4. Frontend integration points (today, all full-page redirects)
+
+`DepositResponse.tsx:176-187` and `FlashPaymentResponse.tsx:87-98` both do
+`window.location.href = session.url` to leave the app entirely for Stripe's hosted page. Three
+staff-facing pages (`AppointmentDetail.tsx`, `InquiryDetail.tsx`, `ClientDetail.tsx`) show a
+copyable/openable link rather than auto-redirecting, since staff is generating a link *for* the
+client, not paying themselves -- those stay exactly as they are; only the two client-facing
+redirect flows plus the appointment "amount due" flow are in scope for embedding.
+
+**Zero existing Stripe.js/Elements code anywhere in `apps/web`** (confirmed via grep -- no
+`@stripe/stripe-js`/`@stripe/react-stripe-js` in `package.json`, no `VITE_STRIPE_*` usage
+anywhere). This is a clean-slate frontend build, not a refactor of an existing Elements
+integration.
+
+## 5. Stripe Connect account setup (unaffected by this migration)
+
+Standard Connect via Account Links (`lib/stripeConnect.ts`), never OAuth. Connected account id
+lives in `StudioIntegration.metadata.stripeAccountId` (a JSON blob on the same
+channel-based-integration table Twilio/Gmail use), **not** a scalar column on `Studio` --
+`getChargeableConnectedAccountId(studioId)` (`stripeConnect.ts:68-78`) is the one gate every
+payment-creating route already calls (requires `status === CONNECTED` AND
+`metadata.chargesEnabled === true`) before attempting a charge. This same helper is exactly what
+the new PaymentIntent-creation code will call too -- no change needed here.
+
+## 6. Env vars
+
+`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `PLATFORM_FEE_PERCENT` are live and read today.
+`STRIPE_PUBLISHABLE_KEY` is documented in `.env.example` but **not read by any code anywhere** --
+a placeholder for exactly this migration. `VITE_STRIPE_PUBLISHABLE_KEY` doesn't exist yet at all
+and will need to be added (frontend publishable key, safe to expose, per Stripe's own model).
+
+---
+
+## Stripe integration shape, verified against Stripe's current docs (not assumed from training knowledge)
+
+Checked directly against `docs.stripe.com` (fetched live, this session):
+
+- **Direct-charge PaymentIntents work identically to direct-charge Checkout Sessions**: same
+  `Stripe-Account` header / `{ stripeAccount: id }` request option, same `application_fee_amount`
+  parameter, now living directly on the PaymentIntent instead of nested under
+  `payment_intent_data`. `automatic_payment_methods` no longer needs to be explicitly passed --
+  Stripe enables it by default in the current API version, so payment-method selection can stay
+  entirely Dashboard-managed rather than a manually maintained list in code.
+- **Frontend**: `Stripe(publishableKey, { stripeAccount: connectedAccountId })` at Stripe.js
+  init, then `elements({ clientSecret, appearance })` -> `elements.create("payment")` ->
+  `paymentElement.mount(...)`. Confirm via `stripe.confirmPayment({ elements, confirmParams:
+  { return_url } })`; passing `redirect: "if_required"` avoids redirecting for the common
+  card-success case, which matters a lot for the "no redirect" goal -- only genuinely
+  redirect-requiring methods (3DS challenge, bank redirects) leave the page at all, and even
+  those return to `return_url` afterward rather than landing on a Stripe-hosted page.
+- **Webhooks for Connect direct charges**: `payment_intent.succeeded` (and `.payment_failed`,
+  `.processing`) fire on the same **Connect-scoped** webhook surface that `checkout.session.completed`
+  already uses for this app, each carrying the same top-level `account` field. Confirmed this
+  matches the existing endpoint's own `event.account` handling exactly -- **no new webhook
+  endpoint or Dashboard registration needed**, only new event-type branches.
+- **Apple Pay / Google Pay domain registration** (the task's own explicit ask): for a direct-
+  charge Connect integration, the domain must be registered **per connected account**, via
+  `POST /v1/payment_method_domains` using the platform's secret key **with the `Stripe-Account`
+  header set to that connected account's id** -- not a one-time platform-wide registration. This
+  means every studio that completes Connect onboarding needs this call made against its own
+  connected account before its clients see Apple/Google Pay in the Payment Element. Natural
+  hook: fire this (idempotently -- registering an already-registered domain is a harmless
+  no-op) right after `account.updated` first reports `chargesEnabled: true`, alongside the
+  existing status-refresh logic in `webhooks.ts:548-565`.
+
+## Migration map, per flow
+
+All three payment flows (deposit, flash prepayment, session/appointment checkout) share the
+identical shape -- the only per-flow differences are which row the PaymentIntent id lands on and
+which downstream function fires:
+
+**Server** -- add a `createDirectChargePaymentIntent()` sibling to `createDirectChargeCheckoutSession()`
+in `lib/stripe.ts` (same `connectedAccountId`/`amountCents`/`metadata` shape, `stripe.paymentIntents.create`
+instead of `checkout.sessions.create`, `application_fee_amount` directly on the PaymentIntent).
+Each of the three call sites (`lib/deposits.ts`, `lib/flashPayments.ts`, the appointment-checkout
+branch in `routes/appointments.ts`) gets a new endpoint returning `{ clientSecret }` instead of
+`{ url }`, guarded by the new flag (below), with the existing Checkout-session code path left
+completely intact as the fallback when the flag is off.
+
+**Frontend** -- each of the three public pages (`DepositResponse.tsx`, `FlashPaymentResponse.tsx`,
+and a new page/section for the appointment "amount due" flow) fetches the flag + client secret,
+and either renders the existing "redirect to Stripe" button (flag off) or mounts a
+`PaymentElement` inline (flag on). `stripe.confirmPayment({ redirect: "if_required" })` on submit;
+a card success resolves in-place with no navigation at all, matching "clients complete payment ON
+our pages" literally, not just "eventually."
+
+**Webhooks** -- add `payment_intent.succeeded` (and, defensively, `payment_intent.payment_failed`
+for observability -- no user-facing action exists for it today since Checkout absorbed failures
+silently, but it's cheap to log) as new branches in the SAME `routes/webhooks.ts` handler,
+structured as the exact same four-way `findFirst` pattern `checkout.session.completed` already
+uses -- just keyed on `stripePaymentIntentId` instead of `stripeCheckoutSessionId` (already a
+column on all four models, already populated even in today's Checkout flow). Each branch calls
+the SAME existing downstream function (`issueGiftCardForPaidDeposit`, the appointment
+paid-status update, the gift-card activation, the flash self-schedule-token mint) --
+**zero changes needed to any downstream business logic**, only to what triggers it.
+
+**The resendable checkout link, replaced**: instead of minting a fresh Stripe object purely to
+hand the client a new URL, "resend" becomes re-sharing the client's own existing page URL
+(`/deposit/:token`, already token-secured, already what they have from the original signing
+flow). That page's own load sequence becomes responsible for fetching-or-creating a PaymentIntent
+-- **proposed as fetch-or-create, not always-create**: if a live PaymentIntent already exists
+for this row and is still in `requires_payment_method`/`requires_confirmation` (not
+`succeeded`/`canceled`), reuse it (updating the amount via `paymentIntents.update` if it
+changed); otherwise create fresh. This avoids silently proliferating abandoned PaymentIntents the
+way abandoned Checkout Sessions already do today, and it's the one piece of this migration that
+doesn't have a direct one-to-one precedent in the existing code -- flagging it as a design choice
+worth confirming rather than assuming, not a fact I can just find in the codebase.
+
+**Flag**: `StudioSettings.embeddedPaymentsEnabled` (`Boolean @default(false)`), same
+per-studio-boolean-on-StudioSettings pattern `referralProgramEnabled` already establishes in
+this codebase -- consistent with the task's "per-studio or env" allowance, and per-studio is the
+existing convention here, so no new flagging mechanism needs inventing.
+
+## Two things flagged, not decided -- need your call before Part 2 builds anything
+
+1. **"Editorial Gold wrapper" -- literal platform treatment, or just "make it look good"?**
+   Checked directly: all three existing post-checkout pages (`DepositResponse.tsx`,
+   `FlashPaymentResponse.tsx`, and the appointment payment-complete page) currently call
+   `applyThemePreset(data.themePreset)` -- they render in the **studio's own theme**, same as
+   every other public client-facing page in this app. "Editorial Gold" in this codebase is a
+   specific, named, fixed platform treatment (the `login-shell` CSS class family) that Login/
+   Signup/the artist public page use *because* they're explicitly the platform's own pages, not
+   any one studio's -- and that treatment's own convention is "never studio-themed." Taking the
+   phrase literally would mean these three payment pages switch OFF studio branding entirely,
+   a real, visible behavior change for every studio's clients, different from how every other
+   public page in this app behaves today. I don't want to guess on a decision this visible --
+   confirming before Part 2 whether "Editorial Gold" means the literal fixed platform treatment
+   (a deliberate branding departure, matching the artist page precedent) or a within-the-
+   studio's-theme polish pass (keeping `applyThemePreset`, just styled well) is the one blocking
+   question for that part's build.
+2. **PaymentIntent reuse-vs-recreate on resend/reload**, described above -- proposing fetch-or-
+   create as the replacement for "always mint fresh," which is a real behavior change from
+   today's Checkout pattern (not just a mechanical swap), flagged for confirmation rather than
+   silently decided.
+
+## CLAUDE.md hygiene
+
+Working on `explore/embedded-payments`, created off a clean `main` at `5039410`. No schema
+changes, no `prisma migrate` commands run this part (investigation only). REPORT.md line count
+before this entry: 10368 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition.
+Nothing merged to `main`; this branch's commits stay on the branch per the task's own explicit
+instruction until review.
