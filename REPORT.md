@@ -9322,3 +9322,174 @@ were left running by this session. Working tree at the end of Task 1: only `clie
 `deposits.ts` (now committed) plus the same four pre-existing, untouched files noted above.
 REPORT.md line count increased versus `HEAD` before this commit (confirmed:
 `git show HEAD:REPORT.md | wc -l` was 9254 before this append).
+
+# Solo-guest 403 investigation -- root cause confirmed, no fix applied (per instruction)
+
+Investigation only, as explicitly instructed: reproduce, determine role-resolution scope,
+run a read-only production census, propose a fix shape, then stop for review. No source
+changes in this section.
+
+## (a) Reproduction: exact route and check
+
+**Frontend routing is already correct.** `Inquiries.tsx:327` routes a card with a truthy
+`fromGuestStudio` to `/my-inquiries/${id}` (not `/inquiries/${id}`), landing on
+`MyProjectDetail.tsx`, which calls `GET /assigned-to-me/:id`
+(`routes/inquiries.ts:1036-1066`). That route's own comments show it was already built with
+exactly this scenario in mind -- `requireRole(Role.ARTIST, Role.OWNER)` (not ARTIST-only),
+with an explicit comment: "a solo studio's owner is role OWNER with their own attached Artist
+profile... still scoped to assignedArtistId === their own artist id regardless of role." It
+also already calls `hasPermissionAt(req.user!, inquiry.studio.id, "inquiries.view")` --
+record-scoped, from the Part 2 permission-context sweep (`6b8eeed`).
+
+**The actual break is one level down, inside the shared primitive both of those checks route
+through.** `hasPermissionAt` (`lib/artistAccess.ts:108-115`) calls `callerBelongsToStudio`
+(`:54-68`) first. That function's very first line is `if (user.role !== Role.ARTIST) return
+user.studioId === recordStudioId;` -- a plain home-equality check for anyone whose *global JWT
+role* isn't literally `ARTIST`. A solo studio-of-one owner's `User.role` is `OWNER` (confirmed
+in `lib/soloStudio.ts`'s own comment: "a solo artist's own account is commonly itself role:
+OWNER... nothing in the schema prevents that same User row from also having an Artist
+profile"). So for this caller, `callerBelongsToStudio` takes the STAFF branch, compares their
+HOME studioId (their own solo studio) against the HOST's studioId, gets `false`, and
+`hasPermissionAt` returns `false` before ever checking the permission matrix -- 403.
+
+**Reproduced directly against the real primitives with real DB rows** (not just read from the
+code): created a solo studio (one OWNER user with an attached Artist profile), a separate
+multi-staff host studio, and an active GUEST `StudioMembership` linking the artist to the
+host.
+
+```
+callerBelongsToStudio(soloOwner, hostStudio) = false
+hasPermissionAt(soloOwner, hostStudio, inquiries.view) = false   <- causes the 403
+```
+
+Control, identical guest-membership shape but role `ARTIST` instead of a solo `OWNER`:
+
+```
+callerBelongsToStudio(plainArtist, hostStudio) = true
+hasPermissionAt(plainArtist, hostStudio, inquiries.view) = true
+```
+
+This is also exactly why "recreating them as a PLAIN guest resolved it" in production: a
+plain ARTIST-role account hits `callerBelongsToStudio`'s OTHER branch (the one that already
+re-derives home + guest memberships from the DB), which has always worked correctly.
+
+**Why the LIST still worked for the solo owner**: `GET /` (`inquiries.ts:875-977`) never calls
+`callerBelongsToStudio` for its guest-blending step at all -- it runs its own direct
+`prisma.studioMembership.findMany({ artistId, type: "GUEST", endedAt: null })` query
+(`:951-957`) keyed only off the caller's own `Artist.id`, regardless of `User.role`. That
+path was never affected by this bug, which is exactly why the list and the detail page
+disagreed.
+
+## (b) Role resolution: global, confirmed -- and the "7 not ARTIST-reachable" carve-outs re-examined
+
+`req.user!.role` is the JWT's own `role` claim end to end (`middleware/auth.ts`'s
+`AuthPayload`), set once at login/token-mint and never re-derived per request or per
+membership. `requireRole` (`:165-173`) checks this raw claim directly. Only
+`callerBelongsToStudio`/`activeStudioIdsForCaller` attempt any DB-backed re-derivation for
+multi-studio callers, and only when `user.role === Role.ARTIST` literally -- which is the
+exact gap above.
+
+**Re-examined the prior gate-count report's 7 "not ARTIST-reachable" carve-outs** (`inquiries.ts`
+GET `/`, GET `/:id`, POST `/:id/revise-estimate`; `clients.ts` GET `/:id/notes`; `waivers.ts`'s
+3 `staffRouter` routes) under this contextual-role finding. Their `requireRole(OWNER,
+FRONT_DESK)` gate genuinely IS reachable by a solo-owner-artist (global role OWNER) --
+contradicting the literal "not ARTIST-reachable" framing, since that framing implicitly
+assumed "OWNER role" meant "staff member with no cross-studio artist identity."
+
+**Checked whether this reachability is a real additional exposure -- it is not**, in the two
+routes read in full (`inquiries.ts:1511`'s `revise-estimate` and `waivers.ts:293`'s
+`staffRouter GET /:id`), and structurally true of the other five by the same pattern: each
+does a plain `record.studioId !== req.user!.studioId` (home) equality 404 check before
+anything else, using the caller's OWN home studioId, not an arbitrary target. A solo-owner
+reaching one of these can only ever act on records at THEIR OWN home studio (which they're
+entitled to as OWNER regardless) -- there is no path for their host-studio guest identity to
+reach a HOST record through a route gated this way, since the route never looks at the host
+studio at all. **Net conclusion: the prior report's security conclusion (no ARTIST-reachable
+over-permissive gate remains) still holds**; only its stated reasoning for these 7 specific
+routes was imprecise (conflated "literally role ARTIST" with "has any artist identity") and
+should be corrected in wording if revisited, not in code.
+
+## (c) Read-only PRODUCTION census
+
+Per `DEVELOPMENT.md`'s sanctioned one-off pattern (`.env.production`'s `DATABASE_URL` for a
+single script invocation, never written into the working `.env`). Zero writes. (Aside, logged
+for the next person hitting this: `.env.production`'s value is double-quote-wrapped in the
+file the same way `.env`'s is -- extracting it into a shell `export` with a plain
+`cut -d= -f2-` keeps the literal quote characters and silently breaks the connection string;
+`dotenv` itself strips them correctly when loading a file directly, which is why routing
+through `dotenv/config` against the right path -- or stripping the quotes by hand -- both
+work, but a bare shell-level extraction does not.)
+
+**Part A -- legacy `isGuest` markers with zero active `StudioMembership` row:** 2 artists
+match. Both are soft-deleted accounts (`deleted-*@deleted.inkmanager.invalid`, `isActive:
+false`), each with 3-4 total membership rows ever created, all now `endedAt`-set. Consistent
+with these being remediated-and-replaced accounts, not currently-live gaps.
+
+**Part B -- the actual bug's live exposure set: OWNER-role users with an Artist profile AND at
+least one currently-active GUEST membership elsewhere:** 3 OWNER-role users in production have
+an attached Artist profile at all; **zero** of them currently have an active guest membership
+anywhere. **No live production account is exposed to this bug right now.** This is consistent
+with the reported incident already having been worked around at the data level (the account
+"recreated... as a PLAIN guest" per the task's own evidence) rather than the underlying code
+having been fixed -- the two soft-deleted Part-A accounts are a plausible match for that same
+remediated incident, though not confirmed by name. The code path remains live and would
+reproduce for the next solo-studio owner who guests anywhere, unless fixed.
+
+**Part C -- can today's UI/API still create a membership-less guest?** Yes, structurally, but
+not the cross-studio kind this bug needs: `POST /studios/:studioId/artists`
+(`routes/studios.ts:282-296`) lets staff set `isGuest`/`guestStartDate`/`guestEndDate` directly
+on a brand-new Artist row in the same transaction as their User -- this never touches
+`StudioMembership` at all. That route only ever creates a HOME artist at the calling studio
+with a descriptive flag (used for Calendar/assignment-picker filtering per the schema's own
+comment), not a second studio relationship -- so it can't by itself manufacture today's
+solo-owner-guest scenario. It does confirm the legacy `isGuest`-without-membership shape found
+in Part A is still an actively reachable data shape, not purely historical.
+
+## (d) Proposed fix shape (not built)
+
+`callerBelongsToStudio` and `activeStudioIdsForCaller` (`lib/artistAccess.ts:54-90`) should
+stop branching on "is the caller's global role literally ARTIST" and instead branch on "does
+this caller have an Artist profile at all" -- looking it up unconditionally, the same way
+`hasPermissionOrSoloArtistAt`'s own internal solo-bypass sub-check already does at line 149-154
+regardless of the outer role gate. Sketch:
+
+```ts
+export async function callerBelongsToStudio(user, recordStudioId): Promise<boolean> {
+  const artist = await prisma.artist.findUnique({
+    where: { userId: user.userId },
+    select: { id: true, user: { select: { studioId: true } } },
+  });
+  if (!artist) return user.studioId === recordStudioId;
+  return artist.user.studioId === recordStudioId || (await studioHasActiveMembership(recordStudioId, artist.id));
+}
+```
+
+Same shape for `activeStudioIdsForCaller`. This is a no-op for the overwhelming majority of
+callers (OWNER/FRONT_DESK with no Artist row -- the `artist` lookup returns null, falls
+through to the exact same bare equality as today) and unchanged for a plain ARTIST (their role
+already guarantees an Artist row exists). It only changes behavior for the one class this bug
+is about: a User with an Artist profile whose `role` happens to be OWNER (or, in principle,
+FRONT_DESK, though no such combination was found in production) -- consistent with
+`hasPermissionAt`'s own comment describing itself as the general-purpose, self-contained
+primitive every route should trust.
+
+**Blast radius if built**: since `hasPermissionAt` is the shared primitive underlying all 65
+gates the prior permission-context sweep converted (Parts 1/2/4, `9006fa4`/`6b8eeed`/
+`ed5565f`), this single shared-primitive fix would resolve the same under-permissive gap
+everywhere at once, not just `GET /assigned-to-me/:id` -- mirroring how the original
+permission-context fix's own design worked. `hasPermissionOrSoloArtistAt`'s solo-bypass
+sub-block would need no change: it already re-derives the artist's home fresh and requires the
+record's studio to genuinely BE that home before granting the bypass, independent of this
+primitive's own membership gate.
+
+**Flagged, not decided**: whether `activeStudioIdsForCaller`'s widened result set (a solo-owner
+now correctly including their guest studios) has any list-route caller relying on the current
+(narrower, buggy) behavior -- not audited here, since building/verifying that is explicitly
+out of this investigation's scope pending review of the fix shape itself.
+
+## Cleanup
+
+Both throwaway scripts (the dev repro, the production census) deleted after use. No source
+files touched this section. `git status` confirmed clean except the same pre-existing,
+untouched files noted throughout this session. REPORT.md line count increased versus `HEAD`
+before this commit (was 9324).
