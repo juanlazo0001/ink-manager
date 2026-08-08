@@ -497,7 +497,16 @@ router.patch("/:id/preferred-schedule", requirePermission("artistSchedules.manag
   const { preferredSchedule } = req.body ?? {};
 
   const artist = await prisma.artist.findUnique({ where: { id }, include: { user: true } });
-  if (!artist || artist.user.studioId !== req.user!.studioId) {
+  // Artist-mobility gap fix: this was a plain equality against the
+  // caller's own HOME studio, the same bug class as GET /:id and PATCH
+  // /:id just above (both already use isHome/isGuestHere) -- this route
+  // just never got the fix. Under-permissive, not over-permissive: it
+  // silently 404'd a legitimate GUEST studio's staff trying to set their
+  // own guest artist's schedule. Same studioHasActiveMembership(HOME or
+  // GUEST) pattern as its siblings in this file.
+  const isHome = artist?.user.studioId === req.user!.studioId;
+  const isGuestHere = !isHome && artist && (await studioHasActiveMembership(req.user!.studioId, id));
+  if (!artist || (!isHome && !isGuestHere)) {
     return res.status(404).json({ error: "Artist not found" });
   }
 
