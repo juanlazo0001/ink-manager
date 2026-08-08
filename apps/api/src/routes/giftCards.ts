@@ -2,7 +2,6 @@ import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { GiftCardStatus, Role } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
-import { requirePermission } from "../lib/permissions";
 import { diffObjects, logAudit } from "../lib/audit";
 import { computeGiftCardExpiration, generateUniqueGiftCardCode, syncExpiredStatus } from "../lib/giftCards";
 import { getOrCreateClientConversation } from "../lib/conversations";
@@ -13,7 +12,7 @@ import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 import { getChargeableConnectedAccountId } from "../lib/stripeConnect";
 import { createDirectChargeCheckoutSession } from "../lib/stripe";
 import { emitInvalidation } from "../lib/realtime/registry";
-import { callerBelongsToStudio } from "../lib/artistAccess";
+import { callerBelongsToStudio, hasPermissionAt } from "../lib/artistAccess";
 
 const GIFT_CARD_DETAIL_INCLUDE = {
   // Stackable gift cards: giftCards here is every OTHER card (this one
@@ -82,7 +81,7 @@ router.use(requireAuth);
 // collected. Same requirePermission("giftCards.issue") gate as before;
 // no new permission introduced, per this session's own instruction to
 // reuse whatever already governs this action.
-router.post("/", requirePermission("giftCards.issue"), async (req, res) => {
+router.post("/", async (req, res) => {
   const body = req.body ?? {};
   const { clientId, amountCents, appointmentId, expiresAt, paymentMethod } = body;
 
@@ -107,6 +106,11 @@ router.post("/", requirePermission("giftCards.issue"), async (req, res) => {
     return res.status(400).json({ error: "clientId must belong to an active client in your studio" });
   }
   const studioId = client.studioId;
+
+  // Permission-context fix: evaluated at the client's own studio.
+  if (!(await hasPermissionAt(req.user!, studioId, "giftCards.issue"))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
 
   // Stackable gift cards: no "this appointment already has a card" guard
   // here anymore -- several cards can legitimately share one appointmentId
@@ -170,7 +174,7 @@ router.post("/", requirePermission("giftCards.issue"), async (req, res) => {
 // once payment actually completes. Same requirePermission("giftCards.issue")
 // gate as the Cash path -- this is still just "issuing a gift card,"
 // same capability, different payment method.
-router.post("/checkout-session", requirePermission("giftCards.issue"), async (req, res) => {
+router.post("/checkout-session", async (req, res) => {
   const body = req.body ?? {};
   const { clientId, amountCents, appointmentId, expiresAt } = body;
 
@@ -189,6 +193,11 @@ router.post("/checkout-session", requirePermission("giftCards.issue"), async (re
     return res.status(400).json({ error: "clientId must belong to an active client in your studio" });
   }
   const studioId = client.studioId;
+
+  // Permission-context fix: evaluated at the client's own studio.
+  if (!(await hasPermissionAt(req.user!, studioId, "giftCards.issue"))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
 
   if (appointmentId) {
     const appointment = await prisma.appointment.findUnique({ where: { id: appointmentId } });
@@ -336,12 +345,17 @@ router.post("/exempt", requireRole(Role.OWNER), async (req, res) => {
   res.status(201).json(card);
 });
 
-router.get("/:id", requirePermission("giftCards.view"), async (req, res) => {
+router.get("/:id", async (req, res) => {
   const id = req.params.id as string;
 
   const card = await prisma.giftCard.findUnique({ where: { id }, include: GIFT_CARD_DETAIL_INCLUDE });
   if (!card || !(await callerBelongsToStudio(req.user!, card.studioId))) {
     return res.status(404).json({ error: "Gift card not found" });
+  }
+
+  // Permission-context fix: evaluated at the gift card's own studio.
+  if (!(await hasPermissionAt(req.user!, card.studioId, "giftCards.view"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   const synced = await syncExpiredStatus(card);
@@ -362,7 +376,7 @@ const TEXT_RECEIPT_ERROR_MESSAGES: Record<string, string> = {
   send_failed: "The text failed to send -- try again in a moment.",
 };
 
-router.post("/:id/text-receipt", requirePermission("giftCards.issue"), async (req, res) => {
+router.post("/:id/text-receipt", async (req, res) => {
   const id = req.params.id as string;
 
   const card = await prisma.giftCard.findUnique({
@@ -373,6 +387,11 @@ router.post("/:id/text-receipt", requirePermission("giftCards.issue"), async (re
     return res.status(404).json({ error: "Gift card not found" });
   }
   const studioId = card.studioId;
+
+  // Permission-context fix: evaluated at the gift card's own studio.
+  if (!(await hasPermissionAt(req.user!, studioId, "giftCards.issue"))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
 
   const synced = await syncExpiredStatus(card);
   if (synced.status !== GiftCardStatus.ACTIVE) {
@@ -409,7 +428,7 @@ router.post("/:id/text-receipt", requirePermission("giftCards.issue"), async (re
   res.json({ sent: true });
 });
 
-router.patch("/:id/attachment", requirePermission("giftCards.issue"), async (req, res) => {
+router.patch("/:id/attachment", async (req, res) => {
   const id = req.params.id as string;
   const { appointmentId } = req.body ?? {};
 
@@ -420,6 +439,11 @@ router.patch("/:id/attachment", requirePermission("giftCards.issue"), async (req
   const card = await prisma.giftCard.findUnique({ where: { id } });
   if (!card || !(await callerBelongsToStudio(req.user!, card.studioId))) {
     return res.status(404).json({ error: "Gift card not found" });
+  }
+
+  // Permission-context fix: evaluated at the gift card's own studio.
+  if (!(await hasPermissionAt(req.user!, card.studioId, "giftCards.issue"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   const synced = await syncExpiredStatus(card);
@@ -466,12 +490,17 @@ router.patch("/:id/attachment", requirePermission("giftCards.issue"), async (req
 // Not a safety-floor item -- OWNER-only was just the previous hardcoded
 // default, now a genuinely configurable key (defaults preserve that exact
 // behavior: FRONT_DESK/ARTIST both false until an OWNER opts in).
-router.post("/:id/void", requirePermission("giftCards.void"), async (req, res) => {
+router.post("/:id/void", async (req, res) => {
   const id = req.params.id as string;
 
   const card = await prisma.giftCard.findUnique({ where: { id } });
   if (!card || !(await callerBelongsToStudio(req.user!, card.studioId))) {
     return res.status(404).json({ error: "Gift card not found" });
+  }
+
+  // Permission-context fix: evaluated at the gift card's own studio.
+  if (!(await hasPermissionAt(req.user!, card.studioId, "giftCards.void"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   if (card.status === GiftCardStatus.VOID) {

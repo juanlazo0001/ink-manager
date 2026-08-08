@@ -13,7 +13,7 @@ import { generateUniqueReferralCode } from "../lib/referrals";
 import { clientMatchesPhoneOrEmail, findStudioClientsForMatching } from "../lib/duplicateDetection";
 import { performMerge, validateMergePair } from "../lib/clientMerge";
 import { emitInvalidation } from "../lib/realtime/registry";
-import { callerBelongsToStudio, activeStudioIdsForCaller } from "../lib/artistAccess";
+import { callerBelongsToStudio, activeStudioIdsForCaller, hasPermissionAt } from "../lib/artistAccess";
 
 const router = Router();
 
@@ -50,6 +50,10 @@ async function getLastArtistIds(clientIds: string[]): Promise<Map<string, string
 // was propagated onto all five successors before this change shipped (see
 // REPORT.md's "Granular permissions expansion" entry) so no studio's
 // customization silently reset to a different default.
+// Permission-context fix inventory: intentionally left home-scoped -- no
+// pre-existing record to check a matrix against (studioId below IS
+// req.user!.studioId by construction, same reasoning as inquiries.ts's/
+// flashPieces.ts's own POST / create routes).
 router.post("/", requirePermission("clients.edit"), async (req, res) => {
   const body = req.body ?? {};
 
@@ -176,7 +180,7 @@ router.get("/merge-search", requirePermission("clients.view"), async (req, res) 
   res.json(results.map((r) => ({ ...r, lastArtistId: lastArtistIds.get(r.id) ?? null })));
 });
 
-router.get("/:id", requirePermission("clients.view"), async (req, res) => {
+router.get("/:id", async (req, res) => {
   const id = req.params.id as string;
   const client = await prisma.client.findUnique({
     where: { id },
@@ -295,6 +299,11 @@ router.get("/:id", requirePermission("clients.view"), async (req, res) => {
     return res.status(404).json({ error: "Client not found" });
   }
 
+  // Permission-context fix: evaluated at the client's own studio.
+  if (!(await hasPermissionAt(req.user!, client.studioId, "clients.view"))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
   const lastArtistId = (await getLastArtistIds([client.id])).get(client.id) ?? null;
 
   // A direct fetch of a merged client still succeeds (rather than 404) --
@@ -409,7 +418,7 @@ router.get("/:id/notes", requireRole(Role.OWNER, Role.FRONT_DESK), requirePermis
 // hint) for entities that exist but have no active link yet. Deliberately
 // does NOT generate/rotate any token -- that stays on the inquiry/
 // appointment pages, this is read-only.
-router.get("/:id/shareable-links", requirePermission("clients.view"), async (req, res) => {
+router.get("/:id/shareable-links", async (req, res) => {
   const id = req.params.id as string;
   const now = new Date();
 
@@ -472,6 +481,11 @@ router.get("/:id/shareable-links", requirePermission("clients.view"), async (req
 
   if (!client || !(await callerBelongsToStudio(req.user!, client.studioId))) {
     return res.status(404).json({ error: "Client not found" });
+  }
+
+  // Permission-context fix: evaluated at the client's own studio.
+  if (!(await hasPermissionAt(req.user!, client.studioId, "clients.view"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   const estimateLinks = await Promise.all(
@@ -676,12 +690,17 @@ function normalizeDuplicatePair(clientId1: string, clientId2: string): [string, 
 // already dismissed as "not a duplicate" -- manual merge via search stays
 // available for a dismissed pair regardless, this only suppresses the
 // automatic suggestion banner.
-router.get("/:id/potential-duplicates", requirePermission("clients.view"), async (req, res) => {
+router.get("/:id/potential-duplicates", async (req, res) => {
   const id = req.params.id as string;
 
   const client = await prisma.client.findUnique({ where: { id }, include: { phones: true, emails: true } });
   if (!client || !(await callerBelongsToStudio(req.user!, client.studioId))) {
     return res.status(404).json({ error: "Client not found" });
+  }
+
+  // Permission-context fix: evaluated at the client's own studio.
+  if (!(await hasPermissionAt(req.user!, client.studioId, "clients.view"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   const [candidates, dismissedPairs] = await Promise.all([
@@ -717,7 +736,7 @@ router.get("/:id/potential-duplicates", requirePermission("clients.view"), async
 // merge eligibility: the pair remains fully mergeable via the manual
 // search picker (§2), since staff might reconsider later. Idempotent --
 // dismissing an already-dismissed pair just re-confirms it (upsert).
-router.post("/:id/dismiss-duplicate", requirePermission("clients.edit"), async (req, res) => {
+router.post("/:id/dismiss-duplicate", async (req, res) => {
   const id = req.params.id as string;
   const { otherClientId } = req.body ?? {};
 
@@ -735,6 +754,11 @@ router.post("/:id/dismiss-duplicate", requirePermission("clients.edit"), async (
 
   if (!client || !(await callerBelongsToStudio(req.user!, client.studioId))) {
     return res.status(404).json({ error: "Client not found" });
+  }
+
+  // Permission-context fix: evaluated at the client's own studio.
+  if (!(await hasPermissionAt(req.user!, client.studioId, "clients.edit"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
   if (!other || other.studioId !== client.studioId) {
     return res.status(404).json({ error: "Other client not found" });
@@ -771,13 +795,18 @@ const EDITABLE_CLIENT_FIELDS = [
   "address",
 ] as const;
 
-router.patch("/:id", requirePermission("clients.edit"), async (req, res) => {
+router.patch("/:id", async (req, res) => {
   const id = req.params.id as string;
   const body = req.body ?? {};
 
   const client = await prisma.client.findUnique({ where: { id } });
   if (!client || !(await callerBelongsToStudio(req.user!, client.studioId))) {
     return res.status(404).json({ error: "Client not found" });
+  }
+
+  // Permission-context fix: evaluated at the client's own studio.
+  if (!(await hasPermissionAt(req.user!, client.studioId, "clients.edit"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   if (client.mergedIntoId) {
@@ -846,7 +875,7 @@ function isUniqueViolation(err: unknown): boolean {
 // separate, explicit action (see make-primary below), so a client always
 // ends up with the primary contact staff actually chose, not whichever one
 // happened to be added first.
-router.post("/:id/phones", requirePermission("clients.edit"), async (req, res) => {
+router.post("/:id/phones", async (req, res) => {
   const id = req.params.id as string;
   const { phone, label } = req.body ?? {};
 
@@ -859,6 +888,10 @@ router.post("/:id/phones", requirePermission("clients.edit"), async (req, res) =
 
   const client = await loadOwnedClient(id, req.user!);
   if (!client) return res.status(404).json({ error: "Client not found" });
+  // Permission-context fix: evaluated at the client's own studio.
+  if (!(await hasPermissionAt(req.user!, client.studioId, "clients.edit"))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
 
   const normalized = normalizePhone(phone);
 
@@ -888,12 +921,16 @@ router.post("/:id/phones", requirePermission("clients.edit"), async (req, res) =
   res.status(201).json(created);
 });
 
-router.delete("/:id/phones/:phoneId", requirePermission("clients.edit"), async (req, res) => {
+router.delete("/:id/phones/:phoneId", async (req, res) => {
   const id = req.params.id as string;
   const phoneId = req.params.phoneId as string;
 
   const client = await loadOwnedClient(id, req.user!);
   if (!client) return res.status(404).json({ error: "Client not found" });
+  // Permission-context fix: evaluated at the client's own studio.
+  if (!(await hasPermissionAt(req.user!, client.studioId, "clients.edit"))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
 
   const target = await prisma.clientPhone.findUnique({ where: { id: phoneId } });
   if (!target || target.clientId !== id) {
@@ -928,12 +965,16 @@ router.delete("/:id/phones/:phoneId", requirePermission("clients.edit"), async (
   res.status(204).end();
 });
 
-router.post("/:id/phones/:phoneId/make-primary", requirePermission("clients.edit"), async (req, res) => {
+router.post("/:id/phones/:phoneId/make-primary", async (req, res) => {
   const id = req.params.id as string;
   const phoneId = req.params.phoneId as string;
 
   const client = await loadOwnedClient(id, req.user!);
   if (!client) return res.status(404).json({ error: "Client not found" });
+  // Permission-context fix: evaluated at the client's own studio.
+  if (!(await hasPermissionAt(req.user!, client.studioId, "clients.edit"))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
 
   const target = await prisma.clientPhone.findUnique({ where: { id: phoneId } });
   if (!target || target.clientId !== id) {
@@ -963,7 +1004,7 @@ router.post("/:id/phones/:phoneId/make-primary", requirePermission("clients.edit
   res.json(updatedClient);
 });
 
-router.post("/:id/emails", requirePermission("clients.edit"), async (req, res) => {
+router.post("/:id/emails", async (req, res) => {
   const id = req.params.id as string;
   const { email, label } = req.body ?? {};
 
@@ -976,6 +1017,10 @@ router.post("/:id/emails", requirePermission("clients.edit"), async (req, res) =
 
   const client = await loadOwnedClient(id, req.user!);
   if (!client) return res.status(404).json({ error: "Client not found" });
+  // Permission-context fix: evaluated at the client's own studio.
+  if (!(await hasPermissionAt(req.user!, client.studioId, "clients.edit"))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
 
   const normalized = email.trim().toLowerCase();
 
@@ -1005,12 +1050,16 @@ router.post("/:id/emails", requirePermission("clients.edit"), async (req, res) =
   res.status(201).json(created);
 });
 
-router.delete("/:id/emails/:emailId", requirePermission("clients.edit"), async (req, res) => {
+router.delete("/:id/emails/:emailId", async (req, res) => {
   const id = req.params.id as string;
   const emailId = req.params.emailId as string;
 
   const client = await loadOwnedClient(id, req.user!);
   if (!client) return res.status(404).json({ error: "Client not found" });
+  // Permission-context fix: evaluated at the client's own studio.
+  if (!(await hasPermissionAt(req.user!, client.studioId, "clients.edit"))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
 
   const target = await prisma.clientEmail.findUnique({ where: { id: emailId } });
   if (!target || target.clientId !== id) {
@@ -1045,12 +1094,16 @@ router.delete("/:id/emails/:emailId", requirePermission("clients.edit"), async (
   res.status(204).end();
 });
 
-router.post("/:id/emails/:emailId/make-primary", requirePermission("clients.edit"), async (req, res) => {
+router.post("/:id/emails/:emailId/make-primary", async (req, res) => {
   const id = req.params.id as string;
   const emailId = req.params.emailId as string;
 
   const client = await loadOwnedClient(id, req.user!);
   if (!client) return res.status(404).json({ error: "Client not found" });
+  // Permission-context fix: evaluated at the client's own studio.
+  if (!(await hasPermissionAt(req.user!, client.studioId, "clients.edit"))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
 
   const target = await prisma.clientEmail.findUnique({ where: { id: emailId } });
   if (!target || target.clientId !== id) {
@@ -1086,7 +1139,7 @@ router.post("/:id/emails/:emailId/make-primary", requirePermission("clients.edit
 // fields changes -- edit those separately via PATCH /clients/:id if needed.
 // (Except its secondary contact aliases, which do gain the source's
 // phone/email as new entries -- see carryOverContactAliases.)
-router.post("/:id/merge", requirePermission("clients.merge"), async (req, res) => {
+router.post("/:id/merge", async (req, res) => {
   const id = req.params.id as string;
   const { sourceClientId } = req.body ?? {};
 
@@ -1103,6 +1156,11 @@ router.post("/:id/merge", requirePermission("clients.merge"), async (req, res) =
     return res.status(404).json({ error: "Client not found" });
   }
   const studioId = survivorForAuth.studioId;
+
+  // Permission-context fix: evaluated at the survivor client's own studio.
+  if (!(await hasPermissionAt(req.user!, studioId, "clients.merge"))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
 
   const validation = await validateMergePair(studioId, id, sourceClientId);
   if ("error" in validation) {
@@ -1142,12 +1200,18 @@ router.post("/:id/merge", requirePermission("clients.merge"), async (req, res) =
 
 // Archive: soft, reversible hide -- same exclude-from-list-views treatment
 // as a merge, but nothing is repointed/destroyed and it can be undone.
-router.post("/:id/archive", requirePermission("clients.archive"), async (req, res) => {
+router.post("/:id/archive", async (req, res) => {
   const id = req.params.id as string;
   const client = await prisma.client.findUnique({ where: { id } });
   if (!client || !(await callerBelongsToStudio(req.user!, client.studioId))) {
     return res.status(404).json({ error: "Client not found" });
   }
+
+  // Permission-context fix: evaluated at the client's own studio.
+  if (!(await hasPermissionAt(req.user!, client.studioId, "clients.archive"))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
   if (client.archivedAt) {
     return res.json(client);
   }
@@ -1168,12 +1232,18 @@ router.post("/:id/archive", requirePermission("clients.archive"), async (req, re
   res.json(updated);
 });
 
-router.post("/:id/unarchive", requirePermission("clients.archive"), async (req, res) => {
+router.post("/:id/unarchive", async (req, res) => {
   const id = req.params.id as string;
   const client = await prisma.client.findUnique({ where: { id } });
   if (!client || !(await callerBelongsToStudio(req.user!, client.studioId))) {
     return res.status(404).json({ error: "Client not found" });
   }
+
+  // Permission-context fix: evaluated at the client's own studio.
+  if (!(await hasPermissionAt(req.user!, client.studioId, "clients.archive"))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
   if (!client.archivedAt) {
     return res.json(client);
   }

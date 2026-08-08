@@ -12,7 +12,7 @@ import { shortenUrl } from "../lib/shortLinks";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { generateWaiverPdf } from "../lib/pdf";
 import { emitInvalidation } from "../lib/realtime/registry";
-import { studioHasActiveMembership } from "../lib/artistAccess";
+import { studioHasActiveMembership, hasPermissionAt } from "../lib/artistAccess";
 
 function isExpiredOrInvalid(waiver: { signedAt: Date | null; tokenExpiresAt: Date | null } | null) {
   if (!waiver) {
@@ -231,7 +231,7 @@ staffRouter.use(requireAuth);
 // (who already have the full detail view) can reach any waiver in the
 // studio through this endpoint too, same as the permission's FD/AR-own
 // default implies.
-staffRouter.get("/:id/status", requirePermission("waivers.viewStatus"), async (req, res) => {
+staffRouter.get("/:id/status", async (req, res) => {
   const id = req.params.id as string;
 
   const waiver = await prisma.liabilityWaiver.findUnique({
@@ -269,6 +269,14 @@ staffRouter.get("/:id/status", requirePermission("waivers.viewStatus"), async (r
     }
   } else if (waiver.studioId !== req.user!.studioId) {
     return res.status(404).json({ error: "Waiver not found" });
+  }
+
+  // Permission-context fix: evaluated at the waiver's own studio, AFTER the
+  // ownership check above -- a caller with no real relationship to this
+  // waiver must still see 404, not 403 (same ordering reasoning as
+  // deposits.ts's GET /:id/pdf).
+  if (!(await hasPermissionAt(req.user!, waiver.studioId, "waivers.viewStatus"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   res.json({ id: waiver.id, status: waiver.status, signedAt: waiver.signedAt, verifiedAt: waiver.verifiedAt });

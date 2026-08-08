@@ -1,7 +1,6 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { requireAuth } from "../middleware/auth";
-import { requirePermission } from "../lib/permissions";
 import { Role } from "../../generated/prisma/enums";
 import { DEFAULT_THEME_PRESET, THEME_PRESET_ACCENT_COLORS, isValidThemePreset } from "../lib/themePresets";
 import { issueGiftCardForPaidDeposit, createDepositCheckoutSession } from "../lib/deposits";
@@ -11,7 +10,7 @@ import { redactedSessionHours } from "../lib/plannedSessions";
 import { getOrCreateClientConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
 import { emitInvalidation } from "../lib/realtime/registry";
-import { studioHasActiveMembership } from "../lib/artistAccess";
+import { studioHasActiveMembership, callerBelongsToStudio, hasPermissionAt } from "../lib/artistAccess";
 
 // Exact SOP wording, in the order the client must agree to each one.
 const TERMS = [
@@ -294,12 +293,23 @@ const staffRouter = Router();
 // SCHEDULING rather than CONFIRMED -- an appointment can't be created
 // without an attached gift card (Phase 3), so scheduling has to come after
 // the card exists, not before.
-staffRouter.patch("/:id/mark-paid", requireAuth, requirePermission("deposits.markPaidManual"), async (req, res) => {
+staffRouter.patch("/:id/mark-paid", requireAuth, async (req, res) => {
   const id = req.params.id as string;
 
   const depositForm = await prisma.depositForm.findUnique({ where: { id }, include: { inquiry: true } });
-  if (!depositForm || depositForm.inquiry.studioId !== req.user!.studioId) {
+  // Permission-context fix prerequisite: this 404 check was a plain
+  // equality against the caller's own home studio -- upgraded to
+  // callerBelongsToStudio (HOME or active GUEST) so a legitimately
+  // guest-assigned artist granted deposits.markPaidManual isn't 404'd
+  // before the permission check below ever runs, matching every other
+  // record-scoped route in this codebase.
+  if (!depositForm || !(await callerBelongsToStudio(req.user!, depositForm.inquiry.studioId))) {
     return res.status(404).json({ error: "Deposit form not found" });
+  }
+
+  // Permission-context fix: evaluated at the deposit form's own inquiry's studio.
+  if (!(await hasPermissionAt(req.user!, depositForm.inquiry.studioId, "deposits.markPaidManual"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   if (!depositForm.signedAt) {
@@ -337,7 +347,6 @@ staffRouter.patch("/:id/mark-paid", requireAuth, requirePermission("deposits.mar
 staffRouter.post(
   "/:id/checkout-link",
   requireAuth,
-  requirePermission("inquiries.edit"),
   async (req, res) => {
     const id = req.params.id as string;
 
@@ -346,8 +355,16 @@ staffRouter.post(
       include: { inquiry: { select: { studioId: true, clientId: true, client: { select: { firstName: true } } } } },
     });
 
-    if (!depositForm || depositForm.inquiry.studioId !== req.user!.studioId) {
+    // Permission-context fix prerequisite: upgraded from a plain equality
+    // against the caller's own home studio to callerBelongsToStudio, same
+    // reasoning as PATCH /:id/mark-paid above.
+    if (!depositForm || !(await callerBelongsToStudio(req.user!, depositForm.inquiry.studioId))) {
       return res.status(404).json({ error: "Deposit form not found" });
+    }
+
+    // Permission-context fix: evaluated at the deposit form's own inquiry's studio.
+    if (!(await hasPermissionAt(req.user!, depositForm.inquiry.studioId, "inquiries.edit"))) {
+      return res.status(403).json({ error: "Forbidden" });
     }
 
     const result = await createDepositCheckoutSession(id);
@@ -391,7 +408,7 @@ staffRouter.post(
 // GET /inquiries/assigned-to-me and waivers.ts's own /:id/status route),
 // enforced manually below since requirePermission itself only checks the
 // studio-level toggle, not row ownership.
-staffRouter.get("/:id/pdf", requireAuth, requirePermission("inquiries.view"), async (req, res) => {
+staffRouter.get("/:id/pdf", requireAuth, async (req, res) => {
   const id = req.params.id as string;
 
   const depositForm = await prisma.depositForm.findUnique({
@@ -437,6 +454,14 @@ staffRouter.get("/:id/pdf", requireAuth, requirePermission("inquiries.view"), as
     }
   } else if (depositForm.inquiry.studioId !== req.user!.studioId) {
     return res.status(404).json({ error: "Deposit form not found" });
+  }
+
+  // Permission-context fix: evaluated at the deposit form's own inquiry's
+  // studio, AFTER the ownership check above -- ordering matters: a caller
+  // with no real relationship to this project must still see 404 (same as
+  // before this fix), not 403, which would leak that the record exists.
+  if (!(await hasPermissionAt(req.user!, depositForm.inquiry.studioId, "inquiries.view"))) {
+    return res.status(403).json({ error: "Forbidden" });
   }
 
   if (!depositForm.signedAt) {

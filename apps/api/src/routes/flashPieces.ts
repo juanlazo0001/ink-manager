@@ -9,7 +9,7 @@ import { normalizePhone } from "../lib/phone";
 import { syncPrimaryEmail, syncPrimaryPhone } from "../lib/clientContacts";
 import { generateUniqueReferralCode } from "../lib/referrals";
 import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
-import { studioHasActiveMembership, callerBelongsToStudio, activeStudioIdsForCaller } from "../lib/artistAccess";
+import { studioHasActiveMembership, callerBelongsToStudio, activeStudioIdsForCaller, hasPermissionAt } from "../lib/artistAccess";
 
 const router = Router();
 
@@ -263,6 +263,11 @@ async function resolveOwnArtistId(userId: string): Promise<string | null> {
   return artist?.id ?? null;
 }
 
+// Permission-context fix inventory: intentionally left home-scoped -- a
+// multi-studio LIST for an ARTIST caller (activeStudioIdsForCaller, HOME +
+// every active GUEST in one query), no single record to check a matrix
+// against. Same reasoning as appointments.ts's/inquiries.ts's own list
+// routes.
 router.get("/", requirePermission("flashGallery.manage"), async (req, res) => {
   const studioId = req.user!.studioId;
   let artistId = typeof req.query.artistId === "string" ? req.query.artistId : undefined;
@@ -292,6 +297,11 @@ router.get("/", requirePermission("flashGallery.manage"), async (req, res) => {
   res.json(pieces);
 });
 
+// Permission-context fix inventory: intentionally left home-scoped -- no
+// pre-existing record to check a matrix against (studioId below IS
+// req.user!.studioId by construction; a piece always gets created at the
+// caller's OWN current studio, never a guest one, so there's nothing to
+// resolve independently of home here).
 router.post("/", requirePermission("flashGallery.manage"), async (req, res) => {
   const studioId = req.user!.studioId;
   const { imageUrl, title, description, priceCents, estimatedDurationMinutes, isOneOfOne } = req.body ?? {};
@@ -375,7 +385,7 @@ router.post("/", requirePermission("flashGallery.manage"), async (req, res) => {
   res.status(201).json(piece);
 });
 
-router.patch("/:id", requirePermission("flashGallery.manage"), async (req, res) => {
+router.patch("/:id", async (req, res) => {
   const id = req.params.id as string;
 
   const existing = await prisma.flashPiece.findUnique({ where: { id }, include: { artist: true } });
@@ -383,9 +393,23 @@ router.patch("/:id", requirePermission("flashGallery.manage"), async (req, res) 
     return res.status(404).json({ error: "Flash piece not found" });
   }
   const studioId = existing.studioId;
+  const isSelf = existing.artist.userId === req.user!.userId;
 
-  if (req.user!.role === Role.ARTIST && existing.artist.userId !== req.user!.userId) {
-    return res.status(403).json({ error: "Forbidden" });
+  // Carve-out: a flash piece is the artist's own portable content (image,
+  // title, price, duration) -- editing YOUR OWN piece is never gated by any
+  // studio's permission matrix, same "governed by the artist" carve-out
+  // artists.ts's own self-bypass already established for bio/portfolio/
+  // rates. An ARTIST can still never touch a DIFFERENT artist's piece
+  // (unchanged from before this fix) -- only staff manage on another
+  // artist's behalf, gated by flashGallery.manage evaluated at the piece's
+  // own studio (permission-context fix).
+  if (!isSelf) {
+    if (req.user!.role === Role.ARTIST) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    if (!(await hasPermissionAt(req.user!, studioId, "flashGallery.manage"))) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
   }
 
   const { imageUrl, title, description, priceCents, estimatedDurationMinutes, isOneOfOne } = req.body ?? {};
@@ -435,7 +459,7 @@ router.patch("/:id", requirePermission("flashGallery.manage"), async (req, res) 
 // folding into PATCH's generic field update) for the same reason
 // mark-lost/reopen get their own routes elsewhere -- a clear, audited,
 // singular action rather than a raw status field write.
-router.post("/:id/retire", requirePermission("flashGallery.manage"), async (req, res) => {
+router.post("/:id/retire", async (req, res) => {
   const id = req.params.id as string;
 
   const existing = await prisma.flashPiece.findUnique({ where: { id }, include: { artist: true } });
@@ -443,9 +467,20 @@ router.post("/:id/retire", requirePermission("flashGallery.manage"), async (req,
     return res.status(404).json({ error: "Flash piece not found" });
   }
   const studioId = existing.studioId;
+  const isSelf = existing.artist.userId === req.user!.userId;
 
-  if (req.user!.role === Role.ARTIST && existing.artist.userId !== req.user!.userId) {
-    return res.status(403).json({ error: "Forbidden" });
+  // Carve-out: same "governed by the artist" reasoning as PATCH /:id above
+  // -- retiring your OWN piece is never gated by any studio's permission
+  // matrix. An ARTIST still can never touch a DIFFERENT artist's piece;
+  // staff retiring on another artist's behalf stays gated by
+  // flashGallery.manage, evaluated at the piece's own studio.
+  if (!isSelf) {
+    if (req.user!.role === Role.ARTIST) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    if (!(await hasPermissionAt(req.user!, studioId, "flashGallery.manage"))) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
   }
 
   if (existing.status !== FlashPieceStatus.AVAILABLE) {
