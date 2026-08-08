@@ -9785,3 +9785,138 @@ response (no per-studio `select` is possible when different rows can belong to d
 studios with different settings). A shared `lib/artistFieldVisibility.ts` helper resolves each
 row's OWN studio's settings and strips accordingly, applied at three call sites: `GET
 /assigned-to-me`, `GET /assigned-to-me/:id`, and the guest-blended branch of staff `GET /`.
+
+# Phase 5, Parts 2-3: artist field-visibility built, tested, and live-verified
+
+Follow-up to the Part 1 investigation above. Built exactly the two groups grounded in the real
+field inventory (Pricing & financial detail, Internal notes), per the user's own confirmation
+of that scope decision.
+
+## Part 2 (`37266fd`): the build
+
+- **Schema**: `StudioSettings.artistFieldVisibility` (`Json?`), migrated via `prisma migrate
+  diff` (`--from-config-datasource` / `--to-schema`, since this Prisma version needs a shadow
+  DB for `--from-migrations` and none is configured) + `prisma migrate deploy` against the dev
+  DB -- never `migrate dev`. One real hiccup worth logging for the next person: the first
+  `migrate diff` invocation redirected `2>&1` into the SQL file itself, so a stray "Loaded
+  Prisma config..." line landed as the first line of `migration.sql` and `deploy` failed with a
+  Postgres syntax error. Fixed by rewriting the file with just the real SQL and
+  `prisma migrate resolve --rolled-back` before retrying -- worth remembering that `migrate
+  diff`'s informational output goes to the SAME stream as its SQL output under `--script`.
+- **`lib/artistFieldVisibility.ts`**: defaults/normalization, a batched per-studio lookup
+  (`getArtistFieldVisibilityForStudios`, since a single artist-facing response can span several
+  studios with different settings), and `applyArtistFieldVisibility` -- post-fetch key
+  *deletion* (never nulling), so a hidden field is genuinely absent from the JSON. Post-fetch
+  rather than a static Prisma `select` swap specifically because `GET /assigned-to-me`'s own
+  query already spans every studio the caller has a live relationship with in ONE response; no
+  single `select` could express "different shape per row."
+- **Three enforcement points**, all keyed on the caller's EFFECTIVE role at the record's OWN
+  studio being ARTIST (never their raw global role, consistent with the solo-guest access fix
+  immediately above this in the file): `GET /assigned-to-me`, `GET /assigned-to-me/:id`, and --
+  found during Part 1 -- the guest-blended branch of staff `GET /`, which previously used the
+  full staff field set for a solo owner's own guest-studio rows.
+- **`settings.manageArtistVisibility`**: new permission key, OWNER-only by default (same
+  precedent as every other `settings.*` key). Settings UI section built as its own
+  own-card/own-Edit-toggle unit (matching Deposit Tiers/Reminder Send Times' existing
+  convention) in the Defaults tab, hidden entirely -- not shown disabled -- for a solo studio.
+- **Realtime**: `PATCH /studio-settings` emits the existing studio-wide `inquiry.updated` event
+  when `artistFieldVisibility` changes (no new event type needed). This correctly live-refreshes
+  the STAFF Inquiries list/detail (`inquiriesQueryKey`, prefix-compatible with the registry's
+  `["inquiries"]` key). **Found, not fixed, flagged for a future session**: `MyProjectDetail.tsx`
+  (the artist-facing project page this feature is actually about) uses its own disconnected
+  react-query key (`['assigned-project', id]`), not the `inquiries`-prefixed one -- so a
+  connected artist's already-open tab won't auto-refresh on a live settings change the way the
+  staff page will. This is a pre-existing gap (this page was never wired into the realtime
+  registry at all, for any event), not something Phase 5 introduced, and matches the registry's
+  own documented precedent of several consumers not being wired up yet. "Live, no redeploy" is
+  proven and verified at the data layer -- a fresh request always reflects the current setting,
+  confirmed by automated test -- extending socket-push to this specific page is a real but
+  separate frontend-wiring task, out of this phase's scope.
+
+## Part 3 (`884bcfb`): verification -- caught a real crash before it shipped
+
+`src/routes/artistFieldVisibility.test.ts`, 8 tests, same real-HTTP/real-Prisma convention as
+every other regression suite in this file:
+
+- Default (no toggle touched) matches pre-Phase-5 behavior exactly.
+- Hiding Pricing & financial detail: `priceEstimateLow/High`, `timeEstimateHoursMin/Max`,
+  `budget`, and `depositForms` are confirmed **absent** (`"key" in body === false`), not null,
+  on both LIST and DETAIL raw JSON -- the literal adversarial check the task asked for.
+- Guest case: the SAME artist's HOME-studio inquiry (checked in the exact same LIST response
+  as their affected HOST row) keeps every field -- proving the setting is genuinely per-studio,
+  not per-caller.
+- Hiding Internal notes too, independently: `notes` absent, pricing stays hidden from the prior
+  toggle (both groups compose correctly).
+- Toggle back on, in the SAME running server process (no restart): visibility restored on the
+  very next request -- the literal proof "live, no redeploy" isn't just true of a fresh deploy,
+  it's true within one continuously-running server.
+- OWNER/FRONT_DESK control: the host OWNER's own full staff `GET /:id` view keeps every field
+  regardless of the artist-only setting.
+- Part 1's second finding, re-verified with a REAL fixture (not just re-reading the code): a
+  genuine solo studio-of-one OWNER-with-Artist-profile, guesting at the same host, has their own
+  blended row in staff `GET /` lose pricing detail too -- proving their global OWNER role
+  doesn't leak full staff-shaped data through the blending branch just because it's technically
+  *their own* list view.
+
+**A real bug the live browser walkthrough caught that the backend test suite could not**:
+`MyProjectDetail.tsx` crashed outright (React error boundary, "Cannot read properties of
+undefined (reading 'length')") the instant a studio actually hid a group, because it read
+`project.depositForms.length`/`project.notes.length` unconditionally -- these fields are now
+genuinely absent, not empty arrays, and nothing in Part 2 had touched this page. This is exactly
+why the task asked for a live walkthrough on top of server-side adversarial checks: a
+"successful" 200 response with the correct (absent) fields is not the same as a working
+feature if the one page that renders it can't handle absence. Fixed: `depositForms`/`notes`/
+`budget`/`priceEstimateLow`/`priceEstimateHigh`/`timeEstimateHoursMin`/`timeEstimateHoursMax`
+marked optional in the `Project` type; the Deposit-status and Notes cards now don't render at
+all when their data is absent (rather than a misleading "No deposit forms yet."); the Budget
+row is omitted outright rather than showing "Not provided" for a value that was actually
+supplied but hidden, not actually missing. Checked every other page that reads these same
+fields (`MyInquiries.tsx`, `Inquiries.tsx`, `InquiryKanbanCard.tsx`, and every STAFF-facing page)
+-- none had the same unguarded pattern; the staff pages are structurally unaffected (they never
+receive a stripped response), and `MyInquiries.tsx`/`InquiryKanbanCard.tsx` already route
+through `formatPriceEstimate`'s loose `== null` checks, which treat `undefined` and `null`
+identically and were already safe.
+
+**Live browser verification** (real Chromium via Playwright, isolated dev servers `:4099`/
+`:5183`, screenshots not committed): a normal studio's OWNER sees the new "Artist Field
+Visibility" section in Settings -> Defaults, toggles Pricing & financial detail off, and saves
+successfully. The assigned artist's project detail page, reloaded fresh, shows every
+non-hideable field intact (description, placement, size, color, service, timing, tattooed-
+before, reference/placement photos, sessions) with the Budget field, the Estimate row, and the
+entire Deposit-status card genuinely gone -- not empty, not erroring -- while the Notes card
+(untouched toggle) still renders its one visible-to-artist note correctly. A separate solo
+studio-of-one owner's Settings -> Defaults tab has no "Artist Field Visibility" section at all.
+
+## Judgment call: no write-side enforcement needed (not a gap)
+
+The task's Part 2 asked to "reject or strip consistently with how profile-delegation
+enforcement behaves" if a hidden field arrives in a PATCH from an artist. Checked directly:
+there is no such path. The only artist-writable route touching pricing at all is `PATCH
+/inquiries/:id/respond` (entering a brand-new estimate, gated by the separate
+`inquiries.enterEstimate` permission) -- this WRITES a new number, it never reflects an
+existing hidden value back to the server, so there is nothing to strip or reject. Notes are
+staff-authored only; no artist-facing route creates or edits an `InquiryNote` at all. Concluding
+"neither reject nor strip is needed, because no such write path exists" rather than silently
+skipping the instruction.
+
+## CLAUDE.md hygiene
+
+`prisma migrate dev` never used -- `migrate diff` + `migrate deploy` only, against the dev DB,
+per the standing rule (including recovering cleanly from the one redirect mistake above via
+`migrate resolve --rolled-back` rather than any workaround that touches production). No
+database reset offered or accepted. REPORT.md append-only, line count increased at every
+commit in this phase (verified against `git show HEAD:REPORT.md | wc -l` before each append:
+9680 -> 9787 -> this entry). Every throwaway script (`_p5_seed.ts`, the two Playwright
+walkthrough scripts) created outside the committed tree or deleted immediately after use,
+confirmed via `git status` showing only the intended files at each commit. Both isolated dev
+servers (`:4099` API, `:5183` web) killed and reconfirmed via `Get-NetTCPConnection -State
+Listen` before ending the session. Working tree confirmed clean except the same four
+pre-existing, untouched-since-before-this-session files noted throughout this file's recent
+entries. The one throwaway demo studio's `artistFieldVisibility` setting was left toggled off
+after the walkthrough -- inert, since that studio is disposable and never reused, same
+"leave test data" convention as every prior session's own scratch fixtures.
+
+## Commits
+
+Part 1 (investigation): `95622e0`. Part 2 (build): `37266fd`. Part 3 (verification + the
+frontend crash fix it caught): `884bcfb`.
