@@ -9678,3 +9678,110 @@ disposable studio pair created solely for this walkthrough.
 
 Part 1: `c1a0b95`. Part 2: `a6d635b`. This entry (Parts 3 and 4, investigation-only,
 documentation): itself, no further source changes.
+
+# Phase 5, Part 1: artist field-visibility investigation
+
+## Current mechanism: a static, hand-maintained `select` allow-list, not a toggle system
+
+`ARTIST_INQUIRY_SELECT` (`routes/inquiries.ts:657-746`) is the one place an ARTIST-facing
+Inquiry/Project response is shaped -- used by `GET /assigned-to-me` (list) and
+`GET /assigned-to-me/:id` (detail). It is a hardcoded Prisma `select` object, not a dynamic or
+per-key configurable mechanism -- there is no existing toggle infrastructure to "extend" beyond
+this one allow-list. The "existing artist financial-limits scoping" the task refers to IS this
+select object's own already-reduced shape (e.g. `depositForms` limited to
+`{id, sessionNumber, signedAt, paidAt, paidManually}` -- no dollar amounts, no signature -- per
+its own inline comment referencing the Dashboard's `reports.viewFinancial` split). Enforcement
+is 100% server-side (a query-shape decision), never UI-hidden -- exactly the model Phase 5 must
+extend.
+
+**Exact current ARTIST-visible field set** (verbatim from `ARTIST_INQUIRY_SELECT`): `id`,
+`channel`, `description`, `colorOrBlackGrey`, `placement`, `estimatedSize`,
+`hasBeenTattooedBefore`, `budget`, `desiredTiming`, `referenceImages`, `placementImages`,
+`createdAt`, `updatedAt`, `status`, `priceEstimateLow`, `priceEstimateHigh`,
+`timeEstimateHoursMin`, `timeEstimateHoursMax`, `projectCompletedAt`, `client{firstName,
+lastName}` (name only, no email/phone), `assignedArtist{id, hourlyRateCents, flatRateCents,
+user{...}}` (the artist's OWN rate, needed for their own estimate-entry auto-suggestion),
+`studio{id,name}` (guest badge), `service{id,name,pricingModel}`, `appointment{...}`,
+`sessions{...}` (times/status/checkout/waiver-status/photos), `plannedSessions{...}` (hours +
+**estimated price range** + reduced `depositForm`), `depositForms{...}` (reduced, no dollars),
+`notes` (already filtered to `InquiryNote.visibleToArtist === true` only, per-note staff
+control -- not a blanket section flag).
+
+## Three findings that reshape the proposed groupings
+
+Checked each of the task's five example groups against this real field list rather than
+assuming all five apply:
+
+1. **Client contact info -- nothing to toggle.** Email/phone are never in this payload at all
+   (`client` select is hardcoded to first/last name only), and the entire `Client` resource is
+   separately walled off from ARTIST by the existing permission matrix (`clients.view`/
+   `clients.edit` aren't in `DEFAULT_ROLE_PERMISSIONS[Role.ARTIST]`, and `clients.ts`'s routes
+   are gated on that key). A toggle here would be a permanent no-op against this feature's own
+   scope (Inquiry/Project responses).
+2. **Attachments collides with the task's own non-hideable list.** The only attachment-like
+   fields are `referenceImages`/`placementImages`, which the task explicitly requires stay
+   non-hideable ("reference photos"). No other attachment field exists on `Inquiry`.
+3. **Referral info doesn't exist in this payload.** Referral data lives on `Client`/`GiftCard`
+   (`Client.referralCode`, `GiftCard` rows) -- neither is embedded in `ARTIST_INQUIRY_SELECT`
+   today, so there's nothing here to gate either.
+
+**Decision (confirmed with the user)**: ship exactly the two groups grounded in real fields --
+**Pricing & financial detail** and **Internal notes** -- rather than adding no-op placeholder
+toggles for the other three.
+
+**Judgment call flagged, not solved (v1's own scope limit)**: hiding "Pricing & financial
+detail" hides the price/time estimate range from an artist who may still be expected to ENTER
+that same estimate via the existing `PATCH /:id/respond` artist-estimate workflow
+(`inquiries.artistSendEstimate`). This is a real product tension a studio opting into this
+toggle should understand -- v1's explicit "no per-record hiding" scope means there's no clean
+way to resolve it (e.g. "hide only after the estimate is entered") without more infrastructure
+than this phase asks for. Flagging for the studio's own judgment when they opt in, not solving
+it here.
+
+## A second finding: the STAFF list route needs the same treatment for blended guest rows
+
+`GET /inquiries/` (staff list, `requireRole(OWNER, FRONT_DESK)`) blends in a caller's own
+guest-studio-assigned rows (the artist-mobility fix from the solo-guest work) using
+`INQUIRY_LIST_SELECT` -- the FULL staff list projection, not the reduced artist one. Per the
+task's own framing ("visibility applies to callers whose effective role AT THE RECORD'S STUDIO
+is ARTIST"), those specific blended rows describe a studio where this caller's effective role
+is ARTIST (never their raw global role) regardless of whether they're OWNER/FRONT_DESK at
+their own home -- so they need the identical pricing-detail stripping applied, or a studio
+hiding pricing for its artists would still leak it to a guest artist's OWN blended list view.
+Home rows in the same response are correctly unaffected (the caller's effective role there is
+their real staff role).
+
+## Final field groupings (built into Part 2)
+
+**Non-hideable minimum** (matches the task's own list, grounded in the field inventory above):
+core project/tattoo description (`description`, `colorOrBlackGrey`, `placement`,
+`estimatedSize`, `hasBeenTattooedBefore`, `desiredTiming`, `channel`, `status`, `createdAt`,
+`updatedAt`, `projectCompletedAt`, `id`), reference/placement photos, client name (already the
+contact-info floor), studio/service/appointment basics, all session/schedule data (actual
+`Appointment` times, not estimates -- see below), and the artist's own hourly/flat rate (needed
+to do the estimate-entry job at all).
+
+**Pricing & financial detail** (toggleable, default ON = current behavior): `priceEstimateLow`,
+`priceEstimateHigh`, `timeEstimateHoursMin`, `timeEstimateHoursMax`, `budget` (the client's
+stated budget), `depositForms` (the whole array -- already dollar-free, but "has this client
+paid" is itself financial-adjacent status a studio may want off), each `plannedSessions[]`
+row's `estimatedHoursMin/Max`/`estimatedPriceLow/High`/`depositForm`, and (list view only)
+`service.flatDepositCents`/`service.depositBreakdownNote`. Judgment call: `timeEstimateHours*`
+and `plannedSessions[].estimatedHoursMin/Max` are grouped with pricing (they're quoted/planned
+numbers used to compute price), not with session info -- the ACTUAL scheduled
+`Appointment.startTime/endTime` stay in the non-hideable session-info set regardless, so an
+artist always knows when to show up even with pricing detail hidden.
+
+**Internal notes** (toggleable, default ON = current behavior): the entire `notes` array. This
+is an ADDITIONAL studio-wide kill switch layered on top of the existing per-note
+`visibleToArtist` flag, never a replacement for it -- a note must pass BOTH gates.
+
+## Enforcement mechanism (grounded in what already works elsewhere)
+
+Post-fetch stripping (delete the key entirely, not null it out, to genuinely match "absent
+from the response"), not a per-route static `select` swap -- required because `GET
+/assigned-to-me`'s own query spans every studio the artist has a live relationship with in ONE
+response (no per-studio `select` is possible when different rows can belong to different
+studios with different settings). A shared `lib/artistFieldVisibility.ts` helper resolves each
+row's OWN studio's settings and strips accordingly, applied at three call sites: `GET
+/assigned-to-me`, `GET /assigned-to-me/:id`, and the guest-blended branch of staff `GET /`.
