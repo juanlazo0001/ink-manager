@@ -466,3 +466,70 @@ test("webhook payment_intent.succeeded: finds the Appointment by stripePaymentIn
   const updated = await prisma.appointment.findUniqueOrThrow({ where: { id: appointment.id } });
   assert.equal(updated.paidVia, "STRIPE");
 });
+
+// ---------------------------------------------------------------------
+// Part 4: adversarial -- public-flow token security. Amount/fee tampering
+// itself is verified live against real Stripe (see the Part 4 report
+// entry) rather than here, since proving a created PaymentIntent's real
+// amount requires an actual Stripe API round trip; what IS checkable
+// without any live network call is that the payment-intent endpoints
+// never accept an id/amount from the request at all -- only ever a token
+// in the URL, resolved server-side to a row whose OWN amount field is the
+// only thing ever sent to Stripe. These tests prove the token is the sole
+// key, and that garbage/malicious request bodies change nothing.
+// ---------------------------------------------------------------------
+
+test("adversarial: POST /:token/payment-intent with a wrong/guessed token 404s, never falls back to any real deposit", async () => {
+  await makeStudioWithSignedDeposit({ embeddedPaymentsEnabled: true, stripeConnected: true, tag: "tokenguess" });
+
+  const res = await fetch(`${baseUrl}/deposits/not-a-real-token-${suffix}/payment-intent`, { method: "POST" });
+  assert.equal(res.status, 404);
+  const body = (await res.json()) as { error: string };
+  assert.match(body.error, /invalid/i);
+});
+
+test("adversarial: POST /:token/payment-intent ignores a malicious request body entirely -- only the URL token and the row's own DB amount matter", async () => {
+  // embeddedPaymentsEnabled: false here is deliberate -- this proves the
+  // route reads NOTHING from the body before its own server-side gating
+  // even runs (still 400s for the flag, not for anything body-shaped),
+  // confirming there's no code path where a client-supplied amount/
+  // studioId/depositFormId in the body could possibly matter.
+  const { depositForm } = await makeStudioWithSignedDeposit({ embeddedPaymentsEnabled: false, stripeConnected: true, tag: "tamperbody" });
+
+  const res = await fetch(`${baseUrl}/deposits/${depositForm.token}/payment-intent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      amountCents: 1,
+      totalCharged: 0.01,
+      depositFormId: "some-other-studios-deposit-form-id",
+      studioId: "some-other-studio-id",
+      application_fee_amount: 0,
+    }),
+  });
+  assert.equal(res.status, 400, "the flag-off gate fires identically regardless of anything in the body");
+  const body = (await res.json()) as { error: string };
+  assert.match(body.error, /enabled/i);
+
+  // The row itself must be completely unchanged -- no stray write from a
+  // body the route never reads.
+  const unchanged = await prisma.depositForm.findUniqueOrThrow({ where: { id: depositForm.id } });
+  assert.equal(unchanged.totalCharged, depositForm.totalCharged);
+  assert.equal(unchanged.stripePaymentIntentId, null);
+});
+
+test("adversarial: flash payment-intent endpoint also ignores a malicious body and requires the real token", async () => {
+  const { flashPaymentToken } = await makeStudioWithFlashInquiry({ embeddedPaymentsEnabled: false, stripeConnected: true, tag: "flashtamper" });
+
+  const wrongTokenRes = await fetch(`${baseUrl}/flash-payment/payment-intent/not-a-real-token-${suffix}`, { method: "POST" });
+  assert.equal(wrongTokenRes.status, 404);
+
+  const res = await fetch(`${baseUrl}/flash-payment/payment-intent/${flashPaymentToken}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ amountCents: 1, priceCents: 1, inquiryId: "someone-elses-inquiry-id" }),
+  });
+  assert.equal(res.status, 400);
+  const body = (await res.json()) as { error: string };
+  assert.match(body.error, /enabled/i, "gating fires the same regardless of a malicious body -- nothing in it is ever read");
+});

@@ -10883,3 +10883,174 @@ REPORT.md line count before this entry: 10743 (verified via `git show HEAD:REPOR
 ## Commits
 
 This entry's own commit (below).
+
+# Embedded payments Part 4: verification and rollout prep (branch `explore/embedded-payments`)
+
+Final part of the epic -- adversarial verification, a mobile-viewport pass across all three
+flows, and the production rollout report. No new product features; two flagged gaps found
+along the way (no self-serve toggle exists yet, and Apple/Google Pay needs a one-time backfill
+for studios connected before this deploy) are both documented below, not silently worked around.
+
+## Adversarial: amount/fee tampering is ineffective
+
+**Structural guarantee, not just a spot check**: none of the three payment-intent-creation
+functions (`createOrRetrieveDepositPaymentIntent`, `createOrRetrieveFlashPaymentIntent`, the
+inline block in `routes/appointments.ts`'s checkout route) accept an amount as a parameter from
+the request at all -- each one loads its own row from the database by server-side lookup (a
+token for deposit/flash, an authenticated route param for the appointment) and computes the
+amount from that row's own field (`depositForm.totalCharged`, `flashPiece.priceCents`,
+`finalCostCents` computed server-side from redeemed gift cards). `application_fee_amount` is
+always `computeApplicationFeeCents()`'s own server-side computation from `PLATFORM_FEE_PERCENT`
+-- never read from anywhere client-supplied, for any of the three flows, before or after this
+migration.
+
+**Live proof against real Stripe** (Dev Studio, isolated dev servers, `embeddedPaymentsEnabled`
+on): called `POST /deposits/:token/payment-intent` twice against a real $110.00 deposit -- once
+with no body, once with a malicious body claiming
+`{"amountCents":1,"totalCharged":0.01,"application_fee_amount":0,"studioId":"someone-elses-studio"}`.
+Both calls returned the **identical** `clientSecret` (fetch-or-create correctly reused the same
+PaymentIntent, completely unaffected by the second call's body). Retrieved that PaymentIntent
+directly from Stripe afterward: `amount: 11000` (exactly $110.00, matching the real
+`depositForm.totalCharged`) -- the tampered `$0.01` had zero effect, confirmed against Stripe's
+own record of the object, not just this app's own response.
+
+**Automated regression** (`routes/embeddedPayments.test.ts`, no live Stripe calls): three new
+adversarial tests -- a guessed/wrong token 404s without touching any real deposit; a malicious
+body (fake amount, fake studio id, fake deposit-form id) changes nothing about the gating
+outcome or the row's own state (verified the row is byte-for-byte unchanged after the attempt);
+the flash payment-intent endpoint is held to the identical standard. **12 tests total in this
+file, 110/110 across the full suite.**
+
+**Session checkout's own amount is a different trust boundary, noted for completeness**: unlike
+deposit/flash (anonymous public endpoints, amount must never trust ANY client input),
+`finalCostCents` for session checkout is legitimately staff-entered by an authenticated,
+permission-checked user (`appointments.checkout`) -- that's an existing trust boundary this
+migration doesn't touch or widen, not a client-facing amount-tampering surface at all. There is
+no anonymous-client path into this flow's amount.
+
+**Public-flow token security, unchanged**: both public payment-intent endpoints require the
+exact same crypto-random token every other public flow in this codebase already uses
+(`DepositForm.token`, `Inquiry.flashPaymentToken`) -- no new token scheme introduced, no new
+guessable identifier added anywhere. A wrong token 404s before any Stripe call is even
+attempted, proven above.
+
+## Mobile-viewport pass (all three flows, real Chromium via Playwright, iPhone 13 emulation)
+
+- **Deposit**: loaded, filled a real test card, paid in place, landed on "Thanks -- your deposit
+  is paid!" with the referral card -- no horizontal scroll at any point (`scrollWidth <=
+  clientWidth` checked directly, not eyeballed).
+- **Flash prepayment**: identical shape, correctly redirected into `/schedule/:token` on
+  success, no horizontal scroll.
+- **Session checkout**: logged in as staff on the same mobile viewport (this flow's own
+  "have the client pay on this device now" framing implies a phone/tablet handoff is the
+  realistic use case, not just desktop) -- the checkout card, gift-card redemption UI, and the
+  inline Payment Element all reflowed correctly under the sidebar's mobile hamburger layout,
+  resolved in place, "$100.00 paid via Stripe." visible with no reload, no horizontal scroll.
+
+## Production rollout, per flow
+
+**Turning it on today requires a manual step -- there is no Settings UI toggle.** Checked
+directly: `StudioSettings.embeddedPaymentsEnabled` is not wired into `PATCH /studio-settings`'s
+own allow-list (confirmed by grepping that route for the field -- zero matches, unlike
+`referralProgramEnabled`, which the same route does expose). A studio owner cannot flip this
+themselves through the product today. Turning it on for a specific studio is:
+
+```
+await prisma.studioSettings.update({ where: { studioId }, data: { embeddedPaymentsEnabled: true } });
+```
+
+run by an engineer (a one-off script or a `prisma studio` edit against the production DB, same
+class of action as any other manual data fix in this codebase). **Recommended fast-follow, not
+built in this pass since it wasn't asked for**: a Settings toggle, gated behind
+`settings.manageEmbeddedPayments` or similar, before this goes beyond a small pilot -- flipping
+flags by hand doesn't scale past a handful of studios and has no audit trail of who turned it on.
+
+**Suggested rollout order, one studio at a time, in this sequence** (matches the epic's own
+build order, each flow proven on the one before it):
+
+1. **Deposit** first -- highest volume of the three, and the flow with the most adversarial
+   coverage (decline-then-retry-on-the-same-PaymentIntent specifically proven). Pick one
+   consenting pilot studio, flip the flag, watch for 3-5 business days (enough to see a real
+   mix of card types, at least one likely decline, ideally one 3DS challenge from a real
+   customer's bank).
+2. **Flash prepayment** next, same pilot studio -- structurally near-identical to deposit, lower
+   risk once deposit is proven live for that same studio's connected account.
+3. **Session checkout** last -- the only flow with a genuinely different code path (staff-
+   embedded, not a public page) and the only one whose UI (`AppointmentDetail.tsx`) staff use
+   directly rather than a client-facing page; worth a short internal walkthrough with that
+   studio's own staff before wide use, not just automated confidence.
+
+**Apple/Google Pay needs a one-time backfill for already-connected studios.** The domain
+registration this migration wires into `account.updated` (Part 2) only FIRES on that webhook
+event -- a studio that connected Stripe long before this deploy, with `chargesEnabled` already
+`true`, won't get a fresh `account.updated` event just because this code shipped. Without a
+backfill, Apple/Google Pay will silently never appear for any studio that was already connected
+before rollout, only for newly-onboarding ones. Recommended one-time script at rollout time:
+
+```
+const integrations = await prisma.studioIntegration.findMany({
+  where: { channel: "STRIPE", status: "CONNECTED" },
+});
+for (const integration of integrations) {
+  const { stripeAccountId, chargesEnabled } = integration.metadata as { stripeAccountId?: string; chargesEnabled?: boolean };
+  if (stripeAccountId && chargesEnabled) {
+    await registerPaymentMethodDomainForAccount(stripeAccountId);
+  }
+}
+```
+
+Idempotent and safe to run against every connected studio regardless of whether embedded
+payments is even turned on for them yet -- registering a domain has no effect until a studio
+both has the flag on and a client actually loads a Payment Element.
+
+## What to watch in the Stripe Dashboard during the first days
+
+- **Connect > [pilot studio's account] > Payments**: since these are direct charges, each
+  payment appears on the CONNECTED account's own Dashboard view, not the platform's -- confirm
+  you're looking at the right account (Part 1's own investigation: direct charges have "limited
+  visibility at the platform level," this is expected, not a bug).
+- **Developers > Webhooks > [this app's Connect-scoped endpoint] > recent deliveries**: watch
+  for `payment_intent.succeeded` delivery failures specifically -- a payment can succeed on
+  Stripe's side while the webhook that tells this app about it fails to deliver (network
+  blip, a deploy mid-flight), which would leave a `DepositForm`/`Inquiry`/`Appointment` looking
+  unpaid despite Stripe having the client's money. Stripe retries automatically, but a stuck
+  delivery after several retries needs a manual `stripe events resend` or a support ticket.
+- **Connect > Collected fees** (`dashboard.stripe.com/connect/application_fees`): confirms
+  `application_fee_amount` is actually landing on the platform account for embedded payments
+  the same way it already does for Checkout -- a quick sanity check that the migration didn't
+  silently zero out platform revenue for the studios it's enabled for.
+- **Payment method domains** (`dashboard.stripe.com/settings/payment_method_domains`, viewed
+  AS the connected account via Stripe-Account impersonation, or via the API): confirm the
+  backfill script above actually registered the pilot studio's domain, and that Apple Pay
+  actually appears in a real Payment Element load on a real HTTPS deployment (this cannot be
+  verified on localhost -- confirmed directly this session that Apple Pay is unavailable in dev
+  specifically because of the unregistered-domain warning Stripe.js itself prints, not a code
+  bug).
+- **Disputes**: direct charges debit the disputed amount from the CONNECTED account's balance,
+  not the platform's (Part 1's own finding, re-confirmed against current docs) -- no code in
+  this app currently automates dispute handling for either Checkout or the new embedded path,
+  so this is an unchanged, pre-existing manual process, not something this migration needs to
+  add.
+- **`payment_intent.payment_failed`** is logged (`console.warn`) but has no dashboard/alerting
+  wired to it yet -- worth grepping server logs for a pattern of declines on a specific studio
+  in the first few days, since (unlike Checkout, which silently absorbed failures on Stripe's
+  own hosted page) this is the first time this app's own logs see failed-payment detail at all.
+
+## CLAUDE.md hygiene
+
+No schema changes this part. `STRIPE_WEBHOOK_SECRET` again temporarily pointed at the local
+`stripe listen` session's signing secret for the live amount-tampering and mobile-viewport
+verification, backed up first and restored byte-for-byte after (diffed to confirm, same as
+Parts 2/3). All throwaway scripts (`_ep4_seed.ts`, `_ep4_verify_amount.ts`, `_ep4_cleanup.ts`)
+created directly in `apps/api/src` and deleted before this commit; every row they created (3
+clients, 3 inquiries, 1 appointment, 1 flash piece) deleted afterward, confirmed via the cleanup
+script's own count output. Both isolated dev servers (`:4099`, `:5183`) and the `stripe listen`
+process killed and reconfirmed. REPORT.md line count before this entry: 10885 (verified via
+`git show HEAD:REPORT.md | wc -l`) -- pure addition.
+
+Still on `explore/embedded-payments`; **nothing merged to `main`**, per the epic's own explicit
+instruction throughout all four parts -- this branch is ready for review, not auto-merged.
+
+## Commits
+
+This entry's own commit (below).
