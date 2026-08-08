@@ -9202,3 +9202,35 @@ Part 1: `9006fa4`. Part 2: `6b8eeed`. Part 4 (renumbered per the task's own "Par
 ## Cleanup
 
 All scratch scripts deleted (confirmed via `ls` after each deletion). Both isolated dev servers (`:4099` API, `:5183` web) killed and confirmed via `netstat` port checks. Working tree confirmed clean except the pre-existing, untouched-by-this-session logo/marketing files already present at session start (`git status` shows only those). A background `/code-review high` pass was launched mid-session but returned no usable findings against this work -- by the time it completed (~55 minutes later), Part 4 was already committed and merged with `origin/main`, so its `git diff HEAD` was empty; its findings concern the pre-existing, out-of-scope logo/marketing files instead, not touched here. The real bug-catching mechanism this session was the existing automated test suite (see "A real bug the test suite caught" above), not the code-review pass.
+
+## Correction: Part numbering, and the real inventory accounting
+
+Asked directly for the ~92-gate inventory accounting and where "Part 3" was -- caught two real errors in this entry and the commits above.
+
+**Part numbering**: there is no Part 3 commit. The actual sequence is Part 1 (`9006fa4`, helpers + appointments.ts), Part 2 (`6b8eeed`, inquiries.ts), then the commit message and this file both mislabeled the third sweep batch "Part 4" (`ed5565f`) -- skipping 3 entirely, then contradicted itself two paragraphs later by also calling `6b8eeed` "Part 3" in the same sentence that called it "Part 2." Pure labeling error in the commit message and this write-up, not a gap in the underlying work. Not rewriting the pushed commit message for this.
+
+**The count was also wrong**: "~92" was the original investigation's estimate; recounting directly from the pre-fix (`ecdfe86`) and current file contents, filtering every comment-only false positive by hand (the investigation's own same-line grep filter missed several multi-line route registrations), the real numbers are:
+
+| File | Original gates | Remaining | Converted |
+|---|---|---|---|
+| appointments.ts | 14 | 1 | 13 |
+| inquiries.ts | 30 | 4 | 26 |
+| clients.ts | 18 | 4 | 14 |
+| giftCards.ts | 6 | 0 | 6 |
+| deposits.ts | 3 | 0 | 3 |
+| flashPieces.ts | 4 | 2 | 2 (carve-out shape) |
+| waivers.ts | 4 | 3 | 1 |
+| artists.ts | 5 | 5 | 0 |
+| studios.ts | 14 | 14 | 0 |
+| tasks.ts | 4 | 4 | 0 |
+| reports.ts | 1 | 1 | 0 |
+| audit.ts | 1 | 1 | 0 |
+| clientImport.ts | 1 | 1 | 0 |
+| uploads.ts | 1 | 1 | 0 |
+| **Total** | **106** | **41** | **65** |
+
+Of the 41 remaining: **7 are not ARTIST-reachable** (`requireRole(OWNER, FRONT_DESK)` excludes ARTIST before the permission check runs: `inquiries.ts` GET `/`, GET `/:id`, POST `/:id/revise-estimate`; `clients.ts` GET `/:id/notes`; `waivers.ts`'s three `staffRouter` routes after its own `requireRole` gate). **33 are ARTIST-reachable carve-outs verified to have no independent record** -- including three files never previously examined during the fix, checked only in response to this question: `studios.ts`'s 14 team/location-management routes (every one hard-locks `:studioId === req.user!.studioId` via an explicit equality check before anything else runs -- no cross-studio path exists regardless of the permission matrix), `audit.ts` (a studio-wide log with no independent record), and `clientImport.ts` (an import batch always lands in the caller's own studio, `ImportBatch.studioId` is `req.user!.studioId` by construction). **1 is a confirmed, deliberately out-of-scope gap**: `artists.ts`'s `PATCH /:id/preferred-schedule` uses a plain home-only equality instead of `callerBelongsToStudio` -- under-permissive (blocks a legitimate guest-studio staff member), not over-permissive, so it's not this bug class; flagged, not fixed.
+
+**Net answer**: zero ARTIST-reachable gates still evaluate the caller's home studio in a way that creates an over-permissive cross-studio exposure. The one remaining home-scoped ARTIST-reachable gap fails closed, not open.
+
+Also confirmed no lingering shells: the old `find /` background search from early in this session (looking for `chromium-cli`) had already self-terminated (its own completion notification arrived, then `TaskStop` confirmed "no task found"); both isolated dev-server ports (`:4099`, `:5183`) were already off, reconfirmed via `netstat`. Port `:4000` is still listening -- that's the user's own pre-existing dev server from before this session started, not touched.
