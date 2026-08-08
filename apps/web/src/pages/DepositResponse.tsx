@@ -1,13 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
-import { loadStripe, type Stripe } from '@stripe/stripe-js'
-import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime } from '../lib/format'
+import { dollarsToCents } from '../lib/money'
 import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import PublicPageFooter from '../components/PublicPageFooter'
 import SignaturePadField, { type SignaturePadHandle } from '../components/SignaturePadField'
-import { EDITORIAL_GOLD_STRIPE_APPEARANCE } from '../lib/stripeAppearance'
+import PaymentFlowStages from '../components/payments/PaymentFlowStages'
+import PaymentConfirmationStage from '../components/payments/PaymentConfirmationStage'
 
 // Embedded payments migration: this page is one of the platform's own
 // "Editorial Gold, never studio-themed" pages now (same login-shell
@@ -249,11 +249,6 @@ export default function DepositResponse() {
     }
   }, [showEmbedded, token, embeddedSecret])
 
-  const stripePromise = useMemo<Promise<Stripe | null> | null>(() => {
-    if (!embeddedSecret) return null
-    return loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY, { stripeAccount: embeddedSecret.connectedAccountId })
-  }, [embeddedSecret])
-
   function handleEmbeddedPaid() {
     setConfirmingPayment(true)
     loadVerify({ poll: true })
@@ -283,13 +278,21 @@ export default function DepositResponse() {
         )}
 
         {state === 'ready' && verifyData && verifyData.paidVia && (
-          <div className="text-center">
-            <h1 className="login-jura text-xl font-semibold text-fg">Thanks — your deposit is paid!</h1>
-            <p className="mt-2 text-sm text-fg-secondary">
-              {verifyData.paidVia === 'STRIPE'
-                ? "We've received your payment and confirmed your appointment."
-                : 'The studio has recorded your payment and confirmed your appointment.'}
-            </p>
+          <div>
+            <PaymentConfirmationStage
+              identity={{
+                artistName: verifyData.artistName,
+                artistAvatarUrl: verifyData.artistAvatarUrl,
+                studioName: verifyData.studioName,
+              }}
+              amountCents={dollarsToCents(verifyData.totalCharged)}
+              heading="Payment received"
+              body={
+                verifyData.paidVia === 'STRIPE'
+                  ? "We've received your payment and confirmed your appointment."
+                  : 'The studio has recorded your payment and confirmed your appointment.'
+              }
+            />
 
             {verifyData.referralProgramEnabled && (
               <div className="mt-5 rounded-lg border border-accent/30 bg-accent/5 p-4 text-left">
@@ -312,73 +315,75 @@ export default function DepositResponse() {
           </div>
         )}
 
-        {state === 'ready' && verifyData && !verifyData.paidVia && !confirmingPayment && verifyData.signedAt && verifyData.stripeConnected && (
-          <div>
-            <h1 className="login-jura text-xl font-semibold text-fg">Deposit Agreement Signed</h1>
-            <p className="mt-1 text-sm font-medium text-fg-secondary">{verifyData.studioName}</p>
-            <p className="mt-2 text-sm text-fg-secondary">
-              {verifyData.clientFirstName}, your agreement is on file. Pay your deposit below to confirm your
-              appointment.
-            </p>
+        {state === 'ready' &&
+          verifyData &&
+          !verifyData.paidVia &&
+          !confirmingPayment &&
+          verifyData.signedAt &&
+          verifyData.stripeConnected &&
+          (verifyData.embeddedPaymentsEnabled ? (
+            <PaymentFlowStages
+              identity={{
+                artistName: verifyData.artistName,
+                artistAvatarUrl: verifyData.artistAvatarUrl,
+                studioName: verifyData.studioName,
+              }}
+              headlineAmountCents={dollarsToCents(verifyData.totalCharged)}
+              breakdown={[
+                { label: 'Deposit', valueCents: dollarsToCents(verifyData.depositAmount) },
+                { label: 'Fee', valueCents: dollarsToCents(verifyData.feeAmount) },
+              ]}
+              payment={embeddedSecret}
+              paymentLoadError={embeddedLoadError}
+              returnUrl={`${window.location.origin}/deposit/${token}?paid=1`}
+              successHeading="Payment received"
+              successBody="We've received your payment and confirmed your appointment."
+              onPaid={handleEmbeddedPaid}
+            />
+          ) : (
+            <div>
+              <h1 className="login-jura text-xl font-semibold text-fg">Deposit Agreement Signed</h1>
+              <p className="mt-1 text-sm font-medium text-fg-secondary">{verifyData.studioName}</p>
+              <p className="mt-2 text-sm text-fg-secondary">
+                {verifyData.clientFirstName}, your agreement is on file. Pay your deposit below to confirm your
+                appointment.
+              </p>
 
-            <div className="mt-4 grid grid-cols-3 gap-3">
-              <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Deposit</p>
-                <p className="mt-1 text-lg font-semibold text-fg">${verifyData.depositAmount}</p>
+              <div className="mt-4 grid grid-cols-3 gap-3">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Deposit</p>
+                  <p className="mt-1 text-lg font-semibold text-fg">${verifyData.depositAmount}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Fee</p>
+                  <p className="mt-1 text-lg font-semibold text-fg">${verifyData.feeAmount}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Total</p>
+                  <p className="mt-1 text-lg font-semibold text-fg">${verifyData.totalCharged}</p>
+                </div>
               </div>
-              <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Fee</p>
-                <p className="mt-1 text-lg font-semibold text-fg">${verifyData.feeAmount}</p>
-              </div>
-              <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Total</p>
-                <p className="mt-1 text-lg font-semibold text-fg">${verifyData.totalCharged}</p>
-              </div>
+
+              {verifyData.depositBreakdownNote && (
+                <p className="mt-2 text-xs text-fg-muted">{verifyData.depositBreakdownNote}</p>
+              )}
+
+              {payError && (
+                <div className="mt-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+                  {payError}
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={goToStripeCheckout}
+                disabled={payingNow}
+                className="mt-6 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
+              >
+                {payingNow ? 'Redirecting…' : `Pay $${verifyData.totalCharged}`}
+              </button>
             </div>
-
-            {verifyData.depositBreakdownNote && (
-              <p className="mt-2 text-xs text-fg-muted">{verifyData.depositBreakdownNote}</p>
-            )}
-
-            {verifyData.embeddedPaymentsEnabled ? (
-              <div className="mt-6">
-                {embeddedLoadError && (
-                  <div className="mb-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
-                    {embeddedLoadError}
-                  </div>
-                )}
-                {embeddedSecret && stripePromise ? (
-                  <Elements stripe={stripePromise} options={{ clientSecret: embeddedSecret.clientSecret, appearance: EDITORIAL_GOLD_STRIPE_APPEARANCE }}>
-                    <DepositPaymentForm
-                      token={token!}
-                      totalCharged={verifyData.totalCharged}
-                      onPaid={handleEmbeddedPaid}
-                    />
-                  </Elements>
-                ) : (
-                  !embeddedLoadError && <p className="text-center text-sm text-fg-secondary">Loading payment form…</p>
-                )}
-              </div>
-            ) : (
-              <>
-                {payError && (
-                  <div className="mt-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
-                    {payError}
-                  </div>
-                )}
-
-                <button
-                  type="button"
-                  onClick={goToStripeCheckout}
-                  disabled={payingNow}
-                  className="mt-6 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
-                >
-                  {payingNow ? 'Redirecting…' : `Pay $${verifyData.totalCharged}`}
-                </button>
-              </>
-            )}
-          </div>
-        )}
+          ))}
 
         {state === 'ready' &&
           verifyData &&
@@ -522,84 +527,5 @@ export default function DepositResponse() {
         <PublicPageFooter studioSlug={verifyData?.studioSlug} />
       </div>
     </div>
-  )
-}
-
-// Embedded payments: rendered inside <Elements>, so useStripe/useElements
-// resolve to the instance mounted with THIS deposit's own client secret --
-// a fresh instance per payment attempt, not a shared/cached one, since a
-// new <Elements> tree is created whenever embeddedSecret changes.
-function DepositPaymentForm({
-  token,
-  totalCharged,
-  onPaid,
-}: {
-  token: string
-  totalCharged: number
-  onPaid: () => void
-}) {
-  const stripe = useStripe()
-  const elements = useElements()
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!stripe || !elements) return
-
-    setSubmitting(true)
-    setError(null)
-
-    const { error: submitError } = await elements.submit()
-    if (submitError) {
-      setError(submitError.message ?? 'Please check your payment details.')
-      setSubmitting(false)
-      return
-    }
-
-    // redirect: 'if_required' is the whole point of this migration --
-    // a card payment (the overwhelming majority of cases) resolves right
-    // here with no navigation at all. Only a genuinely redirect-requiring
-    // method (3DS challenge, a bank redirect) leaves the page, and even
-    // then returns to return_url (this same page, ?paid=1) rather than a
-    // Stripe-hosted one -- the SAME polling logic the old Checkout
-    // redirect flow already used picks up from there via justReturnedFromStripe.
-    const { error: confirmError, paymentIntent } = await stripe.confirmPayment({
-      elements,
-      confirmParams: {
-        return_url: `${window.location.origin}/deposit/${token}?paid=1`,
-      },
-      redirect: 'if_required',
-    })
-
-    if (confirmError) {
-      setError(confirmError.message ?? 'Something went wrong. Please try again.')
-      setSubmitting(false)
-      return
-    }
-
-    if (paymentIntent && (paymentIntent.status === 'succeeded' || paymentIntent.status === 'processing')) {
-      onPaid()
-    } else {
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <PaymentElement />
-
-      {error && (
-        <div className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">{error}</div>
-      )}
-
-      <button
-        type="submit"
-        disabled={!stripe || !elements || submitting}
-        className="login-button login-jura w-full px-4 py-3 text-sm font-bold uppercase disabled:opacity-60"
-      >
-        {submitting ? 'Processing…' : `Pay $${totalCharged}`}
-      </button>
-    </form>
   )
 }

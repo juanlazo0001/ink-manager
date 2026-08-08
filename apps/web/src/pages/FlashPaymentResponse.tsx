@@ -1,11 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { loadStripe, type Stripe } from '@stripe/stripe-js'
-import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js'
 import { apiFetch, ApiError } from '../lib/api'
 import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import PublicPageFooter from '../components/PublicPageFooter'
-import { EDITORIAL_GOLD_STRIPE_APPEARANCE } from '../lib/stripeAppearance'
+import PaymentFlowStages from '../components/payments/PaymentFlowStages'
 
 // Embedded payments migration: same fixed Editorial Gold platform
 // treatment as DepositResponse.tsx now (login-shell) -- applyThemePreset
@@ -129,11 +127,6 @@ export default function FlashPaymentResponse() {
     }
   }, [showEmbedded, token, embeddedSecret])
 
-  const stripePromise = useMemo<Promise<Stripe | null> | null>(() => {
-    if (!embeddedSecret) return null
-    return loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY, { stripeAccount: embeddedSecret.connectedAccountId })
-  }, [embeddedSecret])
-
   function handleEmbeddedPaid() {
     setConfirmingPayment(true)
     loadVerify({ poll: true })
@@ -195,22 +188,21 @@ export default function FlashPaymentResponse() {
               </p>
             ) : verifyData.embeddedPaymentsEnabled ? (
               <div className="mt-5">
-                {embeddedLoadError && (
-                  <div className="mb-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
-                    {embeddedLoadError}
-                  </div>
-                )}
-                {embeddedSecret && stripePromise ? (
-                  <Elements stripe={stripePromise} options={{ clientSecret: embeddedSecret.clientSecret, appearance: EDITORIAL_GOLD_STRIPE_APPEARANCE }}>
-                    <FlashPaymentForm
-                      token={token!}
-                      priceCents={verifyData.priceCents}
-                      onPaid={handleEmbeddedPaid}
-                    />
-                  </Elements>
-                ) : (
-                  !embeddedLoadError && <p className="text-center text-sm text-fg-secondary">Loading payment form…</p>
-                )}
+                <PaymentFlowStages
+                  identity={{
+                    artistName: verifyData.artistName,
+                    artistAvatarUrl: verifyData.artistAvatarUrl,
+                    studioName: verifyData.studioName,
+                  }}
+                  headlineAmountCents={verifyData.priceCents ?? 0}
+                  breakdown={[]}
+                  payment={embeddedSecret}
+                  paymentLoadError={embeddedLoadError}
+                  returnUrl={`${window.location.origin}/flash-payment/${token}?paid=1`}
+                  successHeading="Payment received"
+                  successBody="Your flash booking is locked in -- taking you to pick a time now."
+                  onPaid={handleEmbeddedPaid}
+                />
               </div>
             ) : (
               <>
@@ -233,76 +225,5 @@ export default function FlashPaymentResponse() {
         <PublicPageFooter studioSlug={verifyData?.studioSlug} />
       </div>
     </div>
-  )
-}
-
-// Embedded payments: same shape as DepositResponse.tsx's own
-// DepositPaymentForm -- rendered inside <Elements>, one fresh instance per
-// payment attempt.
-function FlashPaymentForm({
-  token,
-  priceCents,
-  onPaid,
-}: {
-  token: string
-  priceCents: number | null
-  onPaid: () => void
-}) {
-  const stripe = useStripe()
-  const elements = useElements()
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!stripe || !elements) return
-
-    setSubmitting(true)
-    setError(null)
-
-    const { error: submitError } = await elements.submit()
-    if (submitError) {
-      setError(submitError.message ?? 'Please check your payment details.')
-      setSubmitting(false)
-      return
-    }
-
-    const { error: confirmError, paymentIntent } = await stripe.confirmPayment({
-      elements,
-      confirmParams: {
-        return_url: `${window.location.origin}/flash-payment/${token}?paid=1`,
-      },
-      redirect: 'if_required',
-    })
-
-    if (confirmError) {
-      setError(confirmError.message ?? 'Something went wrong. Please try again.')
-      setSubmitting(false)
-      return
-    }
-
-    if (paymentIntent && (paymentIntent.status === 'succeeded' || paymentIntent.status === 'processing')) {
-      onPaid()
-    } else {
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <PaymentElement />
-
-      {error && (
-        <div className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">{error}</div>
-      )}
-
-      <button
-        type="submit"
-        disabled={!stripe || !elements || submitting}
-        className="login-button login-jura w-full px-4 py-3 text-sm font-bold uppercase disabled:opacity-60"
-      >
-        {submitting ? 'Processing…' : `Pay ${priceCents != null ? `$${(priceCents / 100).toFixed(2)}` : 'now'}`}
-      </button>
-    </form>
   )
 }

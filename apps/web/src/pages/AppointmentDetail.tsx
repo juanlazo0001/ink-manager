@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { loadStripe, type Stripe } from '@stripe/stripe-js'
-import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js'
 import AuditTrail from '../components/AuditTrail'
+import PaymentTakeoverOverlay from '../components/payments/PaymentTakeoverOverlay'
+import PaymentFlowStages from '../components/payments/PaymentFlowStages'
 import Modal from '../components/Modal'
 import DropdownPortal from '../components/DropdownPortal'
 import StatusPill from '../components/StatusPill'
@@ -73,6 +73,9 @@ interface Appointment {
   notes: string | null
   archivedAt: string | null
   finalCostCents: number | null
+  // Tipping: null until the tip step has run (pre-tipping appointments, or
+  // embeddedPaymentsEnabled off); 0 once the client explicitly chose no tip.
+  tipCents: number | null
   closeoutNotes: string | null
   checkedOutAt: string | null
   checkedOutBy: { id: string; name: string | null; email: string } | null
@@ -83,6 +86,9 @@ interface Appointment {
   // always a live fetch result, never a hand-built placeholder.
   referralProgramEnabled: boolean
   artist: { id: string; user: { email: string; name: string | null; avatarUrl: string | null } }
+  // Embedded payments UX redesign: the payment takeover's identity line
+  // ("Your session with {artist} at {studio}") needs the studio's own name.
+  studio: { name: string }
   inquiry: {
     id: string
     description: string
@@ -226,6 +232,11 @@ export default function AppointmentDetail() {
   } | null>(null)
   const [markingCharged, setMarkingCharged] = useState(false)
   const [markChargedError, setMarkChargedError] = useState<string | null>(null)
+  // Embedded payments UX redesign: the payment takeover auto-opens once a
+  // PaymentIntent exists, but staff can step away (client not ready to pay
+  // yet, e.g.) -- this tracks that explicit dismissal so it doesn't just
+  // reopen itself on the next render/refresh.
+  const [takeoverDismissed, setTakeoverDismissed] = useState(false)
   // Embedded payments migration: true while polling for the
   // payment_intent.succeeded webhook to land after an in-place
   // confirmation -- same "webhook is usually near-instant but not
@@ -513,6 +524,27 @@ export default function AppointmentDetail() {
       }
     }
     poll()
+  }
+
+  // Embedded payments UX redesign: session checkout's tip step, called from
+  // inside the payment takeover once the client picks a tip. Recomputes
+  // nothing client-side beyond the tip choice itself -- the server re-
+  // derives amountDueCents from this appointment's own finalCostCents/
+  // redeemed cards and never trusts a client-supplied subtotal.
+  async function handleTipConfirm(tipCents: number) {
+    if (!id) throw new Error('Missing appointment id')
+    const result = await apiFetch<{
+      tipCents: number
+      amountDueCents: number
+      amountCents: number
+      paymentIntentClientSecret: string | null
+      paymentIntentConnectedAccountId: string | null
+    }>(`/appointments/${id}/tip`, { method: 'POST', body: JSON.stringify({ tipCents }) })
+    setRefreshIndex((i) => i + 1)
+    if (!result.paymentIntentClientSecret || !result.paymentIntentConnectedAccountId) {
+      throw new Error('Something went wrong starting payment. Please try again.')
+    }
+    return { clientSecret: result.paymentIntentClientSecret, connectedAccountId: result.paymentIntentConnectedAccountId }
   }
 
   async function handleCompleteConsultation(event: FormEvent) {
@@ -1521,6 +1553,15 @@ export default function AppointmentDetail() {
                             {appointment.checkedOutBy?.name ?? appointment.checkedOutBy?.email ?? '—'}
                           </p>
                         </div>
+                        {/* Tipping: only present once the tip step has actually
+                            run (see the payment takeover) -- absent (not a $0
+                            tile) beforehand. */}
+                        {appointment.tipCents != null && (
+                          <div>
+                            <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Tip</p>
+                            <p className="mt-1 text-fg">{formatCents(appointment.tipCents)}</p>
+                          </div>
+                        )}
                       </div>
 
                       {appointment.referralProgramEnabled && (
@@ -1552,11 +1593,13 @@ export default function AppointmentDetail() {
                                 Have {appointment.client.firstName} pay {formatCents(checkoutAmountDue)} on this device
                                 now, or collect it another way and mark it charged below.
                               </p>
-                              <AppointmentPaymentElement
-                                clientSecret={checkoutResult.paymentIntentClientSecret}
-                                connectedAccountId={checkoutResult.paymentIntentConnectedAccountId}
-                                onPaid={handleEmbeddedAppointmentPaid}
-                              />
+                              <button
+                                type="button"
+                                onClick={() => setTakeoverDismissed(false)}
+                                className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover"
+                              >
+                                {takeoverDismissed ? 'Reopen payment screen' : 'Open payment screen'}
+                              </button>
                             </div>
                           ) : checkoutResult?.checkoutUrl ? (
                             <div className="space-y-2">
@@ -1864,96 +1907,49 @@ export default function AppointmentDetail() {
                   </div>
                 </Modal>
               )}
+
+              {/* Embedded payments UX redesign: the client-facing payment
+                  moment, staged full-screen in Editorial Gold rather than
+                  this page's own studio theme -- same "this moment is the
+                  platform's own brand" reasoning the deposit/flash public
+                  pages already use. Auto-open (takeoverDismissed starts
+                  false) the instant a PaymentIntent exists; staff can step
+                  away and reopen via the button in the checkout card above. */}
+              {checkoutResult?.paymentIntentClientSecret &&
+                checkoutResult.paymentIntentConnectedAccountId &&
+                checkoutAmountDue !== null &&
+                checkoutAmountDue > 0 &&
+                !appointment.paidVia &&
+                !takeoverDismissed && (
+                  <PaymentTakeoverOverlay onClose={() => setTakeoverDismissed(true)}>
+                    <PaymentFlowStages
+                      identity={{
+                        artistName: artistLabel(appointment.artist),
+                        artistAvatarUrl: appointment.artist.user.avatarUrl,
+                        studioName: appointment.studio.name,
+                      }}
+                      headlineAmountCents={checkoutAmountDue}
+                      breakdown={[
+                        { label: 'Final cost', valueCents: appointment.finalCostCents ?? 0 },
+                        ...(checkoutRedeemedTotalCents > 0
+                          ? [{ label: 'Deposit redeemed', valueCents: checkoutRedeemedTotalCents }]
+                          : []),
+                      ]}
+                      tip={{
+                        subtotalCents: appointment.finalCostCents ?? 0,
+                        baseTotalCents: checkoutAmountDue,
+                        onConfirm: handleTipConfirm,
+                      }}
+                      payment={null}
+                      returnUrl={window.location.href}
+                      successHeading="Payment received"
+                      successBody="This session is checked out and paid -- nothing else to do here."
+                      onPaid={handleEmbeddedAppointmentPaid}
+                    />
+                  </PaymentTakeoverOverlay>
+                )}
             </>
           )}
     </div>
-  )
-}
-
-// Embedded payments migration: mounted inline in the checkout card above,
-// inside this already-authenticated, studio-themed staff page -- unlike
-// the standalone public deposit/flash pages (which switch to the fixed
-// Editorial Gold platform treatment because they ARE the platform's own
-// page), this is a small widget living inside a page that's already
-// wearing the studio's own theme. Deliberately left on the Payment
-// Element's own default appearance rather than hand-matching every
-// studio's arbitrary preset colors -- there's no single "right" palette
-// to chase here the way there is for the platform's own fixed Editorial
-// Gold pages, and Stripe's default already renders cleanly regardless of
-// the surrounding theme.
-function AppointmentPaymentElementForm({ onPaid }: { onPaid: () => void }) {
-  const stripe = useStripe()
-  const elements = useElements()
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault()
-    if (!stripe || !elements) return
-
-    setSubmitting(true)
-    setError(null)
-
-    const { error: submitError } = await elements.submit()
-    if (submitError) {
-      setError(submitError.message ?? 'Please check the payment details.')
-      setSubmitting(false)
-      return
-    }
-
-    const { error: confirmError, paymentIntent } = await stripe.confirmPayment({
-      elements,
-      confirmParams: {
-        return_url: `${window.location.origin}/appointments/pay-complete?status=success`,
-      },
-      redirect: 'if_required',
-    })
-
-    if (confirmError) {
-      setError(confirmError.message ?? 'Something went wrong. Please try again.')
-      setSubmitting(false)
-      return
-    }
-
-    if (paymentIntent && (paymentIntent.status === 'succeeded' || paymentIntent.status === 'processing')) {
-      onPaid()
-    } else {
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <form onSubmit={handleSubmit} className="space-y-3">
-      <PaymentElement />
-      {error && <p className="text-sm text-danger">{error}</p>}
-      <button
-        type="submit"
-        disabled={!stripe || !elements || submitting}
-        className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
-      >
-        {submitting ? 'Processing…' : 'Charge card'}
-      </button>
-    </form>
-  )
-}
-
-function AppointmentPaymentElement({
-  clientSecret,
-  connectedAccountId,
-  onPaid,
-}: {
-  clientSecret: string
-  connectedAccountId: string
-  onPaid: () => void
-}) {
-  const stripePromise = useMemo<Promise<Stripe | null>>(
-    () => loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY, { stripeAccount: connectedAccountId }),
-    [connectedAccountId],
-  )
-
-  return (
-    <Elements stripe={stripePromise} options={{ clientSecret }}>
-      <AppointmentPaymentElementForm onPaid={onPaid} />
-    </Elements>
   )
 }

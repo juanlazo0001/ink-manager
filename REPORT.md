@@ -11136,3 +11136,89 @@ this epic:
 
 No scratch scripts left in the repo. REPORT.md line count before this entry: 11056 (verified via
 `git show HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Embedded payment UX redesign, Part 1: staged screens
+
+Restages all three embedded-payment flows (deposit, flash prepayment, session checkout) as a
+shared amount/identity -> payment method -> confirmation sequence, mobile-first, Editorial Gold
+throughout. Layout principles only from the competitor reference the user pointed at -- no borrowed
+colors/type/components.
+
+## What existed before this
+
+All three flows were single-component conditional state machines (a `PageState` union gating JSX
+blocks), not staged screens. Deposit and flash were already wrapped in `login-shell`/Editorial Gold
+(the platform's own fixed identity, same reasoning as the artist public page); session checkout's
+Payment Element deliberately stayed in the studio's own theme, since it's a small widget inside an
+already-authenticated, already-studio-themed staff page (`AppointmentDetail.tsx`) -- explicitly
+documented in that file's own comment as a "no single right palette to chase" decision.
+
+## Design decision needed before building: session checkout's theme
+
+The user's spec said all three restaged flows are "strictly Editorial Gold," which directly
+conflicts with that prior deliberate decision. Asked the user rather than assume either direction.
+Chosen: session checkout's *client-facing payment moment* (the point where staff hands the device to
+the client to pay) becomes a full-screen Editorial Gold takeover -- matching deposit/flash's own
+"this moment is the platform's own brand, not the studio's" reasoning -- while the staff-only
+checkout form (final cost entry, gift-card redeem/roll, closeout notes, photo upload) stays exactly
+as-is in the studio's own theme, unchanged. This is a real behavior change from the prior session's
+explicit choice, made with the user's sign-off, not a silent reversal.
+
+## What got built
+
+**New shared component family**, `apps/web/src/components/payments/` -- one implementation reused
+by all three flows rather than three copies, since all three need the identical staging shape and
+only differ in what data they supply:
+- `PaymentFlowStages.tsx` -- orchestrator. Stage state `'amount' | 'tip' | 'method' | 'confirmation'`,
+  crossfades via the existing `crossfadeVariants`/`uiSpringTransition` from `lib/motion.ts` (plain
+  opacity/y, no `backdrop-filter` on anything animated, per CLAUDE.md's Design rules). `tip` is an
+  optional prop -- present only for session checkout.
+- `PaymentAmountStage.tsx` -- `FlatArtistAvatar` + "Your session with {artist} at {studio}", large
+  `font-display` (Fraunces under Editorial Gold, confirmed this Tailwind utility already exists via
+  the `@theme` block and is already used by `ArtistAvatar.tsx` -- no new CSS needed) amount, and a
+  collapsed `PaymentBreakdownDisclosure`.
+- `PaymentBreakdownDisclosure.tsx` -- "See total breakdown" progressive-disclosure row instead of
+  always-visible itemization; renders nothing when there's only one line item (flash's single price).
+- `PaymentMethodStage.tsx` -- consolidates what were three near-identical `*PaymentForm` components
+  (`DepositPaymentForm`, the flash equivalent, `AppointmentPaymentElementForm`) into one. Wallets
+  (Apple/Google Pay) ordered above card entry via the Payment Element's own `paymentMethodOrder`
+  option (`['apple_pay', 'google_pay', 'link', 'card']`) -- the mechanism the user pointed at
+  ("via the Payment Element's ordering/appearance options"), not a separate Express Checkout Element.
+  Same `elements.submit()` -> `stripe.confirmPayment({ redirect: 'if_required' })` logic as before,
+  unchanged behavior, now in one place instead of three.
+- `PaymentConfirmationStage.tsx` -- full-screen "Payment received" (Fraunces), amount, identity,
+  next-steps copy. Also reused standalone for each page's pre-existing "already paid, page reloaded"
+  branch, so a fresh visit and an in-flow success look identical.
+- `PaymentTakeoverOverlay.tsx` -- session-checkout-only full-viewport `.login-shell` overlay, mirroring
+  `components/Modal.tsx`'s own focus-trap/Esc/body-scroll-lock pattern (no scrim-click-to-close --
+  this is a payment flow, not a dismissible dialog; stepping away is an explicit button).
+
+**Per-flow wiring**:
+- `DepositResponse.tsx`/`FlashPaymentResponse.tsx`: the embedded-payment branch now renders
+  `PaymentFlowStages`; the `paidVia`-already-paid branch now renders standalone
+  `PaymentConfirmationStage`. The hosted-Checkout fallback (`embeddedPaymentsEnabled: false`) and the
+  unsigned/agreement-signing screen are untouched -- explicitly out of this redesign's scope.
+- `AppointmentDetail.tsx`: the staff-only checkout form is unchanged. Once a PaymentIntent exists and
+  there's a real balance due, `PaymentTakeoverOverlay` auto-opens over the whole page with
+  `PaymentFlowStages` inside; staff can dismiss it (client not ready yet) and reopen via a button in
+  the checkout card, which still keeps its "Mark as charged (cash/other)" manual fallback. The old
+  `AppointmentPaymentElement`/`AppointmentPaymentElementForm` pair (studio-themed, no wallet ordering)
+  is deleted, fully superseded.
+- `apps/api/src/routes/appointments.ts`: `APPOINTMENT_DETAIL_INCLUDE` never fetched the studio's own
+  name before -- added (`studio: { select: { name: true } } }`), needed for the "at {studio}" identity
+  line. `GET /:id` already spreads the fetched appointment via `...rest` with no allowlist, so this
+  flows to the frontend automatically.
+
+## Verification
+
+`tsc --build`/`tsc --noEmit` clean on both `apps/web` and `apps/api` after every file touched in this
+part (via `tsconfig.app.json` directly -- the web app's root `tsconfig.json` is references-only and
+silently no-ops under a bare `-p .`, caught while checking my own work here). `eslint` clean on every
+touched file except one pre-existing, unrelated `react-hooks/set-state-in-effect` warning at
+`AppointmentDetail.tsx:338` (confirmed via `git diff` that line isn't part of this change). Full
+mobile-viewport, real-Stripe-test-mode walkthrough screenshots are Part 3.
+
+## CLAUDE.md hygiene
+
+No scratch scripts used in this part. REPORT.md line count before this entry: 11138 (verified via
+`git show HEAD:REPORT.md | wc -l`) -- pure addition.
