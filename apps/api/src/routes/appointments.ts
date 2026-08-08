@@ -266,6 +266,37 @@ router.post("/", async (req, res) => {
 // everywhere and overriding it off at exactly one of an artist's several
 // studios is a narrow, unusual configuration -- flagged as a residual,
 // low-severity (read-only) gap for a future pass, not fixed here.
+const APPOINTMENT_LIST_INCLUDE = {
+  artist: { select: { id: true, user: { select: { name: true, email: true, avatarUrl: true } } } },
+  client: { select: { id: true, firstName: true, lastName: true } },
+  inquiryProject: { select: { id: true, description: true } },
+  // Derived status (Calendar/ClientDetail's status pills) needs this to
+  // tell "Waiver Pending" apart from a plain CONFIRMED/REQUESTED --
+  // checkedOutAt already comes through as a plain scalar column below.
+  liabilityWaiver: { select: { status: true } },
+} as const;
+
+function shapeListAppointment<
+  T extends {
+    inquiryProject: { id: string; description: string } | null;
+    artist: { id: string; user: { name: string | null; email: string; avatarUrl: string | null } };
+  },
+>({ inquiryProject, artist, ...rest }: T) {
+  return {
+    ...rest,
+    artist: { id: artist.id, name: artist.user.name ?? artist.user.email, avatarUrl: artist.user.avatarUrl },
+    inquiry: inquiryProject
+      ? {
+          id: inquiryProject.id,
+          label:
+            inquiryProject.description.length > 60
+              ? `${inquiryProject.description.slice(0, 60).trimEnd()}…`
+              : inquiryProject.description,
+        }
+      : null,
+  };
+}
+
 router.get("/", requirePermission("appointments.view"), async (req, res) => {
   const { studioId, role, userId } = req.user!;
   const clientId = typeof req.query.clientId === "string" ? req.query.clientId : undefined;
@@ -273,6 +304,7 @@ router.get("/", requirePermission("appointments.view"), async (req, res) => {
   const rangeEndRaw = typeof req.query.end === "string" ? new Date(req.query.end) : undefined;
   const hasValidRange =
     rangeStartRaw && rangeEndRaw && !Number.isNaN(rangeStartRaw.getTime()) && !Number.isNaN(rangeEndRaw.getTime());
+  const take = hasValidRange ? 500 : 100;
 
   // Staff-supplied filter (e.g. AppointmentForm's slot-suggestion feature
   // fetching just one artist's bookings) -- an ARTIST caller below always
@@ -310,34 +342,50 @@ router.get("/", requirePermission("appointments.view"), async (req, res) => {
       ...(artistId ? { artistId } : {}),
       ...(hasValidRange ? { startTime: { lt: rangeEndRaw! }, endTime: { gt: rangeStartRaw! } } : {}),
     },
-    include: {
-      artist: { select: { id: true, user: { select: { name: true, email: true, avatarUrl: true } } } },
-      client: { select: { id: true, firstName: true, lastName: true } },
-      inquiryProject: { select: { id: true, description: true } },
-      // Derived status (Calendar/ClientDetail's status pills) needs this to
-      // tell "Waiver Pending" apart from a plain CONFIRMED/REQUESTED --
-      // checkedOutAt already comes through as a plain scalar column below.
-      liabilityWaiver: { select: { status: true } },
-    },
+    include: APPOINTMENT_LIST_INCLUDE,
     orderBy: { startTime: "asc" },
-    take: hasValidRange ? 500 : 100,
+    take,
   });
 
-  res.json(
-    appointments.map(({ inquiryProject, artist, ...rest }) => ({
-      ...rest,
-      artist: { id: artist.id, name: artist.user.name ?? artist.user.email, avatarUrl: artist.user.avatarUrl },
-      inquiry: inquiryProject
-        ? {
-            id: inquiryProject.id,
-            label:
-              inquiryProject.description.length > 60
-                ? `${inquiryProject.description.slice(0, 60).trimEnd()}…`
-                : inquiryProject.description,
-          }
-        : null,
-    })),
-  );
+  // Solo-guest fix (union, rule 1): this caller may ALSO be an artist with
+  // active GUEST memberships elsewhere -- if so, blend in whatever's
+  // assigned to them at those studios too, same "my calendar isn't blind
+  // to my own guest work" precedent inquiries.ts's own GET / already
+  // established. Gated on `!artistStudioIds` (the ARTIST-role branch above
+  // already covers a plain artist caller in full) rather than on role, so
+  // a solo studio-of-one's own OWNER account (which can have an Artist
+  // profile too) isn't blind to their own guest-studio bookings just
+  // because their home role isn't literally ARTIST. No-op for the
+  // overwhelming majority of staff callers (no Artist row at all).
+  let combined = appointments;
+  if (!artistStudioIds) {
+    const requestingArtist = await prisma.artist.findUnique({ where: { userId }, select: { id: true } });
+    if (requestingArtist) {
+      const guestMemberships = await prisma.studioMembership.findMany({
+        where: { artistId: requestingArtist.id, type: "GUEST", endedAt: null },
+        select: { studioId: true },
+      });
+      if (guestMemberships.length > 0) {
+        const guestAppointments = await prisma.appointment.findMany({
+          where: {
+            studioId: { in: guestMemberships.map((m) => m.studioId) },
+            artistId: requestingArtist.id,
+            ...NOT_ARCHIVED,
+            ...(clientId ? { clientId } : {}),
+            ...(hasValidRange ? { startTime: { lt: rangeEndRaw! }, endTime: { gt: rangeStartRaw! } } : {}),
+          },
+          include: APPOINTMENT_LIST_INCLUDE,
+          orderBy: { startTime: "asc" },
+          take,
+        });
+        combined = [...appointments, ...guestAppointments]
+          .sort((a, b) => a.startTime.getTime() - b.startTime.getTime())
+          .slice(0, take);
+      }
+    }
+  }
+
+  res.json(combined.map(shapeListAppointment));
 });
 
 const APPOINTMENT_DETAIL_INCLUDE = {
