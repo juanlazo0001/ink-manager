@@ -1886,6 +1886,15 @@ model StudioSettings {
   // deposit. Governs reuse by the SAME redeemer only -- a code being used
   // by many different people is already unlimited regardless of this flag.
   referralAllowRepeatRedemption Boolean  @default(false)
+  // Embedded payments migration: per-studio opt-in for the in-app Payment
+  // Element (deposit/flash-prepayment/session-checkout all gate on this
+  // same flag) -- default false so no studio's client-facing payment flow
+  // changes until an OWNER explicitly turns it on. Hosted Stripe Checkout
+  // stays fully intact as the fallback whenever this is off, and Stripe
+  // Connect mechanics (Standard, direct charges, application_fee_amount)
+  // are identical either way -- this only changes where the customer types
+  // their card number, never who's charged or how fees are split.
+  embeddedPaymentsEnabled       Boolean  @default(false)
   // Settings "Defaults" tab audit: three more values that were previously
   // hardcoded constants (see REPORT.md's Part 1 proposal), now studio-level
   // defaults on the same model, same pattern as every field above --

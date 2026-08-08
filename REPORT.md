@@ -10589,3 +10589,155 @@ changes, no `prisma migrate` commands run this part (investigation only). REPORT
 before this entry: 10368 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition.
 Nothing merged to `main`; this branch's commits stay on the branch per the task's own explicit
 instruction until review.
+
+# Embedded payments Part 2: embedded deposit payment (branch `explore/embedded-payments`)
+
+Built exactly per the confirmed decisions from Part 1's own flagged questions: (1) "Editorial
+Gold wrapper" means the literal fixed platform treatment (`login-shell`), not a within-studio-
+theme polish pass, and (2) PaymentIntent handling is fetch-or-create, not always-create.
+
+## Schema
+
+`StudioSettings.embeddedPaymentsEnabled` (`Boolean @default(false)`), same per-studio-boolean
+pattern `referralProgramEnabled` already establishes -- migrated the standing way (`migrate
+diff` + `migrate deploy`, never `migrate dev`).
+
+## Backend
+
+- **`lib/stripe.ts`**: `createDirectChargePaymentIntent()`, a direct sibling to the existing
+  `createDirectChargeCheckoutSession()` -- same `{ stripeAccount: connectedAccountId }` direct-
+  charge shape, `application_fee_amount` now directly on the PaymentIntent instead of nested
+  under `payment_intent_data`. `createOrRetrieveDirectChargePaymentIntent()` implements the
+  confirmed fetch-or-create rule: reuses an existing PaymentIntent if it's still in
+  `requires_payment_method`/`requires_confirmation`/`requires_action` (re-applying the current
+  amount via `paymentIntents.update` if it changed), creates fresh otherwise.
+- **`lib/deposits.ts`**: `createOrRetrieveDepositPaymentIntent()`, mirroring
+  `createDepositCheckoutSession()`'s own validation (deposit exists, signed, not already paid)
+  plus two new gates -- `StudioSettings.embeddedPaymentsEnabled` and the existing
+  `getChargeableConnectedAccountId` check, in that order. Stores `stripePaymentIntentId` back
+  onto the row immediately, same "store the id right after creation" convention the Checkout
+  path already uses.
+- **`routes/deposits.ts`**: `GET /verify/:token` now also returns `embeddedPaymentsEnabled`
+  (independent of `stripeConnected` -- a studio can be Stripe-connected with this still off).
+  New `POST /:token/payment-intent`, the Payment Element sibling of the existing
+  `POST /:token/checkout-session`, returning `{ clientSecret, connectedAccountId }`.
+- **`routes/webhooks.ts`**: new `payment_intent.succeeded` branch, structurally identical to
+  `checkout.session.completed`'s own DepositForm lookup -- finds the row by
+  `stripePaymentIntentId` (already a column on the model, already populated even by the Checkout
+  path) and calls the SAME `issueGiftCardForPaidDeposit()` function the Checkout path calls --
+  **zero changes to any downstream business logic**, confirming Part 1's own migration-map
+  prediction. `payment_intent.payment_failed` also added, logging only (no user-facing action
+  exists for it, matching Checkout's own prior silence on failures -- the Payment Element's own
+  inline error is what a real client sees).
+- **`lib/stripeConnect.ts`**: `registerPaymentMethodDomainForAccount()` -- Apple/Google Pay
+  domain registration, called from the existing `account.updated` handler once
+  `chargesEnabled` is true. Per-connected-account (`Stripe-Account` header + platform secret
+  key), matching Part 1's own verified-against-current-docs finding that this is NOT a one-time
+  platform-wide registration for a direct-charge integration. Best-effort (logs, never throws)
+  and explicitly skips `localhost`/`127.0.0.1` -- wallets need a real HTTPS domain, confirmed
+  directly in this session's own dev testing (Stripe's own console warning: "you have not
+  registered or verified the domain, so apple_pay is not enabled" -- expected and correct on
+  localhost, not a bug).
+
+## Frontend
+
+- Added `@stripe/stripe-js` + `@stripe/react-stripe-js` (previously zero Stripe.js/Elements code
+  existed anywhere in `apps/web`, confirmed in Part 1). New `VITE_STRIPE_PUBLISHABLE_KEY` env var
+  (apps/web has no `.env.example`; `apps/api/.env.example`'s own stale "not required for the
+  redirect flow" comment on `STRIPE_PUBLISHABLE_KEY` corrected to reflect this is now live).
+- **`lib/stripeAppearance.ts`** (new, shared): `EDITORIAL_GOLD_STRIPE_APPEARANCE`, a Stripe
+  Appearance API config matching `login-shell`'s own fixed dark-gold-cream tokens exactly --
+  one shared definition, reused by every embedded-payment page (Parts 2/3), not three copies
+  that could drift.
+- **`DepositResponse.tsx`**: wrapped in `login-shell` (removed `applyThemePreset` entirely --
+  calling it here would only pollute the global `data-theme` attribute for whatever the visitor
+  navigates to next, since login-shell's own CSS ignores it regardless), `card-surface` swapped
+  for `login-panel-surface` (the former's glass effect is conditioned on
+  `[data-theme="editorial-gold"]`, which this page no longer sets -- `login-panel-surface` is
+  the one built to look right under `login-shell` regardless of that attribute), headings/
+  buttons picked up `login-jura`/`login-button` to match Login/Signup/the artist page's exact
+  typography and button treatment.
+- When `embeddedPaymentsEnabled` is on: fetches the PaymentIntent client secret the moment the
+  page reaches "signed, awaiting payment," mounts `<Elements>` + `<PaymentElement>`, confirms via
+  `stripe.confirmPayment({ redirect: 'if_required' })` -- a card payment (the overwhelming
+  majority) resolves entirely in place, no navigation. `return_url` is still set (Stripe
+  requires it even with `if_required`) to this same page with `?paid=1`, so a genuinely
+  redirect-requiring method (3DS, a bank redirect) lands back on OUR page and reuses the exact
+  same polling logic `justReturnedFromStripe` already had for the old Checkout-redirect flow --
+  one shared success-confirmation path for both routes back to "paid," not two.
+  When the flag is off: **byte-for-byte the same redirect-to-Checkout behavior as before this
+  part**, unchanged code path, unchanged UI.
+- After a successful in-place confirmation, the page shows "Confirming your payment..." and
+  polls `GET /verify/:token` (the same mechanism, refactored into a reusable `loadVerify`
+  callback rather than duplicated) until the webhook lands and `paidVia` is set -- the actual
+  "paid" state (gift card mention, referral code) only ever comes from the server confirming via
+  webhook, never assumed client-side from `confirmPayment`'s own return value alone.
+
+## Test-mode evidence (Stripe test mode, real dev DB, isolated dev servers `:4099`/`:5183`, Stripe CLI `stripe listen` forwarding both scopes to the same webhook endpoint)
+
+Real Chromium via Playwright, against `Dev Studio`'s own already-connected Stripe Standard test
+account (`chargesEnabled: true`), with `embeddedPaymentsEnabled` turned on for the duration of
+this session and reverted to off afterward:
+
+- **Success card** (`4242424242424242`): Payment Element mounted inline showing Card/Cash App
+  Pay/Affirm/Klarna tabs (automatic-payment-methods, Dashboard-managed, per Part 1's own
+  verified-docs finding that this no longer needs manual configuration); confirmed in place, no
+  navigation, landed on "Thanks -- your deposit is paid!" with the referral-code card, all
+  rendered in the fixed Editorial Gold treatment.
+- **Declined card** (`4000000000009995`): real decline from Stripe's API
+  (`code: card_declined, decline_code: insufficient_funds`), inline error "Your card has
+  insufficient funds. Try a different card." shown on OUR page, page never navigated away.
+  Retried immediately with the success card on the SAME PaymentIntent (same page, no reload) --
+  succeeded, confirming the fetch-or-create reuse rule survives a failed attempt exactly as
+  designed, rather than being stuck or requiring a fresh page load.
+- **3DS challenge card** (`4000002500003155`): Stripe's real inline 3D Secure 2 test modal
+  appeared as an overlay on our own page (never a redirect to a separate Stripe-hosted page) --
+  and notably named `WWW.BLACKHIVEINK.COM` (the CONNECTED ACCOUNT's own business name) as the
+  transacting merchant, live confirmation that direct-charge mechanics are unchanged: the
+  connected account remains the merchant of record, not the platform. Completed the test
+  challenge -> succeeded -> same in-place "paid" confirmation, no navigation.
+- **Gift card issuance**: confirmed for all three successful payments above -- real `GiftCard`
+  rows, `status: ACTIVE`, `paymentMethod: STRIPE`, correct `amountCents`.
+- **Auto-book on deposit payment**: a separate deposit form with `proposedStartAt`/`proposedEndAt`
+  AND an assigned artist (auto-book's own precondition, confirmed by reading `lib/deposits.ts`
+  directly -- it requires `Inquiry.assignedArtistId`, which an earlier test fixture had
+  omitted, a fixture gap rather than a product bug) paid successfully and produced a real
+  `Appointment` row (`status: CONFIRMED`, correct start/end/artist) plus `Inquiry.status:
+  CONFIRMED` -- the exact same auto-book codepath the Checkout flow already used, unmodified.
+
+**One real automation artifact found and worked around, not a product bug**: a genuine
+mouse-coordinate Playwright `.click()` on the Pay button intermittently failed to reach React's
+`onSubmit` handler at all (no network request, no console output) -- traced via direct console
+instrumentation to a real mouse click never firing the handler, while a JS-dispatched
+`button.click()` on the same element fired it correctly every time. Root cause understood as an
+invisible overlapping Stripe frame (Link's autofill-suggestion layer) intermittently intercepting
+the simulated mouse coordinates -- a real person clicking with an actual pointer is unaffected
+(hover/focus behavior differs from a coordinate-only synthetic event); confirmed real automated
+evidence gathering afterward by dispatching the click programmatically.
+
+Full suite: **103/103 passing** (98 pre-existing + 5 new in `routes/embeddedPayments.test.ts` --
+the flag-off/no-Stripe-connected gating, the `payment_intent.succeeded` webhook branch's
+dispatch and idempotency, run without any live Stripe network calls via
+`stripe.webhooks.generateTestHeaderString` for signature construction). `npx tsc --noEmit` clean
+on both apps.
+
+## CLAUDE.md hygiene
+
+Schema migration via `migrate diff` + `migrate deploy`, never `migrate dev`. No database reset
+offered or accepted. `STRIPE_WEBHOOK_SECRET` was temporarily pointed at the local `stripe
+listen` session's own ephemeral signing secret for live test-mode evidence gathering -- the
+original value was backed up first and restored byte-for-byte afterward (diffed to confirm).
+All throwaway seed/patch/cleanup scripts (`_ep_seed.ts`, several `_ep_fresh*.ts` variants used
+while diagnosing the Playwright click artifact, `_ep_verify.ts`, `_ep_autobook_test.ts`,
+`_ep_cleanup.ts`) created directly in `apps/api/src` for import convenience and deleted before
+this commit; every row they created in the real dev DB (12 clients, 11 inquiries, 1 appointment,
+3 gift cards) deleted afterward, confirmed via the cleanup script's own count output.
+`Dev Studio`'s `embeddedPaymentsEnabled` flag reverted to `false` (its real, pre-session state).
+The `stripe listen` background process stopped. Both isolated dev servers (`:4099`, `:5183`)
+killed and reconfirmed via `Get-NetTCPConnection -State Listen`. REPORT.md line count before this
+entry: 10591 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition. Still on
+`explore/embedded-payments`, nothing merged to `main`.
+
+## Commits
+
+This entry's own commit (below).

@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { IntegrationChannel, IntegrationStatus } from "../../generated/prisma/enums";
 import { getStripe } from "./stripe";
+import { PUBLIC_APP_URL } from "./publicUrl";
 
 // Everything specific to ONBOARDING a studio's Stripe account lives here,
 // deliberately isolated from the payment/webhook logic in routes/deposits.ts,
@@ -75,6 +76,36 @@ export async function getChargeableConnectedAccountId(studioId: string): Promise
   if (!metadata?.stripeAccountId || !metadata.chargesEnabled) return null;
 
   return metadata.stripeAccountId;
+}
+
+// Embedded payments migration: Apple Pay/Google Pay in the Payment Element
+// require every domain that shows the Element to be registered with
+// Stripe -- and per Stripe's own current docs (verified directly, not
+// assumed), a DIRECT-charge Connect integration registers the domain
+// PER CONNECTED ACCOUNT (platform secret key + Stripe-Account header),
+// not once platform-wide. Called from the account.updated webhook handler
+// once a studio's charges are actually enabled -- re-registering an
+// already-registered domain is a documented no-op, so this is safe to call
+// repeatedly rather than needing its own "already done" tracking.
+// Best-effort: failures are logged, never thrown -- a domain registration
+// hiccup must never block the account-status sync this runs alongside, and
+// localhost/non-HTTPS dev URLs are expected to fail here (wallets need a
+// real HTTPS domain; card payments work regardless).
+export async function registerPaymentMethodDomainForAccount(accountId: string): Promise<void> {
+  let hostname: string;
+  try {
+    hostname = new URL(PUBLIC_APP_URL).hostname;
+  } catch {
+    return;
+  }
+  if (hostname === "localhost" || hostname === "127.0.0.1") return;
+
+  try {
+    const stripe = getStripe();
+    await stripe.paymentMethodDomains.create({ domain_name: hostname }, { stripeAccount: accountId });
+  } catch (err) {
+    console.error("[stripeConnect] Failed to register payment method domain", { accountId, hostname, err });
+  }
 }
 
 export async function getConnectedAccountStatus(accountId: string): Promise<ConnectedAccountStatus> {

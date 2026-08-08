@@ -21,7 +21,7 @@ import { sendClientSms } from "../lib/clientSms";
 import { renderTemplate, type ReminderTemplates } from "../lib/reminderTemplates";
 import { getStripe } from "../lib/stripe";
 import { issueGiftCardForPaidDeposit } from "../lib/deposits";
-import { getConnectedAccountStatus } from "../lib/stripeConnect";
+import { getConnectedAccountStatus, registerPaymentMethodDomainForAccount } from "../lib/stripeConnect";
 import { emitInvalidation } from "../lib/realtime/registry";
 
 const router = Router();
@@ -559,9 +559,73 @@ router.post("/stripe", async (req, res) => {
           },
         },
       });
+      // Embedded payments migration: Apple Pay/Google Pay need this
+      // studio's domain registered against ITS OWN connected account --
+      // fire-and-forget alongside the status sync above, once charges are
+      // actually enabled (no point registering for an account that can't
+      // take payments yet). Idempotent on Stripe's side, so re-running on
+      // every subsequent account.updated is intentional, not wasteful.
+      if (status.chargesEnabled) {
+        await registerPaymentMethodDomainForAccount(connectedAccountId);
+      }
     } catch (err) {
       console.error("[webhooks/stripe] Failed to sync account.updated status", err);
     }
+  }
+
+  // Embedded payments migration: the Payment Element's own success/failure
+  // signal, parallel to checkout.session.completed above but for
+  // PaymentIntents created directly (never through Checkout). Same
+  // four-model-lookup shape as that branch, keyed on stripePaymentIntentId
+  // instead of stripeCheckoutSessionId -- Part 2 wires the DepositForm
+  // lookup only (the one flow embedded payments covers so far); Part 3
+  // adds the remaining three models alongside their own PaymentIntent
+  // creation, exactly mirroring how checkout.session.completed grew its
+  // four branches over Phase 7C/7D/Part 3 rather than landing all at once.
+  if (event.type === "payment_intent.succeeded") {
+    const paymentIntent = event.data.object;
+
+    const depositForm = await prisma.depositForm.findFirst({
+      where: { stripePaymentIntentId: paymentIntent.id },
+    });
+
+    if (depositForm) {
+      // Idempotency: a webhook retry for the same event lands on a deposit
+      // form whose gift card has already been issued -- issueGiftCardForPaidDeposit
+      // itself re-checks giftCardId fresh inside its own transaction
+      // regardless, same guard checkout.session.completed's branch relies on.
+      const result = await issueGiftCardForPaidDeposit(depositForm.id, "STRIPE", null);
+      if (!result.ok) {
+        console.error("[webhooks/stripe] Failed to issue gift card for paid deposit (payment_intent.succeeded)", {
+          depositFormId: depositForm.id,
+          error: result.error,
+        });
+      } else {
+        await logAudit({
+          studioId,
+          actorUserId: null,
+          entityType: "DepositForm",
+          entityId: depositForm.id,
+          action: "stripe_payment_confirmed",
+          changes: { stripePaymentIntentId: paymentIntent.id, alreadyProcessed: result.alreadyProcessed, embedded: true },
+        });
+        emitInvalidation({ type: "inquiry.updated", studioId, inquiryId: depositForm.inquiryId });
+      }
+    }
+  }
+
+  // Defensive/observability only -- no user-facing failure path exists for
+  // this yet (the Payment Element's own inline error from confirmPayment is
+  // what a real client sees immediately; Checkout never had payment_intent.payment_failed
+  // handling either, see this file's own Part 1 investigation). Logged so a
+  // pattern of declines is visible in server logs, not silently invisible.
+  if (event.type === "payment_intent.payment_failed") {
+    const paymentIntent = event.data.object;
+    console.warn("[webhooks/stripe] payment_intent.payment_failed", {
+      studioId,
+      paymentIntentId: paymentIntent.id,
+      lastPaymentError: paymentIntent.last_payment_error?.message ?? null,
+    });
   }
 
   res.status(200).json({ received: true });

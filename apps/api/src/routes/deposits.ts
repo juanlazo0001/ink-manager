@@ -3,7 +3,7 @@ import { prisma } from "../lib/prisma";
 import { requireAuth } from "../middleware/auth";
 import { Role } from "../../generated/prisma/enums";
 import { DEFAULT_THEME_PRESET, THEME_PRESET_ACCENT_COLORS, isValidThemePreset } from "../lib/themePresets";
-import { issueGiftCardForPaidDeposit, createDepositCheckoutSession } from "../lib/deposits";
+import { issueGiftCardForPaidDeposit, createDepositCheckoutSession, createOrRetrieveDepositPaymentIntent } from "../lib/deposits";
 import { getChargeableConnectedAccountId } from "../lib/stripeConnect";
 import { generateDepositFormPdf } from "../lib/pdf";
 import { redactedSessionHours } from "../lib/plannedSessions";
@@ -98,7 +98,7 @@ publicRouter.get("/verify/:token", async (req, res) => {
       inquiry: {
         include: {
           client: true,
-          studio: { include: { settings: { select: { themePreset: true, referralProgramEnabled: true } } } },
+          studio: { include: { settings: { select: { themePreset: true, referralProgramEnabled: true, embeddedPaymentsEnabled: true } } } },
           assignedArtist: { include: { user: true } },
           appointment: true,
           service: { select: { depositBreakdownNote: true } },
@@ -174,6 +174,12 @@ publicRouter.get("/verify/:token", async (req, res) => {
     signedAt: depositForm!.signedAt,
     paidVia: depositForm!.paidVia,
     stripeConnected,
+    // Embedded payments migration: drives whether the frontend mounts a
+    // Payment Element inline or falls back to today's redirect-to-Stripe-
+    // Checkout button. Independent of stripeConnected -- a studio can be
+    // Stripe-connected without this flag on (the default), in which case
+    // behavior is byte-for-byte what it was before this migration.
+    embeddedPaymentsEnabled: inquiry.studio.settings?.embeddedPaymentsEnabled ?? false,
     terms: TERMS,
   });
 });
@@ -280,6 +286,30 @@ publicRouter.post("/:token/checkout-session", async (req, res) => {
   }
 
   res.json({ url: result.url });
+});
+
+// Embedded payments migration: the Payment Element sibling of
+// POST /:token/checkout-session above -- same call sites (right after
+// signing, and again on reload/retry), fetch-or-create instead of
+// always-create (see createOrRetrieveDepositPaymentIntent's own comment).
+// Only reachable when the studio has actually turned the flag on;
+// GET /verify's own embeddedPaymentsEnabled field is what the frontend
+// checks BEFORE ever calling this, but this route enforces the same gate
+// independently rather than trusting the frontend's own branching.
+publicRouter.post("/:token/payment-intent", async (req, res) => {
+  const token = req.params.token as string;
+
+  const depositForm = await prisma.depositForm.findUnique({ where: { token }, select: { id: true } });
+  if (!depositForm) {
+    return res.status(404).json({ error: "This link is invalid." });
+  }
+
+  const result = await createOrRetrieveDepositPaymentIntent(depositForm.id);
+  if (!result.ok) {
+    return res.status(result.status).json({ error: result.error });
+  }
+
+  res.json({ clientSecret: result.clientSecret, connectedAccountId: result.connectedAccountId });
 });
 
 // Staff-facing: marking a deposit paid is a separate, authenticated step

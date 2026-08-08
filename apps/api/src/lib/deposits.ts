@@ -9,7 +9,7 @@ import { sendClientSms } from "./clientSms";
 import { shortenUrl } from "./shortLinks";
 import { PUBLIC_APP_URL } from "./publicUrl";
 import { getChargeableConnectedAccountId } from "./stripeConnect";
-import { createDirectChargeCheckoutSession } from "./stripe";
+import { createDirectChargeCheckoutSession, createOrRetrieveDirectChargePaymentIntent } from "./stripe";
 import { findBufferConflict, resolveSchedulingBufferMs } from "./schedulingConflict";
 import { resolveDepositAmounts, resolveDepositTiers } from "./depositTiers";
 import { emitInvalidation } from "./realtime/registry";
@@ -657,4 +657,72 @@ export async function createDepositCheckoutSession(depositFormId: string): Promi
   });
 
   return { ok: true, url: session.url };
+}
+
+export type CreateDepositPaymentIntentResult =
+  | { ok: true; clientSecret: string; connectedAccountId: string }
+  | { ok: false; status: number; error: string };
+
+// Embedded-payments migration sibling to createDepositCheckoutSession
+// above -- same validation, gated additionally on the studio's own
+// StudioSettings.embeddedPaymentsEnabled flag (default off; hosted
+// Checkout via createDepositCheckoutSession stays the only path when this
+// is false or unset). Fetch-or-create rather than always-create: a client
+// reloading the page, or staff resending the same link, reuses the
+// existing PaymentIntent (see createOrRetrieveDirectChargePaymentIntent's
+// own comment) instead of piling up abandoned ones the way repeated
+// Checkout Sessions already silently do today.
+export async function createOrRetrieveDepositPaymentIntent(depositFormId: string): Promise<CreateDepositPaymentIntentResult> {
+  const depositForm = await prisma.depositForm.findUnique({
+    where: { id: depositFormId },
+    include: { inquiry: { select: { studioId: true } } },
+  });
+
+  if (!depositForm) {
+    return { ok: false, status: 404, error: "This deposit form was not found." };
+  }
+
+  if (depositForm.paidVia) {
+    return { ok: false, status: 400, error: "This deposit has already been paid." };
+  }
+
+  if (!depositForm.signedAt) {
+    return { ok: false, status: 400, error: "Please sign the deposit agreement first." };
+  }
+
+  const studioSettings = await prisma.studioSettings.findUnique({
+    where: { studioId: depositForm.inquiry.studioId },
+    select: { embeddedPaymentsEnabled: true },
+  });
+  if (!studioSettings?.embeddedPaymentsEnabled) {
+    return { ok: false, status: 400, error: "Embedded payment isn't enabled for this studio." };
+  }
+
+  const stripeAccountId = await getChargeableConnectedAccountId(depositForm.inquiry.studioId);
+  if (!stripeAccountId) {
+    return { ok: false, status: 400, error: "Online payment isn't available for this studio right now." };
+  }
+
+  const totalCents = dollarsToCents(depositForm.totalCharged);
+
+  let intent;
+  try {
+    intent = await createOrRetrieveDirectChargePaymentIntent({
+      connectedAccountId: stripeAccountId,
+      existingPaymentIntentId: depositForm.stripePaymentIntentId,
+      amountCents: totalCents,
+      metadata: { depositFormId: depositForm.id },
+    });
+  } catch (err) {
+    return { ok: false, status: 502, error: err instanceof Error ? err.message : "Failed to start payment" };
+  }
+
+  if (intent.id !== depositForm.stripePaymentIntentId) {
+    await prisma.depositForm.update({
+      where: { id: depositForm.id },
+      data: { stripePaymentIntentId: intent.id },
+    });
+  }
+
+  return { ok: true, clientSecret: intent.clientSecret, connectedAccountId: stripeAccountId };
 }

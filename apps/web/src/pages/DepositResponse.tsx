@@ -1,11 +1,24 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
+import { loadStripe, type Stripe } from '@stripe/stripe-js'
+import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime } from '../lib/format'
 import { FlatArtistAvatar } from '../components/ArtistAvatar'
-import { applyThemePreset } from '../lib/themePresets'
 import PublicPageFooter from '../components/PublicPageFooter'
 import SignaturePadField, { type SignaturePadHandle } from '../components/SignaturePadField'
+import { EDITORIAL_GOLD_STRIPE_APPEARANCE } from '../lib/stripeAppearance'
+
+// Embedded payments migration: this page is one of the platform's own
+// "Editorial Gold, never studio-themed" pages now (same login-shell
+// treatment as Login/Signup/the artist public page), so applyThemePreset
+// is deliberately gone -- login-shell's own CSS redefines the same
+// --color-* custom properties every bg-bg/text-fg/etc. utility class below
+// already reads, scoped to .login-shell regardless of whatever [data-theme]
+// happens to be sitting on <html> from a previously-viewed studio's own
+// page in this same tab. Calling applyThemePreset here would only pollute
+// that global attribute for whatever the visitor navigates to next, for a
+// page that no longer reads it at all.
 
 const INPUT_CLASS =
   'mt-1 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
@@ -53,6 +66,11 @@ interface VerifyResponse {
   signedAt: string | null
   paidVia: 'STRIPE' | 'MANUAL' | null
   stripeConnected: boolean
+  // Embedded payments migration: independent of stripeConnected -- a
+  // studio can be Stripe-connected with this still off (the default),
+  // in which case this page behaves exactly as it did before this flag
+  // existed (redirect to hosted Checkout).
+  embeddedPaymentsEnabled: boolean
   terms: Term[]
 }
 
@@ -73,49 +91,55 @@ export default function DepositResponse() {
 
   const [payingNow, setPayingNow] = useState(false)
   const [payError, setPayError] = useState<string | null>(null)
-  // Set only right after returning from Stripe -- the checkout.session.completed
-  // webhook is usually near-instant, but not guaranteed to have landed by
-  // the time the browser's own redirect completes, so this briefly polls
-  // rather than showing a stale "pay now" button for a payment that
+  // Set right after returning from Stripe (redirect-based methods only
+  // now) OR right after an embedded PaymentElement confirmation resolves
+  // in-place -- the payment_intent.succeeded webhook is usually near-
+  // instant, but not guaranteed to have landed yet, so this briefly polls
+  // rather than showing a stale "pay now" state for a payment that
   // actually already succeeded.
   const [confirmingPayment, setConfirmingPayment] = useState(justReturnedFromStripe)
 
+  // Embedded payments: the fetched client secret + connected account id
+  // for this deposit's PaymentIntent, and any error from that fetch
+  // itself (distinct from payError above, which is Checkout-redirect-
+  // specific and stays scoped to that fallback path).
+  const [embeddedSecret, setEmbeddedSecret] = useState<{ clientSecret: string; connectedAccountId: string } | null>(null)
+  const [embeddedLoadError, setEmbeddedLoadError] = useState<string | null>(null)
+
   const signaturePadRef = useRef<SignaturePadHandle | null>(null)
 
-  useEffect(() => {
-    if (!token) return
+  const loadVerify = useCallback(
+    (opts?: { poll?: boolean }) => {
+      if (!token) return
+      let pollAttempts = 0
 
-    let ignore = false
-    let pollAttempts = 0
+      function load() {
+        apiFetch<VerifyResponse>(`/deposits/verify/${token}`)
+          .then((data) => {
+            setVerifyData(data)
+            setState('ready')
 
-    function load() {
-      apiFetch<VerifyResponse>(`/deposits/verify/${token}`)
-        .then((data) => {
-          if (ignore) return
-          setVerifyData(data)
-          applyThemePreset(data.themePreset)
-          setState('ready')
-
-          if (justReturnedFromStripe && !data.paidVia && pollAttempts < 5) {
-            pollAttempts += 1
-            setTimeout(load, 1500)
-          } else {
+            if (opts?.poll && !data.paidVia && pollAttempts < 5) {
+              pollAttempts += 1
+              setTimeout(load, 1500)
+            } else {
+              setConfirmingPayment(false)
+            }
+          })
+          .catch((err) => {
+            setInvalidMessage(err instanceof Error ? err.message : 'This link is invalid or has expired.')
+            setState('invalid')
             setConfirmingPayment(false)
-          }
-        })
-        .catch((err) => {
-          if (ignore) return
-          setInvalidMessage(err instanceof Error ? err.message : 'This link is invalid or has expired.')
-          setState('invalid')
-          setConfirmingPayment(false)
-        })
-    }
+          })
+      }
 
-    load()
+      load()
+    },
+    [token],
+  )
 
-    return () => {
-      ignore = true
-    }
+  useEffect(() => {
+    loadVerify({ poll: justReturnedFromStripe })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
 
@@ -158,11 +182,19 @@ export default function DepositResponse() {
       })
 
       if (result.stripeConnected) {
-        // Redirect straight to Stripe's hosted checkout rather than
-        // showing the "we'll collect it separately" screen -- reuses the
-        // same checkout-session endpoint a return visit's "Pay Now" button
-        // calls, so there's exactly one place that creates the session.
-        await goToStripeCheckout()
+        if (verifyData.embeddedPaymentsEnabled) {
+          // Refresh rather than redirect -- the "signed, awaiting payment"
+          // render branch below picks up from here and mounts the Payment
+          // Element inline, no navigation at all.
+          loadVerify()
+        } else {
+          // Redirect straight to Stripe's hosted checkout rather than
+          // showing the "we'll collect it separately" screen -- reuses the
+          // same checkout-session endpoint a return visit's "Pay Now"
+          // button calls, so there's exactly one place that creates the
+          // session.
+          await goToStripeCheckout()
+        }
       } else {
         setState('success')
       }
@@ -186,14 +218,55 @@ export default function DepositResponse() {
     }
   }
 
+  // Embedded payments: fetches (or reuses -- see the server's own
+  // fetch-or-create comment) the PaymentIntent client secret the moment
+  // this page is in the "signed, awaiting payment, embedded flag on"
+  // state -- mirrors the fallback path's own "create right after signing,
+  // or again on a return visit" behavior, just producing a client secret
+  // to mount instead of a URL to redirect to.
+  const showEmbedded = Boolean(
+    state === 'ready' &&
+      verifyData &&
+      !verifyData.paidVia &&
+      !confirmingPayment &&
+      verifyData.signedAt &&
+      verifyData.stripeConnected &&
+      verifyData.embeddedPaymentsEnabled,
+  )
+
+  useEffect(() => {
+    if (!showEmbedded || !token || embeddedSecret) return
+    let ignore = false
+    apiFetch<{ clientSecret: string; connectedAccountId: string }>(`/deposits/${token}/payment-intent`, { method: 'POST' })
+      .then((data) => {
+        if (!ignore) setEmbeddedSecret(data)
+      })
+      .catch((err) => {
+        if (!ignore) setEmbeddedLoadError(err instanceof ApiError ? err.message : 'Something went wrong. Please try again.')
+      })
+    return () => {
+      ignore = true
+    }
+  }, [showEmbedded, token, embeddedSecret])
+
+  const stripePromise = useMemo<Promise<Stripe | null> | null>(() => {
+    if (!embeddedSecret) return null
+    return loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY, { stripeAccount: embeddedSecret.connectedAccountId })
+  }, [embeddedSecret])
+
+  function handleEmbeddedPaid() {
+    setConfirmingPayment(true)
+    loadVerify({ poll: true })
+  }
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
-      <div className="w-full max-w-lg rounded-2xl card-surface border border-border bg-surface p-8">
+    <div className="login-shell flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
+      <div className="login-panel-surface w-full max-w-lg p-8">
         {state === 'loading' && <p className="text-center text-sm text-fg-secondary">Loading…</p>}
 
         {state === 'invalid' && (
           <div className="text-center">
-            <h1 className="text-xl font-semibold text-fg">This link has expired</h1>
+            <h1 className="login-jura text-xl font-semibold text-fg">This link has expired</h1>
             <p className="mt-2 text-sm text-fg-secondary">{invalidMessage}</p>
             <p className="mt-4 text-sm text-fg-secondary">Please contact the studio to request a new deposit form.</p>
           </div>
@@ -201,7 +274,7 @@ export default function DepositResponse() {
 
         {state === 'success' && (
           <div className="text-center">
-            <h1 className="text-xl font-semibold text-fg">Thanks — you're all set!</h1>
+            <h1 className="login-jura text-xl font-semibold text-fg">Thanks — you're all set!</h1>
             <p className="mt-2 text-sm text-fg-secondary">
               Your signed deposit form has been received. No payment has been collected yet — the studio will reach
               out to collect your deposit and confirm your appointment.
@@ -211,7 +284,7 @@ export default function DepositResponse() {
 
         {state === 'ready' && verifyData && verifyData.paidVia && (
           <div className="text-center">
-            <h1 className="text-xl font-semibold text-fg">Thanks — your deposit is paid!</h1>
+            <h1 className="login-jura text-xl font-semibold text-fg">Thanks — your deposit is paid!</h1>
             <p className="mt-2 text-sm text-fg-secondary">
               {verifyData.paidVia === 'STRIPE'
                 ? "We've received your payment and confirmed your appointment."
@@ -234,14 +307,14 @@ export default function DepositResponse() {
 
         {state === 'ready' && verifyData && !verifyData.paidVia && confirmingPayment && (
           <div className="text-center">
-            <h1 className="text-xl font-semibold text-fg">Confirming your payment…</h1>
+            <h1 className="login-jura text-xl font-semibold text-fg">Confirming your payment…</h1>
             <p className="mt-2 text-sm text-fg-secondary">This should only take a moment.</p>
           </div>
         )}
 
         {state === 'ready' && verifyData && !verifyData.paidVia && !confirmingPayment && verifyData.signedAt && verifyData.stripeConnected && (
           <div>
-            <h1 className="text-xl font-semibold text-fg">Deposit Agreement Signed</h1>
+            <h1 className="login-jura text-xl font-semibold text-fg">Deposit Agreement Signed</h1>
             <p className="mt-1 text-sm font-medium text-fg-secondary">{verifyData.studioName}</p>
             <p className="mt-2 text-sm text-fg-secondary">
               {verifyData.clientFirstName}, your agreement is on file. Pay your deposit below to confirm your
@@ -267,20 +340,43 @@ export default function DepositResponse() {
               <p className="mt-2 text-xs text-fg-muted">{verifyData.depositBreakdownNote}</p>
             )}
 
-            {payError && (
-              <div className="mt-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
-                {payError}
+            {verifyData.embeddedPaymentsEnabled ? (
+              <div className="mt-6">
+                {embeddedLoadError && (
+                  <div className="mb-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+                    {embeddedLoadError}
+                  </div>
+                )}
+                {embeddedSecret && stripePromise ? (
+                  <Elements stripe={stripePromise} options={{ clientSecret: embeddedSecret.clientSecret, appearance: EDITORIAL_GOLD_STRIPE_APPEARANCE }}>
+                    <DepositPaymentForm
+                      token={token!}
+                      totalCharged={verifyData.totalCharged}
+                      onPaid={handleEmbeddedPaid}
+                    />
+                  </Elements>
+                ) : (
+                  !embeddedLoadError && <p className="text-center text-sm text-fg-secondary">Loading payment form…</p>
+                )}
               </div>
-            )}
+            ) : (
+              <>
+                {payError && (
+                  <div className="mt-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+                    {payError}
+                  </div>
+                )}
 
-            <button
-              type="button"
-              onClick={goToStripeCheckout}
-              disabled={payingNow}
-              className="mt-6 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
-            >
-              {payingNow ? 'Redirecting…' : `Pay $${verifyData.totalCharged}`}
-            </button>
+                <button
+                  type="button"
+                  onClick={goToStripeCheckout}
+                  disabled={payingNow}
+                  className="mt-6 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                >
+                  {payingNow ? 'Redirecting…' : `Pay $${verifyData.totalCharged}`}
+                </button>
+              </>
+            )}
           </div>
         )}
 
@@ -291,7 +387,7 @@ export default function DepositResponse() {
           verifyData.signedAt &&
           !verifyData.stripeConnected && (
             <div className="text-center">
-              <h1 className="text-xl font-semibold text-fg">Thanks — you're all set!</h1>
+              <h1 className="login-jura text-xl font-semibold text-fg">Thanks — you're all set!</h1>
               <p className="mt-2 text-sm text-fg-secondary">
                 Your signed deposit form has been received. No payment has been collected yet — the studio will
                 reach out to collect your deposit and confirm your appointment.
@@ -301,7 +397,7 @@ export default function DepositResponse() {
 
         {state === 'ready' && verifyData && !verifyData.paidVia && !confirmingPayment && !verifyData.signedAt && (
           <div>
-            <h1 className="text-xl font-semibold text-fg">Deposit Agreement</h1>
+            <h1 className="login-jura text-xl font-semibold text-fg">Deposit Agreement</h1>
             <p className="mt-1 text-sm font-medium text-fg-secondary">{verifyData.studioName}</p>
             {verifyData.artistName && (
               <div className="mt-3 flex items-center gap-2">
@@ -426,5 +522,84 @@ export default function DepositResponse() {
         <PublicPageFooter studioSlug={verifyData?.studioSlug} />
       </div>
     </div>
+  )
+}
+
+// Embedded payments: rendered inside <Elements>, so useStripe/useElements
+// resolve to the instance mounted with THIS deposit's own client secret --
+// a fresh instance per payment attempt, not a shared/cached one, since a
+// new <Elements> tree is created whenever embeddedSecret changes.
+function DepositPaymentForm({
+  token,
+  totalCharged,
+  onPaid,
+}: {
+  token: string
+  totalCharged: number
+  onPaid: () => void
+}) {
+  const stripe = useStripe()
+  const elements = useElements()
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!stripe || !elements) return
+
+    setSubmitting(true)
+    setError(null)
+
+    const { error: submitError } = await elements.submit()
+    if (submitError) {
+      setError(submitError.message ?? 'Please check your payment details.')
+      setSubmitting(false)
+      return
+    }
+
+    // redirect: 'if_required' is the whole point of this migration --
+    // a card payment (the overwhelming majority of cases) resolves right
+    // here with no navigation at all. Only a genuinely redirect-requiring
+    // method (3DS challenge, a bank redirect) leaves the page, and even
+    // then returns to return_url (this same page, ?paid=1) rather than a
+    // Stripe-hosted one -- the SAME polling logic the old Checkout
+    // redirect flow already used picks up from there via justReturnedFromStripe.
+    const { error: confirmError, paymentIntent } = await stripe.confirmPayment({
+      elements,
+      confirmParams: {
+        return_url: `${window.location.origin}/deposit/${token}?paid=1`,
+      },
+      redirect: 'if_required',
+    })
+
+    if (confirmError) {
+      setError(confirmError.message ?? 'Something went wrong. Please try again.')
+      setSubmitting(false)
+      return
+    }
+
+    if (paymentIntent && (paymentIntent.status === 'succeeded' || paymentIntent.status === 'processing')) {
+      onPaid()
+    } else {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <PaymentElement />
+
+      {error && (
+        <div className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">{error}</div>
+      )}
+
+      <button
+        type="submit"
+        disabled={!stripe || !elements || submitting}
+        className="login-button login-jura w-full px-4 py-3 text-sm font-bold uppercase disabled:opacity-60"
+      >
+        {submitting ? 'Processing…' : `Pay $${totalCharged}`}
+      </button>
+    </form>
   )
 }
