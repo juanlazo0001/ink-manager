@@ -12007,3 +12007,120 @@ earlier this session, picked up every change live via `tsx watch`) was left runn
 run dev:web` instance started for this verification was stopped, port confirmed free. `playwright`
 was already installed from earlier in this session; not reinstalled or removed here. REPORT.md line
 count before this entry: 11905 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Payment-received page Part 1: personalized reference-image background
+
+Client-facing confirmation pages (deposit, flash payment) get an ambient background
+drawn from the client's own uploaded design reference -- Part 1 of a two-part
+redesign (Part 2, sizing/hierarchy, follows in a separate commit once its own
+reference screenshot lands).
+
+## The reference-vs-placement distinction
+
+`Inquiry.referenceImages` ("Reference images -- Photos or designs showing the
+style") and `Inquiry.placementImages` ("Placement photos -- A photo of the area
+for the tattoo") are separate `String[]` columns, populated by entirely separate
+upload widgets on both the public intake form and staff's own inquiry form. The
+rule this feature enforces: read ONLY `referenceImages`, never `placementImages`
+-- the latter is a photo of the client's own body, and serving it as decorative
+wallpaper would be a real privacy failure, not a design mismatch. Enforced at the
+query level (the new endpoints' own `select` clauses never fetch
+`placementImages` at all -- nothing to accidentally serve), not by a runtime
+check that could be bypassed by a future edit.
+
+A flash-origin inquiry (`POST /flash-pieces/:id/request`, the only route that
+ever creates one) never sets `referenceImages` at all -- only `placementImages`
+(the client's own body-placement photo, required for a flash booking). This means
+a flash-origin confirmation gets the static fallback background by construction,
+not a special case: `referenceImages[0]` is always `undefined` there. Verified
+adversarially: seeded a flash-origin inquiry with a REAL, valid image sitting in
+`placementImages` (not just an empty array -- a stronger check, since an empty
+array proves nothing about whether the code path is actually guarded) and
+confirmed `GET /flash-payment/reference-background/:token` still 404s.
+
+## Server-side processing, never a live CSS filter
+
+New `serveBlurredRemoteImage` (`apps/api/src/routes/publicAssets.ts`) fetches the
+source image through Cloudinary's own URL-based transformation
+(`w_800,e_blur:2000,q_auto,f_auto` -- downscaled, heavily blurred, aggressively
+compressed, best format for the requesting browser) and proxies the
+already-transformed bytes back under our own URL, rather than ever handing the
+browser a Cloudinary URL directly. Two reasons for proxying instead of
+redirecting: a redirect would leak a real, permanent, transformation-strippable
+Cloudinary URL into the page's own network log (at which point the blur is a
+client-side suggestion, not an enforced property, since stripping the transform
+segment from the URL gets the raw sharp image); and it matches `serveDataUrl`'s
+own established shape in this file (every endpoint here terminates in bytes we
+serve, not a URL we hand off). Defensive hostname/path check before fetching
+(only `res.cloudinary.com` URLs containing `/upload/`) against blindly
+server-side-fetching whatever string happens to be stored. New token-scoped
+routes: `GET /deposits/:token/reference-background`,
+`GET /flash-payment/reference-background/:token` -- same no-expiry-check shape as
+the sibling `/artist-avatar` endpoint from the previous session's fix.
+
+Live-verified the transform is real, not a passthrough: uploaded a real 146KB
+sharp photo to this dev Cloudinary account, fetched it back through the new
+endpoint -- 7KB, visibly abstract/blurred on screen, `Content-Type: image/jpeg`,
+`Cache-Control: public, max-age=3600`.
+
+## A live CSS-stacking discovery: backdrop-filter traps position: fixed
+
+Rendering the fixed photo/wash layers inline inside `PaymentConfirmationStage`
+(itself nested inside `.login-panel-surface`, the frosted-glass card) produced a
+background image sized and clipped to the CARD's own bounds (356x680 measured
+live), not the viewport (390x844) -- confirmed by inspecting computed styles in
+a real browser, not just reading the CSS. Root cause: `.login-panel-surface` has
+`backdrop-filter: blur(...)`, and per spec, `backdrop-filter` (like `transform`
+and `filter`) establishes a new containing block for `position: fixed`
+descendants -- the "fixed" layers were being contained by the card, not escaping
+to the true viewport. Fixed by portaling the photo/wash to `document.body` via
+`createPortal`, which escapes any ancestor's containing-block override
+regardless of nesting depth. Worth a standing note in CLAUDE.md's design rules
+so this doesn't have to be rediscovered live again -- folded into Part 2's own
+commit alongside its sizing pass, at the user's request.
+
+Once portaled, the fixed layers correctly cover the full viewport as a genuine
+overlay -- which meant every other piece of real page content
+(`DepositAppointmentCard`, `DepositGiftCardCard`, the referral block,
+`PublicPageFooter`) needed its own explicit `relative z-10` to read above it: a
+plain, non-positioned element does not automatically out-paint an explicitly
+z-indexed `position: fixed` sibling regardless of DOM order, confirmed live by
+temporarily lightening the wash to 15% opacity and watching the card content
+stay correctly legible above the now-clearly-visible photo.
+
+`DepositResponse.tsx`/`FlashPaymentResponse.tsx`'s own outer `.login-shell`
+wrapper had `bg-bg` (Tailwind's opaque background utility) removed, matching
+`AuthLayout`'s own `.login-shell` usage (which never had it) -- `body` already
+carries this flat color globally, so nothing is lost when no personalized
+background is present, and this is what lets the photo show through the page's
+content instead of being hidden behind an opaque ancestor the way TopBar's own
+`.app-bg-photo`/`.app-bg-wash` are deliberately hidden behind opaque page bodies
+(margins-only, the opposite intent).
+
+## Privacy hard rules
+
+`og:image` stays the studio logo: confirmed by reading `server.mjs` directly --
+`studioImageUrl` only ever derives from `studioLogoUrl`/`studioSlug`, and this
+session's change never touches it. Flash-payment has no OG resolver registered
+at all today (falls back to the generic default tags) -- left as-is for this
+part; Part 2 gives it the same studio-branded preview tags every other public
+route has, folded in per the user's own request.
+
+The reference-background URL is scoped to the same token audience as the
+confirmation page itself (`/deposits/:token/reference-background`,
+`/flash-payment/reference-background/:token` -- a wrong or missing token 404s,
+verified live), not a separate publicly-guessable endpoint.
+
+## Verification
+
+Real browser, 390x844 mobile viewport, three seeded scenarios against the dev
+database: a deposit with a real reference image (background renders, visibly
+abstract); a deposit with no reference image (unchanged static background); a
+flash-origin inquiry with a real image in `placementImages` only (confirmed
+`referenceBackgroundUrl: null` in the verify response AND a direct 404 probing
+the endpoint). Zero console errors across all three. Full API test suite
+126/126. Both apps' `tsc`/`eslint` clean. All seeded DB rows and both real
+Cloudinary test uploads deleted afterward; all scratch scripts removed.
+
+REPORT.md line count before this entry: 12009 (verified via `git show
+HEAD:REPORT.md | wc -l`) -- pure addition.

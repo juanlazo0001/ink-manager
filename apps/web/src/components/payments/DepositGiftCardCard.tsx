@@ -20,7 +20,9 @@ export default function DepositGiftCardCard({
   publicUrl: string | null
 }) {
   return (
-    <div className="mt-5 rounded-lg border border-border p-4 text-center">
+    // relative z-10: same reasoning as DepositAppointmentCard's own comment
+    // -- keeps this above the fixed personalized background.
+    <div className="relative z-10 mt-5 rounded-lg border border-border p-4 text-center">
       <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Your deposit voucher</p>
       <p className="mt-1 text-2xl font-semibold text-fg">{formatCents(amountCents)}</p>
       <p className="mt-1 text-sm text-fg-secondary">Show this QR code at the studio.</p>

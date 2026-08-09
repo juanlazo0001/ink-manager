@@ -19,6 +19,13 @@ interface VerifyResponse {
   themePreset: string
   artistName: string | null
   artistAvatarUrl: string | null
+  // Part 1 (personalized confirmation background): same shape/reasoning
+  // as DepositResponse.tsx's own field -- see that file's comment. Always
+  // null for a flash-origin inquiry in practice (POST /flash-pieces/:id/
+  // request never sets referenceImages), so this page's confirmation
+  // falls back to the static background by construction, not a special
+  // case here.
+  referenceBackgroundUrl: string | null
   pieceTitle: string | null
   pieceImageUrl: string | null
   priceCents: number | null
@@ -133,7 +140,10 @@ export default function FlashPaymentResponse() {
   }
 
   return (
-    <div className="login-shell flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
+    // bg-bg dropped -- see DepositResponse.tsx's own comment on this same
+    // change (Part 1: lets the fixed personalized background show through
+    // instead of being hidden behind an opaque ancestor).
+    <div className="login-shell flex min-h-screen items-center justify-center px-4 py-10 text-fg">
       <div className="login-panel-surface w-full max-w-lg px-4 py-8 sm:p-8">
         {state === 'loading' && <p className="text-center text-sm text-fg-secondary">Loading…</p>}
 
@@ -163,6 +173,7 @@ export default function FlashPaymentResponse() {
               artistName: verifyData.artistName,
               artistAvatarUrl: verifyData.artistAvatarUrl,
               studioName: verifyData.studioName,
+              referenceBackgroundUrl: verifyData.referenceBackgroundUrl,
             }}
             headlineAmountCents={verifyData.priceCents ?? 0}
             breakdown={verifyData.pieceTitle ? [{ label: verifyData.pieceTitle, valueCents: verifyData.priceCents ?? 0 }] : []}

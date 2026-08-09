@@ -27,7 +27,12 @@ export default function DepositAppointmentCard({
 
   if (!confirmed) {
     return (
-      <div className="mt-5 rounded-lg border border-border p-4 text-left">
+      // relative z-10: keeps this readable above the fixed personalized
+    // background PaymentConfirmationStage can render as an earlier sibling
+    // (position: fixed content otherwise paints above plain in-flow
+    // content regardless of DOM order -- see that component's own
+    // comment). No-op everywhere else.
+    <div className="relative z-10 mt-5 rounded-lg border border-border p-4 text-left">
         <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Your appointment</p>
         <p className="mt-1 text-sm font-medium text-fg">Not yet scheduled</p>
         <p className="mt-2 text-sm text-fg-secondary">
@@ -46,7 +51,12 @@ export default function DepositAppointmentCard({
   }
 
   return (
-    <div className="mt-5 rounded-lg border border-border p-4 text-left">
+    // relative z-10: keeps this readable above the fixed personalized
+    // background PaymentConfirmationStage can render as an earlier sibling
+    // (position: fixed content otherwise paints above plain in-flow
+    // content regardless of DOM order -- see that component's own
+    // comment). No-op everywhere else.
+    <div className="relative z-10 mt-5 rounded-lg border border-border p-4 text-left">
       <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Your appointment</p>
       <p className="mt-1 text-sm font-medium text-fg">{formatAppointmentDateTime(startIso!, timeZone)}</p>
       {address && <p className="mt-1 text-sm text-fg-secondary">{address}</p>}

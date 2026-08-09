@@ -10,6 +10,17 @@ export interface PaymentIdentity {
   artistName: string | null
   artistAvatarUrl: string | null
   studioName: string
+  // Personalized confirmation background (Part 1): a pre-blurred,
+  // server-processed variant of the originating inquiry's own reference
+  // image (never the client's placement/body photo -- see the API route's
+  // own comment for why that's enforced server-side, not just a naming
+  // convention here). Optional/omittable, not just nullable -- session
+  // checkout's own PaymentIdentity (AppointmentDetail.tsx) never supplies
+  // this at all, since that flow is staff-authenticated, not reached via
+  // the client's own token link the way deposit/flash are. Absent or null
+  // both mean "no personalized background," falling back to the plain
+  // static one PaymentConfirmationStage already had.
+  referenceBackgroundUrl?: string | null
 }
 
 export interface PaymentBreakdownItem {

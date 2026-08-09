@@ -45,6 +45,14 @@ interface VerifyResponse {
   // published a public profile, in which case the hero falls back to
   // FlatArtistAvatar's own initials badge rather than a broken request.
   artistPublicAvatarUrl: string | null
+  // Part 1 (personalized confirmation background): a real cacheable,
+  // pre-blurred image URL -- same "real URL via publicAssets, not raw
+  // inline data" shape as artistPublicAvatarUrl above, sourced from the
+  // originating inquiry's OWN referenceImages (never placementImages/body
+  // photos -- enforced server-side, see the API route's own comment).
+  // Null whenever the inquiry has no reference images, in which case the
+  // page falls back to its plain static background, unchanged.
+  referenceBackgroundUrl: string | null
   // Multi-session-aware as of the confirmation enrichment -- resolves via
   // this deposit form's own PlannedSession when planned (session 2+ is
   // never reflected on the project's legacy singular appointment slot),
@@ -281,7 +289,15 @@ export default function DepositResponse() {
   }
 
   return (
-    <div className="login-shell flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
+    // bg-bg deliberately dropped (Part 1) -- same as AuthLayout's own
+    // .login-shell wrapper, which never had it: body already carries this
+    // flat color globally (index.css's own @layer base rule), so removing
+    // it here loses nothing when there's no personalized background, and
+    // is what lets PaymentConfirmationStage's fixed photo/wash show
+    // through this page's content when there is one, rather than being
+    // hidden behind an opaque ancestor the way TopBar's own app-bg-photo/
+    // app-bg-wash deliberately are (see that pair's own comment).
+    <div className="login-shell flex min-h-screen items-center justify-center px-4 py-10 text-fg">
       <div className="login-panel-surface w-full max-w-lg px-4 py-8 sm:p-8">
         {state === 'loading' && <p className="text-center text-sm text-fg-secondary">Loading…</p>}
 
@@ -310,6 +326,7 @@ export default function DepositResponse() {
                 artistName: verifyData.artistName,
                 artistAvatarUrl: verifyData.artistPublicAvatarUrl,
                 studioName: verifyData.studioName,
+                referenceBackgroundUrl: verifyData.referenceBackgroundUrl,
               }}
               amountCents={dollarsToCents(verifyData.totalCharged)}
               heading="Payment received"
@@ -345,7 +362,10 @@ export default function DepositResponse() {
             )}
 
             {verifyData.referralProgramEnabled && (
-              <div className="mt-5 rounded-lg border border-accent/30 bg-accent/5 p-4 text-left">
+              // relative z-10: same reasoning as DepositAppointmentCard's
+              // own comment -- keeps this above the fixed personalized
+              // background.
+              <div className="relative z-10 mt-5 rounded-lg border border-accent/30 bg-accent/5 p-4 text-left">
                 <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Know someone else who'd love this?</p>
                 <p className="mt-1 text-sm text-fg-secondary">
                   Share your referral code — when a friend you refer pays their own deposit, you'll earn a reward.
@@ -377,6 +397,7 @@ export default function DepositResponse() {
                 artistName: verifyData.artistName,
                 artistAvatarUrl: verifyData.artistAvatarUrl,
                 studioName: verifyData.studioName,
+                referenceBackgroundUrl: verifyData.referenceBackgroundUrl,
               }}
               headlineAmountCents={dollarsToCents(verifyData.totalCharged)}
               breakdown={[

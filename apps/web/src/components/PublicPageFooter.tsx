@@ -8,7 +8,12 @@ export default function PublicPageFooter({ studioSlug }: { studioSlug: string | 
   if (!studioSlug) return null
 
   return (
-    <div className="mt-6 flex justify-center gap-4 text-xs text-fg-muted">
+    // relative z-10: a no-op everywhere this renders today, but keeps this
+    // footer readable on pages that can show a fixed personalized
+    // background behind their content (DepositResponse/FlashPaymentResponse's
+    // payment-confirmation state, see PaymentConfirmationStage's own
+    // comment) without this component needing to know that's happening.
+    <div className="relative z-10 mt-6 flex justify-center gap-4 text-xs text-fg-muted">
       <Link to={`/privacy/${studioSlug}`} target="_blank" rel="noopener noreferrer" className="hover:text-fg">
         Privacy Policy
       </Link>

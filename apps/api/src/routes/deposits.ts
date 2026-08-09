@@ -13,7 +13,7 @@ import { emitInvalidation } from "../lib/realtime/registry";
 import { callerBelongsToStudio, effectiveRoleAt, hasPermissionAt } from "../lib/artistAccess";
 import { shortenUrl } from "../lib/shortLinks";
 import { PUBLIC_APP_URL, API_PUBLIC_URL } from "../lib/publicUrl";
-import { serveDataUrl } from "./publicAssets";
+import { serveDataUrl, serveBlurredRemoteImage } from "./publicAssets";
 
 // Exact SOP wording, in the order the client must agree to each one.
 const TERMS = [
@@ -224,6 +224,19 @@ publicRouter.get("/verify/:token", async (req, res) => {
     ? `${API_PUBLIC_URL}/deposits/${token}/artist-avatar`
     : null;
 
+  // Personalized confirmation background: referenceImages ONLY, never
+  // placementImages -- see the new route right below for why that
+  // distinction is load-bearing, not stylistic. First image, deterministic
+  // (this is ambient/abstract background texture, not a gallery -- there's
+  // no "best" one to pick). Null (falls back to the static background)
+  // whenever the inquiry has no reference images at all, which is every
+  // flash-origin inquiry unconditionally (POST /flash-pieces/:id/request
+  // never sets referenceImages -- only placementImages, the client's own
+  // body-placement photo).
+  const referenceBackgroundUrl = inquiry.referenceImages[0]
+    ? `${API_PUBLIC_URL}/deposits/${token}/reference-background`
+    : null;
+
   res.json({
     clientFirstName: inquiry.client.firstName,
     // Surfaced on the "your deposit is paid" success state, only when the
@@ -247,6 +260,7 @@ publicRouter.get("/verify/:token", async (req, res) => {
     // specifically -- see the resolution comment above for why this is a
     // separate field from artistAvatarUrl, not a replacement for it.
     artistPublicAvatarUrl,
+    referenceBackgroundUrl,
     appointmentStart: resolvedAppointment?.startTime ?? null,
     appointmentEnd: resolvedAppointment?.endTime ?? null,
     // Purely informational -- only meaningful once there's no real
@@ -323,6 +337,31 @@ publicRouter.get("/:token/artist-avatar", async (req, res) => {
 
   const avatarUrl = depositForm?.inquiry.assignedArtist?.user.avatarUrl;
   if (!avatarUrl || !serveDataUrl(res, avatarUrl)) {
+    res.status(404).end();
+  }
+});
+
+// Personalized confirmation background. Deliberately selects ONLY
+// referenceImages -- never placementImages, which is where the actual body
+// photo lives (see the Inquiry model's own field comments and the intake
+// form's own labels: "Reference images -- Photos or designs showing the
+// style" vs. "Placement photos -- A photo of the area for the tattoo").
+// Serving a client's own photo of their body as decorative ambient
+// wallpaper would be a real privacy failure, not just a design mismatch --
+// this endpoint's select clause is the ONE place that enforces it, by
+// construction (placementImages is never even fetched here, so there's
+// nothing to accidentally serve). Same token-scoped, no-expiry-check shape
+// as /artist-avatar right above.
+publicRouter.get("/:token/reference-background", async (req, res) => {
+  const token = req.params.token as string;
+
+  const depositForm = await prisma.depositForm.findUnique({
+    where: { token },
+    select: { inquiry: { select: { referenceImages: true } } },
+  });
+
+  const referenceImage = depositForm?.inquiry.referenceImages[0];
+  if (!referenceImage || !(await serveBlurredRemoteImage(res, referenceImage))) {
     res.status(404).end();
   }
 });

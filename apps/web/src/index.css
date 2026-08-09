@@ -548,6 +548,29 @@
   background: rgba(12, 10, 8, 0.45);
 }
 
+/* Payment-confirmation personalized background: reuses .app-bg-photo as-is
+   for the <img> itself (purely structural -- fixed/inset-0/cover, no
+   opacity assumptions baked in), but a distinctly heavier wash than
+   .app-bg-wash above (80% vs. 45%) -- this photo is a client's own
+   uploaded reference image, not the studio's own generic ambient art, so
+   it needs to read as abstract texture at a glance, not a recognizable
+   picture. Unlike .app-bg-photo/.app-bg-wash (rendered by TopBar, a
+   sibling of every routed page, deliberately hidden behind each page's own
+   opaque .bg-bg wrapper -- see that pair's own comment), this pair is
+   rendered INSIDE PaymentConfirmationStage itself, and DepositResponse.tsx/
+   FlashPaymentResponse.tsx's own outer wrapper deliberately drops `bg-bg`
+   (same as AuthLayout's .login-shell wrapper already does) so there's no
+   competing opaque background between these fixed layers and the
+   viewport -- the photo is meant to show THROUGH the page, not just in the
+   margins around it, the opposite intent from the app-shell pair. */
+.payment-bg-wash {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: rgba(12, 10, 8, 0.8);
+}
+
 .side-nav-link {
   position: relative;
   border: 1px solid transparent;
