@@ -11674,3 +11674,285 @@ one iframe-debugging throwaway). `dev-studio`'s `embeddedPaymentsEnabled` restor
 `false`. Both dev servers stopped, ports confirmed free. `playwright` (installed `--no-save` for this
 pass) uninstalled afterward, no lockfile touched. REPORT.md line count before this entry: 11590
 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Multi-language public forms -- Part 1: investigation + proposal (branch `explore/multi-language-public-forms`)
+
+Investigation and proposal only, as instructed -- **nothing built, no schema changes, no code
+changes**. Goal: clients complete the six public flows (intake, estimate response, deposit,
+waiver, self-scheduling, flash) in their own language. Two layers throughout: platform UI strings
+(Ink Manager translates, professionally, never machine-translated) and studio-authored content
+(a studio's own text, translated by the studio itself, also never machine-translated). Spanish is
+the first target language; every design decision below is justified against genuine N-language
+extensibility, not a two-language special case.
+
+## 1. String inventory
+
+Read in full: all ten public-flow page components (`ArtistPublicPage.tsx`, `DepositResponse.tsx`,
+`EstimateResponse.tsx`, `EstimateRevisionResponse.tsx`, `FlashPaymentResponse.tsx`,
+`FlashPublicGallery.tsx`, `GiftCardResponse.tsx`, `IntakeForm.tsx`, `SelfSchedule.tsx`,
+`WaiverSign.tsx`) plus every shared component they render (`PublicPageFooter`, `SignaturePadField`,
+`FlatArtistAvatar`, `PhoneInput`, `CurrencyInput`, `ImageUploadSection`, `ImageLightbox`,
+`StatusPill`, `QrCode`, and the `components/payments/*` stage components). Two of these ten pages
+(`ArtistPublicPage.tsx`, `GiftCardResponse.tsx`) aren't in this task's own six-flow list but were
+already covered by the OG-preview work's route inventory, so included here for completeness --
+noted explicitly wherever scope differs from the six named flows.
+
+**Roughly 150 distinct platform-owned strings** across the ten pages (full file:line inventory
+available on request; not reproduced in full here to keep this entry readable) -- headings, button
+labels, validation/error messages, empty/loading states, placeholder text. About a dozen of these
+repeat near-verbatim across multiple pages (the generic "Something went wrong. Please try again."
+API-error fallback appears at ~10 call sites; "This link is invalid or has expired" variants appear
+on six of the ten pages with slightly different wording each time; "Loading…" appears on all ten) --
+real consolidation opportunities once these become translation keys, not just an inventory count.
+
+**Studio-authored content types found, by model:**
+
+| Model | Field(s) | Cardinality per studio |
+|---|---|---|
+| `StudioSettings` | `privacyPolicy`, `termsAndConditions`, `refundPolicy`, `depositPolicy`, `reschedulePolicy`, `communicationPolicy`, `estimateTerms`, `waiverHealthQuestions` (JSON), `waiverClauses` (JSON), `waiverAcknowledgment`, `waiverPhotoRelease` | One row |
+| `IntakeFormField` | `label`, `helpText`, `options` (JSON) | One row per field, per form |
+| `CustomPolicy` | `title`, `bodyHtml` | One row per studio-added policy |
+| `Service` | `name`, `depositBreakdownNote` | One row per service |
+| `FlashPiece` | `title`, `description` | One row per piece |
+| `Artist` | `bio` | One row per artist (public page only, not one of the six named flows) |
+
+**Two findings that change the shape of the design, both worth flagging before the schema
+proposal below:**
+
+**Finding A -- some fields that *look* studio-authored are actually 100% platform copy shipped as
+API "data."** The deposit page's 8-clause agreement checklist (`DepositResponse.tsx`'s `terms[]`)
+looks exactly like per-studio legal terms a client checks off, but traces straight to a hardcoded
+`const TERMS = [...]` array in `apps/api/src/routes/deposits.ts` -- identical for every studio, no
+studio input possible. Same pattern on the estimate page: `collaborativeDesignPolicy` is rendered
+in a box visually identical to the genuinely studio-authored `estimateTermsSnapshot` right next to
+it, but is a single hardcoded string (`COLLABORATIVE_DESIGN_POLICY` in `routes/estimates.ts`) whose
+own code comment literally says "adjust here if the studio's actual policy text changes" -- i.e. a
+developer, not a studio owner, is the only one who can ever change it. **An i18n design that
+treats "comes from a verify-endpoint API response" as the signal for "studio content, needs a
+translation UI" will misclassify these and try to build studio-editable translation fields for
+copy no studio can actually edit.** These two need to go through the PLATFORM string pipeline
+(section 2), not the studio-content schema (section 3), even though they arrive over the same API
+response as genuine studio content.
+
+**Finding B -- some fields are the same DB column but sometimes platform copy, sometimes studio
+copy, with no flag distinguishing the two at read time.** `IntakeFormField.label`/`.helpText` are
+genuinely studio-editable (a studio can open the form builder and change them), but every field is
+pre-seeded from a hardcoded platform default list (`SYSTEM_FIELD_DEFAULTS` in
+`lib/intakeFormFields.ts`) that most studios likely never touch. The same pattern recurs on
+`WaiverSign.tsx`'s `healthQuestions[i].explainPrompt` (falls back to a hardcoded "Please explain"
+when the studio didn't set one) and on the intake form's phone-field `helpText` (falls back to a
+long hardcoded SMS-consent legal paragraph when null). **This means "does this studio have a
+Spanish translation for this field" cannot be answered by checking whether the base field is
+non-null** -- a studio that never touched a SYSTEM field's default label still has a real English
+string sitting in a studio-scoped row, and needs the platform's own Spanish default there, not an
+empty "needs translation" prompt in the Settings UI. Section 3's fallback design accounts for this
+directly.
+
+**A related, distinct-from-i18n flag worth recording**: two hardcoded jurisdiction-specific
+strings exist today independent of language -- `WaiverSign.tsx` states "You must be 18 or older to
+be tattooed in North Carolina" verbatim, and `PhoneInput.tsx` defaults to a US-formatted example
+placeholder and hardcodes 10-digit US validation. Translating these into Spanish without also
+addressing the jurisdiction assumption would ship a Spanish sentence that's still factually wrong
+for any studio outside NC (or eventually outside the US). Flagging for awareness, not proposing a
+fix -- out of scope for a language investigation, but the two problems will visibly collide the
+first time a non-NC or non-US studio's Spanish waiver goes out.
+
+## 2. Platform strings: i18n approach
+
+**No i18n library exists anywhere in this project today** (checked both `apps/web/package.json`
+and root `package.json` -- confirmed greenfield).
+
+**Recommendation: a small homegrown solution, not `react-i18next` or similar.** Justification
+against this specific codebase's actual shape, not i18n best-practice in the abstract:
+
+- The full scope is ~150 flat keys across 10 files, all in the *public, unauthenticated* pages
+  only -- the staff-facing app (the other ~150+ page/component files) stays English-only for v1,
+  explicitly out of scope. `react-i18next` earns its complexity (namespace lazy-loading, backend
+  plugins, language detection middleware) at a scale and access-pattern this app doesn't have yet.
+- Every interpolation case found (`"Hi {firstName}, your request..."`, `"{n}-session plan"`) is
+  simple variable substitution -- no true grammatical pluralization ("1 session" vs. "2 sessions")
+  appeared anywhere in the inventory. A ~30-line `t(key, vars)` helper doing `{{var}}` replacement
+  covers everything found.
+- TypeScript can enforce translation-key parity for free with plain typed objects
+  (`es.ts satisfies Record<keyof typeof en, string>`) -- a missing Spanish key becomes a compile
+  error, not a silent runtime fallback to English that nobody notices until a client complains.
+  `react-i18next`'s JSON-dictionary convention doesn't get this for free.
+- Public pages are frequently opened from an SMS link on mobile data -- avoiding an extra
+  40-60kB (i18next + react-i18next + a detector plugin) on the very pages most sensitive to load
+  time is a real, not just theoretical, win here.
+
+**Structure**: `apps/web/src/i18n/strings/en.ts` and `es.ts`, each a flat (or page-grouped, e.g.
+`{ deposit: {...}, waiver: {...}, common: {...} }`) typed object; a `LocaleContext` +
+`useTranslations()` hook providing `t()`, mounted once around the six public routes (not the whole
+app); a `SUPPORTED_LOCALES` list gates what the language picker (section 4) offers. Adding a third
+language later is a new `strings/<locale>.ts` file plus one line in `SUPPORTED_LOCALES` -- no
+schema change, no migration, matching the "N-language" requirement for this layer the same way
+section 3's schema does for studio content.
+
+**One thing this layer does NOT cover, flagged now so it isn't missed later**: PDF generation
+(`lib/pdf.ts`, e.g. `generateDepositFormPdf`'s hardcoded `"Deposit Agreement"` header) runs
+server-side with no React tree to read a `LocaleContext` from. It needs its own small,
+independent string dictionary for the handful of PDF-chrome labels (section, header, footer text)
+-- same `t(key, vars)` shape, different runtime, listed here as its own line item in the build
+estimate (section 5) rather than folded into the frontend work.
+
+**Maintenance/review**: since these must be professionally translated, never machine-translated,
+the realistic flow is a translator (in-house or a translation service) editing `es.ts` directly, or
+via a reviewed PR if the team wants translation changes to go through the same review as code.
+Exporting/importing from a spreadsheet for non-engineer translators is a real, common pattern but
+adds its own tooling -- flagged as a plausible fast-follow, not built into this proposal's scope.
+
+## 3. Studio content translations: schema proposal
+
+**Recommendation: a dedicated sibling translation table per translatable parent model, not
+locale-keyed columns (`privacyPolicy` / `privacyPolicyEs` / `privacyPolicyFr`...).**
+
+Justified directly against the content types found in section 1, not as a general preference:
+
+- **Two of the five content types are one-to-many at real, unbounded scale** --
+  `IntakeFormField` (one row per field per form) and `FlashPiece`/`Service`/`CustomPolicy` (one row
+  per piece/service/policy a studio adds, with no fixed upper bound). Locale-keyed columns would
+  need to be added to *every one of these tables*, and adding a language means an `ALTER TABLE`
+  migration touching five tables simultaneously, every time -- directly contradicting "architecture
+  must be N-language." A sibling translation table needs a single `INSERT` per new language, ever.
+- **A single generic polymorphic table** (`ContentTranslation { entityType, entityId, fieldName,
+  locale, value }`) was also considered and rejected: Prisma has no real polymorphic-relation
+  support, so `entityId` can't be a real foreign key to five different parent tables at once --
+  losing referential integrity (an orphaned translation row after a parent's hard-deleted becomes
+  silently possible) and Prisma-level type safety on every read. A dedicated table per model keeps
+  a real `@relation` + cascading delete semantics, consistent with how every other one-to-many
+  relationship in this schema already works.
+- **Locale as a plain, app-validated `String`, not a Prisma enum.** An enum needs a migration to
+  add a value, which reintroduces the exact same "N-language needs a migration" problem the
+  translation-table design is meant to avoid at the content layer. This schema already has a
+  precedent for this exact tradeoff: `StudioSettings.themePreset` is a plain `String` validated in
+  application code against `THEME_PRESET_KEYS` (`lib/themePresets.ts`), not a DB enum -- proposing
+  the identical pattern here (`SUPPORTED_LOCALES` as the app-level allow-list, BCP-47-style codes
+  like `"es"`).
+
+**Proposed tables** (one per translatable parent, `@@unique([<parentId>, locale])` on each,
+`studioId` duplicated onto each row -- same defense-in-depth/query-scoping convention this schema
+already uses elsewhere, e.g. `FlashPiece.studioId` existing independently of the artist's current
+studio):
+
+- `StudioSettingsTranslation` -- mirrors every translatable `StudioSettings` field 1:1
+  (`privacyPolicy`, `termsAndConditions`, `refundPolicy`, `depositPolicy`, `reschedulePolicy`,
+  `communicationPolicy`, `estimateTerms`, `waiverHealthQuestions` Json?, `waiverClauses` Json?,
+  `waiverAcknowledgment`, `waiverPhotoRelease`).
+- `IntakeFormFieldTranslation` -- `label`, `helpText`, `options` Json?.
+- `CustomPolicyTranslation` -- `title`, `bodyHtml`.
+- `ServiceTranslation` -- `name`, `depositBreakdownNote`.
+- `FlashPieceTranslation` -- `title`, `description`.
+
+(An `ArtistTranslation` for `bio` follows the identical shape if/when the artist public page is
+brought into scope -- not proposed as part of this task's six named flows.)
+
+**Settings editing UI**: every one of these fields is already edited today through a consistent
+pattern -- a `{key, label}`-array-driven `RichTextEditor` modal for `StudioSettings` fields, and an
+inline edit row/modal for each `IntakeFormField`/`CustomPolicy`/`Service`/`FlashPiece`. Proposal:
+extend each existing editor with a locale tab strip ("English | Español", extensible) inside the
+*same* modal, backed by the new translation table, rather than a separate standalone "Translations"
+settings page. Keeping the Spanish version next to its English source at the point of editing
+matches how this content is actually authored (a studio owner translating their own policy reads
+both at once) and avoids a second place staff have to remember to check.
+
+**Fallback-to-default when a translation is missing**: read-time only, mirrors a pattern already
+used throughout this codebase (`themePreset ?? DEFAULT_THEME_PRESET`, `referralProgramEnabled ??
+true`) -- `translationRow?.field || baseModel.field`, per field, not per row (a studio might
+translate `privacyPolicy` but not `refundPolicy` yet; each field falls back independently). One
+shared `withLocale(base, translations, locale, fields)` helper, used identically across every
+public verify route, so this logic exists in exactly one place. Directly addresses Finding B above:
+since `IntakeFormField.label` itself can already BE the platform's own English default (never
+edited by the studio), the fallback for a SYSTEM field with no Spanish translation should fall
+back to a *platform-maintained* Spanish default for that field key (sourced from the same
+`SYSTEM_FIELD_DEFAULTS`-style list, extended with its own translations) -- not the studio's raw,
+possibly-still-English `label` column. This is the one place platform-string translations and
+studio-content translations need to actually talk to each other, worth flagging clearly for
+whoever builds this part.
+
+**Signed documents: locale + exact text captured at signing time.** This schema already has the
+exact right precedent, three times over: `Inquiry.estimateTermsSnapshot`,
+`LiabilityWaiver.{healthQuestionsSnapshot,clausesSnapshot,acknowledgmentSnapshot,
+photoReleaseSnapshot}`, and (implicitly, via the SOP's own fixed wording) `DepositForm`'s signed
+booleans -- every one of these exists specifically so a later edit to the live template "never
+retroactively changes what a client already saw/agreed to" (verbatim from the `LiabilityWaiver`
+schema comment). Locale needs the identical treatment, extended two ways:
+1. Add `signedLocale String?` to `DepositForm`, `LiabilityWaiver`, and `Inquiry` (estimate
+   acceptance) -- which language was showing when the client actually signed/accepted.
+2. **`DepositForm` needs a new `termsSnapshot Json?` field it doesn't have today.** Its 8 terms are
+   Finding A's hardcoded platform `TERMS` array -- today there's only ever one (English) version,
+   so no snapshot has ever been needed; the instant a Spanish version of those exact 8 clauses
+   exists, the exact translated wording shown at signing must be snapshotted the same way
+   `LiabilityWaiver`'s clauses already are, or a later fix to the Spanish translation's wording
+   would silently and retroactively change what an already-signed deposit form appears to say.
+3. **PDF exports need the same `locale` param threaded through** `generateDepositFormPdf` /
+   `generateWaiverPdf` so both the snapshot text (already locale-correct, verbatim) and the PDF's
+   own chrome labels (section headers, "Signed on," etc. -- section 2's PDF string dictionary)
+   render in the signed language, not always English regardless of what the client saw.
+
+## 4. Language picker placement + client persistence
+
+**Placement**: a small, consistent language toggle in the same header position across all six
+flow pages (near the studio name/logo each page already renders) -- not a full settings panel,
+just a compact EN/Español switch, extensible to a dropdown once a third language exists.
+
+**Persistence**: add `Client.preferredLocale String?` (null = "no preference set yet, use the
+studio's own default") and `StudioSettings.defaultLocale String` (what a brand-new client with no
+preference sees first -- lets an all-Spanish-speaking-clientele studio default to Spanish rather
+than making every client opt in individually). Same app-validated-`String`-against-
+`SUPPORTED_LOCALES` convention as section 3's locale fields, for the same N-language reason.
+
+**Mechanism**: each of the six flows already resolves its own client server-side from its own
+token (deposit token → inquiry → client; waiver token → same; etc.) -- reusing that same
+established token-verification pattern (per CLAUDE.md's own "public unauthenticated flows" rule)
+rather than inventing a new one, the language picker fires a small `PATCH` to that flow's own
+existing token-scoped namespace (e.g. `PATCH /deposits/:token/locale`) the moment a client changes
+it, persisting straight onto their `Client` row. **Intake is the one exception**: there's no
+`Client` row yet on first contact, so the picker there only affects the current page's render;
+once the inquiry is submitted and a `Client` is created, whatever locale was active at submission
+seeds `preferredLocale` for that brand-new client, and every later link (deposit, waiver,
+self-schedule, ...) for that same client defaults to it from then on, picker still present to
+override per-visit.
+
+**SMS is explicitly out of v1 scope, and here's exactly where that boundary sits cleanly**:
+`Client.preferredLocale` existing at all is a genuinely useful future hook for
+`lib/clientSms.ts`/`lib/jobs/reminderTicker.ts` to eventually read from, but v1 will not wire
+either of them to it -- every SMS body (`StudioSettings.reminderTemplates` and any ad-hoc
+conversation text) stays English-only regardless of a client's set preference, until a dedicated
+future part. Because the field itself is additive and nothing in v1 makes SMS read it, this
+boundary requires no special-casing now and doesn't block a future SMS-i18n part from picking it
+up later.
+
+## 5. Build parts estimate
+
+Per this task's own instruction, the schema is its own solo part, reviewed before any code lands:
+
+- **Part 2 (solo, schema only)**: every table/field in section 3 (five translation tables,
+  `Client.preferredLocale`, `StudioSettings.defaultLocale`, `signedLocale` + `DepositForm.
+  termsSnapshot`) -- migration only, no application code reading or writing any of it yet.
+  Reviewed before Part 3 starts, per this task's own explicit instruction.
+- **Part 3**: platform-strings infrastructure (section 2's `LocaleContext`/`useTranslations`/
+  `en.ts`/`es.ts`) plus replacing every hardcoded string across the ten page files with `t()`
+  calls -- the single largest part by line count, since it touches all ten files individually.
+  Includes the language-picker component itself (not yet wired to persistence).
+- **Part 4**: studio-content translation API (read-side `withLocale` fallback helper wired into
+  every public verify route) + the Settings editing UI (locale tabs on each existing editor for
+  `StudioSettings`/`IntakeFormField`/`CustomPolicy`/`Service`/`FlashPiece`) -- a substantial
+  staff-facing UI build in its own right, likely the second-largest part.
+- **Part 5**: language-picker persistence (the six token-scoped `PATCH .../locale` endpoints +
+  `Client.preferredLocale` read-on-verify), signed-document locale capture (`signedLocale` +
+  `DepositForm.termsSnapshot` actually written at sign-time), and PDF generator localization
+  (`lib/pdf.ts`'s own small string dictionary, `locale` param threaded through both PDF functions).
+- **Part 6 (verification)**: full walkthrough of all six flows in Spanish (real studio content +
+  a Spanish translation entered through the new Settings UI), confirming per-field fallback to
+  English when a translation is missing, a real signed deposit/waiver in Spanish producing a
+  correctly-labeled Spanish PDF, and a mobile-viewport pass on the language picker itself.
+
+## CLAUDE.md hygiene
+
+No schema changes, no application code changes -- investigation and documentation only, exactly
+as instructed. Worked from an isolated git worktree (`ink-manager-w-i18n-investigation`, per the
+now-mandatory `scripts/new-session.ps1` this same session added earlier today) specifically
+because the primary working tree was mid-use by a concurrent session at the time this task
+started. REPORT.md line count before this entry: 11676 (verified via
+`git show HEAD:REPORT.md | wc -l`) -- pure addition.
