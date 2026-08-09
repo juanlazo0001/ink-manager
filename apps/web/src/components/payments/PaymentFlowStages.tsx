@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { crossfadeVariants, uiSpringTransition } from '../../lib/motion'
 import PaymentAmountStage from './PaymentAmountStage'
@@ -75,6 +75,17 @@ export default function PaymentFlowStages({
   const [stage, setStage] = useState<Stage>('amount')
   const [resolvedPayment, setResolvedPayment] = useState<PaymentMethodSecret | null>(payment)
   const [paidAmountCents, setPaidAmountCents] = useState(headlineAmountCents)
+
+  // No-tip flows (deposit/flash) fetch their PaymentIntent secret
+  // asynchronously in the parent, in the background, starting before the
+  // user ever reaches the 'method' stage -- `payment` is null at mount and
+  // updates later, so this has to be a synced effect, not just the
+  // `useState(payment)` initializer above (which only ever captures the
+  // value at construction time and would otherwise leave this stuck on
+  // "Loading payment form..." forever once the fetch actually resolves).
+  useEffect(() => {
+    if (payment) setResolvedPayment(payment)
+  }, [payment])
 
   function handleAmountContinue() {
     setStage(tip ? 'tip' : 'method')

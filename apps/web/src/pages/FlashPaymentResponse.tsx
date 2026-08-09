@@ -152,7 +152,34 @@ export default function FlashPaymentResponse() {
           </div>
         )}
 
-        {state === 'ready' && verifyData && !verifyData.selfScheduleToken && !confirmingPayment && (
+        {state === 'ready' && verifyData && !verifyData.selfScheduleToken && !confirmingPayment && verifyData.stripeConnected && verifyData.embeddedPaymentsEnabled && (
+          // Fully restaged -- no duplicate heading/piece-card/price above
+          // this the way the non-embedded fallback below still has; the
+          // piece itself becomes the breakdown's one line item instead of
+          // its own separate card, so the dominant amount only ever
+          // appears once.
+          <PaymentFlowStages
+            identity={{
+              artistName: verifyData.artistName,
+              artistAvatarUrl: verifyData.artistAvatarUrl,
+              studioName: verifyData.studioName,
+            }}
+            headlineAmountCents={verifyData.priceCents ?? 0}
+            breakdown={verifyData.pieceTitle ? [{ label: verifyData.pieceTitle, valueCents: verifyData.priceCents ?? 0 }] : []}
+            payment={embeddedSecret}
+            paymentLoadError={embeddedLoadError}
+            returnUrl={`${window.location.origin}/flash-payment/${token}?paid=1`}
+            successHeading="Payment received"
+            successBody="Your flash booking is locked in -- taking you to pick a time now."
+            onPaid={handleEmbeddedPaid}
+          />
+        )}
+
+        {state === 'ready' &&
+          verifyData &&
+          !verifyData.selfScheduleToken &&
+          !confirmingPayment &&
+          !(verifyData.stripeConnected && verifyData.embeddedPaymentsEnabled) && (
           <div>
             {verifyData.studioLogoUrl && (
               <img src={verifyData.studioLogoUrl} alt={verifyData.studioName} className="mb-4 h-10 w-auto object-contain" />
@@ -186,24 +213,6 @@ export default function FlashPaymentResponse() {
                 Online payment isn't available for this studio right now -- please contact them directly to complete
                 payment.
               </p>
-            ) : verifyData.embeddedPaymentsEnabled ? (
-              <div className="mt-5">
-                <PaymentFlowStages
-                  identity={{
-                    artistName: verifyData.artistName,
-                    artistAvatarUrl: verifyData.artistAvatarUrl,
-                    studioName: verifyData.studioName,
-                  }}
-                  headlineAmountCents={verifyData.priceCents ?? 0}
-                  breakdown={[]}
-                  payment={embeddedSecret}
-                  paymentLoadError={embeddedLoadError}
-                  returnUrl={`${window.location.origin}/flash-payment/${token}?paid=1`}
-                  successHeading="Payment received"
-                  successBody="Your flash booking is locked in -- taking you to pick a time now."
-                  onPaid={handleEmbeddedPaid}
-                />
-              </div>
             ) : (
               <>
                 {payError && <p className="mt-4 text-sm text-danger">{payError}</p>}
