@@ -12154,3 +12154,45 @@ internal state nothing reads. `tsc -b --noEmit` clean, `vite build` clean, full 
 No schema/API changes this slice -- frontend only. Continues on `explore/multi-language-public-forms`
 in the `ink-manager-w-i18n-schema` worktree. REPORT.md line count before this entry: 12098
 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Multi-language public forms -- Part 3, third slice: server-side PDF string dictionary
+
+The one piece of Part 3 that can't share the frontend's `t()` at all: `lib/pdf.ts` runs server-side
+via `pdfkit`, no React tree, no `LocaleContext` to read from. New `lib/pdfStrings.ts` -- the same
+`t(key, vars)`/`{{var}}` shape as the frontend, same `ES: typeof EN` compile-time key-parity
+enforcement, deliberately not shared code with `apps/web` (different runtime, would need a whole
+build-boundary crossing for one small dictionary).
+
+`PdfBrand` (the interface both `DepositFormPdfInput` and `WaiverPdfInput` already extend) gained
+one new optional field, `locale?: string | null` -- optional so every existing call site
+(`deposits.ts`, `waivers.ts`) keeps compiling unchanged; unset falls back to English via `pdfT`'s
+own default. Every hardcoded label in both PDF generators (`"Client: "`, `"Deposit amount: "`,
+section headings, the `"Generated {{date}}"` header line, signature block labels, the ID-
+verification section) now routes through `pdfT(input.locale, key, vars)`. Dates also route through
+a new `pdfDateLocale()` -- `es-US`, not `es-ES`, for Spanish: this app's whole audience is
+US-based (the waiver page's own North Carolina age-of-majority text, `PhoneInput`'s 10-digit US
+validation), so date FORMAT conventions (`MM/DD/YYYY`-style ordering) stay consistent with the
+English version; only the surrounding label text and month/weekday names actually change.
+
+**Deliberately NOT translated here**: the deposit terms' own text (`term.label` in the loop) and
+waiver clauses/health questions/acknowledgment -- those come in as already-locale-correct strings
+from the caller (a `DepositForm.termsSnapshot` entry or a `LiabilityWaiver` snapshot field, both
+captured verbatim at signing time). This file only owns the PDF's own chrome, never the signed
+content itself -- wiring the callers to actually pass a real `locale` (today every call site leaves
+it `undefined`, silently defaulting to English) is Part 5's job, alongside actually writing
+`signedLocale`/`termsSnapshot` at sign time.
+
+## Verification
+
+New `lib/pdfStrings.test.ts`: interpolation, fallback-to-English for `null`/`undefined`/an
+unrecognized locale string, and a check that a real key with its vars supplied never leaves an
+unfilled `{{placeholder}}` in the output. **130/130 across the full suite** (126 prior + 4 new),
+`tsc --noEmit` clean. The existing `GET /:id/pdf` test still passes unchanged at 200 -- confirms
+every current call site (no `locale` passed yet) still renders a correct, English PDF exactly as
+before this change, not just that the new code compiles.
+
+## CLAUDE.md hygiene
+
+No schema changes this slice. Continues on `explore/multi-language-public-forms` in the
+`ink-manager-w-i18n-schema` worktree. REPORT.md line count before this entry: 12156 (verified via
+`git show HEAD:REPORT.md | wc -l`) -- pure addition.
