@@ -184,6 +184,26 @@ export function formatRelativeDateTime(iso: string, timeZone: string): string {
   return date.toLocaleDateString('en-US', { timeZone, month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+// Deposit confirmation enrichment: the appointment card states the studio's
+// timezone explicitly (per its own design brief) rather than letting a
+// client assume it's shown in their own -- e.g. "Friday, August 15, 2026 at
+// 2:00 PM PDT", not just a bare time. Intl's own `timeZoneName: 'short'`
+// gives the correct abbreviation for the zone at that specific date (PST
+// vs PDT, etc.), not a hardcoded guess.
+export function formatAppointmentDateTime(iso: string, timeZone: string): string {
+  const date = new Date(iso)
+  return date.toLocaleString('en-US', {
+    timeZone,
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  })
+}
+
 export function formatPhoneInput(value: string): string {
   const allDigits = value.replace(/\D/g, '')
   // A leading "1" on an 11-digit run is a US country code, not part of the

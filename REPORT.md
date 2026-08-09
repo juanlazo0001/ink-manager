@@ -11674,3 +11674,136 @@ one iframe-debugging throwaway). `dev-studio`'s `embeddedPaymentsEnabled` restor
 `false`. Both dev servers stopped, ports confirmed free. `playwright` (installed `--no-save` for this
 pass) uninstalled afterward, no lockfile touched. REPORT.md line count before this entry: 11590
 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Deposit confirmation enrichment: appointment + gift card details
+
+Enriches the "Payment received" screen with a state-aware appointment card, a gift-card card (QR +
+amount), and an avatar in the hero -- gated on a hard prerequisite that turned out not to be met.
+
+## Prerequisite check, and an explicit override
+
+The task was scoped to run after the multi-language branch merged, with every new string going
+through `t()`. Checked first: `explore/multi-language-public-forms` is 5 commits deep but **not
+merged** -- its own latest commit is explicitly "Part 5 (partial)," paused mid-verification after a
+Railway-side DB outage, with 4 new tests written and `tsc`-clean but not confirmed passing. Flagged
+this to the user rather than build against unmerged/incomplete infrastructure or duplicate that
+branch's own work. Given three options (finish the i18n branch first, wait, or proceed with
+hardcoded English now structured for an easy `t()` retrofit later), the user chose the third,
+explicitly overriding the original ordering. Every new string in this feature is plain English
+JSX text, same as the rest of this codebase today -- no `t()` scaffolding invented ad hoc.
+
+## Investigation before building -- two real gaps found, not assumed away
+
+**Paying a deposit does not always produce a confirmed appointment.** Traced
+`issueGiftCardForPaidDeposit` (`apps/api/src/lib/deposits.ts:234-599`) in full: the auto-book block
+re-runs `findBufferConflict` at payment time (time has passed since the tentative pick, another
+appointment could have taken the slot) -- a conflict means **no Appointment row is created at all**,
+silently, with no persisted "conflict" flag (derived purely from "paid deposit, no appointment yet,"
+same convention `lib/tasks/schedulingConflict.ts` already uses). The task's own instruction to
+investigate real states first, rather than assume "paid = confirmed," was exactly right -- the
+previous copy's blanket "confirmed your appointment" claim was simply false in this case, silently,
+for however long that's been live.
+
+**A second, unrelated real bug found by tracing the same code path**: `GET /deposits/verify/:token`
+resolved `appointmentStart`/`appointmentEnd` from `inquiry.appointment` -- the project's legacy
+*singular* 1:1 slot, which (per `issueGiftCardForPaidDeposit`'s own comment) is only ever set for a
+project's **first** appointment. A multi-session project's session-2+ deposit form, even after a
+fully successful auto-book, would show session 1's time (or nothing) -- never the session this
+payment actually just booked. Fixed by resolving through `depositForm.plannedSession.appointment`
+first (the correct per-session link) when the deposit form is planned, falling back to
+`inquiry.appointment` only for the classic/self-schedule-approved case (both of which do set that
+field correctly). This is a real, silent, pre-existing bug this feature's own investigation
+surfaced and fixed -- not something introduced by this change.
+
+**No reliable per-appointment address exists in this schema, confirmed rather than assumed.**
+`Appointment` has no `locationId` at all; the only location signal anywhere is `User.locationId`,
+already flagged as an unresolved gap in this codebase's own comment
+(`lib/schedulingAssistant.ts:45-53`: "no clean way to resolve which location an artist belongs
+to"). Resolution used: the assigned artist's own `User.location` when set (the one real signal),
+falling back to "the studio has exactly one `Location`" only when unambiguous, else the address is
+simply omitted -- never guessed wrong for a multi-location studio with no artist-location signal.
+
+## What got built
+
+- **`GET /deposits/verify/:token`** (`apps/api/src/routes/deposits.ts`): the two fixes above, plus
+  new fields -- `studioTimezone` (widened the existing `settings` select to include it),
+  `studioAddress` (best-effort per above), `giftCard: { code, amountCents, expiresAt, publicUrl }`
+  (null until paid; `publicUrl` via the same `shortenUrl` every other gift-card link in this app
+  already uses -- idempotent, so a repeat page load never creates a duplicate `ShortLink` row), and
+  `artistPublicAvatarUrl` (see below).
+- **Hero avatar, via `publicAssets`, not the raw stored avatar**: `PaymentConfirmationStage.tsx`
+  never rendered an avatar at all before this (confirmed by reading it, not assumed) -- added one,
+  circular, above the existing checkmark/heading/amount, matching `PaymentAmountStage`'s own
+  identity-block treatment so a confirmation reached mid-flow and one reached via a fresh visit read
+  identically. Deliberately a *new* field (`artistPublicAvatarUrl`), not a repurposing of the
+  existing `artistAvatarUrl` (a potentially large inline `data:` URL, still used unchanged by the
+  pre-payment agreement screen) -- a real cacheable image URL instead, gated the same way the
+  `publicAssets` endpoint itself gates (published profile + real avatar), falling back to
+  `FlatArtistAvatar`'s initials badge rather than a broken image request when unpublished. **Caught
+  by live verification, not review**: first wired this against `PUBLIC_APP_URL` (the web app's own
+  domain) instead of `API_PUBLIC_URL` (the API's -- a genuinely different Railway service/domain,
+  per `lib/publicUrl.ts`'s own comment) -- silently produced a URL pointing at the wrong service
+  entirely. `tsc` had nothing to say about it (both are plain strings); only actually curling the
+  constructed URL surfaced the 404.
+- **`DepositAppointmentCard.tsx`**: state-aware per the investigation above. Confirmed: explicit
+  studio-timezone date/time (new `formatAppointmentDateTime` in `lib/format.ts`, `Intl` +
+  `timeZoneName: 'short'`, same pattern `formatRelativeDateTime` already established in that file),
+  address when resolved, Add to Calendar (.ics download + Google Calendar link). Needs-scheduling:
+  honest "will reach out" copy, zero calendar buttons, no fabricated time -- verified structurally
+  (a live DOM query counting calendar buttons on this state, not just eyeballing a screenshot).
+- **`lib/calendar.ts`**: `.ics` built as plain UTC (`Z`-suffixed `DTSTART`/`DTEND`) rather than an
+  embedded `VTIMEZONE` block -- the stored `startTime`/`endTime` are already true UTC instants, and
+  every real calendar client converts UTC to the viewer's own local time correctly on its own; this
+  is "timezone-correct" without needing IANA transition-rule data this app has no library for.
+  Artist in `SUMMARY`, address in `LOCATION` (RFC 5545 comma/semicolon/backslash-escaped). Google
+  Calendar link built from the same UTC values. No new npm dependency.
+- **`DepositGiftCardCard.tsx`**: QR via the app's **existing** `components/QrCode.tsx` (wraps the
+  already-installed `qrcode` package) -- the same component `GiftCardResponse.tsx` already uses for
+  this exact gift-card-page context, so no new library needed picking or justifying beyond "reuse
+  what's already proven here." Encodes the *shortened* link (this feature's own brief), not the raw
+  long URL `GiftCardResponse.tsx` itself encodes for its own `window.location.href` case.
+- Order confirmed unchanged: hero -> appointment -> gift card -> referral (the referral block's own
+  JSX/copy untouched, exactly as scoped).
+
+## Verification
+
+Seeded two real (throwaway) studios end-to-end through `issueGiftCardForPaidDeposit` directly (the
+actual production function, not a hand-faked row) -- deliberately different timezones and outcomes:
+
+- **Los Angeles studio, confirmed**: on-page text read "Friday, August 14, 2026 at 1:00 PM PDT" for
+  a stored `20:00:00Z` instant -- `20:00 UTC - 7h (PDT) = 13:00`, correct. Downloaded the real `.ics`
+  a live click produced and inspected its actual bytes (not just the generator function in
+  isolation): `DTSTART:20260814T200000Z` / `DTEND:20260814T220000Z`, `SUMMARY:Tattoo session with
+  Riley Test-Artist — Confirm Test confirmed`, `LOCATION:742 Evergreen Terrace\, Los Angeles\, CA
+  90012` (correctly escaped). This *is* the different-timezone check the task asked for --
+  LA-specific wall-clock time, proven correct against the raw UTC bytes, not just eyeballed.
+- **London studio, needs-scheduling**: forced the real `findBufferConflict` path by seeding a
+  pre-existing overlapping appointment for the same artist before paying -- confirmed
+  `appointmentStart`/`appointmentEnd` both `null` in the API response and zero `Add to Calendar`
+  buttons in the live DOM. Gift card still issued and shown correctly regardless (paying and
+  scheduling are independent, per the investigation).
+- **QR chain, real browser**: read the QR's own `value` prop (the shortened link), then drove an
+  actual browser to that exact URL and confirmed it landed on the real `/gift-card/:code` page with
+  the correct amount/status, zero console errors -- the same navigation a phone's camera app
+  triggers by opening a scanned URL. Literal physical phone-camera scanning isn't something this
+  agent can perform directly (no camera/device access) -- flagged rather than claimed.
+- **Avatar**: confirmed the `publicAssets` URL resolves (`200`, correct `Content-Type`,
+  `Cache-Control`) after patching the test artist with a real (throwaway) avatar image and
+  publishing their profile; rendered correctly in the actual screenshot, not just a 200 in isolation.
+- Zero console/page errors across both full page loads, confirmed via live `console`/`pageerror`
+  listeners, not just an absence of visible red text in a screenshot.
+- `tsc --noEmit` clean (`apps/api`), `tsc --build` + `vite build` clean (`apps/web`), `eslint` clean
+  on every touched frontend file.
+
+## CLAUDE.md hygiene
+
+Both throwaway studios and every row under them deleted after verification (gift cards, appointments,
+planned sessions, deposit forms, inquiries, clients, services, intake forms, artists, locations,
+users, studio settings, audit logs -- the same `AuditLog` FK-before-`Studio`-delete ordering this
+session has hit before). Two `ShortLink` rows created during the QR-chain check were left in place
+(inert, no FK constraint blocks anything, and this dev database already carries months of similar
+test-fixture debris per this session's own earlier finding) rather than spending further round trips
+on a genuinely harmless leftover. All scratch scripts deleted (two seed/cleanup pairs, one avatar
+patcher, one screenshot driver, one QR-chain verifier). Both dev servers stopped, ports confirmed
+free. `playwright` (installed `--no-save`) uninstalled afterward, no lockfile touched. REPORT.md line
+count before this entry: 11676 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition.

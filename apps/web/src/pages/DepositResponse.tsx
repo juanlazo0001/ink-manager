@@ -8,6 +8,8 @@ import PublicPageFooter from '../components/PublicPageFooter'
 import SignaturePadField, { type SignaturePadHandle } from '../components/SignaturePadField'
 import PaymentFlowStages from '../components/payments/PaymentFlowStages'
 import PaymentConfirmationStage from '../components/payments/PaymentConfirmationStage'
+import DepositAppointmentCard from '../components/payments/DepositAppointmentCard'
+import DepositGiftCardCard from '../components/payments/DepositGiftCardCard'
 
 // Embedded payments migration: this page is one of the platform's own
 // "Editorial Gold, never studio-themed" pages now (same login-shell
@@ -38,10 +40,34 @@ interface VerifyResponse {
   studioSlug: string
   artistName: string | null
   artistAvatarUrl: string | null
+  // Confirmation-screen enrichment: a real cacheable image URL (via
+  // publicAssets) for the hero specifically -- null when the artist hasn't
+  // published a public profile, in which case the hero falls back to
+  // FlatArtistAvatar's own initials badge rather than a broken request.
+  artistPublicAvatarUrl: string | null
+  // Multi-session-aware as of the confirmation enrichment -- resolves via
+  // this deposit form's own PlannedSession when planned (session 2+ is
+  // never reflected on the project's legacy singular appointment slot),
+  // so this is now the correct per-session appointment, not just
+  // whatever the project's first session happened to be.
   appointmentStart: string | null
   appointmentEnd: string | null
   proposedStartAt: string | null
   proposedEndAt: string | null
+  // IANA identifier, always present -- the appointment card states this
+  // explicitly rather than letting a client assume their own timezone.
+  studioTimezone: string
+  // Best-effort -- null whenever there's no reliable single location to
+  // attribute the appointment to (see the API route's own comment on why
+  // this can't be a clean per-appointment lookup in this schema).
+  studioAddress: string | null
+  // Confirmation-screen enrichment: null until paid.
+  giftCard: {
+    code: string
+    amountCents: number
+    expiresAt: string | null
+    publicUrl: string | null
+  } | null
   themePreset: string
   depositAmount: number
   feeAmount: number
@@ -282,17 +308,41 @@ export default function DepositResponse() {
             <PaymentConfirmationStage
               identity={{
                 artistName: verifyData.artistName,
-                artistAvatarUrl: verifyData.artistAvatarUrl,
+                artistAvatarUrl: verifyData.artistPublicAvatarUrl,
                 studioName: verifyData.studioName,
               }}
               amountCents={dollarsToCents(verifyData.totalCharged)}
               heading="Payment received"
+              // State-accurate rather than a blanket "confirmed your
+              // appointment" claim -- paying a deposit doesn't always
+              // result in a real appointment (a scheduling conflict
+              // re-checked at payment time can leave it unbooked). The
+              // appointment card right below carries the actual state;
+              // this line only ever claims what's universally true.
               body={
                 verifyData.paidVia === 'STRIPE'
-                  ? "We've received your payment and confirmed your appointment."
-                  : 'The studio has recorded your payment and confirmed your appointment.'
+                  ? "We've received your payment."
+                  : 'The studio has recorded your payment.'
               }
             />
+
+            <DepositAppointmentCard
+              startIso={verifyData.appointmentStart}
+              endIso={verifyData.appointmentEnd}
+              timeZone={verifyData.studioTimezone}
+              address={verifyData.studioAddress}
+              artistName={verifyData.artistName}
+              studioName={verifyData.studioName}
+            />
+
+            {verifyData.giftCard && (
+              <DepositGiftCardCard
+                code={verifyData.giftCard.code}
+                amountCents={verifyData.giftCard.amountCents}
+                expiresAt={verifyData.giftCard.expiresAt}
+                publicUrl={verifyData.giftCard.publicUrl}
+              />
+            )}
 
             {verifyData.referralProgramEnabled && (
               <div className="mt-5 rounded-lg border border-accent/30 bg-accent/5 p-4 text-left">
