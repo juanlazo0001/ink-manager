@@ -11956,3 +11956,95 @@ now-mandatory `scripts/new-session.ps1` this same session added earlier today) s
 because the primary working tree was mid-use by a concurrent session at the time this task
 started. REPORT.md line count before this entry: 11676 (verified via
 `git show HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Multi-language public forms -- Part 2: schema (solo session, branch `explore/multi-language-public-forms`)
+
+Schema only, per the proposal's own instruction that it be reviewed before any code lands. Two
+decisions from the proposal review, both confirmed to need **no schema change** -- they're
+read-time application logic, built into Parts 3-4 instead:
+
+- **Finding 2's SEED-EQUALITY rule** (a field byte-identical to the platform's seed gets the
+  platform's own Spanish automatically, labeled "platform translation," until the studio edits the
+  English away from the seed): computed live at read/Settings-UI time against the seed dictionary,
+  not stored -- no new flag column, exactly as decided.
+- **Finding 1's platform-string classification** (the deposit's 8 hardcoded terms and the
+  estimate's `COLLABORATIVE_DESIGN_POLICY` stay platform strings for v1, translated via the `t(key)`
+  system in Part 3, not the studio-content schema below): confirms the original proposal's own
+  classification was already correct -- neither one was ever going to get a translation table.
+
+**Recorded here, as asked**: the long-standing "make deposit terms studio-editable" deferral
+(REPORT.md, much earlier in this file: *"a dedicated future session, scoped around one specific
+design decision -- most likely turning `TERMS` into an ordered, studio-editable list... plus
+explicitly deciding what happens to `reschedulePolicy`... ideally with a legal/product sign-off"*)
+**remains deliberately deferred.** Translating the current hardcoded English wording into Spanish
+now does not change that decision either way. When that future session does happen and `TERMS`
+becomes a real per-studio, per-`CustomPolicy`-style editable list, those strings migrate out of the
+platform `t(key)` dictionary and into this session's own `StudioSettingsTranslation`-family schema
+at that point -- not before.
+
+## What got built
+
+Ten new fields, five new tables, one migration
+(`20260809030000_multilanguage_public_forms`), generated via `prisma migrate diff` and applied via
+`prisma migrate deploy` to the dev database, never `migrate dev`, per CLAUDE.md:
+
+- **`Client.preferredLocale String?`** -- null means "no preference yet," falls back to the
+  client's own studio's new `defaultLocale` below. Deliberately NOT read by SMS in v1 (`lib/
+  clientSms.ts`, `lib/jobs/reminderTicker.ts` untouched) -- the field is a hook for a future SMS-i18n
+  part, not wired to one now.
+- **`StudioSettings.defaultLocale String @default("en")`** -- what a brand-new client with no
+  preference of their own sees first. Default matches every existing studio's current, unchanged
+  behavior.
+- **`Inquiry.signedLocale`, `LiabilityWaiver.signedLocale`, `DepositForm.signedLocale`** (all
+  `String?`) -- which language was showing at the moment a client actually signed/accepted, for
+  PDF/audit display. The underlying text was already immutably snapshotted (`estimateTermsSnapshot`,
+  `LiabilityWaiver`'s four snapshot fields) before this -- these three fields only add which
+  *language* that already-captured text was in.
+- **`DepositForm.termsSnapshot Json?`** -- new, because the deposit's 8 terms never needed a
+  snapshot before now (they're the hardcoded, single-locale `TERMS` array -- see Finding 1 above).
+  The moment a Spanish version of those same 8 clauses exists, the exact wording shown at signing
+  has to be captured the same way `LiabilityWaiver.clausesSnapshot` already is, or a later
+  correction to the Spanish translation would silently and retroactively change what an
+  already-signed deposit form appears to say. Closes a real, previously-flagged gap as a byproduct:
+  this file's own much-earlier investigation into the deposit-form PDF noted `DepositForm` "has no
+  equivalent snapshot for the 8 terms," unlike `LiabilityWaiver`'s genuine one -- this field closes
+  that gap for every future signer, English included, not just Spanish ones.
+- **Five sibling translation tables** -- `StudioSettingsTranslation`, `IntakeFormFieldTranslation`,
+  `CustomPolicyTranslation`, `ServiceTranslation`, `FlashPieceTranslation` -- one per translatable
+  parent model, each `@@unique([<parentId>, locale])`, `studioId` duplicated onto every row (same
+  query-scoping/defense-in-depth convention this schema already uses elsewhere, e.g.
+  `FlashPiece.studioId` existing independently of the artist's current studio), `locale` a plain
+  `String` validated in application code (not yet written -- that's Part 3/4) against a
+  `SUPPORTED_LOCALES` list, matching `StudioSettings.themePreset`'s own existing String-not-enum
+  precedent so a new language is never a migration. Every FK to its own translation table uses
+  `onDelete: Cascade` (deleting the parent row cleanly deletes its translations); every FK to
+  `Studio` itself uses the schema's own default `RESTRICT`.
+
+No route, lib, or frontend code reads or writes any of these yet -- confirmed via a clean
+`tsc --noEmit` and the full existing suite passing unchanged (**126/126**, all pre-existing tests;
+none of the new columns/tables are exercised by anything yet, so none needed a new test at this
+stage). `prisma generate` re-run after the schema edit, same "client needs regenerating, not just
+the SQL applied" step this session already learned the hard way during the embedded-payments
+default-on work.
+
+## A gap found and fixed in `scripts/new-session.ps1` while doing this
+
+`prisma migrate diff --from-config-datasource` failed outright in the fresh worktree this session
+used (`Error: P4003 -- No URL defined in the configured datasource`) -- a git worktree only ever
+contains **tracked** files, and `apps/api/.env` (holding `DATABASE_URL`) is gitignored, so a brand
+new worktree has no working database connection for Prisma, `npm run dev`, or the test suite at
+all until something puts one there. Worked around it this session by copying `.env` from the
+primary checkout by hand; fixed the script itself right after (see below) so the next session
+doesn't hit the same wall.
+
+## CLAUDE.md hygiene
+
+Schema-only part, reviewed before Parts 3-6 per this task's own instruction -- no application code
+changed. Worked from its own isolated worktree (`ink-manager-w-i18n-schema`), created via
+`scripts/new-session.ps1` per this session's own SOLO rules, then switched onto the existing
+`explore/multi-language-public-forms` branch (the script itself always cuts a fresh branch off
+`main` -- switching onto an already-in-progress feature branch inside the worktree it produces is
+the correct next step, not a script limitation). `.env` copied from the primary checkout by hand
+to unblock local Prisma commands (see above); not committed (gitignored, machine-local). Migration
+applied to the dev database only -- nothing touched in production. REPORT.md line count before
+this entry: 11958 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition.

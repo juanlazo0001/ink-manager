@@ -301,6 +301,18 @@ model Studio {
   flashPieces             FlashPiece[]
   artistMemberships       StudioMembership[]
   artistMembershipInvites ArtistMembershipInvite[]
+
+  // Multi-language public forms, Part 2: studioId is duplicated onto every
+  // translation row (see e.g. FlashPieceTranslation's own comment for why),
+  // so each of these back-relations exists purely for that direct FK, not
+  // because translations are looked up FROM the studio in practice (every
+  // real read goes through the specific parent row's own translations
+  // relation instead).
+  studioSettingsTranslations  StudioSettingsTranslation[]
+  intakeFormFieldTranslations IntakeFormFieldTranslation[]
+  customPolicyTranslations    CustomPolicyTranslation[]
+  serviceTranslations         ServiceTranslation[]
+  flashPieceTranslations      FlashPieceTranslation[]
 }
 
 // Self-serve provider connections -- a studio owner connects their OWN
@@ -396,7 +408,7 @@ model User {
   // succeeds -- a non-null token IS "pending verification," regardless of
   // emailVerifiedAt's own value, so the two can never disagree.
   emailVerifiedAt                 DateTime?
-  emailVerificationToken          String?    @unique
+  emailVerificationToken          String?   @unique
   emailVerificationTokenExpiresAt DateTime?
 
   // Forgot-password recovery. Deliberately separate from emailChangeToken/
@@ -562,7 +574,7 @@ model Artist {
   // so it's never reused even after an artist unpublishes/republishes with
   // a new one (the old slug just starts 404ing, same "URLs are forever"
   // convention Studio.slug already follows).
-  publicSlug String? @unique
+  publicSlug  String?   @unique
   // Null = unpublished (default -- every existing artist stays exactly as
   // invisible as before this feature shipped). Set to the publish moment,
   // cleared on unpublish -- same nullable-timestamp-as-flag convention as
@@ -647,6 +659,14 @@ model StudioMembership {
 
   createdAt DateTime @default(now())
 
+  // 6a Epic: a membership is the ONGOING relationship (an artist has been
+  // invited/accepted as a guest at this studio, full stop); residencies are
+  // the individual SCHEDULED STINTS within it -- many per membership, e.g.
+  // a touring guest artist who visits the same host every summer gets one
+  // membership and a new Residency each year, not a new membership each
+  // time. See Residency's own comment for the accept/overlap rules.
+  residencies Residency[]
+
   // Artist mobility: a membership is never deleted when an artist leaves
   // (goes solo, or moves their HOME elsewhere) -- endedAt is set instead,
   // same "preserve history, only change access" principle as User's own
@@ -669,14 +689,6 @@ model StudioMembership {
   //     application-level as Phase 1 originally deferred it.
   @@index([artistId])
   @@index([studioId])
-
-  // 6a Epic: a membership is the ONGOING relationship (an artist has been
-  // invited/accepted as a guest at this studio, full stop); residencies are
-  // the individual SCHEDULED STINTS within it -- many per membership, e.g.
-  // a touring guest artist who visits the same host every summer gets one
-  // membership and a new Residency each year, not a new membership each
-  // time. See Residency's own comment for the accept/overlap rules.
-  residencies Residency[]
 }
 
 enum ResidencyStatus {
@@ -790,7 +802,7 @@ model ArtistMembershipInvite {
   residencyStartDate DateTime?
   residencyEndDate   DateTime?
 
-  token          String    @unique
+  token          String   @unique
   tokenExpiresAt DateTime
 
   createdAt DateTime @default(now())
@@ -826,11 +838,11 @@ enum FlashPieceStatus {
 // directly (skipping the estimate step entirely -- price/duration are
 // already fixed by the artist at upload time, not negotiated per client).
 model FlashPiece {
-  id          String @id @default(cuid())
-  imageUrl    String
-  title       String
-  description String?
-  priceCents  Int
+  id                       String           @id @default(cuid())
+  imageUrl                 String
+  title                    String
+  description              String?
+  priceCents               Int
   // Set by the artist at upload -- feeds directly into the self-scheduling
   // engine's duration target (getSuggestedTimes), same role
   // timeEstimateHoursMin/Max's midpoint plays for a normal estimate.
@@ -838,10 +850,10 @@ model FlashPiece {
   // true: once booked, this exact piece is retired forever (status ->
   // BOOKED, never re-offered). false: stays repeatedly bookable by
   // different clients indefinitely -- a booking never changes its status.
-  isOneOfOne Boolean          @default(false)
-  status     FlashPieceStatus @default(AVAILABLE)
-  createdAt  DateTime         @default(now())
-  updatedAt  DateTime         @updatedAt
+  isOneOfOne               Boolean          @default(false)
+  status                   FlashPieceStatus @default(AVAILABLE)
+  createdAt                DateTime         @default(now())
+  updatedAt                DateTime         @updatedAt
 
   studioId String
   studio   Studio @relation(fields: [studioId], references: [id])
@@ -851,8 +863,49 @@ model FlashPiece {
 
   inquiries Inquiry[]
 
+  // Multi-language public forms: studio-authored translations of title/
+  // description, one row per locale this piece has been translated into.
+  // See FlashPieceTranslation's own comment for why this is a sibling
+  // table rather than locale-keyed columns.
+  translations FlashPieceTranslation[]
+
   @@index([studioId, artistId])
   @@index([studioId, status])
+}
+
+// Multi-language public forms, Part 2 (schema only): a studio's own
+// Spanish (or any future language) version of a FlashPiece's title/
+// description. Sibling-table pattern, not locale-keyed columns
+// (flashPieceTitleEs, flashPieceTitleFr, ...) -- FlashPiece is a genuine
+// one-to-many, unbounded-per-studio table, so a locale-keyed column
+// would need a migration touching this table every time a language is
+// added. `locale` is a plain, app-validated String (against
+// SUPPORTED_LOCALES), not a Prisma enum, for the identical reason --
+// same pattern StudioSettings.themePreset already uses against
+// THEME_PRESET_KEYS. `studioId` is duplicated here rather than derived
+// via flashPieceId -> studioId, matching this schema's own existing
+// convention (e.g. FlashPiece.studioId itself exists independently of
+// the artist's current studio) for query-scoping and defense-in-depth,
+// not because it can ever legitimately disagree with the parent's own
+// studioId.
+model FlashPieceTranslation {
+  id     String @id @default(cuid())
+  locale String
+
+  title       String?
+  description String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  flashPieceId String
+  flashPiece   FlashPiece @relation(fields: [flashPieceId], references: [id], onDelete: Cascade)
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  @@unique([flashPieceId, locale])
+  @@index([studioId, locale])
 }
 
 model Client {
@@ -926,6 +979,23 @@ model Client {
   // Soft, reversible hide -- same exclude-from-list-views pattern as
   // mergedIntoId above, but fully intact and unarchivable, unlike a merge.
   archivedAt DateTime?
+
+  // Multi-language public forms: null means "no preference set yet" --
+  // every public flow (deposit/waiver/estimate/self-schedule/flash-
+  // payment) falls back to the client's OWN studio's StudioSettings.
+  // defaultLocale until this is set, via the language picker on any of
+  // those pages persisting here through that flow's own existing token-
+  // scoped endpoint (e.g. PATCH /deposits/:token/locale) -- no new auth
+  // mechanism. Once set, every later link for this same client defaults
+  // to it, picker still present to override per-visit. Plain,
+  // app-validated String (against SUPPORTED_LOCALES), not a Prisma enum,
+  // so adding a language is never a migration -- same reasoning as
+  // StudioSettings.themePreset's own String-not-enum precedent.
+  // Deliberately NOT read by SMS sends (lib/clientSms.ts,
+  // lib/jobs/reminderTicker.ts) in v1 -- SMS bodies stay English-only
+  // regardless of this value until a dedicated future part; this field
+  // existing is just the hook that part would read from later.
+  preferredLocale String?
 
   // Phase 7B: set when this client texts STOP/UNSUBSCRIBE/CANCEL/QUIT to
   // the studio's connected SMS number, cleared on START/UNSTOP. Checked
@@ -1177,8 +1247,37 @@ model Service {
   artistServices ArtistService[]
   inquiries      Inquiry[]
 
+  // Multi-language public forms: see FlashPieceTranslation's own comment
+  // for the sibling-table-vs-locale-columns reasoning (identical here).
+  translations ServiceTranslation[]
+
   @@unique([studioId, slug])
   @@index([studioId])
+}
+
+// Multi-language public forms, Part 2 (schema only): a studio's own
+// translation of a Service's client-facing name and deposit breakdown
+// note. Same sibling-table pattern as FlashPieceTranslation -- see that
+// model's comment for the full reasoning (unbounded one-to-many per
+// studio, plain app-validated locale String, duplicated studioId).
+model ServiceTranslation {
+  id     String @id @default(cuid())
+  locale String
+
+  name                 String?
+  depositBreakdownNote String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  serviceId String
+  service   Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  @@unique([serviceId, locale])
+  @@index([studioId, locale])
 }
 
 // Which artists offer which services -- e.g. only the one real PMU
@@ -1256,8 +1355,59 @@ model IntakeFormField {
   intakeFormId String
   intakeForm   IntakeForm @relation(fields: [intakeFormId], references: [id])
 
+  // Multi-language public forms: see FlashPieceTranslation's own comment
+  // for the sibling-table reasoning. Read-time fallback for a SYSTEM
+  // field with no translation row is NOT simply this row's own (possibly
+  // still-platform-default) `label`/`helpText` -- see
+  // IntakeFormFieldTranslation's own comment for the seed-equality rule
+  // that governs it instead.
+  translations IntakeFormFieldTranslation[]
+
   @@index([studioId, order])
   @@index([intakeFormId, order])
+}
+
+// Multi-language public forms, Part 2 (schema only): a studio's own
+// translation of one intake form field's label/helpText/options. Same
+// sibling-table pattern as FlashPieceTranslation -- see that model's
+// comment for the full schema reasoning.
+//
+// SEED-EQUALITY rule (Part 1 proposal, decision on review): this table
+// alone is not enough to know whether a SYSTEM field's Spanish should
+// come from the platform's own translated defaults or be left as "needs
+// a studio translation." No new boolean/flag column for this -- it's
+// computed at read time by comparing the parent IntakeFormField's live
+// English `label`/`helpText` against the platform's own seed dictionary
+// (lib/intakeFormFields.ts's SYSTEM_FIELD_DEFAULTS) for that
+// systemFieldKey: byte-identical to the seed -> serve the platform's own
+// Spanish default for that field key (shown in the Settings editor
+// labeled "platform translation," overridable by writing a row here);
+// the moment a studio edits the English away from the seed, this table
+// becomes the sole source for that field, falling back to the studio's
+// own (now-diverged) English until a row here is actually supplied. A
+// CUSTOM field (never seeded, always studio-authored) always follows the
+// plain fallback -- this row if present, else the studio's own English,
+// never the platform seed.
+model IntakeFormFieldTranslation {
+  id     String @id @default(cuid())
+  locale String
+
+  label    String?
+  helpText String?
+  // Array<string> -- mirrors IntakeFormField.options' own shape.
+  options  Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  intakeFormFieldId String
+  intakeFormField   IntakeFormField @relation(fields: [intakeFormFieldId], references: [id], onDelete: Cascade)
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  @@unique([intakeFormFieldId, locale])
+  @@index([studioId, locale])
 }
 
 // Additive secondary-contact layer -- Client.phone stays the "primary"
@@ -1519,6 +1669,13 @@ model Inquiry {
   // sent, so a later edit to StudioSettings.estimateTerms never retroactively
   // changes what a client already saw/agreed to.
   estimateTermsSnapshot  String?
+  // Multi-language public forms: which locale was showing when the client
+  // actually responded to this estimate -- estimateTermsSnapshot above
+  // already captures the exact text verbatim regardless of locale; this
+  // just records which language that text was in, for PDF/audit display.
+  // Plain, app-validated String, not an enum -- same reasoning as
+  // Client.preferredLocale.
+  signedLocale           String?
   clientStatedBudget     String?
   closedReason           String?
   // Phase 7A: set only by POST /:id/mark-lost (a deliberate staff action),
@@ -1572,14 +1729,14 @@ model Inquiry {
   // creates the Appointment -- never cleared. The one authoritative
   // "self-scheduling is done" signal (see selfScheduleToken's own comment
   // on why the token's mere presence/nullness stopped being that signal).
-  selfScheduleBookedAt DateTime?
+  selfScheduleBookedAt       DateTime?
   // Token-lifecycle bug fix, resend support: holds the IMMEDIATELY prior
   // selfScheduleToken value whenever a fresh one supersedes a still-live,
   // not-yet-booked one (see POST /:id/revise-estimate's own self-
   // scheduling-aware branch) -- lets GET /self-schedule/verify/:token tell
   // a client on a since-superseded link "a newer link was sent" instead of
   // a bare "invalid," in the edge case they still have that old tab open.
-  previousSelfScheduleToken String? @unique
+  previousSelfScheduleToken  String?   @unique
 
   // Token-lifecycle bug fix: holds the IMMEDIATELY prior estimateToken
   // value whenever POST /inquiries/:id/send-estimate issues a fresh one on
@@ -1939,11 +2096,71 @@ model StudioSettings {
   // the single source of truth for these defaults and key names.
   // Shape: { pricingDetail?: boolean, internalNotes?: boolean }
   artistFieldVisibility         Json?
+  // Multi-language public forms: what a brand-new client with no
+  // Client.preferredLocale of their own sees first on any public flow --
+  // lets an all-Spanish-speaking-clientele studio default to Spanish
+  // rather than making every client opt in individually. Plain,
+  // app-validated String (against SUPPORTED_LOCALES), not an enum, same
+  // reasoning as themePreset above. "en" matches every existing studio's
+  // current, unchanged behavior.
+  defaultLocale                 String   @default("en")
   createdAt                     DateTime @default(now())
   updatedAt                     DateTime @updatedAt
 
   studioId String @unique
   studio   Studio @relation(fields: [studioId], references: [id])
+
+  // Multi-language public forms: studio-authored translations of the
+  // free-text policy/waiver/estimate fields above. One row per locale
+  // this studio has translated any of them into -- see
+  // StudioSettingsTranslation's own comment.
+  translations StudioSettingsTranslation[]
+}
+
+// Multi-language public forms, Part 2 (schema only): a studio's own
+// translation of its free-text StudioSettings fields, one row per
+// locale. Mirrors the base model's own translatable fields 1:1. Same
+// sibling-table pattern as every other translation model in this
+// package -- see FlashPieceTranslation's comment for the full reasoning
+// (StudioSettings itself is 1:1 with Studio, but locale-keyed columns
+// were still rejected here for consistency with every other content
+// type and because it's the same "migration per language" problem the
+// moment a third language is added). Fallback-to-default when a field
+// here is null follows the exact pattern already used elsewhere in this
+// schema (e.g. `themePreset ?? DEFAULT_THEME_PRESET`): each field falls
+// back to its own StudioSettings column independently, not the whole
+// row at once -- a studio might translate privacyPolicy but not
+// refundPolicy yet.
+model StudioSettingsTranslation {
+  id     String @id @default(cuid())
+  locale String
+
+  refundPolicy          String?
+  depositPolicy         String?
+  reschedulePolicy      String?
+  communicationPolicy   String?
+  estimateTerms         String?
+  // Mirrors StudioSettings.waiverHealthQuestions' own shape:
+  // Array<{ question: string, type: "yes_no" | "yes_no_explain", explainPrompt?: string }>
+  waiverHealthQuestions Json?
+  // Mirrors StudioSettings.waiverClauses' own shape: Array<string>.
+  waiverClauses         Json?
+  waiverAcknowledgment  String?
+  waiverPhotoRelease    String?
+  privacyPolicy         String?
+  termsAndConditions    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  studioSettingsId String
+  studioSettings   StudioSettings @relation(fields: [studioSettingsId], references: [id], onDelete: Cascade)
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  @@unique([studioSettingsId, locale])
+  @@index([studioId, locale])
 }
 
 // Package C1: add-your-own policy beyond the 8 fixed StudioSettings HTML
@@ -1964,7 +2181,35 @@ model CustomPolicy {
   studioId String
   studio   Studio @relation(fields: [studioId], references: [id])
 
+  // Multi-language public forms: see FlashPieceTranslation's own comment
+  // for the sibling-table reasoning.
+  translations CustomPolicyTranslation[]
+
   @@index([studioId])
+}
+
+// Multi-language public forms, Part 2 (schema only): a studio's own
+// translation of one CustomPolicy's title/body. Same sibling-table
+// pattern as FlashPieceTranslation -- see that model's comment for the
+// full reasoning.
+model CustomPolicyTranslation {
+  id     String @id @default(cuid())
+  locale String
+
+  title    String?
+  bodyHtml String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customPolicyId String
+  customPolicy   CustomPolicy @relation(fields: [customPolicyId], references: [id], onDelete: Cascade)
+
+  studioId String
+  studio   Studio @relation(fields: [studioId], references: [id])
+
+  @@unique([customPolicyId, locale])
+  @@index([studioId, locale])
 }
 
 model AuditLog {
@@ -2066,6 +2311,27 @@ model DepositForm {
   // just no longer the signature itself.
   signatureData               String?
   signedAt                    DateTime?
+  // Multi-language public forms: the deposit page's 8 terms (agreedNonRefundable
+  // etc. above) are fixed platform copy (a hardcoded TERMS array in
+  // routes/deposits.ts, "exact SOP wording" per that file's own comment),
+  // not studio-authored -- until now that meant no client-visible text ever
+  // varied, so no snapshot was needed (a known, previously-flagged gap --
+  // see REPORT.md's "Deposit-form PDF" investigation). The moment a
+  // translated (Spanish) version of those same 8 terms exists, the exact
+  // wording actually shown at signing must be captured the same way
+  // LiabilityWaiver's clausesSnapshot already is, or a later correction to
+  // the Spanish translation would silently and retroactively change what
+  // an already-signed deposit form appears to say. Array<{ key: string,
+  // label: string }>, exactly the 8 TERMS entries as rendered at signing
+  // time -- null for every row signed before this field existed. Closes
+  // the pre-existing snapshot gap for English signers too, as a byproduct.
+  termsSnapshot               Json?
+  // Which locale was showing when the client actually signed -- the
+  // snapshot above already captures the exact text verbatim regardless of
+  // locale; this just records which language it was in, for PDF/audit
+  // display. Plain, app-validated String, not an enum -- same reasoning
+  // as Client.preferredLocale.
+  signedLocale                String?
   depositAmount               Float
   feeAmount                   Float
   totalCharged                Float
@@ -2247,6 +2513,12 @@ model LiabilityWaiver {
   clausesSnapshot         Json
   acknowledgmentSnapshot  String?
   photoReleaseSnapshot    String?
+  // Multi-language public forms: which locale was showing when the client
+  // actually signed -- the four snapshots above already capture the exact
+  // text verbatim regardless of locale; this just records which language
+  // it was in, for PDF/audit display. Plain, app-validated String, not an
+  // enum -- same reasoning as Client.preferredLocale.
+  signedLocale            String?
 
   signedAt   DateTime?
   verifiedAt DateTime?
