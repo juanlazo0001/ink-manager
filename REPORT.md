@@ -12279,3 +12279,60 @@ apps, `vite build` clean.
 No schema changes this slice (Part 2's tables already cover everything needed). Continues on
 `explore/multi-language-public-forms` in the `ink-manager-w-i18n-schema` worktree. REPORT.md line
 count before this entry: 12198 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Multi-language public forms -- Part 5 (partial): persistence endpoints + compiled Spanish review
+
+Two pieces landed before an infrastructure interruption paused further work this session (see
+below) -- both noted honestly rather than glossed over.
+
+## Language-picker persistence: `PATCH .../locale`
+
+`persistClientLocale(clientId, locale)` (`lib/contentTranslation.ts`) -- validates against
+`SUPPORTED_LOCALES`, writes `Client.preferredLocale`. Five token-scoped endpoints call it, same
+pattern as every other public write in this app (CLAUDE.md's own "public unauthenticated flows"
+rule): `deposits.ts`, `waivers.ts`, `estimates.ts` (both the original estimate token and a
+revision's own separate token), `selfSchedule.ts`, `flashPayments.ts`. Intake and the flash
+gallery are deliberately NOT wired -- no `Client` row exists yet at either point in the funnel
+(confirmed in Part 4), matching the proposal's own explicit scope.
+
+New tests: 2 unit tests for `persistClientLocale` itself (rejects an unsupported locale without
+touching the DB; writes a real client's row correctly) and 2 HTTP-level tests through
+`deposits.ts`'s own endpoint (a full round trip -- PATCH the locale, then confirm a LATER `GET
+/verify` with no `?locale=` param at all now resolves to the stored value; and a rejected
+unsupported-locale PATCH). `tsc` clean on the API.
+
+## Compiled Spanish string review (`apps/web/src/i18n/PLATFORM_STRINGS_ES_REVIEW.md`)
+
+Per this task's own addition to the final part: every platform-owned Spanish string -- the full
+frontend dictionary (`strings/es.ts`), the server-side PDF chrome (`lib/pdfStrings.ts`'s `ES`), and
+the intake-field seed defaults (`SYSTEM_FIELD_DEFAULTS_ES`) -- compiled into one document, organized
+by page/section as English-vs-Spanish tables, explicitly marked DRAFT NOT SHIPPING COPY. Flags the
+deposit terms specifically for a legal/native-speaker pass (not just fluency) since that's the
+exact text a client legally agrees to, and separately notes the pre-existing North Carolina-
+specific waiver text as a jurisdiction issue distinct from the translation itself. This is the
+reviewable artifact the task asked for -- corrections go back into the two source files directly,
+this document is a snapshot, not a new source of truth.
+
+## Interruption: dev database outage, mid-session
+
+The dev database (`hopper.proxy.rlwy.net`, Railway) became unreachable partway through this
+part's own test-writing -- confirmed as a real infrastructure issue, not a code bug: a minimal
+standalone connection script outside any test framework failed with `ECONNREFUSED` at the Postgres
+protocol level, while a raw TCP check to the same host:port succeeded (`Test-NetConnection`),
+meaning Railway's own proxy was reachable but the actual Postgres backend behind it was not --
+consistent with a brief restart/redeploy on Railway's end, not a local network or code problem.
+
+Per instruction, paused rather than continuing to layer more untested code (Task 32's Settings UI,
+Task 34's write-path locale capture) on top of a foundation that couldn't be verified. **Task 33's
+five endpoints and their 4 new tests have NOT been confirmed passing** -- they're written and
+`tsc`-clean, same rigor as everything else in this epic, but "written and type-checks" is
+explicitly not this codebase's own bar for "trust it," and this entry says so rather than
+implying otherwise. A background poll (re-running a minimal connectivity check every 20s) was
+left running to resume automatically the moment the database recovers; Task 35 above was done
+in the meantime specifically because it has zero database dependency.
+
+## CLAUDE.md hygiene
+
+No schema changes this part. Continues on `explore/multi-language-public-forms` in the
+`ink-manager-w-i18n-schema` worktree. REPORT.md line count before this entry: 12281 (verified via
+`git show HEAD:REPORT.md | wc -l`) -- pure addition.

@@ -225,6 +225,76 @@ test("GET /deposits/verify/:token?locale=es applies the service's ServiceTransla
   const resEn = await fetch(`${baseUrl}/deposits/verify/dep-${suffix}`);
   const bodyEn = (await resEn.json()) as { depositBreakdownNote: string };
   assert.equal(bodyEn.depositBreakdownNote, "$50 deposit + $10 fee");
+
+  // Multi-language public forms, Part 5: the language picker's own
+  // persistence -- PATCH .../locale writes Client.preferredLocale, so a
+  // LATER verify call with no explicit ?locale= at all still resolves to
+  // the client's own stored choice.
+  const patchRes = await fetch(`${baseUrl}/deposits/dep-${suffix}/locale`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ locale: "es" }),
+  });
+  assert.equal(patchRes.status, 200);
+
+  const updatedClient = await prisma.client.findUnique({ where: { id: client.id } });
+  assert.equal(updatedClient?.preferredLocale, "es");
+
+  const resNoParam = await fetch(`${baseUrl}/deposits/verify/dep-${suffix}`);
+  const bodyNoParam = (await resNoParam.json()) as { resolvedLocale: string; depositBreakdownNote: string };
+  assert.equal(bodyNoParam.resolvedLocale, "es");
+  assert.equal(bodyNoParam.depositBreakdownNote, "$50 de depósito + $10 de cargo");
+});
+
+test("PATCH /deposits/:token/locale rejects an unsupported locale", async () => {
+  const studio = await prisma.studio.create({ data: { name: `Studio ${suffix}-6`, slug: `studio-${suffix}-6` } });
+  studioIds.push(studio.id);
+  const client = await prisma.client.create({
+    data: { studioId: studio.id, firstName: "A", lastName: "B", referralCode: `REF6${suffix}` },
+  });
+  clientIds.push(client.id);
+  const intakeForm = await prisma.intakeForm.create({
+    data: { studioId: studio.id, name: "Default", slug: "default", isDefault: true },
+  });
+  intakeFormIds.push(intakeForm.id);
+  const service = await prisma.service.create({
+    data: { studioId: studio.id, name: "Tattoo", slug: "tattoo", pricingModel: "RANGE", depositModel: "TIER_BASED", intakeFormId: intakeForm.id },
+  });
+  serviceIds.push(service.id);
+  const inquiry = await prisma.inquiry.create({
+    data: {
+      studioId: studio.id,
+      clientId: client.id,
+      serviceId: service.id,
+      channel: "EMAIL",
+      description: "test",
+      colorOrBlackGrey: "Color",
+      placement: "Arm",
+      estimatedSize: "Small",
+      hasBeenTattooedBefore: false,
+      referenceImages: [],
+      placementImages: [],
+    },
+  });
+  inquiryIds.push(inquiry.id);
+  const depositForm = await prisma.depositForm.create({
+    data: {
+      inquiryId: inquiry.id,
+      token: `dep6-${suffix}`,
+      tokenExpiresAt: new Date(Date.now() + 86400000),
+      depositAmount: 50,
+      feeAmount: 10,
+      totalCharged: 60,
+    },
+  });
+  depositFormIds.push(depositForm.id);
+
+  const res = await fetch(`${baseUrl}/deposits/dep6-${suffix}/locale`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ locale: "fr" }),
+  });
+  assert.equal(res.status, 400);
 });
 
 test("GET /flash-pieces/public?locale=es applies FlashPieceTranslation to title/description", async () => {

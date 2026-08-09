@@ -7,6 +7,7 @@ import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 import { redactedSessionHours } from "../lib/plannedSessions";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { SELF_SCHEDULE_TOKEN_TTL_DAYS } from "../lib/selfSchedule";
+import { persistClientLocale } from "../lib/contentTranslation";
 
 const router = Router();
 
@@ -154,6 +155,36 @@ router.get("/verify/:token", async (req, res) => {
     estimateTermsSnapshot: inquiry!.estimateTermsSnapshot,
     collaborativeDesignPolicy: COLLABORATIVE_DESIGN_POLICY,
   });
+});
+
+// Multi-language public forms, Part 5: see deposits.ts's own identical
+// endpoint for the full reasoning. Covers both the original estimate
+// token and a revision's own separate token -- two different Inquiry
+// columns, same client either way.
+router.patch("/:token/locale", async (req, res) => {
+  const token = req.params.token as string;
+  const inquiry = await prisma.inquiry.findUnique({ where: { estimateToken: token }, select: { clientId: true } });
+  if (!inquiry) {
+    return res.status(404).json({ error: "This link is invalid." });
+  }
+  const result = await persistClientLocale(inquiry.clientId, req.body?.locale);
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error });
+  }
+  res.json({ success: true });
+});
+
+router.patch("/revision/:token/locale", async (req, res) => {
+  const token = req.params.token as string;
+  const inquiry = await prisma.inquiry.findUnique({ where: { estimateRevisionToken: token }, select: { clientId: true } });
+  if (!inquiry) {
+    return res.status(404).json({ error: "This link is invalid." });
+  }
+  const result = await persistClientLocale(inquiry.clientId, req.body?.locale);
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error });
+  }
+  res.json({ success: true });
 });
 
 const DECISIONS = ["PROCEED", "BUDGET_TOO_HIGH", "DECLINE"] as const;

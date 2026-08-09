@@ -11,7 +11,7 @@ import { getOrCreateClientConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { callerBelongsToStudio, effectiveRoleAt, hasPermissionAt } from "../lib/artistAccess";
-import { resolveRequestLocale, withLocale } from "../lib/contentTranslation";
+import { resolveRequestLocale, withLocale, persistClientLocale } from "../lib/contentTranslation";
 
 // Exact SOP wording, in the order the client must agree to each one.
 const TERMS = [
@@ -208,6 +208,25 @@ publicRouter.get("/verify/:token", async (req, res) => {
     embeddedPaymentsEnabled: inquiry.studio.settings?.embeddedPaymentsEnabled ?? false,
     terms: TERMS,
   });
+});
+
+// Multi-language public forms, Part 5: the language picker's own
+// persistence -- fired the moment a client toggles it, so every later
+// link (a future deposit, waiver, estimate...) for this same client
+// defaults to their own choice. Reuses this exact same token-scoped
+// pattern (CLAUDE.md's own "public unauthenticated flows" rule) rather
+// than inventing a new mechanism.
+publicRouter.patch("/:token/locale", async (req, res) => {
+  const token = req.params.token as string;
+  const depositForm = await prisma.depositForm.findUnique({ where: { token }, select: { inquiry: { select: { clientId: true } } } });
+  if (!depositForm) {
+    return res.status(404).json({ error: "This link is invalid." });
+  }
+  const result = await persistClientLocale(depositForm.inquiry.clientId, req.body?.locale);
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error });
+  }
+  res.json({ success: true });
 });
 
 publicRouter.patch("/sign/:token", async (req, res) => {

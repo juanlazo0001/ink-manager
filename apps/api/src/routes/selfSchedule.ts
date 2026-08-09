@@ -6,6 +6,7 @@ import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { getAvailableDates, getSlotsForDate } from "../lib/schedulingAssistant";
 import { findBufferConflict, resolveSchedulingBufferMs } from "../lib/schedulingConflict";
+import { persistClientLocale } from "../lib/contentTranslation";
 
 const router = Router();
 
@@ -134,6 +135,21 @@ router.get("/verify/:token", async (req, res) => {
 });
 
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+// Multi-language public forms, Part 5: see deposits.ts's own identical
+// endpoint for the full reasoning.
+router.patch("/:token/locale", async (req, res) => {
+  const token = req.params.token as string;
+  const inquiry = await prisma.inquiry.findUnique({ where: { selfScheduleToken: token }, select: { clientId: true } });
+  if (!inquiry) {
+    return res.status(404).json({ error: "This link is invalid." });
+  }
+  const result = await persistClientLocale(inquiry.clientId, req.body?.locale);
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error });
+  }
+  res.json({ success: true });
+});
 
 // Client self-scheduling date/time picker: the time-of-day options for one
 // specific date the client has already picked from the calendar grid

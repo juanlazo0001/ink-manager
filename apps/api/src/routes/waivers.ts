@@ -13,7 +13,7 @@ import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { generateWaiverPdf } from "../lib/pdf";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { effectiveRoleAt, hasPermissionAt } from "../lib/artistAccess";
-import { resolveRequestLocale } from "../lib/contentTranslation";
+import { resolveRequestLocale, persistClientLocale } from "../lib/contentTranslation";
 
 function isExpiredOrInvalid(waiver: { signedAt: Date | null; tokenExpiresAt: Date | null } | null) {
   if (!waiver) {
@@ -128,6 +128,22 @@ publicRouter.get("/verify/:token", async (req, res) => {
     acknowledgment,
     photoRelease,
   });
+});
+
+// Multi-language public forms, Part 5: see deposits.ts's own identical
+// endpoint for the full reasoning -- same token-scoped persistence
+// pattern, repeated per flow rather than a shared cross-flow route.
+publicRouter.patch("/:token/locale", async (req, res) => {
+  const token = req.params.token as string;
+  const waiver = await prisma.liabilityWaiver.findUnique({ where: { token }, select: { clientId: true } });
+  if (!waiver) {
+    return res.status(404).json({ error: "This link is invalid." });
+  }
+  const result = await persistClientLocale(waiver.clientId, req.body?.locale);
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error });
+  }
+  res.json({ success: true });
 });
 
 publicRouter.patch("/sign/:token", async (req, res) => {

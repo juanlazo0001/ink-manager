@@ -1,5 +1,6 @@
 import { isSupportedLocale, type Locale } from "./locale";
 import { SYSTEM_FIELD_DEFAULTS } from "./intakeFormFields";
+import { prisma } from "./prisma";
 
 // Multi-language public forms, Part 4: the read-side of the studio-
 // content translation system approved in this epic's Part 1 proposal.
@@ -107,4 +108,22 @@ export function resolveSystemFieldLabel(
   }
 
   return liveEnglishLabel;
+}
+
+// Multi-language public forms, Part 5: shared write-side helper for the
+// language picker's own persistence -- every token-scoped PATCH .../locale
+// endpoint (deposits, waivers, estimates, self-schedule, flash-payment;
+// intake and the flash gallery have no Client yet at that point in the
+// funnel, so they're not wired to this at all) calls this with the
+// clientId their own token already resolved to. Validates against
+// SUPPORTED_LOCALES itself -- callers never need their own copy of that
+// check. Client.preferredLocale is intentionally NOT read by SMS sends
+// (lib/clientSms.ts, lib/jobs/reminderTicker.ts) -- see that field's own
+// schema comment.
+export async function persistClientLocale(clientId: string, locale: unknown): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!isSupportedLocale(locale)) {
+    return { ok: false, error: "locale must be one of the supported locales." };
+  }
+  await prisma.client.update({ where: { id: clientId }, data: { preferredLocale: locale } });
+  return { ok: true };
 }

@@ -3,7 +3,7 @@ import { prisma } from "../lib/prisma";
 import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 import { createFlashPaymentCheckoutSession, createOrRetrieveFlashPaymentIntent } from "../lib/flashPayments";
 import { getChargeableConnectedAccountId } from "../lib/stripeConnect";
-import { resolveRequestLocale, withLocale } from "../lib/contentTranslation";
+import { resolveRequestLocale, withLocale, persistClientLocale } from "../lib/contentTranslation";
 
 // Public, unauthenticated: same crypto-token + verify/checkout pattern as
 // deposits.ts's own publicRouter, minus the signing step -- a flash
@@ -80,6 +80,21 @@ router.get("/verify/:token", async (req, res) => {
     paidAt: inquiry!.flashPaidAt,
     selfScheduleToken: inquiry!.flashPaidAt ? inquiry!.selfScheduleToken : null,
   });
+});
+
+// Multi-language public forms, Part 5: see deposits.ts's own identical
+// endpoint for the full reasoning.
+router.patch("/:token/locale", async (req, res) => {
+  const token = req.params.token as string;
+  const inquiry = await prisma.inquiry.findUnique({ where: { flashPaymentToken: token }, select: { clientId: true } });
+  if (!inquiry) {
+    return res.status(404).json({ error: "This link is invalid." });
+  }
+  const result = await persistClientLocale(inquiry.clientId, req.body?.locale);
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error });
+  }
+  res.json({ success: true });
 });
 
 router.post("/checkout/:token", async (req, res) => {
