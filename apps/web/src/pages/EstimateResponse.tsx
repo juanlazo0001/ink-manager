@@ -6,6 +6,8 @@ import { formatPriceEstimate } from '../lib/format'
 import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import { applyThemePreset } from '../lib/themePresets'
 import PublicPageFooter from '../components/PublicPageFooter'
+import { LocaleProvider, useTranslations } from '../i18n'
+import LanguagePicker from '../i18n/LanguagePicker'
 
 const INPUT_CLASS =
   'mt-1 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
@@ -48,6 +50,8 @@ interface VerifyResponse {
     estimatedPriceHigh: number | null
   }[]
   estimateTermsSnapshot: string | null
+  // Multi-language public forms: this API field is IGNORED on purpose --
+  // see the module-level comment near its render site below.
   collaborativeDesignPolicy: string
 }
 
@@ -67,11 +71,6 @@ interface AlreadyBookedResponse {
   themePreset: string
 }
 
-function formatHourRange(min: number | null, max: number | null): string {
-  if (min == null || max == null) return 'To be discussed'
-  return min === max ? `${min} hours` : `${min}–${max} hours`
-}
-
 // Status-code convention this fix introduces across the whole estimate/
 // self-scheduling token chain (estimates.ts, selfSchedule.ts): 404 = never
 // existed, 410 = time-expired, 409 = superseded by a newer link. Kept as
@@ -84,18 +83,33 @@ function invalidKindFromStatus(status: number | undefined): InvalidKind {
   return 'invalid'
 }
 
-const INVALID_HEADINGS: Record<InvalidKind, string> = {
-  invalid: 'This link is invalid',
-  expired: 'This link has expired',
-  superseded: 'A newer link was sent',
+export default function EstimateResponse() {
+  return (
+    <LocaleProvider>
+      <EstimateResponseContent />
+    </LocaleProvider>
+  )
 }
 
-export default function EstimateResponse() {
+function EstimateResponseContent() {
+  const { t } = useTranslations()
+
+  const INVALID_HEADINGS: Record<InvalidKind, string> = {
+    invalid: t('common.linkInvalidHeading'),
+    expired: t('common.linkExpiredHeading'),
+    superseded: t('common.linkSupersededHeading'),
+  }
+
+  function formatHourRange(min: number | null, max: number | null): string | null {
+    if (min == null || max == null) return null
+    return min === max ? `${min} hours` : `${min}–${max} hours`
+  }
+
   const { token } = useParams<{ token: string }>()
   const navigate = useNavigate()
   const [state, setState] = useState<PageState>('loading')
   const [invalidKind, setInvalidKind] = useState<InvalidKind>('invalid')
-  const [invalidMessage, setInvalidMessage] = useState('This link is invalid or has expired.')
+  const [invalidMessage, setInvalidMessage] = useState(t('common.linkExpiredHeading'))
   const [verifyData, setVerifyData] = useState<VerifyResponse | null>(null)
   const [alreadyBookedData, setAlreadyBookedData] = useState<AlreadyBookedResponse | null>(null)
   const [respondedAs, setRespondedAs] = useState<Decision | null>(null)
@@ -137,20 +151,21 @@ export default function EstimateResponse() {
         if (ignore) return
         const kind = invalidKindFromStatus(err instanceof ApiError ? err.status : undefined)
         setInvalidKind(kind)
-        setInvalidMessage(err instanceof Error ? err.message : 'This link is invalid or has expired.')
+        setInvalidMessage(err instanceof Error ? err.message : t('common.linkExpiredHeading'))
         setState('invalid')
       })
 
     return () => {
       ignore = true
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, navigate])
 
   async function respond(decision: Decision) {
     if (!token) return
 
     if (decision === 'BUDGET_TOO_HIGH' && statedBudget.trim().length === 0) {
-      setSubmitError('Please let us know what budget would work for you.')
+      setSubmitError(t('estimate.pleaseProvideBudget'))
       return
     }
 
@@ -183,7 +198,7 @@ export default function EstimateResponse() {
       setRespondedAs(decision)
       setState('success')
     } catch (err) {
-      setSubmitError(err instanceof ApiError ? err.message : 'Something went wrong. Please try again.')
+      setSubmitError(err instanceof ApiError ? err.message : t('common.somethingWentWrong'))
     } finally {
       setSubmitting(false)
       setPendingDecision(null)
@@ -193,7 +208,11 @@ export default function EstimateResponse() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
       <div className="w-full max-w-lg rounded-2xl card-surface border border-border bg-surface p-8">
-        {state === 'loading' && <p className="text-center text-sm text-fg-secondary">Loading…</p>}
+        <div className="mb-4 flex justify-end">
+          <LanguagePicker />
+        </div>
+
+        {state === 'loading' && <p className="text-center text-sm text-fg-secondary">{t('common.loading')}</p>}
 
         {state === 'invalid' && (
           <div className="text-center">
@@ -201,18 +220,17 @@ export default function EstimateResponse() {
             <p className="mt-2 text-sm text-fg-secondary">{invalidMessage}</p>
             <p className="mt-4 text-sm text-fg-secondary">
               {invalidKind === 'superseded'
-                ? 'Please check your messages for the newest link.'
-                : 'Please contact the studio to request a new estimate.'}
+                ? t('common.pleaseCheckMessagesForNewestLink')
+                : t('estimate.contactStudioForNewEstimate')}
             </p>
           </div>
         )}
 
         {state === 'alreadyBooked' && alreadyBookedData && (
           <div className="text-center">
-            <h1 className="text-xl font-semibold text-fg">You're all set, {alreadyBookedData.clientFirstName}!</h1>
+            <h1 className="text-xl font-semibold text-fg">{t('estimate.alreadyBookedHeading', { firstName: alreadyBookedData.clientFirstName })}</h1>
             <p className="mt-2 text-sm text-fg-secondary">
-              You've already booked your appointment with {alreadyBookedData.studioName}. They'll be in touch if
-              anything changes.
+              {t('estimate.alreadyBookedBody', { studioName: alreadyBookedData.studioName })}
             </p>
           </div>
         )}
@@ -220,17 +238,14 @@ export default function EstimateResponse() {
         {state === 'success' && (
           <div className="text-center">
             <h1 className="text-xl font-semibold text-fg">
-              {respondedAs === 'PROCEED' && "Thanks — let's get you scheduled!"}
-              {respondedAs === 'BUDGET_TOO_HIGH' && "Thanks for letting us know"}
-              {respondedAs === 'DECLINE' && "We're sorry to see you go"}
+              {respondedAs === 'PROCEED' && t('estimate.proceedHeading')}
+              {respondedAs === 'BUDGET_TOO_HIGH' && t('estimate.budgetHeading')}
+              {respondedAs === 'DECLINE' && t('estimate.declineHeading')}
             </h1>
             <p className="mt-2 text-sm text-fg-secondary">
-              {respondedAs === 'PROCEED' &&
-                "We've let the studio know you're ready to move forward. They'll be in touch to schedule your appointment."}
-              {respondedAs === 'BUDGET_TOO_HIGH' &&
-                "We've passed your budget along to the studio — they'll follow up with revised options."}
-              {respondedAs === 'DECLINE' &&
-                'Thanks for considering us. If anything changes, feel free to reach back out.'}
+              {respondedAs === 'PROCEED' && t('estimate.proceedBody')}
+              {respondedAs === 'BUDGET_TOO_HIGH' && t('estimate.budgetBody')}
+              {respondedAs === 'DECLINE' && t('estimate.declineBody')}
             </p>
           </div>
         )}
@@ -244,15 +259,17 @@ export default function EstimateResponse() {
                 className="mb-4 h-10 w-auto object-contain"
               />
             )}
-            <h1 className="text-xl font-semibold text-fg">Your Tattoo Estimate</h1>
+            <h1 className="text-xl font-semibold text-fg">{t('estimate.pageHeading')}</h1>
             <p className="mt-1 text-sm font-medium text-fg-secondary">{verifyData.studioName}</p>
             <div className="mt-3 flex items-center gap-2.5">
               {verifyData.artistName && (
                 <FlatArtistAvatar name={verifyData.artistName} avatarUrl={verifyData.artistAvatarUrl} className="h-8 w-8" />
               )}
               <p className="text-sm text-fg-secondary">
-                {verifyData.clientFirstName}, here's what {verifyData.artistName ?? 'your artist'} put together for
-                you.
+                {t('estimate.intro', {
+                  firstName: verifyData.clientFirstName,
+                  artistName: verifyData.artistName ?? t('estimate.defaultArtistName'),
+                })}
               </p>
             </div>
 
@@ -262,11 +279,11 @@ export default function EstimateResponse() {
                   {verifyData.priceEstimateLow != null &&
                   verifyData.priceEstimateHigh != null &&
                   verifyData.priceEstimateLow !== verifyData.priceEstimateHigh
-                    ? 'Price range'
-                    : 'Price'}
+                    ? t('estimate.priceRangeLabel')
+                    : t('estimate.priceLabel')}
                 </p>
                 <p className="mt-1 text-lg font-semibold text-fg">
-                  {formatPriceEstimate(verifyData.priceEstimateLow, verifyData.priceEstimateHigh) ?? 'To be discussed'}
+                  {formatPriceEstimate(verifyData.priceEstimateLow, verifyData.priceEstimateHigh) ?? t('estimate.toBeDiscussed')}
                 </p>
               </div>
               {/* A 1-row plan (flat-rate, staff choosing whether to show
@@ -276,17 +293,17 @@ export default function EstimateResponse() {
                   breakdown to see. */}
               {verifyData.plannedSessions.length <= 1 && (
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Estimated time</p>
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('estimate.estimatedTimeLabel')}</p>
                   <p className="mt-1 text-lg font-semibold text-fg">
                     {/* A present single session's hours win even when
                         null/redacted -- only fall back to the top-level
                         fields when there's no session row at all. */}
-                    {verifyData.plannedSessions.length === 1
+                    {(verifyData.plannedSessions.length === 1
                       ? formatHourRange(
                           verifyData.plannedSessions[0].estimatedHoursMin,
                           verifyData.plannedSessions[0].estimatedHoursMax,
                         )
-                      : formatHourRange(verifyData.timeEstimateHoursMin, verifyData.timeEstimateHoursMax)}
+                      : formatHourRange(verifyData.timeEstimateHoursMin, verifyData.timeEstimateHoursMax)) ?? t('estimate.toBeDiscussed')}
                   </p>
                 </div>
               )}
@@ -295,12 +312,12 @@ export default function EstimateResponse() {
             {verifyData.plannedSessions.length > 1 && (
               <div className="mt-4 rounded-lg border border-border bg-surface-inset p-3">
                 <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
-                  {verifyData.plannedSessions.length}-session plan
+                  {t('estimate.sessionPlan', { n: verifyData.plannedSessions.length })}
                 </p>
                 <ul className="mt-2 space-y-1">
                   {verifyData.plannedSessions.map((session) => (
                     <li key={session.sessionNumber} className="text-sm text-fg">
-                      Session {session.sessionNumber}
+                      {t('estimate.sessionLabel', { n: session.sessionNumber })}
                       {session.estimatedHoursMin != null && session.estimatedHoursMax != null && (
                         <>: {formatHourRange(session.estimatedHoursMin, session.estimatedHoursMax)}</>
                       )}
@@ -313,13 +330,18 @@ export default function EstimateResponse() {
               </div>
             )}
 
+            {/* Multi-language public forms, Finding 1: verifyData.collaborativeDesignPolicy
+                is deliberately ignored -- it's a single hardcoded platform string
+                (COLLABORATIVE_DESIGN_POLICY in routes/estimates.ts), identical for
+                every studio, not studio content, so it's translated here instead
+                of trusting whatever single-locale text the API happens to send. */}
             <div className="mt-5 rounded-lg border border-border bg-surface-inset p-3 text-xs text-fg-secondary">
-              {verifyData.collaborativeDesignPolicy}
+              {t('estimate.collaborativeDesignPolicy')}
             </div>
 
             {verifyData.estimateTermsSnapshot && (
               <div className="mt-3 rounded-lg border border-border bg-surface-inset p-3 text-xs text-fg-secondary">
-                <p className="mb-1 font-medium uppercase tracking-wider text-fg-muted">Terms &amp; Conditions</p>
+                <p className="mb-1 font-medium uppercase tracking-wider text-fg-muted">{t('estimate.termsHeading')}</p>
                 {/* estimateTermsSnapshot may hold rich HTML (saved through
                     Settings' WYSIWYG editor) or older plain text (pre-
                     existing snapshots from before Phase UI-3) -- sanitized
@@ -346,17 +368,17 @@ export default function EstimateResponse() {
                 disabled={submitting}
                 className="w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
               >
-                {submitting && pendingDecision === 'PROCEED' ? 'Submitting…' : "Proceed — I'm in!"}
+                {submitting && pendingDecision === 'PROCEED' ? t('estimate.submitting') : t('estimate.proceedButton')}
               </button>
 
               {activeForm === 'BUDGET_TOO_HIGH' ? (
                 <div className="rounded-lg border border-border p-3">
                   <label className="mb-1 block text-xs font-medium text-fg-secondary">
-                    What budget would work for you?
+                    {t('estimate.budgetPrompt')}
                   </label>
                   <input
                     type="text"
-                    placeholder="e.g. $200-300"
+                    placeholder={t('estimate.budgetPlaceholder')}
                     value={statedBudget}
                     onChange={(e) => setStatedBudget(e.target.value)}
                     className={INPUT_CLASS}
@@ -367,7 +389,7 @@ export default function EstimateResponse() {
                     disabled={submitting}
                     className="mt-3 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
                   >
-                    {submitting && pendingDecision === 'BUDGET_TOO_HIGH' ? 'Submitting…' : 'Send my budget'}
+                    {submitting && pendingDecision === 'BUDGET_TOO_HIGH' ? t('estimate.submitting') : t('estimate.sendBudget')}
                   </button>
                 </div>
               ) : (
@@ -376,7 +398,7 @@ export default function EstimateResponse() {
                   onClick={() => setActiveForm('BUDGET_TOO_HIGH')}
                   className="w-full rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
                 >
-                  This is a bit more than I expected
+                  {t('estimate.declinePrompt')}
                 </button>
               )}
 
@@ -386,7 +408,7 @@ export default function EstimateResponse() {
                 disabled={submitting}
                 className="w-full rounded-full border border-border px-4 py-2 text-sm font-medium text-fg-secondary transition hover:bg-surface hover:text-fg disabled:opacity-60"
               >
-                {submitting && pendingDecision === 'DECLINE' ? 'Submitting…' : "No thanks, I'm not moving forward"}
+                {submitting && pendingDecision === 'DECLINE' ? t('estimate.submitting') : t('estimate.notMovingForward')}
               </button>
             </div>
           </div>

@@ -5,6 +5,8 @@ import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import { applyThemePreset } from '../lib/themePresets'
 import PublicPageFooter from '../components/PublicPageFooter'
 import { formatPriceEstimate } from '../lib/format'
+import { LocaleProvider, useTranslations } from '../i18n'
+import LanguagePicker from '../i18n/LanguagePicker'
 
 type PageState = 'loading' | 'invalid' | 'ready' | 'success'
 type Decision = 'APPROVE' | 'FLAG'
@@ -18,11 +20,6 @@ type InvalidKind = 'invalid' | 'expired'
 
 function invalidKindFromStatus(status: number | undefined): InvalidKind {
   return status === 410 ? 'expired' : 'invalid'
-}
-
-const INVALID_HEADINGS: Record<InvalidKind, string> = {
-  invalid: 'This link is invalid',
-  expired: 'This link has expired',
 }
 
 interface VerifyResponse {
@@ -53,11 +50,6 @@ interface VerifyResponse {
   reason: string | null
 }
 
-function formatHourRange(min: number | null, max: number | null): string {
-  if (min == null || max == null) return 'To be discussed'
-  return min === max ? `${min} hours` : `${min}–${max} hours`
-}
-
 // Distinct from EstimateResponse.tsx (the pre-conversion PROCEED/BUDGET_TOO_HIGH/
 // DECLINE flow) -- this page only ever appears for a Project whose estimate
 // was revised AFTER the deposit was already paid (see POST /inquiries/:id/
@@ -66,11 +58,31 @@ function formatHourRange(min: number | null, max: number | null): string {
 // change" and "I have a concern" (FLAG), neither of which touches the
 // Project's scheduling/deposit status -- FLAG just tells staff to follow up.
 export default function EstimateRevisionResponse() {
+  return (
+    <LocaleProvider>
+      <EstimateRevisionResponseContent />
+    </LocaleProvider>
+  )
+}
+
+function EstimateRevisionResponseContent() {
+  const { t } = useTranslations()
+
+  const INVALID_HEADINGS: Record<InvalidKind, string> = {
+    invalid: t('common.linkInvalidHeading'),
+    expired: t('common.linkExpiredHeading'),
+  }
+
+  function formatHourRange(min: number | null, max: number | null): string {
+    if (min == null || max == null) return t('estimate.toBeDiscussed')
+    return min === max ? `${min} hours` : `${min}–${max} hours`
+  }
+
   const { token } = useParams<{ token: string }>()
   const navigate = useNavigate()
   const [state, setState] = useState<PageState>('loading')
   const [invalidKind, setInvalidKind] = useState<InvalidKind>('invalid')
-  const [invalidMessage, setInvalidMessage] = useState('This link is invalid or has expired.')
+  const [invalidMessage, setInvalidMessage] = useState(t('common.linkExpiredHeading'))
   const [verifyData, setVerifyData] = useState<VerifyResponse | null>(null)
   const [respondedAs, setRespondedAs] = useState<Decision | null>(null)
 
@@ -93,13 +105,14 @@ export default function EstimateRevisionResponse() {
       .catch((err) => {
         if (ignore) return
         setInvalidKind(invalidKindFromStatus(err instanceof ApiError ? err.status : undefined))
-        setInvalidMessage(err instanceof Error ? err.message : 'This link is invalid or has expired.')
+        setInvalidMessage(err instanceof Error ? err.message : t('common.linkExpiredHeading'))
         setState('invalid')
       })
 
     return () => {
       ignore = true
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
 
   async function respond(decision: Decision) {
@@ -128,7 +141,7 @@ export default function EstimateRevisionResponse() {
       setRespondedAs(decision)
       setState('success')
     } catch (err) {
-      setSubmitError(err instanceof ApiError ? err.message : 'Something went wrong. Please try again.')
+      setSubmitError(err instanceof ApiError ? err.message : t('common.somethingWentWrong'))
     } finally {
       setSubmitting(false)
       setPendingDecision(null)
@@ -138,25 +151,27 @@ export default function EstimateRevisionResponse() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
       <div className="w-full max-w-lg rounded-2xl card-surface border border-border bg-surface p-8">
-        {state === 'loading' && <p className="text-center text-sm text-fg-secondary">Loading…</p>}
+        <div className="mb-4 flex justify-end">
+          <LanguagePicker />
+        </div>
+
+        {state === 'loading' && <p className="text-center text-sm text-fg-secondary">{t('common.loading')}</p>}
 
         {state === 'invalid' && (
           <div className="text-center">
             <h1 className="text-xl font-semibold text-fg">{INVALID_HEADINGS[invalidKind]}</h1>
             <p className="mt-2 text-sm text-fg-secondary">{invalidMessage}</p>
-            <p className="mt-4 text-sm text-fg-secondary">Please contact the studio if you have questions.</p>
+            <p className="mt-4 text-sm text-fg-secondary">{t('estimateRevision.invalidBody')}</p>
           </div>
         )}
 
         {state === 'success' && (
           <div className="text-center">
             <h1 className="text-xl font-semibold text-fg">
-              {respondedAs === 'APPROVE' ? 'Thanks for confirming!' : 'Thanks for letting us know'}
+              {respondedAs === 'APPROVE' ? t('estimateRevision.confirmedHeading') : t('estimateRevision.concernHeading')}
             </h1>
             <p className="mt-2 text-sm text-fg-secondary">
-              {respondedAs === 'APPROVE'
-                ? "We've let the studio know you're good with the updated estimate."
-                : "We've flagged your concern for the studio -- they'll follow up with you directly."}
+              {respondedAs === 'APPROVE' ? t('estimateRevision.confirmedBody') : t('estimateRevision.concernBody')}
             </p>
           </div>
         )}
@@ -170,14 +185,14 @@ export default function EstimateRevisionResponse() {
                 className="mb-4 h-10 w-auto object-contain"
               />
             )}
-            <h1 className="text-xl font-semibold text-fg">Your Estimate Has Been Updated</h1>
+            <h1 className="text-xl font-semibold text-fg">{t('estimateRevision.pageHeading')}</h1>
             <p className="mt-1 text-sm font-medium text-fg-secondary">{verifyData.studioName}</p>
             <div className="mt-3 flex items-center gap-2.5">
               {verifyData.artistName && (
                 <FlatArtistAvatar name={verifyData.artistName} avatarUrl={verifyData.artistAvatarUrl} className="h-8 w-8" />
               )}
               <p className="text-sm text-fg-secondary">
-                {verifyData.clientFirstName}, here's the updated estimate for your project.
+                {t('estimateRevision.intro', { firstName: verifyData.clientFirstName })}
               </p>
             </div>
 
@@ -187,11 +202,11 @@ export default function EstimateRevisionResponse() {
                   {verifyData.priceEstimateLow != null &&
                   verifyData.priceEstimateHigh != null &&
                   verifyData.priceEstimateLow !== verifyData.priceEstimateHigh
-                    ? 'Price range'
-                    : 'Price'}
+                    ? t('estimate.priceRangeLabel')
+                    : t('estimate.priceLabel')}
                 </p>
                 <p className="mt-1 text-lg font-semibold text-fg">
-                  {formatPriceEstimate(verifyData.priceEstimateLow, verifyData.priceEstimateHigh) ?? 'To be discussed'}
+                  {formatPriceEstimate(verifyData.priceEstimateLow, verifyData.priceEstimateHigh) ?? t('estimate.toBeDiscussed')}
                 </p>
               </div>
               {/* A 1-row plan (flat-rate, staff choosing whether to show
@@ -201,7 +216,7 @@ export default function EstimateRevisionResponse() {
                   breakdown to see. */}
               {verifyData.plannedSessions.length <= 1 && (
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Estimated time</p>
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('estimate.estimatedTimeLabel')}</p>
                   <p className="mt-1 text-lg font-semibold text-fg">
                     {/* A present single session's hours win even when
                         null/redacted -- only fall back to the top-level
@@ -220,12 +235,12 @@ export default function EstimateRevisionResponse() {
             {verifyData.plannedSessions.length > 1 && (
               <div className="mt-4 rounded-lg border border-border bg-surface-inset p-3">
                 <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
-                  {verifyData.plannedSessions.length}-session plan
+                  {t('estimate.sessionPlan', { n: verifyData.plannedSessions.length })}
                 </p>
                 <ul className="mt-2 space-y-1">
                   {verifyData.plannedSessions.map((session) => (
                     <li key={session.sessionNumber} className="text-sm text-fg">
-                      Session {session.sessionNumber}
+                      {t('estimate.sessionLabel', { n: session.sessionNumber })}
                       {session.estimatedHoursMin != null && session.estimatedHoursMax != null && (
                         <>: {formatHourRange(session.estimatedHoursMin, session.estimatedHoursMax)}</>
                       )}
@@ -240,7 +255,7 @@ export default function EstimateRevisionResponse() {
 
             {verifyData.reason && (
               <div className="mt-5 rounded-lg border border-border bg-surface-inset p-3">
-                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Why this changed</p>
+                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('estimateRevision.whyThisChanged')}</p>
                 <p className="mt-1 text-sm text-fg-secondary">{verifyData.reason}</p>
               </div>
             )}
@@ -258,7 +273,7 @@ export default function EstimateRevisionResponse() {
                 disabled={submitting}
                 className="w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
               >
-                {submitting && pendingDecision === 'APPROVE' ? 'Submitting…' : 'I approve this change'}
+                {submitting && pendingDecision === 'APPROVE' ? t('estimateRevision.submitting') : t('estimateRevision.approveButton')}
               </button>
 
               <button
@@ -267,7 +282,7 @@ export default function EstimateRevisionResponse() {
                 disabled={submitting}
                 className="w-full rounded-full border border-border px-4 py-2 text-sm font-medium text-fg-secondary transition hover:bg-surface hover:text-fg disabled:opacity-60"
               >
-                {submitting && pendingDecision === 'FLAG' ? 'Submitting…' : 'I have a concern about this'}
+                {submitting && pendingDecision === 'FLAG' ? t('estimateRevision.submitting') : t('estimateRevision.concernButton')}
               </button>
             </div>
           </div>

@@ -11,6 +11,8 @@ import ImageUploadSection, { type ImageUploadState } from '../components/ImageUp
 import ImageLightbox from '../components/ImageLightbox'
 import { ViewIcon, SparkleIcon } from '../components/icons'
 import { isValidPhoneDigits, formatDurationHours } from '../lib/format'
+import { LocaleProvider, useTranslations } from '../i18n'
+import LanguagePicker from '../i18n/LanguagePicker'
 
 type PageState = 'loading' | 'invalid' | 'gallery' | 'request' | 'success'
 
@@ -46,9 +48,18 @@ const INPUT_CLASS =
   'mt-1 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
 
 export default function FlashPublicGallery() {
+  return (
+    <LocaleProvider>
+      <FlashPublicGalleryContent />
+    </LocaleProvider>
+  )
+}
+
+function FlashPublicGalleryContent() {
+  const { t } = useTranslations()
   const { studioSlug, artistId } = useParams<{ studioSlug: string; artistId: string }>()
   const [state, setState] = useState<PageState>('loading')
-  const [invalidMessage, setInvalidMessage] = useState('This gallery is unavailable.')
+  const [invalidMessage, setInvalidMessage] = useState(t('flashGallery.unavailableDefault'))
   const [gallery, setGallery] = useState<GalleryResponse | null>(null)
   const [selectedPiece, setSelectedPiece] = useState<FlashPieceSummary | null>(null)
   const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null)
@@ -82,13 +93,14 @@ export default function FlashPublicGallery() {
       })
       .catch((err) => {
         if (ignore) return
-        setInvalidMessage(err instanceof Error ? err.message : 'This gallery is unavailable.')
+        setInvalidMessage(err instanceof Error ? err.message : t('flashGallery.unavailableDefault'))
         setState('invalid')
       })
 
     return () => {
       ignore = true
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [studioSlug, artistId])
 
   function selectPiece(piece: FlashPieceSummary) {
@@ -107,7 +119,7 @@ export default function FlashPublicGallery() {
 
   async function handleLookup() {
     if (!studioSlug || phone.length !== 10 || !isValidPhoneDigits(phone)) {
-      setLookupError('Enter a complete 10-digit phone number.')
+      setLookupError(t('flashGallery.enterCompletePhoneNumber'))
       return
     }
     setLookupError(null)
@@ -125,7 +137,7 @@ export default function FlashPublicGallery() {
         setLookupState('not-found')
       }
     } catch (err) {
-      setLookupError(err instanceof Error ? err.message : 'Something went wrong. Please try again.')
+      setLookupError(err instanceof Error ? err.message : t('common.somethingWentWrong'))
       setLookupState('idle')
     }
   }
@@ -136,15 +148,15 @@ export default function FlashPublicGallery() {
     setSubmitError(null)
 
     if (!placementDescription.trim()) {
-      setSubmitError('Please describe where you’d like this placed.')
+      setSubmitError(t('flashGallery.pleaseDescribePlacement'))
       return
     }
     if (placementPhoto.urls.length === 0) {
-      setSubmitError('Please add a photo of the placement area.')
+      setSubmitError(t('flashGallery.pleaseAddPlacementPhoto'))
       return
     }
     if (lookupState === 'not-found' && (!firstName.trim() || !lastName.trim() || !email.trim())) {
-      setSubmitError('Please fill in your name and email.')
+      setSubmitError(t('flashGallery.pleaseFillNameAndEmail'))
       return
     }
 
@@ -163,7 +175,7 @@ export default function FlashPublicGallery() {
       })
       setState('success')
     } catch (err) {
-      setSubmitError(err instanceof ApiError ? err.message : 'Something went wrong. Please try again.')
+      setSubmitError(err instanceof ApiError ? err.message : t('common.somethingWentWrong'))
     } finally {
       setSubmitting(false)
     }
@@ -172,21 +184,24 @@ export default function FlashPublicGallery() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
       <div className="w-full max-w-2xl rounded-2xl card-surface border border-border bg-surface p-8">
-        {state === 'loading' && <p className="text-center text-sm text-fg-secondary">Loading…</p>}
+        <div className="mb-4 flex justify-end">
+          <LanguagePicker />
+        </div>
+
+        {state === 'loading' && <p className="text-center text-sm text-fg-secondary">{t('common.loading')}</p>}
 
         {state === 'invalid' && (
           <div className="text-center">
-            <h1 className="text-xl font-semibold text-fg">This gallery isn't available</h1>
+            <h1 className="text-xl font-semibold text-fg">{t('flashGallery.unavailableHeading')}</h1>
             <p className="mt-2 text-sm text-fg-secondary">{invalidMessage}</p>
           </div>
         )}
 
         {state === 'success' && (
           <div className="text-center">
-            <h1 className="text-xl font-semibold text-fg">Request sent!</h1>
+            <h1 className="text-xl font-semibold text-fg">{t('flashGallery.requestSentHeading')}</h1>
             <p className="mt-2 text-sm text-fg-secondary">
-              {gallery?.studioName} will review your placement and get back to you shortly to confirm and collect
-              payment -- this isn't booked yet.
+              {t('flashGallery.requestSentBody', { studioName: gallery?.studioName ?? '' })}
             </p>
           </div>
         )}
@@ -196,16 +211,16 @@ export default function FlashPublicGallery() {
             {gallery.studioLogoUrl && (
               <img src={gallery.studioLogoUrl} alt={gallery.studioName} className="mb-4 h-10 w-auto object-contain" />
             )}
-            <h1 className="text-xl font-semibold text-fg">Flash Gallery</h1>
+            <h1 className="text-xl font-semibold text-fg">{t('flashGallery.pageHeading')}</h1>
             <div className="mt-2 flex items-center gap-2.5">
               <FlatArtistAvatar name={gallery.artistName} avatarUrl={gallery.artistAvatarUrl} className="h-8 w-8" />
               <p className="text-sm text-fg-secondary">
-                {gallery.artistName}'s ready-to-book designs at {gallery.studioName}.
+                {t('flashGallery.intro', { artistName: gallery.artistName, studioName: gallery.studioName })}
               </p>
             </div>
 
             {gallery.pieces.length === 0 ? (
-              <p className="mt-6 text-sm text-fg-secondary">No flash pieces are available right now.</p>
+              <p className="mt-6 text-sm text-fg-secondary">{t('flashGallery.noPiecesAvailable')}</p>
             ) : (
               <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3">
                 {gallery.pieces.map((piece, pieceIndex) => (
@@ -218,7 +233,7 @@ export default function FlashPublicGallery() {
                       onClick={() =>
                         setLightbox({ images: gallery.pieces.map((p) => p.imageUrl), index: pieceIndex })
                       }
-                      aria-label={`View ${piece.title} full size`}
+                      aria-label={t('flashGallery.viewFullSize', { title: piece.title })}
                       className="group relative block aspect-square w-full overflow-hidden bg-surface"
                     >
                       <img src={piece.imageUrl} alt={piece.title} className="h-full w-full object-cover" />
@@ -228,7 +243,7 @@ export default function FlashPublicGallery() {
                       {piece.isOneOfOne && (
                         <span className="absolute left-2 top-2 flex items-center gap-1 rounded-full bg-fg/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-bg backdrop-blur-sm">
                           <SparkleIcon className="h-3 w-3" />
-                          One of one
+                          {t('flashGallery.oneOfOne')}
                         </span>
                       )}
                     </button>
@@ -246,17 +261,17 @@ export default function FlashPublicGallery() {
         {state === 'request' && selectedPiece && (
           <div>
             <button type="button" onClick={() => setState('gallery')} className="text-xs font-medium text-fg-muted hover:text-fg">
-              &larr; Back to gallery
+              {t('flashGallery.backToGallery')}
             </button>
-            <h1 className="mt-2 text-xl font-semibold text-fg">Request "{selectedPiece.title}"</h1>
+            <h1 className="mt-2 text-xl font-semibold text-fg">{t('flashGallery.requestTitle', { title: selectedPiece.title })}</h1>
             <p className="mt-1 text-sm text-fg-secondary">
-              ${(selectedPiece.priceCents / 100).toFixed(2)} &middot; ~{formatDurationHours(selectedPiece.estimatedDurationMinutes)}
-              {selectedPiece.isOneOfOne && ' · One of one -- first request wins'}
+              ${(selectedPiece.priceCents / 100).toFixed(2)} &middot; {t('flashGallery.durationApprox', { duration: formatDurationHours(selectedPiece.estimatedDurationMinutes) })}
+              {selectedPiece.isOneOfOne && ` ${t('flashGallery.oneOfOneFirstRequestWins')}`}
             </p>
 
             <form onSubmit={handleSubmit} className="mt-6 space-y-4">
               <div>
-                <label className="mb-1 block text-sm font-medium text-fg-secondary">Your phone number *</label>
+                <label className="mb-1 block text-sm font-medium text-fg-secondary">{t('flashGallery.phoneNumber')}</label>
                 <div className="flex gap-2">
                   <PhoneInput value={phone} onChange={setPhone} disabled={lookupState !== 'idle'} className={INPUT_CLASS} />
                   {lookupState === 'idle' && (
@@ -265,29 +280,29 @@ export default function FlashPublicGallery() {
                       onClick={handleLookup}
                       className="mt-1 shrink-0 rounded-lg border border-border px-3 py-2 text-sm font-medium text-fg transition hover:bg-surface-inset"
                     >
-                      Continue
+                      {t('flashGallery.continueButton')}
                     </button>
                   )}
                 </div>
-                {lookupState === 'checking' && <p className="mt-1 text-xs text-fg-muted">Checking…</p>}
+                {lookupState === 'checking' && <p className="mt-1 text-xs text-fg-muted">{t('flashGallery.checking')}</p>}
                 {lookupError && <p className="mt-1 text-xs text-danger">{lookupError}</p>}
                 {lookupState === 'found' && (
-                  <p className="mt-1 text-xs text-success">Welcome back, {firstName}!</p>
+                  <p className="mt-1 text-xs text-success">{t('flashGallery.welcomeBack', { firstName })}</p>
                 )}
               </div>
 
               {lookupState === 'not-found' && (
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
-                    <label className="mb-1 block text-sm font-medium text-fg-secondary">First name *</label>
+                    <label className="mb-1 block text-sm font-medium text-fg-secondary">{t('flashGallery.firstName')}</label>
                     <input type="text" value={firstName} onChange={(e) => setFirstName(e.target.value)} className={INPUT_CLASS} />
                   </div>
                   <div>
-                    <label className="mb-1 block text-sm font-medium text-fg-secondary">Last name *</label>
+                    <label className="mb-1 block text-sm font-medium text-fg-secondary">{t('flashGallery.lastName')}</label>
                     <input type="text" value={lastName} onChange={(e) => setLastName(e.target.value)} className={INPUT_CLASS} />
                   </div>
                   <div className="sm:col-span-2">
-                    <label className="mb-1 block text-sm font-medium text-fg-secondary">Email *</label>
+                    <label className="mb-1 block text-sm font-medium text-fg-secondary">{t('flashGallery.email')}</label>
                     <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={INPUT_CLASS} />
                   </div>
                 </div>
@@ -296,10 +311,10 @@ export default function FlashPublicGallery() {
               {(lookupState === 'found' || lookupState === 'not-found') && (
                 <>
                   <div>
-                    <label className="mb-1 block text-sm font-medium text-fg-secondary">Where would you like this placed? *</label>
+                    <label className="mb-1 block text-sm font-medium text-fg-secondary">{t('flashGallery.placementPrompt')}</label>
                     <textarea
                       rows={2}
-                      placeholder="e.g. outer left forearm"
+                      placeholder={t('flashGallery.placementPlaceholder')}
                       value={placementDescription}
                       onChange={(e) => setPlacementDescription(e.target.value)}
                       className={INPUT_CLASS}
@@ -307,8 +322,8 @@ export default function FlashPublicGallery() {
                   </div>
 
                   <ImageUploadSection
-                    label="Photo of the placement area *"
-                    hint="A photo of the area so the artist can plan sizing/placement."
+                    label={t('flashGallery.placementPhotoLabel')}
+                    hint={t('flashGallery.placementPhotoHint')}
                     onChange={setPlacementPhoto}
                     uploadFn={uploadImageToCloudinary}
                   />
@@ -320,7 +335,7 @@ export default function FlashPublicGallery() {
                     disabled={submitting || placementPhoto.uploading}
                     className="w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
                   >
-                    {submitting ? 'Sending…' : 'Send request'}
+                    {submitting ? t('flashGallery.sending') : t('flashGallery.sendRequest')}
                   </button>
                 </>
               )}

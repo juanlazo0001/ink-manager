@@ -8,6 +8,8 @@ import PublicPageFooter from '../components/PublicPageFooter'
 import SignaturePadField, { type SignaturePadHandle } from '../components/SignaturePadField'
 import PaymentFlowStages from '../components/payments/PaymentFlowStages'
 import PaymentConfirmationStage from '../components/payments/PaymentConfirmationStage'
+import { LocaleProvider, useTranslations } from '../i18n'
+import LanguagePicker from '../i18n/LanguagePicker'
 
 // Embedded payments migration: this page is one of the platform's own
 // "Editorial Gold, never studio-themed" pages now (same login-shell
@@ -74,13 +76,41 @@ interface VerifyResponse {
   terms: Term[]
 }
 
+// Multi-language public forms: this page's own hardcoded 8-clause
+// agreement (Term.label from the API) is platform copy, not studio
+// content -- see routes/deposits.ts's TERMS array and the Part 1
+// investigation's Finding 1. Term.key is still the API's own source of
+// truth for WHICH terms exist and in what order; Term.label itself is
+// ignored in favor of this lookup, so the platform copy is translated
+// here, once, rather than trusting whatever single-locale text the API
+// happens to send.
+const TERM_TRANSLATION_KEYS: Record<string, Parameters<ReturnType<typeof useTranslations>['t']>[0]> = {
+  agreedNonRefundable: 'deposit.terms.agreedNonRefundable',
+  agreedLatePolicy: 'deposit.terms.agreedLatePolicy',
+  agreedNoShowForfeit: 'deposit.terms.agreedNoShowForfeit',
+  agreedNewDepositAfterNoShow: 'deposit.terms.agreedNewDepositAfterNoShow',
+  agreedRescheduleLimit: 'deposit.terms.agreedRescheduleLimit',
+  agreedExpiration: 'deposit.terms.agreedExpiration',
+  agreedIdAndVoucher: 'deposit.terms.agreedIdAndVoucher',
+  agreedAge18: 'deposit.terms.agreedAge18',
+}
+
 export default function DepositResponse() {
+  return (
+    <LocaleProvider>
+      <DepositResponseContent />
+    </LocaleProvider>
+  )
+}
+
+function DepositResponseContent() {
+  const { t } = useTranslations()
   const { token } = useParams<{ token: string }>()
   const [searchParams] = useSearchParams()
   const justReturnedFromStripe = searchParams.get('paid') === '1'
 
   const [state, setState] = useState<PageState>('loading')
-  const [invalidMessage, setInvalidMessage] = useState('This link is invalid or has expired.')
+  const [invalidMessage, setInvalidMessage] = useState(t('common.linkExpiredHeading'))
   const [verifyData, setVerifyData] = useState<VerifyResponse | null>(null)
 
   const [agreed, setAgreed] = useState<Record<string, boolean>>({})
@@ -127,7 +157,7 @@ export default function DepositResponse() {
             }
           })
           .catch((err) => {
-            setInvalidMessage(err instanceof Error ? err.message : 'This link is invalid or has expired.')
+            setInvalidMessage(err instanceof Error ? err.message : t('common.linkExpiredHeading'))
             setState('invalid')
             setConfirmingPayment(false)
           })
@@ -135,6 +165,7 @@ export default function DepositResponse() {
 
       load()
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [token],
   )
 
@@ -150,18 +181,18 @@ export default function DepositResponse() {
     if (!token || !verifyData) return
 
     if (!allAgreed) {
-      setSubmitError('Please agree to every term before signing.')
+      setSubmitError(t('deposit.pleaseAgreeToEveryTerm'))
       return
     }
 
     if (signatureName.trim().length === 0) {
-      setSubmitError('Please type your full name.')
+      setSubmitError(t('deposit.pleaseTypeFullName'))
       return
     }
 
     if (!signaturePadRef.current || signaturePadRef.current.isEmpty()) {
       setSignatureEmptyError(true)
-      setSubmitError('Please sign before submitting.')
+      setSubmitError(t('common.pleaseSignBeforeSubmitting'))
       return
     }
 
@@ -199,7 +230,7 @@ export default function DepositResponse() {
         setState('success')
       }
     } catch (err) {
-      setSubmitError(err instanceof ApiError ? err.message : 'Something went wrong. Please try again.')
+      setSubmitError(err instanceof ApiError ? err.message : t('common.somethingWentWrong'))
     } finally {
       setSubmitting(false)
     }
@@ -213,7 +244,7 @@ export default function DepositResponse() {
       const { url } = await apiFetch<{ url: string }>(`/deposits/${token}/checkout-session`, { method: 'POST' })
       window.location.href = url
     } catch (err) {
-      setPayError(err instanceof ApiError ? err.message : 'Something went wrong. Please try again.')
+      setPayError(err instanceof ApiError ? err.message : t('common.somethingWentWrong'))
       setPayingNow(false)
     }
   }
@@ -242,11 +273,12 @@ export default function DepositResponse() {
         if (!ignore) setEmbeddedSecret(data)
       })
       .catch((err) => {
-        if (!ignore) setEmbeddedLoadError(err instanceof ApiError ? err.message : 'Something went wrong. Please try again.')
+        if (!ignore) setEmbeddedLoadError(err instanceof ApiError ? err.message : t('common.somethingWentWrong'))
       })
     return () => {
       ignore = true
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showEmbedded, token, embeddedSecret])
 
   function handleEmbeddedPaid() {
@@ -257,23 +289,24 @@ export default function DepositResponse() {
   return (
     <div className="login-shell flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
       <div className="login-panel-surface w-full max-w-lg px-4 py-8 sm:p-8">
-        {state === 'loading' && <p className="text-center text-sm text-fg-secondary">Loading…</p>}
+        <div className="mb-4 flex justify-end">
+          <LanguagePicker />
+        </div>
+
+        {state === 'loading' && <p className="text-center text-sm text-fg-secondary">{t('common.loading')}</p>}
 
         {state === 'invalid' && (
           <div className="text-center">
-            <h1 className="login-jura text-xl font-semibold text-fg">This link has expired</h1>
+            <h1 className="login-jura text-xl font-semibold text-fg">{t('common.linkExpiredHeading')}</h1>
             <p className="mt-2 text-sm text-fg-secondary">{invalidMessage}</p>
-            <p className="mt-4 text-sm text-fg-secondary">Please contact the studio to request a new deposit form.</p>
+            <p className="mt-4 text-sm text-fg-secondary">{t('deposit.linkExpiredBody')}</p>
           </div>
         )}
 
         {state === 'success' && (
           <div className="text-center">
-            <h1 className="login-jura text-xl font-semibold text-fg">Thanks — you're all set!</h1>
-            <p className="mt-2 text-sm text-fg-secondary">
-              Your signed deposit form has been received. No payment has been collected yet — the studio will reach
-              out to collect your deposit and confirm your appointment.
-            </p>
+            <h1 className="login-jura text-xl font-semibold text-fg">{t('deposit.receivedNoPaymentHeading')}</h1>
+            <p className="mt-2 text-sm text-fg-secondary">{t('deposit.receivedNoPaymentBody')}</p>
           </div>
         )}
 
@@ -286,20 +319,14 @@ export default function DepositResponse() {
                 studioName: verifyData.studioName,
               }}
               amountCents={dollarsToCents(verifyData.totalCharged)}
-              heading="Payment received"
-              body={
-                verifyData.paidVia === 'STRIPE'
-                  ? "We've received your payment and confirmed your appointment."
-                  : 'The studio has recorded your payment and confirmed your appointment.'
-              }
+              heading={t('deposit.paidHeading')}
+              body={verifyData.paidVia === 'STRIPE' ? t('deposit.paidHeadingStripe') : t('deposit.paidHeadingManual')}
             />
 
             {verifyData.referralProgramEnabled && (
               <div className="mt-5 rounded-lg border border-accent/30 bg-accent/5 p-4 text-left">
-                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Know someone else who'd love this?</p>
-                <p className="mt-1 text-sm text-fg-secondary">
-                  Share your referral code — when a friend you refer pays their own deposit, you'll earn a reward.
-                </p>
+                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('deposit.shareReferralHeading')}</p>
+                <p className="mt-1 text-sm text-fg-secondary">{t('deposit.shareReferralBody')}</p>
                 <p className="mt-2 text-center font-mono text-lg font-semibold tracking-widest text-fg">
                   {verifyData.clientReferralCode}
                 </p>
@@ -310,8 +337,8 @@ export default function DepositResponse() {
 
         {state === 'ready' && verifyData && !verifyData.paidVia && confirmingPayment && (
           <div className="text-center">
-            <h1 className="login-jura text-xl font-semibold text-fg">Confirming your payment…</h1>
-            <p className="mt-2 text-sm text-fg-secondary">This should only take a moment.</p>
+            <h1 className="login-jura text-xl font-semibold text-fg">{t('deposit.confirmingPayment')}</h1>
+            <p className="mt-2 text-sm text-fg-secondary">{t('deposit.confirmingPaymentBody')}</p>
           </div>
         )}
 
@@ -330,36 +357,35 @@ export default function DepositResponse() {
               }}
               headlineAmountCents={dollarsToCents(verifyData.totalCharged)}
               breakdown={[
-                { label: 'Deposit', valueCents: dollarsToCents(verifyData.depositAmount) },
-                { label: 'Fee', valueCents: dollarsToCents(verifyData.feeAmount) },
+                { label: t('deposit.depositLabel'), valueCents: dollarsToCents(verifyData.depositAmount) },
+                { label: t('deposit.feeLabel'), valueCents: dollarsToCents(verifyData.feeAmount) },
               ]}
               payment={embeddedSecret}
               paymentLoadError={embeddedLoadError}
               returnUrl={`${window.location.origin}/deposit/${token}?paid=1`}
-              successHeading="Payment received"
-              successBody="We've received your payment and confirmed your appointment."
+              successHeading={t('deposit.paidHeading')}
+              successBody={t('deposit.paidHeadingStripe')}
               onPaid={handleEmbeddedPaid}
             />
           ) : (
             <div>
-              <h1 className="login-jura text-xl font-semibold text-fg">Deposit Agreement Signed</h1>
+              <h1 className="login-jura text-xl font-semibold text-fg">{t('deposit.agreementSignedHeading')}</h1>
               <p className="mt-1 text-sm font-medium text-fg-secondary">{verifyData.studioName}</p>
               <p className="mt-2 text-sm text-fg-secondary">
-                {verifyData.clientFirstName}, your agreement is on file. Pay your deposit below to confirm your
-                appointment.
+                {t('deposit.agreementSignedBody', { firstName: verifyData.clientFirstName })}
               </p>
 
               <div className="mt-4 grid grid-cols-3 gap-3">
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Deposit</p>
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('deposit.depositLabel')}</p>
                   <p className="mt-1 text-lg font-semibold text-fg">${verifyData.depositAmount}</p>
                 </div>
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Fee</p>
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('deposit.feeLabel')}</p>
                   <p className="mt-1 text-lg font-semibold text-fg">${verifyData.feeAmount}</p>
                 </div>
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Total</p>
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('deposit.totalLabel')}</p>
                   <p className="mt-1 text-lg font-semibold text-fg">${verifyData.totalCharged}</p>
                 </div>
               </div>
@@ -380,7 +406,7 @@ export default function DepositResponse() {
                 disabled={payingNow}
                 className="mt-6 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
               >
-                {payingNow ? 'Redirecting…' : `Pay $${verifyData.totalCharged}`}
+                {payingNow ? t('deposit.redirecting') : t('deposit.payAmount', { amount: `$${verifyData.totalCharged}` })}
               </button>
             </div>
           ))}
@@ -392,17 +418,14 @@ export default function DepositResponse() {
           verifyData.signedAt &&
           !verifyData.stripeConnected && (
             <div className="text-center">
-              <h1 className="login-jura text-xl font-semibold text-fg">Thanks — you're all set!</h1>
-              <p className="mt-2 text-sm text-fg-secondary">
-                Your signed deposit form has been received. No payment has been collected yet — the studio will
-                reach out to collect your deposit and confirm your appointment.
-              </p>
+              <h1 className="login-jura text-xl font-semibold text-fg">{t('deposit.receivedNoPaymentHeading')}</h1>
+              <p className="mt-2 text-sm text-fg-secondary">{t('deposit.receivedNoPaymentBody')}</p>
             </div>
         )}
 
         {state === 'ready' && verifyData && !verifyData.paidVia && !confirmingPayment && !verifyData.signedAt && (
           <div>
-            <h1 className="login-jura text-xl font-semibold text-fg">Deposit Agreement</h1>
+            <h1 className="login-jura text-xl font-semibold text-fg">{t('deposit.agreementHeading')}</h1>
             <p className="mt-1 text-sm font-medium text-fg-secondary">{verifyData.studioName}</p>
             {verifyData.artistName && (
               <div className="mt-3 flex items-center gap-2">
@@ -411,13 +434,15 @@ export default function DepositResponse() {
               </div>
             )}
             <p className="mt-2 text-sm text-fg-secondary">
-              {verifyData.clientFirstName}, please review and sign below to confirm your appointment
-              {verifyData.artistName ? ` with ${verifyData.artistName}` : ''}.
+              {t('deposit.agreementIntro', {
+                firstName: verifyData.clientFirstName,
+                withArtist: verifyData.artistName ? t('deposit.withArtistSuffix', { artistName: verifyData.artistName }) : '',
+              })}
             </p>
 
             {verifyData.appointmentStart && verifyData.appointmentEnd && (
               <div className="mt-4 rounded-lg border border-border p-3">
-                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Appointment</p>
+                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('deposit.appointmentLabel')}</p>
                 <p className="mt-1 text-sm text-fg">
                   {formatDateTime(verifyData.appointmentStart)} – {formatDateTime(verifyData.appointmentEnd)}
                 </p>
@@ -428,11 +453,11 @@ export default function DepositResponse() {
                 purely informational and never implies a confirmed booking. */}
             {!verifyData.appointmentStart && verifyData.proposedStartAt && verifyData.proposedEndAt && (
               <div className="mt-4 rounded-lg border border-border bg-surface-inset p-3">
-                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Tentative Time</p>
+                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('deposit.tentativeTimeLabel')}</p>
                 <p className="mt-1 text-sm text-fg">
-                  Your appointment will be tentatively scheduled for{' '}
-                  {formatDateTime(verifyData.proposedStartAt)} – {formatDateTime(verifyData.proposedEndAt)}, pending
-                  your deposit. We'll confirm exact scheduling once payment is received.
+                  {t('deposit.tentativeTimeBody', {
+                    range: `${formatDateTime(verifyData.proposedStartAt)} – ${formatDateTime(verifyData.proposedEndAt)}`,
+                  })}
                 </p>
               </div>
             )}
@@ -442,12 +467,17 @@ export default function DepositResponse() {
             {verifyData.plannedSession && (
               <div className="mt-4 rounded-lg border border-border bg-surface-inset p-3">
                 <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
-                  Session {verifyData.plannedSession.sessionNumber} of {verifyData.plannedSession.totalSessions}
+                  {t('deposit.sessionOf', {
+                    n: verifyData.plannedSession.sessionNumber,
+                    total: verifyData.plannedSession.totalSessions,
+                  })}
                 </p>
                 {verifyData.plannedSession.estimatedHoursMin != null && verifyData.plannedSession.estimatedHoursMax != null && (
                   <p className="mt-1 text-sm text-fg">
-                    Estimated {verifyData.plannedSession.estimatedHoursMin}-{verifyData.plannedSession.estimatedHoursMax}{' '}
-                    hours
+                    {t('deposit.estimatedHours', {
+                      min: verifyData.plannedSession.estimatedHoursMin,
+                      max: verifyData.plannedSession.estimatedHoursMax,
+                    })}
                   </p>
                 )}
               </div>
@@ -455,15 +485,15 @@ export default function DepositResponse() {
 
             <div className="mt-4 grid grid-cols-3 gap-3">
               <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Deposit</p>
+                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('deposit.depositLabel')}</p>
                 <p className="mt-1 text-lg font-semibold text-fg">${verifyData.depositAmount}</p>
               </div>
               <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Fee</p>
+                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('deposit.feeLabel')}</p>
                 <p className="mt-1 text-lg font-semibold text-fg">${verifyData.feeAmount}</p>
               </div>
               <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Total</p>
+                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('deposit.totalLabel')}</p>
                 <p className="mt-1 text-lg font-semibold text-fg">${verifyData.totalCharged}</p>
               </div>
             </div>
@@ -473,7 +503,7 @@ export default function DepositResponse() {
             )}
 
             <form onSubmit={handleSubmit} className="mt-6 space-y-3">
-              <p className="text-sm font-medium text-fg-secondary">Please read and agree to each term:</p>
+              <p className="text-sm font-medium text-fg-secondary">{t('deposit.pleaseReadAndAgree')}</p>
 
               {verifyData.terms.map((term) => (
                 <label
@@ -486,12 +516,12 @@ export default function DepositResponse() {
                     onChange={(e) => setAgreed({ ...agreed, [term.key]: e.target.checked })}
                     className="mt-0.5 h-4 w-4 shrink-0 rounded border-border bg-surface-inset accent-accent"
                   />
-                  <span>{term.label}</span>
+                  <span>{TERM_TRANSLATION_KEYS[term.key] ? t(TERM_TRANSLATION_KEYS[term.key]) : term.label}</span>
                 </label>
               ))}
 
               <div>
-                <label className="mb-1 block text-sm font-medium text-fg-secondary">Type your full name</label>
+                <label className="mb-1 block text-sm font-medium text-fg-secondary">{t('deposit.typeFullName')}</label>
                 <input
                   type="text"
                   value={signatureName}
@@ -502,7 +532,7 @@ export default function DepositResponse() {
 
               <SignaturePadField
                 ref={signaturePadRef}
-                label="Sign below"
+                label={t('common.signBelow')}
                 showError={signatureEmptyError}
                 onClear={() => setSignatureEmptyError(false)}
               />
@@ -518,7 +548,7 @@ export default function DepositResponse() {
                 disabled={submitting || !allAgreed}
                 className="w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
               >
-                {submitting ? 'Submitting…' : 'Sign and Confirm'}
+                {submitting ? t('deposit.submitting') : t('deposit.signAndConfirm')}
               </button>
             </form>
           </div>

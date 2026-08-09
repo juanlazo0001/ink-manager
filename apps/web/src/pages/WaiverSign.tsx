@@ -8,6 +8,8 @@ import PhoneInput from '../components/PhoneInput'
 import { applyThemePreset } from '../lib/themePresets'
 import PublicPageFooter from '../components/PublicPageFooter'
 import SignaturePadField, { type SignaturePadHandle } from '../components/SignaturePadField'
+import { LocaleProvider, useTranslations } from '../i18n'
+import LanguagePicker from '../i18n/LanguagePicker'
 
 const INPUT_CLASS =
   'mt-1 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
@@ -47,9 +49,18 @@ function isAtLeast18(dob: string): boolean {
 }
 
 export default function WaiverSign() {
+  return (
+    <LocaleProvider>
+      <WaiverSignContent />
+    </LocaleProvider>
+  )
+}
+
+function WaiverSignContent() {
+  const { t } = useTranslations()
   const { token } = useParams<{ token: string }>()
   const [state, setState] = useState<PageState>('loading')
-  const [invalidMessage, setInvalidMessage] = useState('This link is invalid or has expired.')
+  const [invalidMessage, setInvalidMessage] = useState(t('common.linkExpiredHeading'))
   const [data, setData] = useState<VerifyResponse | null>(null)
 
   const [legalName, setLegalName] = useState('')
@@ -87,13 +98,14 @@ export default function WaiverSign() {
       })
       .catch((err) => {
         if (ignore) return
-        setInvalidMessage(err instanceof Error ? err.message : 'This link is invalid or has expired.')
+        setInvalidMessage(err instanceof Error ? err.message : t('common.linkExpiredHeading'))
         setState('invalid')
       })
 
     return () => {
       ignore = true
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
 
   async function handleIdImageChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -110,7 +122,7 @@ export default function WaiverSign() {
       const url = await uploadImageToCloudinary(file)
       setIdImageUrl(url)
     } catch (err) {
-      setIdImageError(err instanceof Error ? err.message : 'Upload failed')
+      setIdImageError(err instanceof Error ? err.message : t('waiver.uploadFailed'))
     } finally {
       setIdImageUploading(false)
     }
@@ -147,18 +159,18 @@ export default function WaiverSign() {
     setSubmitError(null)
 
     if (!isAtLeast18(dateOfBirth)) {
-      setSubmitError('You must be 18 or older to be tattooed in North Carolina.')
+      setSubmitError(t('waiver.ageRequirement'))
       return
     }
 
     if (!canSubmit) {
-      setSubmitError('Please complete every required field before signing.')
+      setSubmitError(t('waiver.pleaseCompleteEveryField'))
       return
     }
 
     if (!signaturePadRef.current || signaturePadRef.current.isEmpty()) {
       setSignatureEmptyError(true)
-      setSubmitError('Please sign before submitting.')
+      setSubmitError(t('common.pleaseSignBeforeSubmitting'))
       return
     }
 
@@ -167,7 +179,7 @@ export default function WaiverSign() {
       (!photoReleaseSignaturePadRef.current || photoReleaseSignaturePadRef.current.isEmpty())
     ) {
       setPhotoReleaseSignatureEmptyError(true)
-      setSubmitError('Please sign the photo/video release before submitting.')
+      setSubmitError(t('waiver.pleaseSignPhotoRelease'))
       return
     }
 
@@ -202,7 +214,7 @@ export default function WaiverSign() {
 
       setState('success')
     } catch (err) {
-      setSubmitError(err instanceof ApiError ? err.message : 'Something went wrong. Please try again.')
+      setSubmitError(err instanceof ApiError ? err.message : t('common.somethingWentWrong'))
     } finally {
       setSubmitting(false)
     }
@@ -211,39 +223,44 @@ export default function WaiverSign() {
   return (
     <div className="min-h-screen bg-bg px-4 py-8 text-fg">
       <div className="mx-auto w-full max-w-lg">
-        {state === 'loading' && <p className="text-center text-sm text-fg-secondary">Loading…</p>}
+        <div className="mb-4 flex justify-end">
+          <LanguagePicker />
+        </div>
+
+        {state === 'loading' && <p className="text-center text-sm text-fg-secondary">{t('common.loading')}</p>}
 
         {state === 'invalid' && (
           <div className="rounded-2xl card-surface border border-border bg-surface p-6 text-center">
-            <h1 className="text-xl font-semibold text-fg">This link isn't available</h1>
+            <h1 className="text-xl font-semibold text-fg">{t('waiver.linkUnavailableHeading')}</h1>
             <p className="mt-2 text-sm text-fg-secondary">{invalidMessage}</p>
-            <p className="mt-4 text-sm text-fg-secondary">Please ask the front desk for a new link.</p>
+            <p className="mt-4 text-sm text-fg-secondary">{t('waiver.linkUnavailableBody')}</p>
           </div>
         )}
 
         {state === 'success' && (
           <div className="rounded-2xl card-surface border border-border bg-surface p-6 text-center">
-            <h1 className="text-xl font-semibold text-fg">Thanks — you're all set!</h1>
-            <p className="mt-2 text-sm text-fg-secondary">
-              Your waiver has been received. Please have your government ID ready for the front desk to verify.
-            </p>
+            <h1 className="text-xl font-semibold text-fg">{t('waiver.receivedHeading')}</h1>
+            <p className="mt-2 text-sm text-fg-secondary">{t('waiver.receivedBody')}</p>
           </div>
         )}
 
         {state === 'ready' && data && (
           <div className="rounded-2xl card-surface border border-border bg-surface p-5">
-            <h1 className="text-xl font-bold text-fg">Liability Waiver</h1>
+            <h1 className="text-xl font-bold text-fg">{t('waiver.pageHeading')}</h1>
             <p className="mt-1 text-sm text-fg-secondary">{data.studioName}</p>
             <p className="mt-1 text-sm text-fg-secondary">
-              Appointment: {formatDateTime(data.appointmentStart)} – {formatDateTime(data.appointmentEnd)}
+              {t('waiver.appointmentRange', {
+                start: formatDateTime(data.appointmentStart),
+                end: formatDateTime(data.appointmentEnd),
+              })}
             </p>
 
             <form onSubmit={handleSubmit} className="mt-6 space-y-6">
               <section className="space-y-4">
-                <h2 className="text-sm font-semibold text-fg">Personal details</h2>
+                <h2 className="text-sm font-semibold text-fg">{t('waiver.personalDetails')}</h2>
 
                 <div>
-                  <label className={LABEL_CLASS}>Legal name *</label>
+                  <label className={LABEL_CLASS}>{t('waiver.legalName')}</label>
                   <input
                     type="text"
                     value={legalName}
@@ -254,7 +271,7 @@ export default function WaiverSign() {
                 </div>
 
                 <div>
-                  <label className={LABEL_CLASS}>Date of birth *</label>
+                  <label className={LABEL_CLASS}>{t('waiver.dateOfBirth')}</label>
                   <input
                     type="date"
                     value={dateOfBirth}
@@ -263,14 +280,12 @@ export default function WaiverSign() {
                     className={INPUT_CLASS}
                   />
                   {dateOfBirth.length > 0 && !isAtLeast18(dateOfBirth) && (
-                    <p className="mt-1 text-xs text-danger">
-                      You must be 18 or older to be tattooed in North Carolina.
-                    </p>
+                    <p className="mt-1 text-xs text-danger">{t('waiver.ageRequirement')}</p>
                   )}
                 </div>
 
                 <div>
-                  <label className={LABEL_CLASS}>Emergency contact name *</label>
+                  <label className={LABEL_CLASS}>{t('waiver.emergencyContactName')}</label>
                   <input
                     type="text"
                     value={emergencyContactName}
@@ -281,7 +296,7 @@ export default function WaiverSign() {
                 </div>
 
                 <div>
-                  <label className={LABEL_CLASS}>Emergency contact phone *</label>
+                  <label className={LABEL_CLASS}>{t('waiver.emergencyContactPhone')}</label>
                   <PhoneInput
                     value={emergencyContactPhone}
                     onChange={setEmergencyContactPhone}
@@ -292,7 +307,7 @@ export default function WaiverSign() {
               </section>
 
               <section className="space-y-4 border-t border-border pt-6">
-                <h2 className="text-sm font-semibold text-fg">Health screening</h2>
+                <h2 className="text-sm font-semibold text-fg">{t('waiver.healthScreening')}</h2>
 
                 {data.healthQuestions.map((q, i) => (
                   <div key={i} className="rounded-lg border border-border p-3">
@@ -313,7 +328,7 @@ export default function WaiverSign() {
                             required
                             className="accent-accent"
                           />
-                          {option === 'YES' ? 'Yes' : 'No'}
+                          {option === 'YES' ? t('intake.yesOption') : t('intake.noOption')}
                         </label>
                       ))}
                     </div>
@@ -321,7 +336,7 @@ export default function WaiverSign() {
                     {q.type === 'yes_no_explain' && healthAnswers[i]?.answer === 'YES' && (
                       <textarea
                         rows={2}
-                        placeholder={q.explainPrompt ?? 'Please explain'}
+                        placeholder={q.explainPrompt ?? t('waiver.explainPlaceholder')}
                         value={healthAnswers[i]?.explanation ?? ''}
                         onChange={(e) =>
                           setHealthAnswers({
@@ -337,30 +352,30 @@ export default function WaiverSign() {
               </section>
 
               <section className="space-y-3 border-t border-border pt-6">
-                <h2 className="text-sm font-semibold text-fg">Photo ID</h2>
-                <p className="text-xs text-fg-muted">Take or upload a clear photo of your government-issued ID.</p>
+                <h2 className="text-sm font-semibold text-fg">{t('waiver.photoId')}</h2>
+                <p className="text-xs text-fg-muted">{t('waiver.photoIdHint')}</p>
 
                 {idImagePreview && (
                   <img src={idImagePreview} alt="ID preview" className="max-h-48 rounded-lg border border-border" />
                 )}
 
                 <label className="inline-block cursor-pointer rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface">
-                  {idImageUrl ? 'Change photo' : 'Upload ID photo'}
+                  {idImageUrl ? t('waiver.changePhoto') : t('waiver.uploadIdPhoto')}
                   <input type="file" accept="image/*" capture="environment" onChange={handleIdImageChange} className="hidden" />
                 </label>
 
-                {idImageUploading && <p className="text-xs text-fg-secondary">Uploading…</p>}
+                {idImageUploading && <p className="text-xs text-fg-secondary">{t('waiver.uploading')}</p>}
                 {idImageError && <p className="text-xs text-danger">{idImageError}</p>}
               </section>
 
               <section className="space-y-3 border-t border-border pt-6">
-                <h2 className="text-sm font-semibold text-fg">Please read and initial each clause</h2>
+                <h2 className="text-sm font-semibold text-fg">{t('waiver.readAndInitial')}</h2>
 
                 {data.clauses.map((clause, i) => (
                   <div key={i} className="rounded-lg border border-border p-3">
                     <p className="text-sm text-fg-secondary">{clause}</p>
                     <div className="mt-2 flex items-center gap-2">
-                      <label className="text-xs text-fg-muted">Initials *</label>
+                      <label className="text-xs text-fg-muted">{t('waiver.initials')}</label>
                       <input
                         type="text"
                         maxLength={6}
@@ -375,7 +390,7 @@ export default function WaiverSign() {
 
               {data.acknowledgment && (
                 <section className="space-y-2 border-t border-border pt-6">
-                  <h2 className="text-sm font-semibold text-fg">Acknowledgment</h2>
+                  <h2 className="text-sm font-semibold text-fg">{t('waiver.acknowledgment')}</h2>
                   {/* acknowledgmentSnapshot may hold rich HTML (Phase UI-3's
                       WYSIWYG editor) or older plain text -- sanitized either way. */}
                   <div
@@ -386,7 +401,7 @@ export default function WaiverSign() {
               )}
 
               <section className="space-y-3 border-t border-border pt-6">
-                <label className={LABEL_CLASS}>Signature — type your full legal name *</label>
+                <label className={LABEL_CLASS}>{t('waiver.signatureLabel')}</label>
                 <input
                   type="text"
                   value={signatureName}
@@ -396,7 +411,7 @@ export default function WaiverSign() {
                 />
                 <SignaturePadField
                   ref={signaturePadRef}
-                  label="Sign below *"
+                  label={t('waiver.signBelowRequired')}
                   showError={signatureEmptyError}
                   onClear={() => setSignatureEmptyError(false)}
                 />
@@ -404,10 +419,8 @@ export default function WaiverSign() {
 
               {data.photoRelease && (
                 <section className="space-y-3 rounded-lg border border-border p-4">
-                  <h2 className="text-sm font-semibold text-fg">Photo/video release (optional)</h2>
-                  <p className="text-xs text-fg-muted">
-                    Optional — you may decline without affecting your appointment.
-                  </p>
+                  <h2 className="text-sm font-semibold text-fg">{t('waiver.photoReleaseHeading')}</h2>
+                  <p className="text-xs text-fg-muted">{t('waiver.photoReleaseHint')}</p>
                   <div
                     className="tiptap-content whitespace-pre-wrap text-sm text-fg-secondary"
                     dangerouslySetInnerHTML={{ __html: sanitizeHtml(data.photoRelease) }}
@@ -420,12 +433,12 @@ export default function WaiverSign() {
                       onChange={(e) => setPhotoReleaseAccepted(e.target.checked)}
                       className="mt-0.5 h-4 w-4 shrink-0 rounded border-border bg-surface-inset accent-accent"
                     />
-                    I agree to the photo/video release above
+                    {t('waiver.photoReleaseAgree')}
                   </label>
 
                   {photoReleaseAccepted && (
                     <div className="space-y-3">
-                      <label className={LABEL_CLASS}>Signature for photo release *</label>
+                      <label className={LABEL_CLASS}>{t('waiver.photoReleaseSignatureLabel')}</label>
                       <input
                         type="text"
                         value={photoReleaseSignatureName}
@@ -434,7 +447,7 @@ export default function WaiverSign() {
                       />
                       <SignaturePadField
                         ref={photoReleaseSignaturePadRef}
-                        label="Sign below *"
+                        label={t('waiver.signBelowRequired')}
                         showError={photoReleaseSignatureEmptyError}
                         onClear={() => setPhotoReleaseSignatureEmptyError(false)}
                       />
@@ -454,7 +467,7 @@ export default function WaiverSign() {
                 disabled={submitting || !canSubmit}
                 className="w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
               >
-                {submitting ? 'Submitting…' : 'Sign Waiver'}
+                {submitting ? t('waiver.submitting') : t('waiver.signWaiver')}
               </button>
             </form>
           </div>

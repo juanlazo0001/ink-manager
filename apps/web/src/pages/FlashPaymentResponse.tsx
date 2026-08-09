@@ -4,6 +4,8 @@ import { apiFetch, ApiError } from '../lib/api'
 import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import PublicPageFooter from '../components/PublicPageFooter'
 import PaymentFlowStages from '../components/payments/PaymentFlowStages'
+import { LocaleProvider, useTranslations } from '../i18n'
+import LanguagePicker from '../i18n/LanguagePicker'
 
 // Embedded payments migration: same fixed Editorial Gold platform
 // treatment as DepositResponse.tsx now (login-shell) -- applyThemePreset
@@ -29,13 +31,22 @@ interface VerifyResponse {
 }
 
 export default function FlashPaymentResponse() {
+  return (
+    <LocaleProvider>
+      <FlashPaymentResponseContent />
+    </LocaleProvider>
+  )
+}
+
+function FlashPaymentResponseContent() {
+  const { t } = useTranslations()
   const { token } = useParams<{ token: string }>()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const justReturnedFromStripe = searchParams.get('paid') === '1'
 
   const [state, setState] = useState<PageState>('loading')
-  const [invalidMessage, setInvalidMessage] = useState('This link is invalid or has expired.')
+  const [invalidMessage, setInvalidMessage] = useState(t('common.linkExpiredHeading'))
   const [verifyData, setVerifyData] = useState<VerifyResponse | null>(null)
   const [confirmingPayment, setConfirmingPayment] = useState(justReturnedFromStripe)
 
@@ -74,7 +85,7 @@ export default function FlashPaymentResponse() {
             }
           })
           .catch((err) => {
-            setInvalidMessage(err instanceof Error ? err.message : 'This link is invalid or has expired.')
+            setInvalidMessage(err instanceof Error ? err.message : t('common.linkExpiredHeading'))
             setState('invalid')
             setConfirmingPayment(false)
           })
@@ -82,6 +93,7 @@ export default function FlashPaymentResponse() {
 
       load()
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [token, navigate],
   )
 
@@ -98,7 +110,7 @@ export default function FlashPaymentResponse() {
       const { url } = await apiFetch<{ url: string }>(`/flash-payment/checkout/${token}`, { method: 'POST' })
       window.location.href = url
     } catch (err) {
-      setPayError(err instanceof ApiError ? err.message : 'Something went wrong. Please try again.')
+      setPayError(err instanceof ApiError ? err.message : t('common.somethingWentWrong'))
       setPayingNow(false)
     }
   }
@@ -120,11 +132,12 @@ export default function FlashPaymentResponse() {
         if (!ignore) setEmbeddedSecret(data)
       })
       .catch((err) => {
-        if (!ignore) setEmbeddedLoadError(err instanceof ApiError ? err.message : 'Something went wrong. Please try again.')
+        if (!ignore) setEmbeddedLoadError(err instanceof ApiError ? err.message : t('common.somethingWentWrong'))
       })
     return () => {
       ignore = true
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showEmbedded, token, embeddedSecret])
 
   function handleEmbeddedPaid() {
@@ -135,20 +148,24 @@ export default function FlashPaymentResponse() {
   return (
     <div className="login-shell flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
       <div className="login-panel-surface w-full max-w-lg px-4 py-8 sm:p-8">
-        {state === 'loading' && <p className="text-center text-sm text-fg-secondary">Loading…</p>}
+        <div className="mb-4 flex justify-end">
+          <LanguagePicker />
+        </div>
+
+        {state === 'loading' && <p className="text-center text-sm text-fg-secondary">{t('common.loading')}</p>}
 
         {state === 'invalid' && (
           <div className="text-center">
-            <h1 className="login-jura text-xl font-semibold text-fg">This link has expired</h1>
+            <h1 className="login-jura text-xl font-semibold text-fg">{t('common.linkExpiredHeading')}</h1>
             <p className="mt-2 text-sm text-fg-secondary">{invalidMessage}</p>
-            <p className="mt-4 text-sm text-fg-secondary">Please contact the studio to request a new payment link.</p>
+            <p className="mt-4 text-sm text-fg-secondary">{t('flashPayment.linkExpiredBody')}</p>
           </div>
         )}
 
         {state === 'ready' && verifyData && confirmingPayment && (
           <div className="text-center">
-            <h1 className="login-jura text-xl font-semibold text-fg">Confirming your payment…</h1>
-            <p className="mt-2 text-sm text-fg-secondary">This should only take a moment.</p>
+            <h1 className="login-jura text-xl font-semibold text-fg">{t('flashPayment.confirmingPayment')}</h1>
+            <p className="mt-2 text-sm text-fg-secondary">{t('flashPayment.confirmingPaymentBody')}</p>
           </div>
         )}
 
@@ -169,8 +186,8 @@ export default function FlashPaymentResponse() {
             payment={embeddedSecret}
             paymentLoadError={embeddedLoadError}
             returnUrl={`${window.location.origin}/flash-payment/${token}?paid=1`}
-            successHeading="Payment received"
-            successBody="Your flash booking is locked in -- taking you to pick a time now."
+            successHeading={t('flashPayment.paymentReceivedHeading')}
+            successBody={t('flashPayment.paymentReceivedBody')}
             onPaid={handleEmbeddedPaid}
           />
         )}
@@ -184,10 +201,13 @@ export default function FlashPaymentResponse() {
             {verifyData.studioLogoUrl && (
               <img src={verifyData.studioLogoUrl} alt={verifyData.studioName} className="mb-4 h-10 w-auto object-contain" />
             )}
-            <h1 className="login-jura text-xl font-semibold text-fg">Complete your flash booking</h1>
+            <h1 className="login-jura text-xl font-semibold text-fg">{t('flashPayment.pageHeading')}</h1>
             <p className="mt-1 text-sm text-fg-secondary">
-              Hi {verifyData.clientFirstName}, your request for "{verifyData.pieceTitle}" was approved by{' '}
-              {verifyData.studioName}. Pay in full below to lock in your booking and pick a time.
+              {t('flashPayment.intro', {
+                firstName: verifyData.clientFirstName,
+                pieceTitle: verifyData.pieceTitle ?? '',
+                studioName: verifyData.studioName,
+              })}
             </p>
 
             <div className="mt-5 flex items-center gap-3 rounded-xl border border-border bg-surface-inset p-3">
@@ -209,10 +229,7 @@ export default function FlashPaymentResponse() {
             </div>
 
             {!verifyData.stripeConnected ? (
-              <p className="mt-5 text-sm text-fg-secondary">
-                Online payment isn't available for this studio right now -- please contact them directly to complete
-                payment.
-              </p>
+              <p className="mt-5 text-sm text-fg-secondary">{t('flashPayment.paymentUnavailable')}</p>
             ) : (
               <>
                 {payError && <p className="mt-4 text-sm text-danger">{payError}</p>}
@@ -223,8 +240,10 @@ export default function FlashPaymentResponse() {
                   className="mt-5 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
                 >
                   {payingNow
-                    ? 'Redirecting…'
-                    : `Pay ${verifyData.priceCents != null ? `$${(verifyData.priceCents / 100).toFixed(2)}` : 'now'}`}
+                    ? t('flashPayment.redirecting')
+                    : verifyData.priceCents != null
+                      ? t('flashPayment.payAmount', { amount: `$${(verifyData.priceCents / 100).toFixed(2)}` })
+                      : t('flashPayment.payNow')}
                 </button>
               </>
             )}

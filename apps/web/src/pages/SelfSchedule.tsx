@@ -8,6 +8,8 @@ import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import { applyThemePreset } from '../lib/themePresets'
 import PublicPageFooter from '../components/PublicPageFooter'
 import { toDateString, parseDateString } from '../components/DateAndTimeRangeFields'
+import { LocaleProvider, useTranslations } from '../i18n'
+import LanguagePicker from '../i18n/LanguagePicker'
 
 // Token-lifecycle bug fix: 'alreadyBooked' is new -- a client revisiting
 // their own link after their booking already completed (see
@@ -24,12 +26,6 @@ function invalidKindFromStatus(status: number | undefined): InvalidKind {
   if (status === 409) return 'superseded'
   if (status === 410) return 'expired'
   return 'invalid'
-}
-
-const INVALID_HEADINGS: Record<InvalidKind, string> = {
-  invalid: 'This link is invalid',
-  expired: 'This link has expired',
-  superseded: 'A newer link was sent',
 }
 
 interface TimeSlot {
@@ -72,10 +68,26 @@ function formatTimeOnly(iso: string): string {
 const CALENDAR_MONTHS_AHEAD = 4
 
 export default function SelfSchedule() {
+  return (
+    <LocaleProvider>
+      <SelfScheduleContent />
+    </LocaleProvider>
+  )
+}
+
+function SelfScheduleContent() {
+  const { t } = useTranslations()
+
+  const INVALID_HEADINGS: Record<InvalidKind, string> = {
+    invalid: t('common.linkInvalidHeading'),
+    expired: t('common.linkExpiredHeading'),
+    superseded: t('common.linkSupersededHeading'),
+  }
+
   const { token } = useParams<{ token: string }>()
   const [state, setState] = useState<PageState>('loading')
   const [invalidKind, setInvalidKind] = useState<InvalidKind>('invalid')
-  const [invalidMessage, setInvalidMessage] = useState('This link is invalid or has expired.')
+  const [invalidMessage, setInvalidMessage] = useState(t('common.linkExpiredHeading'))
   const [verifyData, setVerifyData] = useState<VerifyResponse | null>(null)
   const [alreadyBookedData, setAlreadyBookedData] = useState<AlreadyBookedResponse | null>(null)
   const [confirmed, setConfirmed] = useState<{ startTime: string; endTime: string } | null>(null)
@@ -110,13 +122,14 @@ export default function SelfSchedule() {
       .catch((err) => {
         if (ignore) return
         setInvalidKind(invalidKindFromStatus(err instanceof ApiError ? err.status : undefined))
-        setInvalidMessage(err instanceof Error ? err.message : 'This link is invalid or has expired.')
+        setInvalidMessage(err instanceof Error ? err.message : t('common.linkExpiredHeading'))
         setState('invalid')
       })
 
     return () => {
       ignore = true
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
 
   function selectDate(date: string) {
@@ -129,7 +142,7 @@ export default function SelfSchedule() {
 
     apiFetch<{ slots: TimeSlot[] }>(`/self-schedule/slots/${token}?date=${date}`)
       .then((data) => setSlots(data.slots))
-      .catch((err) => setSlotsError(err instanceof Error ? err.message : 'Failed to load times for this date'))
+      .catch((err) => setSlotsError(err instanceof Error ? err.message : t('selfSchedule.failedToLoadTimes')))
       .finally(() => setSlotsLoading(false))
   }
 
@@ -151,7 +164,7 @@ export default function SelfSchedule() {
       // selection) both land here as a plain message -- re-fetching the
       // date's slots isn't attempted automatically; picking the date again
       // (or another one) refreshes it.
-      setSubmitError(err instanceof ApiError ? err.message : 'Something went wrong. Please try again.')
+      setSubmitError(err instanceof ApiError ? err.message : t('common.somethingWentWrong'))
     } finally {
       setSubmitting(false)
     }
@@ -164,7 +177,11 @@ export default function SelfSchedule() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
       <div className="w-full max-w-lg rounded-2xl card-surface border border-border bg-surface p-8">
-        {state === 'loading' && <p className="text-center text-sm text-fg-secondary">Loading…</p>}
+        <div className="mb-4 flex justify-end">
+          <LanguagePicker />
+        </div>
+
+        {state === 'loading' && <p className="text-center text-sm text-fg-secondary">{t('common.loading')}</p>}
 
         {state === 'invalid' && (
           <div className="text-center">
@@ -172,29 +189,28 @@ export default function SelfSchedule() {
             <p className="mt-2 text-sm text-fg-secondary">{invalidMessage}</p>
             <p className="mt-4 text-sm text-fg-secondary">
               {invalidKind === 'superseded'
-                ? 'Please check your messages for the newest link.'
-                : 'Please contact the studio to schedule your appointment.'}
+                ? t('common.pleaseCheckMessagesForNewestLink')
+                : t('selfSchedule.invalidBodyByKind.expired')}
             </p>
           </div>
         )}
 
         {state === 'alreadyBooked' && alreadyBookedData && (
           <div className="text-center">
-            <h1 className="text-xl font-semibold text-fg">You're all set, {alreadyBookedData.clientFirstName}!</h1>
+            <h1 className="text-xl font-semibold text-fg">{t('selfSchedule.alreadyBookedHeading', { firstName: alreadyBookedData.clientFirstName })}</h1>
             <p className="mt-2 text-sm text-fg-secondary">
-              You've already booked your appointment with {alreadyBookedData.studioName}. They'll be in touch if
-              anything changes.
+              {t('selfSchedule.alreadyBookedBody', { studioName: alreadyBookedData.studioName })}
             </p>
           </div>
         )}
 
         {state === 'success' && confirmed && (
           <div className="text-center">
-            <h1 className="text-xl font-semibold text-fg">Request sent!</h1>
+            <h1 className="text-xl font-semibold text-fg">{t('selfSchedule.requestSentHeading')}</h1>
             <p className="mt-2 text-sm text-fg-secondary">
-              You've requested {formatDateTime(confirmed.startTime)} – {formatDateTime(confirmed.endTime)}. The
-              studio will confirm this time shortly -- it's not booked yet, so keep an eye out for a message from
-              them.
+              {t('selfSchedule.requestSentBody', {
+                range: `${formatDateTime(confirmed.startTime)} – ${formatDateTime(confirmed.endTime)}`,
+              })}
             </p>
           </div>
         )}
@@ -208,22 +224,20 @@ export default function SelfSchedule() {
                 className="mb-4 h-10 w-auto object-contain"
               />
             )}
-            <h1 className="text-xl font-semibold text-fg">Pick a time</h1>
+            <h1 className="text-xl font-semibold text-fg">{t('selfSchedule.pageHeading')}</h1>
             <p className="mt-1 text-sm font-medium text-fg-secondary">{verifyData.studioName}</p>
             <div className="mt-3 flex items-center gap-2.5">
               <FlatArtistAvatar name={verifyData.artistName} avatarUrl={verifyData.artistAvatarUrl} className="h-8 w-8" />
               <p className="text-sm text-fg-secondary">
-                {verifyData.clientFirstName}, here's {verifyData.artistName}'s real availability.
+                {t('selfSchedule.intro', { firstName: verifyData.clientFirstName, artistName: verifyData.artistName })}
               </p>
             </div>
 
             {verifyData.availableDates.length === 0 ? (
-              <p className="mt-5 text-sm text-fg-secondary">
-                No open times found right now -- please contact the studio directly to schedule.
-              </p>
+              <p className="mt-5 text-sm text-fg-secondary">{t('selfSchedule.noOpenTimes')}</p>
             ) : (
               <>
-                <p className="mt-5 text-xs font-medium uppercase tracking-wider text-fg-muted">Choose a date</p>
+                <p className="mt-5 text-xs font-medium uppercase tracking-wider text-fg-muted">{t('selfSchedule.chooseDate')}</p>
                 <div className="mt-2 flex justify-center rounded-xl border border-border bg-surface-inset p-2">
                   <DayPicker
                     mode="single"
@@ -259,16 +273,16 @@ export default function SelfSchedule() {
                 {selectedDate && (
                   <div className="mt-4">
                     <p className="mb-1.5 text-xs font-medium uppercase tracking-wider text-fg-muted">
-                      Available times on {parseDateString(selectedDate)?.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
+                      {t('selfSchedule.availableTimesOn', {
+                        date: parseDateString(selectedDate)?.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }) ?? '',
+                      })}
                     </p>
 
-                    {slotsLoading && <p className="text-sm text-fg-secondary">Loading times…</p>}
+                    {slotsLoading && <p className="text-sm text-fg-secondary">{t('selfSchedule.loadingTimes')}</p>}
                     {slotsError && <p className="text-sm text-danger">{slotsError}</p>}
 
                     {!slotsLoading && !slotsError && slots.length === 0 && (
-                      <p className="text-sm text-fg-secondary">
-                        No open times left on this date -- please pick another.
-                      </p>
+                      <p className="text-sm text-fg-secondary">{t('selfSchedule.noOpenTimesOnDate')}</p>
                     )}
 
                     <div className="flex flex-wrap gap-2">
@@ -295,8 +309,7 @@ export default function SelfSchedule() {
             )}
 
             <p className="mt-5 rounded-lg border border-border bg-surface-inset p-3 text-xs text-fg-secondary">
-              Picking a time sends a request to {verifyData.studioName} -- it's not a confirmed booking until they
-              get back to you.
+              {t('selfSchedule.requestDisclaimer', { studioName: verifyData.studioName })}
             </p>
 
             {submitError && (
@@ -312,7 +325,7 @@ export default function SelfSchedule() {
                 disabled={!selectedSlot || submitting}
                 className="w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
               >
-                {submitting ? 'Requesting…' : 'Request this time'}
+                {submitting ? t('selfSchedule.requesting') : t('selfSchedule.requestThisTime')}
               </button>
             </div>
           </div>

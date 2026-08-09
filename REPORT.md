@@ -12096,3 +12096,61 @@ but not yet imported anywhere.
 No schema changes this slice. Continues on `explore/multi-language-public-forms` in the same
 `ink-manager-w-i18n-schema` worktree Part 2 used. REPORT.md line count before this entry: 12050
 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Multi-language public forms -- Part 3, second slice: wiring `t()` into all six flows + the language picker
+
+Every hardcoded platform string across all eight page files (the six named flows -- intake,
+estimate response, deposit, waiver, self-scheduling, flash -- flash being two pages, gallery and
+payment, plus the estimate-revision page that shares the estimate flow's own concerns) now routes
+through `t()`, and `LanguagePicker` is mounted on every one of them.
+
+## Real copy drift caught along the way
+
+Two of `en.ts`'s draft strings (written from the Part 1 agent's own inventory, before this slice
+actually opened each file) didn't match what's actually shipping today -- `EstimateResponse.tsx`'s
+`BUDGET_TOO_HIGH`/`DECLINE` success bodies read differently than the inventory's paraphrase,
+almost certainly from the concurrent session's own UX-redesign work touching this same page in
+parallel. Caught by diffing the dictionary against the real file before wiring, not after --
+fixed in both `en.ts` and `es.ts` to match the live text exactly, plus a few genuinely-missed
+strings the inventory's own representative-sampling approach hadn't called out individually
+(`selfSchedule.failedToLoadTimes`, `estimate.sessionLabel`).
+
+## Finding 1, actually implemented
+
+The deposit page's `terms[].label` and the estimate page's `collaborativeDesignPolicy` -- both
+confirmed platform-owned in Part 1's investigation -- are now rendered from `t()` unconditionally,
+with the API's own returned English values for those two fields **ignored on purpose** (each
+render site has a comment explaining why). `Term.key` from `deposits.ts`'s own `TERMS` array is
+still the API's job -- it's the one place that knows which 8 clauses exist and in what order --
+just no longer trusted for the display text itself.
+
+## The one real design gap found while wiring, not anticipated in Part 1
+
+`t()`'s `{{var}}` interpolation is plain string substitution -- it can't embed a real `<a>` element
+mid-sentence. Both SMS-consent paragraphs (the phone field's own, and the bottom-of-form opt-in)
+originally interpolated "Privacy Policy"/"Terms" as link text into the middle of one long sentence.
+Restructured into three pieces per paragraph -- a translated lead-in ending right before the links
+(`intake.smsOptInBody`, ending at "...Reply STOP to opt out."), a small translated connector word
+(`intake.viewOurPrivacyAndTerms` / `intake.seeOurPrivacyAndTerms`, "View our" vs. "See our" -- these
+were two different verbs in the original English, not one reused string), then two real `<a>`
+elements using existing `common.privacyPolicy`/a new `common.terms` (the intake page's own link
+text is literally "Terms," not "Terms & Conditions" -- a third, shorter variant of that word
+already existed once the two other pages' own usages were compared side by side) -- composed
+directly in JSX rather than interpolated as a string. No other string in the whole inventory needed
+this treatment; flagging it here since Part 4's Settings UI and any future locale will hit the same
+constraint the moment a studio-authored field needs an inline link, which none currently do.
+
+## Verification
+
+Real dev-server click-through (Playwright, no backend running -- pure frontend behavior, not an
+API integration test): loaded the deposit page, confirmed "This link has expired" in the DOM,
+clicked the "Español" toggle, confirmed the SAME element now reads "Este enlace ha vencido" and the
+body text below it also switched -- the picker actually re-renders live DOM text, not just changes
+internal state nothing reads. `tsc -b --noEmit` clean, `vite build` clean, full API suite unaffected
+(**126/126**, frontend-only change).
+
+## CLAUDE.md hygiene
+
+No schema/API changes this slice -- frontend only. Continues on `explore/multi-language-public-forms`
+in the `ink-manager-w-i18n-schema` worktree. REPORT.md line count before this entry: 12098
+(verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition.
