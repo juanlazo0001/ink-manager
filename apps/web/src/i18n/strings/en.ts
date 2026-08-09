@@ -36,8 +36,13 @@ export const en = {
 
   deposit: {
     linkExpiredBody: 'Please contact the studio to request a new deposit form.',
-    paidHeadingStripe: "We've received your payment and confirmed your appointment.",
-    paidHeadingManual: 'The studio has recorded your payment and confirmed your appointment.',
+    // Deposit confirmation enrichment (main, post-branch-cut): state-aware
+    // now that the appointment card right below carries the real state --
+    // paying a deposit doesn't always produce a real appointment (a
+    // scheduling conflict re-checked at payment time can leave it
+    // unbooked), so this line only claims what's universally true.
+    paidHeadingStripe: "We've received your payment.",
+    paidHeadingManual: 'The studio has recorded your payment.',
     paidHeading: 'Thanks — your deposit is paid!',
     shareReferralHeading: "Know someone else who'd love this?",
     shareReferralBody: "Share your referral code — when a friend you refer pays their own deposit, you'll earn a reward.",
@@ -85,6 +90,26 @@ export const en = {
       agreedExpiration: 'Deposits expire one year after the date they were created.',
       agreedIdAndVoucher: 'Client must bring a government-issued ID and the Deposit Voucher (issued after payment) on the day of the appointment.',
       agreedAge18: 'Client reconfirms they are at least 18 years of age.',
+    },
+    // Deposit confirmation enrichment (main, post-branch-cut): shipped in
+    // English only -- see components/payments/DepositAppointmentCard.tsx
+    // and DepositGiftCardCard.tsx for where these are consumed.
+    appointmentCard: {
+      label: 'Your appointment',
+      notScheduledHeading: 'Not yet scheduled',
+      notScheduledBody:
+        "{{studioName}} will reach out to lock in a time that works{{withArtist}}. You don't need to do anything else right now.",
+      addToCalendar: 'Add to Calendar (.ics)',
+      googleCalendar: 'Google Calendar',
+      // Embedded into the downloaded .ics file / Google Calendar link, not
+      // rendered as page UI -- still user-facing (lands in the client's
+      // own calendar app), so translated the same as everything else here.
+      eventTitle: 'Tattoo session{{withArtist}} — {{studioName}}',
+    },
+    giftCardCard: {
+      label: 'Your deposit voucher',
+      showQrAtStudio: 'Show this QR code at the studio.',
+      validUntil: 'Valid until {{date}}',
     },
   },
 

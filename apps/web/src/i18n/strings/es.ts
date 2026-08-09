@@ -31,8 +31,8 @@ export const es: typeof en = {
 
   deposit: {
     linkExpiredBody: 'Por favor, contacta al estudio para solicitar un nuevo formulario de depósito.',
-    paidHeadingStripe: 'Hemos recibido tu pago y confirmado tu cita.',
-    paidHeadingManual: 'El estudio ha registrado tu pago y confirmado tu cita.',
+    paidHeadingStripe: 'Hemos recibido tu pago.',
+    paidHeadingManual: 'El estudio ha registrado tu pago.',
     paidHeading: '¡Gracias — tu depósito está pagado!',
     shareReferralHeading: '¿Conoces a alguien más a quien le encantaría esto?',
     shareReferralBody: 'Comparte tu código de referido — cuando un amigo que refieras pague su propio depósito, ganarás una recompensa.',
@@ -74,6 +74,20 @@ export const es: typeof en = {
       agreedExpiration: 'Los depósitos vencen un año después de la fecha en que fueron creados.',
       agreedIdAndVoucher: 'El cliente debe traer una identificación oficial con fotografía y el comprobante de depósito (emitido después del pago) el día de la cita.',
       agreedAge18: 'El cliente reconfirma que tiene al menos 18 años de edad.',
+    },
+    appointmentCard: {
+      label: 'Tu cita',
+      notScheduledHeading: 'Aún no programada',
+      notScheduledBody:
+        '{{studioName}} se pondrá en contacto para coordinar un horario que te funcione{{withArtist}}. No necesitas hacer nada más por ahora.',
+      addToCalendar: 'Agregar al calendario (.ics)',
+      googleCalendar: 'Google Calendar',
+      eventTitle: 'Sesión de tatuaje{{withArtist}} — {{studioName}}',
+    },
+    giftCardCard: {
+      label: 'Tu comprobante de depósito',
+      showQrAtStudio: 'Muestra este código QR en el estudio.',
+      validUntil: 'Válido hasta {{date}}',
     },
   },
 

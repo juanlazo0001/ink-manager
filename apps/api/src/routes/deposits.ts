@@ -12,6 +12,9 @@ import { sendClientSms } from "../lib/clientSms";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { callerBelongsToStudio, effectiveRoleAt, hasPermissionAt } from "../lib/artistAccess";
 import { resolveRequestLocale, withLocale, persistClientLocale } from "../lib/contentTranslation";
+import { shortenUrl } from "../lib/shortLinks";
+import { PUBLIC_APP_URL, API_PUBLIC_URL } from "../lib/publicUrl";
+import { serveDataUrl } from "./publicAssets";
 
 // Exact SOP wording, in the order the client must agree to each one.
 const TERMS = [
@@ -139,12 +142,35 @@ publicRouter.get("/verify/:token", async (req, res) => {
           studio: {
             include: {
               settings: {
-                select: { themePreset: true, referralProgramEnabled: true, embeddedPaymentsEnabled: true, defaultLocale: true },
+                select: {
+                  themePreset: true,
+                  referralProgramEnabled: true,
+                  embeddedPaymentsEnabled: true,
+                  defaultLocale: true,
+                  timezone: true,
+                },
               },
+              // Confirmation-screen appointment card: no Appointment/
+              // Inquiry/Artist row anywhere in this schema carries a
+              // locationId (only User.locationId exists, unused by any
+              // listing route today -- see lib/schedulingAssistant.ts's own
+              // comment on this exact gap). This is only fetched to support
+              // the "studio has exactly one location" fallback below, never
+              // to pick among several.
+              locations: { select: { id: true, address: true } },
             },
           },
-          assignedArtist: { include: { user: true } },
-          appointment: true,
+          assignedArtist: {
+            include: {
+              // The one real per-artist location signal that exists --
+              // preferred over the studio-has-one-location fallback below
+              // when set, since it's more specific. name/avatarUrl are the
+              // only other user fields this route ever reads (artistName/
+              // artistAvatarUrl/artistPublicAvatarUrl below).
+              user: { select: { name: true, avatarUrl: true, location: { select: { address: true } } } },
+            },
+          },
+          appointment: { select: { startTime: true, endTime: true } },
           // translations: tiny (at most a couple of locales per studio) --
           // fetched in full and matched in JS rather than a second
           // locale-filtered query, same as every other public verify
@@ -162,8 +188,25 @@ publicRouter.get("/verify/:token", async (req, res) => {
       // PlannedSession, so the page can show "Session 2 of 3 -- estimated
       // 6-8 hours" for context.
       plannedSession: {
-        select: { sessionNumber: true, estimatedHoursMin: true, estimatedHoursMax: true, showDurationToClient: true },
+        select: {
+          sessionNumber: true,
+          estimatedHoursMin: true,
+          estimatedHoursMax: true,
+          showDurationToClient: true,
+          // Confirmation-screen fix: a planned session's own auto-booked
+          // (or already-booked) appointment is NEVER reflected on
+          // Inquiry.appointmentId -- that legacy singular slot is only
+          // ever set for a project's first-ever appointment
+          // (issueGiftCardForPaidDeposit's own comment on this). Without
+          // this, session 2+'s confirmation screen would show session 1's
+          // time (or nothing), not the session this payment just booked.
+          appointment: { select: { startTime: true, endTime: true } },
+        },
       },
+      // Confirmation-screen enrichment: null until paid (issued fresh by
+      // issueGiftCardForPaidDeposit at payment time), so this is also the
+      // natural "has this been paid" signal for the gift-card card below.
+      giftCard: { select: { code: true, amountCents: true, expiresAt: true } },
     },
   });
 
@@ -187,6 +230,59 @@ publicRouter.get("/verify/:token", async (req, res) => {
   const serviceTranslation = inquiry.service.translations.find((t) => t.locale === locale);
   const localizedService = withLocale(inquiry.service, serviceTranslation, ["depositBreakdownNote"]);
 
+  // Multi-session-aware appointment resolution: a planned session's own
+  // resulting appointment (auto-booked, or already-booked via self-
+  // schedule+approve) is never reflected on Inquiry.appointmentId -- only
+  // via PlannedSession.appointmentId. Falls back to the legacy singular
+  // Inquiry.appointmentId for every un-planned deposit form, which covers
+  // both the classic first-session flow and self-schedule+approve (both
+  // set that field). Both null means genuinely not-yet-confirmed --
+  // either no proposed time was ever picked, or auto-book hit a
+  // scheduling conflict and never created an Appointment at all (see
+  // issueGiftCardForPaidDeposit's own comment on that derivation).
+  const resolvedAppointment = depositForm!.plannedSession?.appointment ?? inquiry.appointment ?? null;
+
+  // Best-effort address -- see the query's own comment above on why this
+  // can't be a clean per-appointment lookup. Prefer the assigned artist's
+  // own location; only guess from "the studio has exactly one location"
+  // when that's not set; omit entirely rather than guess wrong for a
+  // multi-location studio with no artist-location signal.
+  const resolvedAddress =
+    inquiry.assignedArtist?.user.location?.address ??
+    (inquiry.studio.locations.length === 1 ? inquiry.studio.locations[0].address : null) ??
+    null;
+
+  // Gift-card card: only ever non-null once paid (issued fresh at payment
+  // time). Shortened the same way every other gift-card link in this app
+  // already is (deposits.ts's own referral-reward SMS, giftCards.ts's
+  // text-receipt action) -- shortenUrl is idempotent by target URL, so
+  // this never creates a duplicate ShortLink row on a repeat page load.
+  const giftCard = depositForm!.giftCard;
+  const giftCardPublicUrl = giftCard ? await shortenUrl(`${PUBLIC_APP_URL}/gift-card/${giftCard.code}`) : null;
+
+  // Hero avatar: deliberately NOT the raw artistAvatarUrl below (a
+  // potentially large inline data: URL, already used unconditionally by
+  // the pre-payment agreement screen, left untouched) -- a real cacheable
+  // image URL instead. FIXED: originally routed through the publicAssets
+  // artist-avatar endpoint (keyed by publicSlug, gated on publishedAt) --
+  // that gate is for the SEPARATE opt-in public marketing/booking page,
+  // and 404s for any artist who hasn't set that up, which is the common
+  // case, not the exception (confirmed live against a real production
+  // artist with a real avatarUrl on file and publicSlug/publishedAt both
+  // null). Scoped by this deposit's own token instead (this route's own
+  // new GET /:token/artist-avatar, right above /verify) -- the same
+  // credential that already governs the raw avatarUrl exposure elsewhere
+  // on this page, so this isn't wider exposure, just a cacheable URL for
+  // the same information. Still null (initials fallback) whenever there's
+  // genuinely no avatar to serve.
+  // API_PUBLIC_URL, not PUBLIC_APP_URL -- this endpoint lives on the API
+  // server (a genuinely different domain from the web frontend, see
+  // lib/publicUrl.ts's own comment), unlike every other link this route
+  // builds (gift-card page, etc.), which all correctly point at the web app.
+  const artistPublicAvatarUrl = inquiry.assignedArtist?.user.avatarUrl
+    ? `${API_PUBLIC_URL}/deposits/${token}/artist-avatar`
+    : null;
+
   res.json({
     resolvedLocale: locale,
     clientFirstName: inquiry.client.firstName,
@@ -207,12 +303,29 @@ publicRouter.get("/verify/:token", async (req, res) => {
     themePreset: inquiry.studio.settings?.themePreset ?? DEFAULT_THEME_PRESET,
     artistName: inquiry.assignedArtist?.user.name ?? null,
     artistAvatarUrl: inquiry.assignedArtist?.user.avatarUrl ?? null,
-    appointmentStart: inquiry.appointment?.startTime ?? null,
-    appointmentEnd: inquiry.appointment?.endTime ?? null,
+    // Confirmation screen: a real cacheable image URL for the hero
+    // specifically -- see the resolution comment above for why this is a
+    // separate field from artistAvatarUrl, not a replacement for it.
+    artistPublicAvatarUrl,
+    appointmentStart: resolvedAppointment?.startTime ?? null,
+    appointmentEnd: resolvedAppointment?.endTime ?? null,
     // Purely informational -- only meaningful once there's no real
     // appointment yet (a real one always takes precedence in the UI).
     proposedStartAt: depositForm!.proposedStartAt,
     proposedEndAt: depositForm!.proposedEndAt,
+    // Confirmation screen: IANA identifier, always present (StudioSettings
+    // itself defaults to "America/New_York") -- the appointment card
+    // states the timezone explicitly rather than letting a client assume
+    // it's in their own.
+    studioTimezone: inquiry.studio.settings?.timezone ?? "America/New_York",
+    studioAddress: resolvedAddress,
+    // Confirmation screen: null until paid. amountCents is the deposit
+    // amount the card was issued for (see issueGiftCardForPaidDeposit),
+    // not necessarily depositAmount below if a future issuance path ever
+    // diverges -- read from the card's own row, not re-derived.
+    giftCard: giftCard
+      ? { code: giftCard.code, amountCents: giftCard.amountCents, expiresAt: giftCard.expiresAt, publicUrl: giftCardPublicUrl }
+      : null,
     depositAmount: depositForm!.depositAmount,
     feeAmount: depositForm!.feeAmount,
     totalCharged: depositForm!.totalCharged,
@@ -264,6 +377,33 @@ publicRouter.patch("/:token/locale", async (req, res) => {
     return res.status(400).json({ error: result.error });
   }
   res.json({ success: true });
+});
+
+// Confirmation-screen hero avatar, fixed: the publicAssets artist-avatar
+// endpoint (keyed by publicSlug, gated on publishedAt) only ever serves an
+// artist who's opted into the SEPARATE public marketing/booking page --
+// most real artists never do that, so it 404s for exactly the common case
+// (confirmed live against production: a real studio's real artist, real
+// avatarUrl on file, publicSlug/publishedAt both null). Scoped by this
+// deposit's own token instead -- the same credential that already governs
+// every other field on this page (including the raw artistAvatarUrl the
+// pre-payment screen shows unconditionally), so this isn't a new/wider
+// exposure, just the same information at a real cacheable URL instead of
+// inline in the JSON payload. No expiry check (matching publicAssets.ts's
+// own simplicity) -- an artist's photo isn't sensitive enough to warrant
+// it, and a stale/expired token still identifies the same real deposit row.
+publicRouter.get("/:token/artist-avatar", async (req, res) => {
+  const token = req.params.token as string;
+
+  const depositForm = await prisma.depositForm.findUnique({
+    where: { token },
+    select: { inquiry: { select: { assignedArtist: { select: { user: { select: { avatarUrl: true } } } } } } },
+  });
+
+  const avatarUrl = depositForm?.inquiry.assignedArtist?.user.avatarUrl;
+  if (!avatarUrl || !serveDataUrl(res, avatarUrl)) {
+    res.status(404).end();
+  }
 });
 
 publicRouter.patch("/sign/:token", async (req, res) => {

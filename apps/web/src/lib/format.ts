@@ -1,12 +1,16 @@
+import { dateLocale, DEFAULT_LOCALE, type Locale } from '../i18n/locales'
+
 export function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 }
 
 // Date only, no time -- for grouping/section headers (e.g. AuditTrail's
 // per-day activity groups) where the full timestamp already shows
-// per-entry and a repeated day label would be noise.
-export function formatDateOnly(iso: string) {
-  return new Date(iso).toLocaleDateString(undefined, { dateStyle: 'medium' })
+// per-entry and a repeated day label would be noise. `locale` defaults to
+// English -- AuditTrail (staff-only, English-only for v1) never passes
+// one; DepositGiftCardCard (public, locale-aware) does.
+export function formatDateOnly(iso: string, locale: Locale = DEFAULT_LOCALE) {
+  return new Date(iso).toLocaleDateString(dateLocale(locale), { dateStyle: 'medium' })
 }
 
 // Service lines: a FLAT-pricing service (e.g. Powder Brows) is entered with
@@ -182,6 +186,29 @@ export function formatRelativeDateTime(iso: string, timeZone: string): string {
   if (dayDiff === 1) return `Yesterday at ${time}`
   if (dayDiff > 1 && dayDiff < 7) return `${dayDiff} days ago`
   return date.toLocaleDateString('en-US', { timeZone, month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+// Deposit confirmation enrichment: the appointment card states the studio's
+// timezone explicitly (per its own design brief) rather than letting a
+// client assume it's shown in their own -- e.g. "Friday, August 15, 2026 at
+// 2:00 PM PDT", not just a bare time. Intl's own `timeZoneName: 'short'`
+// gives the correct abbreviation for the zone at that specific date (PST
+// vs PDT, etc.), not a hardcoded guess.
+// Multi-language public forms closeout: `locale` defaults to English --
+// this function had exactly one call site (DepositAppointmentCard.tsx),
+// shipped hardcoded to 'en-US' before this fix.
+export function formatAppointmentDateTime(iso: string, timeZone: string, locale: Locale = DEFAULT_LOCALE): string {
+  const date = new Date(iso)
+  return date.toLocaleString(dateLocale(locale), {
+    timeZone,
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  })
 }
 
 export function formatPhoneInput(value: string): string {

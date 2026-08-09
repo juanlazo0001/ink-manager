@@ -20,3 +20,12 @@ export const LOCALE_LABELS: Record<Locale, string> = {
   en: 'English',
   es: 'Español',
 };
+
+// Multi-language public forms closeout: es-US, not es-ES -- mirrors the
+// API's own pdfDateLocale (apps/api/src/lib/pdfStrings.ts) for the
+// identical reason: this app's whole audience is US-based, so date FORMAT
+// conventions (MM/DD/YYYY-style ordering) stay consistent with the English
+// version; only the surrounding month/weekday names actually change.
+export function dateLocale(locale: Locale): string {
+  return locale === 'es' ? 'es-US' : 'en-US';
+}

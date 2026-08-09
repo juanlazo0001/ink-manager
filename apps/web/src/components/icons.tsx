@@ -401,3 +401,17 @@ export function DragHandleIcon({ className }: IconProps) {
     </svg>
   )
 }
+
+// Four viewfinder corner brackets -- the universal "scan" affordance
+// (camera/QR scanner apps), used by the front-desk scanner's own nav item.
+export function ScanIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <path d="M3 7V4.5A1.5 1.5 0 0 1 4.5 3H7" strokeLinecap="round" />
+      <path d="M13 3h2.5A1.5 1.5 0 0 1 17 4.5V7" strokeLinecap="round" />
+      <path d="M17 13v2.5a1.5 1.5 0 0 1-1.5 1.5H13" strokeLinecap="round" />
+      <path d="M7 17H4.5A1.5 1.5 0 0 1 3 15.5V13" strokeLinecap="round" />
+      <line x1="3" y1="10" x2="17" y2="10" strokeLinecap="round" />
+    </svg>
+  )
+}

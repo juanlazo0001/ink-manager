@@ -9,10 +9,13 @@
   tree means one session's uncommitted edits are silently visible to,
   and clobberable by, the other. This script is the single entry point
   that guarantees that: it fetches the latest main, creates a fresh
-  worktree on its own branch cut from origin/main, runs a full npm ci
-  in it, and prints the worktree path plus a free dev-port pair so the
-  new session never has to guess or collide with whatever the primary
-  checkout (or another worktree) already has running.
+  worktree on its own branch cut from origin/main, copies every local
+  .env* file (gitignored, so a bare worktree has none -- no DATABASE_URL,
+  nothing works) from the primary checkout into the same relative path,
+  runs a full npm ci in it, and prints the worktree path plus a free
+  dev-port pair so the new session never has to guess or collide with
+  whatever the primary checkout (or another worktree) already has
+  running.
 
 .PARAMETER Name
   Optional label for the worktree directory and branch. Defaults to a
@@ -48,6 +51,21 @@ if (-not $repoRoot) {
 $repoRoot = $repoRoot -replace '/', '\'
 Set-Location $repoRoot
 
+# The PRIMARY checkout's path, not wherever this script happens to be
+# invoked from -- `git rev-parse --show-toplevel` returns whichever
+# worktree you're standing in, including an already-linked one. Running
+# this script from inside an existing worktree (rather than the original
+# clone) would otherwise silently source .env files from that worktree's
+# own (possibly incomplete) copy instead of the canonical primary
+# checkout. `git worktree list --porcelain`'s first `worktree` line is
+# always the original checkout, never a linked one.
+$primaryWorktreeLine = (git worktree list --porcelain | Select-String '^worktree ' | Select-Object -First 1).Line
+$envSourceRoot = ($primaryWorktreeLine -replace '^worktree ', '') -replace '/', '\'
+if (-not $envSourceRoot -or -not (Test-Path $envSourceRoot)) {
+  Write-Warning "Could not resolve the primary checkout's path -- falling back to $repoRoot for .env sourcing."
+  $envSourceRoot = $repoRoot
+}
+
 $parentDir = Split-Path -Parent $repoRoot
 $worktreeDirName = "ink-manager-w-$Name"
 $worktreePath = Join-Path $parentDir $worktreeDirName
@@ -65,6 +83,29 @@ $branchName = "session/$Name"
 Write-Host "Creating worktree at $worktreePath on new branch '$branchName' (from origin/main)..."
 git worktree add -b $branchName $worktreePath origin/main
 if ($LASTEXITCODE -ne 0) { throw 'git worktree add failed -- see output above.' }
+
+# --- Copy local .env files ------------------------------------------
+# A git worktree only ever contains TRACKED files -- every .env* file in
+# this repo (apps/api/.env, apps/api/.env.production, apps/web/.env) is
+# gitignored, so a brand new worktree has no DATABASE_URL at all: prisma
+# commands, npm run dev, and the test suite all fail outright until
+# something puts one there (hit this the hard way building Part 2 of the
+# multi-language-public-forms epic). Mirrors every real .env* file found
+# in the primary checkout into the same relative path in the new
+# worktree, skipping .env.example (already tracked, already present).
+Write-Host "Copying local .env files from the primary checkout ($envSourceRoot) into the new worktree..."
+Get-ChildItem -Path $envSourceRoot -Recurse -Filter '.env*' -File -Force |
+  Where-Object { $_.Name -ne '.env.example' -and $_.FullName -notmatch '\\node_modules\\' } |
+  ForEach-Object {
+    $relativePath = $_.FullName.Substring($envSourceRoot.Length + 1)
+    $destPath = Join-Path $worktreePath $relativePath
+    $destDir = Split-Path -Parent $destPath
+    if (-not (Test-Path $destDir)) {
+      New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+    }
+    Copy-Item -Path $_.FullName -Destination $destPath -Force
+    Write-Host "  Copied $relativePath"
+  }
 
 Write-Host "Running npm ci in the new worktree (repo root, full monorepo install)..."
 Push-Location $worktreePath

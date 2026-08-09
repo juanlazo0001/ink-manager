@@ -24,6 +24,7 @@
     "@tiptap/extension-underline": "^3.28.0",
     "@tiptap/react": "^3.28.0",
     "@tiptap/starter-kit": "^3.28.0",
+    "@zxing/browser": "^0.2.1",
     "dayjs": "^1.11.21",
     "dompurify": "^3.4.12",
     "framer-motion": "^12.42.2",

@@ -12607,3 +12607,393 @@ branch merges.
 No schema/API changes this pass -- test-only. Continues on `explore/multi-language-public-forms`
 in the `ink-manager-w-i18n-schema` worktree. REPORT.md line count before this entry: 12556
 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Deposit confirmation enrichment: appointment + gift card details
+
+Enriches the "Payment received" screen with a state-aware appointment card, a gift-card card (QR +
+amount), and an avatar in the hero -- gated on a hard prerequisite that turned out not to be met.
+
+## Prerequisite check, and an explicit override
+
+The task was scoped to run after the multi-language branch merged, with every new string going
+through `t()`. Checked first: `explore/multi-language-public-forms` is 5 commits deep but **not
+merged** -- its own latest commit is explicitly "Part 5 (partial)," paused mid-verification after a
+Railway-side DB outage, with 4 new tests written and `tsc`-clean but not confirmed passing. Flagged
+this to the user rather than build against unmerged/incomplete infrastructure or duplicate that
+branch's own work. Given three options (finish the i18n branch first, wait, or proceed with
+hardcoded English now structured for an easy `t()` retrofit later), the user chose the third,
+explicitly overriding the original ordering. Every new string in this feature is plain English
+JSX text, same as the rest of this codebase today -- no `t()` scaffolding invented ad hoc.
+
+## Investigation before building -- two real gaps found, not assumed away
+
+**Paying a deposit does not always produce a confirmed appointment.** Traced
+`issueGiftCardForPaidDeposit` (`apps/api/src/lib/deposits.ts:234-599`) in full: the auto-book block
+re-runs `findBufferConflict` at payment time (time has passed since the tentative pick, another
+appointment could have taken the slot) -- a conflict means **no Appointment row is created at all**,
+silently, with no persisted "conflict" flag (derived purely from "paid deposit, no appointment yet,"
+same convention `lib/tasks/schedulingConflict.ts` already uses). The task's own instruction to
+investigate real states first, rather than assume "paid = confirmed," was exactly right -- the
+previous copy's blanket "confirmed your appointment" claim was simply false in this case, silently,
+for however long that's been live.
+
+**A second, unrelated real bug found by tracing the same code path**: `GET /deposits/verify/:token`
+resolved `appointmentStart`/`appointmentEnd` from `inquiry.appointment` -- the project's legacy
+*singular* 1:1 slot, which (per `issueGiftCardForPaidDeposit`'s own comment) is only ever set for a
+project's **first** appointment. A multi-session project's session-2+ deposit form, even after a
+fully successful auto-book, would show session 1's time (or nothing) -- never the session this
+payment actually just booked. Fixed by resolving through `depositForm.plannedSession.appointment`
+first (the correct per-session link) when the deposit form is planned, falling back to
+`inquiry.appointment` only for the classic/self-schedule-approved case (both of which do set that
+field correctly). This is a real, silent, pre-existing bug this feature's own investigation
+surfaced and fixed -- not something introduced by this change.
+
+**No reliable per-appointment address exists in this schema, confirmed rather than assumed.**
+`Appointment` has no `locationId` at all; the only location signal anywhere is `User.locationId`,
+already flagged as an unresolved gap in this codebase's own comment
+(`lib/schedulingAssistant.ts:45-53`: "no clean way to resolve which location an artist belongs
+to"). Resolution used: the assigned artist's own `User.location` when set (the one real signal),
+falling back to "the studio has exactly one `Location`" only when unambiguous, else the address is
+simply omitted -- never guessed wrong for a multi-location studio with no artist-location signal.
+
+## What got built
+
+- **`GET /deposits/verify/:token`** (`apps/api/src/routes/deposits.ts`): the two fixes above, plus
+  new fields -- `studioTimezone` (widened the existing `settings` select to include it),
+  `studioAddress` (best-effort per above), `giftCard: { code, amountCents, expiresAt, publicUrl }`
+  (null until paid; `publicUrl` via the same `shortenUrl` every other gift-card link in this app
+  already uses -- idempotent, so a repeat page load never creates a duplicate `ShortLink` row), and
+  `artistPublicAvatarUrl` (see below).
+- **Hero avatar, via `publicAssets`, not the raw stored avatar**: `PaymentConfirmationStage.tsx`
+  never rendered an avatar at all before this (confirmed by reading it, not assumed) -- added one,
+  circular, above the existing checkmark/heading/amount, matching `PaymentAmountStage`'s own
+  identity-block treatment so a confirmation reached mid-flow and one reached via a fresh visit read
+  identically. Deliberately a *new* field (`artistPublicAvatarUrl`), not a repurposing of the
+  existing `artistAvatarUrl` (a potentially large inline `data:` URL, still used unchanged by the
+  pre-payment agreement screen) -- a real cacheable image URL instead, gated the same way the
+  `publicAssets` endpoint itself gates (published profile + real avatar), falling back to
+  `FlatArtistAvatar`'s initials badge rather than a broken image request when unpublished. **Caught
+  by live verification, not review**: first wired this against `PUBLIC_APP_URL` (the web app's own
+  domain) instead of `API_PUBLIC_URL` (the API's -- a genuinely different Railway service/domain,
+  per `lib/publicUrl.ts`'s own comment) -- silently produced a URL pointing at the wrong service
+  entirely. `tsc` had nothing to say about it (both are plain strings); only actually curling the
+  constructed URL surfaced the 404.
+- **`DepositAppointmentCard.tsx`**: state-aware per the investigation above. Confirmed: explicit
+  studio-timezone date/time (new `formatAppointmentDateTime` in `lib/format.ts`, `Intl` +
+  `timeZoneName: 'short'`, same pattern `formatRelativeDateTime` already established in that file),
+  address when resolved, Add to Calendar (.ics download + Google Calendar link). Needs-scheduling:
+  honest "will reach out" copy, zero calendar buttons, no fabricated time -- verified structurally
+  (a live DOM query counting calendar buttons on this state, not just eyeballing a screenshot).
+- **`lib/calendar.ts`**: `.ics` built as plain UTC (`Z`-suffixed `DTSTART`/`DTEND`) rather than an
+  embedded `VTIMEZONE` block -- the stored `startTime`/`endTime` are already true UTC instants, and
+  every real calendar client converts UTC to the viewer's own local time correctly on its own; this
+  is "timezone-correct" without needing IANA transition-rule data this app has no library for.
+  Artist in `SUMMARY`, address in `LOCATION` (RFC 5545 comma/semicolon/backslash-escaped). Google
+  Calendar link built from the same UTC values. No new npm dependency.
+- **`DepositGiftCardCard.tsx`**: QR via the app's **existing** `components/QrCode.tsx` (wraps the
+  already-installed `qrcode` package) -- the same component `GiftCardResponse.tsx` already uses for
+  this exact gift-card-page context, so no new library needed picking or justifying beyond "reuse
+  what's already proven here." Encodes the *shortened* link (this feature's own brief), not the raw
+  long URL `GiftCardResponse.tsx` itself encodes for its own `window.location.href` case.
+- Order confirmed unchanged: hero -> appointment -> gift card -> referral (the referral block's own
+  JSX/copy untouched, exactly as scoped).
+
+## Verification
+
+Seeded two real (throwaway) studios end-to-end through `issueGiftCardForPaidDeposit` directly (the
+actual production function, not a hand-faked row) -- deliberately different timezones and outcomes:
+
+- **Los Angeles studio, confirmed**: on-page text read "Friday, August 14, 2026 at 1:00 PM PDT" for
+  a stored `20:00:00Z` instant -- `20:00 UTC - 7h (PDT) = 13:00`, correct. Downloaded the real `.ics`
+  a live click produced and inspected its actual bytes (not just the generator function in
+  isolation): `DTSTART:20260814T200000Z` / `DTEND:20260814T220000Z`, `SUMMARY:Tattoo session with
+  Riley Test-Artist — Confirm Test confirmed`, `LOCATION:742 Evergreen Terrace\, Los Angeles\, CA
+  90012` (correctly escaped). This *is* the different-timezone check the task asked for --
+  LA-specific wall-clock time, proven correct against the raw UTC bytes, not just eyeballed.
+- **London studio, needs-scheduling**: forced the real `findBufferConflict` path by seeding a
+  pre-existing overlapping appointment for the same artist before paying -- confirmed
+  `appointmentStart`/`appointmentEnd` both `null` in the API response and zero `Add to Calendar`
+  buttons in the live DOM. Gift card still issued and shown correctly regardless (paying and
+  scheduling are independent, per the investigation).
+- **QR chain, real browser**: read the QR's own `value` prop (the shortened link), then drove an
+  actual browser to that exact URL and confirmed it landed on the real `/gift-card/:code` page with
+  the correct amount/status, zero console errors -- the same navigation a phone's camera app
+  triggers by opening a scanned URL. Literal physical phone-camera scanning isn't something this
+  agent can perform directly (no camera/device access) -- flagged rather than claimed.
+- **Avatar**: confirmed the `publicAssets` URL resolves (`200`, correct `Content-Type`,
+  `Cache-Control`) after patching the test artist with a real (throwaway) avatar image and
+  publishing their profile; rendered correctly in the actual screenshot, not just a 200 in isolation.
+- Zero console/page errors across both full page loads, confirmed via live `console`/`pageerror`
+  listeners, not just an absence of visible red text in a screenshot.
+- `tsc --noEmit` clean (`apps/api`), `tsc --build` + `vite build` clean (`apps/web`), `eslint` clean
+  on every touched frontend file.
+
+## CLAUDE.md hygiene
+
+Both throwaway studios and every row under them deleted after verification (gift cards, appointments,
+planned sessions, deposit forms, inquiries, clients, services, intake forms, artists, locations,
+users, studio settings, audit logs -- the same `AuditLog` FK-before-`Studio`-delete ordering this
+session has hit before). Two `ShortLink` rows created during the QR-chain check were left in place
+(inert, no FK constraint blocks anything, and this dev database already carries months of similar
+test-fixture debris per this session's own earlier finding) rather than spending further round trips
+on a genuinely harmless leftover. All scratch scripts deleted (two seed/cleanup pairs, one avatar
+patcher, one screenshot driver, one QR-chain verifier). Both dev servers stopped, ports confirmed
+free. `playwright` (installed `--no-save`) uninstalled afterward, no lockfile touched. REPORT.md line
+count before this entry: 11676 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Bug fix: deposit confirmation hero avatar falling back to initials
+
+Real production case: Juangi at Black Hive has a real photo on file, but the hero showed his
+initials, not it. Diagnosed against production first, per instruction, not guessed at.
+
+## Diagnosis (read-only against production)
+
+A single read-only query (Railway's own `DATABASE_PUBLIC_URL`, fetched and used within one
+non-persistent command, never printed/logged, no writes) against the real `Artist` row: `avatarUrl
+present: true` (a real 97KB `data:image/webp` blob), but **`publicSlug: null`, `publishedAt:
+null`**. Root cause immediately obvious from that one query, not the fee-basis-style service-domain
+mismatch that was the prime suspect: the previous session's `artistPublicAvatarUrl` field routed
+through `publicAssets.ts`'s `GET /artist-avatar/:publicSlug` endpoint, keyed by `publicSlug` and
+gated on `publishedAt` -- both null for any artist (Juangi, and presumably most real artists) who
+hasn't opted into the *separate*, unrelated public marketing/booking page feature. That gate is
+correct for its original purpose (an OG-preview crawler hitting a truly public, discoverable page
+shouldn't see a photo the artist never agreed to publish) but wrong for this context: the deposit
+confirmation is a private, token-authenticated page that already discloses the same artist's name
+and (via the pre-payment screen's own `artistAvatarUrl`) their raw photo unconditionally, with no
+publish-gate at all. Conflating "has a photo" with "opted into public marketing" was the actual bug,
+not a URL/domain typo this time.
+
+## Fix
+
+New `GET /deposits/:token/artist-avatar` (`apps/api/src/routes/deposits.ts`, right above `/verify`)
+-- scoped by the deposit's own token, the same credential that already governs everything else on
+this page, reusing `publicAssets.ts`'s own decode-and-serve helper (exported as `serveDataUrl`
+rather than duplicated) with no `publishedAt`/`publicSlug` gate at all. `artistPublicAvatarUrl` in
+the verify response now points here whenever `assignedArtist.user.avatarUrl` exists, regardless of
+publish state -- still `null` (initials fallback, unchanged) when there's genuinely no avatar on
+file. Same token pattern this codebase already uses everywhere else for a public,
+unauthenticated-but-scoped resource (CLAUDE.md's own standing rule) -- no new auth mechanism
+invented.
+
+## Verification
+
+Reproduced Juangi's exact real-world shape locally first (real `avatarUrl`, `publicSlug`/
+`publishedAt` both null) plus a genuinely-no-avatar control, before touching production again:
+`artistPublicAvatarUrl` resolves to the new endpoint only for the has-avatar case; the endpoint
+itself returns `200`/correct `Content-Type`/`Cache-Control` for it, a clean `404` for the no-avatar
+artist, and a clean `404` for a nonexistent token (no error, no leak). Screenshotted both states in
+a real mobile-viewport browser: the has-avatar-but-unpublished artist's real photo renders in the
+hero; the genuinely-no-avatar artist still shows the initials badge, unchanged -- confirming the fix
+doesn't regress the fallback path it's specifically supposed to preserve. Full suite 126/126,
+`tsc --noEmit` clean. Live production verification against the real Juangi/Black Hive case happens
+after this deploys (next entry).
+
+## CLAUDE.md hygiene
+
+All scratch scripts deleted (one read-only production diagnostic, one local seed/cleanup pair, one
+screenshot driver). Both dev servers stopped, ports confirmed free. `playwright` uninstalled, no
+lockfile touched. The production read-only query used per-command interactive approval, not a
+standing grant (corrected framing from an earlier session where this was mischaracterized) --
+connection string never printed or logged, no writes made. REPORT.md line count before this entry:
+11809 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Production verification: avatar fix deploy, and a real infra bug it surfaced
+
+The deposit-confirmation avatar fix above deployed, then was re-checked against the real
+Juangi/Black Hive production case per the original instruction ("confirm on the real production
+page," not just locally). First pass after deploy: the hero still fell back to initials -- not the
+bug just fixed (that part was confirmed correct locally and via the endpoint's own status/content-
+type checks), but the constructed URL itself not actually serving in production.
+
+## Root cause: a stale `API_PUBLIC_URL`
+
+`API_PUBLIC_URL` (apps/api's own Railway service domain, distinct from `PUBLIC_APP_URL`, the web
+app's -- the exact confusable pair this feature has hit before) was still set to
+`ink-manager.up.railway.app`, a domain that migrated to the **web** service at some earlier point
+this codebase's history doesn't otherwise record. The API itself now actually lives at
+`api.inkmanager.app` (confirmed against Railway's own auto-injected `RAILWAY_PUBLIC_DOMAIN`/
+`RAILWAY_SERVICE_API_URL` variables, not guessed). Every `artistPublicAvatarUrl` this session's fix
+built was therefore a syntactically correct but practically dead URL -- pointing at a domain the web
+app now owns, not the API. This is an infrastructure misconfiguration, not a code bug, and it
+predates this session's own change; it also means every other consumer of `API_PUBLIC_URL`
+(Twilio's SMS webhook/status-callback URLs, the Gmail OAuth redirect URI) has likely been similarly
+wrong for as long as this drift has existed. Flagged to the user rather than silently patched
+further or silently left -- out of scope to chase down every downstream consumer in this pass.
+
+## Fix and re-verification
+
+Corrected with explicit one-time authorization (`railway variable set
+API_PUBLIC_URL=https://api.inkmanager.app --service api`, triggering a redeploy) -- not a standing
+production-write grant, a single narrowly-scoped exception for this one variable. Re-verified
+end-to-end against the real, live Juangi/Black Hive deposit-confirmation page afterward: the hero
+now renders his actual photo, not the initials fallback. Read-only diagnostic queries throughout
+used per-command interactive approval each time, never a standing grant; the connection string was
+never printed, logged, or echoed; no other production writes were made.
+
+## CLAUDE.md hygiene
+
+No new scratch scripts for this entry (reused the prior entry's already-cleaned-up diagnostic
+approach; nothing new to remove). REPORT.md line count before this entry: 11865 (verified via `git
+show HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Feature: front-desk QR scanner for gift cards
+
+The receiving end of "show this QR at the studio" -- a staff-authenticated scanner page that reads a
+client's gift-card QR (or a manually-typed fallback code) and routes straight to the right admin
+view. Gift cards first, per the task's own scope; every other short-link shape this app produces is
+recognized-but-unsupported rather than silently swallowed into a generic "not found."
+
+## Library choice
+
+`@zxing/browser` (`^0.2.1`) over `jsQR`: `jsQR` has had no release since 2021, `@zxing/browser` is
+actively maintained (checked against the npm registry directly, not assumed). Its
+`BrowserQRCodeReader.decodeFromConstraints` gives a continuous-decode callback keyed to a live
+`getUserMedia` stream, which is exactly the front-desk shape (point phone at a client's screen,
+decode as soon as a frame resolves) rather than a single-shot capture.
+
+## What the QR actually encodes (corrected an assumption mid-build)
+
+The original design assumed the scanned QR would always be a shortened `/s/:code` link, since
+that's the pattern every *texted* public link in this codebase uses. Reading `GiftCardResponse.tsx`
+(the client-facing gift-card page) directly disproved that: its own QR encodes `window.location.
+href` -- the full `/gift-card/:code` page URL, not a shortened link -- and the manual fallback text
+printed underneath is the gift card's own `code` field, not a `ShortLink` code. A short link only
+ever wraps that same URL when it's compressed for SMS; nothing generates a QR of the shortened form.
+`apps/api/src/routes/scan.ts`'s `GET /resolve/:code` resolves all three shapes a scanned/typed
+string can arrive as: a bare gift-card code (manual entry), a full `/gift-card/:code` URL (camera
+scan of the live page), and a `/s/:code` short link (one level of indirection, kept generic per the
+task's own instruction in case a future flow ever does QR a shortened link). Every other known
+`shortenUrl()` shape (deposit, waiver, estimate, estimate-revision, flash-payment, self-schedule,
+flash gallery, intake, the policy pages) is reported as a recognized-but-unsupported record type,
+derived from the URL string alone with no DB lookup -- safe to return honestly rather than folding
+into "not found."
+
+## Cross-studio safety
+
+A gift-card code belonging to a studio the caller has no membership/permission at collapses to the
+exact same 404 as a genuinely nonexistent code -- resolved via `callerBelongsToStudio` +
+`hasPermissionAt(..., "giftCards.view")` against the card's own `studioId`, never the caller's
+token studio (CLAUDE.md's own standing rule). Never a 403: a 403 would itself confirm "a real record
+exists here, you're just not allowed to see it," which is the exact leak this boundary exists to
+prevent.
+
+## Redeem endpoint
+
+No dedicated gift-card redeem endpoint existed before this -- the only prior path to `REDEEMED` was
+as a side effect of a full session checkout's redeem/roll decision. New `POST /gift-cards/:id/redeem`
+(`apps/api/src/routes/giftCards.ts`, directly modeled on the sibling `/void` route): same
+`callerBelongsToStudio` + `hasPermissionAt(..., "giftCards.void")` scoping tier -- spending a card's
+value down is a consuming action, not an issuing one -- same lazy `syncExpiredStatus` before acting,
+same `logAudit` and `emitInvalidation({ type: "giftcard.changed", ... })` shape every other mutation
+in this file already uses. Surfaced in `GiftCardDetail.tsx` as a new "Redeem card" button, gated on
+`canVoid && card.status === 'ACTIVE'`, styled as the page's one positive/gold action next to the
+existing danger-styled "Void card."
+
+## Frontend
+
+`apps/web/src/pages/ScanGiftCard.tsx`: live camera preview (`facingMode: 'environment'`, rear
+camera preferred on mobile) with a manual code-entry field always available underneath, not just on
+camera failure -- front desk can type the printed code even with the camera running. States: camera
+starting/active, permission denied, camera/device unavailable, resolving, and the not-found/
+unsupported-type error message. A decode error on any given frame (no code in view, blur, motion --
+almost always `NotFoundException`) is expected per-frame noise, not surfaced; only a genuinely
+resolved code or a hard `getUserMedia` failure (mapped to denied vs. unavailable by error name)
+changes visible state. New `ScanIcon` (viewfinder-corners glyph) added to `icons.tsx`; new `/scan`
+route wired into `App.tsx` (including `APP_SHELL_SEGMENTS`, so shell navigation doesn't re-fade) and
+a new "Scan" sidebar nav item gated on `giftCards.view`, the same permission the resolve endpoint
+itself checks.
+
+## Verification
+
+All against the DEV database with seeded throwaway studios -- the adversarial cross-studio check
+never touched production, per this session's own explicit scope correction (production access this
+session was authorized for the avatar diagnostic only). `GET /scan/resolve/:code` tested directly
+over real HTTP: own-studio card by bare code (200, correct id), same card by its full page URL (200,
+same id), the same target wrapped in a `ShortLink` (200, same id, proving the indirection path), a
+seeded foreign-studio card's code (clean 404, identical shape to a genuinely invalid code -- the
+adversarial check the task specifically called for), a genuinely invalid code (same 404), and a
+recognized-but-unsupported type (`/deposit/:token`, 200 with `supported: false`).
+
+Browser verification via Playwright at a 390x844 mobile viewport: live (fake-device) camera stream
+attaches and the loading overlay clears; manual entry of the own-studio code redirects to the
+correct gift-card detail page (`$75.00 Gift Card`, `Redeem card` button present); manual entry of
+the foreign-studio code shows a clean "Code not found." with the client staying on `/scan`, no
+studio existence leaked; the Redeem action flips status from `ACTIVE` to `REDEEMED` (confirmed both
+in the UI and via a direct DB read) and the button disappears afterward; re-scanning the now-
+REDEEMED code still routes staff to its detail page (a scan is a lookup, not gated on status); the
+"Scan" nav item renders correctly in the mobile hamburger menu. Camera-permission-denied specifically
+landed in the `unavailable` branch rather than `denied` in this headless CI environment (no real
+camera hardware present at all, so `getUserMedia` fails with `NotFoundError` before permission is
+ever checked) -- both branches share the same fallback-to-manual-entry UI, and the code path for a
+real `NotAllowedError` is implemented and mapped, just not independently triggerable without real
+camera hardware or a fake-video-file rig this pass didn't build.
+
+Full API `tsc --noEmit` and web `tsc -b` both clean; `eslint` clean on every touched/new web file.
+
+## CLAUDE.md hygiene
+
+All scratch scripts (two seed/cleanup script pairs, one debug script, one Playwright driver) and the
+screenshot directory deleted after verification. All seeded DEV rows removed (two throwaway foreign
+studios across two seed runs, their clients, six gift cards, one short link) -- confirmed zero
+remaining via a follow-up count query. The one pre-existing dev API server (already running from
+earlier this session, picked up every change live via `tsx watch`) was left running; the fresh `npm
+run dev:web` instance started for this verification was stopped, port confirmed free. `playwright`
+was already installed from earlier in this session; not reinstalled or removed here. REPORT.md line
+count before this entry: 11905 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Multi-language public forms -- pre-merge closeout, step 1-2: enrichment i18n + main merge
+
+**Step 1 -- deposit confirmation enrichment strings folded into `t()`.** The enrichment above
+(state-aware appointment card, gift-card QR card, hero avatar) shipped to `main` after this
+branch's cut, entirely in hardcoded English, with an explicit documented override to proceed
+without waiting for this branch. Folded in now: `DepositAppointmentCard.tsx`/
+`DepositGiftCardCard.tsx` both call `useTranslations()` (safe -- both only ever render as
+`DepositResponse.tsx` children, always inside its own `<LocaleProvider>`), new
+`deposit.appointmentCard.*`/`deposit.giftCardCard.*` keys added to both `en.ts` and a Spanish
+draft in `es.ts`. `paidHeadingStripe`/`paidHeadingManual` (already `t()`-driven on this branch)
+updated to match main's new, state-accurate English wording ("We've received your payment," not
+"...and confirmed your appointment" -- a deposit payment doesn't always produce a real
+appointment), with matching Spanish updates.
+
+Also translated the `.ics`/Google Calendar event title (`deposit.appointmentCard.eventTitle`) --
+technically not on-page UI text, but still client-facing (lands in their own calendar app), so
+held to the same bar as everything else in this epic.
+
+**A real, separate gap found while doing this**: `formatAppointmentDateTime` (new, one call site)
+hardcoded `'en-US'`, and `formatDateOnly` (pre-existing, two call sites) used the browser's
+ambient locale via `toLocaleDateString(undefined, ...)` -- neither was ever going to show Spanish
+month/weekday names on the Spanish tab regardless of how many strings got `t()`-ified around them.
+Added `dateLocale(locale)` to `apps/web/src/i18n/locales.ts`, mirroring the API's own
+`pdfDateLocale` (`es-US`/`en-US`, not `es-ES`, for the identical "this app's whole audience is
+US-based" reason) -- both date functions now take an optional `locale` param defaulting to
+English, so `AuditTrail.tsx`'s lone staff-facing call site (English-only app, per
+`LocaleContext.tsx`'s own comment) is unaffected while `DepositAppointmentCard`/
+`DepositGiftCardCard` pass the real page locale through.
+
+**Step 2 -- merged latest `main` into the branch.** Three conflicts, all resolved by combining
+both sides rather than picking one: `apps/api/src/routes/deposits.ts` (this branch's locale
+resolution/translation-read logic vs. main's appointment/address/gift-card/avatar resolution logic
+-- both needed, on the same `GET /verify/:token` route, so the `select`/`include` clauses were
+merged field-by-field, not replaced), `apps/web/src/pages/DepositResponse.tsx` (same shape -- kept
+this branch's `t()` calls, updated the underlying English string to match main's new wording, kept
+main's two new card components), and `REPORT.md` (append-only -- both sides' entire set of new
+entries kept, main's appended after this branch's own). `npm ci` re-run to pick up main's new
+`@zxing/browser` dependency (the QR scanner feature). Confirmed no other public-flow page touched
+by main needs i18n treatment -- `GiftCardDetail.tsx`'s new redeem button and `ScanGiftCard.tsx` are
+both staff-facing (front-desk tooling), not one of the six public flows, and staff UI stays
+English-only for v1 per this epic's own standing scope decision.
+
+## Verification
+
+Full API `tsc --noEmit` clean, full API suite **161/161** (unchanged from before the merge -- main
+added no new backend tests). Web `tsc -b --noEmit` clean, production `vite build` clean (same
+pre-existing >500kB chunk-size warning as always, unrelated).
+
+## CLAUDE.md hygiene
+
+No schema changes. Merge commit + this entry both land on `explore/multi-language-public-forms` in
+the `ink-manager-w-i18n-schema` worktree, NOT merged into `main` -- per this task's own explicit
+instruction, stopping here for the Spanish-list native-speaker review before that happens.
+REPORT.md line count before this entry: 12942 (working tree, mid-merge -- both branches' full
+history combined; verified via `wc -l REPORT.md` since `git show HEAD:REPORT.md` mid-merge only
+reflects this branch's own pre-merge tip) -- pure addition on top of both parents.
