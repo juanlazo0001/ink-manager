@@ -1,23 +1,29 @@
 # Platform Spanish strings — review pass needed before merge
 
-**Status: DRAFT.** Every Spanish string below (`apps/web/src/i18n/strings/es.ts` and
-`apps/api/src/lib/pdfStrings.ts`'s `ES` dictionary) was written as a professional first draft, not
-machine-translated, but has **not** had a native-speaker review pass. This document exists so that
-review can happen as one pass over one list, rather than by reading two source files. Once
-reviewed, corrections go back into `es.ts`/`pdfStrings.ts` directly — this file is not itself a
-source of truth, just a reviewable snapshot of one.
+**Status: DRAFT, machine-generated from source.** Every Spanish string below (`apps/web/src/i18n/strings/es.ts`,
+`apps/api/src/lib/pdfStrings.ts`'s `ES` dictionary, `apps/api/src/routes/deposits.ts`'s `TERMS_ES`,
+`apps/api/src/lib/contentTranslation.ts`'s `SYSTEM_FIELD_DEFAULTS_ES`) was written as a professional first
+draft, not machine-translated, but has **not** had a native-speaker review pass. This document is generated
+directly from those four source files (`scripts/generate-es-review.ts`) rather than hand-copied, so it can
+never drift out of sync the way a manually-maintained snapshot can. Once reviewed, corrections go back into
+the four source files directly and this doc gets regenerated -- it is not itself a source of truth.
+
+A `**MISSING**` cell means the key exists in the English dictionary but has no Spanish counterpart --
+should never appear once the source files are consistent (the frontend dictionaries are compile-time
+enforced via `es: typeof en`; the three backend dictionaries are not, so this doc doubles as their only
+completeness check).
 
 ## Conventions used throughout (flag if any of these should change)
 
-- **Register**: informal "tú," not formal "usted" — matches the casual, friendly tone of the
-  English original (e.g. "Hi {{firstName}}," "Let's get you scheduled!").
-- **Dialect**: neutral, broadly-understandable Spanish aimed at a US Hispanic audience (not
-  Spain-specific vocabulary or "vosotros" conjugations) — consistent with this app's US-only scope
-  (10-digit phone validation, North Carolina-specific legal text, `es-US` date formatting).
-- **Punctuation**: inverted question/exclamation marks (¿...?, ¡...!) used per standard Spanish
-  orthography, even though the English original doesn't have an opening mark.
-- **Placeholders**: every `{{var}}` token must appear in the Spanish string in the same form,
-  unchanged — these are substituted programmatically, not part of the reviewable prose itself.
+- **Register**: informal "tú," not formal "usted" — matches the casual, friendly tone of the English
+  original (e.g. "Hi {{firstName}}," "Let's get you scheduled!").
+- **Dialect**: neutral, broadly-understandable Spanish aimed at a US Hispanic audience (not Spain-specific
+  vocabulary or "vosotros" conjugations) — consistent with this app's US-only scope (10-digit phone
+  validation, North Carolina-specific legal text, `es-US` date formatting).
+- **Punctuation**: inverted question/exclamation marks (¿...?, ¡...!) used per standard Spanish orthography,
+  even though the English original doesn't have an opening mark.
+- **Placeholders**: every `{{var}}` token must appear in the Spanish string in the same form, unchanged —
+  these are substituted programmatically, not part of the reviewable prose itself.
 
 ## Frontend platform strings (`apps/web/src/i18n/strings/es.ts`)
 
@@ -44,8 +50,8 @@ source of truth, just a reviewable snapshot of one.
 | Key | English | Spanish (draft) |
 |---|---|---|
 | linkExpiredBody | Please contact the studio to request a new deposit form. | Por favor, contacta al estudio para solicitar un nuevo formulario de depósito. |
-| paidHeadingStripe | We've received your payment and confirmed your appointment. | Hemos recibido tu pago y confirmado tu cita. |
-| paidHeadingManual | The studio has recorded your payment and confirmed your appointment. | El estudio ha registrado tu pago y confirmado tu cita. |
+| paidHeadingStripe | We've received your payment. | Hemos recibido tu pago. |
+| paidHeadingManual | The studio has recorded your payment. | El estudio ha registrado tu pago. |
 | paidHeading | Thanks — your deposit is paid! | ¡Gracias — tu depósito está pagado! |
 | shareReferralHeading | Know someone else who'd love this? | ¿Conoces a alguien más a quien le encantaría esto? |
 | shareReferralBody | Share your referral code — when a friend you refer pays their own deposit, you'll earn a reward. | Comparte tu código de referido — cuando un amigo que refieras pague su propio depósito, ganarás una recompensa. |
@@ -74,22 +80,23 @@ source of truth, just a reviewable snapshot of one.
 | signAndConfirm | Sign and Confirm | Firmar y Confirmar |
 | pleaseAgreeToEveryTerm | Please agree to every term before signing. | Por favor, acepta cada término antes de firmar. |
 | pleaseTypeFullName | Please type your full name. | Por favor, escribe tu nombre completo. |
-
-**deposit.terms.\*** — the platform's 8 fixed deposit-agreement clauses (Finding 1: hardcoded
-platform copy, not studio content — see `routes/deposits.ts`'s own `TERMS` array). **Legal text —
-recommend this specific block gets an actual legal/native-speaker review, not just a fluency
-check**, since these are the exact clauses a client is agreeing to.
-
-| Key | English | Spanish (draft) |
-|---|---|---|
-| agreedNonRefundable | A deposit is required to set an appointment. Deposits are non-refundable and are applied to the final price of the tattoo. | Se requiere un depósito para fijar una cita. Los depósitos no son reembolsables y se aplican al precio final del tatuaje. |
-| agreedLatePolicy | Artists reserve the right to reschedule the appointment if the client is more than 15 minutes late without notification. | Los artistas se reservan el derecho de reprogramar la cita si el cliente llega con más de 15 minutos de retraso sin previo aviso. |
-| agreedNoShowForfeit | A no-call/no-show forfeits the deposit. A 48-hour notice is required to change a scheduled appointment. | La falta de asistencia sin aviso previo resulta en la pérdida del depósito. Se requiere un aviso de 48 horas para cambiar una cita programada. |
-| agreedNewDepositAfterNoShow | After a no-call/no-show, a new deposit is required to set up another appointment. | Después de una falta de asistencia sin aviso previo, se requiere un nuevo depósito para programar otra cita. |
-| agreedRescheduleLimit | Appointments may be rescheduled up to 3 times; the deposit is forfeited on the 3rd reschedule. | Las citas pueden reprogramarse hasta 3 veces; el depósito se pierde en la tercera reprogramación. |
-| agreedExpiration | Deposits expire one year after the date they were created. | Los depósitos vencen un año después de la fecha en que fueron creados. |
-| agreedIdAndVoucher | Client must bring a government-issued ID and the Deposit Voucher (issued after payment) on the day of the appointment. | El cliente debe traer una identificación oficial con fotografía y el comprobante de depósito (emitido después del pago) el día de la cita. |
-| agreedAge18 | Client reconfirms they are at least 18 years of age. | El cliente reconfirma que tiene al menos 18 años de edad. |
+| terms.agreedNonRefundable | A deposit is required to set an appointment. Deposits are non-refundable and are applied to the final price of the tattoo. | Se requiere un depósito para fijar una cita. Los depósitos no son reembolsables y se aplican al precio final del tatuaje. |
+| terms.agreedLatePolicy | Artists reserve the right to reschedule the appointment if the client is more than 15 minutes late without notification. | Los artistas se reservan el derecho de reprogramar la cita si el cliente llega con más de 15 minutos de retraso sin previo aviso. |
+| terms.agreedNoShowForfeit | A no-call/no-show forfeits the deposit. A 48-hour notice is required to change a scheduled appointment. | La falta de asistencia sin aviso previo resulta en la pérdida del depósito. Se requiere un aviso de 48 horas para cambiar una cita programada. |
+| terms.agreedNewDepositAfterNoShow | After a no-call/no-show, a new deposit is required to set up another appointment. | Después de una falta de asistencia sin aviso previo, se requiere un nuevo depósito para programar otra cita. |
+| terms.agreedRescheduleLimit | Appointments may be rescheduled up to 3 times; the deposit is forfeited on the 3rd reschedule. | Las citas pueden reprogramarse hasta 3 veces; el depósito se pierde en la tercera reprogramación. |
+| terms.agreedExpiration | Deposits expire one year after the date they were created. | Los depósitos vencen un año después de la fecha en que fueron creados. |
+| terms.agreedIdAndVoucher | Client must bring a government-issued ID and the Deposit Voucher (issued after payment) on the day of the appointment. | El cliente debe traer una identificación oficial con fotografía y el comprobante de depósito (emitido después del pago) el día de la cita. |
+| terms.agreedAge18 | Client reconfirms they are at least 18 years of age. | El cliente reconfirma que tiene al menos 18 años de edad. |
+| appointmentCard.label | Your appointment | Tu cita |
+| appointmentCard.notScheduledHeading | Not yet scheduled | Aún no programada |
+| appointmentCard.notScheduledBody | {{studioName}} will reach out to lock in a time that works{{withArtist}}. You don't need to do anything else right now. | {{studioName}} se pondrá en contacto para coordinar un horario que te funcione{{withArtist}}. No necesitas hacer nada más por ahora. |
+| appointmentCard.addToCalendar | Add to Calendar (.ics) | Agregar al calendario (.ics) |
+| appointmentCard.googleCalendar | Google Calendar | Google Calendar |
+| appointmentCard.eventTitle | Tattoo session{{withArtist}} — {{studioName}} | Sesión de tatuaje{{withArtist}} — {{studioName}} |
+| giftCardCard.label | Your deposit voucher | Tu comprobante de depósito |
+| giftCardCard.showQrAtStudio | Show this QR code at the studio. | Muestra este código QR en el estudio. |
+| giftCardCard.validUntil | Valid until {{date}} | Válido hasta {{date}} |
 
 ### estimate
 
@@ -122,7 +129,7 @@ check**, since these are the exact clauses a client is agreeing to.
 | declinePrompt | This is a bit more than I expected | Esto es un poco más de lo que esperaba |
 | notMovingForward | No thanks, I'm not moving forward | No, gracias, no voy a continuar |
 | pleaseProvideBudget | Please let us know what budget would work for you. | Por favor, indícanos qué presupuesto funcionaría para ti. |
-| collaborativeDesignPolicy (Finding 1 — platform copy) | No design is drawn in advance — it is created together with the client on the day of the appointment. | Ningún diseño se dibuja con anticipación — se crea junto con el cliente el día de la cita. |
+| collaborativeDesignPolicy | No design is drawn in advance — it is created together with the client on the day of the appointment. | Ningún diseño se dibuja con anticipación — se crea junto con el cliente el día de la cita. |
 
 ### estimateRevision
 
@@ -141,10 +148,6 @@ check**, since these are the exact clauses a client is agreeing to.
 | concernButton | I have a concern about this | Tengo una inquietud sobre esto |
 
 ### waiver
-
-**Note**: `ageRequirement` states North Carolina specifically (a pre-existing, jurisdiction-specific
-string, not new to this translation work — flagged separately in Part 1's own investigation as a
-non-i18n design issue worth revisiting).
 
 | Key | English | Spanish (draft) |
 |---|---|---|
@@ -301,11 +304,47 @@ non-i18n design issue worth revisiting).
 | pleaseAddPlacementPhoto | Please add at least one placement photo. | Por favor, agrega al menos una foto de la ubicación. |
 | pleaseAnswer | Please answer: {{fieldLabel}} | Por favor, responde: {{fieldLabel}} |
 
-## Server-side PDF chrome (`apps/api/src/lib/pdfStrings.ts`)
 
-Distinct runtime from the frontend strings above (server-side, `pdfkit`, no React) — same review
-standard applies. These render on the deposit-agreement and liability-waiver PDFs a client can
-download.
+**deposit.terms.\*** above is a legacy leftover key space -- the actual deposit clauses shown to clients
+come from the API's own `TERMS`/`TERMS_ES` (see the dedicated section below), snapshotted onto
+`DepositForm.termsSnapshot` at sign time. **Legal text — recommend this specific block gets an actual
+legal/native-speaker review, not just a fluency check** (this is the exact text a client legally agrees to).
+
+## Backend platform strings
+
+### Deposit agreement clauses -- platform copy (`apps/api/src/routes/deposits.ts` TERMS/TERMS_ES)
+
+| Key | English | Spanish (draft) |
+|---|---|---|
+| agreedNonRefundable | A deposit is required to set an appointment. Deposits are non-refundable and are applied to the final price of the tattoo. | Se requiere un depósito para fijar una cita. Los depósitos no son reembolsables y se aplican al precio final del tatuaje. |
+| agreedLatePolicy | Artists reserve the right to reschedule the appointment if the client is more than 15 minutes late without notification. | Los artistas se reservan el derecho de reprogramar la cita si el cliente llega con más de 15 minutos de retraso sin previo aviso. |
+| agreedNoShowForfeit | A no-call/no-show forfeits the deposit. A 48-hour notice is required to change a scheduled appointment. | La falta de asistencia sin aviso previo resulta en la pérdida del depósito. Se requiere un aviso de 48 horas para cambiar una cita programada. |
+| agreedNewDepositAfterNoShow | After a no-call/no-show, a new deposit is required to set up another appointment. | Después de una falta de asistencia sin aviso previo, se requiere un nuevo depósito para programar otra cita. |
+| agreedRescheduleLimit | Appointments may be rescheduled up to 3 times; the deposit is forfeited on the 3rd reschedule. | Las citas pueden reprogramarse hasta 3 veces; el depósito se pierde en la tercera reprogramación. |
+| agreedExpiration | Deposits expire one year after the date they were created. | Los depósitos vencen un año después de la fecha en que fueron creados. |
+| agreedIdAndVoucher | Client must bring a government-issued ID and the Deposit Voucher (issued after payment) on the day of the appointment. | El cliente debe traer una identificación oficial con fotografía y el comprobante de depósito (emitido después del pago) el día de la cita. |
+| agreedAge18 | Client reconfirms they are at least 18 years of age. | El cliente reconfirma que tiene al menos 18 años de edad. |
+
+### SYSTEM intake field seed labels (`apps/api/src/lib/intakeFormFields.ts` / `contentTranslation.ts`)
+
+| Key | English | Spanish (draft) |
+|---|---|---|
+| name | Name | Nombre |
+| email | Email | Correo electrónico |
+| phone | Phone | Teléfono |
+| referralSource | How did you hear about us? | ¿Cómo te enteraste de nosotros? |
+| description | Describe the tattoo you want | Describe el tatuaje que quieres |
+| colorOrBlackGrey | Color or Black & Grey? | ¿Color o Negro y Gris? |
+| placement | Placement | Ubicación |
+| size | Estimated size | Tamaño estimado |
+| hasBeenTattooedBefore | Have you been tattooed before? | ¿Te has tatuado antes? |
+| preferredArtist | Preferred artist | Artista preferido |
+| budget | Budget | Presupuesto |
+| desiredTiming | Desired timing | Fecha deseada |
+| referenceImages | Reference images | Imágenes de referencia |
+| placementImages | Placement photos | Fotos de la ubicación |
+
+### PDF chrome (`apps/api/src/lib/pdfStrings.ts`)
 
 | Key | English | Spanish (draft) |
 |---|---|---|
@@ -343,32 +382,16 @@ download.
 | staffVerifiedYes | Staff-verified: Yes, {{date}} by {{name}} | Verificado por el personal: Sí, el {{date}} por {{name}} |
 | staffVerifiedNo | Staff-verified: Not yet verified | Verificado por el personal: Aún no verificado |
 
-## Platform intake-field defaults (`SYSTEM_FIELD_DEFAULTS_ES`, `apps/api/src/lib/contentTranslation.ts`)
 
-The platform's own Spanish label for each of the 14 standard intake fields — applied automatically
-(the SEED-EQUALITY rule) to any studio that hasn't customized that field's English label away from
-the platform default. Short standalone labels, not full sentences.
+## Known gaps, not covered by this document
 
-| Field key | English seed | Spanish (draft) |
-|---|---|---|
-| name | Name | Nombre |
-| email | Email | Correo electrónico |
-| phone | Phone | Teléfono |
-| referralSource | How did you hear about us? | ¿Cómo te enteraste de nosotros? |
-| description | Describe the tattoo you want | Describe el tatuaje que quieres |
-| colorOrBlackGrey | Color or Black & Grey? | ¿Color o Negro y Gris? |
-| placement | Placement | Ubicación |
-| size | Estimated size | Tamaño estimado |
-| hasBeenTattooedBefore | Have you been tattooed before? | ¿Te has tatuado antes? |
-| preferredArtist | Preferred artist | Artista preferido |
-| budget | Budget | Presupuesto |
-| desiredTiming | Desired timing | Fecha deseada |
-| referenceImages | Reference images | Imágenes de referencia |
-| placementImages | Placement photos | Fotos de la ubicación |
-
-## What's explicitly NOT in this document
-
-Studio-authored content (policies, waiver clauses a studio writes themselves, intake question
-text, service names, flash piece descriptions) — that's the studio's own translation to supply via
-the Settings UI, not the platform's, and isn't reviewable here since it doesn't exist as fixed
-platform copy.
+- **SMS bodies** (`StudioSettings.reminderTemplates`, ad-hoc conversation text) — explicitly out of v1
+  scope (see the Part 1 investigation's own finding); stay English-only regardless of a client's locale
+  preference until a dedicated future part.
+- **Studio-authored content** (a studio's own `StudioSettingsTranslation`/`ServiceTranslation`/etc. rows,
+  entered through the Settings locale tabs) — by definition not platform copy, not reviewable here; each
+  studio owns the accuracy of their own translations.
+- **Deposit confirmation enrichment** (appointment card, gift-card card) — folded into `en.ts`/`es.ts` as
+  part of this same pre-merge closeout pass (see `deposit.appointmentCard.*`/`deposit.giftCardCard.*`
+  above), so it IS covered, but flagged here since it shipped to `main` after this branch's original cut
+  and is the newest content in this document.

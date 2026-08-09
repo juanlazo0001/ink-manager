@@ -12997,3 +12997,50 @@ instruction, stopping here for the Spanish-list native-speaker review before tha
 REPORT.md line count before this entry: 12942 (working tree, mid-merge -- both branches' full
 history combined; verified via `wc -l REPORT.md` since `git show HEAD:REPORT.md` mid-merge only
 reflects this branch's own pre-merge tip) -- pure addition on top of both parents.
+
+# Multi-language public forms -- pre-merge closeout, step 3: Spanish review doc regenerated from source
+
+The checked-in `PLATFORM_STRINGS_ES_REVIEW.md` (built by hand in an earlier part) had already
+drifted from its own source of truth -- it still showed `paidHeadingStripe`/`paidHeadingManual`'s
+OLD English/Spanish wording from before this session's own step 1 fix, and had no entries at all
+for `deposit.appointmentCard.*`/`deposit.giftCardCard.*`. A hand-maintained snapshot of four
+separate source files was never going to stay in sync through several more sessions of edits --
+so this replaces "hand-copy the strings into a doc" with "generate the doc from the actual
+dictionaries."
+
+New `scripts/generate-es-review.ts`: imports all four Spanish sources directly --
+`apps/web/src/i18n/strings/{en,es}.ts`, `apps/api/src/lib/pdfStrings.ts`'s `EN`/`ES`,
+`apps/api/src/routes/deposits.ts`'s `TERMS`/`TERMS_ES`, and
+`apps/api/src/lib/contentTranslation.ts`'s `SYSTEM_FIELD_DEFAULTS_ES` (paired with
+`apps/api/src/lib/intakeFormFields.ts`'s existing `SYSTEM_FIELD_DEFAULTS` for the English side) --
+walks the frontend dictionaries recursively (they're nested by page namespace), and renders one
+markdown table per namespace/source, flagging any English key with no Spanish counterpart as
+`**MISSING**` rather than silently omitting it. All four backend dictionaries needed a bare
+`export` added (`EN`/`ES` in pdfStrings.ts, `TERMS`/`TERMS_ES` in deposits.ts,
+`SYSTEM_FIELD_DEFAULTS_ES` in contentTranslation.ts) -- previously module-private, harmless to
+expose, and now directly importable by this script (and, going forward, by tests that want to
+assert against the real dictionary instead of hardcoding expected Spanish text).
+
+Regenerated output confirms **zero missing keys** across all four sources -- the frontend
+dictionaries were already guaranteed in sync by `es: typeof en`'s compile-time check, and this run
+is the first actual confirmation the three backend dictionaries are too. Full generated document:
+138 platform strings across 9 frontend page namespaces, 8 deposit-agreement clauses, 14 SYSTEM
+intake field labels, and 27 PDF-chrome strings.
+
+Kept the generator script rather than deleting it after this one run -- the native-speaker review
+this document exists for will produce corrections that go back into the four source files, at
+which point regenerating (rather than hand-editing the doc a second time and risking a second
+drift) is the whole point of having built it this way.
+
+## Verification
+
+Ran via `JWT_SECRET=dummy-for-script npx tsx scripts/generate-es-review.ts` (the dummy value is
+required only because `deposits.ts` transitively imports `middleware/auth` -> `lib/jwt`, which
+throws at module-load time if unset -- never actually used, since the script only reads the two
+exported consts). Full API `tsc --noEmit` clean after adding the four exports, full suite
+**161/161**, unchanged.
+
+## CLAUDE.md hygiene
+
+No schema changes. Still on `explore/multi-language-public-forms`, still not merged into `main`.
+REPORT.md line count before this entry: 12999 (verified via `wc -l REPORT.md`) -- pure addition.

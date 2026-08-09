@@ -9,7 +9,7 @@
 // not English VALUES.
 import { DEFAULT_LOCALE, isSupportedLocale, type Locale } from "./locale";
 
-const EN = {
+export const EN = {
   generatedOn: "Generated {{date}}",
   depositAgreementTitle: "Deposit Agreement",
   client: "Client: {{name}}",
@@ -45,7 +45,7 @@ const EN = {
   staffVerifiedNo: "Staff-verified: Not yet verified",
 };
 
-const ES: typeof EN = {
+export const ES: typeof EN = {
   generatedOn: "Generado el {{date}}",
   depositAgreementTitle: "Acuerdo de Depósito",
   client: "Cliente: {{name}}",

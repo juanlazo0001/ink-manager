@@ -69,7 +69,7 @@ export function withLocale<T extends Record<string, unknown>>(
 // why the rule is a live comparison at read time, not a stored flag: a
 // flag would need updating every time the English changes, and could
 // drift out of sync; comparing against the seed can never drift.
-const SYSTEM_FIELD_DEFAULTS_ES: Record<string, string> = {
+export const SYSTEM_FIELD_DEFAULTS_ES: Record<string, string> = {
   name: "Nombre",
   email: "Correo electrónico",
   phone: "Teléfono",

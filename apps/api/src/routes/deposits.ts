@@ -17,7 +17,7 @@ import { PUBLIC_APP_URL, API_PUBLIC_URL } from "../lib/publicUrl";
 import { serveDataUrl } from "./publicAssets";
 
 // Exact SOP wording, in the order the client must agree to each one.
-const TERMS = [
+export const TERMS = [
   {
     key: "agreedNonRefundable",
     label:
@@ -64,7 +64,7 @@ const TERM_KEYS = TERMS.map((t) => t.key);
 // Keys must match TERMS exactly; termsForLocale below is the only place
 // that reads this map, so a missing key surfaces as English text rather
 // than a runtime crash.
-const TERMS_ES: Record<(typeof TERM_KEYS)[number], string> = {
+export const TERMS_ES: Record<(typeof TERM_KEYS)[number], string> = {
   agreedNonRefundable:
     "Se requiere un depósito para fijar una cita. Los depósitos no son reembolsables y se aplican al precio final del tatuaje.",
   agreedLatePolicy:
