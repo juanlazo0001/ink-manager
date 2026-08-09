@@ -5,21 +5,27 @@ import type { PaymentIdentity } from './PaymentFlowStages'
 
 // Stage 3, also reused standalone for each page's "already paid, page
 // reloaded" branch -- a fresh visit and an in-flow success look identical.
-// The celebratory hero itself (checkmark, heading, amount, body) stays
-// exactly as it was -- the avatar is additive, placed above it, same
-// circular treatment PaymentAmountStage's own identity block already
-// uses, so a confirmation reached mid-flow and one reached via a fresh
-// visit read as the same design language throughout.
+// Part 2 sizing pass (against a real reference screenshot): a much larger
+// hero avatar, a gold divider under the checkmark, and the title allowed to
+// wrap at true display scale rather than staying compact.
 export default function PaymentConfirmationStage({
   identity,
   amountCents,
   heading,
   body,
+  // Part 2: the reference screenshot's own deposit-with-voucher case drops
+  // the amount from the hero entirely -- it's redundant with
+  // DepositGiftCardCard's own large amount right below. Callers with no
+  // such redundant display elsewhere (flash payment, session checkout, or
+  // a deposit with no gift card issued) leave this unset and keep the
+  // amount here, since it would otherwise appear nowhere on the page.
+  hideAmount = false,
 }: {
   identity: PaymentIdentity
   amountCents: number
   heading: string
   body: string
+  hideAmount?: boolean
 }) {
   return (
     <div className="py-4 text-center">
@@ -50,16 +56,21 @@ export default function PaymentConfirmationStage({
       <div className="relative z-10">
         {identity.artistName && (
           <div className="flex justify-center">
-            <FlatArtistAvatar name={identity.artistName} avatarUrl={identity.artistAvatarUrl} className="h-14 w-14" />
+            <FlatArtistAvatar name={identity.artistName} avatarUrl={identity.artistAvatarUrl} className="h-32 w-32" />
           </div>
         )}
-        <p className="font-display mt-3 text-3xl italic text-accent">✓</p>
-        <h1 className="font-display mt-3 text-3xl font-medium text-fg">{heading}</h1>
-        <p className="font-display mt-2 text-4xl font-medium text-fg">{formatCents(amountCents)}</p>
-        <p className="mt-3 text-sm text-fg-secondary">
+        <p className="font-display mt-5 text-2xl italic text-accent">✓</p>
+        {/* Short gold divider under the checkmark -- purely decorative,
+            matching the reference's own hero treatment. */}
+        <div className="mx-auto mt-2 h-px w-10 bg-accent/60" aria-hidden="true" />
+        <h1 className="font-display mt-4 text-5xl leading-[1.05] font-medium text-fg">{heading}</h1>
+        {!hideAmount && (
+          <p className="font-display mt-3 text-4xl font-medium text-fg">{formatCents(amountCents)}</p>
+        )}
+        <p className="mt-4 text-base text-accent">
           {identity.artistName ? `${identity.artistName} at ${identity.studioName}` : identity.studioName}
         </p>
-        <p className="mt-4 text-sm text-fg-secondary">{body}</p>
+        <p className="mt-2 text-sm text-fg-secondary">{body}</p>
       </div>
     </div>
   )

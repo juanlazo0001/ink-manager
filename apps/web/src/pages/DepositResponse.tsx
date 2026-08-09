@@ -341,6 +341,10 @@ export default function DepositResponse() {
                   ? "We've received your payment."
                   : 'The studio has recorded your payment.'
               }
+              // Part 2: the amount would otherwise appear twice -- once
+              // here, once in DepositGiftCardCard's own large amount right
+              // below -- whenever a gift card was actually issued.
+              hideAmount={Boolean(verifyData.giftCard)}
             />
 
             <DepositAppointmentCard
@@ -365,12 +369,12 @@ export default function DepositResponse() {
               // relative z-10: same reasoning as DepositAppointmentCard's
               // own comment -- keeps this above the fixed personalized
               // background.
-              <div className="relative z-10 mt-5 rounded-lg border border-accent/30 bg-accent/5 p-4 text-left">
-                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Know someone else who'd love this?</p>
-                <p className="mt-1 text-sm text-fg-secondary">
+              <div className="relative z-10 mt-5 rounded-2xl border border-accent/30 bg-accent/5 p-5 text-left">
+                <p className="text-sm font-medium uppercase tracking-wider text-fg-muted">Know someone else who'd love this?</p>
+                <p className="mt-2 text-sm text-fg-secondary">
                   Share your referral code — when a friend you refer pays their own deposit, you'll earn a reward.
                 </p>
-                <p className="mt-2 text-center font-mono text-lg font-semibold tracking-widest text-fg">
+                <p className="mt-3 text-center font-mono text-xl font-semibold tracking-widest text-fg">
                   {verifyData.clientReferralCode}
                 </p>
               </div>

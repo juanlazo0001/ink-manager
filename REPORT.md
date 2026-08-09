@@ -12124,3 +12124,113 @@ Cloudinary test uploads deleted afterward; all scratch scripts removed.
 
 REPORT.md line count before this entry: 12009 (verified via `git show
 HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Payment-received page Part 2: sizing/hierarchy pass, CLAUDE.md note, flash-payment OG tags
+
+Matched the deposit confirmation page's proportions and hierarchy against a real
+reference screenshot (the actual Juangi/Black Hive case), plus two small
+additions folded in at the user's request.
+
+## Sizing pass
+
+Measured the reference screenshot directly (934x1684px) rather than guessing,
+cropping specific regions (hero, appointment card, voucher/QR, referral card) for
+close inspection before touching any code. Changes, all in
+`PaymentConfirmationStage.tsx`/`DepositAppointmentCard.tsx`/
+`DepositGiftCardCard.tsx`/the referral block in `DepositResponse.tsx`:
+
+- Hero avatar: `h-14` (56px) -> `h-32` (128px). Tried a `ring-2` border to match
+  a first guess at the reference's treatment; a side-by-side crop showed the
+  reference has no visible ring at all, so removed it rather than leaving a
+  guessed detail that didn't hold up against the actual source.
+- Checkmark gained a short gold divider underneath (new, decorative only) --
+  present in the reference, absent before.
+- Title: `text-3xl` -> `text-5xl`, allowed to wrap to two lines rather than
+  staying compact.
+- Amount: the reference's own deposit-with-voucher case drops it from the hero
+  entirely -- confirmed by cropping the exact region between the title and the
+  artist/studio line, where I'd expected to see it and didn't. Root cause:
+  it's redundant with `DepositGiftCardCard`'s own large amount right below.
+  New `hideAmount` prop on `PaymentConfirmationStage`, set to
+  `Boolean(verifyData.giftCard)` only in `DepositResponse.tsx`'s own
+  already-paid branch -- verified BOTH directions live: a paid deposit WITH a
+  gift card shows no hero amount, a paid deposit with NO gift card still
+  shows it (nothing else on that page would display it otherwise). Every
+  other caller (flash payment, session checkout, or mid-flow before a gift
+  card is known to exist) leaves the prop unset and keeps the amount.
+- Artist/studio line: `text-fg-secondary` -> `text-accent` (gold), matching
+  the reference; body line unchanged.
+- Cards (appointment, voucher, referral): `rounded-lg`/`p-4` ->
+  `rounded-2xl`/`p-5` throughout, consistently.
+- Appointment date/time: `text-sm font-medium` -> `text-lg font-semibold`;
+  calendar buttons: `text-xs px-3 py-1.5` -> `text-sm px-4 py-2`.
+- Voucher amount: `text-2xl` -> `text-4xl` serif; QR code: `160` -> `200`;
+  code text: `text-sm` -> `text-base`.
+- Referral code: `text-lg` -> `text-xl`.
+
+Deliberately left out of scope: the reference's calendar-button icons
+(a calendar glyph, a Google "G" mark) -- reproducing Google's own brand mark
+accurately is a different kind of work than a sizing/proportion pass, and
+the buttons read correctly without them.
+
+## Verification
+
+Seeded a real deposit + real appointment (with a real address) + real gift
+card + a real uploaded reference image against the dev database, closely
+mirroring the actual reference screenshot's own data shape, then screenshotted
+at 390x844 (mobile-first, per the task's own instruction) and compared
+side-by-side against cropped regions of the reference. Also verified the two
+edge cases the hero-amount change touches: a paid deposit with NO gift card
+(amount still shows, confirmed live) and a paid deposit with no artist
+assigned (avatar block correctly omitted, unchanged prior behavior). Zero
+console errors. Full API test suite 126/126 (unaffected -- these are frontend-
+only changes plus the two additions below). Web `tsc`/`eslint` clean. All
+seeded rows, the real Cloudinary test upload, and a `Dev Artist One` test
+location assignment were removed afterward; scratch scripts and the throwaway
+production build deleted.
+
+Not independently re-verified: the identical sizing change as it renders
+inside `FlashPaymentResponse.tsx`'s own in-flow confirmation. `PaymentConfirmationStage`
+is the exact same component in both places (already proven live via the
+deposit page above), and reaching that state for flash requires a full live
+Stripe payment completion (briefly visible before the page redirects to
+self-scheduling, per Part 1's own finding) -- disproportionate effort to
+re-confirm a shared component's own rendering a second time.
+
+## CLAUDE.md: backdrop-filter containing-block note
+
+Added to the Design rules (one line): `backdrop-filter` establishes a
+containing block for `position: fixed` descendants, same as `transform`/
+`filter` -- portal full-viewport fixed layers to `document.body` when they
+might end up nested inside one. Captures Part 1's own live discovery (a fixed
+background layer got trapped inside `.login-panel-surface`'s own
+backdrop-filter box) so it doesn't have to be rediscovered the same way again.
+
+## flash-payment OG tags
+
+`server.mjs` had a resolver for every other public route (deposit, estimate,
+waiver, gift card, self-schedule, flash gallery, artist page) except
+flash-payment -- that link fell back to the generic default preview tags. New
+`resolveFlashPayment` (mirrors `resolveDeposit` exactly: studio name + a fixed
+description, `image` via the same `studioImageUrl` helper every other resolver
+uses -- never the personalized reference-image background, same privacy
+posture as Part 1's own deposit/flash-payment JSON responses) registered in
+`PUBLIC_ROUTE_HANDLERS`. Verified against a real production-mode build
+(`npm run build && node server.mjs`, per CLAUDE.md's own "trust a build" rule
+-- not just a code read): a valid token now returns
+`Dev Studio — Flash Booking Payment` / the studio-logo `og:image`; an invalid
+token still falls back to the plain default tags, unchanged. (Caught and fixed
+one real mistake in this same verification pass: the server reads
+`VITE_API_URL`, not `API_URL` -- the first attempt silently fell back to the
+default tags because of the wrong env var name, not a resolver bug; confirmed
+by inspecting the actual env-var read in `server.mjs` before retrying.)
+
+## CLAUDE.md hygiene
+
+All scratch scripts (two seed/cleanup pairs, three screenshot drivers) and
+screenshot directories deleted. The throwaway `apps/web/dist` production
+build removed (gitignored, but not left lying around). Both dev servers
+(already running from earlier this session) and the throwaway production
+server on port 5180 all confirmed stopped/freed. REPORT.md line count before
+this entry: 12126 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure
+addition.
