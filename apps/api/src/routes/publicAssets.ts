@@ -13,7 +13,7 @@ import { prisma } from "../lib/prisma";
 // pages, just re-served at a fetchable URL.
 const router = Router();
 
-function serveDataUrl(res: import("express").Response, dataUrl: string): boolean {
+export function serveDataUrl(res: import("express").Response, dataUrl: string): boolean {
   const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
   if (!match) return false;
   const [, contentType, base64] = match;

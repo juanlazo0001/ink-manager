@@ -13,6 +13,7 @@ import { emitInvalidation } from "../lib/realtime/registry";
 import { callerBelongsToStudio, effectiveRoleAt, hasPermissionAt } from "../lib/artistAccess";
 import { shortenUrl } from "../lib/shortLinks";
 import { PUBLIC_APP_URL, API_PUBLIC_URL } from "../lib/publicUrl";
+import { serveDataUrl } from "./publicAssets";
 
 // Exact SOP wording, in the order the client must agree to each one.
 const TERMS = [
@@ -201,21 +202,27 @@ publicRouter.get("/verify/:token", async (req, res) => {
   const giftCardPublicUrl = giftCard ? await shortenUrl(`${PUBLIC_APP_URL}/gift-card/${giftCard.code}`) : null;
 
   // Hero avatar: deliberately NOT the raw artistAvatarUrl below (a
-  // potentially large inline data: URL, already used by the pre-payment
-  // agreement screen, left untouched) -- a real cacheable image URL via
-  // the same publicAssets decode-and-serve endpoint OG previews use.
-  // Gated on the artist actually having published a public profile
-  // (publicSlug + publishedAt), same floor that endpoint itself enforces
-  // -- null otherwise, and the hero falls back to FlatArtistAvatar's own
-  // initials badge rather than a broken image request.
+  // potentially large inline data: URL, already used unconditionally by
+  // the pre-payment agreement screen, left untouched) -- a real cacheable
+  // image URL instead. FIXED: originally routed through the publicAssets
+  // artist-avatar endpoint (keyed by publicSlug, gated on publishedAt) --
+  // that gate is for the SEPARATE opt-in public marketing/booking page,
+  // and 404s for any artist who hasn't set that up, which is the common
+  // case, not the exception (confirmed live against a real production
+  // artist with a real avatarUrl on file and publicSlug/publishedAt both
+  // null). Scoped by this deposit's own token instead (this route's own
+  // new GET /:token/artist-avatar, right above /verify) -- the same
+  // credential that already governs the raw avatarUrl exposure elsewhere
+  // on this page, so this isn't wider exposure, just a cacheable URL for
+  // the same information. Still null (initials fallback) whenever there's
+  // genuinely no avatar to serve.
   // API_PUBLIC_URL, not PUBLIC_APP_URL -- this endpoint lives on the API
   // server (a genuinely different domain from the web frontend, see
   // lib/publicUrl.ts's own comment), unlike every other link this route
   // builds (gift-card page, etc.), which all correctly point at the web app.
-  const artistPublicAvatarUrl =
-    inquiry.assignedArtist?.publicSlug && inquiry.assignedArtist.publishedAt
-      ? `${API_PUBLIC_URL}/public-assets/artist-avatar/${inquiry.assignedArtist.publicSlug}`
-      : null;
+  const artistPublicAvatarUrl = inquiry.assignedArtist?.user.avatarUrl
+    ? `${API_PUBLIC_URL}/deposits/${token}/artist-avatar`
+    : null;
 
   res.json({
     clientFirstName: inquiry.client.firstName,
@@ -291,6 +298,33 @@ publicRouter.get("/verify/:token", async (req, res) => {
     embeddedPaymentsEnabled: inquiry.studio.settings?.embeddedPaymentsEnabled ?? false,
     terms: TERMS,
   });
+});
+
+// Confirmation-screen hero avatar, fixed: the publicAssets artist-avatar
+// endpoint (keyed by publicSlug, gated on publishedAt) only ever serves an
+// artist who's opted into the SEPARATE public marketing/booking page --
+// most real artists never do that, so it 404s for exactly the common case
+// (confirmed live against production: a real studio's real artist, real
+// avatarUrl on file, publicSlug/publishedAt both null). Scoped by this
+// deposit's own token instead -- the same credential that already governs
+// every other field on this page (including the raw artistAvatarUrl the
+// pre-payment screen shows unconditionally), so this isn't a new/wider
+// exposure, just the same information at a real cacheable URL instead of
+// inline in the JSON payload. No expiry check (matching publicAssets.ts's
+// own simplicity) -- an artist's photo isn't sensitive enough to warrant
+// it, and a stale/expired token still identifies the same real deposit row.
+publicRouter.get("/:token/artist-avatar", async (req, res) => {
+  const token = req.params.token as string;
+
+  const depositForm = await prisma.depositForm.findUnique({
+    where: { token },
+    select: { inquiry: { select: { assignedArtist: { select: { user: { select: { avatarUrl: true } } } } } } },
+  });
+
+  const avatarUrl = depositForm?.inquiry.assignedArtist?.user.avatarUrl;
+  if (!avatarUrl || !serveDataUrl(res, avatarUrl)) {
+    res.status(404).end();
+  }
 });
 
 publicRouter.patch("/sign/:token", async (req, res) => {

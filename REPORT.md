@@ -11807,3 +11807,59 @@ on a genuinely harmless leftover. All scratch scripts deleted (two seed/cleanup 
 patcher, one screenshot driver, one QR-chain verifier). Both dev servers stopped, ports confirmed
 free. `playwright` (installed `--no-save`) uninstalled afterward, no lockfile touched. REPORT.md line
 count before this entry: 11676 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Bug fix: deposit confirmation hero avatar falling back to initials
+
+Real production case: Juangi at Black Hive has a real photo on file, but the hero showed his
+initials, not it. Diagnosed against production first, per instruction, not guessed at.
+
+## Diagnosis (read-only against production)
+
+A single read-only query (Railway's own `DATABASE_PUBLIC_URL`, fetched and used within one
+non-persistent command, never printed/logged, no writes) against the real `Artist` row: `avatarUrl
+present: true` (a real 97KB `data:image/webp` blob), but **`publicSlug: null`, `publishedAt:
+null`**. Root cause immediately obvious from that one query, not the fee-basis-style service-domain
+mismatch that was the prime suspect: the previous session's `artistPublicAvatarUrl` field routed
+through `publicAssets.ts`'s `GET /artist-avatar/:publicSlug` endpoint, keyed by `publicSlug` and
+gated on `publishedAt` -- both null for any artist (Juangi, and presumably most real artists) who
+hasn't opted into the *separate*, unrelated public marketing/booking page feature. That gate is
+correct for its original purpose (an OG-preview crawler hitting a truly public, discoverable page
+shouldn't see a photo the artist never agreed to publish) but wrong for this context: the deposit
+confirmation is a private, token-authenticated page that already discloses the same artist's name
+and (via the pre-payment screen's own `artistAvatarUrl`) their raw photo unconditionally, with no
+publish-gate at all. Conflating "has a photo" with "opted into public marketing" was the actual bug,
+not a URL/domain typo this time.
+
+## Fix
+
+New `GET /deposits/:token/artist-avatar` (`apps/api/src/routes/deposits.ts`, right above `/verify`)
+-- scoped by the deposit's own token, the same credential that already governs everything else on
+this page, reusing `publicAssets.ts`'s own decode-and-serve helper (exported as `serveDataUrl`
+rather than duplicated) with no `publishedAt`/`publicSlug` gate at all. `artistPublicAvatarUrl` in
+the verify response now points here whenever `assignedArtist.user.avatarUrl` exists, regardless of
+publish state -- still `null` (initials fallback, unchanged) when there's genuinely no avatar on
+file. Same token pattern this codebase already uses everywhere else for a public,
+unauthenticated-but-scoped resource (CLAUDE.md's own standing rule) -- no new auth mechanism
+invented.
+
+## Verification
+
+Reproduced Juangi's exact real-world shape locally first (real `avatarUrl`, `publicSlug`/
+`publishedAt` both null) plus a genuinely-no-avatar control, before touching production again:
+`artistPublicAvatarUrl` resolves to the new endpoint only for the has-avatar case; the endpoint
+itself returns `200`/correct `Content-Type`/`Cache-Control` for it, a clean `404` for the no-avatar
+artist, and a clean `404` for a nonexistent token (no error, no leak). Screenshotted both states in
+a real mobile-viewport browser: the has-avatar-but-unpublished artist's real photo renders in the
+hero; the genuinely-no-avatar artist still shows the initials badge, unchanged -- confirming the fix
+doesn't regress the fallback path it's specifically supposed to preserve. Full suite 126/126,
+`tsc --noEmit` clean. Live production verification against the real Juangi/Black Hive case happens
+after this deploys (next entry).
+
+## CLAUDE.md hygiene
+
+All scratch scripts deleted (one read-only production diagnostic, one local seed/cleanup pair, one
+screenshot driver). Both dev servers stopped, ports confirmed free. `playwright` uninstalled, no
+lockfile touched. The production read-only query used per-command interactive approval, not a
+standing grant (corrected framing from an earlier session where this was mischaracterized) --
+connection string never printed or logged, no writes made. REPORT.md line count before this entry:
+11809 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition.
