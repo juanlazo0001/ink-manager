@@ -41,6 +41,7 @@ import SelfSchedule from './pages/SelfSchedule'
 import AppointmentPaymentComplete from './pages/AppointmentPaymentComplete'
 import GiftCardResponse from './pages/GiftCardResponse'
 import GiftCardDetail from './pages/GiftCardDetail'
+import ScanGiftCard from './pages/ScanGiftCard'
 import WaiverSign from './pages/WaiverSign'
 import ShortLinkRedirect from './pages/ShortLinkRedirect'
 import Tasks from './pages/Tasks'
@@ -80,6 +81,7 @@ const APP_SHELL_SEGMENTS = new Set([
   'conversations',
   'gift-cards',
   'flash',
+  'scan',
 ])
 
 function getPageFadeKey(pathname: string): string {
@@ -207,6 +209,7 @@ function AppRoutes() {
             intended). */}
         <Route element={<ProtectedRoute><AppShellLayout /></ProtectedRoute>}>
           <Route path="/gift-cards/:id" element={<GiftCardDetail />} />
+          <Route path="/scan" element={<ScanGiftCard />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/clients" element={<Clients />} />
           <Route path="/clients/import" element={<ClientImport />} />

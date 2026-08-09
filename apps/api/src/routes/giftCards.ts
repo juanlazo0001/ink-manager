@@ -487,6 +487,66 @@ router.patch("/:id/attachment", async (req, res) => {
   });
 });
 
+// Scanner feature: the front-desk "redeem/apply" action a QR scan routes
+// staff to. No dedicated redeem endpoint existed before this -- the only
+// prior way a card became REDEEMED was as a side effect of a full session
+// checkout's own redeem/roll decision (routes/appointments.ts). This is
+// the direct, out-of-band equivalent for a card being spent at the front
+// desk without going through that flow (e.g. a walk-in, or simply
+// confirming a client's voucher on the spot). Same terminal-action
+// permission tier as /void (giftCards.void), not giftCards.issue --
+// spending a card's value down is a consuming action, not an issuing one.
+router.post("/:id/redeem", async (req, res) => {
+  const id = req.params.id as string;
+
+  const card = await prisma.giftCard.findUnique({ where: { id } });
+  if (!card || !(await callerBelongsToStudio(req.user!, card.studioId))) {
+    return res.status(404).json({ error: "Gift card not found" });
+  }
+
+  // Permission-context fix: evaluated at the gift card's own studio.
+  if (!(await hasPermissionAt(req.user!, card.studioId, "giftCards.void"))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  // Lazy expiry sync, same as every other read/mutation of a single card
+  // in this file -- an ACTIVE-looking row whose expiresAt has already
+  // passed must be caught here, not redeemed as if it were still good.
+  const synced = await syncExpiredStatus(card);
+
+  if (synced.status !== GiftCardStatus.ACTIVE) {
+    const reason =
+      synced.status === GiftCardStatus.REDEEMED
+        ? "This card has already been redeemed"
+        : synced.status === GiftCardStatus.EXPIRED
+          ? "This card has expired"
+          : synced.status === GiftCardStatus.VOID
+            ? "This card has been voided"
+            : `This card isn't redeemable (status: ${synced.status})`;
+    return res.status(400).json({ error: reason });
+  }
+
+  const updated = await prisma.giftCard.update({
+    where: { id },
+    data: { status: GiftCardStatus.REDEEMED, redeemedAt: new Date() },
+  });
+
+  await logAudit({
+    studioId: card.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "GiftCard",
+    entityId: id,
+    action: "redeem",
+    changes: { status: { from: synced.status, to: GiftCardStatus.REDEEMED }, source: "scanner" },
+  });
+
+  // Same event shape every other gift-card mutation in this file already
+  // uses -- the scanner's redemption is not a special case realtime-wise.
+  emitInvalidation({ type: "giftcard.changed", studioId: card.studioId, clientId: card.clientId });
+
+  res.json(updated);
+});
+
 // Not a safety-floor item -- OWNER-only was just the previous hardcoded
 // default, now a genuinely configurable key (defaults preserve that exact
 // behavior: FRONT_DESK/ARTIST both false until an OWNER opts in).

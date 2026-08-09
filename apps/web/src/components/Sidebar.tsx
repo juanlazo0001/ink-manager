@@ -1,7 +1,7 @@
 import { useState, type ComponentType } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { AppointmentsIcon, ClientsIcon, DashboardIcon, DocumentIcon, MenuIcon, PhotoIcon, TeamIcon } from './icons'
+import { AppointmentsIcon, ClientsIcon, DashboardIcon, DocumentIcon, MenuIcon, PhotoIcon, ScanIcon, TeamIcon } from './icons'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useViewAs } from '../context/useViewAs'
 import { useUserProfile } from '../context/useUserProfile'
@@ -54,6 +54,10 @@ const NAV_ITEMS: NavItem[] = [
   // ARTIST and FRONT_DESK, so this link shows for every role by default,
   // same visibility pattern as Clients above.
   { label: 'Flash Gallery', to: '/flash', icon: PhotoIcon, permission: 'flashGallery.manage' },
+  // Front-desk QR scanner -- gated on the same permission that governs
+  // seeing gift-card balances, since scanning a client's voucher opens
+  // straight into the gift-card detail view.
+  { label: 'Scan', to: '/scan', icon: ScanIcon, permission: 'giftCards.view' },
 ]
 
 export default function Sidebar() {

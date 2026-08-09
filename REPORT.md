@@ -11863,3 +11863,147 @@ lockfile touched. The production read-only query used per-command interactive ap
 standing grant (corrected framing from an earlier session where this was mischaracterized) --
 connection string never printed or logged, no writes made. REPORT.md line count before this entry:
 11809 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Production verification: avatar fix deploy, and a real infra bug it surfaced
+
+The deposit-confirmation avatar fix above deployed, then was re-checked against the real
+Juangi/Black Hive production case per the original instruction ("confirm on the real production
+page," not just locally). First pass after deploy: the hero still fell back to initials -- not the
+bug just fixed (that part was confirmed correct locally and via the endpoint's own status/content-
+type checks), but the constructed URL itself not actually serving in production.
+
+## Root cause: a stale `API_PUBLIC_URL`
+
+`API_PUBLIC_URL` (apps/api's own Railway service domain, distinct from `PUBLIC_APP_URL`, the web
+app's -- the exact confusable pair this feature has hit before) was still set to
+`ink-manager.up.railway.app`, a domain that migrated to the **web** service at some earlier point
+this codebase's history doesn't otherwise record. The API itself now actually lives at
+`api.inkmanager.app` (confirmed against Railway's own auto-injected `RAILWAY_PUBLIC_DOMAIN`/
+`RAILWAY_SERVICE_API_URL` variables, not guessed). Every `artistPublicAvatarUrl` this session's fix
+built was therefore a syntactically correct but practically dead URL -- pointing at a domain the web
+app now owns, not the API. This is an infrastructure misconfiguration, not a code bug, and it
+predates this session's own change; it also means every other consumer of `API_PUBLIC_URL`
+(Twilio's SMS webhook/status-callback URLs, the Gmail OAuth redirect URI) has likely been similarly
+wrong for as long as this drift has existed. Flagged to the user rather than silently patched
+further or silently left -- out of scope to chase down every downstream consumer in this pass.
+
+## Fix and re-verification
+
+Corrected with explicit one-time authorization (`railway variable set
+API_PUBLIC_URL=https://api.inkmanager.app --service api`, triggering a redeploy) -- not a standing
+production-write grant, a single narrowly-scoped exception for this one variable. Re-verified
+end-to-end against the real, live Juangi/Black Hive deposit-confirmation page afterward: the hero
+now renders his actual photo, not the initials fallback. Read-only diagnostic queries throughout
+used per-command interactive approval each time, never a standing grant; the connection string was
+never printed, logged, or echoed; no other production writes were made.
+
+## CLAUDE.md hygiene
+
+No new scratch scripts for this entry (reused the prior entry's already-cleaned-up diagnostic
+approach; nothing new to remove). REPORT.md line count before this entry: 11865 (verified via `git
+show HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Feature: front-desk QR scanner for gift cards
+
+The receiving end of "show this QR at the studio" -- a staff-authenticated scanner page that reads a
+client's gift-card QR (or a manually-typed fallback code) and routes straight to the right admin
+view. Gift cards first, per the task's own scope; every other short-link shape this app produces is
+recognized-but-unsupported rather than silently swallowed into a generic "not found."
+
+## Library choice
+
+`@zxing/browser` (`^0.2.1`) over `jsQR`: `jsQR` has had no release since 2021, `@zxing/browser` is
+actively maintained (checked against the npm registry directly, not assumed). Its
+`BrowserQRCodeReader.decodeFromConstraints` gives a continuous-decode callback keyed to a live
+`getUserMedia` stream, which is exactly the front-desk shape (point phone at a client's screen,
+decode as soon as a frame resolves) rather than a single-shot capture.
+
+## What the QR actually encodes (corrected an assumption mid-build)
+
+The original design assumed the scanned QR would always be a shortened `/s/:code` link, since
+that's the pattern every *texted* public link in this codebase uses. Reading `GiftCardResponse.tsx`
+(the client-facing gift-card page) directly disproved that: its own QR encodes `window.location.
+href` -- the full `/gift-card/:code` page URL, not a shortened link -- and the manual fallback text
+printed underneath is the gift card's own `code` field, not a `ShortLink` code. A short link only
+ever wraps that same URL when it's compressed for SMS; nothing generates a QR of the shortened form.
+`apps/api/src/routes/scan.ts`'s `GET /resolve/:code` resolves all three shapes a scanned/typed
+string can arrive as: a bare gift-card code (manual entry), a full `/gift-card/:code` URL (camera
+scan of the live page), and a `/s/:code` short link (one level of indirection, kept generic per the
+task's own instruction in case a future flow ever does QR a shortened link). Every other known
+`shortenUrl()` shape (deposit, waiver, estimate, estimate-revision, flash-payment, self-schedule,
+flash gallery, intake, the policy pages) is reported as a recognized-but-unsupported record type,
+derived from the URL string alone with no DB lookup -- safe to return honestly rather than folding
+into "not found."
+
+## Cross-studio safety
+
+A gift-card code belonging to a studio the caller has no membership/permission at collapses to the
+exact same 404 as a genuinely nonexistent code -- resolved via `callerBelongsToStudio` +
+`hasPermissionAt(..., "giftCards.view")` against the card's own `studioId`, never the caller's
+token studio (CLAUDE.md's own standing rule). Never a 403: a 403 would itself confirm "a real record
+exists here, you're just not allowed to see it," which is the exact leak this boundary exists to
+prevent.
+
+## Redeem endpoint
+
+No dedicated gift-card redeem endpoint existed before this -- the only prior path to `REDEEMED` was
+as a side effect of a full session checkout's redeem/roll decision. New `POST /gift-cards/:id/redeem`
+(`apps/api/src/routes/giftCards.ts`, directly modeled on the sibling `/void` route): same
+`callerBelongsToStudio` + `hasPermissionAt(..., "giftCards.void")` scoping tier -- spending a card's
+value down is a consuming action, not an issuing one -- same lazy `syncExpiredStatus` before acting,
+same `logAudit` and `emitInvalidation({ type: "giftcard.changed", ... })` shape every other mutation
+in this file already uses. Surfaced in `GiftCardDetail.tsx` as a new "Redeem card" button, gated on
+`canVoid && card.status === 'ACTIVE'`, styled as the page's one positive/gold action next to the
+existing danger-styled "Void card."
+
+## Frontend
+
+`apps/web/src/pages/ScanGiftCard.tsx`: live camera preview (`facingMode: 'environment'`, rear
+camera preferred on mobile) with a manual code-entry field always available underneath, not just on
+camera failure -- front desk can type the printed code even with the camera running. States: camera
+starting/active, permission denied, camera/device unavailable, resolving, and the not-found/
+unsupported-type error message. A decode error on any given frame (no code in view, blur, motion --
+almost always `NotFoundException`) is expected per-frame noise, not surfaced; only a genuinely
+resolved code or a hard `getUserMedia` failure (mapped to denied vs. unavailable by error name)
+changes visible state. New `ScanIcon` (viewfinder-corners glyph) added to `icons.tsx`; new `/scan`
+route wired into `App.tsx` (including `APP_SHELL_SEGMENTS`, so shell navigation doesn't re-fade) and
+a new "Scan" sidebar nav item gated on `giftCards.view`, the same permission the resolve endpoint
+itself checks.
+
+## Verification
+
+All against the DEV database with seeded throwaway studios -- the adversarial cross-studio check
+never touched production, per this session's own explicit scope correction (production access this
+session was authorized for the avatar diagnostic only). `GET /scan/resolve/:code` tested directly
+over real HTTP: own-studio card by bare code (200, correct id), same card by its full page URL (200,
+same id), the same target wrapped in a `ShortLink` (200, same id, proving the indirection path), a
+seeded foreign-studio card's code (clean 404, identical shape to a genuinely invalid code -- the
+adversarial check the task specifically called for), a genuinely invalid code (same 404), and a
+recognized-but-unsupported type (`/deposit/:token`, 200 with `supported: false`).
+
+Browser verification via Playwright at a 390x844 mobile viewport: live (fake-device) camera stream
+attaches and the loading overlay clears; manual entry of the own-studio code redirects to the
+correct gift-card detail page (`$75.00 Gift Card`, `Redeem card` button present); manual entry of
+the foreign-studio code shows a clean "Code not found." with the client staying on `/scan`, no
+studio existence leaked; the Redeem action flips status from `ACTIVE` to `REDEEMED` (confirmed both
+in the UI and via a direct DB read) and the button disappears afterward; re-scanning the now-
+REDEEMED code still routes staff to its detail page (a scan is a lookup, not gated on status); the
+"Scan" nav item renders correctly in the mobile hamburger menu. Camera-permission-denied specifically
+landed in the `unavailable` branch rather than `denied` in this headless CI environment (no real
+camera hardware present at all, so `getUserMedia` fails with `NotFoundError` before permission is
+ever checked) -- both branches share the same fallback-to-manual-entry UI, and the code path for a
+real `NotAllowedError` is implemented and mapped, just not independently triggerable without real
+camera hardware or a fake-video-file rig this pass didn't build.
+
+Full API `tsc --noEmit` and web `tsc -b` both clean; `eslint` clean on every touched/new web file.
+
+## CLAUDE.md hygiene
+
+All scratch scripts (two seed/cleanup script pairs, one debug script, one Playwright driver) and the
+screenshot directory deleted after verification. All seeded DEV rows removed (two throwaway foreign
+studios across two seed runs, their clients, six gift cards, one short link) -- confirmed zero
+remaining via a follow-up count query. The one pre-existing dev API server (already running from
+earlier this session, picked up every change live via `tsx watch`) was left running; the fresh `npm
+run dev:web` instance started for this verification was stopped, port confirmed free. `playwright`
+was already installed from earlier in this session; not reinstalled or removed here. REPORT.md line
+count before this entry: 11905 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition.

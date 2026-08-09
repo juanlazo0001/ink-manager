@@ -56,6 +56,9 @@ export default function GiftCardDetail() {
   const [voiding, setVoiding] = useState(false)
   const [voidError, setVoidError] = useState<string | null>(null)
 
+  const [redeeming, setRedeeming] = useState(false)
+  const [redeemError, setRedeemError] = useState<string | null>(null)
+
   const [sendingReceipt, setSendingReceipt] = useState(false)
   const [receiptSent, setReceiptSent] = useState(false)
   const [receiptError, setReceiptError] = useState<string | null>(null)
@@ -119,6 +122,22 @@ export default function GiftCardDetail() {
       setVoidError(err instanceof Error ? err.message : 'Failed to void gift card')
     } finally {
       setVoiding(false)
+    }
+  }
+
+  async function handleRedeem() {
+    if (!id) return
+
+    setRedeeming(true)
+    setRedeemError(null)
+
+    try {
+      await apiFetch(`/gift-cards/${id}/redeem`, { method: 'POST' })
+      setRefreshIndex((index) => index + 1)
+    } catch (err) {
+      setRedeemError(err instanceof Error ? err.message : 'Failed to redeem gift card')
+    } finally {
+      setRedeeming(false)
     }
   }
 
@@ -292,6 +311,17 @@ export default function GiftCardDetail() {
                     </button>
                   )}
 
+                  {canVoid && card.status === 'ACTIVE' && (
+                    <button
+                      type="button"
+                      onClick={handleRedeem}
+                      disabled={redeeming}
+                      className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                    >
+                      {redeeming ? 'Redeeming…' : 'Redeem card'}
+                    </button>
+                  )}
+
                   {canVoid && card.status !== 'VOID' && (
                     <button
                       type="button"
@@ -304,6 +334,7 @@ export default function GiftCardDetail() {
                   )}
                 </div>
 
+                {redeemError && <p className="mt-3 text-sm text-danger">{redeemError}</p>}
                 {voidError && <p className="mt-3 text-sm text-danger">{voidError}</p>}
                 {receiptError && <p className="mt-3 text-sm text-danger">{receiptError}</p>}
 
