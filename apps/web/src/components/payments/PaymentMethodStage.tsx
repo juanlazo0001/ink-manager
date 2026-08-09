@@ -2,7 +2,7 @@ import { useMemo, useState, type FormEvent } from 'react'
 import { loadStripe, type Stripe } from '@stripe/stripe-js'
 import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js'
 import { formatCents } from '../../lib/money'
-import { EDITORIAL_GOLD_STRIPE_APPEARANCE } from '../../lib/stripeAppearance'
+import { EDITORIAL_GOLD_STRIPE_APPEARANCE, EDITORIAL_GOLD_STRIPE_FONTS } from '../../lib/stripeAppearance'
 
 const DEFAULT_PAYMENT_METHOD_ORDER = ['apple_pay', 'google_pay', 'link', 'card']
 
@@ -33,7 +33,10 @@ export default function PaymentMethodStage({
   )
 
   return (
-    <Elements stripe={stripePromise} options={{ clientSecret, appearance: EDITORIAL_GOLD_STRIPE_APPEARANCE }}>
+    <Elements
+      stripe={stripePromise}
+      options={{ clientSecret, appearance: EDITORIAL_GOLD_STRIPE_APPEARANCE, fonts: EDITORIAL_GOLD_STRIPE_FONTS }}
+    >
       <PaymentMethodForm
         amountCents={amountCents}
         returnUrl={returnUrl}

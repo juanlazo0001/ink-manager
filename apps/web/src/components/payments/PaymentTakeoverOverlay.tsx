@@ -62,7 +62,7 @@ export default function PaymentTakeoverOverlay({ onClose, children }: { onClose:
       animate={{ opacity: 1 }}
       transition={uiSpringTransition}
     >
-      <div className="login-panel-surface relative w-full max-w-lg p-8">
+      <div className="login-panel-surface relative w-full max-w-lg px-4 py-8 sm:p-8">
         <button
           type="button"
           onClick={onClose}

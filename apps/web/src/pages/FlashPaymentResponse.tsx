@@ -134,7 +134,7 @@ export default function FlashPaymentResponse() {
 
   return (
     <div className="login-shell flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
-      <div className="login-panel-surface w-full max-w-lg p-8">
+      <div className="login-panel-surface w-full max-w-lg px-4 py-8 sm:p-8">
         {state === 'loading' && <p className="text-center text-sm text-fg-secondary">Loading…</p>}
 
         {state === 'invalid' && (

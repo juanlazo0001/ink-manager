@@ -11588,3 +11588,89 @@ installed with `--no-save` for the browser walkthrough was uninstalled afterward
 any lockfile (confirmed via `git status`/`git diff` on `package-lock.json`). No database reset was
 offered or accepted at any point. REPORT.md line count before this entry: 11314 (verified via
 `git show HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Payment Element restyle: match the app's native form language
+
+Small focused pass on the embedded Payment Element's visual chrome -- gold borders on inputs at
+rest, heavy card padding, and an unverified font claim, all fixed in the one shared file that
+governs all three flows.
+
+## Investigation, not assumption
+
+**The "gold border at rest" complaint traced to a real token mismatch, not a subjective read.**
+`stripeAppearance.ts`'s `.Input`/`.Tab` rules were hardcoded to `rgba(201, 154, 91, 0.18)` -- which
+turns out to be an exact copy of `--color-border`'s own editorial-gold value, i.e. the studio-panel
+border token, gold-tinted by design for card/panel chrome. The app already has a second, deliberately
+*neutral* (non-gold) pair built for exactly this context -- `--color-input-bg`/`--color-input-border`
+(index.css, `#0f0e0d`/`#252322`), consumed by `.login-input` and used by every other login-shell page
+(Sign In, Signup, Reset Password, Invite Accept) -- but never by the payment pages, despite living in
+the identical `.login-shell` context. Switched `.Input`/`.Tab` to this pair instead; gold
+(`--login-gold`/`#c99a5b`) stays only on `:focus`/`.Tab--selected`, matching `.login-input:focus`
+exactly. `borderRadius` moved from an arbitrary `10px` to `.login-input`'s own literal `5px`.
+
+**The `fontFamily: 'Outfit'` claim was never actually true.** The Payment Element mounts inside a
+cross-origin iframe, which does not inherit `@font-face` rules from the parent document -- setting
+`variables.fontFamily` to an unloaded font name silently falls through to the next stack entry
+(`ui-sans-serif`/`system-ui`) with no error, no warning, nothing to catch it short of actually
+inspecting the rendered font. Verified Stripe's *current* docs (`docs.stripe.com/elements/appearance-
+api`, `.../js/elements_object/create`, and this repo's own installed `@stripe/stripe-js` `.d.ts` --
+three independent sources, since docs can drift from a shipped SDK version) before writing anything:
+`fonts` is a sibling of `appearance` in the `Elements` options object, not nested inside it, and a
+`CustomFontSource` needs `family`/`src`/`weight`/`style` -- confirmed against the installed types
+directly (`elements-group.d.ts`), the most authoritative source available. Loaded the same
+self-hosted `@fontsource/outfit` file `index.css` already imports via Vite's `?url` suffix
+(`@fontsource/outfit/files/outfit-latin-400-normal.woff2?url`) rather than hand-hardcoding a path --
+confirmed the resulting hashed asset (`outfit-latin-400-normal-*.woff2`) actually lands in `dist/assets`
+via a real build, not just a clean `tsc`.
+
+**Layout**: card padding dropped from a flat `p-8` to `px-4 py-8 sm:p-8` across all three call sites
+(`DepositResponse.tsx`, `FlashPaymentResponse.tsx`, `PaymentTakeoverOverlay.tsx` -- identical strings
+in all three, confirmed via grep before editing) -- horizontal only, per the ask; vertical breathing
+room and the desktop/tablet size are untouched.
+
+## What stayed centralized
+
+Every actual Stripe-facing change (`stripeAppearance.ts`'s rules/variables, the new `fonts` array) is
+still one shared definition consumed by the one shared `PaymentMethodStage.tsx` that all three flows
+already mount through -- no per-flow copies existed to drift in the first place, so "style once,
+verify across all three" was already structurally guaranteed by the existing architecture from the
+UX redesign work above, not something this pass had to build.
+
+## Verification
+
+**Real browser, real payment, real Stripe object** -- `dev-studio` (temporarily re-flagged
+`embeddedPaymentsEnabled`, restored after), mobile viewport (390x844), a freshly seeded signed
+deposit form. Screenshots confirm: amount/identity stage renders with the tightened card padding;
+the payment-method stage's rows (Card/Cash App Pay/Affirm/Klarna) show neutral borders at rest, no
+gold until a field is focused (captured live -- the ZIP field's gold focus ring is visible mid-entry
+in the card-filled screenshot); labels sit above fields exactly like `.login-input`'s own pattern.
+Filled Stripe's universal test card (`4242 4242 4242 4242`) through the actual iframe (`input[name=
+"number"/"expiry"/"cvc"/"postalCode"]` -- the visible placeholder text turned out to be `1234 1234
+1234 1234`/`12345`, not "Card number"/"ZIP", learned by walking `page.frames()` after the first
+guess timed out) and submitted for real. `stripe.confirmPayment` resolved client-side
+("Confirming your payment..." rendered); independently confirmed against the real Stripe object
+(not this app's own DB) via `paymentIntents.retrieve`: `status: "succeeded"`, `amount: 15600`
+(matching the $156.00 total exactly). The final webhook-driven "paid" UI state wasn't chased here --
+that requires `stripe listen` forwarding, which isn't running in this ad hoc pass and is unchanged,
+unrelated machinery this pass never touched (already covered by the embedded-payments epic's own
+webhook tests) -- the live Stripe object's real `succeeded` status is the authoritative proof "a
+test-mode payment still completes," independent of local webhook delivery.
+
+**New Inquiry side-by-side**: same mobile viewport, staff-authenticated, `StaffInquiryForm` opened
+from `/inquiries`. Visual comparison confirms the intended match -- dark fill, subtle neutral
+border, label-above-field, comparable corner rounding.
+
+**Console errors**: one `net::ERR_BLOCKED_BY_ORB` surfaced on the New Inquiry screenshot, traced
+(via `page.frames()`/`requestfailed` on an isolated re-run) to broken `example.com/*.jpg` placeholder
+images from pre-existing dev-database test fixtures rendering as thumbnails -- unrelated to Stripe,
+unrelated to this change, not something this pass's cleanup owns. Zero errors on every payment-page
+load, stage transition, or the completed payment itself.
+
+## CLAUDE.md hygiene
+
+All scratch scripts deleted after use (two seed/cleanup pairs -- an earlier attempt's leftover rows
+were also caught and cleaned in the same pass -- one screenshot driver, one payment-status verifier,
+one iframe-debugging throwaway). `dev-studio`'s `embeddedPaymentsEnabled` restored to its original
+`false`. Both dev servers stopped, ports confirmed free. `playwright` (installed `--no-save` for this
+pass) uninstalled afterward, no lockfile touched. REPORT.md line count before this entry: 11590
+(verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition.
