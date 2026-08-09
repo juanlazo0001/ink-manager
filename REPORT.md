@@ -11137,6 +11137,178 @@ this epic:
 No scratch scripts left in the repo. REPORT.md line count before this entry: 11056 (verified via
 `git show HEAD:REPORT.md | wc -l`) -- pure addition.
 
+# Embedded payments default-on: merged, backfilled, and live-verified
+
+Merge (`b2e7758`, fast-forward, no conflicts), Railway auto-deploy of both `api` and `web`
+confirmed back online, then the two remaining steps from the previous entry's "what's next":
+
+**Production backfill**: `UPDATE "StudioSettings" SET "embeddedPaymentsEnabled" = true` with no
+`WHERE` (every studio, this time, not a single pilot) -- read back and listed by name and id
+afterward. All 9 studios now `true` (Black Hive was already `true` from its own pilot enable
+earlier in this session; the other 8 flipped from `false`). Column default confirmed `true` via
+`information_schema.columns` before running the update, confirming the migration itself had
+already applied from the merge.
+
+**Live verification, deposit**: already covered by the pilot-enable work earlier this session
+(Black Hive's real deposit link, Payment Element mounted, Apple/Google Pay wallets present).
+
+**Live verification, flash prepayment**: only Black Hive has a connected Stripe account in
+production (confirmed via `StudioIntegration` -- the other 8 studios have the flag on now but no
+Stripe connection, so there's no embedded-vs-hosted distinction to observe for them yet; the flag
+being on is inert without a connected account). Created a synthetic, obviously-fake QA client +
+flash piece + flash-payment-pending inquiry directly against production (same self-contained
+seed/cleanup pattern as Part 4's dev-mode scripts, just pointed at prod since that's where the
+connected account lives) -- loaded the real link on a real mobile-emulated browser: Payment
+Element mounted (`Secure payment input frame` present), no redirect to `checkout.stripe.com`, no
+console errors. Deleted the inquiry, flash piece, and client immediately after, confirmed by the
+cleanup script's own printed ids.
+
+**Session checkout: verified by code review + Part 4's existing live evidence, not a fresh
+production run.** This flow is staff-embedded, not a public token-based page -- exercising it live
+in Black Hive's real production account would require either using the studio owner's actual
+login (not available, not appropriate to ask for) or creating a synthetic staff `User` row in a
+real tenant's account, a meaningfully bigger and riskier step than the two public, token-scoped
+flows above. Two things make a fresh production run unnecessary rather than skipped outright:
+this commit's diff touched only `schema.prisma`, `studioCreation.ts`, and `artists.ts`'s go-solo
+transaction (confirmed via `git diff 31709e2 b2e7758 --stat`) -- `appointments.ts`'s checkout
+route, the actual embedded-vs-hosted branching logic for this flow, is byte-for-byte unchanged;
+and Part 4 already produced live Stripe test-mode evidence of this exact same code path correctly
+rendering the Payment Element under the identical gating condition (`embeddedPaymentsEnabled:
+true`, real connected account). Today's change only widens which studios reach that condition, it
+doesn't touch the condition or what happens on either side of it.
+
+**Hosted Checkout fallback confirmed intact, not deleted**: same `git diff --stat` evidence --
+`createDepositCheckoutSession`, `createFlashPaymentCheckoutSession`, and the non-embedded branch
+of `appointments.ts`'s checkout route are all untouched files in this change. Flipping any single
+studio's `embeddedPaymentsEnabled` back to `false` still routes that one studio to hosted
+Checkout, unaffected by every other studio's value -- verified by reading, not by re-running,
+since the code itself didn't move.
+
+## CLAUDE.md hygiene
+
+No scratch scripts left in the repo (`_seed_flash_verify.ts` / `_cleanup_flash_verify.ts` created
+directly in `apps/api/src`, both deleted after use; production rows they created were deleted by
+the cleanup script itself before the files were removed). REPORT.md line count before this entry:
+11138 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# OG/Twitter link previews for public pages (branch `og-link-previews`)
+
+Investigated first, as asked, before building anything -- two findings changed the shape of the
+fix from "add meta tags to 8 routes" into something a bit bigger.
+
+## Investigation
+
+**The proven pattern already existed.** `apps/web/server.mjs` already does request-time SSR for
+`/inquiry/:studioSlug` (a prior fix for the same "non-JS client can't see real content" family of
+problem, there for Twilio A2P review rather than link previews) -- a plain Node `http` server in
+front of `serve-handler`, fetching from the same public API the client itself calls and string-
+replacing into `dist/index.html`'s template before serving. Extending this to a generic per-route
+OG/Twitter injection mechanism, rather than inventing a second approach, was the obvious move.
+
+**Finding 1 -- the actual shared link usually isn't the route URL at all.** `lib/shortLinks.ts`
+shortens every deposit/waiver/estimate/gift-card link before it's texted (`shortenUrl`, used by
+`deposits.ts`, `estimates.ts`, `waivers.ts`, `reminderTicker.ts`) to `/s/:code` on this same
+domain. `pages/ShortLinkRedirect.tsx` resolves and redirects **purely client-side** (`apiFetch` +
+`window.location.replace`) -- a non-JS crawler hitting the actual link a client's phone received
+saw nothing at all: no tags, no redirect, not even the destination page's own (soon-to-exist)
+meta tags, regardless of how well the destination route itself was fixed. Asked the user how to
+handle this; chose a real server-side HTTP 302 (`server.mjs` resolves the code against
+`GET /s/:code` and redirects) over rendering tags in place at `/s/:code` itself -- simpler, and
+most preview crawlers (iMessage, WhatsApp, Slack) follow a redirect even without executing JS, so
+the destination route's own tags apply with no duplicated logic.
+
+**Finding 2 -- studio logos and artist avatars can't be used as `og:image` at all, as stored.**
+`lib/images.ts`'s own comment confirms `Studio.logoUrl` and `User.avatarUrl` are base64 `data:`
+URLs stored directly on the row, "rather than adding file storage infra." That's fine for a React
+`<img src>`, but no real link-preview crawler fetches a `data:` URI for `og:image` -- every studio
+logo and every artist photo in this app was silently unusable as a preview image, a more
+fundamental gap than "no tags exist yet." Rather than either building real file-storage infra (a
+much bigger undertaking the original comment deliberately avoided) or silently falling back to
+the generic mark everywhere (a materially worse result than what was asked for -- the user
+explicitly wanted studio logos and artist photos in previews), added a small, contained decode-
+and-serve layer instead: `routes/publicAssets.ts`'s two new endpoints
+(`GET /public-assets/studio-logo/:studioSlug`, `GET /public-assets/artist-avatar/:publicSlug`)
+decode the stored data URL and re-serve it as a real image response with the right Content-Type,
+purely so there's an actual hosted URL for `server.mjs` to point `og:image` at. Artist avatar
+route respects the same `publishedAt` gate `artistPublicProfile.ts`'s own public route already
+uses -- an unpublished artist's photo isn't fetchable via this side door just because their
+`publicSlug` leaked somewhere.
+
+## What got built
+
+**`server.mjs`**: generalized the existing single-purpose SSR helper into `PUBLIC_ROUTE_HANDLERS`,
+a list of `[pattern, resolver]` pairs covering all 8 requested route types -- deposit, estimate
+(+ estimate-revision), waiver, gift card, self-schedule, flash gallery, artist page -- plus the
+pre-existing intake route extended to also emit proper OG tags (previously it only fixed visible
+`#root` content and `<title>`, never actual `og:*`/`twitter:*` tags). Each resolver fetches only
+studio/artist-level fields from the same public verify endpoint the real page calls -- never the
+full response -- and returns `{ title, description, image }` or `null` (fetch failed/unknown
+token/slug), which falls through to the plain SPA shell now carrying index.html's own clean
+default tags rather than a broken or stale-looking preview.
+
+**PRIVACY (the hard rule from the task, enforced structurally, not just by convention)**: every
+resolver hand-picks studio name + logo only -- title/description strings are fixed, generic-but-
+branded copy per type (`"{Studio} — Secure Deposit Form"`, never `"{Studio}: $210 deposit for
+{Client}'s forearm piece"`), so there is no code path by which a client name, amount, or
+appointment detail could end up in a tag even by future accident, short of a resolver being
+rewritten from scratch. The one deliberate exception is the artist's own public page
+(`resolveArtistPage`) -- real name and photo, because that page is public by the artist's own
+choice (they set `publicSlug`/`publishedAt` themselves), not client data that happened to leak
+into a link.
+
+**A real bug caught by the verification step, not left in**: the first version of
+`injectHeadTags` only ever appended new tags before `</head>`, never removing index.html's own
+static fallback tags first -- since most preview crawlers use the FIRST tag of a given property
+they encounter (Facebook's own documented parsing behavior), the generic platform fallback would
+have silently won over every route-specific tag, making the entire feature inert while looking
+correct in a superficial code read. Fixed by stripping any existing `og:*`/`twitter:*` meta tags
+before inserting the real ones. Caught by the raw-fetch verification step below, not by review --
+worth noting since it would not have been obvious from reading the diff alone.
+
+**Studio-logo data-consistency gaps found and fixed along the way**: `deposits.ts`,
+`estimates.ts`, and `selfSchedule.ts` each have more than one JSON response branch for the same
+verify endpoint (pre-sign vs. already-signed-awaiting-payment; not-yet-responded vs. already-
+booked), and in every one of those files exactly one branch was missing `studioLogoUrl` --
+harmless for the product UI (never read there) but meant a deposit/estimate/self-schedule link's
+preview silently lost the studio's real logo the moment the underlying state changed, an
+inconsistency invisible from reading any single branch in isolation. `waivers.ts` was missing the
+field entirely (only one response branch, needed adding to both the `select` and the JSON body).
+All four fixed to match their own sibling branch.
+
+**`apps/web/index.html`**: fixed the global fallback -- `<title>` was the literal package-name
+string `ink-manager`, and there was no default `og:image` at all, so a crawler landing on any
+route without a specific resolver (or a failed fetch) fell back to whatever image it found first
+on the rendered page, which in practice was the blurred background asset. Now: `Ink Manager`,
+the wordmark as a real absolute `og:image`/`twitter:image` (hardcoded to `web.inkmanager.app`,
+matching this static file's own existing convention of hardcoded absolute URLs elsewhere, e.g.
+`LEGAL_REDIRECTS` -- a build-time template has no per-request host to derive one from), and a
+`og:site_name` of `Ink Manager`.
+
+## Verification
+
+**Raw no-JS fetch, one call per route type**, `server.mjs` run locally against the real
+production API (read-only fetches, no writes) so the data was real: `/inquiry/black-hive-ink`
+correctly returned `Black Hive Ink and Arts — Tattoo Inquiry`; `/flash/black-hive-ink/<artist>`
+returned `Violeta at Black Hive Ink and Arts` with `og:image` pointing at the real
+`/public-assets/studio-logo/black-hive-ink` URL (confirmed non-fallback, i.e. the studio's actual
+logo path resolved); every unknown-token/unknown-slug case (deposit, gift-card, artist) correctly
+fell through to the clean platform-default tags rather than erroring or showing stale data.
+`/s/l31FiPho` (a real, currently-live production `ShortLink` row) issued a real `302` to
+`https://web.inkmanager.app/deposit/<token>` -- the exact link a real client's phone already has,
+now actually redirectable by a non-JS client for the first time. No published artist exists in
+production yet to verify `resolveArtistPage` against real data, so only its fallback path (unknown
+slug -> clean defaults) was exercised live; the resolver itself is structurally identical to every
+other one already proven against real data.
+
+**Automated**: new `routes/publicAssets.test.ts`, 5 tests covering both decode-and-serve routes
+(real image served with the right Content-Type, 404 for no-logo/unknown-slug/unpublished-artist).
+**117/117 across the full suite** (112 prior + 5 new), `tsc --noEmit` clean, `apps/web`'s own
+`vite build` clean.
+
+**Real-phone link preview**: not something this agent can perform directly (no way to send an
+SMS/iMessage or view a phone's own preview rendering) -- flagged for the user to do themselves
+once this is live, rather than silently skipped or falsely claimed.
+
 # Embedded payment UX redesign, Part 1: staged screens
 
 Restages all three embedded-payment flows (deposit, flash prepayment, session checkout) as a

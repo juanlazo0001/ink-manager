@@ -4,7 +4,26 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ink-manager</title>
+    <title>Ink Manager</title>
+    <!--
+      Global fallback OG/Twitter tags: server.mjs overwrites all of these
+      for every route it has a specific resolver for (deposit, estimate,
+      intake, waiver, gift card, self-schedule, flash gallery, artist
+      page). This is what a crawler sees for every OTHER route (the app
+      shell, staff-only pages, anything not in that list) -- previously
+      there was no og:image at all here, so a crawler fell back to
+      whatever image it found first on the rendered page (the blurred
+      background asset), and the title read "ink-manager" verbatim.
+    -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Ink Manager" />
+    <meta property="og:title" content="Ink Manager" />
+    <meta property="og:description" content="Studio management for tattoo artists." />
+    <meta property="og:image" content="https://web.inkmanager.app/branding/logo-black-512.png" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Ink Manager" />
+    <meta name="twitter:description" content="Studio management for tattoo artists." />
+    <meta name="twitter:image" content="https://web.inkmanager.app/branding/logo-black-512.png" />
   </head>
   <body>
     <div id="root"></div>

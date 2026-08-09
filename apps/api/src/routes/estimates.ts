@@ -101,6 +101,7 @@ router.get("/verify/:token", async (req, res) => {
         clientFirstName: inquiry.client.firstName,
         studioName: inquiry.studio.name,
         studioSlug: inquiry.studio.slug,
+        studioLogoUrl: inquiry.studio.logoUrl,
         themePreset: inquiry.studio.settings?.themePreset ?? DEFAULT_THEME_PRESET,
       });
     }

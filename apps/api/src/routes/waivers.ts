@@ -41,7 +41,7 @@ publicRouter.get("/verify/:token", async (req, res) => {
   const waiver = await prisma.liabilityWaiver.findUnique({
     where: { token },
     include: {
-      studio: { select: { name: true, slug: true, settings: { select: { themePreset: true } } } },
+      studio: { select: { name: true, slug: true, logoUrl: true, settings: { select: { themePreset: true } } } },
       appointment: { select: { startTime: true, endTime: true } },
     },
   });
@@ -57,6 +57,7 @@ publicRouter.get("/verify/:token", async (req, res) => {
   res.json({
     studioName: waiver!.studio.name,
     studioSlug: waiver!.studio.slug,
+    studioLogoUrl: waiver!.studio.logoUrl,
     themePreset: waiver!.studio.settings?.themePreset ?? DEFAULT_THEME_PRESET,
     appointmentStart: waiver!.appointment.startTime,
     appointmentEnd: waiver!.appointment.endTime,
