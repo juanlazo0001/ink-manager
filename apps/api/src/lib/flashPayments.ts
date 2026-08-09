@@ -1,6 +1,6 @@
 import { prisma } from "./prisma";
 import { InquiryStatus } from "../../generated/prisma/enums";
-import { createDirectChargeCheckoutSession, createOrRetrieveDirectChargePaymentIntent } from "./stripe";
+import { computeApplicationFeeCents, createDirectChargeCheckoutSession, createOrRetrieveDirectChargePaymentIntent } from "./stripe";
 import { getChargeableConnectedAccountId } from "./stripeConnect";
 import { PUBLIC_APP_URL } from "./publicUrl";
 
@@ -109,6 +109,7 @@ export async function createOrRetrieveFlashPaymentIntent(inquiryId: string): Pro
       connectedAccountId: stripeAccountId,
       existingPaymentIntentId: inquiry.stripePaymentIntentId,
       amountCents: inquiry.flashPiece.priceCents,
+      applicationFeeCents: computeApplicationFeeCents(inquiry.flashPiece.priceCents),
       metadata: { inquiryId: inquiry.id, flashPieceId: inquiry.flashPiece.id },
     });
   } catch (err) {

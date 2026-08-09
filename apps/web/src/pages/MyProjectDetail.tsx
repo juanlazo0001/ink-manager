@@ -3,6 +3,7 @@ import { Link, Navigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { apiFetch, ApiError, downloadFile } from '../lib/api'
 import { formatDateTime, formatPriceEstimate, formatStatus } from '../lib/format'
+import { formatCents } from '../lib/money'
 import { sanitizeHtml } from '../lib/sanitizeHtml'
 import { deriveProjectStage, PROJECT_STAGE_LABELS } from '../lib/kanban'
 import { useEffectiveUser } from '../context/useEffectiveUser'
@@ -17,6 +18,10 @@ interface Session {
   endTime: string
   status: string
   checkedOutAt: string | null
+  // Tipping: an artist's own tip, unlike every other financial field on
+  // this page, is never withheld by the studio's pricing-visibility
+  // toggle -- always present (null until the tip step has run).
+  tipCents: number | null
   liabilityWaiver: { status: string } | null
   photos: { id: string; url: string; uploadedAt: string }[]
 }
@@ -336,6 +341,11 @@ export default function MyProjectDetail() {
                     <div className="mt-2 flex flex-wrap gap-4 text-xs text-fg-muted">
                       <span>{session.checkedOutAt ? `Checked out ${formatDateTime(session.checkedOutAt)}` : 'Not checked out yet'}</span>
                       {session.liabilityWaiver && <span>Waiver: {formatStatus(session.liabilityWaiver.status)}</span>}
+                      {/* Tips are the artist's own money -- shown regardless of
+                          this studio's general pricing-visibility setting. */}
+                      {typeof session.tipCents === 'number' && session.tipCents > 0 && (
+                        <span className="font-medium text-accent">Tip: {formatCents(session.tipCents)}</span>
+                      )}
                     </div>
                     {session.photos.length > 0 && (
                       <div className="mt-3">

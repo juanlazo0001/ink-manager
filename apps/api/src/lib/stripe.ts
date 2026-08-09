@@ -94,6 +94,14 @@ export async function createDirectChargeCheckoutSession(params: {
 export async function createDirectChargePaymentIntent(params: {
   connectedAccountId: string;
   amountCents: number;
+  // Caller-supplied rather than derived from amountCents here -- session
+  // checkout's tip endpoint charges amountDueCents + tipCents but the
+  // platform's cut is computed on amountDueCents alone (the platform takes
+  // no cut of tips), so the fee basis can no longer be assumed to equal
+  // the charge amount. Deposit/flash callers just pass
+  // computeApplicationFeeCents(amountCents) themselves -- unchanged
+  // behavior, just made explicit at the call site instead of implicit here.
+  applicationFeeCents: number;
   metadata: Record<string, string>;
 }): Promise<{ id: string; clientSecret: string }> {
   const stripe = getStripe();
@@ -101,7 +109,7 @@ export async function createDirectChargePaymentIntent(params: {
     {
       amount: params.amountCents,
       currency: "usd",
-      application_fee_amount: computeApplicationFeeCents(params.amountCents),
+      application_fee_amount: params.applicationFeeCents,
       metadata: params.metadata,
     },
     { stripeAccount: params.connectedAccountId },
@@ -133,6 +141,12 @@ export async function createOrRetrieveDirectChargePaymentIntent(params: {
   connectedAccountId: string;
   existingPaymentIntentId: string | null;
   amountCents: number;
+  // Same caller-supplied fee basis as createDirectChargePaymentIntent above
+  // -- applied on both the reused-and-updated path and the create-fallback
+  // path below, so a tip added after the PaymentIntent already exists (see
+  // the appointments /tip endpoint) updates the charge amount without
+  // moving the fee basis.
+  applicationFeeCents: number;
   metadata: Record<string, string>;
 }): Promise<{ id: string; clientSecret: string }> {
   const stripe = getStripe();
@@ -153,7 +167,7 @@ export async function createOrRetrieveDirectChargePaymentIntent(params: {
       if (existing.amount !== params.amountCents) {
         const updated = await stripe.paymentIntents.update(
           existing.id,
-          { amount: params.amountCents, application_fee_amount: computeApplicationFeeCents(params.amountCents) },
+          { amount: params.amountCents, application_fee_amount: params.applicationFeeCents },
           { stripeAccount: params.connectedAccountId },
         );
         return { id: updated.id, clientSecret: updated.client_secret ?? existing.client_secret };
@@ -165,6 +179,7 @@ export async function createOrRetrieveDirectChargePaymentIntent(params: {
   return createDirectChargePaymentIntent({
     connectedAccountId: params.connectedAccountId,
     amountCents: params.amountCents,
+    applicationFeeCents: params.applicationFeeCents,
     metadata: params.metadata,
   });
 }

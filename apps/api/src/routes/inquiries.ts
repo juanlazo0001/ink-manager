@@ -743,6 +743,11 @@ const ARTIST_INQUIRY_SELECT = {
       endTime: true,
       status: true,
       checkedOutAt: true,
+      // Tipping: an artist's own tip is theirs to see regardless of this
+      // studio's general "pricing & financial detail" visibility toggle --
+      // deliberately NOT added to artistFieldVisibility's delete-list, so
+      // this field always survives applyArtistFieldVisibility below.
+      tipCents: true,
       liabilityWaiver: { select: { status: true } },
       photos: {
         select: { id: true, url: true, uploadedAt: true },

@@ -11308,3 +11308,283 @@ other one already proven against real data.
 **Real-phone link preview**: not something this agent can perform directly (no way to send an
 SMS/iMessage or view a phone's own preview rendering) -- flagged for the user to do themselves
 once this is live, rather than silently skipped or falsely claimed.
+
+# Embedded payment UX redesign, Part 1: staged screens
+
+Restages all three embedded-payment flows (deposit, flash prepayment, session checkout) as a
+shared amount/identity -> payment method -> confirmation sequence, mobile-first, Editorial Gold
+throughout. Layout principles only from the competitor reference the user pointed at -- no borrowed
+colors/type/components.
+
+## What existed before this
+
+All three flows were single-component conditional state machines (a `PageState` union gating JSX
+blocks), not staged screens. Deposit and flash were already wrapped in `login-shell`/Editorial Gold
+(the platform's own fixed identity, same reasoning as the artist public page); session checkout's
+Payment Element deliberately stayed in the studio's own theme, since it's a small widget inside an
+already-authenticated, already-studio-themed staff page (`AppointmentDetail.tsx`) -- explicitly
+documented in that file's own comment as a "no single right palette to chase" decision.
+
+## Design decision needed before building: session checkout's theme
+
+The user's spec said all three restaged flows are "strictly Editorial Gold," which directly
+conflicts with that prior deliberate decision. Asked the user rather than assume either direction.
+Chosen: session checkout's *client-facing payment moment* (the point where staff hands the device to
+the client to pay) becomes a full-screen Editorial Gold takeover -- matching deposit/flash's own
+"this moment is the platform's own brand, not the studio's" reasoning -- while the staff-only
+checkout form (final cost entry, gift-card redeem/roll, closeout notes, photo upload) stays exactly
+as-is in the studio's own theme, unchanged. This is a real behavior change from the prior session's
+explicit choice, made with the user's sign-off, not a silent reversal.
+
+## What got built
+
+**New shared component family**, `apps/web/src/components/payments/` -- one implementation reused
+by all three flows rather than three copies, since all three need the identical staging shape and
+only differ in what data they supply:
+- `PaymentFlowStages.tsx` -- orchestrator. Stage state `'amount' | 'tip' | 'method' | 'confirmation'`,
+  crossfades via the existing `crossfadeVariants`/`uiSpringTransition` from `lib/motion.ts` (plain
+  opacity/y, no `backdrop-filter` on anything animated, per CLAUDE.md's Design rules). `tip` is an
+  optional prop -- present only for session checkout.
+- `PaymentAmountStage.tsx` -- `FlatArtistAvatar` + "Your session with {artist} at {studio}", large
+  `font-display` (Fraunces under Editorial Gold, confirmed this Tailwind utility already exists via
+  the `@theme` block and is already used by `ArtistAvatar.tsx` -- no new CSS needed) amount, and a
+  collapsed `PaymentBreakdownDisclosure`.
+- `PaymentBreakdownDisclosure.tsx` -- "See total breakdown" progressive-disclosure row instead of
+  always-visible itemization; renders nothing when there's only one line item (flash's single price).
+- `PaymentMethodStage.tsx` -- consolidates what were three near-identical `*PaymentForm` components
+  (`DepositPaymentForm`, the flash equivalent, `AppointmentPaymentElementForm`) into one. Wallets
+  (Apple/Google Pay) ordered above card entry via the Payment Element's own `paymentMethodOrder`
+  option (`['apple_pay', 'google_pay', 'link', 'card']`) -- the mechanism the user pointed at
+  ("via the Payment Element's ordering/appearance options"), not a separate Express Checkout Element.
+  Same `elements.submit()` -> `stripe.confirmPayment({ redirect: 'if_required' })` logic as before,
+  unchanged behavior, now in one place instead of three.
+- `PaymentConfirmationStage.tsx` -- full-screen "Payment received" (Fraunces), amount, identity,
+  next-steps copy. Also reused standalone for each page's pre-existing "already paid, page reloaded"
+  branch, so a fresh visit and an in-flow success look identical.
+- `PaymentTakeoverOverlay.tsx` -- session-checkout-only full-viewport `.login-shell` overlay, mirroring
+  `components/Modal.tsx`'s own focus-trap/Esc/body-scroll-lock pattern (no scrim-click-to-close --
+  this is a payment flow, not a dismissible dialog; stepping away is an explicit button).
+
+**Per-flow wiring**:
+- `DepositResponse.tsx`/`FlashPaymentResponse.tsx`: the embedded-payment branch now renders
+  `PaymentFlowStages`; the `paidVia`-already-paid branch now renders standalone
+  `PaymentConfirmationStage`. The hosted-Checkout fallback (`embeddedPaymentsEnabled: false`) and the
+  unsigned/agreement-signing screen are untouched -- explicitly out of this redesign's scope.
+- `AppointmentDetail.tsx`: the staff-only checkout form is unchanged. Once a PaymentIntent exists and
+  there's a real balance due, `PaymentTakeoverOverlay` auto-opens over the whole page with
+  `PaymentFlowStages` inside; staff can dismiss it (client not ready yet) and reopen via a button in
+  the checkout card, which still keeps its "Mark as charged (cash/other)" manual fallback. The old
+  `AppointmentPaymentElement`/`AppointmentPaymentElementForm` pair (studio-themed, no wallet ordering)
+  is deleted, fully superseded.
+- `apps/api/src/routes/appointments.ts`: `APPOINTMENT_DETAIL_INCLUDE` never fetched the studio's own
+  name before -- added (`studio: { select: { name: true } } }`), needed for the "at {studio}" identity
+  line. `GET /:id` already spreads the fetched appointment via `...rest` with no allowlist, so this
+  flows to the frontend automatically.
+
+## Verification
+
+`tsc --build`/`tsc --noEmit` clean on both `apps/web` and `apps/api` after every file touched in this
+part (via `tsconfig.app.json` directly -- the web app's root `tsconfig.json` is references-only and
+silently no-ops under a bare `-p .`, caught while checking my own work here). `eslint` clean on every
+touched file except one pre-existing, unrelated `react-hooks/set-state-in-effect` warning at
+`AppointmentDetail.tsx:338` (confirmed via `git diff` that line isn't part of this change). Full
+mobile-viewport, real-Stripe-test-mode walkthrough screenshots are Part 3.
+
+## CLAUDE.md hygiene
+
+No scratch scripts used in this part. REPORT.md line count before this entry: 11138 (verified via
+`git show HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Embedded payment UX redesign, Part 2: tipping at session checkout
+
+15/18/20%/Custom/No-tip step, session checkout only (deposits/flash explicitly excluded -- flash
+tipping flagged as a future question, not decided here). One PaymentIntent for subtotal+tip;
+the platform's `application_fee_amount` is computed on the pre-tip subtotal only, so the platform
+takes no cut of tips.
+
+## Schema
+
+`Appointment.tipCents Int?` (nullable, no default), next to the existing `finalCostCents` --
+`null` means the tip step never ran (pre-tipping appointments, or `embeddedPaymentsEnabled` off),
+`0` means the client explicitly chose no tip. These two states must stay distinguishable (future
+tip-adoption reporting needs to tell "never asked" apart from "asked, declined"), so a `0` default
+would have quietly erased that distinction. Migration generated per CLAUDE.md's rule (never
+`prisma migrate dev`): `prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma
+--script` against the live dev database directly (no shadow-database config exists in this repo,
+so diffing from the migrations directory itself isn't available here -- diffing from the live
+datasource sidesteps that requirement entirely), hand-placed into a new
+`20260809020000_appointment_tip_cents` folder, applied via `prisma migrate deploy`.
+
+## Money mechanics: the fee-basis refactor
+
+Both direct-charge PaymentIntent helpers in `apps/api/src/lib/stripe.ts`
+(`createDirectChargePaymentIntent`, `createOrRetrieveDirectChargePaymentIntent`) used to derive
+`application_fee_amount` internally from the same `amountCents` being charged --
+`computeApplicationFeeCents(params.amountCents)`, called in three places including the
+reuse-and-update path. That assumption breaks the moment a charge amount can include a tip: it
+would have handed the platform a cut of every tip. Refactored both functions to take an explicit
+`applicationFeeCents` param instead, supplied by the caller. `deposits.ts` and `flashPayments.ts`
+now pass `computeApplicationFeeCents(amountCents)` themselves (behavior-preserving -- same value,
+just made explicit at the call site instead of implicit inside the helper). `appointments.ts`'s
+existing `POST /:id/checkout` does the same for its own tip-less PaymentIntent creation. The new
+`POST /:id/tip` (below) is the one caller that actually diverges: `applicationFeeCents:
+computeApplicationFeeCents(amountDueCents)` while `amountCents: amountDueCents + tipCents` --
+the fee basis and the charge amount are no longer the same number.
+
+## New endpoint: `POST /appointments/:id/tip`
+
+Architecture decision: `POST /:id/checkout` keeps creating its tip-less PaymentIntent exactly as
+before (no change to its own gating). `/tip` is the only place a tip ever enters the picture, and
+reuses `createOrRetrieveDirectChargePaymentIntent`'s existing "update the amount if it changed"
+path against that same PaymentIntent -- no new Stripe object types, no special-casing for the
+`amountDueCents === 0`-but-tipping case (falls through to that function's own create-fallback
+naturally).
+
+Same studio-scoping pattern as every other checkout-adjacent route in this file
+(`callerBelongsToStudio` against the *appointment's own* `studioId`, never the caller's token
+`studioId`, then `hasPermissionAt(..., "appointments.checkout")`) -- required by CLAUDE.md's
+artist-studio-scoping rule, and this route is a fresh place that rule could have been gotten wrong
+again. `amountDueCents` is always recomputed server-side from the appointment's own
+`finalCostCents` and its own redeemed gift cards -- the request body's `tipCents` is the only
+field ever read from it. A generous abuse-guardrail cap (`finalCostCents * 3`) rejects a
+manipulated/runaway `tipCents` before any Stripe call.
+
+**A real gap found by the live-Stripe verification step, not by review**: the first version of
+this route had no `embeddedPaymentsEnabled` check at all. In practice the frontend only reaches
+the tip step after `/checkout` already returned a PaymentIntent (itself flag-gated), so this
+wasn't reachable through the UI -- but the route itself is a direct API surface, and calling it
+against `dev-studio` (which has the flag off) during the live-Stripe proof (Part 3) went through
+anyway. Fixed by adding the same `studioSettings.embeddedPaymentsEnabled` gate
+`deposits.ts`/`flashPayments.ts`/`/:id/checkout` already apply, in the same position (before the
+Stripe-account lookup, after the persistence-relevant checks). Re-verified live afterward.
+
+## Surfacing
+
+**Staff**: a "Tip" tile added to `AppointmentDetail.tsx`'s checked-out summary grid, shown once
+`appointment.tipCents != null`.
+
+**Artist**: added `tipCents: true` to `ARTIST_INQUIRY_SELECT`'s `sessions.select` in
+`routes/inquiries.ts`, and rendered in `MyProjectDetail.tsx`'s session list. Deliberately *not*
+added to `lib/artistFieldVisibility.ts`'s delete-list -- confirmed by reading
+`applyArtistFieldVisibility` that it only strips an explicit named set of fields
+(`priceEstimateLow/High`, `budget`, `depositForms`, etc.) when a studio's "Pricing & financial
+detail" toggle is off, so `tipCents` survives that redaction untouched. This is a deliberate
+asymmetry from every other financial field on that page (which the same file's own copy already
+tells the artist are "managed by the studio," never shown) -- a tip is the artist's own money, not
+studio economics, so it's shown regardless of that toggle. Full tip-reporting dashboards are
+out of scope for this work, noted as a deferred follow-up.
+
+**Webhook**: no change needed. `payment_intent.succeeded`'s Appointment branch only sets
+`paidVia: "STRIPE"` keyed on `stripePaymentIntentId`, agnostic to what the charge amount was made
+of -- `tipCents` is already durably persisted before the PaymentIntent is ever confirmed.
+
+## CLAUDE.md hygiene
+
+No scratch scripts left in the repo (the live-Stripe proof script used in Part 3's verification
+was deleted after use, along with a second throwaway script that confirmed cleanup). REPORT.md
+line count before this entry: 11224 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure
+addition.
+
+# Embedded payment UX redesign, Part 3: verification
+
+Test-mode mobile walkthroughs of all three flows, an adversarial fee-basis proof against a real
+Stripe test-mode PaymentIntent, and a full regression pass -- three real problems surfaced by
+actually running the app rather than just reading the diff, all fixed before this part landed.
+
+## Concurrent-branch surprise, resolved before committing anything
+
+Mid-session, this shared working tree's checked-out branch changed from `embedded-payments-default`
+to `main` (main had picked up 2 commits not on the local feature branch: a REPORT.md entry and an
+unrelated "OG/Twitter link previews" feature) -- something external to this session, not an action
+this agent took. Flagged to the user immediately rather than silently committing onto `main`
+(this epic's own convention, and the user's own "commit per part on the branch" instruction, both
+point at the feature branch). Confirmed via `git diff --stat` that none of the two branches'
+diverging files overlapped with anything this session had touched, then `git checkout
+embedded-payments-default` -- carried the uncommitted working-tree changes over cleanly (git
+preserves uncommitted edits across a checkout when the target branch has no conflicting changes to
+the same files), re-verified with a fresh typecheck + targeted test run before proceeding. `main`
+was left exactly as found.
+
+## Real-browser walkthrough (Playwright, 390x844 mobile viewport, dev-studio's real Stripe
+test-mode connected account)
+
+No project-specific "run" skill exists for this repo yet. Seeded throwaway fixtures (a signed
+deposit form, a flash-payment-pending inquiry, an unchecked-out appointment with an EXEMPT gift
+card so the real checkout form could be driven end-to-end rather than faked), temporarily flipped
+`dev-studio`'s `embeddedPaymentsEnabled` on for the duration (restored after), drove all three
+flows through every stage in a real headless Chromium session, screenshotted each one.
+
+**Bug #1, found here, not by review**: `PaymentFlowStages`'s `resolvedPayment` state was
+initialized from the `payment` prop via `useState(payment)` -- which only captures the value at
+mount time. Deposit and flash both fetch their PaymentIntent secret asynchronously in the parent,
+starting in the background while the user is still on the amount/identity stage, so `payment` is
+always `null` at the exact moment `PaymentFlowStages` first mounts and only becomes non-null later.
+With no effect syncing the two, the payment-method stage was stuck on "Loading payment form..."
+forever for both public flows -- 100% of the time, not an edge case. `tsc`/`eslint` had nothing to
+say about this; it only showed up once an actual browser sat on the page for more than an instant.
+Fixed with a `useEffect` that adopts the prop whenever it changes.
+
+**Bug #2, found here**: `FlashPaymentResponse.tsx`'s embedded-payment branch still rendered the
+original "Complete your flash booking" heading + a separate piece-info card (with its own
+`$200.00` price) directly above the new `PaymentFlowStages`, which has its own large dominant
+amount -- the price appeared twice, and the "amount + identity" stage never actually became the
+first thing the client saw the way it does on the deposit page. Restaged fully: the legacy
+heading/piece-card block now only renders for the non-embedded (hosted Checkout) fallback; the
+embedded path goes straight into `PaymentFlowStages`, with the piece title folded into the
+breakdown's one line item instead of a separate card.
+
+**Bug #3, found via the live-Stripe proof below, not the browser walkthrough**: `POST
+/appointments/:id/tip` had no `embeddedPaymentsEnabled` gate at all -- unlike every other
+Stripe-touching route in this codebase. Calling it against `dev-studio` (flag off there) went
+through anyway. Fixed by adding the same gate `deposits.ts`/`flashPayments.ts`/`:id/checkout`
+already apply, in the same position (documented in Part 2's own entry above -- included here since
+this is the step that actually caught it).
+
+All three fixed, re-verified with a fresh screenshot pass afterward. Final 10-screenshot set
+(mobile viewport) confirmed clean: deposit's amount/identity stage (with breakdown expanded:
+Deposit $150.00 + Fee $6.00 = $156.00) and payment method stage (Card/Cash App Pay/Affirm/Klarna
++ "PAY $156.00", Editorial Gold `night` Payment Element appearance -- Apple/Google Pay don't
+render in a headless Linux-style Chromium session regardless of `paymentMethodOrder`, an
+environment limitation, not something checkable here); flash's equivalent two stages
+($200.00, no duplicate); session checkout's takeover opening as a full-screen Editorial Gold
+overlay over the still-visible studio-themed staff page behind it (confirming it's a layered
+overlay, not a route replace), the tip step (15%/$90.00, 18%/$108.00, 20%/$120.00, Custom, No tip,
+live "Total today" line), 18% selected updating the total to $708.00, and the payment method stage
+correctly showing "PAY $708.00" ($600.00 subtotal + $108.00 tip). Zero browser console errors
+across every stage of all three flows.
+
+## Adversarial: fee-basis proof against a real Stripe test-mode PaymentIntent
+
+Per this repo's established convention (`embeddedPayments.test.ts`'s own header comment: amount/fee
+tampering is proven live, since confirming a created PaymentIntent's real amount needs an actual
+Stripe API round trip) -- a throwaway script, deleted after: created a scratch appointment at
+`dev-studio` ($500.00 final cost, no gift cards redeemed), called the real `/tip` endpoint for an
+18% tip ($90.00) through an in-process server mount hitting `dev-studio`'s real connected account
+(`acct_1TxBWSHC1zSX1x99`), then fetched the resulting PaymentIntent directly from Stripe (not from
+this app's own DB) and asserted `application_fee_amount === computeApplicationFeeCents(50000)` --
+passed (both evaluate to 0 in this dev environment, since `PLATFORM_FEE_PERCENT` isn't set here;
+the equality itself, not the specific value, is the proof). A second call with `tipCents` far above
+the 3x cap 400'd before any Stripe call was made, confirmed by the appointment's
+`stripePaymentIntentId` staying `null`. `dev-studio`'s own `embeddedPaymentsEnabled` (temporarily
+flipped on for this proof, per Bug #3 above) was restored to its original `false` afterward,
+confirmed by a follow-up read.
+
+## Regression
+
+Full suite (`npm test`, all 14 `*.test.ts` files): 121/121 passing, 0 failures, on the final
+commit's code. `tsc --build`/`tsc --noEmit` clean on both `apps/web` (`tsconfig.app.json`) and
+`apps/api`. Deposit/flash/webhook/gift-card/auto-book coverage in `embeddedPayments.test.ts`
+unaffected by the `stripe.ts` fee-basis signature change (confirmed by reading -- that file never
+calls the two refactored functions directly, only `getStripe`) and re-run clean regardless.
+
+## CLAUDE.md hygiene
+
+Both dev servers (API on :4000, web on :5173) stopped after verification (`Get-NetTCPConnection`
++ `Stop-Process`, `lsof` isn't available in this Windows/Git-Bash environment). Every scratch
+script used in this part deleted (`_seed_screenshots.ts`, `_cleanup_screenshots.ts`,
+`_verify_clean.ts`, `_screenshot_flows.mjs`, three `_debug_*.mjs` files) -- confirmed via
+`git status` showing none of them remain, tracked or untracked. The `playwright` npm package
+installed with `--no-save` for the browser walkthrough was uninstalled afterward and never touched
+any lockfile (confirmed via `git status`/`git diff` on `package-lock.json`). No database reset was
+offered or accepted at any point. REPORT.md line count before this entry: 11314 (verified via
+`git show HEAD:REPORT.md | wc -l`) -- pure addition.

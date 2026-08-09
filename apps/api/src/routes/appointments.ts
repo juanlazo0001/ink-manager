@@ -30,7 +30,7 @@ import { sendClientSms } from "../lib/clientSms";
 import { resolveImageMeta } from "../lib/imageMeta";
 import { NOTE_AUTHOR_SELECT, canModifyNote, isBlankHtml, isValidAttachments } from "../lib/notes";
 import { getChargeableConnectedAccountId } from "../lib/stripeConnect";
-import { createDirectChargeCheckoutSession, createOrRetrieveDirectChargePaymentIntent } from "../lib/stripe";
+import { computeApplicationFeeCents, createDirectChargeCheckoutSession, createOrRetrieveDirectChargePaymentIntent } from "../lib/stripe";
 import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { shortenUrl } from "../lib/shortLinks";
 import { SELF_SCHEDULE_TOKEN_TTL_DAYS } from "../lib/selfSchedule";
@@ -390,6 +390,10 @@ router.get("/", requirePermission("appointments.view"), async (req, res) => {
 
 const APPOINTMENT_DETAIL_INCLUDE = {
   artist: { select: { id: true, user: { select: { email: true, name: true, avatarUrl: true } } } },
+  // Embedded payments UX redesign: the payment takeover's identity line
+  // ("Your session with {artist} at {studio}") needs the studio's own
+  // name, which this include never fetched before now.
+  studio: { select: { name: true } },
   // referralCode: surfaced in the checkout-complete panel so staff can
   // remind the client to share their own code right after the session --
   // reuses the code already generated at this client's own creation, not a
@@ -1006,6 +1010,11 @@ router.post("/:id/checkout", async (req, res) => {
             connectedAccountId: stripeAccountId,
             existingPaymentIntentId: appointment.stripePaymentIntentId,
             amountCents: amountDueCents,
+            // No tip has been chosen yet at this point (that only happens
+            // in the /tip step below, once the client-facing takeover is
+            // showing) -- fee basis equals the charge amount here, same as
+            // before this param became explicit.
+            applicationFeeCents: computeApplicationFeeCents(amountDueCents),
             metadata: { appointmentId: id },
           });
           await prisma.appointment.update({
@@ -1063,6 +1072,129 @@ router.post("/:id/checkout", async (req, res) => {
     paymentIntentClientSecret,
     paymentIntentConnectedAccountId,
   });
+});
+
+// Embedded payments UX redesign: the client-facing tip step, shown between
+// the amount/identity screen and the payment method screen on the payment
+// takeover overlay -- session checkout only (no tip on deposits/flash).
+// Tip is computed by the frontend as a percentage of finalCostCents (the
+// session subtotal), but this route re-derives every dollar amount itself
+// server-side rather than trusting anything the client sends beyond the
+// raw tipCents choice, same "no client-supplied charge amounts" rule the
+// rest of this Stripe integration follows. Can be called more than once
+// (a client changing their tip selection before confirming payment) --
+// createOrRetrieveDirectChargePaymentIntent's own reuse-and-update path
+// handles that without piling up abandoned PaymentIntents.
+router.post("/:id/tip", async (req, res) => {
+  const id = req.params.id as string;
+  const tipCentsInput = (req.body ?? {}).tipCents;
+
+  if (typeof tipCentsInput !== "number" || !Number.isInteger(tipCentsInput) || tipCentsInput < 0) {
+    return res.status(400).json({ error: "tipCents must be a non-negative integer number of cents" });
+  }
+
+  const appointment = await prisma.appointment.findUnique({ where: { id }, include: { giftCards: true } });
+  if (!appointment || !(await callerBelongsToStudio(req.user!, appointment.studioId))) {
+    return res.status(404).json({ error: "Appointment not found" });
+  }
+  const studioId = appointment.studioId;
+
+  // Permission-context fix: evaluated at the appointment's own studio, same
+  // as every other checkout-adjacent route in this file.
+  if (!(await hasPermissionAt(req.user!, studioId, "appointments.checkout"))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  if (!appointment.checkedOutAt || appointment.finalCostCents == null) {
+    return res.status(400).json({ error: "This appointment hasn't been checked out yet" });
+  }
+  if (appointment.paidVia) {
+    return res.status(400).json({ error: "This appointment's balance has already been paid" });
+  }
+
+  // Tipping only exists on the embedded (Payment Element) path -- same gate
+  // deposits.ts/flashPayments.ts/POST :id/checkout already apply before
+  // touching Stripe. In practice the frontend only reaches this step after
+  // /checkout already returned a PaymentIntent (itself flag-gated), but this
+  // route is reachable directly, so it re-checks rather than trusting that.
+  const studioSettings = await prisma.studioSettings.findUnique({ where: { studioId }, select: { embeddedPaymentsEnabled: true } });
+  if (!studioSettings?.embeddedPaymentsEnabled) {
+    return res.status(400).json({ error: "Embedded payment isn't enabled for this studio." });
+  }
+
+  // Generous abuse guardrail, not a real-world ceiling -- blocks a
+  // manipulated/runaway tipCents value before it ever reaches Stripe.
+  const tipCapCents = appointment.finalCostCents * 3;
+  if (tipCentsInput > tipCapCents) {
+    return res.status(400).json({ error: `tipCents cannot exceed ${tipCapCents}` });
+  }
+
+  // Same redeemed-cards derivation POST /:id/checkout and
+  // PATCH /:id/mark-charged already use -- never trust a client-sent
+  // subtotal for the platform fee basis.
+  const redeemedTotalCents = appointment.giftCards.reduce((sum, c) => sum + c.amountCents, 0);
+  const amountDueCents = Math.max(0, appointment.finalCostCents - redeemedTotalCents);
+  const amountCents = amountDueCents + tipCentsInput;
+
+  await prisma.appointment.update({ where: { id }, data: { tipCents: tipCentsInput } });
+  await logAudit({
+    studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Appointment",
+    entityId: id,
+    action: "tip_selected",
+    changes: { tipCents: tipCentsInput, amountDueCents, amountCents },
+  });
+
+  if (amountCents <= 0) {
+    emitInvalidation({ type: "appointment.changed", studioId });
+    return res.json({
+      tipCents: tipCentsInput,
+      amountDueCents,
+      amountCents,
+      paymentIntentClientSecret: null,
+      paymentIntentConnectedAccountId: null,
+    });
+  }
+
+  const stripeAccountId = await getChargeableConnectedAccountId(studioId);
+  if (!stripeAccountId) {
+    return res.status(400).json({ error: "Online payment isn't available for this studio right now." });
+  }
+
+  try {
+    // Reuses the (tip-less) PaymentIntent /:id/checkout already created
+    // when amountDueCents > 0, updating its amount to include the tip --
+    // or creates fresh if amountDueCents was 0 at checkout time. Fee basis
+    // stays amountDueCents (pre-tip) regardless -- the platform takes no
+    // cut of tips.
+    const intent = await createOrRetrieveDirectChargePaymentIntent({
+      connectedAccountId: stripeAccountId,
+      existingPaymentIntentId: appointment.stripePaymentIntentId,
+      amountCents,
+      applicationFeeCents: computeApplicationFeeCents(amountDueCents),
+      metadata: { appointmentId: id, tipCents: String(tipCentsInput) },
+    });
+    if (intent.id !== appointment.stripePaymentIntentId) {
+      await prisma.appointment.update({ where: { id }, data: { stripePaymentIntentId: intent.id } });
+    }
+
+    emitInvalidation({ type: "appointment.changed", studioId });
+
+    res.json({
+      tipCents: tipCentsInput,
+      amountDueCents,
+      amountCents,
+      paymentIntentClientSecret: intent.clientSecret,
+      paymentIntentConnectedAccountId: stripeAccountId,
+    });
+  } catch (err) {
+    console.error("[appointments/tip] Failed to create/update Stripe PaymentIntent", {
+      appointmentId: id,
+      error: err instanceof Error ? err.message : err,
+    });
+    res.status(502).json({ error: err instanceof Error ? err.message : "Failed to start payment" });
+  }
 });
 
 // Manual fallback for collecting the amount due at checkout -- cash/comp,
