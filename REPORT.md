@@ -12336,3 +12336,274 @@ in the meantime specifically because it has zero database dependency.
 No schema changes this part. Continues on `explore/multi-language-public-forms` in the
 `ink-manager-w-i18n-schema` worktree. REPORT.md line count before this entry: 12281 (verified via
 `git show HEAD:REPORT.md | wc -l`) -- pure addition.
+
+## Correction: the "dev database outage" above was never a real outage
+
+The previous entry's conclusion was wrong, and this entry retracts it. There was no Railway
+outage, no Postgres backend restart -- the dev database was reachable the entire time.
+
+The user directly challenged the conclusion ("are we sure db is not working... not sure what
+you're seeing that doesn't allow this session to continue"), which prompted re-verification
+instead of taking the earlier diagnosis as settled. That re-check found a raw `pg.Client` using
+the *identical* `DATABASE_URL` connecting successfully, immediately after the same
+Prisma-based check failed with `ECONNREFUSED` in the same terminal -- a contradiction the
+original "Railway backend down" theory could not explain, since a truly-down backend would fail
+both clients identically.
+
+Root cause: `contentTranslation.test.ts` (written earlier in this same part) was missing
+`import "dotenv/config";` -- present in every other DB-touching test file in this repo
+(`studioCreation.test.ts`, `permissionContext.test.ts`, etc.) but omitted here. Without it,
+`process.env.DATABASE_URL` was `undefined` when `apps/api/src/lib/prisma.ts` built the
+`PrismaPg` adapter, so the underlying `pg` driver silently fell back to its own default
+(`localhost:5432`) instead of the real Railway host -- which refuses instantly, producing an
+`ECONNREFUSED` indistinguishable at a glance from a genuine backend outage. The standalone
+`_conn_check.ts` script used to "confirm" the outage had the identical bug, which is why it kept
+"failing" through every retry: it was never testing connectivity to the real database at all.
+
+Fix: added the missing `dotenv/config` import to `contentTranslation.test.ts`. Its two
+DB-touching tests, previously unconfirmed, now pass (14/14 in that file). Stopped the background
+connectivity poller (it was polling the same broken script and would have run until manually
+killed regardless of real database state). Deleted `_conn_check.ts`. Re-ran the full API suite
+clean: **150/150 pass.** Task 33's five persistence endpoints and their tests are now confirmed
+passing, not merely `tsc`-clean.
+
+Lesson for this file specifically: "a raw TCP check succeeds but the app-level client fails" is
+evidence the app-level client is misconfigured, not evidence the backend is flaky behind its own
+proxy -- that alternative should have been ruled out (a second, independently-constructed
+app-level client, e.g. bare `pg`, with `.env` loaded explicitly) before writing up an
+infrastructure incident.
+
+# Multi-language public forms -- Part 5: signed-document locale capture
+
+The remainder of Part 5: writing `signedLocale` (and, for `DepositForm`, `termsSnapshot`) at the
+actual moment of signing/accepting, and threading the result into the two staff-facing PDF
+exports -- the last piece the interruption above paused mid-way through.
+
+**`DepositForm`**: `TERMS` (deposits.ts's own platform-owned English array, Finding 1) got a
+sibling `TERMS_ES` map plus a `termsForLocale(locale)` helper, kept in deposits.ts rather than
+lib/pdfStrings.ts since TERMS itself already lives here and this text needs to be captured at
+sign time, not just used for PDF chrome. `PATCH /sign/:token` now resolves the signer's locale
+(query param > `Client.preferredLocale` > `StudioSettings.defaultLocale`, same
+`resolveRequestLocale` used everywhere else) and writes both `signedLocale` and
+`termsSnapshot: termsForLocale(signedLocale)` in the same update. This closes a real, previously
+self-documented gap: `lib/pdf.ts`'s `generateDepositFormPdf` used to carry a comment admitting it
+rendered TERMS' *current* wording, not a per-signing snapshot, "an accepted, documented gap"
+because only one (English) version of those 8 clauses had ever existed. The instant a Spanish
+version exists, that gap becomes a real correctness bug (a later wording tweak retroactively
+changing what an already-signed client appears to have agreed to) -- so staffRouter's
+`GET /:id/pdf` now passes `depositForm.termsSnapshot ?? TERMS` (the `?? TERMS` fallback only ever
+firing for deposit forms signed before this migration) and `locale: depositForm.signedLocale`
+into the PDF generator. The stale comment in pdf.ts is updated to reflect this.
+
+**`LiabilityWaiver`**: different shape, because its clauses/health-questions/acknowledgment/
+photo-release are studio-authored content, not platform strings -- they're already frozen at
+LINK-CREATION time (`healthQuestionsSnapshot` etc.) and Part 4 already built the seed-equality
+resolution (does the studio's current live English still match what was snapshotted? if so, show
+the live translation) as something re-evaluated at request time, not a second frozen copy. So
+`signedLocale` here only records which language the client was *looking at*, and that seed-
+equality resolution logic was pulled out of `GET /verify/:token` into a shared
+`resolveWaiverSnapshotContent()` helper so `GET /:id/pdf` (staff export) uses the exact same logic
+-- it now resolves `locale` from `signedLocale` (falling back through `resolveRequestLocale` for
+pre-migration waivers with no `signedLocale` recorded) and renders whichever language the seed-
+equality check currently resolves to, rather than always the frozen English.
+
+**`Inquiry`** (estimate flow): `PATCH /respond/:token` (PROCEED/BUDGET_TOO_HIGH/DECLINE) and
+`PATCH /revision/respond/:token` (APPROVE/FLAG) both now write `signedLocale` the same way. No
+companion snapshot needed here -- per the Part 1 review decision, `estimateTermsSnapshot` and
+`collaborativeDesignPolicy` stay platform/immutable strings for v1, so there's nothing per-locale
+to freeze beyond the locale value itself.
+
+## Verification
+
+New tests in `contentTranslationHttp.test.ts` (real HTTP against the real public routers, real
+DB): deposit sign writes `signedLocale="es"` and an 8-entry Spanish `termsSnapshot` with the exact
+expected wording for `agreedNonRefundable`; waiver sign (empty health-question/clause snapshots,
+the minimal valid submission) writes `signedLocale="es"`; estimate DECLINE writes
+`Inquiry.signedLocale="es"`. Hit one recurring cleanup-ordering bug immediately (documented
+before in this same file for a different route): the waiver-sign route's own `logAudit` call
+creates an `AuditLog` row, which blocked `Studio` deleteMany in `after()` until `AuditLog` was
+added ahead of it in cleanup order -- same fix shape as every previous instance of this bug this
+session. `tsc --noEmit` clean. **Full suite: 153/153** (150 prior + 3 new).
+
+## CLAUDE.md hygiene
+
+Schema unchanged this part -- no new migration, only application code reading/writing fields
+Part 2's migration already added. Continues on `explore/multi-language-public-forms` in the
+`ink-manager-w-i18n-schema` worktree. REPORT.md line count before this entry: 12374 (verified via
+`git show HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Multi-language public forms -- Part 6, backend half: staff-facing translation writes
+
+Part 4 built the read side (`withLocale` fallback, wired into every public verify route) but
+never built anywhere for staff to actually WRITE a translation -- every `*Translation` table has
+existed since Part 2's migration with nothing populating it outside test fixtures. This is that
+write side, for all five translatable entities: `StudioSettings`, `CustomPolicy`, `Service`,
+`FlashPiece`, `IntakeFormField`.
+
+**Shape, consistent across all five**: the existing staff PATCH/POST for the base entity now also
+accepts `translations: { es: { field: value, ... } }` in the same request body, validated against
+that entity's own translatable-field allowlist (a subset of the base fields -- e.g. Service's
+`pricingModel`/`flatPriceCents`/etc. are locale-independent and rejected if sent under
+`translations`), then upserted onto the sibling `*Translation` row keyed by its own
+`@@unique([<parentId>, locale])` constraint. `StudioSettings`/`CustomPolicy`/`Service`/
+`FlashPiece` all follow this exact pattern; each entity's own list/GET route was extended to
+return `translations` reshaped from the flat DB rows into that same `{ es: {...} }` object, so a
+save round-trips cleanly and the editor can pre-fill a locale tab's draft on reopen.
+
+**`IntakeFormField` needed more than that** -- and this surfaced a real, pre-existing correctness
+bug, not just a missing feature. `PUT /:id/fields`'s own comment already documented its
+delete-all-then-recreate approach as deliberate and safe: the client round-trips every row's own
+`id`, and `Inquiry.customFieldAnswers` only ever matches a CUSTOM field by `id` STRING (no real
+FK), so reusing the same id string on a freshly-recreated row was correctness-preserving for that
+one specific downstream consumer. `IntakeFormFieldTranslation.intakeFormFieldId`, added in Part 2,
+IS a real FK with `onDelete: Cascade` -- and a cascade fires at the moment of physical row
+deletion, not "does a row with this id exist afterward." So the exact same delete+recreate that
+was safe for `customFieldAnswers` was silently wiping every field's translations on EVERY save of
+this list, including a pure reorder or an edit to a totally different field. Fixed by replacing
+`deleteMany` + `createMany` with an in-place upsert per row inside one transaction (`tx.
+intakeFormField.update` for any row with an `id`, `.create` for a genuinely new one, and a
+`deleteMany` scoped only to ids actually absent from the incoming payload) -- a row that's merely
+being reordered/edited is now never physically deleted, so its translation survives. Each row in
+the PUT payload can now also carry its own `translations: { es: { label, helpText, options } }`,
+upserted inside the same transaction right after that row's own upsert.
+
+`IntakeFormFieldInput` (lib/intakeFormFields.ts) and `validateIntakeFormFieldsPayload` both
+extended for the new field; `GET /:id/fields` and the PUT response both now return `translations`
+reshaped the same way as the other four entities.
+
+## Verification
+
+New `translationWrites.test.ts`: StudioSettings translation upsert (and that a second PATCH
+touching a different field doesn't clobber the first), a rejected write for an untranslatable
+field, CustomPolicy/Service/FlashPiece create-with-translations then update-adds-a-second-field
+then list-reflects-both, and the IntakeFormField regression test specifically -- seeds a CUSTOM
+field with a Spanish translation, then performs a SECOND, unrelated save (round-trips every row's
+own id, tweaks only one SYSTEM field's label, exactly what the real drag-and-drop editor always
+sends) and asserts both that the CUSTOM row's `id` is unchanged and that its
+`IntakeFormFieldTranslation` row still physically exists afterward -- this is the test that would
+have failed against the old delete-and-recreate code. `tsc --noEmit` clean. **Full suite:
+159/159** (153 prior + 6 new).
+
+## CLAUDE.md hygiene
+
+No schema changes this part -- every table already existed from Part 2's migration. Continues on
+`explore/multi-language-public-forms` in the `ink-manager-w-i18n-schema` worktree. REPORT.md line
+count before this entry: 12433 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Multi-language public forms -- Part 6, frontend half: locale tabs on the five Settings editors
+
+The other half of Task 32: wiring the backend's translation-write endpoints (previous entry) into
+the five staff-facing editors themselves -- `StudioSettings`' policy-field modal + waiver
+questions/clauses list, `CustomPolicy`, `Service`, `FlashPiece`, `IntakeFormField`. No shared
+`Tabs` component exists anywhere in `apps/web` (confirmed by search) -- the established convention
+in this codebase (`Settings.tsx`'s own `SETTINGS_TABS`, `Team.tsx`'s staff/artists/permissions
+tabs) is a small inline button row, copy-pasted per page rather than abstracted. Followed that
+convention: the same ~15-line EN/Español underline-tab block, duplicated into each of the five
+editors, using `LOCALE_LABELS` from `apps/web/src/i18n/locales.ts` for the two button labels.
+
+**Per-editor shape**: `ServicesManager`/`FlashGallery` (small forms, 1-2 translatable fields) get
+the tab switcher above their translatable fields specifically -- switching tabs swaps between the
+English inputs and their Spanish counterparts (placeholder text shows the English value as a
+hint), while pricing/deposit-model/status fields stay locale-independent and always visible.
+`Settings.tsx`'s `CustomPolicy` modal gets the same treatment for title/body. `Settings.tsx`'s
+single shared HTML-policy modal (one modal instance reused for all 9 `POLICY_HTML_FIELDS`) only
+shows the tab switcher when the field currently open is actually in a new
+`STUDIO_SETTINGS_TRANSLATABLE_FIELDS` allowlist mirroring the API's own -- `calendarInviteTemplate`
+opens with no tabs at all, since it has no translation column (staff-only chrome, per Part 6's
+backend entry).
+
+**The two waiver JSON lists needed a different shape than a plain field swap.** `waiverHealthQuestions`/
+`waiverClauses` are variable-length arrays with their own add/remove/reorder UI in English; a
+Spanish translation is "the text for row N," not an independently addable list -- if it were,
+nothing would stop the two lists drifting to different lengths, and the read side (`resolveWaiverSnapshotContent`,
+seed-equality against a frozen snapshot) has no way to render row 3 of a 2-item Spanish clause list.
+So the Spanish tab renders exactly as many rows as the CURRENT English list, each showing the
+English text as a read-only caption above a Spanish input -- add/remove only happens on the English
+tab, and `addHealthQuestion`/`removeHealthQuestion`/`addClause`/`removeClause` were all extended to
+keep a parallel `waiverHealthQuestionsEs`/`waiverHealthExplainEs`/`waiverClausesEs` array in lockstep
+by index. `IntakeFormFieldsEditor` hit the identical alignment concern for a CUSTOM field's
+`options` array (a SELECT/MULTI_SELECT question's Spanish option list must line up 1:1 with the
+English one) -- solved the same way: `Row` renders a totally different (non-draggable, no
+add/remove) body in Spanish mode, one input per existing English option.
+
+**A general gap found across all five, fixed the same way everywhere**: none of the POST/PATCH
+responses for these entities echo `translations` back (it's a sibling table, upserted server-side
+strictly AFTER the base row's own `update`/`create` call returns) -- naively doing
+`setState(apiResponse)` after a save would visibly wipe whatever Spanish content the editor had
+just shown, until the next full reload. Fixed once per editor by merging the just-submitted
+translation values into local state directly rather than trusting the response to contain them
+(`ServicesManager`/`FlashGallery` sidestep this entirely by calling their existing full-list
+reload after any save, which already returns real reshaped translations from the GET route).
+
+**Save payload convention, consistent everywhere**: `translations` is only ever included in a
+request body when at least one Spanish field is actually non-empty -- an untouched Spanish tab
+never creates an empty `*Translation` row that would just fall back to English anyway, avoiding
+DB clutter and needless upsert calls for the overwhelming majority of studios who never touch a
+second language yet.
+
+## Verification
+
+`tsc -b --noEmit` clean across `apps/web` after each editor, and again at the end. Full production
+`vite build` clean (pre-existing >500kB chunk-size warning only, unrelated to this change).
+Backend full suite unaffected -- no backend edits this half: **159/159**, same as the previous
+entry.
+
+## CLAUDE.md hygiene
+
+No schema/API changes this half -- frontend only, consuming Part 6's backend endpoints from the
+previous entry. Continues on `explore/multi-language-public-forms` in the
+`ink-manager-w-i18n-schema` worktree. REPORT.md line count before this entry: 12491 (verified via
+`git show HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Multi-language public forms -- Part 6, verification pass (Task 36)
+
+Task 36 as originally scoped (per the Part 1 build-parts estimate) called for a full walkthrough
+of all six flows in Spanish, confirming fallback-to-English, a real signed deposit/waiver
+producing a correctly-labeled Spanish PDF, and a mobile-viewport pass. What actually ran, and
+what's flagged as NOT run rather than silently skipped:
+
+**Ran -- new `localeEndToEnd.test.ts`, real HTTP + real DB**: two full pipeline tests neither prior
+part covered end to end. (1) A deposit form signed with `?locale=es` active, through the real
+public `PATCH /sign/:token` route, then exported via the real STAFF `GET /:id/pdf` route (real
+auth + `inquiries.view` permission gate, not a direct function call) -- asserts `signedLocale` and
+`termsSnapshot` landed correctly (already covered by an earlier part's test) AND that the actual
+PDF export endpoint, given that Spanish-signed record, returns a real `%PDF-`-prefixed document
+over 1KB with the correct content-type, not an error or empty body. (2) The identical shape for a
+Spanish-signed `LiabilityWaiver`, exercising `resolveWaiverSnapshotContent`'s seed-equality
+resolution inside the real staff PDF route rather than in isolation. Both new tests pass; full
+suite **161/161** (159 prior + 2 new).
+
+**Explicitly NOT run, and why**: no browser-automation tool was available in this session (checked
+via tool search; nothing matching Playwright/browser control came back). That means:
+- No real click-through of the six public pages in a real browser with the language picker toggled
+  to Español -- unlike an earlier part's own Part-3 verification entry, which DID have Playwright
+  available and used it for a frontend-only locale-toggle check. This session's tool access
+  differs from that one's; this isn't a downgrade in rigor, it's a different environment.
+- No mobile-viewport pass on the language picker.
+- No pixel/visual confirmation that a Settings-UI-entered Spanish translation actually renders
+  correctly on each of the six public pages (as opposed to being correctly stored and returned by
+  the API, which IS verified -- `contentTranslationHttp.test.ts`, `translationWrites.test.ts`).
+- No inspection of the exported PDFs' actual rendered TEXT to confirm the glyphs are Spanish, not
+  just that the correct locale was threaded into the call. `pdfkit` compresses its content streams
+  by default and no PDF-text-extraction library is a dependency of this repo; adding one solely to
+  make one test's assertions richer was judged out of scope for this pass. `pdfStrings.test.ts`
+  already unit-tests `pdfT`/`pdfDateLocale`'s own correctness in isolation, and the new
+  `localeEndToEnd.test.ts` confirms the PDF pipeline runs successfully end to end given
+  Spanish-signed input -- together these are strong but not complete evidence the PDF LOOKS right.
+
+**What IS fully verified across the whole epic at this point, by real HTTP+DB tests**: locale
+resolution and fallback chain (`contentTranslation.test.ts`), the SEED-EQUALITY rule for both its
+platform-seed and waiver-frozen-snapshot forms, every public verify route's translation
+resolution, every staff write endpoint for all five translatable entities, the IntakeFormField
+delete-and-recreate regression fix, signed-document locale + snapshot capture for all three
+signable document types, and now the PDF export pipeline actually running end to end for a
+Spanish-signed deposit and waiver. What remains genuinely unverified is exclusively the visual/
+UI layer -- recommended as a manual follow-up (or a future session with browser-automation access)
+before treating this epic as fully shipped, particularly the mobile-viewport pass, before this
+branch merges.
+
+## CLAUDE.md hygiene
+
+No schema/API changes this pass -- test-only. Continues on `explore/multi-language-public-forms`
+in the `ink-manager-w-i18n-schema` worktree. REPORT.md line count before this entry: 12556
+(verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition.

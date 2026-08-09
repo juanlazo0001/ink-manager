@@ -3,6 +3,7 @@ import { DragDropProvider, type DragEndEvent } from '@dnd-kit/react'
 import { useSortable, isSortable } from '@dnd-kit/react/sortable'
 import { DragHandleIcon } from './icons'
 import { apiFetch } from '../lib/api'
+import { LOCALE_LABELS, type Locale } from '../i18n/locales'
 
 export type IntakeFieldKind = 'SYSTEM' | 'CUSTOM'
 export type IntakeCustomQuestionType =
@@ -26,6 +27,11 @@ export interface IntakeFormField {
   enabled: boolean
   options: string[] | null
   order: number
+  // Multi-language public forms, Part 6: keyed by locale -- options here
+  // is index-aligned to this same row's own `options` array above, not an
+  // independent list (a Spanish option list has to be exactly as long,
+  // since the public form renders them paired by index).
+  translations?: Record<string, { label: string | null; helpText: string | null; options: string[] | null }>
 }
 
 const CUSTOM_TYPE_LABELS: Record<IntakeCustomQuestionType, string> = {
@@ -60,12 +66,14 @@ function Row({
   field,
   index,
   allFields,
+  formLocale,
   onUpdate,
   onRemove,
 }: {
   field: IntakeFormField
   index: number
   allFields: IntakeFormField[]
+  formLocale: Locale
   onUpdate: (id: string, patch: Partial<IntakeFormField>) => void
   onRemove: (id: string) => void
 }) {
@@ -73,6 +81,53 @@ function Row({
   const enabledLocked = isEnabledLocked(field, allFields)
   const isSystem = field.fieldKind === 'SYSTEM'
   const showOptions = field.customQuestionType && OPTION_TYPES.includes(field.customQuestionType)
+
+  function updateEs(patch: Partial<{ label: string | null; helpText: string | null; options: string[] | null }>) {
+    const current = field.translations?.es ?? { label: null, helpText: null, options: null }
+    onUpdate(field.id, { translations: { ...field.translations, es: { ...current, ...patch } } })
+  }
+
+  if (formLocale === 'es') {
+    const es = field.translations?.es
+    return (
+      <div ref={ref} className="rounded-lg card-surface border border-border bg-surface p-3">
+        <p className="mb-1 text-xs text-fg-muted">{field.label || (isSystem ? field.systemFieldKey : 'Untitled question')}</p>
+        <input
+          type="text"
+          value={es?.label ?? ''}
+          onChange={(e) => updateEs({ label: e.target.value })}
+          placeholder={field.label || 'Label (Español)'}
+          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+        />
+        <input
+          type="text"
+          value={es?.helpText ?? ''}
+          onChange={(e) => updateEs({ helpText: e.target.value || null })}
+          placeholder={field.helpText || 'Help text (Español, optional)'}
+          className="mt-2 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-xs text-fg-secondary focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+        />
+        {showOptions && (field.options ?? []).length > 0 && (
+          <div className="mt-2 space-y-2 rounded-lg border border-border p-2">
+            {(field.options ?? []).map((option, oi) => (
+              <input
+                key={oi}
+                type="text"
+                value={es?.options?.[oi] ?? ''}
+                placeholder={option || `Option ${oi + 1} (Español)`}
+                onChange={(e) => {
+                  const nextOptions = [...(es?.options ?? (field.options ?? []).map(() => ''))]
+                  nextOptions[oi] = e.target.value
+                  updateEs({ options: nextOptions })
+                }}
+                className="w-full rounded-lg border border-border bg-surface-inset px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+            ))}
+          </div>
+        )}
+        <p className="mt-1 text-xs text-fg-muted">Falls back to English until filled in. Reorder/add/remove on the English tab.</p>
+      </div>
+    )
+  }
 
   return (
     <div
@@ -223,6 +278,7 @@ export default function IntakeFormFieldsEditor({
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [formLocale, setFormLocale] = useState<Locale>('en')
 
   // Re-fetches (and resets any in-progress edit) whenever the selected
   // form changes -- this component is parameterized by intakeFormId now
@@ -247,6 +303,7 @@ export default function IntakeFormFieldsEditor({
   function startEditing() {
     setDraft(saved ?? [])
     setError(null)
+    setFormLocale('en')
     setEditing(true)
   }
 
@@ -301,16 +358,32 @@ export default function IntakeFormFieldsEditor({
     setSaving(true)
     setError(null)
 
-    const cleaned = draft.map((f, i) => ({
-      ...f,
-      label: f.label.trim(),
-      helpText: f.helpText?.trim() || null,
-      options:
-        f.customQuestionType && OPTION_TYPES.includes(f.customQuestionType)
-          ? (f.options ?? []).map((o) => o.trim()).filter((o) => o.length > 0)
-          : null,
-      order: i,
-    }))
+    const cleaned = draft.map((f, i) => {
+      const hasOptions = f.customQuestionType && OPTION_TYPES.includes(f.customQuestionType)
+      // Kept indices tracked so the Spanish options list below stays
+      // aligned to the SAME positions after empty English options are
+      // dropped -- same alignment concern as Settings.tsx's waiver clauses.
+      const keptOptionIndices = hasOptions
+        ? (f.options ?? []).map((o, oi) => (o.trim().length > 0 ? oi : -1)).filter((oi) => oi !== -1)
+        : []
+      const cleanedOptions = hasOptions ? keptOptionIndices.map((oi) => f.options![oi].trim()) : null
+
+      const esLabel = f.translations?.es?.label?.trim() || null
+      const esHelpText = f.translations?.es?.helpText?.trim() || null
+      const esOptions = hasOptions ? keptOptionIndices.map((oi) => f.translations?.es?.options?.[oi]?.trim() || '') : null
+      const hasEs = !!(esLabel || esHelpText || esOptions?.some((o) => o.length > 0))
+
+      return {
+        ...f,
+        label: f.label.trim(),
+        helpText: f.helpText?.trim() || null,
+        options: cleanedOptions,
+        order: i,
+        translations: hasEs
+          ? { es: { label: esLabel, helpText: esHelpText, options: esOptions && esOptions.length > 0 ? esOptions : null } }
+          : undefined,
+      }
+    })
 
     const emptyLabel = cleaned.find((f) => f.label.length === 0)
     if (emptyLabel) {
@@ -366,23 +439,51 @@ export default function IntakeFormFieldsEditor({
 
       {editing && (
         <div className="mt-4 space-y-4">
+          <div className="flex gap-1 border-b border-border">
+            {(Object.keys(LOCALE_LABELS) as Locale[]).map((locale) => (
+              <button
+                key={locale}
+                type="button"
+                onClick={() => setFormLocale(locale)}
+                className={[
+                  'shrink-0 border-b-2 px-3 py-1.5 text-xs font-medium transition',
+                  formLocale === locale ? 'border-accent text-fg' : 'border-transparent text-fg-secondary hover:text-fg',
+                ].join(' ')}
+              >
+                {LOCALE_LABELS[locale]}
+              </button>
+            ))}
+          </div>
+
           <div className="flex items-center justify-between">
             <label className="text-sm font-medium text-fg-secondary">
-              Every field a client sees on the public intake form, in this order
+              {formLocale === 'en'
+                ? 'Every field a client sees on the public intake form, in this order'
+                : 'Spanish translation for each field -- reorder/add/remove on the English tab'}
             </label>
-            <button
-              type="button"
-              onClick={addCustomQuestion}
-              className="rounded-full border border-border px-3 py-1 text-xs font-medium text-fg transition hover:bg-surface"
-            >
-              + Add custom question
-            </button>
+            {formLocale === 'en' && (
+              <button
+                type="button"
+                onClick={addCustomQuestion}
+                className="rounded-full border border-border px-3 py-1 text-xs font-medium text-fg transition hover:bg-surface"
+              >
+                + Add custom question
+              </button>
+            )}
           </div>
 
           <DragDropProvider onDragEnd={handleDragEnd}>
             <div className="space-y-2">
               {draft.map((field, i) => (
-                <Row key={field.id} field={field} index={i} allFields={draft} onUpdate={update} onRemove={remove} />
+                <Row
+                  key={field.id}
+                  field={field}
+                  index={i}
+                  allFields={draft}
+                  formLocale={formLocale}
+                  onUpdate={update}
+                  onRemove={remove}
+                />
               ))}
             </div>
           </DragDropProvider>

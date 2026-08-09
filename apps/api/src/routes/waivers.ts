@@ -15,6 +15,60 @@ import { emitInvalidation } from "../lib/realtime/registry";
 import { effectiveRoleAt, hasPermissionAt } from "../lib/artistAccess";
 import { resolveRequestLocale, persistClientLocale } from "../lib/contentTranslation";
 
+// Multi-language public forms, Part 5: shared by GET /verify/:token (public,
+// pre-signing) and staffRouter's GET /:id/pdf (post-signing export) so the
+// exact same seed-equality resolution never drifts between the two --
+// re-evaluated against the studio's CURRENT live translation every call
+// (not snapshotted), per this waiver's own frozen English content as the
+// seed. See GET /verify/:token below for the full seed-equality reasoning.
+function resolveWaiverSnapshotContent(
+  waiver: {
+    healthQuestionsSnapshot: unknown;
+    clausesSnapshot: unknown;
+    acknowledgmentSnapshot: string | null;
+    photoReleaseSnapshot: string | null;
+  },
+  settings:
+    | {
+        waiverHealthQuestions: unknown;
+        waiverClauses: unknown;
+        waiverAcknowledgment: string | null;
+        waiverPhotoRelease: string | null;
+        translations: {
+          locale: string;
+          waiverHealthQuestions: unknown;
+          waiverClauses: unknown;
+          waiverAcknowledgment: string | null;
+          waiverPhotoRelease: string | null;
+        }[];
+      }
+    | null
+    | undefined,
+  locale: string,
+) {
+  const translation = settings?.translations.find((t) => t.locale === locale);
+  const snapshotMatchesLiveEnglish = (snapshot: unknown, live: unknown) => JSON.stringify(snapshot) === JSON.stringify(live);
+
+  return {
+    healthQuestions:
+      translation?.waiverHealthQuestions && snapshotMatchesLiveEnglish(waiver.healthQuestionsSnapshot, settings?.waiverHealthQuestions)
+        ? translation.waiverHealthQuestions
+        : waiver.healthQuestionsSnapshot,
+    clauses:
+      translation?.waiverClauses && snapshotMatchesLiveEnglish(waiver.clausesSnapshot, settings?.waiverClauses)
+        ? translation.waiverClauses
+        : waiver.clausesSnapshot,
+    acknowledgment:
+      translation?.waiverAcknowledgment && waiver.acknowledgmentSnapshot === settings?.waiverAcknowledgment
+        ? translation.waiverAcknowledgment
+        : waiver.acknowledgmentSnapshot,
+    photoRelease:
+      translation?.waiverPhotoRelease && waiver.photoReleaseSnapshot === settings?.waiverPhotoRelease
+        ? translation.waiverPhotoRelease
+        : waiver.photoReleaseSnapshot,
+  };
+}
+
 function isExpiredOrInvalid(waiver: { signedAt: Date | null; tokenExpiresAt: Date | null } | null) {
   if (!waiver) {
     return { code: "invalid", error: "This link is invalid." } as const;
@@ -92,26 +146,11 @@ publicRouter.get("/verify/:token", async (req, res) => {
   // waiver's own frozen English renders as-is -- correct, never stale-
   // looking, just not translatable until a studio explicitly re-issues
   // a fresh link after editing.
-  const settings = waiver!.studio.settings;
-  const translation = settings?.translations.find((t) => t.locale === locale);
-  const snapshotMatchesLiveEnglish = (snapshot: unknown, live: unknown) => JSON.stringify(snapshot) === JSON.stringify(live);
-
-  const healthQuestions =
-    translation?.waiverHealthQuestions && snapshotMatchesLiveEnglish(waiver!.healthQuestionsSnapshot, settings?.waiverHealthQuestions)
-      ? translation.waiverHealthQuestions
-      : waiver!.healthQuestionsSnapshot;
-  const clauses =
-    translation?.waiverClauses && snapshotMatchesLiveEnglish(waiver!.clausesSnapshot, settings?.waiverClauses)
-      ? translation.waiverClauses
-      : waiver!.clausesSnapshot;
-  const acknowledgment =
-    translation?.waiverAcknowledgment && waiver!.acknowledgmentSnapshot === settings?.waiverAcknowledgment
-      ? translation.waiverAcknowledgment
-      : waiver!.acknowledgmentSnapshot;
-  const photoRelease =
-    translation?.waiverPhotoRelease && waiver!.photoReleaseSnapshot === settings?.waiverPhotoRelease
-      ? translation.waiverPhotoRelease
-      : waiver!.photoReleaseSnapshot;
+  const { healthQuestions, clauses, acknowledgment, photoRelease } = resolveWaiverSnapshotContent(
+    waiver!,
+    waiver!.studio.settings,
+    locale,
+  );
 
   // Minimal safe info only -- no client name, DOB, or any other PII is
   // echoed back on this public pre-signing view.
@@ -152,7 +191,11 @@ publicRouter.patch("/sign/:token", async (req, res) => {
 
   const waiver = await prisma.liabilityWaiver.findUnique({
     where: { token },
-    include: { appointment: { select: { inquiryId: true } } },
+    include: {
+      appointment: { select: { inquiryId: true } },
+      client: { select: { preferredLocale: true } },
+      studio: { select: { settings: { select: { defaultLocale: true } } } },
+    },
   });
 
   const invalidity = isExpiredOrInvalid(waiver);
@@ -252,6 +295,17 @@ publicRouter.patch("/sign/:token", async (req, res) => {
     releaseSignatureData = photoReleaseSignatureData;
   }
 
+  // Multi-language public forms, Part 5: which language the client was
+  // actually looking at when they signed -- doesn't change what the
+  // healthQuestions/clauses/acknowledgment/photoRelease snapshots say
+  // (those stay the studio's own frozen English, unchanged by this),
+  // only which language the staff PDF export later renders in.
+  const signedLocale = resolveRequestLocale(
+    req.query.locale,
+    waiver!.client.preferredLocale,
+    waiver!.studio.settings?.defaultLocale,
+  );
+
   await prisma.liabilityWaiver.update({
     where: { id: waiver!.id },
     data: {
@@ -268,6 +322,7 @@ publicRouter.patch("/sign/:token", async (req, res) => {
       photoReleaseSignatureName: releaseSignature,
       photoReleaseSignatureData: releaseSignatureData,
       signedAt: new Date(),
+      signedLocale,
       status: LiabilityWaiverStatus.SIGNED,
       token: null,
       tokenExpiresAt: null,
@@ -408,7 +463,23 @@ staffRouter.get("/:id/pdf", requirePermission("waivers.viewStatus"), async (req,
     include: {
       client: { select: { firstName: true, lastName: true } },
       appointment: { select: { startTime: true } },
-      studio: { select: { name: true, logoUrl: true, settings: { select: { themePreset: true } } } },
+      studio: {
+        select: {
+          name: true,
+          logoUrl: true,
+          settings: {
+            select: {
+              themePreset: true,
+              defaultLocale: true,
+              waiverHealthQuestions: true,
+              waiverClauses: true,
+              waiverAcknowledgment: true,
+              waiverPhotoRelease: true,
+              translations: true,
+            },
+          },
+        },
+      },
       verifiedBy: { select: { name: true } },
     },
   });
@@ -420,6 +491,17 @@ staffRouter.get("/:id/pdf", requirePermission("waivers.viewStatus"), async (req,
   if (!waiver.signedAt) {
     return res.status(400).json({ error: "This waiver has not been signed yet" });
   }
+
+  // Multi-language public forms, Part 5: pre-migration waivers have no
+  // signedLocale recorded -- resolveRequestLocale's own "en" floor covers
+  // that (no query param, no client preference passed here, only the
+  // studio's own default) rather than a separate null-check.
+  const locale = resolveRequestLocale(undefined, waiver.signedLocale, waiver.studio.settings?.defaultLocale);
+  const { healthQuestions, clauses, acknowledgment, photoRelease } = resolveWaiverSnapshotContent(
+    waiver,
+    waiver.studio.settings,
+    locale,
+  );
 
   const waiverThemePreset = waiver.studio.settings?.themePreset;
   const pdf = await generateWaiverPdf({
@@ -433,21 +515,22 @@ staffRouter.get("/:id/pdf", requirePermission("waivers.viewStatus"), async (req,
     dateOfBirth: waiver.dateOfBirth,
     emergencyContactName: waiver.emergencyContactName,
     emergencyContactPhone: waiver.emergencyContactPhone,
-    healthQuestions: waiver.healthQuestionsSnapshot as unknown as { question: string; type: string }[],
+    healthQuestions: healthQuestions as unknown as { question: string; type: string }[],
     healthAnswers: (waiver.healthAnswers ?? []) as unknown as { questionIndex: number; answer: string; explanation?: string }[],
-    clauses: waiver.clausesSnapshot as unknown as string[],
+    clauses: clauses as unknown as string[],
     clauseInitials: (waiver.clauseInitials ?? []) as unknown as { clauseIndex: number; initials: string }[],
-    acknowledgment: waiver.acknowledgmentSnapshot,
+    acknowledgment,
     signatureName: waiver.signatureName,
     signatureData: waiver.signatureData,
     signedAt: waiver.signedAt,
     photoReleaseAccepted: waiver.photoReleaseAccepted,
-    photoReleaseText: waiver.photoReleaseSnapshot,
+    photoReleaseText: photoRelease,
     photoReleaseSignatureName: waiver.photoReleaseSignatureName,
     photoReleaseSignatureData: waiver.photoReleaseSignatureData,
     idImageOnFile: !!waiver.idImageUrl,
     verifiedAt: waiver.verifiedAt,
     verifiedByName: waiver.verifiedBy?.name ?? null,
+    locale,
   });
 
   res.setHeader("Content-Type", "application/pdf");

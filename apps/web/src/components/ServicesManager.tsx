@@ -3,6 +3,7 @@ import { apiFetch, ApiError } from '../lib/api'
 import { dollarsToCents, formatCents } from '../lib/money'
 import Modal from './Modal'
 import { useThemePreset } from '../lib/useThemePreset'
+import { LOCALE_LABELS, type Locale } from '../i18n/locales'
 
 type PricingModel = 'RANGE' | 'FLAT'
 type DepositModel = 'TIER_BASED' | 'FLAT'
@@ -19,6 +20,10 @@ export interface ServiceSummary {
   requiresCandidacyReview: boolean
   isActive: boolean
   intakeFormId: string
+  // Multi-language public forms, Part 6: keyed by locale -- only ever has
+  // an "es" entry today (SUPPORTED_LOCALES), absent entirely for a service
+  // that's never been translated.
+  translations?: Record<string, { name: string | null; depositBreakdownNote: string | null }>
 }
 
 interface IntakeFormOption {
@@ -35,6 +40,8 @@ const EMPTY_FORM = {
   depositBreakdownNote: '',
   requiresCandidacyReview: false,
   intakeFormId: '',
+  nameEs: '',
+  depositBreakdownNoteEs: '',
 }
 
 // Settings -> a studio's service lines (Package: multi-service support) --
@@ -56,6 +63,7 @@ export default function ServicesManager({ canEdit }: { canEdit: boolean }) {
   const [form, setForm] = useState(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [formLocale, setFormLocale] = useState<Locale>('en')
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<ServiceSummary | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -94,9 +102,11 @@ export default function ServicesManager({ canEdit }: { canEdit: boolean }) {
 
   function openModal(service: ServiceSummary | 'new') {
     setSaveError(null)
+    setFormLocale('en')
     if (service === 'new') {
       setForm({ ...EMPTY_FORM, intakeFormId: intakeForms[0]?.id ?? '' })
     } else {
+      const es = service.translations?.es
       setForm({
         name: service.name,
         pricingModel: service.pricingModel,
@@ -106,6 +116,8 @@ export default function ServicesManager({ canEdit }: { canEdit: boolean }) {
         depositBreakdownNote: service.depositBreakdownNote ?? '',
         requiresCandidacyReview: service.requiresCandidacyReview,
         intakeFormId: service.intakeFormId,
+        nameEs: es?.name ?? '',
+        depositBreakdownNoteEs: es?.depositBreakdownNote ?? '',
       })
     }
     setEditingService(service)
@@ -118,6 +130,9 @@ export default function ServicesManager({ canEdit }: { canEdit: boolean }) {
     setSaving(true)
     setSaveError(null)
 
+    const esName = form.nameEs.trim()
+    const esNote = form.depositBreakdownNoteEs.trim()
+
     const payload = {
       name: form.name.trim(),
       pricingModel: form.pricingModel,
@@ -127,6 +142,10 @@ export default function ServicesManager({ canEdit }: { canEdit: boolean }) {
       depositBreakdownNote: form.depositBreakdownNote.trim() || null,
       requiresCandidacyReview: form.requiresCandidacyReview,
       intakeFormId: form.intakeFormId,
+      // Only sent once staff have actually entered a Spanish translation --
+      // an untouched Spanish tab never creates an empty ServiceTranslation
+      // row that would just fall back to English anyway.
+      ...(esName || esNote ? { translations: { es: { name: esName || null, depositBreakdownNote: esNote || null } } } : {}),
     }
 
     try {
@@ -278,18 +297,48 @@ export default function ServicesManager({ canEdit }: { canEdit: boolean }) {
           onClose={() => setEditingService(null)}
         >
           <form onSubmit={handleSave} className="space-y-3">
-            <div>
-              <label className="mb-1 block text-sm font-medium text-fg-secondary">Name</label>
-              <input
-                type="text"
-                required
-                autoFocus
-                value={form.name}
-                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                placeholder="e.g. Powder Brows"
-                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-              />
+            <div className="flex gap-1 border-b border-border">
+              {(Object.keys(LOCALE_LABELS) as Locale[]).map((locale) => (
+                <button
+                  key={locale}
+                  type="button"
+                  onClick={() => setFormLocale(locale)}
+                  className={[
+                    'shrink-0 border-b-2 px-3 py-1.5 text-xs font-medium transition',
+                    formLocale === locale ? 'border-accent text-fg' : 'border-transparent text-fg-secondary hover:text-fg',
+                  ].join(' ')}
+                >
+                  {LOCALE_LABELS[locale]}
+                </button>
+              ))}
             </div>
+
+            {formLocale === 'en' ? (
+              <div>
+                <label className="mb-1 block text-sm font-medium text-fg-secondary">Name</label>
+                <input
+                  type="text"
+                  required
+                  autoFocus
+                  value={form.name}
+                  onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                  placeholder="e.g. Powder Brows"
+                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                />
+              </div>
+            ) : (
+              <div>
+                <label className="mb-1 block text-sm font-medium text-fg-secondary">Name (Español)</label>
+                <input
+                  type="text"
+                  value={form.nameEs}
+                  onChange={(e) => setForm((f) => ({ ...f, nameEs: e.target.value }))}
+                  placeholder={form.name || 'e.g. Cejas en Polvo'}
+                  className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                />
+                <p className="mt-1 text-xs text-fg-muted">Falls back to the English name above until filled in.</p>
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -345,19 +394,35 @@ export default function ServicesManager({ canEdit }: { canEdit: boolean }) {
                     className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                   />
                 </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-fg-secondary">
-                    Deposit breakdown note (optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={form.depositBreakdownNote}
-                    onChange={(e) => setForm((f) => ({ ...f, depositBreakdownNote: e.target.value }))}
-                    placeholder="e.g. $50 deposit + $10 processing fee"
-                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                  />
-                  <p className="mt-1 text-xs text-fg-muted">Shown to the client alongside the total on the deposit page.</p>
-                </div>
+                {formLocale === 'en' ? (
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-fg-secondary">
+                      Deposit breakdown note (optional)
+                    </label>
+                    <input
+                      type="text"
+                      value={form.depositBreakdownNote}
+                      onChange={(e) => setForm((f) => ({ ...f, depositBreakdownNote: e.target.value }))}
+                      placeholder="e.g. $50 deposit + $10 processing fee"
+                      className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                    />
+                    <p className="mt-1 text-xs text-fg-muted">Shown to the client alongside the total on the deposit page.</p>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-fg-secondary">
+                      Deposit breakdown note (Español, optional)
+                    </label>
+                    <input
+                      type="text"
+                      value={form.depositBreakdownNoteEs}
+                      onChange={(e) => setForm((f) => ({ ...f, depositBreakdownNoteEs: e.target.value }))}
+                      placeholder={form.depositBreakdownNote || 'e.g. $50 de depósito + $10 de cargo'}
+                      className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                    />
+                    <p className="mt-1 text-xs text-fg-muted">Falls back to the English note above until filled in.</p>
+                  </div>
+                )}
               </>
             )}
 

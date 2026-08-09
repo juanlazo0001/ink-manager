@@ -11,6 +11,7 @@ import { hasPermission, type PermissionKey } from "../lib/permissions";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { normalizeArtistFieldVisibility } from "../lib/artistFieldVisibility";
 import { resolveRequestLocale, resolveSystemFieldLabel, withLocale } from "../lib/contentTranslation";
+import { isSupportedLocale } from "../lib/locale";
 
 // Public: /privacy/:studioSlug and /terms/:studioSlug (unauthenticated) need
 // to read these two fields by slug, same "public sub-router mounted first"
@@ -151,7 +152,21 @@ staffRouter.get("/", requireRole(Role.OWNER, Role.FRONT_DESK, Role.ARTIST), asyn
   // Same materialize-the-default treatment as depositTiers above -- the
   // Settings UI renders two real checkboxes, not a tri-state "unset" one.
   const artistFieldVisibility = normalizeArtistFieldVisibility(settings.artistFieldVisibility);
-  res.json({ ...settings, depositTiers, artistFieldVisibility });
+
+  // Multi-language public forms, Part 6: keyed by locale, same shape PATCH
+  // accepts under body.translations -- lets the Settings editor pre-fill
+  // each field's Spanish draft without a second round-trip.
+  const translationRows = await prisma.studioSettingsTranslation.findMany({ where: { studioId: req.user!.studioId } });
+  const translations: Record<string, Record<string, unknown>> = {};
+  for (const row of translationRows) {
+    const fields: Record<string, unknown> = {};
+    for (const field of STUDIO_SETTINGS_TRANSLATABLE_FIELDS) {
+      fields[field] = row[field];
+    }
+    translations[row.locale] = fields;
+  }
+
+  res.json({ ...settings, depositTiers, artistFieldVisibility, translations });
 });
 
 const TEXT_FIELDS = [
@@ -183,6 +198,26 @@ const VALID_TIMEZONES = [
 ] as const;
 
 const HEALTH_QUESTION_TYPES = ["yes_no", "yes_no_explain"];
+
+// Multi-language public forms, Part 4/6: the fields StudioSettingsTranslation
+// actually has a column for -- a subset of TEXT_FIELDS above
+// (calendarInviteTemplate is staff-only chrome, never shown to a client, so
+// it deliberately has no translation column) plus the two waiver JSON
+// fields, which aren't in TEXT_FIELDS at all (they get their own dedicated
+// list editor on StudioSettings itself).
+const STUDIO_SETTINGS_TRANSLATABLE_FIELDS = [
+  "refundPolicy",
+  "depositPolicy",
+  "reschedulePolicy",
+  "communicationPolicy",
+  "estimateTerms",
+  "waiverHealthQuestions",
+  "waiverClauses",
+  "waiverAcknowledgment",
+  "waiverPhotoRelease",
+  "privacyPolicy",
+  "termsAndConditions",
+] as const;
 
 function isValidHealthQuestions(value: unknown): boolean {
   if (!Array.isArray(value)) return false;
@@ -311,7 +346,8 @@ function presentSettingsPermissionGroups(body: Record<string, unknown>): Set<Per
   if (
     TEXT_FIELDS.some((f) => body[f] !== undefined) ||
     body.waiverHealthQuestions !== undefined ||
-    body.waiverClauses !== undefined
+    body.waiverClauses !== undefined ||
+    body.translations !== undefined
   ) {
     groups.add("settings.managePolicies");
   }
@@ -537,7 +573,56 @@ staffRouter.patch("/", async (req, res) => {
     };
   }
 
+  // Multi-language public forms, Part 6: { translations: { es: { refundPolicy: "...", ... } } }
+  // -- one upsert per locale present, only touching fields actually sent
+  // (undefined fields leave that locale's existing translation column
+  // alone; explicit null clears it back to "fall back to English").
+  // Validated the same way TEXT_FIELDS/waiverHealthQuestions/waiverClauses
+  // are above -- these are the exact same fields on a sibling table, so the
+  // exact same rules apply.
+  const translationUpserts: { locale: string; data: Record<string, unknown> }[] = [];
+  if (body.translations !== undefined) {
+    if (typeof body.translations !== "object" || body.translations === null || Array.isArray(body.translations)) {
+      return res.status(400).json({ error: "translations must be an object keyed by locale" });
+    }
+    for (const [locale, fields] of Object.entries(body.translations as Record<string, unknown>)) {
+      if (!isSupportedLocale(locale) || locale === "en") {
+        return res.status(400).json({ error: `translations key "${locale}" is not a supported non-English locale` });
+      }
+      if (typeof fields !== "object" || fields === null || Array.isArray(fields)) {
+        return res.status(400).json({ error: `translations.${locale} must be an object` });
+      }
+      const translationData: Record<string, unknown> = {};
+      for (const [field, value] of Object.entries(fields as Record<string, unknown>)) {
+        if (!(STUDIO_SETTINGS_TRANSLATABLE_FIELDS as readonly string[]).includes(field)) {
+          return res.status(400).json({ error: `translations.${locale}.${field} is not a translatable field` });
+        }
+        if (field === "waiverHealthQuestions") {
+          if (value !== null && !isValidHealthQuestions(value)) {
+            return res.status(400).json({ error: `translations.${locale}.waiverHealthQuestions is invalid` });
+          }
+        } else if (field === "waiverClauses") {
+          if (value !== null && !isValidClauses(value)) {
+            return res.status(400).json({ error: `translations.${locale}.waiverClauses is invalid` });
+          }
+        } else if (value !== null && typeof value !== "string") {
+          return res.status(400).json({ error: `translations.${locale}.${field} must be a string or null` });
+        }
+        translationData[field] = value;
+      }
+      translationUpserts.push({ locale, data: translationData });
+    }
+  }
+
   const updated = await prisma.studioSettings.update({ where: { studioId: req.user!.studioId }, data });
+
+  for (const { locale, data: translationData } of translationUpserts) {
+    await prisma.studioSettingsTranslation.upsert({
+      where: { studioSettingsId_locale: { studioSettingsId: updated.id, locale } },
+      create: { studioSettingsId: updated.id, studioId: req.user!.studioId, locale, ...translationData },
+      update: translationData,
+    });
+  }
 
   if (body.artistFieldVisibility !== undefined) {
     // Realtime standing rule: a connected artist's already-open Inquiries

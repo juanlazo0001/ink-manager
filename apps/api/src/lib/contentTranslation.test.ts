@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { prisma } from "./prisma";

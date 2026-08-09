@@ -5,6 +5,41 @@ import { requireAuth, requireRole } from "../middleware/auth";
 import { diffObjects, logAudit } from "../lib/audit";
 import { generateUniqueServiceSlug } from "../lib/services";
 import { emitInvalidation } from "../lib/realtime/registry";
+import { isSupportedLocale } from "../lib/locale";
+
+// Multi-language public forms, Part 6: identical shape/reasoning to
+// customPolicies.ts's own parseCustomPolicyTranslations -- see that
+// comment. Only `name`/`depositBreakdownNote` are translatable here
+// (ServiceTranslation's own two columns); pricing/deposit model and every
+// other Service field are locale-independent.
+function parseServiceTranslations(
+  translations: unknown,
+): { ok: true; value: { locale: string; data: Record<string, unknown> }[] } | { ok: false; error: string } {
+  if (typeof translations !== "object" || translations === null || Array.isArray(translations)) {
+    return { ok: false, error: "translations must be an object keyed by locale" };
+  }
+  const result: { locale: string; data: Record<string, unknown> }[] = [];
+  for (const [locale, fields] of Object.entries(translations as Record<string, unknown>)) {
+    if (!isSupportedLocale(locale) || locale === "en") {
+      return { ok: false, error: `translations key "${locale}" is not a supported non-English locale` };
+    }
+    if (typeof fields !== "object" || fields === null || Array.isArray(fields)) {
+      return { ok: false, error: `translations.${locale} must be an object` };
+    }
+    const data: Record<string, unknown> = {};
+    for (const [field, value] of Object.entries(fields as Record<string, unknown>)) {
+      if (field !== "name" && field !== "depositBreakdownNote") {
+        return { ok: false, error: `translations.${locale}.${field} is not a translatable field` };
+      }
+      if (value !== null && typeof value !== "string") {
+        return { ok: false, error: `translations.${locale}.${field} must be a string or null` };
+      }
+      data[field] = value;
+    }
+    result.push({ locale, data });
+  }
+  return { ok: true, value: result };
+}
 
 const router = Router();
 router.use(requireAuth);
@@ -18,8 +53,14 @@ router.get("/", requireRole(Role.OWNER, Role.FRONT_DESK, Role.ARTIST), async (re
   const services = await prisma.service.findMany({
     where: { studioId: req.user!.studioId },
     orderBy: [{ isActive: "desc" }, { createdAt: "asc" }],
+    include: { translations: true },
   });
-  res.json(services);
+  res.json(
+    services.map(({ translations, ...service }) => ({
+      ...service,
+      translations: Object.fromEntries(translations.map((t) => [t.locale, { name: t.name, depositBreakdownNote: t.depositBreakdownNote }])),
+    })),
+  );
 });
 
 router.use(requireRole(Role.OWNER));
@@ -79,6 +120,15 @@ router.post("/", async (req, res) => {
     return res.status(400).json({ error: "intakeFormId must reference an existing intake form in your studio" });
   }
 
+  let parsedTranslations: { locale: string; data: Record<string, unknown> }[] = [];
+  if (body.translations !== undefined) {
+    const parsed = parseServiceTranslations(body.translations);
+    if (!parsed.ok) {
+      return res.status(400).json({ error: parsed.error });
+    }
+    parsedTranslations = parsed.value;
+  }
+
   const slug = await generateUniqueServiceSlug(studioId, name.trim());
 
   const service = await prisma.service.create({
@@ -95,6 +145,12 @@ router.post("/", async (req, res) => {
       intakeFormId,
     },
   });
+
+  for (const { locale, data: translationData } of parsedTranslations) {
+    await prisma.serviceTranslation.create({
+      data: { serviceId: service.id, studioId, locale, ...translationData },
+    });
+  }
 
   await logAudit({
     studioId,
@@ -215,7 +271,24 @@ router.patch("/:id", async (req, res) => {
     data.isActive = isActive;
   }
 
+  let parsedTranslations: { locale: string; data: Record<string, unknown> }[] = [];
+  if (body.translations !== undefined) {
+    const parsed = parseServiceTranslations(body.translations);
+    if (!parsed.ok) {
+      return res.status(400).json({ error: parsed.error });
+    }
+    parsedTranslations = parsed.value;
+  }
+
   const updated = await prisma.service.update({ where: { id }, data });
+
+  for (const { locale, data: translationData } of parsedTranslations) {
+    await prisma.serviceTranslation.upsert({
+      where: { serviceId_locale: { serviceId: id, locale } },
+      create: { serviceId: id, studioId, locale, ...translationData },
+      update: translationData,
+    });
+  }
 
   await logAudit({
     studioId,

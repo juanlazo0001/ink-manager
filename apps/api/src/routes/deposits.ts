@@ -52,6 +52,43 @@ const TERMS = [
 
 const TERM_KEYS = TERMS.map((t) => t.key);
 
+// Multi-language public forms, Part 5: TERMS above is Finding 1's
+// platform-owned copy (see the frontend's own deposit.terms dictionary for
+// the display-side half of this) -- this is the Spanish counterpart, kept
+// here rather than in lib/pdfStrings.ts since TERMS itself already lives in
+// this file and termsForLocale is what actually gets snapshotted onto
+// DepositForm.termsSnapshot at sign time, not just used for PDF chrome.
+// Keys must match TERMS exactly; termsForLocale below is the only place
+// that reads this map, so a missing key surfaces as English text rather
+// than a runtime crash.
+const TERMS_ES: Record<(typeof TERM_KEYS)[number], string> = {
+  agreedNonRefundable:
+    "Se requiere un depósito para fijar una cita. Los depósitos no son reembolsables y se aplican al precio final del tatuaje.",
+  agreedLatePolicy:
+    "Los artistas se reservan el derecho de reprogramar la cita si el cliente llega con más de 15 minutos de retraso sin previo aviso.",
+  agreedNoShowForfeit:
+    "La falta de asistencia sin aviso previo resulta en la pérdida del depósito. Se requiere un aviso de 48 horas para cambiar una cita programada.",
+  agreedNewDepositAfterNoShow:
+    "Después de una falta de asistencia sin aviso previo, se requiere un nuevo depósito para programar otra cita.",
+  agreedRescheduleLimit:
+    "Las citas pueden reprogramarse hasta 3 veces; el depósito se pierde en la tercera reprogramación.",
+  agreedExpiration: "Los depósitos vencen un año después de la fecha en que fueron creados.",
+  agreedIdAndVoucher:
+    "El cliente debe traer una identificación oficial con fotografía y el comprobante de depósito (emitido después del pago) el día de la cita.",
+  agreedAge18: "El cliente reconfirma que tiene al menos 18 años de edad.",
+};
+
+// The exact wording shown to the client at sign time, snapshotted onto
+// DepositForm.termsSnapshot -- so a later edit to TERMS/TERMS_ES never
+// retroactively changes what an already-signed deposit form appears to say
+// (same guarantee LiabilityWaiver's own snapshots already provide).
+function termsForLocale(locale: string): { key: string; label: string }[] {
+  if (locale === "es") {
+    return TERMS.map((t) => ({ key: t.key, label: TERMS_ES[t.key] }));
+  }
+  return TERMS.map((t) => ({ key: t.key, label: t.label }));
+}
+
 // Phase 7C: "already signed" is no longer unconditionally terminal -- a
 // studio with Stripe connected still needs this same token to work AFTER
 // signing, so the client can pay (or retry paying, if they abandoned
@@ -236,7 +273,15 @@ publicRouter.patch("/sign/:token", async (req, res) => {
 
   const depositForm = await prisma.depositForm.findUnique({
     where: { token },
-    include: { inquiry: { select: { studioId: true } } },
+    include: {
+      inquiry: {
+        select: {
+          studioId: true,
+          client: { select: { preferredLocale: true } },
+          studio: { select: { settings: { select: { defaultLocale: true } } } },
+        },
+      },
+    },
   });
 
   if (!depositForm) {
@@ -278,6 +323,15 @@ publicRouter.patch("/sign/:token", async (req, res) => {
     return res.status(400).json({ error: "signatureData is required" });
   }
 
+  // Multi-language public forms, Part 5: captured at the moment of signing,
+  // not re-derived later -- same reasoning as every other signed-document
+  // snapshot in this codebase (see termsForLocale's own comment above).
+  const signedLocale = resolveRequestLocale(
+    req.query.locale,
+    depositForm!.inquiry.client.preferredLocale,
+    depositForm!.inquiry.studio.settings?.defaultLocale,
+  );
+
   await prisma.depositForm.update({
     where: { id: depositForm!.id },
     data: {
@@ -292,6 +346,8 @@ publicRouter.patch("/sign/:token", async (req, res) => {
       signatureName: signatureName.trim(),
       signatureData,
       signedAt: new Date(),
+      signedLocale,
+      termsSnapshot: termsForLocale(signedLocale),
     },
   });
 
@@ -553,10 +609,15 @@ staffRouter.get("/:id/pdf", requireAuth, async (req, res) => {
     depositAmount: depositForm.depositAmount,
     feeAmount: depositForm.feeAmount,
     totalCharged: depositForm.totalCharged,
-    terms: TERMS,
+    // Falls back to TERMS (today's live English) for any deposit form
+    // signed before this snapshot existed -- termsSnapshot is null for
+    // every one of those, never an empty array, so this fallback only ever
+    // fires for genuinely pre-migration records.
+    terms: (depositForm.termsSnapshot as unknown as { key: string; label: string }[] | null) ?? TERMS,
     signatureName: depositForm.signatureName,
     signatureData: depositForm.signatureData,
     signedAt: depositForm.signedAt,
+    locale: depositForm.signedLocale,
   });
 
   res.setHeader("Content-Type", "application/pdf");

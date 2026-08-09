@@ -5,6 +5,41 @@ import { requireAuth, requireRole } from "../middleware/auth";
 import { diffObjects, logAudit } from "../lib/audit";
 import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 import { emitInvalidation } from "../lib/realtime/registry";
+import { isSupportedLocale } from "../lib/locale";
+
+// Multi-language public forms, Part 6: shared by POST/PATCH below --
+// validates { es: { title?, bodyHtml? } }-shaped input against
+// CustomPolicyTranslation's own two columns, same rules as the base
+// title/bodyHtml validation right above each call site. Returns either the
+// per-locale upsert data or a ready-to-send error response.
+function parseCustomPolicyTranslations(
+  translations: unknown,
+): { ok: true; value: { locale: string; data: Record<string, unknown> }[] } | { ok: false; error: string } {
+  if (typeof translations !== "object" || translations === null || Array.isArray(translations)) {
+    return { ok: false, error: "translations must be an object keyed by locale" };
+  }
+  const result: { locale: string; data: Record<string, unknown> }[] = [];
+  for (const [locale, fields] of Object.entries(translations as Record<string, unknown>)) {
+    if (!isSupportedLocale(locale) || locale === "en") {
+      return { ok: false, error: `translations key "${locale}" is not a supported non-English locale` };
+    }
+    if (typeof fields !== "object" || fields === null || Array.isArray(fields)) {
+      return { ok: false, error: `translations.${locale} must be an object` };
+    }
+    const data: Record<string, unknown> = {};
+    for (const [field, value] of Object.entries(fields as Record<string, unknown>)) {
+      if (field !== "title" && field !== "bodyHtml") {
+        return { ok: false, error: `translations.${locale}.${field} is not a translatable field` };
+      }
+      if (value !== null && typeof value !== "string") {
+        return { ok: false, error: `translations.${locale}.${field} must be a string or null` };
+      }
+      data[field] = value;
+    }
+    result.push({ locale, data });
+  }
+  return { ok: true, value: result };
+}
 
 // Public: the studio's own /policies page lists every isPublic custom
 // policy, keyed by studio slug -- same unauthenticated, studio-scoped GET
@@ -52,8 +87,18 @@ staffRouter.get("/", requireRole(Role.OWNER, Role.FRONT_DESK), async (req, res) 
   const policies = await prisma.customPolicy.findMany({
     where: { studioId: req.user!.studioId },
     orderBy: { order: "asc" },
+    include: { translations: true },
   });
-  res.json(policies);
+  // Multi-language public forms, Part 6: reshaped from the flat
+  // CustomPolicyTranslation rows into { es: { title, bodyHtml } } -- same
+  // by-locale object shape POST/PATCH accept, so the editor can round-trip
+  // a policy's translations without reshaping on the frontend.
+  res.json(
+    policies.map(({ translations, ...policy }) => ({
+      ...policy,
+      translations: Object.fromEntries(translations.map((t) => [t.locale, { title: t.title, bodyHtml: t.bodyHtml }])),
+    })),
+  );
 });
 
 staffRouter.post("/", requireRole(Role.OWNER), async (req, res) => {
@@ -69,6 +114,15 @@ staffRouter.post("/", requireRole(Role.OWNER), async (req, res) => {
     return res.status(400).json({ error: "isPublic must be a boolean" });
   }
 
+  let parsedTranslations: { locale: string; data: Record<string, unknown> }[] = [];
+  if (body.translations !== undefined) {
+    const parsed = parseCustomPolicyTranslations(body.translations);
+    if (!parsed.ok) {
+      return res.status(400).json({ error: parsed.error });
+    }
+    parsedTranslations = parsed.value;
+  }
+
   // New policies land at the end of the existing order, not order: 0 --
   // otherwise every new policy would jump to the front of the list.
   const count = await prisma.customPolicy.count({ where: { studioId: req.user!.studioId } });
@@ -82,6 +136,12 @@ staffRouter.post("/", requireRole(Role.OWNER), async (req, res) => {
       order: count,
     },
   });
+
+  for (const { locale, data: translationData } of parsedTranslations) {
+    await prisma.customPolicyTranslation.create({
+      data: { customPolicyId: created.id, studioId: req.user!.studioId, locale, ...translationData },
+    });
+  }
 
   await logAudit({
     studioId: req.user!.studioId,
@@ -129,7 +189,24 @@ staffRouter.patch("/:id", requireRole(Role.OWNER), async (req, res) => {
     data.isPublic = body.isPublic;
   }
 
+  let parsedTranslations: { locale: string; data: Record<string, unknown> }[] = [];
+  if (body.translations !== undefined) {
+    const parsed = parseCustomPolicyTranslations(body.translations);
+    if (!parsed.ok) {
+      return res.status(400).json({ error: parsed.error });
+    }
+    parsedTranslations = parsed.value;
+  }
+
   const updated = await prisma.customPolicy.update({ where: { id }, data });
+
+  for (const { locale, data: translationData } of parsedTranslations) {
+    await prisma.customPolicyTranslation.upsert({
+      where: { customPolicyId_locale: { customPolicyId: id, locale } },
+      create: { customPolicyId: id, studioId: req.user!.studioId, locale, ...translationData },
+      update: translationData,
+    });
+  }
 
   await logAudit({
     studioId: req.user!.studioId,

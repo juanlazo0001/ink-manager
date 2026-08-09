@@ -23,6 +23,7 @@ import { useEffectiveUser } from '../context/useEffectiveUser'
 import { THEME_PRESETS, applyThemePreset } from '../lib/themePresets'
 import { dollarsToCents } from '../lib/money'
 import { useThemePreset } from '../lib/useThemePreset'
+import { LOCALE_LABELS, type Locale } from '../i18n/locales'
 import Eyebrow from '../components/Eyebrow'
 
 interface HealthQuestion {
@@ -58,6 +59,9 @@ interface CustomPolicyData {
   bodyHtml: string | null
   isPublic: boolean
   order: number
+  // Multi-language public forms, Part 6: keyed by locale, absent entirely
+  // for a policy that's never been translated.
+  translations?: Record<string, { title: string | null; bodyHtml: string | null }>
 }
 
 // Phase 7A: Settings -> System section (job scheduler observability).
@@ -159,6 +163,11 @@ interface StudioSettingsData {
   // response), typed optional here only because a stale cached response
   // from before this field existed could theoretically lack it.
   artistFieldVisibility?: ArtistFieldVisibilityData
+  // Multi-language public forms, Part 6: keyed by locale, each value an
+  // object with whichever STUDIO_SETTINGS_TRANSLATABLE_FIELDS keys have
+  // ever been saved for that locale -- absent entirely for a studio that's
+  // never translated anything.
+  translations?: Record<string, Partial<Record<string, unknown>>>
 }
 
 // Phase 5: see lib/artistFieldVisibility.ts (API) for the authoritative
@@ -273,6 +282,24 @@ const POLICY_HTML_FIELDS: { key: keyof StudioSettingsData; label: string }[] = [
   { key: 'termsAndConditions', label: 'Terms & Conditions' },
 ]
 
+// Multi-language public forms, Part 6: the subset of POLICY_HTML_FIELDS
+// (and the two waiver list fields below) that actually has a column on
+// StudioSettingsTranslation -- calendarInviteTemplate is staff-only chrome,
+// never shown to a client, so it deliberately has no locale tab. Matches
+// apps/api/src/routes/studioSettings.ts's own STUDIO_SETTINGS_TRANSLATABLE_FIELDS
+// exactly.
+const STUDIO_SETTINGS_TRANSLATABLE_FIELDS = new Set<keyof StudioSettingsData>([
+  'refundPolicy',
+  'depositPolicy',
+  'reschedulePolicy',
+  'communicationPolicy',
+  'estimateTerms',
+  'waiverAcknowledgment',
+  'waiverPhotoRelease',
+  'privacyPolicy',
+  'termsAndConditions',
+])
+
 // Strips tags for the compact row preview (plain text only, never rendered
 // as HTML -- React text interpolation escapes it same as any other string,
 // so this needs no sanitizer of its own; it's the modal editor and the
@@ -351,6 +378,22 @@ const JOB_DISPLAY: Record<string, { friendlyName: string; plainDescription: stri
 }
 
 const EMPTY_HEALTH_QUESTION: HealthQuestion = { question: '', type: 'yes_no', explainPrompt: '' }
+
+// Multi-language public forms, Part 6: aligns a Spanish
+// StudioSettingsTranslation.waiverHealthQuestions array to the CURRENT
+// English list's length/order -- a saved translation might be shorter (an
+// English question added since) or the same shape; either way this always
+// returns exactly `english.length` strings, empty for any row with no
+// saved Spanish text yet.
+function zipEsHealthQuestions(english: HealthQuestion[], es: unknown): { question: string; explainPrompt: string }[] {
+  const esList = Array.isArray(es) ? (es as Partial<HealthQuestion>[]) : []
+  return english.map((_, i) => ({ question: esList[i]?.question ?? '', explainPrompt: esList[i]?.explainPrompt ?? '' }))
+}
+
+function zipEsClauses(english: string[], es: unknown): string[] {
+  const esList = Array.isArray(es) ? (es as string[]) : []
+  return english.map((_, i) => esList[i] ?? '')
+}
 
 const EMPTY_STUDIO_FORM = { name: '', website: '' }
 
@@ -759,6 +802,8 @@ export default function Settings() {
   // null), fieldDraft holds that one field's in-progress HTML.
   const [editingField, setEditingField] = useState<keyof StudioSettingsData | null>(null)
   const [fieldDraft, setFieldDraft] = useState('')
+  const [fieldDraftEs, setFieldDraftEs] = useState('')
+  const [fieldLocale, setFieldLocale] = useState<Locale>('en')
   const [fieldSaving, setFieldSaving] = useState(false)
   const [fieldError, setFieldError] = useState<string | null>(null)
 
@@ -776,6 +821,16 @@ export default function Settings() {
   const [editingWaiverList, setEditingWaiverList] = useState(false)
   const [waiverListSaving, setWaiverListSaving] = useState(false)
   const [waiverListError, setWaiverListError] = useState<string | null>(null)
+  // Multi-language public forms, Part 6: index-aligned with
+  // waiverHealthQuestions/waiverClauses above -- a Spanish translation is
+  // "the text for row N," not an independently addable/removable list of
+  // its own, since the two arrays must stay the same shape for
+  // resolveWaiverSnapshotContent's own per-index rendering. Kept in sync by
+  // the same add/remove handlers below.
+  const [waiverHealthQuestionsEs, setWaiverHealthQuestionsEs] = useState<string[]>([])
+  const [waiverHealthExplainEs, setWaiverHealthExplainEs] = useState<string[]>([])
+  const [waiverClausesEs, setWaiverClausesEs] = useState<string[]>([])
+  const [waiverListLocale, setWaiverListLocale] = useState<Locale>('en')
 
   // Message templates: same treatment as the waiver list above.
   const [messageTemplates, setMessageTemplates] = useState<MessageTemplate[]>([])
@@ -815,6 +870,9 @@ export default function Settings() {
   const [customPolicyTitleDraft, setCustomPolicyTitleDraft] = useState('')
   const [customPolicyBodyDraft, setCustomPolicyBodyDraft] = useState('')
   const [customPolicyPublicDraft, setCustomPolicyPublicDraft] = useState(false)
+  const [customPolicyTitleEsDraft, setCustomPolicyTitleEsDraft] = useState('')
+  const [customPolicyBodyEsDraft, setCustomPolicyBodyEsDraft] = useState('')
+  const [customPolicyLocale, setCustomPolicyLocale] = useState<Locale>('en')
   const [customPolicySaving, setCustomPolicySaving] = useState(false)
   const [customPolicyError, setCustomPolicyError] = useState<string | null>(null)
   const [deletingCustomPolicyId, setDeletingCustomPolicyId] = useState<string | null>(null)
@@ -866,8 +924,14 @@ export default function Settings() {
       .then((data) => {
         if (ignore) return
         setPolicies(data)
-        setWaiverHealthQuestions(data.waiverHealthQuestions ?? [])
-        setWaiverClauses(data.waiverClauses ?? [])
+        const englishQuestions = data.waiverHealthQuestions ?? []
+        const englishClauses = data.waiverClauses ?? []
+        setWaiverHealthQuestions(englishQuestions)
+        setWaiverClauses(englishClauses)
+        const zippedEsQuestions = zipEsHealthQuestions(englishQuestions, data.translations?.es?.waiverHealthQuestions)
+        setWaiverHealthQuestionsEs(zippedEsQuestions.map((q) => q.question))
+        setWaiverHealthExplainEs(zippedEsQuestions.map((q) => q.explainPrompt))
+        setWaiverClausesEs(zipEsClauses(englishClauses, data.translations?.es?.waiverClauses))
         setMessageTemplates(data.messageTemplates ?? [])
         setReminderSendTimes(data.reminderSendTimes ?? DEFAULT_REMINDER_SEND_TIMES)
         setReminderCadenceDays({
@@ -887,6 +951,8 @@ export default function Settings() {
   function openFieldModal(key: keyof StudioSettingsData) {
     setEditingField(key)
     setFieldDraft((policies?.[key] as string | null) ?? '')
+    setFieldDraftEs((policies?.translations?.es?.[key] as string | null) ?? '')
+    setFieldLocale('en')
     setFieldError(null)
   }
 
@@ -895,11 +961,27 @@ export default function Settings() {
     setFieldSaving(true)
     setFieldError(null)
     try {
+      const isTranslatable = STUDIO_SETTINGS_TRANSLATABLE_FIELDS.has(editingField)
+      const esValue = fieldDraftEs.trim()
       const updated = await apiFetch<StudioSettingsData>('/studio-settings', {
         method: 'PATCH',
-        body: JSON.stringify({ [editingField]: fieldDraft }),
+        body: JSON.stringify({
+          [editingField]: fieldDraft,
+          ...(isTranslatable ? { translations: { es: { [editingField]: esValue || null } } } : {}),
+        }),
       })
-      setPolicies(updated)
+      // PATCH doesn't echo translations back (a sibling table, upserted
+      // after the base row) -- merged in locally from what was just
+      // submitted, same as the CustomPolicy/Service/FlashPiece editors.
+      setPolicies({
+        ...updated,
+        translations: isTranslatable
+          ? {
+              ...policies?.translations,
+              es: { ...policies?.translations?.es, [editingField]: esValue || null },
+            }
+          : policies?.translations,
+      })
       setEditingField(null)
     } catch (err) {
       setFieldError(err instanceof Error ? err.message : 'Failed to save')
@@ -909,10 +991,14 @@ export default function Settings() {
   }
 
   function openCustomPolicyModal(policy: CustomPolicyData | 'new') {
+    const es = policy === 'new' ? undefined : policy.translations?.es
     setEditingCustomPolicy(policy)
     setCustomPolicyTitleDraft(policy === 'new' ? '' : policy.title)
     setCustomPolicyBodyDraft(policy === 'new' ? '' : (policy.bodyHtml ?? ''))
     setCustomPolicyPublicDraft(policy === 'new' ? false : policy.isPublic)
+    setCustomPolicyTitleEsDraft(es?.title ?? '')
+    setCustomPolicyBodyEsDraft(es?.bodyHtml ?? '')
+    setCustomPolicyLocale('en')
     setCustomPolicyError(null)
   }
 
@@ -921,6 +1007,14 @@ export default function Settings() {
     setCustomPolicySaving(true)
     setCustomPolicyError(null)
     try {
+      const esTitle = customPolicyTitleEsDraft.trim()
+      const esBody = customPolicyBodyEsDraft.trim()
+      // Neither POST nor PATCH echoes translations back on the base entity
+      // (they're a sibling table, upserted server-side after the base row
+      // is written) -- merged in locally from what was just submitted
+      // rather than left stale until the next full list refetch.
+      const translations = esTitle || esBody ? { es: { title: esTitle || null, bodyHtml: esBody || null } } : undefined
+
       if (editingCustomPolicy === 'new') {
         const created = await apiFetch<CustomPolicyData>('/custom-policies', {
           method: 'POST',
@@ -928,9 +1022,10 @@ export default function Settings() {
             title: customPolicyTitleDraft,
             bodyHtml: customPolicyBodyDraft,
             isPublic: customPolicyPublicDraft,
+            ...(translations ? { translations } : {}),
           }),
         })
-        setCustomPolicies((prev) => [...(prev ?? []), created])
+        setCustomPolicies((prev) => [...(prev ?? []), { ...created, translations }])
       } else {
         const updated = await apiFetch<CustomPolicyData>(`/custom-policies/${editingCustomPolicy.id}`, {
           method: 'PATCH',
@@ -938,9 +1033,12 @@ export default function Settings() {
             title: customPolicyTitleDraft,
             bodyHtml: customPolicyBodyDraft,
             isPublic: customPolicyPublicDraft,
+            ...(translations ? { translations } : {}),
           }),
         })
-        setCustomPolicies((prev) => (prev ?? []).map((p) => (p.id === updated.id ? updated : p)))
+        setCustomPolicies((prev) =>
+          (prev ?? []).map((p) => (p.id === updated.id ? { ...updated, translations: translations ?? p.translations } : p)),
+        )
       }
       setEditingCustomPolicy(null)
     } catch (err) {
@@ -1142,15 +1240,31 @@ export default function Settings() {
     setWaiverListSaving(true)
     setWaiverListError(null)
 
-    const cleanedQuestions = waiverHealthQuestions
-      .filter((q) => q.question.trim().length > 0)
-      .map((q) => ({
+    // Zipped against the ORIGINAL (pre-filter) index so a dropped empty
+    // English row drops its Spanish counterpart too -- cleanedQuestions/
+    // cleanedClauses below can end up shorter than waiverHealthQuestions/
+    // waiverClauses, and the Spanish arrays must stay aligned to whichever
+    // rows actually survive.
+    const keptQuestionIndices = waiverHealthQuestions
+      .map((q, i) => (q.question.trim().length > 0 ? i : -1))
+      .filter((i) => i !== -1)
+    const cleanedQuestions = keptQuestionIndices.map((i) => {
+      const q = waiverHealthQuestions[i]
+      return {
         question: q.question.trim(),
         type: q.type,
         ...(q.type === 'yes_no_explain' ? { explainPrompt: q.explainPrompt?.trim() || undefined } : {}),
-      }))
+      }
+    })
+    const cleanedQuestionsEs = keptQuestionIndices.map((i) => ({
+      question: waiverHealthQuestionsEs[i]?.trim() || null,
+      type: waiverHealthQuestions[i].type,
+      explainPrompt: waiverHealthExplainEs[i]?.trim() || undefined,
+    }))
 
-    const cleanedClauses = waiverClauses.map((c) => c.trim()).filter((c) => c.length > 0)
+    const keptClauseIndices = waiverClauses.map((c, i) => (c.trim().length > 0 ? i : -1)).filter((i) => i !== -1)
+    const cleanedClauses = keptClauseIndices.map((i) => waiverClauses[i].trim())
+    const cleanedClausesEs = keptClauseIndices.map((i) => waiverClausesEs[i]?.trim() || null)
 
     if (cleanedClauses.length === 0) {
       setWaiverListError('At least one waiver clause is required.')
@@ -1158,14 +1272,45 @@ export default function Settings() {
       return
     }
 
+    const hasEsQuestions = cleanedQuestionsEs.some((q) => q.question)
+    const hasEsClauses = cleanedClausesEs.some((c) => c)
+
     try {
       const updated = await apiFetch<StudioSettingsData>('/studio-settings', {
         method: 'PATCH',
-        body: JSON.stringify({ waiverHealthQuestions: cleanedQuestions, waiverClauses: cleanedClauses }),
+        body: JSON.stringify({
+          waiverHealthQuestions: cleanedQuestions,
+          waiverClauses: cleanedClauses,
+          ...(hasEsQuestions || hasEsClauses
+            ? {
+                translations: {
+                  es: {
+                    ...(hasEsQuestions ? { waiverHealthQuestions: cleanedQuestionsEs } : {}),
+                    ...(hasEsClauses ? { waiverClauses: cleanedClausesEs } : {}),
+                  },
+                },
+              }
+            : {}),
+        }),
       })
-      setPolicies(updated)
       setWaiverHealthQuestions(updated.waiverHealthQuestions ?? [])
       setWaiverClauses(updated.waiverClauses ?? [])
+      setWaiverHealthQuestionsEs(cleanedQuestionsEs.map((q) => q.question ?? ''))
+      setWaiverHealthExplainEs(cleanedQuestionsEs.map((q) => q.explainPrompt ?? ''))
+      setWaiverClausesEs(cleanedClausesEs.map((c) => c ?? ''))
+      // PATCH doesn't echo translations back -- merged in locally, same
+      // convention as every other translatable field in this file.
+      setPolicies({
+        ...updated,
+        translations: {
+          ...policies?.translations,
+          es: {
+            ...policies?.translations?.es,
+            ...(hasEsQuestions ? { waiverHealthQuestions: cleanedQuestionsEs } : {}),
+            ...(hasEsClauses ? { waiverClauses: cleanedClausesEs } : {}),
+          },
+        },
+      })
       setEditingWaiverList(false)
     } catch (err) {
       setWaiverListError(err instanceof Error ? err.message : 'Failed to save')
@@ -1280,10 +1425,14 @@ export default function Settings() {
 
   function addHealthQuestion() {
     setWaiverHealthQuestions((current) => [...current, { ...EMPTY_HEALTH_QUESTION }])
+    setWaiverHealthQuestionsEs((current) => [...current, ''])
+    setWaiverHealthExplainEs((current) => [...current, ''])
   }
 
   function removeHealthQuestion(index: number) {
     setWaiverHealthQuestions((current) => current.filter((_, i) => i !== index))
+    setWaiverHealthQuestionsEs((current) => current.filter((_, i) => i !== index))
+    setWaiverHealthExplainEs((current) => current.filter((_, i) => i !== index))
   }
 
   function updateClause(index: number, value: string) {
@@ -1292,10 +1441,12 @@ export default function Settings() {
 
   function addClause() {
     setWaiverClauses((current) => [...current, ''])
+    setWaiverClausesEs((current) => [...current, ''])
   }
 
   function removeClause(index: number) {
     setWaiverClauses((current) => current.filter((_, i) => i !== index))
+    setWaiverClausesEs((current) => current.filter((_, i) => i !== index))
   }
 
   function updateTemplate(index: number, patch: Partial<MessageTemplate>) {
@@ -2174,6 +2325,31 @@ export default function Settings() {
 
                 {editingWaiverList && (
                   <div className="mt-4 space-y-4">
+                    <div className="flex gap-1 border-b border-border">
+                      {(Object.keys(LOCALE_LABELS) as Locale[]).map((locale) => (
+                        <button
+                          key={locale}
+                          type="button"
+                          onClick={() => setWaiverListLocale(locale)}
+                          className={[
+                            'shrink-0 border-b-2 px-3 py-1.5 text-xs font-medium transition',
+                            waiverListLocale === locale ? 'border-accent text-fg' : 'border-transparent text-fg-secondary hover:text-fg',
+                          ].join(' ')}
+                        >
+                          {LOCALE_LABELS[locale]}
+                        </button>
+                      ))}
+                    </div>
+
+                    {waiverListLocale === 'es' && (
+                      <p className="text-xs text-fg-muted">
+                        Add/remove/reorder questions and clauses on the English tab -- the Spanish rows below always
+                        mirror that list, one translation per row. Falls back to English until filled in.
+                      </p>
+                    )}
+
+                    {waiverListLocale === 'en' ? (
+                  <>
                     <div>
                       <div className="flex items-center justify-between">
                         <label className="text-sm font-medium text-fg-secondary">Health screening questions</label>
@@ -2270,6 +2446,68 @@ export default function Settings() {
                         {waiverClauses.length === 0 && <p className="text-sm text-fg-secondary">No clauses yet.</p>}
                       </div>
                     </div>
+                  </>
+                    ) : (
+                  <>
+                    <div>
+                      <label className="text-sm font-medium text-fg-secondary">Health screening questions (Español)</label>
+                      <div className="mt-3 space-y-3">
+                        {waiverHealthQuestions.map((q, i) => (
+                          <div key={i} className="rounded-lg border border-border p-3">
+                            <p className="mb-1 text-xs text-fg-muted">{q.question || `Question ${i + 1}`}</p>
+                            <textarea
+                              rows={2}
+                              value={waiverHealthQuestionsEs[i] ?? ''}
+                              onChange={(e) =>
+                                setWaiverHealthQuestionsEs((current) => current.map((v, idx) => (idx === i ? e.target.value : v)))
+                              }
+                              placeholder={q.question}
+                              className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                            />
+                            {q.type === 'yes_no_explain' && (
+                              <input
+                                type="text"
+                                placeholder={q.explainPrompt || 'Explain prompt (Español)'}
+                                value={waiverHealthExplainEs[i] ?? ''}
+                                onChange={(e) =>
+                                  setWaiverHealthExplainEs((current) => current.map((v, idx) => (idx === i ? e.target.value : v)))
+                                }
+                                className="mt-2 w-full rounded-lg border border-border bg-surface-inset px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                              />
+                            )}
+                          </div>
+                        ))}
+                        {waiverHealthQuestions.length === 0 && (
+                          <p className="text-sm text-fg-secondary">No health questions yet.</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="border-t border-border pt-4">
+                      <label className="text-sm font-medium text-fg-secondary">Clauses (Español)</label>
+                      <div className="mt-3 space-y-3">
+                        {waiverClauses.map((clause, i) => (
+                          <div key={i} className="flex items-start gap-2">
+                            <span className="mt-2 text-xs text-fg-muted">{i + 1}.</span>
+                            <div className="w-full">
+                              <p className="mb-1 text-xs text-fg-muted">{clause || `Clause ${i + 1}`}</p>
+                              <textarea
+                                rows={2}
+                                value={waiverClausesEs[i] ?? ''}
+                                onChange={(e) =>
+                                  setWaiverClausesEs((current) => current.map((v, idx) => (idx === i ? e.target.value : v)))
+                                }
+                                placeholder={clause}
+                                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                              />
+                            </div>
+                          </div>
+                        ))}
+                        {waiverClauses.length === 0 && <p className="text-sm text-fg-secondary">No clauses yet.</p>}
+                      </div>
+                    </div>
+                  </>
+                    )}
 
                     {waiverListError && <p className="text-sm text-danger">{waiverListError}</p>}
 
@@ -2290,8 +2528,14 @@ export default function Settings() {
                         type="button"
                         onClick={() => {
                           setEditingWaiverList(false)
-                          setWaiverHealthQuestions(policies.waiverHealthQuestions ?? [])
-                          setWaiverClauses(policies.waiverClauses ?? [])
+                          const englishQuestions = policies.waiverHealthQuestions ?? []
+                          const englishClauses = policies.waiverClauses ?? []
+                          setWaiverHealthQuestions(englishQuestions)
+                          setWaiverClauses(englishClauses)
+                          const zipped = zipEsHealthQuestions(englishQuestions, policies.translations?.es?.waiverHealthQuestions)
+                          setWaiverHealthQuestionsEs(zipped.map((q) => q.question))
+                          setWaiverHealthExplainEs(zipped.map((q) => q.explainPrompt))
+                          setWaiverClausesEs(zipEsClauses(englishClauses, policies.translations?.es?.waiverClauses))
                           setWaiverListError(null)
                         }}
                         disabled={waiverListSaving}
@@ -2973,9 +3217,35 @@ export default function Settings() {
               onClose={() => setEditingField(null)}
               size="large"
             >
-              <div className="flex min-h-0 flex-1 flex-col">
-                <RichTextEditor value={fieldDraft} onChange={setFieldDraft} fill />
-              </div>
+              {STUDIO_SETTINGS_TRANSLATABLE_FIELDS.has(editingField) && (
+                <div className="mb-3 flex shrink-0 gap-1 border-b border-border">
+                  {(Object.keys(LOCALE_LABELS) as Locale[]).map((locale) => (
+                    <button
+                      key={locale}
+                      type="button"
+                      onClick={() => setFieldLocale(locale)}
+                      className={[
+                        'shrink-0 border-b-2 px-3 py-1.5 text-xs font-medium transition',
+                        fieldLocale === locale ? 'border-accent text-fg' : 'border-transparent text-fg-secondary hover:text-fg',
+                      ].join(' ')}
+                    >
+                      {LOCALE_LABELS[locale]}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {fieldLocale === 'en' || !STUDIO_SETTINGS_TRANSLATABLE_FIELDS.has(editingField) ? (
+                <div className="flex min-h-0 flex-1 flex-col">
+                  <RichTextEditor value={fieldDraft} onChange={setFieldDraft} fill />
+                </div>
+              ) : (
+                <>
+                  <div className="flex min-h-0 flex-1 flex-col">
+                    <RichTextEditor value={fieldDraftEs} onChange={setFieldDraftEs} fill />
+                  </div>
+                  <p className="mt-1 shrink-0 text-xs text-fg-muted">Falls back to the English version above until filled in.</p>
+                </>
+              )}
               {fieldError && <p className="mt-3 shrink-0 text-sm text-danger">{fieldError}</p>}
               <div className="mt-4 flex shrink-0 gap-3">
                 <button
@@ -3012,18 +3282,55 @@ export default function Settings() {
               onClose={() => setEditingCustomPolicy(null)}
               size="large"
             >
-              <label className="mb-1 block shrink-0 text-sm font-medium text-fg-secondary">Title</label>
-              <input
-                type="text"
-                value={customPolicyTitleDraft}
-                onChange={(e) => setCustomPolicyTitleDraft(e.target.value)}
-                className="w-full shrink-0 rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-              />
-
-              <label className="mb-1 mt-4 block shrink-0 text-sm font-medium text-fg-secondary">Body</label>
-              <div className="flex min-h-0 flex-1 flex-col">
-                <RichTextEditor value={customPolicyBodyDraft} onChange={setCustomPolicyBodyDraft} fill />
+              <div className="mb-3 flex shrink-0 gap-1 border-b border-border">
+                {(Object.keys(LOCALE_LABELS) as Locale[]).map((locale) => (
+                  <button
+                    key={locale}
+                    type="button"
+                    onClick={() => setCustomPolicyLocale(locale)}
+                    className={[
+                      'shrink-0 border-b-2 px-3 py-1.5 text-xs font-medium transition',
+                      customPolicyLocale === locale ? 'border-accent text-fg' : 'border-transparent text-fg-secondary hover:text-fg',
+                    ].join(' ')}
+                  >
+                    {LOCALE_LABELS[locale]}
+                  </button>
+                ))}
               </div>
+
+              {customPolicyLocale === 'en' ? (
+                <>
+                  <label className="mb-1 block shrink-0 text-sm font-medium text-fg-secondary">Title</label>
+                  <input
+                    type="text"
+                    value={customPolicyTitleDraft}
+                    onChange={(e) => setCustomPolicyTitleDraft(e.target.value)}
+                    className="w-full shrink-0 rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                  />
+
+                  <label className="mb-1 mt-4 block shrink-0 text-sm font-medium text-fg-secondary">Body</label>
+                  <div className="flex min-h-0 flex-1 flex-col">
+                    <RichTextEditor value={customPolicyBodyDraft} onChange={setCustomPolicyBodyDraft} fill />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <label className="mb-1 block shrink-0 text-sm font-medium text-fg-secondary">Title (Español)</label>
+                  <input
+                    type="text"
+                    value={customPolicyTitleEsDraft}
+                    onChange={(e) => setCustomPolicyTitleEsDraft(e.target.value)}
+                    placeholder={customPolicyTitleDraft}
+                    className="w-full shrink-0 rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                  />
+
+                  <label className="mb-1 mt-4 block shrink-0 text-sm font-medium text-fg-secondary">Body (Español)</label>
+                  <div className="flex min-h-0 flex-1 flex-col">
+                    <RichTextEditor value={customPolicyBodyEsDraft} onChange={setCustomPolicyBodyEsDraft} fill />
+                  </div>
+                  <p className="mt-1 shrink-0 text-xs text-fg-muted">Falls back to the English title/body until filled in.</p>
+                </>
+              )}
 
               <label className="mt-4 flex shrink-0 items-center gap-2 text-sm text-fg">
                 <input

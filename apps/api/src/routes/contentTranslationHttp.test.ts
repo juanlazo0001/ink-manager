@@ -11,6 +11,8 @@ import express from "express";
 import { prisma } from "../lib/prisma";
 import { publicRouter as studioSettingsPublicRouter } from "./studioSettings";
 import { publicRouter as depositsPublicRouter } from "./deposits";
+import { publicRouter as waiversPublicRouter } from "./waivers";
+import estimatesRouter from "./estimates";
 import flashPiecesRouter from "./flashPieces";
 
 const suffix = `ct-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -27,12 +29,16 @@ const depositFormIds: string[] = [];
 const flashPieceIds: string[] = [];
 const userIds: string[] = [];
 const artistIds: string[] = [];
+const waiverIds: string[] = [];
+const appointmentIds: string[] = [];
 
 before(async () => {
   const app = express();
   app.use(express.json());
   app.use("/studio-settings", studioSettingsPublicRouter);
   app.use("/deposits", depositsPublicRouter);
+  app.use("/waivers", waiversPublicRouter);
+  app.use("/estimates", estimatesRouter);
   app.use("/flash-pieces", flashPiecesRouter);
   server = http.createServer(app);
   await new Promise<void>((resolve) => server.listen(0, resolve));
@@ -43,7 +49,10 @@ before(async () => {
 
 after(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
+  await prisma.auditLog.deleteMany({ where: { studioId: { in: studioIds } } });
   await prisma.depositForm.deleteMany({ where: { id: { in: depositFormIds } } });
+  await prisma.liabilityWaiver.deleteMany({ where: { id: { in: waiverIds } } });
+  await prisma.appointment.deleteMany({ where: { id: { in: appointmentIds } } });
   await prisma.flashPiece.deleteMany({ where: { id: { in: flashPieceIds } } });
   await prisma.inquiry.deleteMany({ where: { id: { in: inquiryIds } } });
   await prisma.intakeFormField.deleteMany({ where: { intakeFormId: { in: intakeFormIds } } });
@@ -328,4 +337,227 @@ test("GET /flash-pieces/public?locale=es applies FlashPieceTranslation to title/
   const body = (await res.json()) as { pieces: { title: string; description: string }[] };
   assert.equal(body.pieces[0]?.title, "Rosa");
   assert.equal(body.pieces[0]?.description, "Una rosa roja");
+});
+
+// Multi-language public forms, Part 5: signed-document locale capture.
+// These prove the write side (PATCH .../sign, PATCH /respond) actually
+// records signedLocale/termsSnapshot at the moment of signing, not just
+// that the read side (tested above) can resolve a locale.
+
+test("PATCH /deposits/sign/:token?locale=es writes signedLocale and a Spanish termsSnapshot", async () => {
+  const studio = await prisma.studio.create({ data: { name: `Studio ${suffix}-7`, slug: `studio-${suffix}-7` } });
+  studioIds.push(studio.id);
+  await prisma.studioSettings.create({ data: { studioId: studio.id } });
+
+  const client = await prisma.client.create({
+    data: { studioId: studio.id, firstName: "Jane", lastName: "Doe", referralCode: `REF7${suffix}` },
+  });
+  clientIds.push(client.id);
+
+  const intakeForm = await prisma.intakeForm.create({
+    data: { studioId: studio.id, name: "Default", slug: "default", isDefault: true },
+  });
+  intakeFormIds.push(intakeForm.id);
+
+  const service = await prisma.service.create({
+    data: { studioId: studio.id, name: "Tattoo", slug: "tattoo", pricingModel: "RANGE", depositModel: "TIER_BASED", intakeFormId: intakeForm.id },
+  });
+  serviceIds.push(service.id);
+
+  const inquiry = await prisma.inquiry.create({
+    data: {
+      studioId: studio.id,
+      clientId: client.id,
+      serviceId: service.id,
+      channel: "EMAIL",
+      description: "test",
+      colorOrBlackGrey: "Color",
+      placement: "Arm",
+      estimatedSize: "Small",
+      hasBeenTattooedBefore: false,
+      referenceImages: [],
+      placementImages: [],
+    },
+  });
+  inquiryIds.push(inquiry.id);
+
+  const depositForm = await prisma.depositForm.create({
+    data: {
+      inquiryId: inquiry.id,
+      token: `dep7-${suffix}`,
+      tokenExpiresAt: new Date(Date.now() + 86400000),
+      depositAmount: 50,
+      feeAmount: 10,
+      totalCharged: 60,
+    },
+  });
+  depositFormIds.push(depositForm.id);
+
+  const res = await fetch(`${baseUrl}/deposits/sign/dep7-${suffix}?locale=es`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      agreedNonRefundable: true,
+      agreedLatePolicy: true,
+      agreedNoShowForfeit: true,
+      agreedNewDepositAfterNoShow: true,
+      agreedRescheduleLimit: true,
+      agreedExpiration: true,
+      agreedIdAndVoucher: true,
+      agreedAge18: true,
+      signatureName: "Jane Doe",
+      signatureData: "data:image/png;base64,AAAA",
+    }),
+  });
+  assert.equal(res.status, 200);
+
+  const updated = await prisma.depositForm.findUnique({ where: { id: depositForm.id } });
+  assert.equal(updated?.signedLocale, "es");
+  const snapshot = updated?.termsSnapshot as { key: string; label: string }[];
+  assert.equal(
+    snapshot.find((t) => t.key === "agreedNonRefundable")?.label,
+    "Se requiere un depósito para fijar una cita. Los depósitos no son reembolsables y se aplican al precio final del tatuaje.",
+  );
+  assert.equal(snapshot.length, 8);
+});
+
+test("PATCH /waivers/sign/:token?locale=es writes signedLocale (the frozen English snapshot fields stay untouched)", async () => {
+  const studio = await prisma.studio.create({ data: { name: `Studio ${suffix}-8`, slug: `studio-${suffix}-8` } });
+  studioIds.push(studio.id);
+  await prisma.studioSettings.create({ data: { studioId: studio.id } });
+
+  const client = await prisma.client.create({
+    data: { studioId: studio.id, firstName: "Jane", lastName: "Doe", referralCode: `REF8${suffix}` },
+  });
+  clientIds.push(client.id);
+
+  const user = await prisma.user.create({ data: { email: `artist8-${suffix}@test.invalid`, role: "ARTIST", studioId: studio.id, name: "Test Artist" } });
+  userIds.push(user.id);
+  const artist = await prisma.artist.create({ data: { userId: user.id, specialties: [], portfolioImages: [] } });
+  artistIds.push(artist.id);
+
+  const intakeForm = await prisma.intakeForm.create({
+    data: { studioId: studio.id, name: "Default", slug: "default", isDefault: true },
+  });
+  intakeFormIds.push(intakeForm.id);
+
+  const service = await prisma.service.create({
+    data: { studioId: studio.id, name: "Tattoo", slug: "tattoo", pricingModel: "RANGE", depositModel: "TIER_BASED", intakeFormId: intakeForm.id },
+  });
+  serviceIds.push(service.id);
+
+  const inquiry = await prisma.inquiry.create({
+    data: {
+      studioId: studio.id,
+      clientId: client.id,
+      serviceId: service.id,
+      channel: "EMAIL",
+      description: "test",
+      colorOrBlackGrey: "Color",
+      placement: "Arm",
+      estimatedSize: "Small",
+      hasBeenTattooedBefore: false,
+      referenceImages: [],
+      placementImages: [],
+    },
+  });
+  inquiryIds.push(inquiry.id);
+
+  const appointment = await prisma.appointment.create({
+    data: {
+      studioId: studio.id,
+      artistId: artist.id,
+      clientId: client.id,
+      inquiryId: inquiry.id,
+      startTime: new Date(Date.now() + 86400000),
+      endTime: new Date(Date.now() + 90000000),
+    },
+  });
+  appointmentIds.push(appointment.id);
+
+  // Empty snapshots -- validateHealthAnswers/validateClauseInitials only
+  // require the submitted arrays to match the snapshot's own length, so an
+  // empty snapshot + empty submission is a valid, minimal sign.
+  const waiver = await prisma.liabilityWaiver.create({
+    data: {
+      studioId: studio.id,
+      clientId: client.id,
+      appointmentId: appointment.id,
+      healthQuestionsSnapshot: [],
+      clausesSnapshot: [],
+      token: `wai8-${suffix}`,
+      tokenExpiresAt: new Date(Date.now() + 86400000),
+    },
+  });
+  waiverIds.push(waiver.id);
+
+  const res = await fetch(`${baseUrl}/waivers/sign/wai8-${suffix}?locale=es`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      legalName: "Jane Doe",
+      dateOfBirth: "1990-01-01",
+      emergencyContactName: "John Doe",
+      emergencyContactPhone: "9195551234",
+      healthAnswers: [],
+      idImageUrl: "https://example.com/id.png",
+      clauseInitials: [],
+      signatureName: "Jane Doe",
+      signatureData: "data:image/png;base64,AAAA",
+    }),
+  });
+  assert.equal(res.status, 200);
+
+  const updated = await prisma.liabilityWaiver.findUnique({ where: { id: waiver.id } });
+  assert.equal(updated?.signedLocale, "es");
+});
+
+test("PATCH /estimates/respond/:token?locale=es writes Inquiry.signedLocale", async () => {
+  const studio = await prisma.studio.create({ data: { name: `Studio ${suffix}-9`, slug: `studio-${suffix}-9` } });
+  studioIds.push(studio.id);
+  await prisma.studioSettings.create({ data: { studioId: studio.id } });
+
+  const client = await prisma.client.create({
+    data: { studioId: studio.id, firstName: "Jane", lastName: "Doe", referralCode: `REF9${suffix}` },
+  });
+  clientIds.push(client.id);
+
+  const intakeForm = await prisma.intakeForm.create({
+    data: { studioId: studio.id, name: "Default", slug: "default", isDefault: true },
+  });
+  intakeFormIds.push(intakeForm.id);
+
+  const service = await prisma.service.create({
+    data: { studioId: studio.id, name: "Tattoo", slug: "tattoo", pricingModel: "RANGE", depositModel: "TIER_BASED", intakeFormId: intakeForm.id },
+  });
+  serviceIds.push(service.id);
+
+  const inquiry = await prisma.inquiry.create({
+    data: {
+      studioId: studio.id,
+      clientId: client.id,
+      serviceId: service.id,
+      channel: "EMAIL",
+      description: "test",
+      colorOrBlackGrey: "Color",
+      placement: "Arm",
+      estimatedSize: "Small",
+      hasBeenTattooedBefore: false,
+      referenceImages: [],
+      placementImages: [],
+      estimateToken: `est9-${suffix}`,
+      estimateTokenExpiresAt: new Date(Date.now() + 86400000),
+    },
+  });
+  inquiryIds.push(inquiry.id);
+
+  const res = await fetch(`${baseUrl}/estimates/respond/est9-${suffix}?locale=es`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ decision: "DECLINE" }),
+  });
+  assert.equal(res.status, 200);
+
+  const updated = await prisma.inquiry.findUnique({ where: { id: inquiry.id } });
+  assert.equal(updated?.signedLocale, "es");
 });

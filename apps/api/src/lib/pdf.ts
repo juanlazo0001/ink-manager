@@ -177,13 +177,14 @@ export interface DepositFormPdfInput extends PdfBrand {
   signedAt: Date | null;
 }
 
-// Renders TERMS' CURRENT wording, not a per-signing snapshot -- unlike
-// LiabilityWaiver, DepositForm has no clausesSnapshot equivalent (only the
-// 8 agreed* booleans, backed by a single shared, studio-wide TERMS array in
-// deposits.ts). That array is described in its own comment as "exact SOP
-// wording" and changes rarely, so this is an accepted, documented gap
-// rather than a true historical snapshot -- flagged here and in REPORT.md,
-// not silently treated as equivalent to the waiver's real snapshots.
+// Multi-language public forms, Part 5: `input.terms` is now
+// DepositForm.termsSnapshot (the exact, locale-correct wording shown at
+// sign time) for every form signed after this part landed, falling back to
+// deposits.ts's live TERMS/English only for forms signed before
+// termsSnapshot existed -- see the fallback comment at the /:id/pdf call
+// site. This closes the gap once flagged here as accepted: DepositForm now
+// has the same "never retroactively changes what a client already saw"
+// guarantee LiabilityWaiver's own snapshots always had.
 export async function generateDepositFormPdf(input: DepositFormPdfInput): Promise<Buffer> {
   const doc = new PDFDocument({ margin: 50, size: "LETTER" });
   addDocumentHeader(doc, input.studioName, pdfT(input.locale, "depositAgreementTitle"), input);

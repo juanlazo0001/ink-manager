@@ -7,7 +7,7 @@ import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 import { redactedSessionHours } from "../lib/plannedSessions";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { SELF_SCHEDULE_TOKEN_TTL_DAYS } from "../lib/selfSchedule";
-import { persistClientLocale } from "../lib/contentTranslation";
+import { persistClientLocale, resolveRequestLocale } from "../lib/contentTranslation";
 
 const router = Router();
 
@@ -203,7 +203,11 @@ router.patch("/respond/:token", async (req, res) => {
 
   const inquiry = await prisma.inquiry.findUnique({
     where: { estimateToken: token },
-    include: { assignedArtist: { select: { allowsClientSelfScheduling: true } } },
+    include: {
+      assignedArtist: { select: { allowsClientSelfScheduling: true } },
+      client: { select: { preferredLocale: true } },
+      studio: { select: { settings: { select: { defaultLocale: true } } } },
+    },
   });
 
   if (!inquiry) {
@@ -236,6 +240,13 @@ router.patch("/respond/:token", async (req, res) => {
   }
 
   const clearToken = { estimateToken: null, estimateTokenExpiresAt: null };
+
+  // Multi-language public forms, Part 5: which language the client was
+  // looking at when they accepted/declined/flagged-budget -- estimateTerms
+  // Snapshot/collaborativeDesignPolicy stay platform/immutable strings per
+  // the Part 1 review decision, so unlike DepositForm there's no companion
+  // content snapshot to capture here, only the locale itself.
+  const signedLocale = resolveRequestLocale(req.query.locale, inquiry!.client.preferredLocale, inquiry!.studio.settings?.defaultLocale);
 
   let selfScheduleToken: string | null = null;
 
@@ -271,6 +282,7 @@ router.patch("/respond/:token", async (req, res) => {
       where: { id: inquiry!.id },
       data: {
         estimateRespondedAt: new Date(),
+        signedLocale,
         // Token-lifecycle bug fix: estimateToken/ExpiresAt deliberately
         // NOT cleared here when self-scheduling is issued -- see that
         // field's own schema comment. Cleared normally otherwise.
@@ -290,6 +302,7 @@ router.patch("/respond/:token", async (req, res) => {
       data: {
         ...clearToken,
         estimateRespondedAt: new Date(),
+        signedLocale,
         status: InquiryStatus.BUDGET_NEGOTIATION,
         clientStatedBudget: statedBudget.trim(),
       },
@@ -300,6 +313,7 @@ router.patch("/respond/:token", async (req, res) => {
       data: {
         ...clearToken,
         estimateRespondedAt: new Date(),
+        signedLocale,
         status: InquiryStatus.CLOSED_LOST,
         closedReason: "Client declined the estimate.",
       },
@@ -392,7 +406,13 @@ router.patch("/revision/respond/:token", async (req, res) => {
     return res.status(400).json({ error: `decision must be one of: ${REVISION_DECISIONS.join(", ")}` });
   }
 
-  const inquiry = await prisma.inquiry.findUnique({ where: { estimateRevisionToken: token } });
+  const inquiry = await prisma.inquiry.findUnique({
+    where: { estimateRevisionToken: token },
+    include: {
+      client: { select: { preferredLocale: true } },
+      studio: { select: { settings: { select: { defaultLocale: true } } } },
+    },
+  });
 
   const invalidity = isRevisionExpiredOrInvalid(inquiry);
   if (invalidity) {
@@ -409,6 +429,8 @@ router.patch("/revision/respond/:token", async (req, res) => {
   // unwinding a paid deposit or scheduled appointment automatically would
   // be unsafe; staff sees the flag (Inquiry detail page + audit trail)
   // and follows up manually.
+  const signedLocale = resolveRequestLocale(req.query.locale, inquiry!.client.preferredLocale, inquiry!.studio.settings?.defaultLocale);
+
   await prisma.inquiry.update({
     where: { id: inquiry!.id },
     data: {
@@ -416,6 +438,7 @@ router.patch("/revision/respond/:token", async (req, res) => {
       estimateRevisionTokenExpiresAt: null,
       estimateRevisionRespondedAt: new Date(),
       estimateRevisionApproved: decision === "APPROVE",
+      signedLocale,
     },
   });
 
