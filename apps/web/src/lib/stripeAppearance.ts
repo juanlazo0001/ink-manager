@@ -40,6 +40,10 @@ export const EDITORIAL_GOLD_STRIPE_APPEARANCE: Appearance = {
     '.Input': {
       border: '1px solid #252322',
       backgroundColor: '#0f0e0d',
+      // 'night' theme applies its own default depth shadow otherwise --
+      // .login-input has none at rest (only its own :focus ring), so this
+      // zeroes it out to match rather than leaving Stripe's default in.
+      boxShadow: 'none',
     },
     '.Input:focus': {
       border: '1px solid #c99a5b',
@@ -51,10 +55,12 @@ export const EDITORIAL_GOLD_STRIPE_APPEARANCE: Appearance = {
     '.Tab': {
       border: '1px solid #252322',
       backgroundColor: '#171310',
+      boxShadow: 'none',
     },
     '.Tab--selected': {
       border: '1px solid #c99a5b',
       backgroundColor: '#171310',
+      boxShadow: 'none',
     },
   },
 }
