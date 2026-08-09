@@ -13072,3 +13072,224 @@ font, missing glyph, tofu box) with no automated test able to catch it short of 
 No schema changes, no code changes this entry -- documentation only, recording what remains before
 this branch is merge-ready. REPORT.md line count before this entry: 13046 (verified via
 `wc -l REPORT.md`) -- pure addition.
+
+# Multi-language public forms -- pre-merge closeout, step 4: browser verification, run for real
+
+Step 4 finally run, in a session with Playwright MCP access, against isolated dev servers in this
+same worktree (`ink-manager-w-i18n-schema`, still on `explore/multi-language-public-forms`, still
+not merged). Drove every one of the six public flows end to end as a real client (intake through a
+full inquiry -> estimate -> deposit -> Stripe test-mode payment -> waiver signing chain, plus
+self-scheduling and the flash gallery), switching languages live, downloading and reading the
+actual signed PDFs, and editing Settings as OWNER. **Verdict: do not merge yet.** Three of the six
+checks pass cleanly; the other three surfaced a single root cause with several distinct symptoms,
+plus one separate, well-isolated bug.
+
+## The headline bug: locale never persists, because nothing ever asks it to
+
+`LanguagePicker` (`apps/web/src/i18n/LanguagePicker.tsx`) takes an optional `onChange` prop and
+documents, in its own comment, that persistence is "a separate concern wired in by each page's own
+onChange handler." Checked all eight call sites --
+`IntakeForm.tsx`, `EstimateResponse.tsx`, `EstimateRevisionResponse.tsx`, `DepositResponse.tsx`,
+`WaiverSign.tsx`, `SelfSchedule.tsx`, `FlashPublicGallery.tsx`, `FlashPaymentResponse.tsx` -- every
+single one renders bare `<LanguagePicker />` with no `onChange` at all. The backend halves of this
+feature are real and correct (`PATCH /deposits/:token/locale`, `/waivers/:token/locale`,
+`/self-schedule/:token/locale`, `/flash-payments/:token/locale`, `/estimates/:token/locale`, all
+calling `persistClientLocale()` in `contentTranslation.ts`), but nothing on the frontend ever calls
+them. Confirmed by network trace: toggling the picker on every flow fires zero `/locale` requests.
+
+Net effect: **`Client.preferredLocale` never gets written, ever, from any public page.** The
+specific behavior the task asked to verify -- "the client's choice persists to their client record
+and a subsequently opened link defaults to Spanish" -- does not happen anywhere. This is the single
+most important finding from this pass.
+
+That same gap cascades into a second, easy-to-miss symptom: **signing a deposit in Spanish still
+bakes English terms into the permanent PDF.** `PATCH /deposits/sign/:token` resolves `signedLocale`
+via `resolveRequestLocale(req.query.locale, client.preferredLocale, studio.settings?.defaultLocale)`
+(`apps/api/src/routes/deposits.ts` L469) and snapshots `termsForLocale(signedLocale)` into
+`termsSnapshot` right there, permanently. The sign request never sends `?locale=`, and
+`client.preferredLocale` is never set (see above), so this always resolves to `"en"` regardless of
+what the client actually saw on screen. Verified live: signed a deposit with the picker on Español,
+downloaded the resulting PDF -- terms are in English. The signer's name and every accented
+character rendered perfectly (see the glyph section below); only the terms language is wrong.
+
+## Other mixed-language leaks found while exercising each flow
+
+- **`PublicPageFooter.tsx`** (the "Privacy Policy" / "Terms & Conditions" links shown at the bottom
+  of all nine public pages) hardcodes both link labels in English, never wrapped in `t()`. Confirmed
+  on intake, estimate, deposit, waiver, self-schedule, and flash gallery -- footer stays English on
+  every single one regardless of picker state.
+- **`EstimateResponse.tsx`'s `formatHourRange`** (L105) hardcodes the literal string `` `${min}
+  hours` `` / `` `${min}–${max} hours` `` -- the estimated-time figure reads "2–3 hours" even with
+  the whole rest of the page in Spanish.
+- **The estimate's own Terms & Conditions body** has no Spanish translation path at all --
+  `estimateTermsSnapshot` is set from the single, non-locale-aware `StudioSettings.estimateTerms`
+  (`apps/api/src/lib/estimates.ts` L320); there is no `estimateTermsEs` field anywhere in the
+  schema. Unlike the deposit (`TERMS`/`TERMS_ES`) and the waiver (locale-tabbed clauses in
+  Settings), a studio has no way to translate this text even if it wanted to.
+- **`DepositResponse.tsx`'s pre-payment appointment/tentative-time display** uses a different,
+  older `formatDateTime` helper (`apps/web/src/lib/format.ts` L3-5, `toLocaleString(undefined,
+  ...)`) than the one this epic actually fixed (`formatAppointmentDateTime`/`formatDateOnly` in
+  `locales.ts`, used only by the *post-payment* confirmation cards). The date shown before paying
+  never localizes; the date shown after paying does. Same page, two different date-formatting code
+  paths, only one of which got the multi-language treatment.
+- **`SignaturePadField.tsx`'s "Clear" button** (shared by both the deposit and waiver signing UIs)
+  is a bare hardcoded `"Clear"`, never run through `t()`.
+- **The self-schedule calendar** (`react-day-picker`'s `<DayPicker>` in `SelfSchedule.tsx`) is
+  mounted with no `locale` prop. Month name, weekday headers, and every date's aria-label stay in
+  English ("August 2026", "Su Mo Tu We Th Fr Sa", "Saturday, August 1st, 2026") no matter what the
+  page's own locale is set to.
+- **Waiver health questions and clauses never localize, structurally, not just because no one
+  translated them.** `ensureLiabilityWaiver` (`apps/api/src/lib/waivers.ts` L163-184) snapshots
+  `settings.waiverHealthQuestions` / `waiverClauses` / `waiverAcknowledgment` / `waiverPhotoRelease`
+  straight off `StudioSettings` at waiver-creation time (staff clicking "Create Waiver"), with no
+  locale parameter in the function signature at all. Even though Settings has a real, working
+  locale-tabbed editor for these fields (`waiverListLocale` in `Settings.tsx`), there is no code
+  path anywhere that would read the Spanish side of that data into a waiver snapshot. Every waiver,
+  for every client, in every language, gets whatever's on the English tab.
+
+All of the above were hit organically while running real inquiries through the full pipeline in
+Spanish, not synthesized -- see the six-flow walkthrough below for exactly how each was triggered.
+
+## What actually works
+
+- Intake form (`/inquiry/dev-studio`): all `SYSTEM` fields (Name, Email, Phone, "How did you hear
+  about us?", etc.) auto-translate to the platform's seeded Spanish the moment the picker is
+  toggled, with zero studio configuration -- this is seed-equality working as designed (see below).
+- Full Spanish intake submission + full Spanish waiver signing, both driven end-to-end at a 390px
+  mobile viewport (real file uploads, real signature-pad strokes via synthetic pointer events, real
+  submission) -- clean layout, no overflow, correct mobile stacking, submission succeeds with a
+  fully-Spanish confirmation screen.
+- **Settings seed-equality, confirmed live, both halves.** An unedited seeded intake field
+  ("Placement") shows the platform's own Spanish translation ("Ubicación") automatically. Editing
+  the English label to `"Placement (ZZZ TEST EDIT)"` and reloading the Spanish tab of the *public*
+  form immediately shows the new English text instead of the stale "Ubicación" -- confirms the
+  byte-equality check against the platform seed dictionary breaks correctly on edit, exactly as
+  `resolveSystemFieldLabel`/`withLocale` in `contentTranslation.ts` are supposed to do. (Field
+  reverted to original state afterward -- see cleanup.)
+- **THE GLYPH CHECK passes cleanly.** Signed a deposit and a waiver as "José Ñáñez Muñoz" /
+  emergency contact "María García" / initials "JÑM", downloaded both real PDFs through the actual
+  staff export routes, and read them directly. Every accented character (á, é, í, ñ) renders
+  correctly in the embedded font across regular, bold, and the small italic "Initialed:" lines --
+  no tofu boxes, no fallback-font substitution, on both documents. The embedded-font risk this check
+  exists to catch is not present. (The PDFs' *terms content* being in English despite a Spanish
+  signing session is the separate, root-cause bug above -- the glyph rendering itself is fine.)
+- **Confirmation-page dates, the one thing this epic specifically shipped a fix for, work.** The
+  deposit confirmation page (post-payment) renders "lunes, 10 de agosto de 2026, 1:30 p.m. EDT" and
+  the gift card's "Válido hasta 9 ago 2027" -- correct Spanish weekday/month names and AM/PM
+  convention, via the new `dateLocale`-aware `formatAppointmentDateTime`/`formatDateOnly` path.
+
+## A separate bug found in Settings: removing a translation is a silent no-op
+
+Went looking for the task's fourth check (remove a translation, confirm clean English fallback) by
+adding a real Spanish translation to the same "Placement" field via Settings' locale-tabbed editor,
+confirming it showed on the public form ("Ubicación ZZZ PRUEBA"), then clearing it back to empty and
+saving to see the fallback kick in. **The clear didn't take effect** -- reloaded the public form
+repeatedly, still showed the stale Spanish text. Traced it: `IntakeFormFieldsEditor.tsx`'s
+`handleSave` (L371-384) computes `hasEs = !!(esLabel || esHelpText || esOptions?.some(...))` and
+sends `translations: hasEs ? {...} : undefined` -- an empty Spanish tab means `translations` is
+entirely absent from that field's JSON (network trace confirmed: the PUT body had no `translations`
+key for this field at all). The backend (`apps/api/src/routes/intakeForms.ts` L259,
+`if (translations) { ... upsert ... }`) only touches the translation table when the key is present,
+so an *absent* `translations` key is silently treated as "don't touch," not "clear it" -- the old
+`IntakeFormFieldTranslation` row is never deleted. No error surfaces anywhere; the Save button
+reports success both in the UI and over the wire. A studio has no way to actually remove a Spanish
+translation once one exists, short of a database write.
+
+This means the fallback-to-English path itself is correct (proven by the seed-equality test above,
+where no translation ever existed in the first place) but is effectively unreachable for a studio
+that authors a translation and later wants to retract it -- the exact scenario the task's Check 4
+was aimed at. Left unfixed pending Juan's call on scope; not blocking on its own, but worth fixing
+alongside the locale-persistence root cause above since both live in the same area of the code.
+
+## Pre-existing, out-of-scope issue noticed incidentally
+
+The staff app shell (search/tasks/notifications/account-menu top bar) renders on top of public pages
+whenever the browser holds a valid staff auth token, because `TopBar` gates its own visibility on
+"is someone logged in," not on which route is active (`App.tsx`'s own comment on this: "TopBar
+returns null with no logged-in user, so those layers never mount there regardless" -- true only
+until a staff session exists). Reproduced by opening `/inquiry/dev-studio` in the same browser
+context as an active staff login. This is unrelated to the i18n work (same `TopBar` logic exists on
+`main`) and did not block verification -- worked around it by clearing `localStorage` before every
+public-page visit for the rest of this pass -- but is worth its own ticket: a client opening a link
+on a shared staff device would see internal navigation and the logged-in staffer's name/role
+overlaid on what's supposed to be a public-facing page.
+
+## The six-flow walkthrough, concretely
+
+Two fresh, clearly-tagged (`ZZZQAVERIFY` / `ZZZQAVERIFY2`) test inquiries pushed through the real
+pipeline via the actual UI, no shortcuts:
+
+1. **Intake** (`/inquiry/dev-studio`, no formSlug -- resolves to the studio's "Cover-up
+   Consultation" default form): submitted twice, once English once with the picker on Español at a
+   1280px viewport, once more in full Spanish at 390px for the mobile check.
+2. **Estimate**: assigned artist (Maria Chen) and entered a single-session estimate as front desk;
+   opened the resulting short link as the client, switched to Español, responded "Proceed."
+3. **Self-schedule**: second inquiry's estimate response returned a live `selfScheduleToken` (had to
+   enable Maria Chen's `allowsClientSelfScheduling` first -- reverted after, see cleanup); opened
+   the link, confirmed the picker/copy translate but the calendar widget doesn't (see above).
+4. **Deposit**: front desk sent the deposit form; paid it through the real Stripe test-mode
+   Checkout (card `4242 4242 4242 4242`, sandbox) with the AI-agent disclosure box checked
+   honestly; local webhook wasn't listening for the live `checkout.session.completed` event (dev
+   environment needs `stripe listen --forward-to localhost:4000/webhooks/stripe` running, which
+   nothing in `DEVELOPMENT.md` currently documents), so used the front desk's own "Mark $110 as
+   Paid" manual-payment action instead, which correctly auto-advanced the inquiry to Scheduled and
+   issued the gift card.
+5. **Waiver**: created from the now-real confirmed `Appointment`, signed at 390px in Spanish with
+   real synthetic-pointer-event signature strokes and a real uploaded ID photo.
+6. **Flash gallery** (`/flash/dev-studio/<artistId>`): checked chrome-only (empty state, no flash
+   pieces configured for any artist in this dev DB) -- picker and copy translate correctly, footer
+   bug applies here too.
+
+Zero console errors surfaced on any of the six pages beyond the pre-existing, unrelated
+`https://x/1.jpg` broken-thumbnail warning on the inquiries list (leftover test fixture from an
+earlier, unrelated session).
+
+## Environment notes for whoever picks this up next
+
+- This worktree (`ink-manager-w-i18n-schema`) was missing `apps/web/.env` entirely (present in the
+  primary checkout, dated after this worktree was created some other way than
+  `scripts/new-session.ps1`). Without it, `VITE_API_URL` is `undefined`, every `apiFetch` call
+  resolves to a relative URL, and vite's SPA fallback silently returns `index.html` instead of JSON
+  for every public-page data fetch -- the intake form rendered with zero fields until this was
+  copied over. Not a code bug; fixed by copying the file from the primary checkout, restarting the
+  web dev server.
+- `owner@dev-studio.test`'s password did not match the documented dev default (`password123`) at
+  the start of this session -- login failed outright. Some earlier, unrelated session on this shared
+  Railway dev DB must have changed it and never reset it (the seed script's `upsert` only sets the
+  password on `create`, never on an existing row, so re-running `prisma db seed` would not have
+  fixed this). Reset it back to the documented default via a one-off Prisma script (deleted after
+  use) since OWNER-gated actions (Settings' Intake Form Fields editor, artist self-scheduling
+  toggle) are otherwise untestable. Flagging in case this trips up a future session the same way.
+- The dev DB (shared Railway instance) is heavily populated with leftover test fixtures from many
+  unrelated past sessions (dozens of "Test", "PickerTest", "TASK-D VERIFY" clients/inquiries/
+  artists). The two new `ZZZQAVERIFY*` clients and their full inquiry/deposit/waiver/appointment/
+  gift-card chains from this session were **left in place** -- `Client` has no cascading deletes
+  wired to any of its relations in this schema, so a safe removal would mean hand-enumerating every
+  child table; given the DB's existing state, the marginal cost of two more clearly-tagged rows was
+  judged lower than the risk of a partial cascade failure. They're easy to find and remove later by
+  email (`zzz-qaverify-i18n@example.test`, `zzz-qaverify-i18n-2@example.test`).
+
+## Verification
+
+No `tsc`/test suite run this session -- this was a pure browser-verification pass, no code changed
+on this branch. All findings above are from direct browser interaction (Playwright MCP) and reading
+the actual API/component source for root causes, not from static analysis alone.
+
+## CLAUDE.md hygiene
+
+No schema changes, no code changes to the branch itself. Reverted both live-data side effects made
+during testing: the "Placement" field's English label and its (buggy, undeletable-via-UI) Spanish
+translation were restored/removed directly via Prisma script, and Maria Chen's
+`allowsClientSelfScheduling` was set back to `false`. All three scratch Prisma scripts (self-schedule
+toggle, owner password reset, cleanup) deleted after use. Both dev servers (API :4000, web :5173)
+and all `stripe listen` processes started this session stopped; confirmed via
+`Get-NetTCPConnection`/`Get-CimInstance` that no worktree-related process remains running. The
+`.playwright-mcp/` scratch directory (screenshots, console logs, downloaded PDFs) generated in the
+**primary** checkout by the Playwright MCP tool was untracked and not gitignored -- deleted before
+ending the session, along with the loose numbered screenshot PNGs it left in the primary checkout's
+repo root. `apps/web/.env` copy in this worktree left in place (matches primary checkout, needed for
+the worktree to function at all going forward). REPORT.md line count before this entry: 13074
+(verified via `wc -l REPORT.md`) -- pure addition. Still on `explore/multi-language-public-forms`,
+still not merged into `main` -- both the locale-persistence root cause and the Settings
+translation-removal bug above should be fixed (or explicitly descoped) before this branch is
+merge-ready, in addition to Juan's already-pending Spanish-list review.
