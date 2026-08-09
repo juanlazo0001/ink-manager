@@ -12048,3 +12048,51 @@ the correct next step, not a script limitation). `.env` copied from the primary 
 to unblock local Prisma commands (see above); not committed (gitignored, machine-local). Migration
 applied to the dev database only -- nothing touched in production. REPORT.md line count before
 this entry: 11958 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Multi-language public forms -- Part 3, first slice: platform-strings infrastructure
+
+Part 3 in full is large (infra + wiring `t()` into eight page files + the language picker
+component). This entry covers the infrastructure slice on its own -- the wiring-in, picker, and
+the rest of Part 3 continue as separate work, not bundled into one giant commit.
+
+## What got built
+
+`apps/web/src/i18n/`:
+
+- **`locales.ts`** -- `SUPPORTED_LOCALES = ['en', 'es']`, plain strings (not a TS enum backed by
+  anything the DB enforces), matching `StudioSettings.themePreset`'s own precedent so a new
+  language is never a migration on the frontend side either.
+- **`strings/en.ts`** -- ~150 keys, organized by page (`common`, `deposit`, `estimate`,
+  `estimateRevision`, `waiver`, `selfSchedule`, `flashGallery`, `flashPayment`, `intake`), sourced
+  directly from the Part 1 string inventory -- existing copy carried over verbatim, not
+  reworded. Includes `deposit.terms.*` and `estimate.collaborativeDesignPolicy`, keyed by the same
+  `key` field the API's `TERMS` array and `COLLABORATIVE_DESIGN_POLICY` already use -- per the
+  proposal review's Finding 1 decision, these stay platform strings translated here, not studio
+  content. Deliberately NOT `as const` -- `es.ts` is typed against this file's own inferred shape
+  (every leaf `string`), so it only has to match KEYS, not English VALUES.
+- **`strings/es.ts`** -- a full first-draft Spanish translation, same structure. Explicitly a
+  draft: flagged in its own file header and tracked as this epic's own Part 6 addition (compile
+  every platform Spanish string into one reviewable list for a native-speaker pass before this
+  branch merges -- not shipping copy yet).
+- **`LocaleContext.tsx`** -- `LocaleProvider`/`useLocale`, meant to be mounted once per public flow
+  page (not around the whole app -- the staff-facing app stays English-only for v1), accepting an
+  `initialLocale` so a page can seed its starting language from whatever it already knows
+  server-side once the persistence layer (a later part) exists.
+- **`useTranslations.ts`** -- `t(key, vars)`, `{{var}}` interpolation (every case in the inventory
+  is plain substitution, no grammatical pluralization found anywhere). `TranslationKey` is a
+  mapped-type dot-path union derived from `en.ts`'s own shape (`"deposit.loading"`,
+  `"deposit.terms.agreedAge18"`, etc.) -- `t()` only accepts real keys, so a typo or a key that
+  doesn't exist is a compile error, not a silent runtime string.
+
+**Verified the compile-time parity claim actually holds, not just asserted it**: deleted one key
+from `es.ts` and confirmed `tsc -b` failed with a real, specific error (`Property 'clear' is
+missing in type '{...}'`) before restoring it -- the whole pitch for building this instead of
+`react-i18next` rests on this working, so it was worth proving rather than trusting the type
+signatures alone. Clean `tsc -b --noEmit` and a clean `vite build` with the infrastructure present
+but not yet imported anywhere.
+
+## CLAUDE.md hygiene
+
+No schema changes this slice. Continues on `explore/multi-language-public-forms` in the same
+`ink-manager-w-i18n-schema` worktree Part 2 used. REPORT.md line count before this entry: 12050
+(verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition.
