@@ -10,6 +10,7 @@ import { syncPrimaryEmail, syncPrimaryPhone } from "../lib/clientContacts";
 import { generateUniqueReferralCode } from "../lib/referrals";
 import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 import { studioHasActiveMembership, activeStudioIdsForCaller, effectiveRoleAt } from "../lib/artistAccess";
+import { resolveRequestLocale, withLocale } from "../lib/contentTranslation";
 
 const router = Router();
 
@@ -35,7 +36,7 @@ router.get("/public", async (req, res) => {
 
   const studio = await prisma.studio.findUnique({
     where: { slug: studioSlug },
-    include: { settings: { select: { themePreset: true } } },
+    include: { settings: { select: { themePreset: true, defaultLocale: true } } },
   });
   if (!studio) {
     return res.status(404).json({ error: "Studio not found" });
@@ -50,6 +51,12 @@ router.get("/public", async (req, res) => {
     return res.status(404).json({ error: "Artist not found" });
   }
 
+  // Multi-language public forms: no Client record exists yet on this
+  // purely-anonymous browse page (before any contact-lookup step) --
+  // resolution here can only ever use ?locale= or the studio's own
+  // defaultLocale, never a stored client preference.
+  const locale = resolveRequestLocale(req.query.locale, null, studio.settings?.defaultLocale);
+
   const pieces = await prisma.flashPiece.findMany({
     where: { studioId: studio.id, artistId, status: FlashPieceStatus.AVAILABLE },
     select: {
@@ -60,11 +67,19 @@ router.get("/public", async (req, res) => {
       priceCents: true,
       estimatedDurationMinutes: true,
       isOneOfOne: true,
+      translations: true,
     },
     orderBy: { createdAt: "desc" },
   });
 
+  const localizedPieces = pieces.map((piece) => {
+    const translation = piece.translations.find((t) => t.locale === locale);
+    const { translations, ...rest } = withLocale(piece, translation, ["title", "description"]);
+    return rest;
+  });
+
   res.json({
+    resolvedLocale: locale,
     studioName: studio.name,
     studioSlug: studio.slug,
     studioLogoUrl: studio.logoUrl,
@@ -72,7 +87,7 @@ router.get("/public", async (req, res) => {
     artistId: artist.id,
     artistName: artist.user.name ?? "this artist",
     artistAvatarUrl: artist.user.avatarUrl,
-    pieces,
+    pieces: localizedPieces,
   });
 });
 

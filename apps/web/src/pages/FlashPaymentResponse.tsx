@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { apiFetch, ApiError } from '../lib/api'
 import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import PublicPageFooter from '../components/PublicPageFooter'
 import PaymentFlowStages from '../components/payments/PaymentFlowStages'
-import { LocaleProvider, useTranslations } from '../i18n'
+import { LocaleProvider, useLocale, useTranslations } from '../i18n'
 import LanguagePicker from '../i18n/LanguagePicker'
 
 // Embedded payments migration: same fixed Editorial Gold platform
@@ -28,6 +28,7 @@ interface VerifyResponse {
   embeddedPaymentsEnabled: boolean
   paidAt: string | null
   selfScheduleToken: string | null
+  resolvedLocale?: string
 }
 
 export default function FlashPaymentResponse() {
@@ -40,6 +41,7 @@ export default function FlashPaymentResponse() {
 
 function FlashPaymentResponseContent() {
   const { t } = useTranslations()
+  const { locale, setLocale } = useLocale()
   const { token } = useParams<{ token: string }>()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -62,10 +64,11 @@ function FlashPaymentResponseContent() {
       let pollAttempts = 0
 
       function load() {
-        apiFetch<VerifyResponse>(`/flash-payment/verify/${token}`)
+        apiFetch<VerifyResponse>(`/flash-payment/verify/${token}?locale=${locale}`)
           .then((data) => {
             setVerifyData(data)
             setState('ready')
+            if (data.resolvedLocale && data.resolvedLocale !== locale) setLocale(data.resolvedLocale as typeof locale)
 
             if (data.selfScheduleToken) {
               navigate(`/schedule/${data.selfScheduleToken}`, { replace: true })
@@ -101,6 +104,16 @@ function FlashPaymentResponseContent() {
     loadVerify({ poll: justReturnedFromStripe })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
+
+  const isFirstLocaleRender = useRef(true)
+  useEffect(() => {
+    if (isFirstLocaleRender.current) {
+      isFirstLocaleRender.current = false
+      return
+    }
+    loadVerify()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locale])
 
   async function handlePayNow() {
     if (!token) return

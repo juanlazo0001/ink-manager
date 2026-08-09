@@ -11,6 +11,7 @@ import { getOrCreateClientConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { callerBelongsToStudio, effectiveRoleAt, hasPermissionAt } from "../lib/artistAccess";
+import { resolveRequestLocale, withLocale } from "../lib/contentTranslation";
 
 // Exact SOP wording, in the order the client must agree to each one.
 const TERMS = [
@@ -98,10 +99,20 @@ publicRouter.get("/verify/:token", async (req, res) => {
       inquiry: {
         include: {
           client: true,
-          studio: { include: { settings: { select: { themePreset: true, referralProgramEnabled: true, embeddedPaymentsEnabled: true } } } },
+          studio: {
+            include: {
+              settings: {
+                select: { themePreset: true, referralProgramEnabled: true, embeddedPaymentsEnabled: true, defaultLocale: true },
+              },
+            },
+          },
           assignedArtist: { include: { user: true } },
           appointment: true,
-          service: { select: { depositBreakdownNote: true } },
+          // translations: tiny (at most a couple of locales per studio) --
+          // fetched in full and matched in JS rather than a second
+          // locale-filtered query, same as every other public verify
+          // route this epic touches.
+          service: { select: { depositBreakdownNote: true, translations: true } },
           // Multi-session planning: only its length is needed here (the
           // "of Y" in "Session X of Y") -- the specific session THIS
           // deposit form is for comes from depositForm.plannedSession
@@ -130,7 +141,17 @@ publicRouter.get("/verify/:token", async (req, res) => {
 
   const { inquiry } = depositForm!;
 
+  // Multi-language public forms: the only studio-authored content on this
+  // page is the service's own depositBreakdownNote -- studio name/logo,
+  // artist name, and the 8 terms are either plain data or platform
+  // strings (see deposit.terms in the frontend's own dictionary for the
+  // terms' own Finding-1 treatment).
+  const locale = resolveRequestLocale(req.query.locale, inquiry.client.preferredLocale, inquiry.studio.settings?.defaultLocale);
+  const serviceTranslation = inquiry.service.translations.find((t) => t.locale === locale);
+  const localizedService = withLocale(inquiry.service, serviceTranslation, ["depositBreakdownNote"]);
+
   res.json({
+    resolvedLocale: locale,
     clientFirstName: inquiry.client.firstName,
     // Surfaced on the "your deposit is paid" success state, only when the
     // studio's referral program is actually on -- reuses the code already
@@ -161,7 +182,7 @@ publicRouter.get("/verify/:token", async (req, res) => {
     // Shown alongside the total on the public deposit page when set (e.g.
     // Powder Brows' "$50 deposit + $10 processing fee") -- purely
     // informational, null for every service that doesn't set one.
-    depositBreakdownNote: inquiry.service.depositBreakdownNote,
+    depositBreakdownNote: localizedService.depositBreakdownNote,
     // Multi-session planning: null for every un-planned deposit form.
     plannedSession: depositForm!.plannedSession
       ? {

@@ -13,6 +13,7 @@ import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { generateWaiverPdf } from "../lib/pdf";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { effectiveRoleAt, hasPermissionAt } from "../lib/artistAccess";
+import { resolveRequestLocale } from "../lib/contentTranslation";
 
 function isExpiredOrInvalid(waiver: { signedAt: Date | null; tokenExpiresAt: Date | null } | null) {
   if (!waiver) {
@@ -41,7 +42,28 @@ publicRouter.get("/verify/:token", async (req, res) => {
   const waiver = await prisma.liabilityWaiver.findUnique({
     where: { token },
     include: {
-      studio: { select: { name: true, slug: true, logoUrl: true, settings: { select: { themePreset: true } } } },
+      client: { select: { preferredLocale: true } },
+      studio: {
+        select: {
+          name: true,
+          slug: true,
+          logoUrl: true,
+          settings: {
+            select: {
+              themePreset: true,
+              defaultLocale: true,
+              // Multi-language public forms: fetched only to compare
+              // against this waiver's OWN snapshot below -- never
+              // rendered directly. See the comment further down for why.
+              waiverHealthQuestions: true,
+              waiverClauses: true,
+              waiverAcknowledgment: true,
+              waiverPhotoRelease: true,
+              translations: true,
+            },
+          },
+        },
+      },
       appointment: { select: { startTime: true, endTime: true } },
     },
   });
@@ -52,19 +74,59 @@ publicRouter.get("/verify/:token", async (req, res) => {
     return res.status(status).json(invalidity);
   }
 
+  const locale = resolveRequestLocale(req.query.locale, waiver!.client.preferredLocale, waiver!.studio.settings?.defaultLocale);
+
+  // Multi-language public forms: healthQuestionsSnapshot/clausesSnapshot/
+  // etc. are frozen at WAIVER-LINK-CREATION time (lib/waivers.ts's own
+  // getOrCreateWaiverForAppointment), not at signing -- staff generates
+  // this link well before the client ever opens it, specifically so a
+  // later edit to the studio's live template never retroactively changes
+  // what this exact waiver shows. Applying a live StudioSettingsTranslation
+  // to it unconditionally would undermine that guarantee the moment a
+  // studio edits their English template after this link was already sent
+  // -- so each field only gets translated if the studio's CURRENT live
+  // English is still byte-identical to what was actually snapshotted
+  // (the same seed-equality principle IntakeFormField's SYSTEM defaults
+  // use, applied to "this waiver's own frozen content" as the seed
+  // instead of a platform-wide one). The moment they diverge, this
+  // waiver's own frozen English renders as-is -- correct, never stale-
+  // looking, just not translatable until a studio explicitly re-issues
+  // a fresh link after editing.
+  const settings = waiver!.studio.settings;
+  const translation = settings?.translations.find((t) => t.locale === locale);
+  const snapshotMatchesLiveEnglish = (snapshot: unknown, live: unknown) => JSON.stringify(snapshot) === JSON.stringify(live);
+
+  const healthQuestions =
+    translation?.waiverHealthQuestions && snapshotMatchesLiveEnglish(waiver!.healthQuestionsSnapshot, settings?.waiverHealthQuestions)
+      ? translation.waiverHealthQuestions
+      : waiver!.healthQuestionsSnapshot;
+  const clauses =
+    translation?.waiverClauses && snapshotMatchesLiveEnglish(waiver!.clausesSnapshot, settings?.waiverClauses)
+      ? translation.waiverClauses
+      : waiver!.clausesSnapshot;
+  const acknowledgment =
+    translation?.waiverAcknowledgment && waiver!.acknowledgmentSnapshot === settings?.waiverAcknowledgment
+      ? translation.waiverAcknowledgment
+      : waiver!.acknowledgmentSnapshot;
+  const photoRelease =
+    translation?.waiverPhotoRelease && waiver!.photoReleaseSnapshot === settings?.waiverPhotoRelease
+      ? translation.waiverPhotoRelease
+      : waiver!.photoReleaseSnapshot;
+
   // Minimal safe info only -- no client name, DOB, or any other PII is
   // echoed back on this public pre-signing view.
   res.json({
+    resolvedLocale: locale,
     studioName: waiver!.studio.name,
     studioSlug: waiver!.studio.slug,
     studioLogoUrl: waiver!.studio.logoUrl,
     themePreset: waiver!.studio.settings?.themePreset ?? DEFAULT_THEME_PRESET,
     appointmentStart: waiver!.appointment.startTime,
     appointmentEnd: waiver!.appointment.endTime,
-    healthQuestions: waiver!.healthQuestionsSnapshot,
-    clauses: waiver!.clausesSnapshot,
-    acknowledgment: waiver!.acknowledgmentSnapshot,
-    photoRelease: waiver!.photoReleaseSnapshot,
+    healthQuestions,
+    clauses,
+    acknowledgment,
+    photoRelease,
   });
 });
 

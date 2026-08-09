@@ -8,7 +8,7 @@ import PublicPageFooter from '../components/PublicPageFooter'
 import { isValidPhoneDigits } from '../lib/format'
 import { formatCurrencyInput } from '../lib/money'
 import { applyThemePreset } from '../lib/themePresets'
-import { LocaleProvider, useTranslations } from '../i18n'
+import { LocaleProvider, useLocale, useTranslations } from '../i18n'
 import LanguagePicker from '../i18n/LanguagePicker'
 
 interface PrefillPayload {
@@ -74,6 +74,7 @@ export default function IntakeForm() {
 
 function IntakeFormContent() {
   const { t } = useTranslations()
+  const { locale, setLocale } = useLocale()
   const { studioSlug, formSlug } = useParams<{ studioSlug: string; formSlug?: string }>()
   const [searchParams] = useSearchParams()
   const draftToken = searchParams.get('draft')
@@ -177,10 +178,10 @@ function IntakeFormContent() {
     if (!studioSlug) return
 
     let ignore = false
-    const query = new URLSearchParams({ studioSlug })
+    const query = new URLSearchParams({ studioSlug, locale })
     if (formSlug) query.set("formSlug", formSlug)
 
-    apiFetch<{ studioName: string; intakeFormFields: IntakeFormFieldPublic[]; referralProgramEnabled: boolean }>(
+    apiFetch<{ studioName: string; intakeFormFields: IntakeFormFieldPublic[]; referralProgramEnabled: boolean; resolvedLocale?: string }>(
       `/studio-settings/public?${query}`,
     )
       .then((data) => {
@@ -188,6 +189,7 @@ function IntakeFormContent() {
         setStudioName(data.studioName)
         setFields((data.intakeFormFields ?? []).slice().sort((a, b) => a.order - b.order))
         setReferralProgramEnabled(data.referralProgramEnabled)
+        if (data.resolvedLocale && data.resolvedLocale !== locale) setLocale(data.resolvedLocale as typeof locale)
       })
       .catch((err) => {
         // A named formSlug that doesn't resolve to a real form is a broken/
@@ -205,7 +207,8 @@ function IntakeFormContent() {
     return () => {
       ignore = true
     }
-  }, [studioSlug, formSlug])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [studioSlug, formSlug, locale])
 
   // Prefill data never rides in the URL as field values -- just this
   // opaque, single-use token. An invalid/expired token quietly falls back

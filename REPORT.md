@@ -12196,3 +12196,86 @@ before this change, not just that the new code compiles.
 No schema changes this slice. Continues on `explore/multi-language-public-forms` in the
 `ink-manager-w-i18n-schema` worktree. REPORT.md line count before this entry: 12156 (verified via
 `git show HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Multi-language public forms -- Part 4: studio-content translation read API
+
+The read half of Part 4 -- `lib/contentTranslation.ts`'s `withLocale`/`resolveRequestLocale`/
+`resolveSystemFieldLabel` helpers, wired into every route that renders studio-authored content on
+a public page, plus the frontend changes needed to actually reach any of it. Settings UI (the
+write side staff use to enter translations) is a separate remaining slice.
+
+## `resolveRequestLocale`: the fallback chain
+
+Highest priority first: an explicit `?locale=` query param (the language picker's own live
+choice) -> the client's own stored `preferredLocale` (inert until Part 5's persistence layer
+writes it, but the read side is ready for it now) -> the studio's own `defaultLocale` -> `"en"`.
+Every public verify route calls this once and returns the result as `resolvedLocale` in its own
+response -- the frontend syncs `LocaleProvider`'s state to it on load, so the picker reflects the
+server's own resolution (e.g. a studio whose `defaultLocale` is Spanish) immediately, not always
+defaulting to English until a client manually toggles it.
+
+## SEED-EQUALITY, actually implemented
+
+Per the proposal review's decision: `resolveSystemFieldLabel` compares an `IntakeFormField`'s live
+English `label` against `SYSTEM_FIELD_DEFAULTS`' own seed value for that `systemFieldKey`. Byte-
+identical -> the platform's own `SYSTEM_FIELD_DEFAULTS_ES` translation applies automatically.
+Diverged (a studio customized the English) -> falls through to the plain `withLocale` behavior
+(the studio's own `IntakeFormFieldTranslation` row if they've supplied one, else their own
+now-diverged English) -- never the platform's stale seed translation for wording the studio no
+longer uses. No new column, exactly as decided -- purely a live comparison at read time.
+
+**A second, unplanned case for the same principle, found while wiring `waivers.ts`**:
+`LiabilityWaiver`'s `healthQuestionsSnapshot`/`clausesSnapshot`/etc. are frozen at *link-creation*
+time (`lib/waivers.ts`'s `getOrCreateWaiverForAppointment`), not at signing -- staff generates
+this link, often days before a client ever opens it, specifically so a later studio edit never
+retroactively changes an already-issued waiver. Applying a live `StudioSettingsTranslation`
+unconditionally to that snapshot would quietly break that exact guarantee the moment a studio
+edits their English template after the link went out. Fixed the same way: each translated field
+only applies if the studio's *current* live English is still byte-identical to what this specific
+waiver actually snapshotted -- the instant they diverge, this waiver's own frozen English renders
+as-is (correct, never stale-looking, just not translatable until the studio re-issues a fresh
+link). Not anticipated in the Part 1 proposal; found by actually reading `lib/waivers.ts` while
+wiring the route, not assumed from the schema alone.
+
+## Routes wired
+
+- `deposits.ts` -- `Service.depositBreakdownNote` via `ServiceTranslation`.
+- `waivers.ts` -- all four waiver template fields, via the seed-equality-on-snapshot logic above.
+- `flashPayments.ts` -- `FlashPiece.title` via `FlashPieceTranslation`.
+- `flashPieces.ts` (public gallery) -- every piece's `title`/`description`, same table.
+- `studioSettings.ts` (public, intake) -- `StudioSettings`' six free-text policy fields via
+  `StudioSettingsTranslation`, plus every `IntakeFormField`'s `label`/`helpText`/`options` via
+  `IntakeFormFieldTranslation` + the seed-equality rule for `SYSTEM` fields.
+- `estimates.ts` -- deliberately **not** wired. `estimateTermsSnapshot` is already an immutable
+  per-`Inquiry` snapshot with no live re-translation path (translating it dynamically would be
+  the exact violation the snapshot exists to prevent) and `collaborativeDesignPolicy` is a
+  platform string per Finding 1, already handled in Part 3. Nothing on this page is live studio
+  content today.
+- `selfSchedule.ts` -- no studio-authored free text exists on this page at all (confirmed in Part
+  1's own investigation), nothing to wire.
+
+## Frontend: actually reaching the backend work
+
+None of the above does anything unless the frontend asks for it. Updated all five affected pages
+(`DepositResponse`, `WaiverSign`, `FlashPaymentResponse`, `FlashPublicGallery`, `IntakeForm`) to
+append `?locale=` (from `useLocale()`) to their verify/data fetches, and to sync
+`LocaleProvider`'s state to each response's own `resolvedLocale` on load. Toggling the picker now
+re-fetches (not just re-renders `t()` strings) so studio-authored content updates too, not only
+platform copy.
+
+## Verification
+
+New `lib/contentTranslation.test.ts` (12 tests: fallback-chain priority order, `withLocale`'s
+per-field/non-mutating behavior, seed-equality's three cases -- untouched, diverged, explicit
+translation always wins) plus new `routes/contentTranslationHttp.test.ts` (5 HTTP-level tests
+proving the wiring, not just the helpers, actually works: a fresh studio's untouched `name` field
+resolves to "Nombre" over real HTTP, a customized one falls back to its own English, an explicit
+`IntakeFormFieldTranslation` always wins, `ServiceTranslation`/`FlashPieceTranslation` both apply
+correctly end to end). **147/147 across the full suite** (130 prior + 17 new), `tsc` clean on both
+apps, `vite build` clean.
+
+## CLAUDE.md hygiene
+
+No schema changes this slice (Part 2's tables already cover everything needed). Continues on
+`explore/multi-language-public-forms` in the `ink-manager-w-i18n-schema` worktree. REPORT.md line
+count before this entry: 12198 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition.

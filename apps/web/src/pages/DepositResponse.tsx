@@ -8,7 +8,7 @@ import PublicPageFooter from '../components/PublicPageFooter'
 import SignaturePadField, { type SignaturePadHandle } from '../components/SignaturePadField'
 import PaymentFlowStages from '../components/payments/PaymentFlowStages'
 import PaymentConfirmationStage from '../components/payments/PaymentConfirmationStage'
-import { LocaleProvider, useTranslations } from '../i18n'
+import { LocaleProvider, useLocale, useTranslations } from '../i18n'
 import LanguagePicker from '../i18n/LanguagePicker'
 
 // Embedded payments migration: this page is one of the platform's own
@@ -74,6 +74,12 @@ interface VerifyResponse {
   // existed (redirect to hosted Checkout).
   embeddedPaymentsEnabled: boolean
   terms: Term[]
+  // Multi-language public forms: which locale the API actually resolved
+  // (explicit ?locale= > this client's own stored preference > the
+  // studio's own default) -- synced back into LocaleProvider on load so
+  // the picker reflects the server's own resolution immediately, not
+  // always defaulting to English until a client manually toggles it.
+  resolvedLocale?: string
 }
 
 // Multi-language public forms: this page's own hardcoded 8-clause
@@ -105,6 +111,7 @@ export default function DepositResponse() {
 
 function DepositResponseContent() {
   const { t } = useTranslations()
+  const { locale, setLocale } = useLocale()
   const { token } = useParams<{ token: string }>()
   const [searchParams] = useSearchParams()
   const justReturnedFromStripe = searchParams.get('paid') === '1'
@@ -144,10 +151,15 @@ function DepositResponseContent() {
       let pollAttempts = 0
 
       function load() {
-        apiFetch<VerifyResponse>(`/deposits/verify/${token}`)
+        apiFetch<VerifyResponse>(`/deposits/verify/${token}?locale=${locale}`)
           .then((data) => {
             setVerifyData(data)
             setState('ready')
+            // Server-resolved locale (client's own stored preference or
+            // the studio's default) wins on first load -- a no-op once
+            // this client has already picked one explicitly, since a
+            // later load's own ?locale= param would just echo it back.
+            if (data.resolvedLocale && data.resolvedLocale !== locale) setLocale(data.resolvedLocale as typeof locale)
 
             if (opts?.poll && !data.paidVia && pollAttempts < 5) {
               pollAttempts += 1
@@ -173,6 +185,21 @@ function DepositResponseContent() {
     loadVerify({ poll: justReturnedFromStripe })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
+
+  // Re-fetch with the new locale whenever the client toggles the picker,
+  // so studio-authored content (depositBreakdownNote) re-resolves too --
+  // platform strings already re-render instantly from LocaleContext
+  // alone, this covers the half of the page that only useTranslations()
+  // can't reach.
+  const isFirstLocaleRender = useRef(true)
+  useEffect(() => {
+    if (isFirstLocaleRender.current) {
+      isFirstLocaleRender.current = false
+      return
+    }
+    loadVerify()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locale])
 
   const allAgreed = verifyData ? verifyData.terms.every((term) => agreed[term.key]) : false
 

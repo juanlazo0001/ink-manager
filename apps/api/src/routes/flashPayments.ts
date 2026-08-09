@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma";
 import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 import { createFlashPaymentCheckoutSession, createOrRetrieveFlashPaymentIntent } from "../lib/flashPayments";
 import { getChargeableConnectedAccountId } from "../lib/stripeConnect";
+import { resolveRequestLocale, withLocale } from "../lib/contentTranslation";
 
 // Public, unauthenticated: same crypto-token + verify/checkout pattern as
 // deposits.ts's own publicRouter, minus the signing step -- a flash
@@ -39,9 +40,9 @@ router.get("/verify/:token", async (req, res) => {
     where: { flashPaymentToken: token },
     include: {
       client: true,
-      studio: { include: { settings: { select: { themePreset: true, embeddedPaymentsEnabled: true } } } },
+      studio: { include: { settings: { select: { themePreset: true, embeddedPaymentsEnabled: true, defaultLocale: true } } } },
       assignedArtist: { include: { user: true } },
-      flashPiece: true,
+      flashPiece: { include: { translations: true } },
     },
   });
 
@@ -51,9 +52,14 @@ router.get("/verify/:token", async (req, res) => {
     return res.status(status).json(invalidity);
   }
 
+  const locale = resolveRequestLocale(req.query.locale, inquiry!.client.preferredLocale, inquiry!.studio.settings?.defaultLocale);
+  const pieceTranslation = inquiry!.flashPiece?.translations.find((t) => t.locale === locale);
+  const localizedPiece = inquiry!.flashPiece ? withLocale(inquiry!.flashPiece, pieceTranslation, ["title"]) : null;
+
   const stripeAccountId = await getChargeableConnectedAccountId(inquiry!.studioId);
 
   res.json({
+    resolvedLocale: locale,
     clientFirstName: inquiry!.client.firstName,
     studioName: inquiry!.studio.name,
     studioSlug: inquiry!.studio.slug,
@@ -61,7 +67,7 @@ router.get("/verify/:token", async (req, res) => {
     themePreset: inquiry!.studio.settings?.themePreset ?? DEFAULT_THEME_PRESET,
     artistName: inquiry!.assignedArtist?.user.name ?? null,
     artistAvatarUrl: inquiry!.assignedArtist?.user.avatarUrl ?? null,
-    pieceTitle: inquiry!.flashPiece?.title ?? null,
+    pieceTitle: localizedPiece?.title ?? null,
     pieceImageUrl: inquiry!.flashPiece?.imageUrl ?? null,
     priceCents: inquiry!.flashPiece?.priceCents ?? null,
     stripeConnected: stripeAccountId !== null,

@@ -8,7 +8,7 @@ import PhoneInput from '../components/PhoneInput'
 import { applyThemePreset } from '../lib/themePresets'
 import PublicPageFooter from '../components/PublicPageFooter'
 import SignaturePadField, { type SignaturePadHandle } from '../components/SignaturePadField'
-import { LocaleProvider, useTranslations } from '../i18n'
+import { LocaleProvider, useLocale, useTranslations } from '../i18n'
 import LanguagePicker from '../i18n/LanguagePicker'
 
 const INPUT_CLASS =
@@ -33,6 +33,7 @@ interface VerifyResponse {
   clauses: string[]
   acknowledgment: string | null
   photoRelease: string | null
+  resolvedLocale?: string
 }
 
 interface HealthAnswerState {
@@ -58,6 +59,7 @@ export default function WaiverSign() {
 
 function WaiverSignContent() {
   const { t } = useTranslations()
+  const { locale, setLocale } = useLocale()
   const { token } = useParams<{ token: string }>()
   const [state, setState] = useState<PageState>('loading')
   const [invalidMessage, setInvalidMessage] = useState(t('common.linkExpiredHeading'))
@@ -89,12 +91,13 @@ function WaiverSignContent() {
     if (!token) return
     let ignore = false
 
-    apiFetch<VerifyResponse>(`/waivers/verify/${token}`)
+    apiFetch<VerifyResponse>(`/waivers/verify/${token}?locale=${locale}`)
       .then((result) => {
         if (ignore) return
         setData(result)
         applyThemePreset(result.themePreset)
         setState('ready')
+        if (result.resolvedLocale && result.resolvedLocale !== locale) setLocale(result.resolvedLocale as typeof locale)
       })
       .catch((err) => {
         if (ignore) return
@@ -106,7 +109,7 @@ function WaiverSignContent() {
       ignore = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token])
+  }, [token, locale])
 
   async function handleIdImageChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]

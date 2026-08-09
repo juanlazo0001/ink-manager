@@ -11,7 +11,7 @@ import ImageUploadSection, { type ImageUploadState } from '../components/ImageUp
 import ImageLightbox from '../components/ImageLightbox'
 import { ViewIcon, SparkleIcon } from '../components/icons'
 import { isValidPhoneDigits, formatDurationHours } from '../lib/format'
-import { LocaleProvider, useTranslations } from '../i18n'
+import { LocaleProvider, useLocale, useTranslations } from '../i18n'
 import LanguagePicker from '../i18n/LanguagePicker'
 
 type PageState = 'loading' | 'invalid' | 'gallery' | 'request' | 'success'
@@ -34,6 +34,7 @@ interface GalleryResponse {
   artistName: string
   artistAvatarUrl: string | null
   pieces: FlashPieceSummary[]
+  resolvedLocale?: string
 }
 
 interface LookupResponse {
@@ -57,6 +58,7 @@ export default function FlashPublicGallery() {
 
 function FlashPublicGalleryContent() {
   const { t } = useTranslations()
+  const { locale, setLocale } = useLocale()
   const { studioSlug, artistId } = useParams<{ studioSlug: string; artistId: string }>()
   const [state, setState] = useState<PageState>('loading')
   const [invalidMessage, setInvalidMessage] = useState(t('flashGallery.unavailableDefault'))
@@ -84,12 +86,15 @@ function FlashPublicGalleryContent() {
     if (!studioSlug || !artistId) return
 
     let ignore = false
-    apiFetch<GalleryResponse>(`/flash-pieces/public?studioSlug=${encodeURIComponent(studioSlug)}&artistId=${encodeURIComponent(artistId)}`)
+    apiFetch<GalleryResponse>(
+      `/flash-pieces/public?studioSlug=${encodeURIComponent(studioSlug)}&artistId=${encodeURIComponent(artistId)}&locale=${locale}`,
+    )
       .then((data) => {
         if (ignore) return
         setGallery(data)
         applyThemePreset(data.themePreset)
         setState('gallery')
+        if (data.resolvedLocale && data.resolvedLocale !== locale) setLocale(data.resolvedLocale as typeof locale)
       })
       .catch((err) => {
         if (ignore) return
@@ -101,7 +106,7 @@ function FlashPublicGalleryContent() {
       ignore = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [studioSlug, artistId])
+  }, [studioSlug, artistId, locale])
 
   function selectPiece(piece: FlashPieceSummary) {
     setSelectedPiece(piece)

@@ -7,7 +7,7 @@
 // Deliberately NOT `as const` on EN, for the identical reason as the
 // frontend's own en.ts: `ES: typeof EN` only has to match KEY structure,
 // not English VALUES.
-import { DEFAULT_LOCALE, isSupportedPdfLocale, type PdfLocale } from "./pdfLocale";
+import { DEFAULT_LOCALE, isSupportedLocale, type Locale } from "./locale";
 
 const EN = {
   generatedOn: "Generated {{date}}",
@@ -81,7 +81,7 @@ const ES: typeof EN = {
   staffVerifiedNo: "Verificado por el personal: Aún no verificado",
 };
 
-const DICTIONARIES: Record<PdfLocale, typeof EN> = { en: EN, es: ES };
+const DICTIONARIES: Record<Locale, typeof EN> = { en: EN, es: ES };
 
 type Vars = Record<string, string | number>;
 
@@ -96,7 +96,7 @@ function interpolate(template: string, vars?: Vars): string {
 export type PdfStringKey = keyof typeof EN;
 
 export function pdfT(locale: string | null | undefined, key: PdfStringKey, vars?: Vars): string {
-  const resolved = isSupportedPdfLocale(locale) ? locale : DEFAULT_LOCALE;
+  const resolved = isSupportedLocale(locale) ? locale : DEFAULT_LOCALE;
   return interpolate(DICTIONARIES[resolved][key], vars);
 }
 
@@ -106,5 +106,5 @@ export function pdfT(locale: string | null | undefined, key: PdfStringKey, vars?
 // ordering) should stay consistent with the English version, only the
 // surrounding label text and month/weekday names change.
 export function pdfDateLocale(locale: string | null | undefined): string {
-  return isSupportedPdfLocale(locale) && locale === "es" ? "es-US" : "en-US";
+  return isSupportedLocale(locale) && locale === "es" ? "es-US" : "en-US";
 }

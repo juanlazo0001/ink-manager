@@ -10,6 +10,7 @@ import { resolveIntakeForm } from "../lib/intakeForms";
 import { hasPermission, type PermissionKey } from "../lib/permissions";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { normalizeArtistFieldVisibility } from "../lib/artistFieldVisibility";
+import { resolveRequestLocale, resolveSystemFieldLabel, withLocale } from "../lib/contentTranslation";
 
 // Public: /privacy/:studioSlug and /terms/:studioSlug (unauthenticated) need
 // to read these two fields by slug, same "public sub-router mounted first"
@@ -29,7 +30,10 @@ publicRouter.get("/public", async (req, res) => {
     return res.status(404).json({ error: "Studio not found" });
   }
 
-  const settings = await prisma.studioSettings.findUnique({ where: { studioId: studio.id } });
+  const settings = await prisma.studioSettings.findUnique({
+    where: { studioId: studio.id },
+    include: { translations: true },
+  });
 
   // formSlug absent -> whichever form is currently the default, same
   // resolution POST /inquiries and POST /prefill-drafts use -- so
@@ -49,7 +53,52 @@ publicRouter.get("/public", async (req, res) => {
   // disagree about what a form with zero rows requires.
   const allFields = await getEffectiveIntakeFormFields(form.id);
 
+  // Multi-language public forms: no Client exists yet at this, the very
+  // first step of the whole funnel -- resolution here can only ever use
+  // ?locale= or the studio's own defaultLocale.
+  const locale = resolveRequestLocale(req.query.locale, null, settings?.defaultLocale);
+  const settingsTranslation = settings?.translations.find((t) => t.locale === locale);
+  const localizedSettings = settings
+    ? withLocale(settings, settingsTranslation, [
+        "privacyPolicy",
+        "termsAndConditions",
+        "refundPolicy",
+        "depositPolicy",
+        "reschedulePolicy",
+        "communicationPolicy",
+      ])
+    : null;
+
+  // Real DB rows only -- a form with zero customized rows yet (the
+  // synthetic SYSTEM_FIELD_DEFAULTS fallback inside getEffectiveIntakeFormFields)
+  // has field.id values that are just the field's own key string ("name",
+  // "email", ...), never a real cuid, so this naturally returns zero rows
+  // for that case rather than needing a separate branch -- the
+  // SEED-EQUALITY fallback inside resolveSystemFieldLabel handles every
+  // untouched field correctly on its own.
+  const fieldTranslations = await prisma.intakeFormFieldTranslation.findMany({
+    where: { intakeFormFieldId: { in: allFields.map((f) => f.id) }, locale },
+  });
+  const fieldTranslationById = new Map(fieldTranslations.map((t) => [t.intakeFormFieldId, t]));
+
+  const localizedFields = allFields
+    .filter((f) => f.enabled)
+    .map((f) => {
+      const translation = fieldTranslationById.get(f.id);
+      if (f.fieldKind === "SYSTEM") {
+        return {
+          ...f,
+          label: resolveSystemFieldLabel(f.systemFieldKey, f.label, locale, translation?.label),
+          helpText: translation?.helpText || f.helpText,
+        };
+      }
+      // CUSTOM: never platform-seeded, always the studio's own translation
+      // row if present, else their own (English or whatever) label as-is.
+      return withLocale(f, translation, ["label", "helpText", "options"]);
+    });
+
   res.json({
+    resolvedLocale: locale,
     studioName: studio.name,
     // OG-preview infra: server.mjs's /inquiry SSR handler uses this the
     // same way every other public route's own verify endpoint does --
@@ -57,17 +106,17 @@ publicRouter.get("/public", async (req, res) => {
     // routes/publicAssets.ts).
     studioLogoUrl: studio.logoUrl,
     formName: form.name,
-    privacyPolicy: settings?.privacyPolicy ?? null,
-    termsAndConditions: settings?.termsAndConditions ?? null,
-    refundPolicy: settings?.refundPolicy ?? null,
-    depositPolicy: settings?.depositPolicy ?? null,
-    reschedulePolicy: settings?.reschedulePolicy ?? null,
-    communicationPolicy: settings?.communicationPolicy ?? null,
+    privacyPolicy: localizedSettings?.privacyPolicy ?? null,
+    termsAndConditions: localizedSettings?.termsAndConditions ?? null,
+    refundPolicy: localizedSettings?.refundPolicy ?? null,
+    depositPolicy: localizedSettings?.depositPolicy ?? null,
+    reschedulePolicy: localizedSettings?.reschedulePolicy ?? null,
+    communicationPolicy: localizedSettings?.communicationPolicy ?? null,
     // Drives whether the public intake form even offers "A friend referred
     // me" as a channel option -- default true matches every studio's
     // always-on behavior before this flag existed.
     referralProgramEnabled: settings?.referralProgramEnabled ?? true,
-    intakeFormFields: allFields.filter((f) => f.enabled),
+    intakeFormFields: localizedFields,
   });
 });
 
