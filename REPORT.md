@@ -13044,3 +13044,31 @@ exported consts). Full API `tsc --noEmit` clean after adding the four exports, f
 
 No schema changes. Still on `explore/multi-language-public-forms`, still not merged into `main`.
 REPORT.md line count before this entry: 12999 (verified via `wc -l REPORT.md`) -- pure addition.
+
+# Multi-language public forms -- pre-merge closeout, step 4: browser verification NOT run this session
+
+Step 4 of this closeout task explicitly required Playwright/browser-automation access: the
+language picker on each public flow, a full Spanish intake + waiver signing on a mobile viewport,
+seed-equality behavior in the Settings locale tabs, fallback-to-English for a missing translation,
+and opening the Spanish-signed deposit/waiver PDFs to visually confirm accented glyphs (á é ñ ¿ ü)
+actually render in the embedded fonts.
+
+Checked for a browser tool at the start of this task (same check as the prior part's own
+verification-pass entry) -- none available in this session, same as before. **None of step 4 was
+run.** Flagging this explicitly rather than silently skipping it or claiming partial credit,
+exactly as the task itself anticipated ("this session or the next one with Playwright available").
+
+Everything else in this closeout (steps 1-3) is committed on `explore/multi-language-public-forms`
+at `a83cb9e`, branch is 10 commits ahead of `main` / 0 behind, full suite 161/161, `tsc` and
+`vite build` both clean. **Not merged into `main`** -- per this task's own instruction, stopping
+before merge for the Spanish list's native-speaker review, and separately, step 4's browser
+verification still needs to happen (in a session with Playwright access) before this branch should
+be considered fully ready, particularly the PDF glyph-rendering check -- embedded-font glyph
+coverage for accented Spanish characters is exactly the kind of thing that fails silently (wrong
+font, missing glyph, tofu box) with no automated test able to catch it short of actually looking.
+
+## CLAUDE.md hygiene
+
+No schema changes, no code changes this entry -- documentation only, recording what remains before
+this branch is merge-ready. REPORT.md line count before this entry: 13046 (verified via
+`wc -l REPORT.md`) -- pure addition.
