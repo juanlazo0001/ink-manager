@@ -54,7 +54,13 @@ export default function PaymentTipStage({
 
   return (
     <div>
-      <h2 className="login-jura text-center text-lg font-semibold text-fg">Add a tip?</h2>
+      {/* text-xl, not text-lg -- matches every other in-flow stage title in
+          this family (DepositResponse's own "Deposit Agreement Signed" etc.,
+          FlashPaymentResponse's own headings), 8 established instances at
+          text-xl vs. this being the lone text-lg outlier -- found via a
+          typography audit's computed-style comparison, not source reading
+          (both looked like plausible "stage title" sizes on their own). */}
+      <h2 className="login-jura text-center text-xl font-semibold text-fg">Add a tip?</h2>
       <p className="mt-1 text-center text-sm text-fg-secondary">
         100% goes to your artist -- computed on the {formatCents(subtotalCents)} session price.
       </p>

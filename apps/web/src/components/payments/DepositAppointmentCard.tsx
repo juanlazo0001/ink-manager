@@ -9,10 +9,21 @@ import { buildGoogleCalendarUrl, buildIcsContent, downloadIcs } from '../../lib/
 // the explicit date/time + Add to Calendar; needs-scheduling gets honest
 // "what happens next" copy, no calendar button, no fabricated time.
 //
-// Part 2 sizing pass: rounded-2xl/p-5 (was rounded-lg/p-4), larger label
-// and date/time text, larger pill buttons -- matches the reference
-// screenshot's own card treatment, reused by DepositGiftCardCard and the
-// referral block right below it for a consistent card language.
+// Part 2 sizing pass: rounded-2xl/p-5 (was rounded-lg/p-4), larger
+// date/time text, larger pill buttons -- matches the reference screenshot's
+// own card treatment, and the app's own established convention for a
+// PRIMARY standalone card (Dashboard/Widget/Team/Settings all use
+// rounded-2xl for this exact role, vs. rounded-lg for the smaller inline
+// info asides elsewhere in this same payment family -- e.g.
+// PaymentBreakdownDisclosure, PaymentTipStage's own total-today box).
+// Reused by DepositGiftCardCard and the referral block right below it for
+// a consistent card language. The eyebrow label itself (below) went to
+// text-sm during that same pass, matched against this reference screenshot
+// -- a later typography audit (computed styles, not the screenshot) found
+// that was drift: text-xs is the established convention for this exact
+// role everywhere else in the app (129 existing instances, including this
+// same family's own PaymentBreakdownDisclosure and EstimateResponse),
+// reverted back to text-xs.
 const CARD_CLASS = 'relative z-10 mt-5 rounded-2xl border border-border p-5 text-left'
 
 export default function DepositAppointmentCard({
@@ -40,7 +51,7 @@ export default function DepositAppointmentCard({
       // in-flow content regardless of DOM order -- see that component's
       // own comment). No-op everywhere else.
       <div className={CARD_CLASS}>
-        <p className="text-sm font-medium uppercase tracking-wider text-fg-muted">Your appointment</p>
+        <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Your appointment</p>
         <p className="mt-1 text-sm font-medium text-fg">Not yet scheduled</p>
         <p className="mt-2 text-sm text-fg-secondary">
           {studioName} will reach out to lock in a time that works{artistName ? ` with ${artistName}` : ''}. You
@@ -64,7 +75,7 @@ export default function DepositAppointmentCard({
     // content regardless of DOM order -- see that component's own
     // comment). No-op everywhere else.
     <div className={CARD_CLASS}>
-      <p className="text-sm font-medium uppercase tracking-wider text-fg-muted">Your appointment</p>
+      <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Your appointment</p>
       <p className="mt-2 text-lg font-semibold text-fg">{formatAppointmentDateTime(startIso!, timeZone)}</p>
       {address && <p className="mt-1 text-sm text-fg-secondary">{address}</p>}
 

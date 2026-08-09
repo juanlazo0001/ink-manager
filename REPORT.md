@@ -12234,3 +12234,137 @@ build removed (gitignored, but not left lying around). Both dev servers
 server on port 5180 all confirmed stopped/freed. REPORT.md line count before
 this entry: 12126 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure
 addition.
+
+# Payment flow typography & consistency audit
+
+Audited the client-facing payment/confirmation family's typography against
+computed styles (not source-reading, not eyeballing screenshots) across the
+full journey -- public intake, estimate response, staged deposit payment
+(every screen), flash-booking payment, and session-checkout's tip flow.
+Classified every difference found as deliberate hierarchy or drift, fixed
+drift at the shared component layer, left deliberate differences alone, and
+flagged one pre-existing architectural split rather than touching it.
+
+## Method
+
+Drove every screen at a real 390px viewport in a real browser (Playwright,
+against a fresh throwaway studio -- `createStudioWithOwner` plus its own
+`StudioSettings.embeddedPaymentsEnabled`/`StudioIntegration` rows, reusing
+dev-studio's own real Stripe test connected account rather than touching
+dev-studio's shared config at all, since another session was mid-verification
+against it in parallel), then pulled `getComputedStyle()` for each role
+(page title, eyebrow label, body copy, card value, amount, button, small
+print) rather than reading Tailwind class names off the JSX -- two of the
+five real findings below (the button-weight collision and its heading/value
+sibling) are things NO amount of source-reading would have caught, since the
+JSX className was byte-identical between the affected and unaffected
+contexts; only a live computed-style comparison surfaced them.
+
+## Findings: drift (fixed at the shared layer)
+
+Each row is BEFORE -> AFTER, both computed live, not inferred.
+
+| # | Role / component | Before | After | Root cause |
+|---|---|---|---|---|
+| 1 | Eyebrow label -- DepositAppointmentCard, DepositGiftCardCard, referral card | 14px (text-sm) | 12px (text-xs) | Part 2's own sizing pass, matched against a reference screenshot's imprecise scale, drifted from the app-wide convention (129 existing text-xs instances app-wide, including this same family's own PaymentBreakdownDisclosure and EstimateResponse, vs. 4 text-sm instances -- all 4 this session's own) |
+| 2 | Stage title -- PaymentTipStage "Add a tip?" | 18px (text-lg) | 20px (text-xl) | Lone outlier against 8 established in-flow stage-title instances at text-xl across DepositResponse.tsx/FlashPaymentResponse.tsx |
+| 3 | Amount weight -- DepositGiftCardCard voucher | font-semibold (600) | font-medium (500) | Only font-display amount in the family not using font-medium (PaymentAmountStage's headline, PaymentConfirmationStage's own confirmed amount both use font-medium) |
+| 4 | Identity/context line -- PaymentAmountStage ("Your session with X at Y") | 14px, text-fg-secondary, name in a separately-colored inline span | 16px, text-accent (matches PaymentConfirmationStage's own reference-validated treatment for the identical role) | Two components render the same transaction's who/where information with genuinely different styling; unified toward Confirmation's own treatment since that one was directly validated against a real design reference in Part 2, this one never was |
+| 5a | CTA button weight -- PaymentTakeoverOverlay's Continue/Pay buttons (session checkout only) | font-weight 400 | font-weight 700 | Computed-styles-only find: an app-wide rule (`[data-theme="editorial-gold"] .font-bold/.font-semibold -> regular`, a deliberate typographic refinement for the rest of the in-app editorial-gold experience) silently catches this overlay's buttons too, since it mounts inside the authenticated shell (where ThemeApplier sets `data-theme` on `<html>`) unlike the public deposit/flash pages, which never set that attribute at all |
+| 5b | Stage title + total-today value -- PaymentTipStage (session checkout only) | 18px/400, 14px/400 | 20px/600, 14px/600 | Same root cause as 5a -- the h2 title's font-semibold and the running-total span's font-semibold were both silently downgraded to regular for the identical reason |
+
+## Findings: deliberate hierarchy (left unchanged)
+
+- **Card radius/padding tiers**: DepositAppointmentCard/DepositGiftCardCard/
+  the referral card (rounded-2xl, p-5) vs. PaymentBreakdownDisclosure's own
+  expanded row, PaymentTipStage's total-today box, and DepositResponse's own
+  pre-payment info asides (rounded-lg, p-3). Confirmed as a real, established,
+  two-tier convention, not drift: the app's own `.card-surface` marker class
+  (Dashboard's CardShell, Widget, Team, Settings) uses rounded-2xl for
+  exactly this "primary standalone card" role, distinct from the smaller
+  "secondary inline aside" role the rounded-lg boxes fill.
+- **PaymentConfirmationStage's own amount (36px) smaller than its own title
+  (48px) and smaller than PaymentAmountStage's headline amount (48px)**:
+  deliberate -- avoids two co-equal maximum-emphasis elements competing on
+  the confirmation screen, where the "Payment received" headline is now the
+  dominant element instead.
+
+## Flagged, not touched (established non-payment pages)
+
+**IntakeForm and EstimateResponse render entirely in plain Outfit sans-serif
+(20-24px/400) with no Fraunces or Jura at all**, vs. the payment family's
+Jura stage titles (20px/600) and Fraunces hero title (48px/500) -- the single
+most visually jarring discontinuity in the actual client journey (a client
+moves from a plain sans-serif intake form straight into a heavily serif-and-
+Jura-branded deposit page mid-journey). This is a real, pre-existing,
+deliberate architectural split, not drift: `DepositResponse.tsx`'s own
+comment states it is one of "the platform's own Editorial Gold, never
+studio-themed" pages, while intake/estimate stay on whatever preset the
+studio itself picked (confirmed live: dev-studio's own `themePreset` is
+`editorial-gold`, yet neither page opts into the Jura/Fraunces treatment at
+the class level regardless). Per this audit's own scope, flagged for the
+user's awareness rather than changed -- fixing it would mean touching two
+established non-payment pages.
+
+## Fixes applied
+
+- `DepositAppointmentCard.tsx`, `DepositGiftCardCard.tsx`,
+  `DepositResponse.tsx` (referral block): eyebrow labels `text-sm` ->
+  `text-xs`.
+- `PaymentTipStage.tsx`: stage title `text-lg` -> `text-xl`.
+- `DepositGiftCardCard.tsx`: voucher amount `font-semibold` -> `font-medium`.
+- `PaymentAmountStage.tsx`: identity line `text-sm text-fg-secondary` (with a
+  separately-colored inline emphasis span) -> `text-base text-accent`
+  (keeping the inline span's own `font-medium` for emphasis, just letting it
+  inherit the now-accent parent color instead of overriding it).
+- `index.css`: replaced Part 1's narrower `.login-button.login-jura.font-bold`
+  rule with a correctly-scoped `.login-shell .font-bold` / `.login-shell
+  .font-semibold` pair (both `!important`, a deliberate, commented exception
+  to this file's own general no-`!important`-needed convention -- two
+  independently-justified always-win rules were genuinely tied on
+  specificity, not one legitimately outranking the other) -- covers every
+  current and future element inside the fixed-platform-identity treatment
+  (`.login-shell`, the same marker Login/deposit/flash/PaymentTakeoverOverlay
+  already share), not just the two elements this pass happened to find.
+  Hit and fixed a real CSS-parser trip-up along the way: a comment containing
+  an apostrophe immediately followed by a double-quoted phrase made
+  Tailwind v4's Lightning-CSS-based parser report an unterminated string and
+  500 the entire stylesheet in dev -- rewrote the comment to avoid the
+  pattern entirely and confirmed both the dev-server transform and a full
+  production build recover cleanly.
+
+## Verification
+
+Computed-style extraction re-run after every fix, using fresh throwaway
+appointments for the session-checkout flow each time (its takeover overlay
+only ever appears once, immediately after submitting the real checkout form
+-- a reload never reconstructs it, since the PaymentIntent client secret is
+pure React state, not derived from any GET response). Confirmed live, both
+directions: the ambient-theme fix does not leak into the public pages (a
+fresh deposit page's own Continue button still computes 700, unaffected);
+the eyebrow-label/amount-weight/stage-title/identity-line fixes hold
+consistently across every page that shares the affected component. Zero
+console errors across all seven driven page states (intake, estimate,
+deposit unsigned/amount-stage/method-stage/confirmation, flash amount-stage,
+session-checkout amount-stage/tip-stage). Full API test suite 126/126, web
+`tsc -b` clean, a full production `vite build` clean. All seeded rows (the
+throwaway studio and everything under it, the many disposable appointments
+consumed one-per-checkout-attempt while iterating on finding 5, dev-studio's
+own throwaway inquiries/deposit forms/gift cards) deleted afterward; all
+scratch scripts and screenshot directories removed.
+
+## CLAUDE.md hygiene
+
+Session launched via `scripts/new-session.ps1` per the mandatory concurrent-
+session rule (another session was mid-verification against the primary
+checkout in parallel) -- isolated worktree
+`ink-manager-w-payment-typography-audit`, own dev-port pair (API 4001, web
+5175, the latter auto-bumped by Vite from the suggested 5174 since that port
+was already claimed, presumably by the parallel session). `playwright`
+installed fresh in this worktree (`--no-save`, not carried over from the
+primary checkout's own install) and left in place per this session's own
+established convention. Both dev servers (including two full restarts during
+this session -- once ruling out stale HMR, once recovering from the CSS
+parser issue above) stopped and ports confirmed free before ending. REPORT.md
+line count before this entry: 12236 (verified via `git show HEAD:REPORT.md |
+wc -l`) -- pure addition.

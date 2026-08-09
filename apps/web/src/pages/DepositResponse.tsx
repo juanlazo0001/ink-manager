@@ -370,7 +370,7 @@ export default function DepositResponse() {
               // own comment -- keeps this above the fixed personalized
               // background.
               <div className="relative z-10 mt-5 rounded-2xl border border-accent/30 bg-accent/5 p-5 text-left">
-                <p className="text-sm font-medium uppercase tracking-wider text-fg-muted">Know someone else who'd love this?</p>
+                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Know someone else who'd love this?</p>
                 <p className="mt-2 text-sm text-fg-secondary">
                   Share your referral code — when a friend you refer pays their own deposit, you'll earn a reward.
                 </p>

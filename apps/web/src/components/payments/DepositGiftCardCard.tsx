@@ -29,8 +29,12 @@ export default function DepositGiftCardCard({
     // relative z-10: same reasoning as DepositAppointmentCard's own comment
     // -- keeps this above the fixed personalized background.
     <div className="relative z-10 mt-5 rounded-2xl border border-border p-5 text-center">
-      <p className="text-sm font-medium uppercase tracking-wider text-fg-muted">Your deposit voucher</p>
-      <p className="font-display mt-2 text-4xl font-semibold text-fg">{formatCents(amountCents)}</p>
+      <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Your deposit voucher</p>
+      {/* font-medium, not font-semibold -- every other font-display amount
+          in this family (PaymentAmountStage's headline, PaymentConfirmation
+          Stage's own confirmed amount) uses font-medium; this was the lone
+          font-semibold outlier, found via computed-style comparison. */}
+      <p className="font-display mt-2 text-4xl font-medium text-fg">{formatCents(amountCents)}</p>
       <p className="mt-2 text-sm text-fg-secondary">Show this QR code at the studio.</p>
 
       {publicUrl && (
