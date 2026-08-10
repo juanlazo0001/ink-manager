@@ -13293,3 +13293,215 @@ the worktree to function at all going forward). REPORT.md line count before this
 still not merged into `main` -- both the locale-persistence root cause and the Settings
 translation-removal bug above should be fixed (or explicitly descoped) before this branch is
 merge-ready, in addition to Juan's already-pending Spanish-list review.
+
+# Multi-language public forms: fix pass + re-verification (conditional merge -- not merged)
+
+Continuation of the prior session's verification-gate report above. Juan's Spanish legal-strings
+review passed, authorizing a fix-and-reverify pass with conditional merge if the re-run came back
+fully clean. It didn't come back clean on the first pass -- two new bugs surfaced during
+re-verification, both fixed and reverified in the same session -- so per the task's own explicit
+rule ("any new finding or partial pass -> STOP and report instead of merging"), **this branch is
+still not merged**. Full findings below; the merge call is Juan's.
+
+## Fixes applied (the four items from the fix-pass instructions)
+
+1. **Root cause: `LanguagePicker.onChange` wired on all eight public pages** (DepositResponse,
+   WaiverSign, EstimateResponse, EstimateRevisionResponse, FlashPaymentResponse, SelfSchedule,
+   IntakeForm, FlashPublicGallery) to the existing per-flow `PATCH .../locale` endpoints via a new
+   shared `apps/web/src/i18n/persistLocale.ts` (`persistPickerLocale`). A chosen locale now flows
+   into `Client.preferredLocale` (so a later-opened link defaults to it) and into the signing
+   payload (`signedLocale` + a same-language terms snapshot baked into the PDF at sign time).
+2. **Every leak closed**: `PublicPageFooter` translated via a new `useLocaleSafe()` hook (returns
+   `null` instead of throwing on `GiftCardResponse.tsx`, the one page with no `LocaleProvider`);
+   estimate hour range pluralized via new explicit `hourSingular`/`hourPlural` keys (no library --
+   matches this codebase's existing no-pluralization-library convention); estimate Terms &
+   Conditions now resolves through the same seed-equality pattern as waiver content
+   (`resolveEstimateTermsSnapshot` in `estimates.ts`, mirroring `resolveWaiverSnapshotContent`);
+   deposit pre-payment date display and the signature pad's "Clear" button both localized; the
+   self-schedule calendar (`react-day-picker`) now renders in Spanish via `react-day-picker/locale`
+   locale objects.
+3. **Waiver snapshots**: turned out to need *zero* code changes -- `resolveWaiverSnapshotContent`
+   in `waivers.ts` already correctly implemented the seed-equality translation resolution the prior
+   session's report flagged as missing (that finding was a misread, corrected here after a careful
+   re-read). The actual gap was just missing authored Spanish content for the health
+   questions/clauses, `waiverAcknowledgment`, and `waiverPhotoRelease` fields, authored live via
+   Settings during this session's re-verification.
+4. **Settings "clear a translation" no-op fixed in three places**: `IntakeFormFieldsEditor.tsx`,
+   and two spots in `Settings.tsx` (the waiver health-questions/clauses list save, and the custom
+   policy save) all used to omit the `translations` key from the PATCH body entirely whenever
+   nothing was filled in, so the backend's `if (translations) {...}` gate skipped processing and a
+   previously-saved translation stayed stubbornly in place. All three now always send the key, with
+   `null` for empty fields -- the backend routes (`studioSettings.ts`, `customPolicies.ts`) already
+   handled explicit `null` correctly; this was purely a frontend gating bug. (A second, deeper bug
+   in this same area was found during re-verification -- see below.)
+
+## New finding #1 (re-verification): first-load explicit `?locale=` defeats persistence
+
+Live-tested the fix from item 1 above with a fresh client (`ZZZQAVERIFY3`, submitted intake fully
+in Spanish) and a freshly-opened estimate link with zero picker interaction: it rendered in
+**English**. Network inspection (`browser_network_requests` filtered on `estimates/verify`) showed
+the very first fetch went out as `GET .../estimates/verify/<token>?locale=en` -- an *explicit*
+`locale=en`, sent before any server resolution had happened, using the `LocaleProvider`'s
+always-`'en'`-at-mount default. `resolveRequestLocale`'s own precedence has an explicit query param
+always win over `Client.preferredLocale`, so this accidentally-sent default permanently defeated the
+whole persistence mechanism on every fresh page load, regardless of what was correctly stored in the
+database. Confirmed pre-existing on `DepositResponse.tsx`'s original code (not introduced this
+session) and freshly introduced by this session's own new effects on `EstimateResponse.tsx`,
+`EstimateRevisionResponse.tsx`, and `SelfSchedule.tsx`.
+
+Fixed across all eight pages: the first fetch never includes an explicit `?locale=`; only a genuine
+*subsequent* locale change (the picker's `onChange`) sends one explicitly. Tracked via an
+`isFirstLocaleRender` `useRef` guard, flipped at the top of the relevant effect.
+
+## New finding #2 (re-verification): that same guard breaks under React 18 StrictMode
+
+Re-verifying finding #1's fix on `WaiverSign.tsx` (freshly created waiver, freshly opened signing
+link, zero picker interaction), the page **still rendered in English** on this dev server despite
+the exact same guard pattern that worked correctly on `DepositResponse.tsx` and `EstimateResponse.tsx`
+moments earlier. Network inspection showed something new: the *first* request correctly omitted
+`?locale=` and the server correctly resolved `"resolvedLocale":"es"` -- but a *second* request
+immediately followed with an explicit `?locale=en`, overwriting the display.
+
+Root cause: this app is wrapped in `<StrictMode>` (`main.tsx`), which in dev deliberately
+double-invokes every effect on mount (mount -> synthetic cleanup -> mount again) *synchronously,
+before any of the first invocation's async work has resolved*. `WaiverSign.tsx`'s
+`isFirstLocaleRender` ref was flipped to `false` synchronously at the top of the effect body on the
+*first* of those two synchronous invocations -- so by the *second* invocation (still before the real
+fetch has returned), the ref already reads `false`, and that second invocation builds its URL with
+`?locale=${locale}` where `locale` is still the untouched default `'en'`. This produces a real,
+stray HTTP request that then races the correct one for whichever resolves last -- non-deterministic,
+and it lost the race exactly when reproduced live.
+
+This is not a `WaiverSign.tsx`-specific bug -- the same vulnerable pattern (a ref flipped
+synchronously at the top of the effect, with no check for whether real data has actually loaded)
+also existed in `IntakeForm.tsx`, `FlashPublicGallery.tsx`, and, in the split-effect form (a
+separate `[locale]`-only effect gated purely on the same kind of ref), `DepositResponse.tsx` and
+`FlashPaymentResponse.tsx`. Only `EstimateResponse.tsx` (via an incidental extra `state !== 'ready'`
+guard) and `EstimateRevisionResponse.tsx`/`SelfSchedule.tsx` (no second effect to race in the first
+place) were actually safe. `DepositResponse.tsx`'s live test earlier in this same pass had simply
+*won* the race by network timing, not because the code was correct -- a flaky false-negative in the
+verification method itself, not a real pass.
+
+This exact StrictMode double-invoke hazard already has established, deliberate precedent in this
+codebase -- `VerifyEmail.tsx`'s own heavily-commented `startedRef` guard exists for precisely this
+reason (a single-use POST that must not fire twice). The fix applied here follows the same
+principle but for a different constraint: instead of a ref that's only meant to prevent a *second
+network call* (harmless here, since both would be idempotent GETs), the guard needs to distinguish
+"genuine first mount" from "a real subsequent change," which a synchronously-set boolean cannot do
+under StrictMode. Fixed in all five vulnerable files by replacing the ref-flipped-synchronously
+pattern with a `hasLoadedRef` that's set only *inside* the fetch's own `.then()` callback --
+StrictMode's synchronous double-invoke can never race that, since neither invocation's promise has
+resolved yet either way; only a real, later, asynchronous locale change can flip it.
+`EstimateResponse.tsx` was left untouched (already correct via its own guard).
+
+Reproduced-then-fixed-then-reverified live: reloading the same waiver link after the fix now
+correctly sends two no-param requests (both StrictMode invocations) followed by exactly one
+`?locale=es` request (the real sync-back), and the page renders in Spanish on the very first paint.
+
+## Re-run of the six-check verification gate
+
+All six checks re-run after both fixes above, using a fresh client (`ZZZQAVERIFY3`,
+`zzz-qaverify-i18n-3@example.test`) pushed through the real pipeline (intake -> estimate -> deposit
+-> waiver -> self-schedule), plus a second client (`ZZZQAVERIFY2`) specifically for the
+self-scheduling flow (had to enable `allowsClientSelfScheduling` on Maria Chen first, same as the
+prior session).
+
+1. **Picker + persistence, all flows**: estimate, deposit, and waiver each opened fresh (zero picker
+   interaction) after the client's Spanish preference was set via an earlier flow step, and each
+   correctly defaulted to Spanish. Self-schedule (via an estimate revision approved in Spanish)
+   redirected into a fully Spanish calendar -- month name, weekday headers (`lu ma mi ju vi sá do`),
+   every date's `aria-label`, and time-slot buttons (`2:00 p.m.` etc.) all correctly localized via
+   the `react-day-picker/locale` fix.
+2. **390px mobile, full Spanish intake**: fresh client (`ZZZQAVERIFY4`) submitted end-to-end at a
+   390px viewport with the picker toggled to Español -- every SYSTEM field label, hint text,
+   consent checkbox copy, and the footer rendered correctly; an intentionally-untranslated CUSTOM
+   question ("Do you have photos of the existing tattoo?") correctly stayed English (fallback
+   working, not a leak). Zero console errors.
+3. **Settings seed-equality**: confirmed via the mobile intake's SYSTEM field labels rendering
+   platform-seeded Spanish (`Ubicación`, `Tamaño estimado`, etc.) without any studio-authored
+   translation existing for them.
+4. **Fallback**: the untranslated custom intake question above; also directly re-tested via the
+   Settings clear-bug fix below.
+5. **THE GLYPH CHECK**: `ZZZQAVERIFY3` signed both a deposit and a waiver fully in Spanish (real
+   drawn signatures via synthetic pointer events, a real uploaded ID photo for the waiver, all 8
+   deposit terms and all 9 health questions / 10 clauses checked/initialed). Both PDFs downloaded
+   through the real staff routes (`GET /deposit-forms/:id/pdf`, `GET /waivers/:id/pdf`) and visually
+   inspected: á é í ó ñ ¿ all render crisply in the embedded font across both documents (e.g.
+   "depósito", "código", "cardíaca", "hemofílico(a)", "identificación", "perforación",
+   "¿Te has tatuado antes?"). `¡` confirmed rendering correctly in-browser (estimate/waiver success
+   headings) but doesn't appear in any PDF template string, and `ü` doesn't appear anywhere in this
+   branch's Spanish content at all (platform strings or studio-authored) -- not a failure, just
+   nothing in this codebase currently exercises that glyph specifically.
+6. **Dates in Spanish locale format**: confirmed throughout -- deposit page ("11 ago 2026, 10:00
+   a.m."), both PDFs ("9/8/2026, 7:45:48 p.m." generation timestamp, "14/1/1995" date of birth),
+   self-schedule calendar month/weekday names.
+
+## New finding #3 (re-verification): Settings clear-bug fix (item 4 above) was incomplete for rich text
+
+Live-testing item 4's fix on `refundPolicy` (add Spanish, save, verify persisted; clear, save,
+verify actually gone) surfaced a second, deeper bug in the exact same area: the field *did* update
+on clear (no longer the old no-op), but the new value was the literal string `"<p></p>"`, not
+`null` or `""`. `withLocale` (`contentTranslation.ts`) only falls back to English when a field is
+exactly `null`/`undefined`/`""`; `"<p></p>"` fails that check and is treated as real content, so the
+public-facing render showed a blank paragraph instead of falling back to the English text -- a
+different, arguably worse, manifestation of the same "clearing a translation doesn't behave
+correctly" problem the task asked to close out.
+
+Root cause: `RichTextEditor.tsx` (TipTap-backed) never produces a true empty string for "nothing
+typed" -- `editor.getHTML()` on empty content returns `"<p></p>"`. The two rich-text save sites in
+`Settings.tsx` (`handleFieldSave`'s `fieldDraftEs`, `handleCustomPolicySave`'s
+`customPolicyBodyEsDraft`) used a bare `.trim() || null`, which doesn't strip tags and so never
+sees an empty string. `waiverAcknowledgment`/`waiverPhotoRelease` route through the same
+`handleFieldSave` path and were affected identically; `IntakeFormFieldsEditor.tsx`'s label/helpText
+fields are plain `<input>`s, not TipTap, and were never affected.
+
+Fixed with a new `isEmptyHtml()` helper in `Settings.tsx` (strips tags/`&nbsp;`, checks the
+remainder is blank) applied at both save sites in place of the bare `.trim() || null`. Reverified
+live: cleared `refundPolicy` now round-trips as genuine `null`, and
+`GET /studio-settings/public?studioSlug=dev-studio&locale=es` correctly falls back to the English
+seed text instead of an empty paragraph.
+
+## Verification
+
+- `npx tsc -b` clean in both `apps/web` and `apps/api` after every fix in this session.
+- `npm test` in `apps/api`: **161/161 passing** (the interleaved `[realtime] failed to emit ...
+  Realtime server not initialized` lines are expected test-environment noise -- no socket.io server
+  running under `node --test`, unrelated to this branch).
+- `npm run build` clean in both `apps/web` (vite) and `apps/api` (tsc) after every fix.
+- `npm run lint` in `apps/web`: 60 pre-existing errors / 8 pre-existing warnings repo-wide,
+  unrelated to this branch (confirmed against the base commit in the prior session via a
+  git-stash comparison). This session's own edits added exactly two more *instances* of an
+  already-existing rule violation (`react-hooks/set-state-in-effect` in `Settings.tsx`, at lines
+  that already violated it before this session -- line numbers shifted from added code above them,
+  not new violations) and zero new rule types. Left as-is per this repo's standing convention
+  against unrelated drive-by cleanup.
+
+## Merge decision: NOT merged
+
+Per the task's own explicit rule, any new finding during re-verification means stop and report
+rather than merge, even after the finding is fixed. Three new findings surfaced during this
+re-verification pass (all now fixed and reverified clean, detailed above):
+
+1. First-load explicit `?locale=` defeating persistence (found on `EstimateResponse.tsx`, was also
+   latent/pre-existing on `DepositResponse.tsx`).
+2. The React 18 StrictMode double-invoke race in the fix for #1, affecting five of the eight pages.
+3. The rich-text "clear a translation" fix from the original fix-pass instructions not actually
+   producing English fallback (only a visually-empty paragraph) for TipTap-backed fields.
+
+All six checks pass cleanly as of the end of this session, and the full test/build/typecheck suite
+is green. This branch (`explore/multi-language-public-forms`) is **not merged into `main`, not
+pushed**. Juan's Spanish-strings review already passed; what's outstanding now is his call on
+whether three found-and-fixed-in-session bugs still warrant the "stop and report" treatment given
+they didn't survive to the final state, or whether this clean re-run is sufficient to proceed. No
+code was left half-fixed either way.
+
+## CLAUDE.md hygiene
+
+Same worktree (`ink-manager-w-i18n-schema`) as the prior session, dev servers (API :4000, web
+:5173) still running from that session, reused rather than restarted. Both stopped at the end of
+this session; confirmed no worktree-related process remains running. Scratch files this session
+created (`.playwright-mcp/test-id.png` placeholder image, downloaded PDF/screenshot artifacts in
+the primary checkout's `.playwright-mcp/`) removed before ending. No schema changes. `git status`
+clean except the tracked source edits described above and this REPORT.md append. REPORT.md line
+count before this entry: 13295 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition,
+nothing above this line touched.

@@ -371,7 +371,6 @@ export default function IntakeFormFieldsEditor({
       const esLabel = f.translations?.es?.label?.trim() || null
       const esHelpText = f.translations?.es?.helpText?.trim() || null
       const esOptions = hasOptions ? keptOptionIndices.map((oi) => f.translations?.es?.options?.[oi]?.trim() || '') : null
-      const hasEs = !!(esLabel || esHelpText || esOptions?.some((o) => o.length > 0))
 
       return {
         ...f,
@@ -379,9 +378,13 @@ export default function IntakeFormFieldsEditor({
         helpText: f.helpText?.trim() || null,
         options: cleanedOptions,
         order: i,
-        translations: hasEs
-          ? { es: { label: esLabel, helpText: esHelpText, options: esOptions && esOptions.length > 0 ? esOptions : null } }
-          : undefined,
+        // Fix pass: always send translations.es, even when every field in
+        // it is null -- an emptied Spanish tab must actually clear the
+        // stale IntakeFormFieldTranslation row (PUT /:id/fields upserts
+        // per-field only when the key is present at all; omitting the
+        // whole object here used to leave a removed translation silently
+        // in place forever).
+        translations: { es: { label: esLabel, helpText: esHelpText, options: esOptions && esOptions.length > 0 ? esOptions : null } },
       }
     })
 

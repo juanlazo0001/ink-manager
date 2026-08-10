@@ -8,7 +8,7 @@ import PublicPageFooter from '../components/PublicPageFooter'
 import SignaturePadField, { type SignaturePadHandle } from '../components/SignaturePadField'
 import PaymentFlowStages from '../components/payments/PaymentFlowStages'
 import PaymentConfirmationStage from '../components/payments/PaymentConfirmationStage'
-import { LocaleProvider, useLocale, useTranslations } from '../i18n'
+import { LocaleProvider, useLocale, useTranslations, persistPickerLocale } from '../i18n'
 import LanguagePicker from '../i18n/LanguagePicker'
 import DepositAppointmentCard from '../components/payments/DepositAppointmentCard'
 import DepositGiftCardCard from '../components/payments/DepositGiftCardCard'
@@ -171,14 +171,28 @@ function DepositResponseContent() {
 
   const signaturePadRef = useRef<SignaturePadHandle | null>(null)
 
+  // Set only INSIDE the fetch's own .then() below -- see the picker
+  // effect's comment for why a plain "is this the first render" ref
+  // isn't a safe enough guard on its own under React 18 StrictMode.
+  const hasLoadedRef = useRef(false)
+
   const loadVerify = useCallback(
-    (opts?: { poll?: boolean }) => {
+    (opts?: { poll?: boolean; explicitLocale?: boolean }) => {
       if (!token) return
       let pollAttempts = 0
 
       function load() {
-        apiFetch<VerifyResponse>(`/deposits/verify/${token}?locale=${locale}`)
+        // Fix pass: the FIRST fetch must NOT send ?locale= at all -- an
+        // explicit query param always wins in resolveRequestLocale's own
+        // precedence, so echoing this component's still-default 'en'
+        // state back at the server as if it were a real choice defeated
+        // the whole "resolve from Client.preferredLocale" mechanism on
+        // every fresh link, permanently. Only a genuine later change
+        // (the picker effect below, explicitLocale: true) sends it.
+        const url = opts?.explicitLocale ? `/deposits/verify/${token}?locale=${locale}` : `/deposits/verify/${token}`
+        apiFetch<VerifyResponse>(url)
           .then((data) => {
+            hasLoadedRef.current = true
             setVerifyData(data)
             setState('ready')
             // Server-resolved locale (client's own stored preference or
@@ -217,13 +231,22 @@ function DepositResponseContent() {
   // platform strings already re-render instantly from LocaleContext
   // alone, this covers the half of the page that only useTranslations()
   // can't reach.
-  const isFirstLocaleRender = useRef(true)
+  //
+  // Gated on hasLoadedRef (set inside loadVerify's own .then() above),
+  // not a plain "have I run before" ref: React 18 StrictMode's dev-only
+  // mount -> cleanup -> remount dance re-invokes this effect a second
+  // time in the same synchronous tick, before the mount effect's fetch
+  // has had any chance to resolve. A ref flipped synchronously at the
+  // top of this effect would already read false-turned-true by that
+  // second invocation and fire a stray `loadVerify({ explicitLocale:
+  // true })` with `locale` still at its default 'en' -- that request
+  // then races the correct one for whichever renders last (reproduced
+  // live on WaiverSign.tsx's identical pattern). hasLoadedRef only
+  // flips once the real fetch actually completes, well after
+  // StrictMode's synchronous double-invoke window has passed.
   useEffect(() => {
-    if (isFirstLocaleRender.current) {
-      isFirstLocaleRender.current = false
-      return
-    }
-    loadVerify()
+    if (!hasLoadedRef.current) return
+    loadVerify({ explicitLocale: true })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locale])
 
@@ -343,7 +366,7 @@ function DepositResponseContent() {
     <div className="login-shell flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
       <div className="login-panel-surface w-full max-w-lg px-4 py-8 sm:p-8">
         <div className="mb-4 flex justify-end">
-          <LanguagePicker />
+          <LanguagePicker onChange={(next) => token && persistPickerLocale(`/deposits/${token}/locale`, next)} />
         </div>
 
         {state === 'loading' && <p className="text-center text-sm text-fg-secondary">{t('common.loading')}</p>}
@@ -523,7 +546,7 @@ function DepositResponseContent() {
               <div className="mt-4 rounded-lg border border-border p-3">
                 <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('deposit.appointmentLabel')}</p>
                 <p className="mt-1 text-sm text-fg">
-                  {formatDateTime(verifyData.appointmentStart)} – {formatDateTime(verifyData.appointmentEnd)}
+                  {formatDateTime(verifyData.appointmentStart, locale)} – {formatDateTime(verifyData.appointmentEnd, locale)}
                 </p>
               </div>
             )}
@@ -535,7 +558,7 @@ function DepositResponseContent() {
                 <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('deposit.tentativeTimeLabel')}</p>
                 <p className="mt-1 text-sm text-fg">
                   {t('deposit.tentativeTimeBody', {
-                    range: `${formatDateTime(verifyData.proposedStartAt)} – ${formatDateTime(verifyData.proposedEndAt)}`,
+                    range: `${formatDateTime(verifyData.proposedStartAt, locale)} – ${formatDateTime(verifyData.proposedEndAt, locale)}`,
                   })}
                 </p>
               </div>

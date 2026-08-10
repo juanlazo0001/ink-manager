@@ -13,10 +13,11 @@
 // the VALUES, which is the whole point.
 //
 // Interpolation: `{{var}}` placeholders, filled in by t()'s own vars
-// argument (see useTranslations.ts). No true grammatical pluralization
-// exists anywhere in the six flows' current copy (checked during the
-// Part 1 investigation) -- every "{{n}}"-style case found is plain
-// count-into-string substitution, not word-form selection.
+// argument (see useTranslations.ts). No general pluralization machinery
+// exists in t() itself (deliberately -- see estimate.hourSingular/
+// hourPlural, the one real word-form-selection case found so far): a
+// caller that needs to pick between word forms does so explicitly with
+// two separate keys and its own count check, not a library.
 export const en = {
   common: {
     loading: 'Loading…',
@@ -129,6 +130,12 @@ export const en = {
     priceRangeLabel: 'Price range',
     priceLabel: 'Price',
     estimatedTimeLabel: 'Estimated time',
+    // First real word-form-selection case in this dictionary (see en.ts's
+    // own module comment) -- an hour RANGE ("2–3 hours") is always plural
+    // in both languages regardless of the numbers involved, so only the
+    // single-number case (min === max) needs to pick between these two.
+    hourSingular: 'hour',
+    hourPlural: 'hours',
     toBeDiscussed: 'To be discussed',
     sessionPlan: '{{n}}-session plan',
     sessionLabel: 'Session {{n}}',

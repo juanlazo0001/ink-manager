@@ -186,7 +186,7 @@ router.get("/lookup-public", async (req, res) => {
 // fixed from the piece -- no assignment or estimate step.
 router.post("/:id/request", async (req, res) => {
   const id = req.params.id as string;
-  const { placementDescription, placementPhotoUrl, firstName, lastName, email, phone } = req.body ?? {};
+  const { placementDescription, placementPhotoUrl, firstName, lastName, email, phone, preferredLocale } = req.body ?? {};
 
   if (
     typeof placementDescription !== "string" ||
@@ -234,9 +234,17 @@ router.post("/:id/request", async (req, res) => {
       ? await prisma.client.findFirst({ where: { studioId, phone: normalizedPhone } })
       : null;
 
+  // Multi-language public forms, fix pass: no Client exists yet at
+  // picker-toggle time on the gallery page (see LanguagePicker's own
+  // comment) -- this request is the one moment it CAN persist the
+  // client's choice, right as their Client record is actually created.
+  const clientPreferredLocale = isSupportedLocale(preferredLocale) ? preferredLocale : null;
+
   let client;
   if (existingClient) {
-    client = existingClient;
+    client = clientPreferredLocale
+      ? await prisma.client.update({ where: { id: existingClient.id }, data: { preferredLocale: clientPreferredLocale } })
+      : existingClient;
   } else {
     const referralCode = await generateUniqueReferralCode();
     client = await prisma.$transaction(async (tx) => {
@@ -248,6 +256,7 @@ router.post("/:id/request", async (req, res) => {
           email: trimmedEmail,
           phone: normalizedPhone,
           referralCode,
+          preferredLocale: clientPreferredLocale,
         },
       });
       await syncPrimaryPhone(tx, created.id, created.phone);

@@ -5,7 +5,7 @@ import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import { applyThemePreset } from '../lib/themePresets'
 import PublicPageFooter from '../components/PublicPageFooter'
 import { formatPriceEstimate } from '../lib/format'
-import { LocaleProvider, useTranslations } from '../i18n'
+import { LocaleProvider, useLocale, useTranslations, persistPickerLocale } from '../i18n'
 import LanguagePicker from '../i18n/LanguagePicker'
 
 type PageState = 'loading' | 'invalid' | 'ready' | 'success'
@@ -48,6 +48,11 @@ interface VerifyResponse {
     estimatedPriceHigh: number | null
   }[]
   reason: string | null
+  // Multi-language public forms: which locale the API actually resolved
+  // (explicit ?locale= > this client's own stored preference > the
+  // studio's own default) -- synced back into LocaleProvider on load,
+  // same pattern as every other flow's own verify response.
+  resolvedLocale?: string
 }
 
 // Distinct from EstimateResponse.tsx (the pre-conversion PROCEED/BUDGET_TOO_HIGH/
@@ -67,15 +72,19 @@ export default function EstimateRevisionResponse() {
 
 function EstimateRevisionResponseContent() {
   const { t } = useTranslations()
+  const { locale, setLocale } = useLocale()
 
   const INVALID_HEADINGS: Record<InvalidKind, string> = {
     invalid: t('common.linkInvalidHeading'),
     expired: t('common.linkExpiredHeading'),
   }
 
+  // See EstimateResponse.tsx's identical helper for why only the
+  // single-number case needs to pick a word form.
   function formatHourRange(min: number | null, max: number | null): string {
     if (min == null || max == null) return t('estimate.toBeDiscussed')
-    return min === max ? `${min} hours` : `${min}–${max} hours`
+    if (min === max) return `${min} ${min === 1 ? t('estimate.hourSingular') : t('estimate.hourPlural')}`
+    return `${min}–${max} ${t('estimate.hourPlural')}`
   }
 
   const { token } = useParams<{ token: string }>()
@@ -95,11 +104,21 @@ function EstimateRevisionResponseContent() {
 
     let ignore = false
 
+    // Fix pass: no explicit ?locale= on this first fetch -- see
+    // EstimateResponse.tsx's identical comment. This page has no
+    // server-resolved, locale-dependent content beyond the initial
+    // resolvedLocale sync (its `reason` field is a one-off staff-typed
+    // message, not studio-translatable template content), so unlike
+    // Estimate/Deposit/Waiver there's no need for a second, toggle-
+    // triggered re-fetch here.
     apiFetch<VerifyResponse>(`/estimates/revision/verify/${token}`)
       .then((data) => {
         if (ignore) return
         setVerifyData(data)
         applyThemePreset(data.themePreset)
+        // Server-resolved locale (client's own stored preference or the
+        // studio's default) wins on first load.
+        if (data.resolvedLocale && data.resolvedLocale !== locale) setLocale(data.resolvedLocale as typeof locale)
         setState('ready')
       })
       .catch((err) => {
@@ -152,7 +171,7 @@ function EstimateRevisionResponseContent() {
     <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
       <div className="w-full max-w-lg rounded-2xl card-surface border border-border bg-surface p-8">
         <div className="mb-4 flex justify-end">
-          <LanguagePicker />
+          <LanguagePicker onChange={(next) => token && persistPickerLocale(`/estimates/revision/${token}/locale`, next)} />
         </div>
 
         {state === 'loading' && <p className="text-center text-sm text-fg-secondary">{t('common.loading')}</p>}

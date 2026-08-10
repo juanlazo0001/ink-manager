@@ -18,6 +18,7 @@ import { validateGiftCardForAttachment, validateGiftCardsForAttachment } from ".
 import { getOrCreateClientConversation, getOrCreateStaffConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
 import { shortenUrl } from "../lib/shortLinks";
+import { isSupportedLocale } from "../lib/locale";
 import { normalizePhone } from "../lib/phone";
 import { syncPrimaryEmail, syncPrimaryPhone } from "../lib/clientContacts";
 import { findBufferConflict, formatBufferWarning, resolveSchedulingBufferMs } from "../lib/schedulingConflict";
@@ -402,15 +403,25 @@ router.post("/", optionalAuth, async (req, res) => {
   // gave it) is preserved across every later one, staff or public.
   const givesConsentNow = !isStaffRequest && smsConsent === true;
 
+  // Multi-language public forms, fix pass: intake has no Client to PATCH
+  // .../locale against until this exact moment (see LanguagePicker's own
+  // comment on why intake is the one flow that persists locale at
+  // submission time instead) -- public path only, an explicit choice
+  // always wins, same as persistClientLocale's own semantics elsewhere.
+  const preferredLocale =
+    !isStaffRequest && isSupportedLocale(body.preferredLocale) ? body.preferredLocale : null;
+
   let client;
   if (existingClient) {
-    client =
-      givesConsentNow && !existingClient.smsConsentGivenAt
-        ? await prisma.client.update({
-            where: { id: existingClient.id },
-            data: { smsConsentGivenAt: new Date(), smsConsentSource: "intake_form" },
-          })
-        : existingClient;
+    const updateData: Prisma.ClientUpdateInput = {
+      ...(givesConsentNow && !existingClient.smsConsentGivenAt
+        ? { smsConsentGivenAt: new Date(), smsConsentSource: "intake_form" }
+        : {}),
+      ...(preferredLocale ? { preferredLocale } : {}),
+    };
+    client = Object.keys(updateData).length > 0
+      ? await prisma.client.update({ where: { id: existingClient.id }, data: updateData })
+      : existingClient;
   } else {
     // Package O: referredByClientId is only ever set here, at the brand-new
     // client's own creation -- "a NEW client can enter someone else's
@@ -430,6 +441,7 @@ router.post("/", optionalAuth, async (req, res) => {
           phone: phone ? normalizePhone(phone) : phone,
           referralCode: newClientReferralCode,
           referredByClientId: referrer?.id ?? null,
+          preferredLocale,
           ...(givesConsentNow ? { smsConsentGivenAt: new Date(), smsConsentSource: "intake_form" } : {}),
         },
       });

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { AnimatePresence } from 'framer-motion'
 import { apiFetch, ApiError } from '../lib/api'
@@ -82,15 +82,29 @@ function FlashPublicGalleryContent() {
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
+  // Fix pass: see IntakeForm.tsx's identical comment -- the FIRST fetch
+  // must not send ?locale= explicitly, or it overrides the studio's own
+  // configured defaultLocale on a fresh, never-toggled load (no Client
+  // exists yet on this pre-request browse page to protect either way).
+  //
+  // Also see WaiverSign.tsx's comment: a plain ref flipped synchronously
+  // at the top of the effect isn't enough of a guard on its own under
+  // React 18 StrictMode's dev-only double-invoke (the second invocation
+  // would see the ref already-false and send a stray explicit
+  // ?locale=en that races the correct fetch). Gating on a ref that's
+  // only set INSIDE the fetch's own .then() sidesteps that.
+  const hasLoadedRef = useRef(false)
   useEffect(() => {
     if (!studioSlug || !artistId) return
 
     let ignore = false
+    const localeParam = hasLoadedRef.current ? `&locale=${locale}` : ''
     apiFetch<GalleryResponse>(
-      `/flash-pieces/public?studioSlug=${encodeURIComponent(studioSlug)}&artistId=${encodeURIComponent(artistId)}&locale=${locale}`,
+      `/flash-pieces/public?studioSlug=${encodeURIComponent(studioSlug)}&artistId=${encodeURIComponent(artistId)}${localeParam}`,
     )
       .then((data) => {
         if (ignore) return
+        hasLoadedRef.current = true
         setGallery(data)
         applyThemePreset(data.themePreset)
         setState('gallery')
@@ -176,6 +190,12 @@ function FlashPublicGalleryContent() {
           lastName: lastName.trim(),
           email: email.trim() || undefined,
           phone,
+          // Multi-language public forms, fix pass: no Client is guaranteed
+          // to exist until this request creates/finds one (see
+          // LanguagePicker's own comment on why intake/flash-gallery are
+          // the two flows that persist locale at submission time instead
+          // of via PATCH .../locale).
+          preferredLocale: locale,
         }),
       })
       setState('success')

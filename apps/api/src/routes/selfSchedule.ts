@@ -6,7 +6,7 @@ import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { getAvailableDates, getSlotsForDate } from "../lib/schedulingAssistant";
 import { findBufferConflict, resolveSchedulingBufferMs } from "../lib/schedulingConflict";
-import { persistClientLocale } from "../lib/contentTranslation";
+import { persistClientLocale, resolveRequestLocale } from "../lib/contentTranslation";
 
 const router = Router();
 
@@ -73,7 +73,7 @@ router.get("/verify/:token", async (req, res) => {
     where: { selfScheduleToken: token },
     include: {
       client: true,
-      studio: { include: { settings: { select: { themePreset: true } } } },
+      studio: { include: { settings: { select: { themePreset: true, defaultLocale: true } } } },
       assignedArtist: { include: { user: true } },
     },
   });
@@ -122,6 +122,7 @@ router.get("/verify/:token", async (req, res) => {
   });
 
   res.json({
+    resolvedLocale: resolveRequestLocale(req.query.locale, inquiry!.client.preferredLocale, inquiry!.studio.settings?.defaultLocale),
     clientFirstName: inquiry!.client.firstName,
     studioName: inquiry!.studio.name,
     studioSlug: inquiry!.studio.slug,

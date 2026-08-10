@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { apiFetch, ApiError } from '../lib/api'
 import PhoneInput from '../components/PhoneInput'
@@ -174,11 +174,34 @@ function IntakeFormContent() {
   // /terms pages read from. formSlug absent -> whichever form is currently
   // the default, so /inquiry/{studio-slug} (no form-slug segment) keeps
   // resolving exactly like it always has.
+  // Fix pass: the FIRST fetch must NOT send ?locale= explicitly -- an
+  // explicit query param always wins in resolveRequestLocale's own
+  // precedence, so it would override even a studio's own configured
+  // defaultLocale (no Client exists yet here to protect, but the
+  // studio default still deserves to win on a fresh, never-toggled
+  // load). Only a genuine later change (the picker) sends it.
+  //
+  // A plain ref flipped synchronously at the top of the effect isn't
+  // enough of a guard by itself: React 18 StrictMode's dev-only
+  // mount -> cleanup -> remount dance re-invokes this effect a SECOND
+  // time in the very same synchronous tick, before the first
+  // invocation's fetch has had any chance to resolve -- flipping the
+  // ref there just means the second invocation reads it as
+  // already-false and sends a stray explicit ?locale=en (the
+  // still-default state) that then races the correct no-param fetch
+  // for whichever renders last (see WaiverSign.tsx, where this exact
+  // race was caught live). Gating on a ref that's only set INSIDE the
+  // fetch's own .then() sidesteps that: both synchronous StrictMode
+  // invocations see it as unset (nothing has resolved yet either way)
+  // and both send the safe no-param request; only a genuine LATER
+  // change (the picker's onChange, well after that promise settled)
+  // sees it set and sends the real explicit locale.
+  const hasLoadedRef = useRef(false)
   useEffect(() => {
     if (!studioSlug) return
 
     let ignore = false
-    const query = new URLSearchParams({ studioSlug, locale })
+    const query = new URLSearchParams({ studioSlug, ...(hasLoadedRef.current ? { locale } : {}) })
     if (formSlug) query.set("formSlug", formSlug)
 
     apiFetch<{ studioName: string; intakeFormFields: IntakeFormFieldPublic[]; referralProgramEnabled: boolean; resolvedLocale?: string }>(
@@ -186,6 +209,7 @@ function IntakeFormContent() {
     )
       .then((data) => {
         if (ignore) return
+        hasLoadedRef.current = true
         setStudioName(data.studioName)
         setFields((data.intakeFormFields ?? []).slice().sort((a, b) => a.order - b.order))
         setReferralProgramEnabled(data.referralProgramEnabled)
@@ -348,6 +372,12 @@ function IntakeFormContent() {
           placementImages: placementImages.urls,
           draftToken: draftToken || undefined,
           smsConsent,
+          // Multi-language public forms, fix pass: no Client exists yet at
+          // picker-toggle time on this page (see LanguagePicker's own
+          // comment) -- so unlike every other flow's PATCH .../locale,
+          // this is the one moment intake CAN persist the client's choice,
+          // right as their Client record is actually created.
+          preferredLocale: locale,
           customFieldAnswers: Object.keys(customAnswers).length > 0 ? customAnswers : undefined,
         }),
       })

@@ -29,3 +29,12 @@ export function useLocale(): LocaleContextValue {
   }
   return ctx;
 }
+
+// For the rare shared component (PublicPageFooter) mounted both inside a
+// LocaleProvider (the six/eight i18n'd public flows) AND outside one
+// (GiftCardResponse.tsx, still English-only for v1) -- returns null
+// rather than throwing when no provider is present, so that one caller
+// can render its own English-only fallback instead of crashing.
+export function useLocaleSafe(): LocaleContextValue | null {
+  return useContext(LocaleContext);
+}

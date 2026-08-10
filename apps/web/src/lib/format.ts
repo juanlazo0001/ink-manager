@@ -1,7 +1,12 @@
 import { dateLocale, DEFAULT_LOCALE, type Locale } from '../i18n/locales'
 
-export function formatDateTime(iso: string) {
-  return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+// `locale` defaults to English -- every staff-only caller (Calendar,
+// InquiryDetail, ClientDetail, etc. -- English-only for v1) never passes
+// one, same convention as formatDateOnly below. The three public,
+// locale-aware callers (DepositResponse, WaiverSign, SelfSchedule) pass
+// their own page's own locale.
+export function formatDateTime(iso: string, locale: Locale = DEFAULT_LOCALE) {
+  return new Date(iso).toLocaleString(dateLocale(locale), { dateStyle: 'medium', timeStyle: 'short' })
 }
 
 // Date only, no time -- for grouping/section headers (e.g. AuditTrail's

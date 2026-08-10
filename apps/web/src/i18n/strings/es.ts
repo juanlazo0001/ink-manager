@@ -107,6 +107,8 @@ export const es: typeof en = {
     priceRangeLabel: 'Rango de precio',
     priceLabel: 'Precio',
     estimatedTimeLabel: 'Tiempo estimado',
+    hourSingular: 'hora',
+    hourPlural: 'horas',
     toBeDiscussed: 'Por definir',
     sessionPlan: 'Plan de {{n}} sesiones',
     sessionLabel: 'Sesión {{n}}',

@@ -55,6 +55,28 @@ async function supersededResponse(token: string) {
     : ({ status: 404, error: "This link is invalid." } as const);
 }
 
+// Multi-language public forms, fix pass: estimateTermsSnapshot is frozen
+// at SEND-ESTIMATE time (lib/estimates.ts), same immutability guarantee
+// as every other signed/sent snapshot in this codebase -- a later edit to
+// the studio's live English template must never retroactively change
+// what an already-sent estimate shows. Same seed-equality resolution as
+// waivers.ts's resolveWaiverSnapshotContent, just for this one string
+// field: the studio's StudioSettingsTranslation.estimateTerms only
+// applies when this inquiry's own frozen snapshot is still byte-identical
+// to the studio's CURRENT live English -- the moment they diverge, this
+// estimate's own frozen English renders as-is.
+function resolveEstimateTermsSnapshot(
+  snapshot: string | null,
+  settings: { estimateTerms: string | null; translations: { locale: string; estimateTerms: string | null }[] } | null | undefined,
+  locale: string,
+): string | null {
+  const translation = settings?.translations.find((t) => t.locale === locale);
+  if (translation?.estimateTerms && snapshot === settings?.estimateTerms) {
+    return translation.estimateTerms;
+  }
+  return snapshot;
+}
+
 // Public: the estimate response link is unauthenticated, same pattern as
 // consent form signing links.
 router.get("/verify/:token", async (req, res) => {
@@ -64,7 +86,13 @@ router.get("/verify/:token", async (req, res) => {
     where: { estimateToken: token },
     include: {
       client: true,
-      studio: { include: { settings: { select: { themePreset: true } } } },
+      studio: {
+        include: {
+          settings: {
+            select: { themePreset: true, defaultLocale: true, estimateTerms: true, translations: true },
+          },
+        },
+      },
       assignedArtist: { include: { user: true } },
       // Multi-session planning: empty for every estimate that never
       // declared more than one session -- the client-facing page falls
@@ -134,7 +162,10 @@ router.get("/verify/:token", async (req, res) => {
     emitInvalidation({ type: "inquiry.updated", studioId: inquiry!.studioId, inquiryId: inquiry!.id });
   }
 
+  const locale = resolveRequestLocale(req.query.locale, inquiry!.client.preferredLocale, inquiry!.studio.settings?.defaultLocale);
+
   res.json({
+    resolvedLocale: locale,
     clientFirstName: inquiry!.client.firstName,
     studioName: inquiry!.studio.name,
     studioSlug: inquiry!.studio.slug,
@@ -152,7 +183,7 @@ router.get("/verify/:token", async (req, res) => {
       estimatedPriceLow: ps.estimatedPriceLow,
       estimatedPriceHigh: ps.estimatedPriceHigh,
     })),
-    estimateTermsSnapshot: inquiry!.estimateTermsSnapshot,
+    estimateTermsSnapshot: resolveEstimateTermsSnapshot(inquiry!.estimateTermsSnapshot, inquiry!.studio.settings, locale),
     collaborativeDesignPolicy: COLLABORATIVE_DESIGN_POLICY,
   });
 });
@@ -241,11 +272,14 @@ router.patch("/respond/:token", async (req, res) => {
 
   const clearToken = { estimateToken: null, estimateTokenExpiresAt: null };
 
-  // Multi-language public forms, Part 5: which language the client was
-  // looking at when they accepted/declined/flagged-budget -- estimateTerms
-  // Snapshot/collaborativeDesignPolicy stay platform/immutable strings per
-  // the Part 1 review decision, so unlike DepositForm there's no companion
-  // content snapshot to capture here, only the locale itself.
+  // Multi-language public forms: which language the client was looking at
+  // when they accepted/declined/flagged-budget. collaborativeDesignPolicy
+  // stays a platform-immutable string (never studio-authored, so no
+  // translation to thread). estimateTermsSnapshot itself isn't touched
+  // here -- it was already frozen at send-estimate time (lib/estimates.ts)
+  // and is resolved to this same locale, seed-equality-checked against
+  // the studio's live English, on every read (GET /verify above, same
+  // pattern as waivers.ts's resolveWaiverSnapshotContent).
   const signedLocale = resolveRequestLocale(req.query.locale, inquiry!.client.preferredLocale, inquiry!.studio.settings?.defaultLocale);
 
   let selfScheduleToken: string | null = null;
@@ -349,7 +383,7 @@ router.get("/revision/verify/:token", async (req, res) => {
     where: { estimateRevisionToken: token },
     include: {
       client: true,
-      studio: { include: { settings: { select: { themePreset: true } } } },
+      studio: { include: { settings: { select: { themePreset: true, defaultLocale: true } } } },
       assignedArtist: { include: { user: true } },
       // Multi-session planning: empty for every Project that never
       // declared more than one session -- the client-facing page falls
@@ -375,6 +409,7 @@ router.get("/revision/verify/:token", async (req, res) => {
   }
 
   res.json({
+    resolvedLocale: resolveRequestLocale(req.query.locale, inquiry!.client.preferredLocale, inquiry!.studio.settings?.defaultLocale),
     clientFirstName: inquiry!.client.firstName,
     studioName: inquiry!.studio.name,
     studioSlug: inquiry!.studio.slug,

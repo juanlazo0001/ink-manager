@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { DayPicker } from 'react-day-picker'
+import { es as dayPickerEs, enUS as dayPickerEnUs } from 'react-day-picker/locale'
 import 'react-day-picker/style.css'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime } from '../lib/format'
@@ -8,7 +9,7 @@ import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import { applyThemePreset } from '../lib/themePresets'
 import PublicPageFooter from '../components/PublicPageFooter'
 import { toDateString, parseDateString } from '../components/DateAndTimeRangeFields'
-import { LocaleProvider, useTranslations } from '../i18n'
+import { LocaleProvider, useLocale, useTranslations, persistPickerLocale, dateLocale, type Locale } from '../i18n'
 import LanguagePicker from '../i18n/LanguagePicker'
 
 // Token-lifecycle bug fix: 'alreadyBooked' is new -- a client revisiting
@@ -46,6 +47,11 @@ interface VerifyResponse {
   // every other date is disabled outright in the calendar below, not just
   // greyed, since this picker only ever offers what's actually available.
   availableDates: string[]
+  // Multi-language public forms: which locale the API actually resolved
+  // (explicit ?locale= > this client's own stored preference > the
+  // studio's own default) -- synced back into LocaleProvider on load,
+  // same pattern as every other flow's own verify response.
+  resolvedLocale?: string
 }
 
 interface AlreadyBookedResponse {
@@ -56,8 +62,8 @@ interface AlreadyBookedResponse {
   themePreset: string
 }
 
-function formatTimeOnly(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+function formatTimeOnly(iso: string, locale: Locale): string {
+  return new Date(iso).toLocaleTimeString(dateLocale(locale), { hour: 'numeric', minute: '2-digit' })
 }
 
 // How far out the calendar lets someone navigate -- kept a bit past the
@@ -77,6 +83,7 @@ export default function SelfSchedule() {
 
 function SelfScheduleContent() {
   const { t } = useTranslations()
+  const { locale, setLocale } = useLocale()
 
   const INVALID_HEADINGS: Record<InvalidKind, string> = {
     invalid: t('common.linkInvalidHeading'),
@@ -106,6 +113,14 @@ function SelfScheduleContent() {
 
     let ignore = false
 
+    // Fix pass: no explicit ?locale= on this first fetch -- see
+    // DepositResponse.tsx's identical comment. This page has no other
+    // server-resolved, locale-dependent content (availableDates/
+    // durationMinutes/artistName aren't translatable), so unlike
+    // Deposit/Waiver there's no need for a second, toggle-triggered
+    // re-fetch here -- the calendar/time-slot formatting already
+    // re-renders instantly off the `locale` state alone (see
+    // formatTimeOnly/DayPicker's own locale prop above).
     apiFetch<VerifyResponse | AlreadyBookedResponse>(`/self-schedule/verify/${token}`)
       .then((data) => {
         if (ignore) return
@@ -117,6 +132,9 @@ function SelfScheduleContent() {
         }
         setVerifyData(data)
         applyThemePreset(data.themePreset)
+        // Server-resolved locale (client's own stored preference or the
+        // studio's default) wins on first load.
+        if (data.resolvedLocale && data.resolvedLocale !== locale) setLocale(data.resolvedLocale as typeof locale)
         setState('ready')
       })
       .catch((err) => {
@@ -178,7 +196,7 @@ function SelfScheduleContent() {
     <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
       <div className="w-full max-w-lg rounded-2xl card-surface border border-border bg-surface p-8">
         <div className="mb-4 flex justify-end">
-          <LanguagePicker />
+          <LanguagePicker onChange={(next) => token && persistPickerLocale(`/self-schedule/${token}/locale`, next)} />
         </div>
 
         {state === 'loading' && <p className="text-center text-sm text-fg-secondary">{t('common.loading')}</p>}
@@ -209,7 +227,7 @@ function SelfScheduleContent() {
             <h1 className="text-xl font-semibold text-fg">{t('selfSchedule.requestSentHeading')}</h1>
             <p className="mt-2 text-sm text-fg-secondary">
               {t('selfSchedule.requestSentBody', {
-                range: `${formatDateTime(confirmed.startTime)} – ${formatDateTime(confirmed.endTime)}`,
+                range: `${formatDateTime(confirmed.startTime, locale)} – ${formatDateTime(confirmed.endTime, locale)}`,
               })}
             </p>
           </div>
@@ -241,6 +259,7 @@ function SelfScheduleContent() {
                 <div className="mt-2 flex justify-center rounded-xl border border-border bg-surface-inset p-2">
                   <DayPicker
                     mode="single"
+                    locale={locale === 'es' ? dayPickerEs : dayPickerEnUs}
                     selected={selectedDate ? parseDateString(selectedDate) : undefined}
                     onSelect={(day) => {
                       if (!day) return
@@ -274,7 +293,12 @@ function SelfScheduleContent() {
                   <div className="mt-4">
                     <p className="mb-1.5 text-xs font-medium uppercase tracking-wider text-fg-muted">
                       {t('selfSchedule.availableTimesOn', {
-                        date: parseDateString(selectedDate)?.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }) ?? '',
+                        date:
+                          parseDateString(selectedDate)?.toLocaleDateString(dateLocale(locale), {
+                            weekday: 'long',
+                            month: 'long',
+                            day: 'numeric',
+                          }) ?? '',
                       })}
                     </p>
 
@@ -298,7 +322,7 @@ function SelfScheduleContent() {
                               isSelected ? 'border-accent bg-accent/15 text-accent' : 'border-border text-fg-secondary hover:bg-surface',
                             ].join(' ')}
                           >
-                            {formatTimeOnly(slot.startTime)}
+                            {formatTimeOnly(slot.startTime, locale)}
                           </button>
                         )
                       })}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { apiFetch, ApiError } from '../lib/api'
 import { sanitizeHtml } from '../lib/sanitizeHtml'
@@ -6,7 +6,7 @@ import { formatPriceEstimate } from '../lib/format'
 import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import { applyThemePreset } from '../lib/themePresets'
 import PublicPageFooter from '../components/PublicPageFooter'
-import { LocaleProvider, useTranslations } from '../i18n'
+import { LocaleProvider, useLocale, useTranslations, persistPickerLocale } from '../i18n'
 import LanguagePicker from '../i18n/LanguagePicker'
 
 const INPUT_CLASS =
@@ -53,6 +53,11 @@ interface VerifyResponse {
   // Multi-language public forms: this API field is IGNORED on purpose --
   // see the module-level comment near its render site below.
   collaborativeDesignPolicy: string
+  // Multi-language public forms: which locale the API actually resolved
+  // (explicit ?locale= > this client's own stored preference > the
+  // studio's own default) -- synced back into LocaleProvider on load,
+  // same pattern as every other flow's own verify response.
+  resolvedLocale?: string
 }
 
 // Token-lifecycle bug fix: GET /estimates/verify/:token's new already-
@@ -93,6 +98,7 @@ export default function EstimateResponse() {
 
 function EstimateResponseContent() {
   const { t } = useTranslations()
+  const { locale, setLocale } = useLocale()
 
   const INVALID_HEADINGS: Record<InvalidKind, string> = {
     invalid: t('common.linkInvalidHeading'),
@@ -100,9 +106,13 @@ function EstimateResponseContent() {
     superseded: t('common.linkSupersededHeading'),
   }
 
+  // A range ("2–3 hours") always reads plural in both languages
+  // regardless of the numbers involved -- only the single-number case
+  // (min === max) needs to pick between estimate.hourSingular/hourPlural.
   function formatHourRange(min: number | null, max: number | null): string | null {
     if (min == null || max == null) return null
-    return min === max ? `${min} hours` : `${min}–${max} hours`
+    if (min === max) return `${min} ${min === 1 ? t('estimate.hourSingular') : t('estimate.hourPlural')}`
+    return `${min}–${max} ${t('estimate.hourPlural')}`
   }
 
   const { token } = useParams<{ token: string }>()
@@ -125,6 +135,14 @@ function EstimateResponseContent() {
 
     let ignore = false
 
+    // Fix pass: the FIRST fetch must NOT send ?locale= explicitly -- an
+    // explicit query param always wins in resolveRequestLocale's own
+    // precedence, so echoing this component's still-default 'en' state
+    // back at the server as if it were a real choice defeated the whole
+    // "resolve from Client.preferredLocale" mechanism on every fresh
+    // link, permanently. A later picker toggle re-fetches explicitly via
+    // the separate effect below (needed so estimateTermsSnapshot's own
+    // seed-equality resolution re-runs in the new language too).
     apiFetch<VerifyResponse | AlreadyRespondedResponse | AlreadyBookedResponse>(`/estimates/verify/${token}`)
       .then((data) => {
         if (ignore) return
@@ -145,6 +163,9 @@ function EstimateResponseContent() {
         }
         setVerifyData(data)
         applyThemePreset(data.themePreset)
+        // Server-resolved locale (client's own stored preference or the
+        // studio's default) wins on first load.
+        if (data.resolvedLocale && data.resolvedLocale !== locale) setLocale(data.resolvedLocale as typeof locale)
         setState('ready')
       })
       .catch((err) => {
@@ -160,6 +181,31 @@ function EstimateResponseContent() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, navigate])
+
+  // Re-fetch with the new locale explicitly whenever the client toggles
+  // the picker, so estimateTermsSnapshot's own seed-equality resolution
+  // (server-side) re-runs in the new language too -- platform strings
+  // already re-render instantly from LocaleContext alone; this covers
+  // the one piece of this page only useTranslations() can't reach.
+  // Skipped on the very first render (that fetch already happened,
+  // deliberately without an explicit locale, above).
+  const isFirstLocaleRender = useRef(true)
+  useEffect(() => {
+    if (isFirstLocaleRender.current) {
+      isFirstLocaleRender.current = false
+      return
+    }
+    if (!token || state !== 'ready') return
+    apiFetch<VerifyResponse | AlreadyRespondedResponse | AlreadyBookedResponse>(`/estimates/verify/${token}?locale=${locale}`)
+      .then((data) => {
+        if ('alreadyResponded' in data || 'alreadyBooked' in data) return
+        setVerifyData(data)
+      })
+      .catch(() => {
+        /* Best-effort re-translation only -- the page already has usable data from the first load. */
+      })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locale])
 
   async function respond(decision: Decision) {
     if (!token) return
@@ -209,7 +255,7 @@ function EstimateResponseContent() {
     <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
       <div className="w-full max-w-lg rounded-2xl card-surface border border-border bg-surface p-8">
         <div className="mb-4 flex justify-end">
-          <LanguagePicker />
+          <LanguagePicker onChange={(next) => token && persistPickerLocale(`/estimates/${token}/locale`, next)} />
         </div>
 
         {state === 'loading' && <p className="text-center text-sm text-fg-secondary">{t('common.loading')}</p>}

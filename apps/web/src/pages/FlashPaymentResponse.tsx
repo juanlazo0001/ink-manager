@@ -4,7 +4,7 @@ import { apiFetch, ApiError } from '../lib/api'
 import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import PublicPageFooter from '../components/PublicPageFooter'
 import PaymentFlowStages from '../components/payments/PaymentFlowStages'
-import { LocaleProvider, useLocale, useTranslations } from '../i18n'
+import { LocaleProvider, useLocale, useTranslations, persistPickerLocale } from '../i18n'
 import LanguagePicker from '../i18n/LanguagePicker'
 
 // Embedded payments migration: same fixed Editorial Gold platform
@@ -58,14 +58,25 @@ function FlashPaymentResponseContent() {
   const [embeddedSecret, setEmbeddedSecret] = useState<{ clientSecret: string; connectedAccountId: string } | null>(null)
   const [embeddedLoadError, setEmbeddedLoadError] = useState<string | null>(null)
 
+  // Set only INSIDE the fetch's own .then() below -- see the picker
+  // effect's comment for why a plain "is this the first render" ref
+  // isn't a safe enough guard on its own under React 18 StrictMode.
+  const hasLoadedRef = useRef(false)
+
   const loadVerify = useCallback(
-    (opts?: { poll?: boolean }) => {
+    (opts?: { poll?: boolean; explicitLocale?: boolean }) => {
       if (!token) return
       let pollAttempts = 0
 
       function load() {
-        apiFetch<VerifyResponse>(`/flash-payment/verify/${token}?locale=${locale}`)
+        // Fix pass: see DepositResponse.tsx's identical comment -- the
+        // FIRST fetch must never send ?locale= explicitly, or it
+        // permanently overrides Client.preferredLocale resolution with
+        // this component's still-default 'en' state.
+        const url = opts?.explicitLocale ? `/flash-payment/verify/${token}?locale=${locale}` : `/flash-payment/verify/${token}`
+        apiFetch<VerifyResponse>(url)
           .then((data) => {
+            hasLoadedRef.current = true
             setVerifyData(data)
             setState('ready')
             if (data.resolvedLocale && data.resolvedLocale !== locale) setLocale(data.resolvedLocale as typeof locale)
@@ -105,13 +116,14 @@ function FlashPaymentResponseContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
 
-  const isFirstLocaleRender = useRef(true)
+  // Gated on hasLoadedRef, not a plain "have I run before" ref -- see
+  // DepositResponse.tsx's identical comment for why: React 18
+  // StrictMode's dev-only double-invoke would otherwise fire a stray
+  // explicit-locale request (still at the default 'en') that races the
+  // correct one.
   useEffect(() => {
-    if (isFirstLocaleRender.current) {
-      isFirstLocaleRender.current = false
-      return
-    }
-    loadVerify()
+    if (!hasLoadedRef.current) return
+    loadVerify({ explicitLocale: true })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locale])
 
@@ -162,7 +174,7 @@ function FlashPaymentResponseContent() {
     <div className="login-shell flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
       <div className="login-panel-surface w-full max-w-lg px-4 py-8 sm:p-8">
         <div className="mb-4 flex justify-end">
-          <LanguagePicker />
+          <LanguagePicker onChange={(next) => token && persistPickerLocale(`/flash-payment/${token}/locale`, next)} />
         </div>
 
         {state === 'loading' && <p className="text-center text-sm text-fg-secondary">{t('common.loading')}</p>}

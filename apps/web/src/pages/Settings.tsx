@@ -315,6 +315,21 @@ function stripHtmlPreview(html: string | null, maxLen = 140): string {
   return text.length > maxLen ? `${text.slice(0, maxLen).trimEnd()}…` : text
 }
 
+// i18n fix pass: TipTap's own "nothing typed" serialization is never a
+// true empty string -- it's an empty paragraph tag (`<p></p>`, or
+// `<p><br></p>` right after a delete) -- so a bare `.trim() || null`
+// check on the raw HTML sees a non-empty string and saves that literal
+// markup as the Spanish translation. withLocale (contentTranslation.ts)
+// only falls back to English when a field is exactly `null`/`undefined`/
+// `""`; `"<p></p>"` fails that check, so the studio's own English
+// fallback rule silently breaks for exactly the fields cleared through
+// this editor -- the public page renders a blank paragraph instead of
+// the English text. Same tag-stripping approach as stripHtmlPreview
+// above, just as a boolean gate instead of a display string.
+function isEmptyHtml(html: string): boolean {
+  return html.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').trim() === ''
+}
+
 // Mirrors apps/api/src/routes/studioSettings.ts's VALID_TIMEZONES -- kept
 // as a literal list for the same reason other backend/frontend mirrored
 // lists in this codebase are (separate compilation units, no shared
@@ -962,12 +977,12 @@ export default function Settings() {
     setFieldError(null)
     try {
       const isTranslatable = STUDIO_SETTINGS_TRANSLATABLE_FIELDS.has(editingField)
-      const esValue = fieldDraftEs.trim()
+      const esValue = isEmptyHtml(fieldDraftEs) ? null : fieldDraftEs
       const updated = await apiFetch<StudioSettingsData>('/studio-settings', {
         method: 'PATCH',
         body: JSON.stringify({
           [editingField]: fieldDraft,
-          ...(isTranslatable ? { translations: { es: { [editingField]: esValue || null } } } : {}),
+          ...(isTranslatable ? { translations: { es: { [editingField]: esValue } } } : {}),
         }),
       })
       // PATCH doesn't echo translations back (a sibling table, upserted
@@ -978,7 +993,7 @@ export default function Settings() {
         translations: isTranslatable
           ? {
               ...policies?.translations,
-              es: { ...policies?.translations?.es, [editingField]: esValue || null },
+              es: { ...policies?.translations?.es, [editingField]: esValue },
             }
           : policies?.translations,
       })
@@ -1008,12 +1023,21 @@ export default function Settings() {
     setCustomPolicyError(null)
     try {
       const esTitle = customPolicyTitleEsDraft.trim()
-      const esBody = customPolicyBodyEsDraft.trim()
+      const esBody = customPolicyBodyEsDraft
       // Neither POST nor PATCH echoes translations back on the base entity
       // (they're a sibling table, upserted server-side after the base row
       // is written) -- merged in locally from what was just submitted
       // rather than left stale until the next full list refetch.
-      const translations = esTitle || esBody ? { es: { title: esTitle || null, bodyHtml: esBody || null } } : undefined
+      //
+      // Fix pass: always sent, title/bodyHtml null when empty -- never
+      // gated on esTitle || esBody, which used to omit the whole
+      // `translations` key (and so leave a removed translation's stale
+      // row untouched) the moment a studio cleared both fields back out.
+      // bodyHtml is RichTextEditor content, not plain text -- gated on
+      // isEmptyHtml (see its own comment) rather than a bare `.trim() ||
+      // null`, which would save TipTap's empty-paragraph markup as if it
+      // were real Spanish content and defeat the English fallback.
+      const translations = { es: { title: esTitle || null, bodyHtml: isEmptyHtml(esBody) ? null : esBody } }
 
       if (editingCustomPolicy === 'new') {
         const created = await apiFetch<CustomPolicyData>('/custom-policies', {
@@ -1022,7 +1046,7 @@ export default function Settings() {
             title: customPolicyTitleDraft,
             bodyHtml: customPolicyBodyDraft,
             isPublic: customPolicyPublicDraft,
-            ...(translations ? { translations } : {}),
+            translations,
           }),
         })
         setCustomPolicies((prev) => [...(prev ?? []), { ...created, translations }])
@@ -1033,12 +1057,10 @@ export default function Settings() {
             title: customPolicyTitleDraft,
             bodyHtml: customPolicyBodyDraft,
             isPublic: customPolicyPublicDraft,
-            ...(translations ? { translations } : {}),
+            translations,
           }),
         })
-        setCustomPolicies((prev) =>
-          (prev ?? []).map((p) => (p.id === updated.id ? { ...updated, translations: translations ?? p.translations } : p)),
-        )
+        setCustomPolicies((prev) => (prev ?? []).map((p) => (p.id === updated.id ? { ...updated, translations } : p)))
       }
       setEditingCustomPolicy(null)
     } catch (err) {
@@ -1281,16 +1303,19 @@ export default function Settings() {
         body: JSON.stringify({
           waiverHealthQuestions: cleanedQuestions,
           waiverClauses: cleanedClauses,
-          ...(hasEsQuestions || hasEsClauses
-            ? {
-                translations: {
-                  es: {
-                    ...(hasEsQuestions ? { waiverHealthQuestions: cleanedQuestionsEs } : {}),
-                    ...(hasEsClauses ? { waiverClauses: cleanedClausesEs } : {}),
-                  },
-                },
-              }
-            : {}),
+          // Fix pass: always send translations.es (null when nothing's
+          // translated), never gated on hasEsQuestions/hasEsClauses -- an
+          // emptied Spanish tab must actually clear the stale
+          // StudioSettingsTranslation row, not silently leave it in place
+          // (PATCH /studio-settings already treats an explicit null as
+          // "clear it"; the bug was this payload omitting the key
+          // entirely instead of sending that null).
+          translations: {
+            es: {
+              waiverHealthQuestions: hasEsQuestions ? cleanedQuestionsEs : null,
+              waiverClauses: hasEsClauses ? cleanedClausesEs : null,
+            },
+          },
         }),
       })
       setWaiverHealthQuestions(updated.waiverHealthQuestions ?? [])
@@ -1306,8 +1331,8 @@ export default function Settings() {
           ...policies?.translations,
           es: {
             ...policies?.translations?.es,
-            ...(hasEsQuestions ? { waiverHealthQuestions: cleanedQuestionsEs } : {}),
-            ...(hasEsClauses ? { waiverClauses: cleanedClausesEs } : {}),
+            waiverHealthQuestions: hasEsQuestions ? cleanedQuestionsEs : null,
+            waiverClauses: hasEsClauses ? cleanedClausesEs : null,
           },
         },
       })
