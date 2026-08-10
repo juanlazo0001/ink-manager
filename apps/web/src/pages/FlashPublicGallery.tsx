@@ -3,7 +3,6 @@ import { useParams } from 'react-router-dom'
 import { AnimatePresence } from 'framer-motion'
 import { apiFetch, ApiError } from '../lib/api'
 import { uploadImageToCloudinary } from '../lib/cloudinary'
-import { applyThemePreset } from '../lib/themePresets'
 import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import PublicPageFooter from '../components/PublicPageFooter'
 import PhoneInput from '../components/PhoneInput'
@@ -106,7 +105,6 @@ function FlashPublicGalleryContent() {
         if (ignore) return
         hasLoadedRef.current = true
         setGallery(data)
-        applyThemePreset(data.themePreset)
         setState('gallery')
         if (data.resolvedLocale && data.resolvedLocale !== locale) setLocale(data.resolvedLocale as typeof locale)
       })
@@ -207,8 +205,8 @@ function FlashPublicGalleryContent() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
-      <div className="w-full max-w-2xl rounded-2xl card-surface border border-border bg-surface p-8">
+    <div className="login-shell flex min-h-screen items-center justify-center px-4 py-10 text-fg">
+      <div className="login-panel-surface w-full max-w-2xl px-4 py-8 sm:p-8">
         <div className="mb-4 flex justify-end">
           <LanguagePicker />
         </div>
@@ -217,14 +215,14 @@ function FlashPublicGalleryContent() {
 
         {state === 'invalid' && (
           <div className="text-center">
-            <h1 className="text-xl font-semibold text-fg">{t('flashGallery.unavailableHeading')}</h1>
+            <h1 className="login-jura text-xl font-semibold text-fg">{t('flashGallery.unavailableHeading')}</h1>
             <p className="mt-2 text-sm text-fg-secondary">{invalidMessage}</p>
           </div>
         )}
 
         {state === 'success' && (
           <div className="text-center">
-            <h1 className="text-xl font-semibold text-fg">{t('flashGallery.requestSentHeading')}</h1>
+            <h1 className="login-jura text-xl font-semibold text-fg">{t('flashGallery.requestSentHeading')}</h1>
             <p className="mt-2 text-sm text-fg-secondary">
               {t('flashGallery.requestSentBody', { studioName: gallery?.studioName ?? '' })}
             </p>
@@ -236,7 +234,7 @@ function FlashPublicGalleryContent() {
             {gallery.studioLogoUrl && (
               <img src={gallery.studioLogoUrl} alt={gallery.studioName} className="mb-4 h-10 w-auto object-contain" />
             )}
-            <h1 className="text-xl font-semibold text-fg">{t('flashGallery.pageHeading')}</h1>
+            <h1 className="login-jura text-xl font-semibold text-fg">{t('flashGallery.pageHeading')}</h1>
             <div className="mt-2 flex items-center gap-2.5">
               <FlatArtistAvatar name={gallery.artistName} avatarUrl={gallery.artistAvatarUrl} className="h-8 w-8" />
               <p className="text-sm text-fg-secondary">
@@ -288,7 +286,7 @@ function FlashPublicGalleryContent() {
             <button type="button" onClick={() => setState('gallery')} className="text-xs font-medium text-fg-muted hover:text-fg">
               {t('flashGallery.backToGallery')}
             </button>
-            <h1 className="mt-2 text-xl font-semibold text-fg">{t('flashGallery.requestTitle', { title: selectedPiece.title })}</h1>
+            <h1 className="login-jura mt-2 text-xl font-semibold text-fg">{t('flashGallery.requestTitle', { title: selectedPiece.title })}</h1>
             <p className="mt-1 text-sm text-fg-secondary">
               ${(selectedPiece.priceCents / 100).toFixed(2)} &middot; {t('flashGallery.durationApprox', { duration: formatDurationHours(selectedPiece.estimatedDurationMinutes) })}
               {selectedPiece.isOneOfOne && ` ${t('flashGallery.oneOfOneFirstRequestWins')}`}

@@ -4,7 +4,6 @@ import { apiFetch, ApiError } from '../lib/api'
 import { sanitizeHtml } from '../lib/sanitizeHtml'
 import { formatPriceEstimate } from '../lib/format'
 import { FlatArtistAvatar } from '../components/ArtistAvatar'
-import { applyThemePreset } from '../lib/themePresets'
 import PublicPageFooter from '../components/PublicPageFooter'
 import { LocaleProvider, useLocale, useTranslations, persistPickerLocale } from '../i18n'
 import LanguagePicker from '../i18n/LanguagePicker'
@@ -156,13 +155,11 @@ function EstimateResponseContent() {
           return
         }
         if ('alreadyBooked' in data) {
-          applyThemePreset(data.themePreset)
           setAlreadyBookedData(data)
           setState('alreadyBooked')
           return
         }
         setVerifyData(data)
-        applyThemePreset(data.themePreset)
         // Server-resolved locale (client's own stored preference or the
         // studio's default) wins on first load.
         if (data.resolvedLocale && data.resolvedLocale !== locale) setLocale(data.resolvedLocale as typeof locale)
@@ -252,8 +249,8 @@ function EstimateResponseContent() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
-      <div className="w-full max-w-lg rounded-2xl card-surface border border-border bg-surface p-8">
+    <div className="login-shell flex min-h-screen items-center justify-center px-4 py-10 text-fg">
+      <div className="login-panel-surface w-full max-w-lg px-4 py-8 sm:p-8">
         <div className="mb-4 flex justify-end">
           <LanguagePicker onChange={(next) => token && persistPickerLocale(`/estimates/${token}/locale`, next)} />
         </div>
@@ -262,7 +259,7 @@ function EstimateResponseContent() {
 
         {state === 'invalid' && (
           <div className="text-center">
-            <h1 className="text-xl font-semibold text-fg">{INVALID_HEADINGS[invalidKind]}</h1>
+            <h1 className="login-jura text-xl font-semibold text-fg">{INVALID_HEADINGS[invalidKind]}</h1>
             <p className="mt-2 text-sm text-fg-secondary">{invalidMessage}</p>
             <p className="mt-4 text-sm text-fg-secondary">
               {invalidKind === 'superseded'
@@ -274,7 +271,7 @@ function EstimateResponseContent() {
 
         {state === 'alreadyBooked' && alreadyBookedData && (
           <div className="text-center">
-            <h1 className="text-xl font-semibold text-fg">{t('estimate.alreadyBookedHeading', { firstName: alreadyBookedData.clientFirstName })}</h1>
+            <h1 className="login-jura text-xl font-semibold text-fg">{t('estimate.alreadyBookedHeading', { firstName: alreadyBookedData.clientFirstName })}</h1>
             <p className="mt-2 text-sm text-fg-secondary">
               {t('estimate.alreadyBookedBody', { studioName: alreadyBookedData.studioName })}
             </p>
@@ -283,7 +280,7 @@ function EstimateResponseContent() {
 
         {state === 'success' && (
           <div className="text-center">
-            <h1 className="text-xl font-semibold text-fg">
+            <h1 className="login-jura text-xl font-semibold text-fg">
               {respondedAs === 'PROCEED' && t('estimate.proceedHeading')}
               {respondedAs === 'BUDGET_TOO_HIGH' && t('estimate.budgetHeading')}
               {respondedAs === 'DECLINE' && t('estimate.declineHeading')}
@@ -305,7 +302,7 @@ function EstimateResponseContent() {
                 className="mb-4 h-10 w-auto object-contain"
               />
             )}
-            <h1 className="text-xl font-semibold text-fg">{t('estimate.pageHeading')}</h1>
+            <h1 className="login-jura text-xl font-semibold text-fg">{t('estimate.pageHeading')}</h1>
             <p className="mt-1 text-sm font-medium text-fg-secondary">{verifyData.studioName}</p>
             <div className="mt-3 flex items-center gap-2.5">
               {verifyData.artistName && (

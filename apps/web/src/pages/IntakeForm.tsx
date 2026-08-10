@@ -7,7 +7,6 @@ import ImageUploadSection, { type ImageUploadState } from '../components/ImageUp
 import PublicPageFooter from '../components/PublicPageFooter'
 import { isValidPhoneDigits } from '../lib/format'
 import { formatCurrencyInput } from '../lib/money'
-import { applyThemePreset } from '../lib/themePresets'
 import { LocaleProvider, useLocale, useTranslations } from '../i18n'
 import LanguagePicker from '../i18n/LanguagePicker'
 
@@ -112,6 +111,7 @@ function IntakeFormContent() {
 
   const [studioCheck, setStudioCheck] = useState<StudioCheck>('loading')
   const [studioName, setStudioName] = useState('')
+  const [studioLogoUrl, setStudioLogoUrl] = useState<string | null>(null)
   const [artists, setArtists] = useState<PublicArtist[]>([])
   const [fields, setFields] = useState<IntakeFormFieldPublic[]>([])
   // Default true -- matches every studio's always-on behavior before this
@@ -125,20 +125,6 @@ function IntakeFormContent() {
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [submitted, setSubmitted] = useState(false)
-
-  // Package C2: public, unauthenticated pages apply the studio's theme
-  // preset independently from the authenticated app shell (ThemeApplier)
-  // -- a small dedicated GET /theme?studioSlug= rather than piggybacking
-  // on this page's own /artists/public response, so a failure/hiccup in
-  // one doesn't affect the other.
-  useEffect(() => {
-    if (!studioSlug) return
-    apiFetch<{ themePreset: string }>(`/theme?studioSlug=${encodeURIComponent(studioSlug)}`)
-      .then((data) => applyThemePreset(data.themePreset))
-      .catch(() => {
-        /* Falls back to index.css's own onyx-lime default -- not critical. */
-      })
-  }, [studioSlug])
 
   useEffect(() => {
     if (!studioSlug) return
@@ -204,13 +190,18 @@ function IntakeFormContent() {
     const query = new URLSearchParams({ studioSlug, ...(hasLoadedRef.current ? { locale } : {}) })
     if (formSlug) query.set("formSlug", formSlug)
 
-    apiFetch<{ studioName: string; intakeFormFields: IntakeFormFieldPublic[]; referralProgramEnabled: boolean; resolvedLocale?: string }>(
-      `/studio-settings/public?${query}`,
-    )
+    apiFetch<{
+      studioName: string
+      studioLogoUrl: string | null
+      intakeFormFields: IntakeFormFieldPublic[]
+      referralProgramEnabled: boolean
+      resolvedLocale?: string
+    }>(`/studio-settings/public?${query}`)
       .then((data) => {
         if (ignore) return
         hasLoadedRef.current = true
         setStudioName(data.studioName)
+        setStudioLogoUrl(data.studioLogoUrl)
         setFields((data.intakeFormFields ?? []).slice().sort((a, b) => a.order - b.order))
         setReferralProgramEnabled(data.referralProgramEnabled)
         if (data.resolvedLocale && data.resolvedLocale !== locale) setLocale(data.resolvedLocale as typeof locale)
@@ -794,12 +785,12 @@ function IntakeFormContent() {
 
   if (!studioSlug || studioCheck === 'invalid') {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
-        <div className="w-full max-w-lg rounded-2xl card-surface border border-border bg-surface p-8 text-center">
+      <div className="login-shell flex min-h-screen items-center justify-center px-4 py-10 text-fg">
+        <div className="login-panel-surface w-full max-w-lg px-4 py-8 text-center sm:p-8">
           <div className="mb-4 flex justify-end">
             <LanguagePicker />
           </div>
-          <h1 className="text-xl font-semibold text-fg">{t('intake.studioNotFoundHeading')}</h1>
+          <h1 className="login-jura text-xl font-semibold text-fg">{t('intake.studioNotFoundHeading')}</h1>
           <p className="mt-2 text-sm text-fg-secondary">{t('intake.studioNotFoundBody')}</p>
         </div>
       </div>
@@ -808,7 +799,7 @@ function IntakeFormContent() {
 
   if (studioCheck === 'loading') {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
+      <div className="login-shell flex min-h-screen items-center justify-center px-4 py-10 text-fg">
         <p className="text-sm text-fg-secondary">{t('common.loading')}</p>
       </div>
     )
@@ -816,9 +807,9 @@ function IntakeFormContent() {
 
   if (submitted) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
-        <div className="w-full max-w-lg rounded-2xl card-surface border border-border bg-surface p-8 text-center">
-          <h1 className="text-xl font-semibold text-fg">{t('intake.submittedHeading')}</h1>
+      <div className="login-shell flex min-h-screen items-center justify-center px-4 py-10 text-fg">
+        <div className="login-panel-surface w-full max-w-lg px-4 py-8 text-center sm:p-8">
+          <h1 className="login-jura text-xl font-semibold text-fg">{t('intake.submittedHeading')}</h1>
           <p className="mt-2 text-sm text-fg-secondary">{t('intake.submittedBody')}</p>
         </div>
       </div>
@@ -826,13 +817,16 @@ function IntakeFormContent() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
-      <div className="w-full max-w-2xl rounded-2xl card-surface border border-border bg-surface p-8">
+    <div className="login-shell flex min-h-screen items-center justify-center px-4 py-10 text-fg">
+      <div className="login-panel-surface w-full max-w-2xl px-4 py-8 sm:p-8">
         <div className="mb-4 flex justify-end">
           <LanguagePicker />
         </div>
 
-        <h1 className="text-2xl font-bold text-fg">{t('intake.pageHeading')}</h1>
+        {studioLogoUrl && (
+          <img src={studioLogoUrl} alt={studioName} className="mb-4 h-10 w-auto object-contain" />
+        )}
+        <h1 className="login-jura text-xl font-semibold text-fg">{t('intake.pageHeading')}</h1>
         <p className="mt-1 text-sm text-fg-secondary">{t('intake.intro')}</p>
 
         <div className="mt-4 rounded-lg border border-warning/30 bg-warning/10 p-3 text-xs text-warning">
