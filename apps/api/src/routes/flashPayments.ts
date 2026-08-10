@@ -4,6 +4,8 @@ import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 import { createFlashPaymentCheckoutSession, createOrRetrieveFlashPaymentIntent } from "../lib/flashPayments";
 import { getChargeableConnectedAccountId } from "../lib/stripeConnect";
 import { resolveRequestLocale, withLocale, persistClientLocale } from "../lib/contentTranslation";
+import { API_PUBLIC_URL } from "../lib/publicUrl";
+import { serveBlurredRemoteImage } from "./publicAssets";
 
 // Public, unauthenticated: same crypto-token + verify/checkout pattern as
 // deposits.ts's own publicRouter, minus the signing step -- a flash
@@ -58,6 +60,18 @@ router.get("/verify/:token", async (req, res) => {
 
   const stripeAccountId = await getChargeableConnectedAccountId(inquiry!.studioId);
 
+  // Personalized confirmation background: referenceImages ONLY, same rule
+  // as deposits.ts's own verify route (see that route's comment for the
+  // full reasoning) -- never placementImages. In practice this is always
+  // null for a flash-origin inquiry specifically: POST /flash-pieces/:id/
+  // request (the only route that ever creates one) never sets
+  // referenceImages at all, only placementImages (the client's own body-
+  // placement photo), so this falls back to the static background by
+  // construction here, not by a special case.
+  const referenceBackgroundUrl = inquiry!.referenceImages[0]
+    ? `${API_PUBLIC_URL}/flash-payment/reference-background/${token}`
+    : null;
+
   res.json({
     resolvedLocale: locale,
     clientFirstName: inquiry!.client.firstName,
@@ -67,6 +81,7 @@ router.get("/verify/:token", async (req, res) => {
     themePreset: inquiry!.studio.settings?.themePreset ?? DEFAULT_THEME_PRESET,
     artistName: inquiry!.assignedArtist?.user.name ?? null,
     artistAvatarUrl: inquiry!.assignedArtist?.user.avatarUrl ?? null,
+    referenceBackgroundUrl,
     pieceTitle: localizedPiece?.title ?? null,
     pieceImageUrl: inquiry!.flashPiece?.imageUrl ?? null,
     priceCents: inquiry!.flashPiece?.priceCents ?? null,
@@ -95,6 +110,23 @@ router.patch("/:token/locale", async (req, res) => {
     return res.status(400).json({ error: result.error });
   }
   res.json({ success: true });
+});
+
+// Same referenceImages-only rule as deposits.ts's sibling route -- see its
+// own comment for the full reasoning. Token-scoped, no expiry check, same
+// shape as every other publicAssets-backed image endpoint.
+router.get("/reference-background/:token", async (req, res) => {
+  const token = req.params.token as string;
+
+  const inquiry = await prisma.inquiry.findUnique({
+    where: { flashPaymentToken: token },
+    select: { referenceImages: true },
+  });
+
+  const referenceImage = inquiry?.referenceImages[0];
+  if (!referenceImage || !(await serveBlurredRemoteImage(res, referenceImage))) {
+    res.status(404).end();
+  }
 });
 
 router.post("/checkout/:token", async (req, res) => {

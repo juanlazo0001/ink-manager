@@ -23,6 +23,65 @@ export function serveDataUrl(res: import("express").Response, dataUrl: string): 
   return true;
 }
 
+// Personalized payment-confirmation background: fetches a Cloudinary-hosted
+// source image (a client's own uploaded inquiry reference image) through
+// Cloudinary's own URL-based transformation (w_800/e_blur:2000/q_auto/
+// f_auto -- downscaled, heavily blurred, aggressively compressed, best
+// format for the requesting browser), then proxies the ALREADY-TRANSFORMED
+// bytes back under our own URL rather than ever handing the browser a
+// Cloudinary URL directly. Two reasons this proxies instead of redirecting:
+// (1) every caller of this (deposits.ts, flashPayments.ts) scopes access by
+// a payment token, not by knowing the Cloudinary URL -- a redirect would
+// leak that real, permanent, transformation-strippable URL into the page's
+// own network log/devtools, at which point the blur is just a client-side
+// suggestion, not an enforced property; (2) matches serveDataUrl's own
+// established shape (this app's other "real image, not a data: URI"
+// endpoints) of always terminating in bytes-we-serve. "Processed server-
+// side and cached" per this feature's own design -- the actual blur pixel
+// work happens at Cloudinary (a real image-processing server, not a live
+// CSS filter: blur() the client would have to recompute every scroll/
+// repaint), cached at Cloudinary's own edge AND behind our own
+// Cache-Control below.
+const CLOUDINARY_HOST = "res.cloudinary.com";
+const REFERENCE_BACKGROUND_TRANSFORM = "w_800,e_blur:2000,q_auto,f_auto";
+
+export async function serveBlurredRemoteImage(res: import("express").Response, sourceUrl: string): Promise<boolean> {
+  let parsed: URL;
+  try {
+    parsed = new URL(sourceUrl);
+  } catch {
+    return false;
+  }
+
+  // Defensive: only ever proxies a real Cloudinary delivery URL (what
+  // every referenceImages entry actually is -- see uploads.ts) rather than
+  // blindly server-side-fetching whatever string happens to be stored,
+  // which would otherwise be a same-origin-request SSRF surface.
+  if (parsed.hostname !== CLOUDINARY_HOST || !parsed.pathname.includes("/upload/")) {
+    return false;
+  }
+
+  const transformedUrl = sourceUrl.replace("/upload/", `/upload/${REFERENCE_BACKGROUND_TRANSFORM}/`);
+
+  let response: Response;
+  try {
+    response = await fetch(transformedUrl);
+  } catch {
+    return false;
+  }
+
+  const contentType = response.headers.get("content-type");
+  if (!response.ok || !contentType?.startsWith("image/")) {
+    return false;
+  }
+
+  const bytes = Buffer.from(await response.arrayBuffer());
+  res.setHeader("Content-Type", contentType);
+  res.setHeader("Cache-Control", "public, max-age=3600");
+  res.end(bytes);
+  return true;
+}
+
 router.get("/studio-logo/:studioSlug", async (req, res) => {
   const studio = await prisma.studio.findUnique({
     where: { slug: req.params.studioSlug as string },

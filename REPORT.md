@@ -13505,3 +13505,364 @@ the primary checkout's `.playwright-mcp/`) removed before ending. No schema chan
 clean except the tracked source edits described above and this REPORT.md append. REPORT.md line
 count before this entry: 13295 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition,
 nothing above this line touched.
+
+# Payment-received page Part 1: personalized reference-image background
+
+Client-facing confirmation pages (deposit, flash payment) get an ambient background
+drawn from the client's own uploaded design reference -- Part 1 of a two-part
+redesign (Part 2, sizing/hierarchy, follows in a separate commit once its own
+reference screenshot lands).
+
+## The reference-vs-placement distinction
+
+`Inquiry.referenceImages` ("Reference images -- Photos or designs showing the
+style") and `Inquiry.placementImages` ("Placement photos -- A photo of the area
+for the tattoo") are separate `String[]` columns, populated by entirely separate
+upload widgets on both the public intake form and staff's own inquiry form. The
+rule this feature enforces: read ONLY `referenceImages`, never `placementImages`
+-- the latter is a photo of the client's own body, and serving it as decorative
+wallpaper would be a real privacy failure, not a design mismatch. Enforced at the
+query level (the new endpoints' own `select` clauses never fetch
+`placementImages` at all -- nothing to accidentally serve), not by a runtime
+check that could be bypassed by a future edit.
+
+A flash-origin inquiry (`POST /flash-pieces/:id/request`, the only route that
+ever creates one) never sets `referenceImages` at all -- only `placementImages`
+(the client's own body-placement photo, required for a flash booking). This means
+a flash-origin confirmation gets the static fallback background by construction,
+not a special case: `referenceImages[0]` is always `undefined` there. Verified
+adversarially: seeded a flash-origin inquiry with a REAL, valid image sitting in
+`placementImages` (not just an empty array -- a stronger check, since an empty
+array proves nothing about whether the code path is actually guarded) and
+confirmed `GET /flash-payment/reference-background/:token` still 404s.
+
+## Server-side processing, never a live CSS filter
+
+New `serveBlurredRemoteImage` (`apps/api/src/routes/publicAssets.ts`) fetches the
+source image through Cloudinary's own URL-based transformation
+(`w_800,e_blur:2000,q_auto,f_auto` -- downscaled, heavily blurred, aggressively
+compressed, best format for the requesting browser) and proxies the
+already-transformed bytes back under our own URL, rather than ever handing the
+browser a Cloudinary URL directly. Two reasons for proxying instead of
+redirecting: a redirect would leak a real, permanent, transformation-strippable
+Cloudinary URL into the page's own network log (at which point the blur is a
+client-side suggestion, not an enforced property, since stripping the transform
+segment from the URL gets the raw sharp image); and it matches `serveDataUrl`'s
+own established shape in this file (every endpoint here terminates in bytes we
+serve, not a URL we hand off). Defensive hostname/path check before fetching
+(only `res.cloudinary.com` URLs containing `/upload/`) against blindly
+server-side-fetching whatever string happens to be stored. New token-scoped
+routes: `GET /deposits/:token/reference-background`,
+`GET /flash-payment/reference-background/:token` -- same no-expiry-check shape as
+the sibling `/artist-avatar` endpoint from the previous session's fix.
+
+Live-verified the transform is real, not a passthrough: uploaded a real 146KB
+sharp photo to this dev Cloudinary account, fetched it back through the new
+endpoint -- 7KB, visibly abstract/blurred on screen, `Content-Type: image/jpeg`,
+`Cache-Control: public, max-age=3600`.
+
+## A live CSS-stacking discovery: backdrop-filter traps position: fixed
+
+Rendering the fixed photo/wash layers inline inside `PaymentConfirmationStage`
+(itself nested inside `.login-panel-surface`, the frosted-glass card) produced a
+background image sized and clipped to the CARD's own bounds (356x680 measured
+live), not the viewport (390x844) -- confirmed by inspecting computed styles in
+a real browser, not just reading the CSS. Root cause: `.login-panel-surface` has
+`backdrop-filter: blur(...)`, and per spec, `backdrop-filter` (like `transform`
+and `filter`) establishes a new containing block for `position: fixed`
+descendants -- the "fixed" layers were being contained by the card, not escaping
+to the true viewport. Fixed by portaling the photo/wash to `document.body` via
+`createPortal`, which escapes any ancestor's containing-block override
+regardless of nesting depth. Worth a standing note in CLAUDE.md's design rules
+so this doesn't have to be rediscovered live again -- folded into Part 2's own
+commit alongside its sizing pass, at the user's request.
+
+Once portaled, the fixed layers correctly cover the full viewport as a genuine
+overlay -- which meant every other piece of real page content
+(`DepositAppointmentCard`, `DepositGiftCardCard`, the referral block,
+`PublicPageFooter`) needed its own explicit `relative z-10` to read above it: a
+plain, non-positioned element does not automatically out-paint an explicitly
+z-indexed `position: fixed` sibling regardless of DOM order, confirmed live by
+temporarily lightening the wash to 15% opacity and watching the card content
+stay correctly legible above the now-clearly-visible photo.
+
+`DepositResponse.tsx`/`FlashPaymentResponse.tsx`'s own outer `.login-shell`
+wrapper had `bg-bg` (Tailwind's opaque background utility) removed, matching
+`AuthLayout`'s own `.login-shell` usage (which never had it) -- `body` already
+carries this flat color globally, so nothing is lost when no personalized
+background is present, and this is what lets the photo show through the page's
+content instead of being hidden behind an opaque ancestor the way TopBar's own
+`.app-bg-photo`/`.app-bg-wash` are deliberately hidden behind opaque page bodies
+(margins-only, the opposite intent).
+
+## Privacy hard rules
+
+`og:image` stays the studio logo: confirmed by reading `server.mjs` directly --
+`studioImageUrl` only ever derives from `studioLogoUrl`/`studioSlug`, and this
+session's change never touches it. Flash-payment has no OG resolver registered
+at all today (falls back to the generic default tags) -- left as-is for this
+part; Part 2 gives it the same studio-branded preview tags every other public
+route has, folded in per the user's own request.
+
+The reference-background URL is scoped to the same token audience as the
+confirmation page itself (`/deposits/:token/reference-background`,
+`/flash-payment/reference-background/:token` -- a wrong or missing token 404s,
+verified live), not a separate publicly-guessable endpoint.
+
+## Verification
+
+Real browser, 390x844 mobile viewport, three seeded scenarios against the dev
+database: a deposit with a real reference image (background renders, visibly
+abstract); a deposit with no reference image (unchanged static background); a
+flash-origin inquiry with a real image in `placementImages` only (confirmed
+`referenceBackgroundUrl: null` in the verify response AND a direct 404 probing
+the endpoint). Zero console errors across all three. Full API test suite
+126/126. Both apps' `tsc`/`eslint` clean. All seeded DB rows and both real
+Cloudinary test uploads deleted afterward; all scratch scripts removed.
+
+REPORT.md line count before this entry: 12009 (verified via `git show
+HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Payment-received page Part 2: sizing/hierarchy pass, CLAUDE.md note, flash-payment OG tags
+
+Matched the deposit confirmation page's proportions and hierarchy against a real
+reference screenshot (the actual Juangi/Black Hive case), plus two small
+additions folded in at the user's request.
+
+## Sizing pass
+
+Measured the reference screenshot directly (934x1684px) rather than guessing,
+cropping specific regions (hero, appointment card, voucher/QR, referral card) for
+close inspection before touching any code. Changes, all in
+`PaymentConfirmationStage.tsx`/`DepositAppointmentCard.tsx`/
+`DepositGiftCardCard.tsx`/the referral block in `DepositResponse.tsx`:
+
+- Hero avatar: `h-14` (56px) -> `h-32` (128px). Tried a `ring-2` border to match
+  a first guess at the reference's treatment; a side-by-side crop showed the
+  reference has no visible ring at all, so removed it rather than leaving a
+  guessed detail that didn't hold up against the actual source.
+- Checkmark gained a short gold divider underneath (new, decorative only) --
+  present in the reference, absent before.
+- Title: `text-3xl` -> `text-5xl`, allowed to wrap to two lines rather than
+  staying compact.
+- Amount: the reference's own deposit-with-voucher case drops it from the hero
+  entirely -- confirmed by cropping the exact region between the title and the
+  artist/studio line, where I'd expected to see it and didn't. Root cause:
+  it's redundant with `DepositGiftCardCard`'s own large amount right below.
+  New `hideAmount` prop on `PaymentConfirmationStage`, set to
+  `Boolean(verifyData.giftCard)` only in `DepositResponse.tsx`'s own
+  already-paid branch -- verified BOTH directions live: a paid deposit WITH a
+  gift card shows no hero amount, a paid deposit with NO gift card still
+  shows it (nothing else on that page would display it otherwise). Every
+  other caller (flash payment, session checkout, or mid-flow before a gift
+  card is known to exist) leaves the prop unset and keeps the amount.
+- Artist/studio line: `text-fg-secondary` -> `text-accent` (gold), matching
+  the reference; body line unchanged.
+- Cards (appointment, voucher, referral): `rounded-lg`/`p-4` ->
+  `rounded-2xl`/`p-5` throughout, consistently.
+- Appointment date/time: `text-sm font-medium` -> `text-lg font-semibold`;
+  calendar buttons: `text-xs px-3 py-1.5` -> `text-sm px-4 py-2`.
+- Voucher amount: `text-2xl` -> `text-4xl` serif; QR code: `160` -> `200`;
+  code text: `text-sm` -> `text-base`.
+- Referral code: `text-lg` -> `text-xl`.
+
+Deliberately left out of scope: the reference's calendar-button icons
+(a calendar glyph, a Google "G" mark) -- reproducing Google's own brand mark
+accurately is a different kind of work than a sizing/proportion pass, and
+the buttons read correctly without them.
+
+## Verification
+
+Seeded a real deposit + real appointment (with a real address) + real gift
+card + a real uploaded reference image against the dev database, closely
+mirroring the actual reference screenshot's own data shape, then screenshotted
+at 390x844 (mobile-first, per the task's own instruction) and compared
+side-by-side against cropped regions of the reference. Also verified the two
+edge cases the hero-amount change touches: a paid deposit with NO gift card
+(amount still shows, confirmed live) and a paid deposit with no artist
+assigned (avatar block correctly omitted, unchanged prior behavior). Zero
+console errors. Full API test suite 126/126 (unaffected -- these are frontend-
+only changes plus the two additions below). Web `tsc`/`eslint` clean. All
+seeded rows, the real Cloudinary test upload, and a `Dev Artist One` test
+location assignment were removed afterward; scratch scripts and the throwaway
+production build deleted.
+
+Not independently re-verified: the identical sizing change as it renders
+inside `FlashPaymentResponse.tsx`'s own in-flow confirmation. `PaymentConfirmationStage`
+is the exact same component in both places (already proven live via the
+deposit page above), and reaching that state for flash requires a full live
+Stripe payment completion (briefly visible before the page redirects to
+self-scheduling, per Part 1's own finding) -- disproportionate effort to
+re-confirm a shared component's own rendering a second time.
+
+## CLAUDE.md: backdrop-filter containing-block note
+
+Added to the Design rules (one line): `backdrop-filter` establishes a
+containing block for `position: fixed` descendants, same as `transform`/
+`filter` -- portal full-viewport fixed layers to `document.body` when they
+might end up nested inside one. Captures Part 1's own live discovery (a fixed
+background layer got trapped inside `.login-panel-surface`'s own
+backdrop-filter box) so it doesn't have to be rediscovered the same way again.
+
+## flash-payment OG tags
+
+`server.mjs` had a resolver for every other public route (deposit, estimate,
+waiver, gift card, self-schedule, flash gallery, artist page) except
+flash-payment -- that link fell back to the generic default preview tags. New
+`resolveFlashPayment` (mirrors `resolveDeposit` exactly: studio name + a fixed
+description, `image` via the same `studioImageUrl` helper every other resolver
+uses -- never the personalized reference-image background, same privacy
+posture as Part 1's own deposit/flash-payment JSON responses) registered in
+`PUBLIC_ROUTE_HANDLERS`. Verified against a real production-mode build
+(`npm run build && node server.mjs`, per CLAUDE.md's own "trust a build" rule
+-- not just a code read): a valid token now returns
+`Dev Studio — Flash Booking Payment` / the studio-logo `og:image`; an invalid
+token still falls back to the plain default tags, unchanged. (Caught and fixed
+one real mistake in this same verification pass: the server reads
+`VITE_API_URL`, not `API_URL` -- the first attempt silently fell back to the
+default tags because of the wrong env var name, not a resolver bug; confirmed
+by inspecting the actual env-var read in `server.mjs` before retrying.)
+
+## CLAUDE.md hygiene
+
+All scratch scripts (two seed/cleanup pairs, three screenshot drivers) and
+screenshot directories deleted. The throwaway `apps/web/dist` production
+build removed (gitignored, but not left lying around). Both dev servers
+(already running from earlier this session) and the throwaway production
+server on port 5180 all confirmed stopped/freed. REPORT.md line count before
+this entry: 12126 (verified via `git show HEAD:REPORT.md | wc -l`) -- pure
+addition.
+
+# Payment flow typography & consistency audit
+
+Audited the client-facing payment/confirmation family's typography against
+computed styles (not source-reading, not eyeballing screenshots) across the
+full journey -- public intake, estimate response, staged deposit payment
+(every screen), flash-booking payment, and session-checkout's tip flow.
+Classified every difference found as deliberate hierarchy or drift, fixed
+drift at the shared component layer, left deliberate differences alone, and
+flagged one pre-existing architectural split rather than touching it.
+
+## Method
+
+Drove every screen at a real 390px viewport in a real browser (Playwright,
+against a fresh throwaway studio -- `createStudioWithOwner` plus its own
+`StudioSettings.embeddedPaymentsEnabled`/`StudioIntegration` rows, reusing
+dev-studio's own real Stripe test connected account rather than touching
+dev-studio's shared config at all, since another session was mid-verification
+against it in parallel), then pulled `getComputedStyle()` for each role
+(page title, eyebrow label, body copy, card value, amount, button, small
+print) rather than reading Tailwind class names off the JSX -- two of the
+five real findings below (the button-weight collision and its heading/value
+sibling) are things NO amount of source-reading would have caught, since the
+JSX className was byte-identical between the affected and unaffected
+contexts; only a live computed-style comparison surfaced them.
+
+## Findings: drift (fixed at the shared layer)
+
+Each row is BEFORE -> AFTER, both computed live, not inferred.
+
+| # | Role / component | Before | After | Root cause |
+|---|---|---|---|---|
+| 1 | Eyebrow label -- DepositAppointmentCard, DepositGiftCardCard, referral card | 14px (text-sm) | 12px (text-xs) | Part 2's own sizing pass, matched against a reference screenshot's imprecise scale, drifted from the app-wide convention (129 existing text-xs instances app-wide, including this same family's own PaymentBreakdownDisclosure and EstimateResponse, vs. 4 text-sm instances -- all 4 this session's own) |
+| 2 | Stage title -- PaymentTipStage "Add a tip?" | 18px (text-lg) | 20px (text-xl) | Lone outlier against 8 established in-flow stage-title instances at text-xl across DepositResponse.tsx/FlashPaymentResponse.tsx |
+| 3 | Amount weight -- DepositGiftCardCard voucher | font-semibold (600) | font-medium (500) | Only font-display amount in the family not using font-medium (PaymentAmountStage's headline, PaymentConfirmationStage's own confirmed amount both use font-medium) |
+| 4 | Identity/context line -- PaymentAmountStage ("Your session with X at Y") | 14px, text-fg-secondary, name in a separately-colored inline span | 16px, text-accent (matches PaymentConfirmationStage's own reference-validated treatment for the identical role) | Two components render the same transaction's who/where information with genuinely different styling; unified toward Confirmation's own treatment since that one was directly validated against a real design reference in Part 2, this one never was |
+| 5a | CTA button weight -- PaymentTakeoverOverlay's Continue/Pay buttons (session checkout only) | font-weight 400 | font-weight 700 | Computed-styles-only find: an app-wide rule (`[data-theme="editorial-gold"] .font-bold/.font-semibold -> regular`, a deliberate typographic refinement for the rest of the in-app editorial-gold experience) silently catches this overlay's buttons too, since it mounts inside the authenticated shell (where ThemeApplier sets `data-theme` on `<html>`) unlike the public deposit/flash pages, which never set that attribute at all |
+| 5b | Stage title + total-today value -- PaymentTipStage (session checkout only) | 18px/400, 14px/400 | 20px/600, 14px/600 | Same root cause as 5a -- the h2 title's font-semibold and the running-total span's font-semibold were both silently downgraded to regular for the identical reason |
+
+## Findings: deliberate hierarchy (left unchanged)
+
+- **Card radius/padding tiers**: DepositAppointmentCard/DepositGiftCardCard/
+  the referral card (rounded-2xl, p-5) vs. PaymentBreakdownDisclosure's own
+  expanded row, PaymentTipStage's total-today box, and DepositResponse's own
+  pre-payment info asides (rounded-lg, p-3). Confirmed as a real, established,
+  two-tier convention, not drift: the app's own `.card-surface` marker class
+  (Dashboard's CardShell, Widget, Team, Settings) uses rounded-2xl for
+  exactly this "primary standalone card" role, distinct from the smaller
+  "secondary inline aside" role the rounded-lg boxes fill.
+- **PaymentConfirmationStage's own amount (36px) smaller than its own title
+  (48px) and smaller than PaymentAmountStage's headline amount (48px)**:
+  deliberate -- avoids two co-equal maximum-emphasis elements competing on
+  the confirmation screen, where the "Payment received" headline is now the
+  dominant element instead.
+
+## Flagged, not touched (established non-payment pages)
+
+**IntakeForm and EstimateResponse render entirely in plain Outfit sans-serif
+(20-24px/400) with no Fraunces or Jura at all**, vs. the payment family's
+Jura stage titles (20px/600) and Fraunces hero title (48px/500) -- the single
+most visually jarring discontinuity in the actual client journey (a client
+moves from a plain sans-serif intake form straight into a heavily serif-and-
+Jura-branded deposit page mid-journey). This is a real, pre-existing,
+deliberate architectural split, not drift: `DepositResponse.tsx`'s own
+comment states it is one of "the platform's own Editorial Gold, never
+studio-themed" pages, while intake/estimate stay on whatever preset the
+studio itself picked (confirmed live: dev-studio's own `themePreset` is
+`editorial-gold`, yet neither page opts into the Jura/Fraunces treatment at
+the class level regardless). Per this audit's own scope, flagged for the
+user's awareness rather than changed -- fixing it would mean touching two
+established non-payment pages.
+
+## Fixes applied
+
+- `DepositAppointmentCard.tsx`, `DepositGiftCardCard.tsx`,
+  `DepositResponse.tsx` (referral block): eyebrow labels `text-sm` ->
+  `text-xs`.
+- `PaymentTipStage.tsx`: stage title `text-lg` -> `text-xl`.
+- `DepositGiftCardCard.tsx`: voucher amount `font-semibold` -> `font-medium`.
+- `PaymentAmountStage.tsx`: identity line `text-sm text-fg-secondary` (with a
+  separately-colored inline emphasis span) -> `text-base text-accent`
+  (keeping the inline span's own `font-medium` for emphasis, just letting it
+  inherit the now-accent parent color instead of overriding it).
+- `index.css`: replaced Part 1's narrower `.login-button.login-jura.font-bold`
+  rule with a correctly-scoped `.login-shell .font-bold` / `.login-shell
+  .font-semibold` pair (both `!important`, a deliberate, commented exception
+  to this file's own general no-`!important`-needed convention -- two
+  independently-justified always-win rules were genuinely tied on
+  specificity, not one legitimately outranking the other) -- covers every
+  current and future element inside the fixed-platform-identity treatment
+  (`.login-shell`, the same marker Login/deposit/flash/PaymentTakeoverOverlay
+  already share), not just the two elements this pass happened to find.
+  Hit and fixed a real CSS-parser trip-up along the way: a comment containing
+  an apostrophe immediately followed by a double-quoted phrase made
+  Tailwind v4's Lightning-CSS-based parser report an unterminated string and
+  500 the entire stylesheet in dev -- rewrote the comment to avoid the
+  pattern entirely and confirmed both the dev-server transform and a full
+  production build recover cleanly.
+
+## Verification
+
+Computed-style extraction re-run after every fix, using fresh throwaway
+appointments for the session-checkout flow each time (its takeover overlay
+only ever appears once, immediately after submitting the real checkout form
+-- a reload never reconstructs it, since the PaymentIntent client secret is
+pure React state, not derived from any GET response). Confirmed live, both
+directions: the ambient-theme fix does not leak into the public pages (a
+fresh deposit page's own Continue button still computes 700, unaffected);
+the eyebrow-label/amount-weight/stage-title/identity-line fixes hold
+consistently across every page that shares the affected component. Zero
+console errors across all seven driven page states (intake, estimate,
+deposit unsigned/amount-stage/method-stage/confirmation, flash amount-stage,
+session-checkout amount-stage/tip-stage). Full API test suite 126/126, web
+`tsc -b` clean, a full production `vite build` clean. All seeded rows (the
+throwaway studio and everything under it, the many disposable appointments
+consumed one-per-checkout-attempt while iterating on finding 5, dev-studio's
+own throwaway inquiries/deposit forms/gift cards) deleted afterward; all
+scratch scripts and screenshot directories removed.
+
+## CLAUDE.md hygiene
+
+Session launched via `scripts/new-session.ps1` per the mandatory concurrent-
+session rule (another session was mid-verification against the primary
+checkout in parallel) -- isolated worktree
+`ink-manager-w-payment-typography-audit`, own dev-port pair (API 4001, web
+5175, the latter auto-bumped by Vite from the suggested 5174 since that port
+was already claimed, presumably by the parallel session). `playwright`
+installed fresh in this worktree (`--no-save`, not carried over from the
+primary checkout's own install) and left in place per this session's own
+established convention. Both dev servers (including two full restarts during
+this session -- once ruling out stale HMR, once recovering from the CSS
+parser issue above) stopped and ports confirmed free before ending. REPORT.md
+line count before this entry: 12236 (verified via `git show HEAD:REPORT.md |
+wc -l`) -- pure addition.

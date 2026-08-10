@@ -20,16 +20,23 @@ export default function PaymentAmountStage({
 }) {
   return (
     <div className="text-center">
+      {/* text-base text-accent -- matches PaymentConfirmationStage's own
+          identity line (the same transaction's who/where, shown again on
+          the confirmation screen); this was text-sm text-fg-secondary with
+          an inline font-medium/text-fg emphasis span, found via a
+          typography audit's computed-style comparison to be a real
+          inconsistency, not deliberate. Kept the inline span's own
+          font-medium for a subtle emphasis on the name, just without its
+          own separate color override now that the whole line is accent. */}
       {identity.artistName ? (
         <div className="flex flex-col items-center gap-2">
           <FlatArtistAvatar name={identity.artistName} avatarUrl={identity.artistAvatarUrl} className="h-12 w-12" />
-          <p className="text-sm text-fg-secondary">
-            Your session with <span className="font-medium text-fg">{identity.artistName}</span> at{' '}
-            {identity.studioName}
+          <p className="text-base text-accent">
+            Your session with <span className="font-medium">{identity.artistName}</span> at {identity.studioName}
           </p>
         </div>
       ) : (
-        <p className="text-sm text-fg-secondary">{identity.studioName}</p>
+        <p className="text-base text-accent">{identity.studioName}</p>
       )}
 
       <p className="font-display mt-4 text-5xl font-medium text-fg">{formatCents(headlineAmountCents)}</p>

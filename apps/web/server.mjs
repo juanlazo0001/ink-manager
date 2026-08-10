@@ -257,6 +257,22 @@ async function resolveGiftCard(req, code) {
   }
 }
 
+// Part 2: had no resolver at all before this -- a shared flash-payment link
+// fell back to the generic default OG tags, unlike every other public
+// route's own studio-branded preview. Same shape/privacy posture as
+// resolveDeposit right above (studio logo only, via studioImageUrl -- the
+// personalized reference-image background this page can now show is never
+// eligible for og:image, same as every other route here).
+async function resolveFlashPayment(req, token) {
+  const data = await fetchJson(`${API_URL}/flash-payment/verify/${encodeURIComponent(token)}`)
+  if (!data?.studioName) return null
+  return {
+    title: `${data.studioName} — Flash Booking Payment`,
+    description: 'Complete your payment to lock in your flash booking.',
+    image: studioImageUrl(req, data),
+  }
+}
+
 async function resolveSelfSchedule(req, token) {
   const data = await fetchJson(`${API_URL}/self-schedule/verify/${encodeURIComponent(token)}`)
   if (!data?.studioName) return null
@@ -322,6 +338,7 @@ async function resolveIntake(req, studioSlug, formSlug) {
 // captured groups are spread as its own arguments (after req).
 const PUBLIC_ROUTE_HANDLERS = [
   [/^\/deposit\/([^/]+)$/, (req, m) => resolveDeposit(req, m[1])],
+  [/^\/flash-payment\/([^/]+)$/, (req, m) => resolveFlashPayment(req, m[1])],
   [/^\/estimate\/([^/]+)$/, (req, m) => resolveEstimate(req, m[1])],
   [/^\/estimate-revision\/([^/]+)$/, (req, m) => resolveEstimate(req, m[1], { revision: true })],
   [/^\/waiver\/([^/]+)$/, (req, m) => resolveWaiver(req, m[1])],

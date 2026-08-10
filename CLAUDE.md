@@ -56,6 +56,10 @@ Concise operating rules, not a project history — see REPORT.md for history.
   combination has caused real jank/frame drops on-device that didn't show up in desktop dev tools.
 - Red is punctuation (errors, destructive actions, urgent flags) — never a fill color or a large
   surface area. Gold is the primary brand color.
+- `backdrop-filter` establishes a containing block for `position: fixed` descendants, same as
+  `transform`/`filter` — a fixed-position layer nested inside a `backdrop-filter` ancestor gets
+  sized/clipped to that ancestor's box, not the viewport. Portal full-viewport fixed layers
+  (background photo/wash, etc.) to `document.body` when they might end up nested inside one.
 
 ## Public unauthenticated flows
 

@@ -15,6 +15,24 @@ import { useTranslations, useLocale } from '../../i18n'
 // interpolation pattern DepositResponse.tsx's own agreement-intro string
 // already uses. Callers always render this inside DepositResponse's own
 // <LocaleProvider>, so useTranslations() here is safe.
+//
+// Part 2 sizing pass: rounded-2xl/p-5 (was rounded-lg/p-4), larger
+// date/time text, larger pill buttons -- matches the reference screenshot's
+// own card treatment, and the app's own established convention for a
+// PRIMARY standalone card (Dashboard/Widget/Team/Settings all use
+// rounded-2xl for this exact role, vs. rounded-lg for the smaller inline
+// info asides elsewhere in this same payment family -- e.g.
+// PaymentBreakdownDisclosure, PaymentTipStage's own total-today box).
+// Reused by DepositGiftCardCard and the referral block right below it for
+// a consistent card language. The eyebrow label itself (below) went to
+// text-sm during that same pass, matched against this reference screenshot
+// -- a later typography audit (computed styles, not the screenshot) found
+// that was drift: text-xs is the established convention for this exact
+// role everywhere else in the app (129 existing instances, including this
+// same family's own PaymentBreakdownDisclosure and EstimateResponse),
+// reverted back to text-xs.
+const CARD_CLASS = 'relative z-10 mt-5 rounded-2xl border border-border p-5 text-left'
+
 export default function DepositAppointmentCard({
   startIso,
   endIso,
@@ -37,7 +55,12 @@ export default function DepositAppointmentCard({
 
   if (!confirmed) {
     return (
-      <div className="mt-5 rounded-lg border border-border p-4 text-left">
+      // relative z-10: keeps this readable above the fixed personalized
+      // background PaymentConfirmationStage can render as an earlier
+      // sibling (position: fixed content otherwise paints above plain
+      // in-flow content regardless of DOM order -- see that component's
+      // own comment). No-op everywhere else.
+      <div className={CARD_CLASS}>
         <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('deposit.appointmentCard.label')}</p>
         <p className="mt-1 text-sm font-medium text-fg">{t('deposit.appointmentCard.notScheduledHeading')}</p>
         <p className="mt-2 text-sm text-fg-secondary">
@@ -55,16 +78,21 @@ export default function DepositAppointmentCard({
   }
 
   return (
-    <div className="mt-5 rounded-lg border border-border p-4 text-left">
+    // relative z-10: keeps this readable above the fixed personalized
+    // background PaymentConfirmationStage can render as an earlier sibling
+    // (position: fixed content otherwise paints above plain in-flow
+    // content regardless of DOM order -- see that component's own
+    // comment). No-op everywhere else.
+    <div className={CARD_CLASS}>
       <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('deposit.appointmentCard.label')}</p>
-      <p className="mt-1 text-sm font-medium text-fg">{formatAppointmentDateTime(startIso!, timeZone, locale)}</p>
+      <p className="mt-2 text-lg font-semibold text-fg">{formatAppointmentDateTime(startIso!, timeZone, locale)}</p>
       {address && <p className="mt-1 text-sm text-fg-secondary">{address}</p>}
 
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-4 flex flex-wrap gap-2">
         <button
           type="button"
           onClick={handleDownloadIcs}
-          className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface-inset"
+          className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface-inset"
         >
           {t('deposit.appointmentCard.addToCalendar')}
         </button>
@@ -72,7 +100,7 @@ export default function DepositAppointmentCard({
           href={buildGoogleCalendarUrl(event)}
           target="_blank"
           rel="noreferrer"
-          className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface-inset"
+          className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface-inset"
         >
           {t('deposit.appointmentCard.googleCalendar')}
         </a>
