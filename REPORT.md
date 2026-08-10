@@ -13969,3 +13969,138 @@ the previous one) uninstalled afterward, confirmed not declared in any
 
 REPORT.md line count before this entry: 13868 (verified via `git show
 HEAD:REPORT.md | wc -l`) — pure addition.
+
+# Public journey restyle — intake + estimate pages into Editorial Gold
+
+Brought the public intake form(s), the flash-request "lighter form" (with
+its phone-lookup existing-client flow), the estimate-response page, and the
+estimate-revision-response page onto the same fixed platform Editorial Gold
+shell (`login-shell`/`login-panel-surface`) the deposit/flash-payment pages
+already use — closing the exact gap the payment typography audit flagged
+but deliberately left untouched: "IntakeForm and EstimateResponse render
+entirely in plain Outfit sans-serif... the single most visually jarring
+discontinuity in the actual client journey." Visual/structural restyle
+only — zero functional or i18n behavior changes, per the task's own scope.
+
+## Investigation
+
+- **Studio logo + accent pattern**: `FlashPaymentResponse.tsx`,
+  `EstimateResponse.tsx`, and `EstimateRevisionResponse.tsx` already show
+  `verifyData.studioLogoUrl` as a top `<img className="mb-4 h-10 w-auto
+  object-contain">` — `IntakeForm.tsx` was the one outlier missing it
+  entirely, despite `/studio-settings/public` already returning
+  `studioLogoUrl` server-side (frontend just never read it). Accent
+  ("sparingly, as the branded PDFs do") pattern confirmed against
+  `apps/api/src/lib/pdf.ts`: a colored rule under the header plus a colored
+  underline per section heading, everything else neutral — matches this
+  app's own existing gold-divider-under-checkmark convention already
+  established in `PaymentConfirmationStage.tsx`.
+- **Type scale**: extracted from the payment typography audit's drift table
+  (REPORT.md, "Payment flow typography & consistency audit") and confirmed
+  live via `getComputedStyle()`: eyebrow labels 12px/`text-xs`/uppercase/
+  tracking-wider, stage titles 20px/`text-xl`/600 in Jura (`login-jura`
+  class), hero titles 48px Fraunces/500 (confirmation-only, not used here).
+  All four restyled pages' headings now compute to exactly `Jura,
+  ui-sans-serif, system-ui, sans-serif` / `20px` / `600` — verified live,
+  not just by className.
+- **Field chrome reference**: `IntakeForm.tsx`'s own `INPUT_CLASS` (dark
+  `bg-surface-inset` fill, neutral `border-border`, `focus:border-accent`)
+  was already byte-identical to `StaffInquiryForm.tsx`'s ("New Inquiry")
+  own convention — confirmed this is the correct native form language and
+  left every input/select/checkbox/radio/textarea/file-upload class
+  completely untouched. `PaymentAmountStage`'s own `login-button`
+  (square, uppercase-Jura) treatment is deliberately reserved for the
+  embedded-payment staged flow only — deposit's own plain sign/pay
+  buttons, and every button on these four pages, already used the
+  `rounded-full bg-accent` convention this restyle keeps unchanged.
+- **Flash's "lighter form"**: identified as `FlashPublicGallery.tsx` (route
+  `/flash/:studioSlug/:artistId`, not literally named "flash intake") —
+  phone-number lookup against `/flash-pieces/lookup-public`, then only the
+  fields NOT already on file (name/email) plus placement description/photo.
+  This is the task's "existing-client lookup" and "flash variant's lighter
+  form."
+
+## Changes
+
+- `IntakeForm.tsx`: removed the `applyThemePreset`/`GET /theme?studioSlug=`
+  effect entirely; added a `studioLogoUrl` state read off the already-
+  fetched `/studio-settings/public` response; wrapped every render branch
+  (studio-not-found, loading, submitted, main form) in `login-shell`/
+  `login-panel-surface`; added the logo `<img>` above the heading; every
+  `<h1>` gained `login-jura`; the oversized one-off `text-2xl font-bold`
+  page heading unified down to the same `text-xl font-semibold` stage-title
+  tier every other page in the family uses.
+- `FlashPublicGallery.tsx`, `EstimateResponse.tsx`,
+  `EstimateRevisionResponse.tsx`: same `login-shell`/`login-panel-surface`
+  wrapper swap, same `applyThemePreset` removal (including the
+  `alreadyBooked` branch), same `login-jura` addition to every heading.
+  Studio logo already present in these three — untouched.
+- Removing `applyThemePreset` from these four pages also drops a real,
+  pre-existing latent bug (not introduced by this session, but present
+  until now): each call set `[data-theme]` on `<html>` AND overwrote the
+  `ink-manager-theme-preset` localStorage cache the AUTHENTICATED app shell
+  also reads on load — a client browsing a public estimate/flash page in
+  the same browser as a logged-in staff member could silently change that
+  staff member's cached theme preset. `DepositResponse.tsx`'s own comment
+  already flagged and avoided this for the deposit page; these four now
+  match.
+
+## Verification
+
+Seeded against dev-studio (real Playwright browser, 390×844, `--no-save`
+playwright reinstalled fresh since the prior segment's install had been
+wiped by an intervening `npm install`): a full custom `IntakeForm` covering
+every field type the builder can produce (all 14 system fields including
+`referenceImages`/`placementImages`/`preferredArtist`, plus one CUSTOM
+field of every `IntakeCustomQuestionType` — TEXT/PARAGRAPH/NUMBER/DATE/
+YES_NO/SELECT/MULTI_SELECT/PHOTO_UPLOAD), a FlashPiece, and six
+Inquiry/estimate-token states (ready, 3-session plan, expired,
+superseded-via-`previousEstimateToken`, plus two consumed live via a real
+button click each — PROCEED and DECLINE) and one revision-pending token
+(consumed live via APPROVE).
+
+Caught and fixed two real gaps during this pass, neither a regression from
+the restyle itself:
+
+1. **A stale artist ID** carried over from earlier context in this session
+   actually belonged to a different studio (confirmed live: dev-studio's
+   real roster via a direct query) — the flash gallery 404'd with "Artist
+   not found" until repointed at a genuine dev-studio artist.
+2. **Two Playwright selector bugs** in the verification script itself
+   produced false "submitted" positives on the first pass (positional
+   input indexing filled the wrong field, leaving `placement` empty and
+   tripping native HTML5 required-field validation; a generic
+   `bodyText.includes('submit')` assertion matched the still-visible
+   "Submit inquiry" button label even when the submission never actually
+   went through). Rewrote every field-fill using `label:has-text(...) +
+   input` adjacency selectors (order-independent, unlike positional
+   indexing) and tightened the success assertion to the actual
+   post-submit heading text. Re-verified both the default form (with a
+   real Cloudinary upload for its two required image fields) and the
+   custom form end-to-end against the live database afterward — every
+   value, including all eight custom-question-type answers, landed
+   exactly as submitted with no silent-strip.
+
+Confirmed live and correct: both intake submissions create real Inquiry
+rows with every field intact; the flash gallery's existing-client lookup
+path renders correctly in both languages; approve/decline/revision-approve
+each drive a real state transition via the actual respond endpoint, not a
+simulated one; expired (410) and superseded (409) tokens render their
+correct distinct messaging; the Spanish path was verified via the real
+language-picker click (an initial pass mistakenly relied on a `?locale=es`
+URL param, which this app's public pages never actually read on first
+load — client-side locale is picker/context-driven only, confirmed
+correct, pre-existing, untouched behavior, not a bug). Zero console errors
+across every state in both languages. `tsc -b` and lint clean on all four
+touched files. Full API suite 161/161. All seeded rows (26 clients across
+three seed-script runs, the custom intake form + its fields, and the flash
+piece) deleted afterward via a scripted cleanup; all scratch scripts and
+the screenshots directory removed; the `--no-save` `playwright` install
+removed; both dev servers stopped and ports confirmed free.
+
+Per the task's own instruction, this stays as a commit on
+`explore/public-journey-restyle` awaiting Juan's visual approval before any
+merge to `main`.
+
+REPORT.md line count before this entry: 13971 (verified via `git show
+HEAD:REPORT.md | wc -l`) — pure addition.
