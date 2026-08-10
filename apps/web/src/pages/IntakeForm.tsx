@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
+import { AnimatePresence, motion } from 'framer-motion'
 import { apiFetch, ApiError } from '../lib/api'
 import PhoneInput from '../components/PhoneInput'
 import CurrencyInput from '../components/CurrencyInput'
@@ -9,6 +10,7 @@ import { isValidPhoneDigits } from '../lib/format'
 import { formatCurrencyInput } from '../lib/money'
 import { LocaleProvider, useLocale, useTranslations } from '../i18n'
 import LanguagePicker from '../i18n/LanguagePicker'
+import { crossfadeVariants, uiSpringTransition } from '../lib/motion'
 
 interface PrefillPayload {
   firstName?: string
@@ -487,19 +489,29 @@ function IntakeFormContent() {
               <option value="FACEBOOK">{t('intake.referralSourceFacebook')}</option>
               {referralProgramEnabled && <option value="REFERRAL">{t('intake.referralSourceFriend')}</option>}
             </select>
-            {channel === 'REFERRAL' && referralProgramEnabled && (
-              <div className="mt-2">
-                <label className={LABEL_CLASS}>{t('intake.friendReferralCode')}</label>
-                <input
-                  type="text"
-                  value={referralCode}
-                  onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
-                  required
-                  placeholder={t('intake.friendReferralCodePlaceholder')}
-                  className={INPUT_CLASS}
-                />
-              </div>
-            )}
+            <AnimatePresence initial={false}>
+              {channel === 'REFERRAL' && referralProgramEnabled && (
+                <motion.div
+                  key="referral-code"
+                  variants={crossfadeVariants}
+                  initial="initial"
+                  animate="animate"
+                  exit="exit"
+                  transition={uiSpringTransition}
+                  className="mt-2 rounded-lg border border-accent/30 bg-accent/5 p-3"
+                >
+                  <label className={LABEL_CLASS}>{t('intake.friendReferralCode')}</label>
+                  <input
+                    type="text"
+                    value={referralCode}
+                    onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
+                    required
+                    placeholder={t('intake.friendReferralCodePlaceholder')}
+                    className={INPUT_CLASS}
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         )
       case 'description':
@@ -790,8 +802,12 @@ function IntakeFormContent() {
           <div className="mb-4 flex justify-end">
             <LanguagePicker />
           </div>
-          <h1 className="login-jura text-xl font-semibold text-fg">{t('intake.studioNotFoundHeading')}</h1>
-          <p className="mt-2 text-sm text-fg-secondary">{t('intake.studioNotFoundBody')}</p>
+          <AnimatePresence mode="wait">
+            <motion.div key="invalid" variants={crossfadeVariants} initial="initial" animate="animate" exit="exit" transition={uiSpringTransition}>
+              <h1 className="login-jura text-xl font-semibold text-fg">{t('intake.studioNotFoundHeading')}</h1>
+              <p className="mt-2 text-sm text-fg-secondary">{t('intake.studioNotFoundBody')}</p>
+            </motion.div>
+          </AnimatePresence>
         </div>
       </div>
     )
@@ -809,8 +825,12 @@ function IntakeFormContent() {
     return (
       <div className="login-shell flex min-h-screen items-center justify-center px-4 py-10 text-fg">
         <div className="login-panel-surface w-full max-w-lg px-4 py-8 text-center sm:p-8">
-          <h1 className="login-jura text-xl font-semibold text-fg">{t('intake.submittedHeading')}</h1>
-          <p className="mt-2 text-sm text-fg-secondary">{t('intake.submittedBody')}</p>
+          <AnimatePresence mode="wait">
+            <motion.div key="submitted" variants={crossfadeVariants} initial="initial" animate="animate" exit="exit" transition={uiSpringTransition}>
+              <h1 className="login-jura text-xl font-semibold text-fg">{t('intake.submittedHeading')}</h1>
+              <p className="mt-2 text-sm text-fg-secondary">{t('intake.submittedBody')}</p>
+            </motion.div>
+          </AnimatePresence>
         </div>
       </div>
     )
@@ -823,78 +843,82 @@ function IntakeFormContent() {
           <LanguagePicker />
         </div>
 
-        {studioLogoUrl && (
-          <img src={studioLogoUrl} alt={studioName} className="mb-4 h-10 w-auto object-contain" />
-        )}
-        <h1 className="login-jura text-xl font-semibold text-fg">{t('intake.pageHeading')}</h1>
-        <p className="mt-1 text-sm text-fg-secondary">{t('intake.intro')}</p>
-
-        <div className="mt-4 rounded-lg border border-warning/30 bg-warning/10 p-3 text-xs text-warning">
-          {t('intake.ageDisclosure')}
-        </div>
-
-        <form onSubmit={handleSubmit} className="mt-6 space-y-5">
-          {/* Package Q (revised): exact studio-configured order, system and
-              custom fields freely mixed -- no fixed section boundaries, so a
-              studio that drags "email" below a custom question sees that
-              order on the live form, not just in the builder. */}
-          {fields.map((field) => (
-            <div key={field.id}>{field.fieldKind === 'SYSTEM' ? renderSystemField(field) : renderCustomField(field)}</div>
-          ))}
-
-          <div>
-            <label className="flex items-start gap-2 text-sm text-fg-secondary">
-              <input
-                type="checkbox"
-                checked={smsConsent}
-                onChange={(e) => {
-                  setSmsConsent(e.target.checked)
-                  if (e.target.checked) setSmsConsentError(false)
-                }}
-                className="mt-0.5 h-4 w-4 shrink-0 accent-accent"
-              />
-              <span>
-                {t('intake.smsOptInBody', { studioName: studioName || t('intake.smsOptInDefaultStudioName') })}{' '}
-                {t('intake.viewOurPrivacyAndTerms')}{' '}
-                <a
-                  href="https://inkmanager.app/privacy"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline hover:text-fg"
-                >
-                  {t('common.privacyPolicy')}
-                </a>{' '}
-                {t('common.and')}{' '}
-                <a
-                  href="https://inkmanager.app/terms"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline hover:text-fg"
-                >
-                  {t('common.terms')}
-                </a>
-                .
-              </span>
-            </label>
-            {smsConsentError && (
-              <p className="mt-1 text-xs text-danger">{t('intake.pleaseAgreeToSms')}</p>
+        <AnimatePresence mode="wait">
+          <motion.div key="form" variants={crossfadeVariants} initial="initial" animate="animate" exit="exit" transition={uiSpringTransition}>
+            {studioLogoUrl && (
+              <img src={studioLogoUrl} alt={studioName} className="mb-4 h-10 w-auto object-contain" />
             )}
-          </div>
+            <h1 className="login-jura text-xl font-semibold text-fg">{t('intake.pageHeading')}</h1>
+            <p className="mt-1 text-sm text-fg-secondary">{t('intake.intro')}</p>
 
-          {submitError && (
-            <div className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
-              {submitError}
+            <div className="mt-4 rounded-lg border border-warning/30 bg-warning/10 p-3 text-xs text-warning">
+              {t('intake.ageDisclosure')}
             </div>
-          )}
 
-          <button
-            type="submit"
-            disabled={submitting || imagesUploading}
-            className="w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
-          >
-            {submitting ? t('intake.submitting') : t('intake.submitInquiry')}
-          </button>
-        </form>
+            <form onSubmit={handleSubmit} className="mt-6 space-y-5">
+              {/* Package Q (revised): exact studio-configured order, system and
+                  custom fields freely mixed -- no fixed section boundaries, so a
+                  studio that drags "email" below a custom question sees that
+                  order on the live form, not just in the builder. */}
+              {fields.map((field) => (
+                <div key={field.id}>{field.fieldKind === 'SYSTEM' ? renderSystemField(field) : renderCustomField(field)}</div>
+              ))}
+
+              <div>
+                <label className="flex items-start gap-2 text-sm text-fg-secondary">
+                  <input
+                    type="checkbox"
+                    checked={smsConsent}
+                    onChange={(e) => {
+                      setSmsConsent(e.target.checked)
+                      if (e.target.checked) setSmsConsentError(false)
+                    }}
+                    className="mt-0.5 h-4 w-4 shrink-0 accent-accent"
+                  />
+                  <span>
+                    {t('intake.smsOptInBody', { studioName: studioName || t('intake.smsOptInDefaultStudioName') })}{' '}
+                    {t('intake.viewOurPrivacyAndTerms')}{' '}
+                    <a
+                      href="https://inkmanager.app/privacy"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline hover:text-fg"
+                    >
+                      {t('common.privacyPolicy')}
+                    </a>{' '}
+                    {t('common.and')}{' '}
+                    <a
+                      href="https://inkmanager.app/terms"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline hover:text-fg"
+                    >
+                      {t('common.terms')}
+                    </a>
+                    .
+                  </span>
+                </label>
+                {smsConsentError && (
+                  <p className="mt-1 text-xs text-danger">{t('intake.pleaseAgreeToSms')}</p>
+                )}
+              </div>
+
+              {submitError && (
+                <div className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+                  {submitError}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={submitting || imagesUploading}
+                className="w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
+              >
+                {submitting ? t('intake.submitting') : t('intake.submitInquiry')}
+              </button>
+            </form>
+          </motion.div>
+        </AnimatePresence>
 
         <PublicPageFooter studioSlug={studioSlug} />
       </div>
