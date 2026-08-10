@@ -27,6 +27,23 @@ completeness check).
 
 ## Frontend platform strings (`apps/web/src/i18n/strings/es.ts`)
 
+### artistPublic
+
+| Key | English | Spanish (draft) |
+|---|---|---|
+| notFoundHeading | This page isn't available | Esta página no está disponible |
+| notFoundBody | The artist may not have published a page here, or the link is out of date. | Es posible que el artista no haya publicado una página aquí, o que el enlace esté desactualizado. |
+| eyebrow | Artist Profile | Perfil de artista |
+| whereToFindMe | Where to find me | Dónde encontrarme |
+| homeStudio | Home studio | Estudio base |
+| guestResidency | Guest residency | Residencia de invitado |
+| openInMaps | Open address in Maps | Abrir dirección en Maps |
+| bookButton | Book | Reservar |
+| flashButton | Flash | Flash |
+| letsConnect | Let's connect | Conectemos |
+| bookPickerPrompt | Where would you like to book? | ¿Dónde te gustaría reservar? |
+| homeStudioSuffix | (home studio) | (estudio base) |
+
 ### common
 
 | Key | English | Spanish (draft) |

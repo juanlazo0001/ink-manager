@@ -158,6 +158,19 @@ export function ArrowLeftIcon({ className }: IconProps) {
   )
 }
 
+// Plain horizontal arrow (mirrored ArrowLeftIcon) -- distinct from
+// ArrowUpRightIcon's diagonal "opens externally" meaning; this one just
+// means "go," the BOOK/FLASH CTA convention the artist public page's
+// mockup uses.
+export function ArrowRightIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <line x1="4" y1="10" x2="16" y2="10" />
+      <polyline points="11 5 16 10 11 15" />
+    </svg>
+  )
+}
+
 export function MenuIcon({ className }: IconProps) {
   return (
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
@@ -453,6 +466,22 @@ export function GoogleGIcon({ className }: IconProps) {
         fill="#EA4335"
         d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0 5.482 0 2.438 2.017.957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"
       />
+    </svg>
+  )
+}
+
+// Artist public page v2: generic "studio" mark -- the "WHERE TO FIND ME"
+// card's fallback when a studio has no logoUrl on file, so every studio
+// still gets SOME mark in that circle rather than an empty ring or a
+// hardcoded stand-in (a bee, a diamond, whatever one reference studio
+// happened to use) that would misrepresent every other studio. A plain
+// storefront glyph, same one-two-path plainness as MapPinIcon.
+export function StudioMarkIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <path d="M4 8.5V16a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V8.5" strokeLinejoin="round" />
+      <path d="M3 8.5h14l-1.2-4.2a1 1 0 0 0-.96-.8H5.16a1 1 0 0 0-.96.8L3 8.5Z" strokeLinejoin="round" />
+      <path d="M8.5 17v-4a1.5 1.5 0 0 1 1.5-1.5v0A1.5 1.5 0 0 1 11.5 13v4" strokeLinejoin="round" />
     </svg>
   )
 }

@@ -13,6 +13,21 @@
 import type { en } from './en';
 
 export const es: typeof en = {
+  artistPublic: {
+    notFoundHeading: 'Esta página no está disponible',
+    notFoundBody: 'Es posible que el artista no haya publicado una página aquí, o que el enlace esté desactualizado.',
+    eyebrow: 'Perfil de artista',
+    whereToFindMe: 'Dónde encontrarme',
+    homeStudio: 'Estudio base',
+    guestResidency: 'Residencia de invitado',
+    openInMaps: 'Abrir dirección en Maps',
+    bookButton: 'Reservar',
+    flashButton: 'Flash',
+    letsConnect: 'Conectemos',
+    bookPickerPrompt: '¿Dónde te gustaría reservar?',
+    homeStudioSuffix: '(estudio base)',
+  },
+
   common: {
     loading: 'Cargando…',
     somethingWentWrong: 'Algo salió mal. Por favor, inténtalo de nuevo.',

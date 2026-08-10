@@ -19,6 +19,27 @@
 // caller that needs to pick between word forms does so explicitly with
 // two separate keys and its own count check, not a library.
 export const en = {
+  // Artist public page v2: platform chrome for /artist/:publicSlug. This
+  // page predated the multi-language public forms epic and was out of
+  // scope then -- folded in now per its own restyle task. The artist's
+  // own authored content (name, bio, specialties, studio names) is never
+  // translated here, same as every other public page's studio-authored
+  // content -- only this page's own fixed copy.
+  artistPublic: {
+    notFoundHeading: "This page isn't available",
+    notFoundBody: 'The artist may not have published a page here, or the link is out of date.',
+    eyebrow: 'Artist Profile',
+    whereToFindMe: 'Where to find me',
+    homeStudio: 'Home studio',
+    guestResidency: 'Guest residency',
+    openInMaps: 'Open address in Maps',
+    bookButton: 'Book',
+    flashButton: 'Flash',
+    letsConnect: "Let's connect",
+    bookPickerPrompt: 'Where would you like to book?',
+    homeStudioSuffix: '(home studio)',
+  },
+
   common: {
     loading: 'Loading…',
     somethingWentWrong: 'Something went wrong. Please try again.',

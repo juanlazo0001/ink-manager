@@ -13969,3 +13969,223 @@ the previous one) uninstalled afterward, confirmed not declared in any
 
 REPORT.md line count before this entry: 13868 (verified via `git show
 HEAD:REPORT.md | wc -l`) — pure addition.
+
+# Artist public page v2 — rebuild to the mockup + reusable button tokens
+
+Rebuilt `/artist/:publicSlug` to match Juan's mockup (`artist-public.png`)
+in strict Editorial Gold, and shipped the mockup's BOOK/FLASH button
+treatment as two new reusable design-layer tokens. Session launched via
+`scripts/new-session.ps1` per the mandatory concurrent-session rule (other
+design branches in flight) — isolated worktree `ink-manager-w-artist-page-v2`
+on branch `explore/artist-page-v2` (renamed from the script's own
+`session/artist-page-v2` default), own dev-port pair (API 4001, web 5174).
+Publish gating, token behavior, and OG behavior all untouched — this is a
+visual rebuild of an already-working page.
+
+## Design plan
+
+- **Color**: existing Editorial Gold tokens throughout (`--color-accent`
+  #c99a5b, `--color-bg` #0e0b08, `--color-danger-strong` for the red "+"
+  accents) — no new palette, per the mockup's own restraint.
+- **Type**: `.login-jura` (Jura, uppercase, tracked) for eyebrows/section
+  rules/pills/CTAs, `font-display` (Fraunces) for the hero name — the
+  exact two-face system this app's own Editorial Gold already establishes,
+  just applied to a page that predated it.
+- **Layout**: header stacks portrait-above-text at true 390px, goes
+  side-by-side (name/pills/bio left, arch portrait right) from `sm:` up,
+  widening further at desktop rather than staying letterboxed at a fixed
+  narrow column.
+
+## Investigation
+
+- **Studio logo pattern**: `publicAssets.ts`'s `GET /studio-logo/:studioSlug`
+  already existed (decodes `Studio.logoUrl`'s stored data: URL into a real
+  fetchable image response) — reused as-is rather than building a new
+  mechanism; a new `StudioMarkIcon` (generic storefront glyph) covers the
+  no-logo case.
+- **Ambient background pattern**: `publicAssets.ts`'s `serveBlurredRemoteImage`
+  (built for the payment-confirmation page's personalized background)
+  already proxies a Cloudinary URL through a server-side transform and
+  re-serves the bytes under our own origin — extended with an optional
+  `transform` parameter (defaulting to the existing reference-background
+  transform, so both its existing call sites in `deposits.ts`/
+  `flashPayments.ts` stay behavior-preserving) rather than duplicating the
+  whole function for a second transform string.
+- **Maps-link pattern**: reused `apps/web/src/lib/maps.ts`'s `buildMapsUrl`
+  and `MapPinIcon` verbatim (built for the deposit confirmation's studio
+  address in an earlier session) for the "WHERE TO FIND ME" card's
+  chevron-expand-to-maps-link behavior.
+- **Why not the shared `Eyebrow` component**: `components/Eyebrow.tsx` gates
+  its editorial-vs-plain rendering on `useThemePreset()` — the currently
+  VIEWED studio's own cached preset, read from whatever `[data-theme]`
+  happened to be on `<html>` from a previously-viewed studio in the same
+  tab. This page is `.login-shell`-locked specifically to be independent of
+  that (a fixed platform identity, same as Login/Deposit), so using
+  `Eyebrow` here would risk silently rendering the wrong (non-editorial)
+  variant depending on unrelated browsing history. Hand-rolled the
+  eyebrow/section-rule markup instead, both for that reason and because its
+  plus-glyph placement (both-sides-flanking) doesn't match this mockup's
+  three different single-side placements anyway.
+- **Address resolution**: mirrored `deposits.ts`'s own `resolvedAddress`
+  "single-location-only, never guess wrong for a multi-location studio"
+  rule, applied per studio (home + each residency) via a new
+  `studioSummary()` helper — no assigned-artist-location signal to prefer
+  here (no appointment/inquiry context on this page), so it's purely the
+  single-location case or `null`.
+- **Socials scope**: the profile wizard's own social step (`ArtistWelcomeWizard.tsx`)
+  collects exactly two fields — `instagramHandle`, `facebookProfileUrl` —
+  not the mockup's three-icon reference photo. Scoped "LET'S CONNECT" to
+  only those two, real-data-driven, per the task's own explicit "render
+  ONLY the social links the artist actually has (wizard's social step)"
+  instruction, which pins this down more precisely than the mockup's own
+  illustrative icon count.
+
+## Backend changes
+
+- `artistPublicProfile.ts`: added `instagramHandle`/`facebookProfileUrl`,
+  per-studio `address`/`logoUrl` (via the new `studioSummary()` helper,
+  applied to both `homeStudio` and every `upcomingResidencies[].studio`),
+  `backgroundImageUrl` (null when the artist has neither a portfolio image
+  nor a flash piece, avoiding a guaranteed-404 fetch), and `resolvedLocale`
+  (multi-language retrofit — this page predated that epic and was
+  explicitly out of scope then). All URLs built server-side via
+  `API_PUBLIC_URL`, same convention `deposits.ts`'s own
+  `artistPublicAvatarUrl`/`referenceBackgroundUrl` already use, rather than
+  the frontend constructing relative API paths itself.
+- `publicAssets.ts`: new `GET /artist-background/:publicSlug` (published-gated,
+  portfolio image preferred, most-recent flash piece as fallback), and
+  `serveBlurredRemoteImage` gained an optional `transform` parameter.
+- Hit and fixed a real bug caught by the API's own test suite (not by hand
+  inspection): the artist select query in `artistPublicProfile.ts`
+  accidentally included a top-level `avatarUrl: true` (that field lives on
+  `Artist.user.avatarUrl`, not directly on `Artist`) — a genuine Prisma
+  schema mismatch that 500'd every request through this route, including
+  the "never existed" 404 case (the invalid select shape throws before any
+  row-matching logic runs). Both previously-passing tests
+  (`publish is blocked...`, `public fetch of a never-published slug -> 404`)
+  caught this immediately once re-run.
+
+## Cloudinary transform: a live-measured dead end
+
+`e_brightness` was tried (chained after `e_blur`, at magnitudes from -45 to
+-70, both alone and combined) to darken the ambient background
+server-side per the task's "heavily darkened" wording — measured live
+against both the shared Cloudinary demo account and this app's own real
+account, and produced **no visible darkening at any tested magnitude**.
+`e_blur` alone works perfectly (confirmed visually, clearly soft-focused).
+Rather than ship a parameter with no measured effect, dropped
+`e_brightness` entirely and moved the "heavily darkened, read as texture"
+requirement onto the client-side wash the image is portaled underneath —
+reusing `.payment-bg-wash` (an existing 80% scrim, built for
+`PaymentConfirmationStage`'s identical "abstract texture behind a whole
+page of live text" need) instead of the app-shell's lighter 45%
+`.app-bg-wash`. This is a static, non-animated overlay `<span>`, the same
+kind CLAUDE.md's design section already establishes elsewhere in this
+codebase — not the "live CSS filter" the task's own pre-processing
+requirement rules out (that requirement is about the blur, which is now
+100% server-side and cached, never recomputed client-side).
+
+## Frontend changes
+
+- `ArtistPublicPage.tsx` rebuilt in full: `.login-shell`/`.login-panel-surface`
+  wrapper (matching Deposit/Estimate/Flash's own fixed-platform-identity
+  pattern), arch portrait (`rounded-t-full` + a modest bottom radius, a
+  double gold ring, the red sparkle badge reusing the existing
+  `SparkleIcon`), specialty pills, conditional bio, "+ WHERE TO FIND ME +"
+  section rule, studio cards with the chevron-expand-to-maps-link pattern
+  (chevron omitted entirely when a studio has no resolvable address, per
+  the task's own "only if it does something" instruction), the BOOK/FLASH
+  CTA pair on the new button tokens, the existing book-picker sub-panel
+  (same destinations as before — `bookingArtistId` pre-assignment via
+  `/inquiry/:studioSlug`, FLASH always to the home studio's gallery —
+  restyled only, never touched functionally), and "LET'S CONNECT" socials.
+- Wrapped in `LocaleProvider` for the first time (this page had zero i18n
+  wiring before this task); a single fetch-once-and-sync pattern rather
+  than Estimate/Deposit's own toggle-triggered re-fetch effect, since
+  nothing on this page besides the initial `resolvedLocale` sync is
+  server-resolved/locale-dependent — the artist's own name/bio/specialties/
+  studio names are never machine-translated, same as every other page's
+  studio-authored content — matching `EstimateRevisionResponse.tsx`'s own
+  identical "no second effect needed" precedent exactly.
+- New icons: `ArrowRightIcon` (plain horizontal arrow, distinct from the
+  existing diagonal `ArrowUpRightIcon`), `StudioMarkIcon` (generic
+  storefront glyph, the logo-absent fallback).
+- `index.css`: `.btn-gold-gradient` (radial gold ramp, lighter
+  top-center deepening toward the edges, no glossy highlight — a
+  `filter: brightness()` press state rather than a color swap, per the
+  design addendum's own "deepened, not swapped" instruction) and
+  `.btn-outline-refined` (near-black `--color-surface` fill, 1px
+  `--color-border` — the same low-opacity gold token already used
+  app-wide — rather than the heavier `border-strong`). Both carry their
+  own hover/active/focus-visible/disabled states and live under
+  `.login-shell` alongside `--btn-gold-light/-mid/-deep` tokens, so any
+  future page can adopt them deliberately; no other page's styling touched
+  in this pass, per the addendum's own explicit scope limit.
+
+## Verification
+
+Seeded two throwaway studios (never dev-studio — other worktrees share the
+same database) and three artists: a full-featured one (bio, both
+specialty pills, Instagram + Facebook, a portfolio image, a confirmed
+future guest residency at the second studio), a minimal one (name only,
+zero optional fields), and an unpublished one (`publicSlug` reserved,
+`publishedAt` null — the real staff-flow shape, not just a nonexistent
+slug). Drove all three plus a genuinely-nonexistent slug through a real
+Playwright browser at 390px, 768px, and 1440px, in English and Spanish.
+
+Caught and fixed two more real bugs during this pass, neither a
+restyle regression:
+
+1. **Wrong API port in both `.env` files.** `new-session.ps1` copies the
+   primary checkout's `.env` files verbatim, which still pointed
+   `VITE_API_URL`/`API_PUBLIC_URL` at port 4000 — this worktree's own
+   assigned pair is 4001/5174. Silently cost two different failure modes
+   before being caught: the web dev server 404ing entirely (a `vite`
+   invoked with `--config` from the wrong working directory resolves its
+   project root incorrectly) and the API constructing self-referencing
+   image URLs (`avatarUrl`, `backgroundImageUrl`) that pointed at the
+   wrong port and never resolved. Fixed by correcting both `.env` files to
+   4001 and restarting both servers from the correct working directories.
+2. **Not-found state used a `<p>`, not an `<h1>`, for its heading** — an
+   inconsistency with the rest of this page (and every sibling public
+   page's own invalid/expired states) that a verification script's
+   `waitForSelector('h1')` caught immediately by timing out. Fixed to
+   `<h1>`.
+
+Also confirmed, via direct `curl` timing against the live route, that
+`h1 count: 1` and a full, correct render only appears after the
+ambient-background image's own Cloudinary round-trip completes (several
+seconds on a cold transform cache) — not a bug, but real enough latency
+that the verification script's own screenshot timing needed
+`waitForSelector('h1')` rather than a flat wait, same lesson as three
+other verification passes earlier in this session's own history.
+
+Confirmed live and correct: arch portrait + gold ring + sparkle badge +
+ambient blurred background (ES and EN); specialty pills; bio present/absent
+both render correctly; "WHERE TO FIND ME" shows both a HOME STUDIO and a
+GUEST RESIDENCY card with the correct date-range subtitle; tapping a
+card's chevron expands to a real, tappable `buildMapsUrl` link with the
+studio's own address, and the chevron itself is absent on a studio with no
+resolvable single-location address; BOOK/FLASH render with the new gradient/
+outline tokens and correct arrow icons; LET'S CONNECT shows exactly the
+artist's own two social icons and is entirely absent for the artist with
+none; the minimal artist collapses every optional section cleanly; both
+the unpublished and never-existed slugs 404 identically; desktop (1440px)
+and tablet (768px) scale the header into a genuine side-by-side layout
+rather than staying letterboxed at a narrow mobile-width column; Spanish
+renders every platform string correctly via the language picker (English
+and Spanish both use the shared `artistPublic` en.ts/es.ts namespace,
+regenerated into `PLATFORM_STRINGS_ES_REVIEW.md` with zero MISSING cells).
+Zero console errors across every state beyond the two expected StrictMode-
+doubled 404s on the two invalid-slug states (same established, accepted
+pattern as every other invalid-token state elsewhere in this app). `tsc -b`
+clean on both apps, lint clean on every touched file, full API suite
+161/161. All seeded rows, scratch scripts, and the screenshots directory
+removed afterward; the `--no-save` `playwright` install removed; both dev
+servers stopped and ports confirmed free.
+
+Per the task's own instruction, this stays as a commit on
+`explore/artist-page-v2` awaiting Juan's visual approval before any merge.
+
+REPORT.md line count before this entry: 13971 (verified via `git show
+HEAD:REPORT.md | wc -l`) — pure addition.
