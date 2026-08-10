@@ -1,5 +1,6 @@
 import { prisma } from "./prisma";
 import { IntakeFieldKind, IntakeCustomQuestionType } from "../../generated/prisma/enums";
+import { isSupportedLocale } from "./locale";
 
 export interface SystemFieldDefault {
   key: string;
@@ -116,6 +117,10 @@ export interface IntakeFormFieldInput {
   required: boolean;
   enabled: boolean;
   options?: unknown;
+  // Multi-language public forms, Part 6: keyed by locale, matching every
+  // other translatable entity's PATCH shape -- only label/helpText/options
+  // have a column on IntakeFormFieldTranslation.
+  translations?: Record<string, { label?: string | null; helpText?: string | null; options?: unknown }>;
 }
 
 const CUSTOM_TYPES = new Set(Object.values(IntakeCustomQuestionType) as string[]);
@@ -163,6 +168,32 @@ export function validateIntakeFormFieldsPayload(body: unknown): string | null {
           row.options.some((o) => typeof o !== "string" || o.trim().length === 0)
         ) {
           return `"${row.label}" needs at least one non-empty option.`;
+        }
+      }
+    }
+
+    if (row.translations !== undefined) {
+      if (typeof row.translations !== "object" || row.translations === null || Array.isArray(row.translations)) {
+        return `"${row.label}": translations must be an object keyed by locale.`;
+      }
+      for (const [locale, fields] of Object.entries(row.translations)) {
+        if (!isSupportedLocale(locale) || locale === "en") {
+          return `"${row.label}": translations key "${locale}" is not a supported non-English locale.`;
+        }
+        if (typeof fields !== "object" || fields === null || Array.isArray(fields)) {
+          return `"${row.label}": translations.${locale} must be an object.`;
+        }
+        for (const [field, value] of Object.entries(fields)) {
+          if (field !== "label" && field !== "helpText" && field !== "options") {
+            return `"${row.label}": translations.${locale}.${field} is not a translatable field.`;
+          }
+          if (field === "options") {
+            if (value !== null && !(Array.isArray(value) && value.every((o) => typeof o === "string"))) {
+              return `"${row.label}": translations.${locale}.options must be an array of strings or null.`;
+            }
+          } else if (value !== null && typeof value !== "string") {
+            return `"${row.label}": translations.${locale}.${field} must be a string or null.`;
+          }
         }
       }
     }

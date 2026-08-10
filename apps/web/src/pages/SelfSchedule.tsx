@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { DayPicker } from 'react-day-picker'
+import { es as dayPickerEs, enUS as dayPickerEnUs } from 'react-day-picker/locale'
 import 'react-day-picker/style.css'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatDateTime } from '../lib/format'
@@ -8,6 +9,8 @@ import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import { applyThemePreset } from '../lib/themePresets'
 import PublicPageFooter from '../components/PublicPageFooter'
 import { toDateString, parseDateString } from '../components/DateAndTimeRangeFields'
+import { LocaleProvider, useLocale, useTranslations, persistPickerLocale, dateLocale, type Locale } from '../i18n'
+import LanguagePicker from '../i18n/LanguagePicker'
 
 // Token-lifecycle bug fix: 'alreadyBooked' is new -- a client revisiting
 // their own link after their booking already completed (see
@@ -24,12 +27,6 @@ function invalidKindFromStatus(status: number | undefined): InvalidKind {
   if (status === 409) return 'superseded'
   if (status === 410) return 'expired'
   return 'invalid'
-}
-
-const INVALID_HEADINGS: Record<InvalidKind, string> = {
-  invalid: 'This link is invalid',
-  expired: 'This link has expired',
-  superseded: 'A newer link was sent',
 }
 
 interface TimeSlot {
@@ -50,6 +47,11 @@ interface VerifyResponse {
   // every other date is disabled outright in the calendar below, not just
   // greyed, since this picker only ever offers what's actually available.
   availableDates: string[]
+  // Multi-language public forms: which locale the API actually resolved
+  // (explicit ?locale= > this client's own stored preference > the
+  // studio's own default) -- synced back into LocaleProvider on load,
+  // same pattern as every other flow's own verify response.
+  resolvedLocale?: string
 }
 
 interface AlreadyBookedResponse {
@@ -60,8 +62,8 @@ interface AlreadyBookedResponse {
   themePreset: string
 }
 
-function formatTimeOnly(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+function formatTimeOnly(iso: string, locale: Locale): string {
+  return new Date(iso).toLocaleTimeString(dateLocale(locale), { hour: 'numeric', minute: '2-digit' })
 }
 
 // How far out the calendar lets someone navigate -- kept a bit past the
@@ -72,10 +74,27 @@ function formatTimeOnly(iso: string): string {
 const CALENDAR_MONTHS_AHEAD = 4
 
 export default function SelfSchedule() {
+  return (
+    <LocaleProvider>
+      <SelfScheduleContent />
+    </LocaleProvider>
+  )
+}
+
+function SelfScheduleContent() {
+  const { t } = useTranslations()
+  const { locale, setLocale } = useLocale()
+
+  const INVALID_HEADINGS: Record<InvalidKind, string> = {
+    invalid: t('common.linkInvalidHeading'),
+    expired: t('common.linkExpiredHeading'),
+    superseded: t('common.linkSupersededHeading'),
+  }
+
   const { token } = useParams<{ token: string }>()
   const [state, setState] = useState<PageState>('loading')
   const [invalidKind, setInvalidKind] = useState<InvalidKind>('invalid')
-  const [invalidMessage, setInvalidMessage] = useState('This link is invalid or has expired.')
+  const [invalidMessage, setInvalidMessage] = useState(t('common.linkExpiredHeading'))
   const [verifyData, setVerifyData] = useState<VerifyResponse | null>(null)
   const [alreadyBookedData, setAlreadyBookedData] = useState<AlreadyBookedResponse | null>(null)
   const [confirmed, setConfirmed] = useState<{ startTime: string; endTime: string } | null>(null)
@@ -94,6 +113,14 @@ export default function SelfSchedule() {
 
     let ignore = false
 
+    // Fix pass: no explicit ?locale= on this first fetch -- see
+    // DepositResponse.tsx's identical comment. This page has no other
+    // server-resolved, locale-dependent content (availableDates/
+    // durationMinutes/artistName aren't translatable), so unlike
+    // Deposit/Waiver there's no need for a second, toggle-triggered
+    // re-fetch here -- the calendar/time-slot formatting already
+    // re-renders instantly off the `locale` state alone (see
+    // formatTimeOnly/DayPicker's own locale prop above).
     apiFetch<VerifyResponse | AlreadyBookedResponse>(`/self-schedule/verify/${token}`)
       .then((data) => {
         if (ignore) return
@@ -105,18 +132,22 @@ export default function SelfSchedule() {
         }
         setVerifyData(data)
         applyThemePreset(data.themePreset)
+        // Server-resolved locale (client's own stored preference or the
+        // studio's default) wins on first load.
+        if (data.resolvedLocale && data.resolvedLocale !== locale) setLocale(data.resolvedLocale as typeof locale)
         setState('ready')
       })
       .catch((err) => {
         if (ignore) return
         setInvalidKind(invalidKindFromStatus(err instanceof ApiError ? err.status : undefined))
-        setInvalidMessage(err instanceof Error ? err.message : 'This link is invalid or has expired.')
+        setInvalidMessage(err instanceof Error ? err.message : t('common.linkExpiredHeading'))
         setState('invalid')
       })
 
     return () => {
       ignore = true
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
 
   function selectDate(date: string) {
@@ -129,7 +160,7 @@ export default function SelfSchedule() {
 
     apiFetch<{ slots: TimeSlot[] }>(`/self-schedule/slots/${token}?date=${date}`)
       .then((data) => setSlots(data.slots))
-      .catch((err) => setSlotsError(err instanceof Error ? err.message : 'Failed to load times for this date'))
+      .catch((err) => setSlotsError(err instanceof Error ? err.message : t('selfSchedule.failedToLoadTimes')))
       .finally(() => setSlotsLoading(false))
   }
 
@@ -151,7 +182,7 @@ export default function SelfSchedule() {
       // selection) both land here as a plain message -- re-fetching the
       // date's slots isn't attempted automatically; picking the date again
       // (or another one) refreshes it.
-      setSubmitError(err instanceof ApiError ? err.message : 'Something went wrong. Please try again.')
+      setSubmitError(err instanceof ApiError ? err.message : t('common.somethingWentWrong'))
     } finally {
       setSubmitting(false)
     }
@@ -164,7 +195,11 @@ export default function SelfSchedule() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
       <div className="w-full max-w-lg rounded-2xl card-surface border border-border bg-surface p-8">
-        {state === 'loading' && <p className="text-center text-sm text-fg-secondary">Loading…</p>}
+        <div className="mb-4 flex justify-end">
+          <LanguagePicker onChange={(next) => token && persistPickerLocale(`/self-schedule/${token}/locale`, next)} />
+        </div>
+
+        {state === 'loading' && <p className="text-center text-sm text-fg-secondary">{t('common.loading')}</p>}
 
         {state === 'invalid' && (
           <div className="text-center">
@@ -172,29 +207,28 @@ export default function SelfSchedule() {
             <p className="mt-2 text-sm text-fg-secondary">{invalidMessage}</p>
             <p className="mt-4 text-sm text-fg-secondary">
               {invalidKind === 'superseded'
-                ? 'Please check your messages for the newest link.'
-                : 'Please contact the studio to schedule your appointment.'}
+                ? t('common.pleaseCheckMessagesForNewestLink')
+                : t('selfSchedule.invalidBodyByKind.expired')}
             </p>
           </div>
         )}
 
         {state === 'alreadyBooked' && alreadyBookedData && (
           <div className="text-center">
-            <h1 className="text-xl font-semibold text-fg">You're all set, {alreadyBookedData.clientFirstName}!</h1>
+            <h1 className="text-xl font-semibold text-fg">{t('selfSchedule.alreadyBookedHeading', { firstName: alreadyBookedData.clientFirstName })}</h1>
             <p className="mt-2 text-sm text-fg-secondary">
-              You've already booked your appointment with {alreadyBookedData.studioName}. They'll be in touch if
-              anything changes.
+              {t('selfSchedule.alreadyBookedBody', { studioName: alreadyBookedData.studioName })}
             </p>
           </div>
         )}
 
         {state === 'success' && confirmed && (
           <div className="text-center">
-            <h1 className="text-xl font-semibold text-fg">Request sent!</h1>
+            <h1 className="text-xl font-semibold text-fg">{t('selfSchedule.requestSentHeading')}</h1>
             <p className="mt-2 text-sm text-fg-secondary">
-              You've requested {formatDateTime(confirmed.startTime)} – {formatDateTime(confirmed.endTime)}. The
-              studio will confirm this time shortly -- it's not booked yet, so keep an eye out for a message from
-              them.
+              {t('selfSchedule.requestSentBody', {
+                range: `${formatDateTime(confirmed.startTime, locale)} – ${formatDateTime(confirmed.endTime, locale)}`,
+              })}
             </p>
           </div>
         )}
@@ -208,25 +242,24 @@ export default function SelfSchedule() {
                 className="mb-4 h-10 w-auto object-contain"
               />
             )}
-            <h1 className="text-xl font-semibold text-fg">Pick a time</h1>
+            <h1 className="text-xl font-semibold text-fg">{t('selfSchedule.pageHeading')}</h1>
             <p className="mt-1 text-sm font-medium text-fg-secondary">{verifyData.studioName}</p>
             <div className="mt-3 flex items-center gap-2.5">
               <FlatArtistAvatar name={verifyData.artistName} avatarUrl={verifyData.artistAvatarUrl} className="h-8 w-8" />
               <p className="text-sm text-fg-secondary">
-                {verifyData.clientFirstName}, here's {verifyData.artistName}'s real availability.
+                {t('selfSchedule.intro', { firstName: verifyData.clientFirstName, artistName: verifyData.artistName })}
               </p>
             </div>
 
             {verifyData.availableDates.length === 0 ? (
-              <p className="mt-5 text-sm text-fg-secondary">
-                No open times found right now -- please contact the studio directly to schedule.
-              </p>
+              <p className="mt-5 text-sm text-fg-secondary">{t('selfSchedule.noOpenTimes')}</p>
             ) : (
               <>
-                <p className="mt-5 text-xs font-medium uppercase tracking-wider text-fg-muted">Choose a date</p>
+                <p className="mt-5 text-xs font-medium uppercase tracking-wider text-fg-muted">{t('selfSchedule.chooseDate')}</p>
                 <div className="mt-2 flex justify-center rounded-xl border border-border bg-surface-inset p-2">
                   <DayPicker
                     mode="single"
+                    locale={locale === 'es' ? dayPickerEs : dayPickerEnUs}
                     selected={selectedDate ? parseDateString(selectedDate) : undefined}
                     onSelect={(day) => {
                       if (!day) return
@@ -259,16 +292,21 @@ export default function SelfSchedule() {
                 {selectedDate && (
                   <div className="mt-4">
                     <p className="mb-1.5 text-xs font-medium uppercase tracking-wider text-fg-muted">
-                      Available times on {parseDateString(selectedDate)?.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
+                      {t('selfSchedule.availableTimesOn', {
+                        date:
+                          parseDateString(selectedDate)?.toLocaleDateString(dateLocale(locale), {
+                            weekday: 'long',
+                            month: 'long',
+                            day: 'numeric',
+                          }) ?? '',
+                      })}
                     </p>
 
-                    {slotsLoading && <p className="text-sm text-fg-secondary">Loading times…</p>}
+                    {slotsLoading && <p className="text-sm text-fg-secondary">{t('selfSchedule.loadingTimes')}</p>}
                     {slotsError && <p className="text-sm text-danger">{slotsError}</p>}
 
                     {!slotsLoading && !slotsError && slots.length === 0 && (
-                      <p className="text-sm text-fg-secondary">
-                        No open times left on this date -- please pick another.
-                      </p>
+                      <p className="text-sm text-fg-secondary">{t('selfSchedule.noOpenTimesOnDate')}</p>
                     )}
 
                     <div className="flex flex-wrap gap-2">
@@ -284,7 +322,7 @@ export default function SelfSchedule() {
                               isSelected ? 'border-accent bg-accent/15 text-accent' : 'border-border text-fg-secondary hover:bg-surface',
                             ].join(' ')}
                           >
-                            {formatTimeOnly(slot.startTime)}
+                            {formatTimeOnly(slot.startTime, locale)}
                           </button>
                         )
                       })}
@@ -295,8 +333,7 @@ export default function SelfSchedule() {
             )}
 
             <p className="mt-5 rounded-lg border border-border bg-surface-inset p-3 text-xs text-fg-secondary">
-              Picking a time sends a request to {verifyData.studioName} -- it's not a confirmed booking until they
-              get back to you.
+              {t('selfSchedule.requestDisclaimer', { studioName: verifyData.studioName })}
             </p>
 
             {submitError && (
@@ -312,7 +349,7 @@ export default function SelfSchedule() {
                 disabled={!selectedSlot || submitting}
                 className="w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
               >
-                {submitting ? 'Requesting…' : 'Request this time'}
+                {submitting ? t('selfSchedule.requesting') : t('selfSchedule.requestThisTime')}
               </button>
             </div>
           </div>

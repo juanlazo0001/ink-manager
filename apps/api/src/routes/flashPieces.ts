@@ -10,12 +10,58 @@ import { syncPrimaryEmail, syncPrimaryPhone } from "../lib/clientContacts";
 import { generateUniqueReferralCode } from "../lib/referrals";
 import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 import { studioHasActiveMembership, activeStudioIdsForCaller, effectiveRoleAt } from "../lib/artistAccess";
+import { resolveRequestLocale, withLocale } from "../lib/contentTranslation";
+import { isSupportedLocale } from "../lib/locale";
 
 const router = Router();
 
 const FLASH_PIECE_INCLUDE = {
   artist: { select: { id: true, user: { select: { name: true, email: true, avatarUrl: true } } } },
+  translations: true,
 } as const;
+
+// Multi-language public forms, Part 6: reshapes the flat FlashPieceTranslation
+// rows FLASH_PIECE_INCLUDE fetches into { es: { title, description } } --
+// same by-locale object shape the staff editor sends back on save.
+function reshapeFlashPieceTranslations<T extends { translations: { locale: string; title: string | null; description: string | null }[] }>(
+  piece: T,
+) {
+  const { translations, ...rest } = piece;
+  return { ...rest, translations: Object.fromEntries(translations.map((t) => [t.locale, { title: t.title, description: t.description }])) };
+}
+
+// Multi-language public forms, Part 6: identical shape/reasoning to
+// customPolicies.ts's own parseCustomPolicyTranslations -- see that
+// comment. Only `title`/`description` are translatable here
+// (FlashPieceTranslation's own two columns).
+function parseFlashPieceTranslations(
+  translations: unknown,
+): { ok: true; value: { locale: string; data: Record<string, unknown> }[] } | { ok: false; error: string } {
+  if (typeof translations !== "object" || translations === null || Array.isArray(translations)) {
+    return { ok: false, error: "translations must be an object keyed by locale" };
+  }
+  const result: { locale: string; data: Record<string, unknown> }[] = [];
+  for (const [locale, fields] of Object.entries(translations as Record<string, unknown>)) {
+    if (!isSupportedLocale(locale) || locale === "en") {
+      return { ok: false, error: `translations key "${locale}" is not a supported non-English locale` };
+    }
+    if (typeof fields !== "object" || fields === null || Array.isArray(fields)) {
+      return { ok: false, error: `translations.${locale} must be an object` };
+    }
+    const data: Record<string, unknown> = {};
+    for (const [field, value] of Object.entries(fields as Record<string, unknown>)) {
+      if (field !== "title" && field !== "description") {
+        return { ok: false, error: `translations.${locale}.${field} is not a translatable field` };
+      }
+      if (value !== null && typeof value !== "string") {
+        return { ok: false, error: `translations.${locale}.${field} must be a string or null` };
+      }
+      data[field] = value;
+    }
+    result.push({ locale, data });
+  }
+  return { ok: true, value: result };
+}
 
 // Public: one artist's available flash pieces -- studio + artist scoped,
 // same two-segment shape as the existing /inquiry/:studioSlug public
@@ -35,7 +81,7 @@ router.get("/public", async (req, res) => {
 
   const studio = await prisma.studio.findUnique({
     where: { slug: studioSlug },
-    include: { settings: { select: { themePreset: true } } },
+    include: { settings: { select: { themePreset: true, defaultLocale: true } } },
   });
   if (!studio) {
     return res.status(404).json({ error: "Studio not found" });
@@ -50,6 +96,12 @@ router.get("/public", async (req, res) => {
     return res.status(404).json({ error: "Artist not found" });
   }
 
+  // Multi-language public forms: no Client record exists yet on this
+  // purely-anonymous browse page (before any contact-lookup step) --
+  // resolution here can only ever use ?locale= or the studio's own
+  // defaultLocale, never a stored client preference.
+  const locale = resolveRequestLocale(req.query.locale, null, studio.settings?.defaultLocale);
+
   const pieces = await prisma.flashPiece.findMany({
     where: { studioId: studio.id, artistId, status: FlashPieceStatus.AVAILABLE },
     select: {
@@ -60,11 +112,19 @@ router.get("/public", async (req, res) => {
       priceCents: true,
       estimatedDurationMinutes: true,
       isOneOfOne: true,
+      translations: true,
     },
     orderBy: { createdAt: "desc" },
   });
 
+  const localizedPieces = pieces.map((piece) => {
+    const translation = piece.translations.find((t) => t.locale === locale);
+    const { translations, ...rest } = withLocale(piece, translation, ["title", "description"]);
+    return rest;
+  });
+
   res.json({
+    resolvedLocale: locale,
     studioName: studio.name,
     studioSlug: studio.slug,
     studioLogoUrl: studio.logoUrl,
@@ -72,7 +132,7 @@ router.get("/public", async (req, res) => {
     artistId: artist.id,
     artistName: artist.user.name ?? "this artist",
     artistAvatarUrl: artist.user.avatarUrl,
-    pieces,
+    pieces: localizedPieces,
   });
 });
 
@@ -126,7 +186,7 @@ router.get("/lookup-public", async (req, res) => {
 // fixed from the piece -- no assignment or estimate step.
 router.post("/:id/request", async (req, res) => {
   const id = req.params.id as string;
-  const { placementDescription, placementPhotoUrl, firstName, lastName, email, phone } = req.body ?? {};
+  const { placementDescription, placementPhotoUrl, firstName, lastName, email, phone, preferredLocale } = req.body ?? {};
 
   if (
     typeof placementDescription !== "string" ||
@@ -174,9 +234,17 @@ router.post("/:id/request", async (req, res) => {
       ? await prisma.client.findFirst({ where: { studioId, phone: normalizedPhone } })
       : null;
 
+  // Multi-language public forms, fix pass: no Client exists yet at
+  // picker-toggle time on the gallery page (see LanguagePicker's own
+  // comment) -- this request is the one moment it CAN persist the
+  // client's choice, right as their Client record is actually created.
+  const clientPreferredLocale = isSupportedLocale(preferredLocale) ? preferredLocale : null;
+
   let client;
   if (existingClient) {
-    client = existingClient;
+    client = clientPreferredLocale
+      ? await prisma.client.update({ where: { id: existingClient.id }, data: { preferredLocale: clientPreferredLocale } })
+      : existingClient;
   } else {
     const referralCode = await generateUniqueReferralCode();
     client = await prisma.$transaction(async (tx) => {
@@ -188,6 +256,7 @@ router.post("/:id/request", async (req, res) => {
           email: trimmedEmail,
           phone: normalizedPhone,
           referralCode,
+          preferredLocale: clientPreferredLocale,
         },
       });
       await syncPrimaryPhone(tx, created.id, created.phone);
@@ -294,7 +363,7 @@ router.get("/", requirePermission("flashGallery.manage"), async (req, res) => {
     orderBy: { createdAt: "desc" },
   });
 
-  res.json(pieces);
+  res.json(pieces.map(reshapeFlashPieceTranslations));
 });
 
 // Permission-context fix inventory: intentionally left home-scoped -- no
@@ -357,6 +426,15 @@ router.post("/", requirePermission("flashGallery.manage"), async (req, res) => {
     return res.status(403).json({ error: "Forbidden" });
   }
 
+  let parsedTranslations: { locale: string; data: Record<string, unknown> }[] = [];
+  if (req.body?.translations !== undefined) {
+    const parsed = parseFlashPieceTranslations(req.body.translations);
+    if (!parsed.ok) {
+      return res.status(400).json({ error: parsed.error });
+    }
+    parsedTranslations = parsed.value;
+  }
+
   const piece = await prisma.flashPiece.create({
     data: {
       studioId,
@@ -371,6 +449,12 @@ router.post("/", requirePermission("flashGallery.manage"), async (req, res) => {
     include: FLASH_PIECE_INCLUDE,
   });
 
+  for (const { locale, data: translationData } of parsedTranslations) {
+    await prisma.flashPieceTranslation.create({
+      data: { flashPieceId: piece.id, studioId, locale, ...translationData },
+    });
+  }
+
   await logAudit({
     studioId,
     actorUserId: req.user!.userId,
@@ -382,6 +466,11 @@ router.post("/", requirePermission("flashGallery.manage"), async (req, res) => {
 
   emitInvalidation({ type: "flash.changed", studioId });
 
+  // Not reshaped like the list GET below -- `piece` was fetched before the
+  // translation rows above were written, so it would show a stale empty
+  // `translations`. The editor already has the values it just submitted;
+  // it doesn't need them echoed back (same convention as
+  // customPolicies.ts/services.ts's own create/update responses).
   res.status(201).json(piece);
 });
 
@@ -435,6 +524,15 @@ router.patch("/:id", async (req, res) => {
     return res.status(400).json({ error: "isOneOfOne must be a boolean" });
   }
 
+  let parsedTranslations: { locale: string; data: Record<string, unknown> }[] = [];
+  if (req.body?.translations !== undefined) {
+    const parsed = parseFlashPieceTranslations(req.body.translations);
+    if (!parsed.ok) {
+      return res.status(400).json({ error: parsed.error });
+    }
+    parsedTranslations = parsed.value;
+  }
+
   const data = {
     ...(imageUrl !== undefined ? { imageUrl } : {}),
     ...(title !== undefined ? { title } : {}),
@@ -445,6 +543,14 @@ router.patch("/:id", async (req, res) => {
   };
 
   const updated = await prisma.flashPiece.update({ where: { id }, data, include: FLASH_PIECE_INCLUDE });
+
+  for (const { locale, data: translationData } of parsedTranslations) {
+    await prisma.flashPieceTranslation.upsert({
+      where: { flashPieceId_locale: { flashPieceId: id, locale } },
+      create: { flashPieceId: id, studioId, locale, ...translationData },
+      update: translationData,
+    });
+  }
 
   await logAudit({
     studioId,

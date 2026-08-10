@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 import SignaturePad from 'signature_pad'
+import { useTranslations } from '../i18n'
 
 export interface SignaturePadHandle {
   isEmpty: () => boolean
@@ -30,6 +31,7 @@ const SignaturePadField = forwardRef<SignaturePadHandle, SignaturePadFieldProps>
   { label, showError = false, onClear },
   ref,
 ) {
+  const { t } = useTranslations()
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const padRef = useRef<SignaturePad | null>(null)
 
@@ -63,7 +65,7 @@ const SignaturePadField = forwardRef<SignaturePadHandle, SignaturePadFieldProps>
       <div className="overflow-hidden rounded-lg border border-border">
         <canvas ref={canvasRef} className="h-32 w-full touch-none" />
       </div>
-      {showError && <p className="mt-2 text-sm text-danger">Please sign before submitting.</p>}
+      {showError && <p className="mt-2 text-sm text-danger">{t('common.pleaseSignBeforeSubmitting')}</p>}
       <button
         type="button"
         onClick={() => {
@@ -72,7 +74,7 @@ const SignaturePadField = forwardRef<SignaturePadHandle, SignaturePadFieldProps>
         }}
         className="mt-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg-secondary transition hover:bg-surface"
       >
-        Clear
+        {t('common.clear')}
       </button>
     </div>
   )

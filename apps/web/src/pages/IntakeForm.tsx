@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { apiFetch, ApiError } from '../lib/api'
 import PhoneInput from '../components/PhoneInput'
@@ -8,6 +8,8 @@ import PublicPageFooter from '../components/PublicPageFooter'
 import { isValidPhoneDigits } from '../lib/format'
 import { formatCurrencyInput } from '../lib/money'
 import { applyThemePreset } from '../lib/themePresets'
+import { LocaleProvider, useLocale, useTranslations } from '../i18n'
+import LanguagePicker from '../i18n/LanguagePicker'
 
 interface PrefillPayload {
   firstName?: string
@@ -63,6 +65,16 @@ type CustomAnswerValue = string | string[]
 type StudioCheck = 'loading' | 'valid' | 'invalid'
 
 export default function IntakeForm() {
+  return (
+    <LocaleProvider>
+      <IntakeFormContent />
+    </LocaleProvider>
+  )
+}
+
+function IntakeFormContent() {
+  const { t } = useTranslations()
+  const { locale, setLocale } = useLocale()
   const { studioSlug, formSlug } = useParams<{ studioSlug: string; formSlug?: string }>()
   const [searchParams] = useSearchParams()
   const draftToken = searchParams.get('draft')
@@ -162,21 +174,46 @@ export default function IntakeForm() {
   // /terms pages read from. formSlug absent -> whichever form is currently
   // the default, so /inquiry/{studio-slug} (no form-slug segment) keeps
   // resolving exactly like it always has.
+  // Fix pass: the FIRST fetch must NOT send ?locale= explicitly -- an
+  // explicit query param always wins in resolveRequestLocale's own
+  // precedence, so it would override even a studio's own configured
+  // defaultLocale (no Client exists yet here to protect, but the
+  // studio default still deserves to win on a fresh, never-toggled
+  // load). Only a genuine later change (the picker) sends it.
+  //
+  // A plain ref flipped synchronously at the top of the effect isn't
+  // enough of a guard by itself: React 18 StrictMode's dev-only
+  // mount -> cleanup -> remount dance re-invokes this effect a SECOND
+  // time in the very same synchronous tick, before the first
+  // invocation's fetch has had any chance to resolve -- flipping the
+  // ref there just means the second invocation reads it as
+  // already-false and sends a stray explicit ?locale=en (the
+  // still-default state) that then races the correct no-param fetch
+  // for whichever renders last (see WaiverSign.tsx, where this exact
+  // race was caught live). Gating on a ref that's only set INSIDE the
+  // fetch's own .then() sidesteps that: both synchronous StrictMode
+  // invocations see it as unset (nothing has resolved yet either way)
+  // and both send the safe no-param request; only a genuine LATER
+  // change (the picker's onChange, well after that promise settled)
+  // sees it set and sends the real explicit locale.
+  const hasLoadedRef = useRef(false)
   useEffect(() => {
     if (!studioSlug) return
 
     let ignore = false
-    const query = new URLSearchParams({ studioSlug })
+    const query = new URLSearchParams({ studioSlug, ...(hasLoadedRef.current ? { locale } : {}) })
     if (formSlug) query.set("formSlug", formSlug)
 
-    apiFetch<{ studioName: string; intakeFormFields: IntakeFormFieldPublic[]; referralProgramEnabled: boolean }>(
+    apiFetch<{ studioName: string; intakeFormFields: IntakeFormFieldPublic[]; referralProgramEnabled: boolean; resolvedLocale?: string }>(
       `/studio-settings/public?${query}`,
     )
       .then((data) => {
         if (ignore) return
+        hasLoadedRef.current = true
         setStudioName(data.studioName)
         setFields((data.intakeFormFields ?? []).slice().sort((a, b) => a.order - b.order))
         setReferralProgramEnabled(data.referralProgramEnabled)
+        if (data.resolvedLocale && data.resolvedLocale !== locale) setLocale(data.resolvedLocale as typeof locale)
       })
       .catch((err) => {
         // A named formSlug that doesn't resolve to a real form is a broken/
@@ -194,7 +231,8 @@ export default function IntakeForm() {
     return () => {
       ignore = true
     }
-  }, [studioSlug, formSlug])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [studioSlug, formSlug, locale])
 
   // Prefill data never rides in the URL as field values -- just this
   // opaque, single-use token. An invalid/expired token quietly falls back
@@ -265,27 +303,27 @@ export default function IntakeForm() {
     if (channel === 'REFERRAL' && !referralCode) missingSystem.push('referral code')
 
     if (missingSystem.length > 0) {
-      setSubmitError('Please fill out all required fields.')
+      setSubmitError(t('intake.pleaseFillRequiredFields'))
       return
     }
 
     if (!isValidPhoneDigits(phone)) {
-      setSubmitError('Enter a complete 10-digit phone number, or leave it blank.')
+      setSubmitError(t('intake.enterCompletePhoneOrBlank'))
       return
     }
 
     if (imagesUploading) {
-      setSubmitError('Please wait for your photos to finish uploading.')
+      setSubmitError(t('intake.pleaseWaitForPhotos'))
       return
     }
 
     if (isRequired('referenceImages') && referenceImages.urls.length === 0) {
-      setSubmitError('Please add at least one reference image.')
+      setSubmitError(t('intake.pleaseAddReferenceImage'))
       return
     }
 
     if (isRequired('placementImages') && placementImages.urls.length === 0) {
-      setSubmitError('Please add at least one placement photo.')
+      setSubmitError(t('intake.pleaseAddPlacementPhoto'))
       return
     }
 
@@ -298,7 +336,7 @@ export default function IntakeForm() {
       return !(typeof value === 'string' && value.trim())
     })
     if (missingCustomField) {
-      setSubmitError(`Please answer: ${missingCustomField.label}`)
+      setSubmitError(t('intake.pleaseAnswer', { fieldLabel: missingCustomField.label }))
       return
     }
 
@@ -334,13 +372,19 @@ export default function IntakeForm() {
           placementImages: placementImages.urls,
           draftToken: draftToken || undefined,
           smsConsent,
+          // Multi-language public forms, fix pass: no Client exists yet at
+          // picker-toggle time on this page (see LanguagePicker's own
+          // comment) -- so unlike every other flow's PATCH .../locale,
+          // this is the one moment intake CAN persist the client's choice,
+          // right as their Client record is actually created.
+          preferredLocale: locale,
           customFieldAnswers: Object.keys(customAnswers).length > 0 ? customAnswers : undefined,
         }),
       })
 
       setSubmitted(true)
     } catch (err) {
-      setSubmitError(err instanceof ApiError ? err.message : 'Something went wrong. Please try again.')
+      setSubmitError(err instanceof ApiError ? err.message : t('common.somethingWentWrong'))
     } finally {
       setSubmitting(false)
     }
@@ -354,7 +398,7 @@ export default function IntakeForm() {
         return (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
-              <label className={LABEL_CLASS}>First name{asterisk}</label>
+              <label className={LABEL_CLASS}>{t('intake.firstName')}{asterisk}</label>
               <input
                 type="text"
                 value={firstName}
@@ -364,7 +408,7 @@ export default function IntakeForm() {
               />
             </div>
             <div>
-              <label className={LABEL_CLASS}>Last name{asterisk}</label>
+              <label className={LABEL_CLASS}>{t('intake.lastName')}{asterisk}</label>
               <input
                 type="text"
                 value={lastName}
@@ -413,25 +457,24 @@ export default function IntakeForm() {
                 attached; switch this back to www at that point for the
                 canonical hostname. */}
             <p className="mt-1 text-[11px] leading-snug text-fg-muted">
-              {field.helpText ||
-                'By providing your phone number, you consent to receive SMS messages about your inquiry and appointment. Message and data rates may apply. Reply STOP to opt out.'}{' '}
-              See our{' '}
+              {field.helpText || t('intake.smsConsentDefault')}{' '}
+              {t('intake.seeOurPrivacyAndTerms')}{' '}
               <a
                 href="https://inkmanager.app/privacy"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="underline hover:text-fg-secondary"
               >
-                Privacy Policy
+                {t('common.privacyPolicy')}
               </a>{' '}
-              and{' '}
+              {t('common.and')}{' '}
               <a
                 href="https://inkmanager.app/terms"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="underline hover:text-fg-secondary"
               >
-                Terms
+                {t('common.terms')}
               </a>
               .
             </p>
@@ -446,22 +489,22 @@ export default function IntakeForm() {
             </label>
             <select value={channel} onChange={(e) => setChannel(e.target.value)} required={field.required} className={INPUT_CLASS}>
               <option value="" disabled>
-                Select one
+                {t('intake.selectOne')}
               </option>
-              <option value="EMAIL">Email</option>
-              <option value="INSTAGRAM">Instagram</option>
-              <option value="FACEBOOK">Facebook</option>
-              {referralProgramEnabled && <option value="REFERRAL">A friend referred me</option>}
+              <option value="EMAIL">{t('intake.referralSourceEmail')}</option>
+              <option value="INSTAGRAM">{t('intake.referralSourceInstagram')}</option>
+              <option value="FACEBOOK">{t('intake.referralSourceFacebook')}</option>
+              {referralProgramEnabled && <option value="REFERRAL">{t('intake.referralSourceFriend')}</option>}
             </select>
             {channel === 'REFERRAL' && referralProgramEnabled && (
               <div className="mt-2">
-                <label className={LABEL_CLASS}>Friend's referral code *</label>
+                <label className={LABEL_CLASS}>{t('intake.friendReferralCode')}</label>
                 <input
                   type="text"
                   value={referralCode}
                   onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
                   required
-                  placeholder="e.g. AB23CDE"
+                  placeholder={t('intake.friendReferralCodePlaceholder')}
                   className={INPUT_CLASS}
                 />
               </div>
@@ -492,7 +535,7 @@ export default function IntakeForm() {
               {asterisk}
             </span>
             <div className="mt-2 flex gap-4">
-              {['Color', 'Black & Grey'].map((option) => (
+              {[t('intake.colorOption'), t('intake.blackAndGreyOption')].map((option) => (
                 <label key={option} className="flex items-center gap-2 text-sm text-fg-secondary">
                   <input
                     type="radio"
@@ -518,7 +561,7 @@ export default function IntakeForm() {
             </label>
             <input
               type="text"
-              placeholder="e.g. forearm, left side"
+              placeholder={t('intake.placementPlaceholder')}
               value={placement}
               onChange={(e) => setPlacement(e.target.value)}
               required={field.required}
@@ -535,7 +578,7 @@ export default function IntakeForm() {
             </label>
             <input
               type="text"
-              placeholder="e.g. palm-sized"
+              placeholder={t('intake.sizePlaceholder')}
               value={estimatedSize}
               onChange={(e) => setEstimatedSize(e.target.value)}
               required={field.required}
@@ -552,8 +595,8 @@ export default function IntakeForm() {
             </span>
             <div className="mt-2 flex gap-4">
               {[
-                { value: 'yes', label: 'Yes' },
-                { value: 'no', label: 'No' },
+                { value: 'yes', label: t('intake.yesOption') },
+                { value: 'no', label: t('intake.noOption') },
               ].map((option) => (
                 <label key={option.value} className="flex items-center gap-2 text-sm text-fg-secondary">
                   <input
@@ -576,7 +619,7 @@ export default function IntakeForm() {
           <div>
             <label className={LABEL_CLASS}>{field.label}</label>
             <select value={preferredArtistId} onChange={(e) => setPreferredArtistId(e.target.value)} className={INPUT_CLASS}>
-              <option value="">No preference</option>
+              <option value="">{t('intake.noPreference')}</option>
               {artists.map((artist) => (
                 <option key={artist.id} value={artist.id}>
                   {artist.name}
@@ -598,7 +641,7 @@ export default function IntakeForm() {
             <label className={LABEL_CLASS}>{field.label}</label>
             <input
               type="text"
-              placeholder="e.g. within a month"
+              placeholder={t('intake.timingPlaceholder')}
               value={desiredTiming}
               onChange={(e) => setDesiredTiming(e.target.value)}
               className={INPUT_CLASS}
@@ -609,7 +652,7 @@ export default function IntakeForm() {
         return (
           <ImageUploadSection
             label={`${field.label}${asterisk}`}
-            hint={field.helpText || "Photos or designs that show the style you're going for."}
+            hint={field.helpText || t('intake.referenceImagesHint')}
             onChange={setReferenceImages}
           />
         )
@@ -617,7 +660,7 @@ export default function IntakeForm() {
         return (
           <ImageUploadSection
             label={`${field.label}${asterisk}`}
-            hint={field.helpText || 'A photo of the area where you want the tattoo.'}
+            hint={field.helpText || t('intake.placementPhotoHint')}
             onChange={setPlacementImages}
           />
         )
@@ -700,7 +743,7 @@ export default function IntakeForm() {
                   required={field.required}
                   className="accent-accent"
                 />
-                {option === 'YES' ? 'Yes' : 'No'}
+                {option === 'YES' ? t('intake.yesOption') : t('intake.noOption')}
               </label>
             ))}
           </div>
@@ -714,7 +757,7 @@ export default function IntakeForm() {
             className={INPUT_CLASS}
           >
             <option value="" disabled>
-              Select one
+              {t('intake.selectOne')}
             </option>
             {(field.options ?? []).map((option) => (
               <option key={option} value={option}>
@@ -753,10 +796,11 @@ export default function IntakeForm() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
         <div className="w-full max-w-lg rounded-2xl card-surface border border-border bg-surface p-8 text-center">
-          <h1 className="text-xl font-semibold text-fg">We couldn't find this studio</h1>
-          <p className="mt-2 text-sm text-fg-secondary">
-            Please double-check the link you were given, or contact the studio directly.
-          </p>
+          <div className="mb-4 flex justify-end">
+            <LanguagePicker />
+          </div>
+          <h1 className="text-xl font-semibold text-fg">{t('intake.studioNotFoundHeading')}</h1>
+          <p className="mt-2 text-sm text-fg-secondary">{t('intake.studioNotFoundBody')}</p>
         </div>
       </div>
     )
@@ -765,7 +809,7 @@ export default function IntakeForm() {
   if (studioCheck === 'loading') {
     return (
       <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
-        <p className="text-sm text-fg-secondary">Loading…</p>
+        <p className="text-sm text-fg-secondary">{t('common.loading')}</p>
       </div>
     )
   }
@@ -774,10 +818,8 @@ export default function IntakeForm() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
         <div className="w-full max-w-lg rounded-2xl card-surface border border-border bg-surface p-8 text-center">
-          <h1 className="text-xl font-semibold text-fg">Thanks — your inquiry is in!</h1>
-          <p className="mt-2 text-sm text-fg-secondary">
-            We've received your submission and someone from the studio will reach out soon.
-          </p>
+          <h1 className="text-xl font-semibold text-fg">{t('intake.submittedHeading')}</h1>
+          <p className="mt-2 text-sm text-fg-secondary">{t('intake.submittedBody')}</p>
         </div>
       </div>
     )
@@ -786,12 +828,15 @@ export default function IntakeForm() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
       <div className="w-full max-w-2xl rounded-2xl card-surface border border-border bg-surface p-8">
-        <h1 className="text-2xl font-bold text-fg">Tattoo Inquiry</h1>
-        <p className="mt-1 text-sm text-fg-secondary">Tell us about the tattoo you have in mind.</p>
+        <div className="mb-4 flex justify-end">
+          <LanguagePicker />
+        </div>
+
+        <h1 className="text-2xl font-bold text-fg">{t('intake.pageHeading')}</h1>
+        <p className="mt-1 text-sm text-fg-secondary">{t('intake.intro')}</p>
 
         <div className="mt-4 rounded-lg border border-warning/30 bg-warning/10 p-3 text-xs text-warning">
-          You must be 18 years or older to receive a tattoo. Submitting this form does not confirm an appointment —
-          it starts a conversation with the studio.
+          {t('intake.ageDisclosure')}
         </div>
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-5">
@@ -815,30 +860,30 @@ export default function IntakeForm() {
                 className="mt-0.5 h-4 w-4 shrink-0 accent-accent"
               />
               <span>
-                I agree to receive text messages from {studioName || 'the studio'} regarding my appointment,
-                including reminders and updates. Message and data rates may apply. Reply STOP to opt out. View our{' '}
+                {t('intake.smsOptInBody', { studioName: studioName || t('intake.smsOptInDefaultStudioName') })}{' '}
+                {t('intake.viewOurPrivacyAndTerms')}{' '}
                 <a
                   href="https://inkmanager.app/privacy"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="underline hover:text-fg"
                 >
-                  Privacy Policy
+                  {t('common.privacyPolicy')}
                 </a>{' '}
-                and{' '}
+                {t('common.and')}{' '}
                 <a
                   href="https://inkmanager.app/terms"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="underline hover:text-fg"
                 >
-                  Terms
+                  {t('common.terms')}
                 </a>
                 .
               </span>
             </label>
             {smsConsentError && (
-              <p className="mt-1 text-xs text-danger">Please agree to receive text messages to submit this form.</p>
+              <p className="mt-1 text-xs text-danger">{t('intake.pleaseAgreeToSms')}</p>
             )}
           </div>
 
@@ -853,7 +898,7 @@ export default function IntakeForm() {
             disabled={submitting || imagesUploading}
             className="w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
           >
-            {submitting ? 'Submitting…' : 'Submit inquiry'}
+            {submitting ? t('intake.submitting') : t('intake.submitInquiry')}
           </button>
         </form>
 

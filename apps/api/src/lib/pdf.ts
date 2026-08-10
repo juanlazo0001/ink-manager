@@ -1,4 +1,5 @@
 import PDFDocument from "pdfkit";
+import { pdfT, pdfDateLocale } from "./pdfStrings";
 
 // Native, pure-JS PDF generation (pdfkit) -- deliberately NOT a
 // headless-browser HTML-to-PDF approach. This project already got burned
@@ -58,6 +59,13 @@ function collectPdf(doc: PDFKit.PDFDocument): Promise<Buffer> {
 export interface PdfBrand {
   studioLogoUrl: string | null;
   accentColor: string;
+  // Multi-language public forms: which language this specific signed
+  // document's PDF chrome (headers, field labels, "Generated on") renders
+  // in -- independent of the snapshot text itself (already locale-correct,
+  // captured verbatim at signing time). Optional/nullable so every
+  // existing call site keeps compiling unchanged; missing/unrecognized
+  // falls back to English via pdfT's own DEFAULT_LOCALE fallback.
+  locale?: string | null;
 }
 
 function addAccentRule(doc: PDFKit.PDFDocument, accentColor: string, y: number, width?: number) {
@@ -114,7 +122,9 @@ function addDocumentHeader(doc: PDFKit.PDFDocument, studioName: string, title: s
     .fontSize(9)
     .font("Helvetica")
     .fillColor("#666666")
-    .text(`Generated ${new Date().toLocaleString("en-US")}`, { align: "center" });
+    .text(pdfT(brand.locale, "generatedOn", { date: new Date().toLocaleString(pdfDateLocale(brand.locale)) }), {
+      align: "center",
+    });
   doc.fillColor("#000000");
   doc.moveDown(0.5);
   addAccentRule(doc, brand.accentColor, doc.y);
@@ -136,17 +146,19 @@ function addSignatureBlock(
   signatureData: string | null,
   signedAt: Date | null,
   accentColor: string,
+  locale: string | null | undefined,
 ) {
+  const dash = pdfT(locale, "dash");
   addSectionTitle(doc, label, accentColor);
-  doc.text(`Signed by: ${signatureName ?? "—"}`);
-  doc.text(`Date/time: ${signedAt ? signedAt.toLocaleString("en-US") : "—"}`);
+  doc.text(pdfT(locale, "signedBy", { name: signatureName ?? dash }));
+  doc.text(pdfT(locale, "dateTimeLabel", { value: signedAt ? signedAt.toLocaleString(pdfDateLocale(locale)) : dash }));
   if (signatureData) {
     try {
       const buf = decodeDataUrlImage(signatureData);
       doc.moveDown(0.25);
       doc.image(buf, { width: 180 });
     } catch {
-      doc.text("(signature image could not be rendered)");
+      doc.text(pdfT(locale, "signatureImageError"));
     }
   }
 }
@@ -165,28 +177,29 @@ export interface DepositFormPdfInput extends PdfBrand {
   signedAt: Date | null;
 }
 
-// Renders TERMS' CURRENT wording, not a per-signing snapshot -- unlike
-// LiabilityWaiver, DepositForm has no clausesSnapshot equivalent (only the
-// 8 agreed* booleans, backed by a single shared, studio-wide TERMS array in
-// deposits.ts). That array is described in its own comment as "exact SOP
-// wording" and changes rarely, so this is an accepted, documented gap
-// rather than a true historical snapshot -- flagged here and in REPORT.md,
-// not silently treated as equivalent to the waiver's real snapshots.
+// Multi-language public forms, Part 5: `input.terms` is now
+// DepositForm.termsSnapshot (the exact, locale-correct wording shown at
+// sign time) for every form signed after this part landed, falling back to
+// deposits.ts's live TERMS/English only for forms signed before
+// termsSnapshot existed -- see the fallback comment at the /:id/pdf call
+// site. This closes the gap once flagged here as accepted: DepositForm now
+// has the same "never retroactively changes what a client already saw"
+// guarantee LiabilityWaiver's own snapshots always had.
 export async function generateDepositFormPdf(input: DepositFormPdfInput): Promise<Buffer> {
   const doc = new PDFDocument({ margin: 50, size: "LETTER" });
-  addDocumentHeader(doc, input.studioName, "Deposit Agreement", input);
+  addDocumentHeader(doc, input.studioName, pdfT(input.locale, "depositAgreementTitle"), input);
 
   doc.fontSize(10).font("Helvetica");
-  doc.text(`Client: ${input.clientName}`);
-  if (input.inquiryTitle) doc.text(`Project: ${input.inquiryTitle}`);
-  doc.text(`Session: #${input.sessionNumber}`);
+  doc.text(pdfT(input.locale, "client", { name: input.clientName }));
+  if (input.inquiryTitle) doc.text(pdfT(input.locale, "project", { title: input.inquiryTitle }));
+  doc.text(pdfT(input.locale, "session", { n: input.sessionNumber }));
   doc.moveDown(0.5);
-  doc.text(`Deposit amount: $${input.depositAmount.toFixed(2)}`);
-  doc.text(`Processing fee: $${input.feeAmount.toFixed(2)}`);
-  doc.font("Helvetica-Bold").text(`Total charged: $${input.totalCharged.toFixed(2)}`);
+  doc.text(pdfT(input.locale, "depositAmount", { amount: `$${input.depositAmount.toFixed(2)}` }));
+  doc.text(pdfT(input.locale, "processingFee", { amount: `$${input.feeAmount.toFixed(2)}` }));
+  doc.font("Helvetica-Bold").text(pdfT(input.locale, "totalCharged", { amount: `$${input.totalCharged.toFixed(2)}` }));
   doc.font("Helvetica");
 
-  addSectionTitle(doc, "Terms agreed to", input.accentColor);
+  addSectionTitle(doc, pdfT(input.locale, "termsAgreedTo"), input.accentColor);
   for (const term of input.terms) {
     // "✓" (U+2713) falls outside the base-14 fonts' WinAnsi encoding and
     // renders as a garbled substitute glyph -- a plain hyphen is
@@ -195,7 +208,15 @@ export async function generateDepositFormPdf(input: DepositFormPdfInput): Promis
     doc.moveDown(0.35);
   }
 
-  addSignatureBlock(doc, "Signature", input.signatureName, input.signatureData, input.signedAt, input.accentColor);
+  addSignatureBlock(
+    doc,
+    pdfT(input.locale, "signature"),
+    input.signatureName,
+    input.signatureData,
+    input.signedAt,
+    input.accentColor,
+    input.locale,
+  );
 
   return collectPdf(doc);
 }
@@ -234,72 +255,81 @@ export interface WaiverPdfInput extends PdfBrand {
 // in-app, same as today.
 export async function generateWaiverPdf(input: WaiverPdfInput): Promise<Buffer> {
   const doc = new PDFDocument({ margin: 50, size: "LETTER" });
-  addDocumentHeader(doc, input.studioName, "Liability Waiver & Consent", input);
+  const dash = pdfT(input.locale, "dash");
+  const dateLocale = pdfDateLocale(input.locale);
+  addDocumentHeader(doc, input.studioName, pdfT(input.locale, "waiverTitle"), input);
 
   doc.fontSize(10).font("Helvetica");
-  doc.text(`Client: ${input.clientName}`);
-  doc.text(`Legal name on file: ${input.legalName ?? "—"}`);
-  doc.text(`Date of birth: ${input.dateOfBirth ? input.dateOfBirth.toLocaleDateString("en-US") : "—"}`);
-  doc.text(`Appointment date: ${input.appointmentDate.toLocaleString("en-US")}`);
-  doc.text(`Emergency contact: ${input.emergencyContactName ?? "—"} (${input.emergencyContactPhone ?? "—"})`);
+  doc.text(pdfT(input.locale, "client", { name: input.clientName }));
+  doc.text(pdfT(input.locale, "legalNameOnFile", { name: input.legalName ?? dash }));
+  doc.text(pdfT(input.locale, "dateOfBirthLabel", { value: input.dateOfBirth ? input.dateOfBirth.toLocaleDateString(dateLocale) : dash }));
+  doc.text(pdfT(input.locale, "appointmentDateLabel", { value: input.appointmentDate.toLocaleString(dateLocale) }));
+  doc.text(
+    pdfT(input.locale, "emergencyContactLabel", {
+      name: input.emergencyContactName ?? dash,
+      phone: input.emergencyContactPhone ?? dash,
+    }),
+  );
 
-  addSectionTitle(doc, "Health screening", input.accentColor);
+  addSectionTitle(doc, pdfT(input.locale, "healthScreening"), input.accentColor);
   const answerByIndex = new Map(input.healthAnswers.map((a) => [a.questionIndex, a]));
   input.healthQuestions.forEach((q, i) => {
     const a = answerByIndex.get(i);
     doc.font("Helvetica-Bold").text(`${i + 1}. ${q.question}`);
     doc
       .font("Helvetica")
-      .text(`Answer: ${a?.answer ?? "—"}${a?.explanation ? ` — ${a.explanation}` : ""}`, { indent: 10 });
+      .text(pdfT(input.locale, "answerLabel", { value: `${a?.answer ?? dash}${a?.explanation ? ` — ${a.explanation}` : ""}` }), {
+        indent: 10,
+      });
     doc.moveDown(0.35);
   });
 
-  addSectionTitle(doc, "Acknowledged clauses", input.accentColor);
+  addSectionTitle(doc, pdfT(input.locale, "acknowledgedClauses"), input.accentColor);
   const initialsByIndex = new Map(input.clauseInitials.map((c) => [c.clauseIndex, c.initials]));
   input.clauses.forEach((clause, i) => {
     doc.text(`${i + 1}. ${clause}`, { indent: 10 });
-    doc.font("Helvetica-Oblique").text(`Initialed: ${initialsByIndex.get(i) ?? "—"}`, { indent: 10 });
+    doc.font("Helvetica-Oblique").text(pdfT(input.locale, "initialedLabel", { value: initialsByIndex.get(i) ?? dash }), { indent: 10 });
     doc.font("Helvetica");
     doc.moveDown(0.35);
   });
 
   if (input.acknowledgment) {
-    addSectionTitle(doc, "Acknowledgment", input.accentColor);
+    addSectionTitle(doc, pdfT(input.locale, "acknowledgment"), input.accentColor);
     doc.text(stripHtml(input.acknowledgment));
   }
 
   addSignatureBlock(
     doc,
-    "Client signature",
+    pdfT(input.locale, "clientSignature"),
     input.signatureName,
     input.signatureData,
     input.signedAt,
     input.accentColor,
+    input.locale,
   );
 
-  addSectionTitle(doc, "Photo / video release", input.accentColor);
+  addSectionTitle(doc, pdfT(input.locale, "photoVideoRelease"), input.accentColor);
   if (input.photoReleaseAccepted) {
     if (input.photoReleaseText) doc.text(stripHtml(input.photoReleaseText));
     addSignatureBlock(
       doc,
-      "Release signature",
+      pdfT(input.locale, "releaseSignature"),
       input.photoReleaseSignatureName,
       input.photoReleaseSignatureData,
       input.signedAt,
       input.accentColor,
+      input.locale,
     );
   } else {
-    doc.text("Not accepted.");
+    doc.text(pdfT(input.locale, "notAccepted"));
   }
 
-  addSectionTitle(doc, "ID verification", input.accentColor);
+  addSectionTitle(doc, pdfT(input.locale, "idVerification"), input.accentColor);
+  doc.text(pdfT(input.locale, input.idImageOnFile ? "idOnFile" : "noIdOnFile"));
   doc.text(
-    input.idImageOnFile
-      ? "A government ID photo is on file in the app (not embedded in this PDF -- see app for the image itself)."
-      : "No ID image on file.",
-  );
-  doc.text(
-    `Staff-verified: ${input.verifiedAt ? `Yes, ${input.verifiedAt.toLocaleString("en-US")} by ${input.verifiedByName ?? "—"}` : "Not yet verified"}`,
+    input.verifiedAt
+      ? pdfT(input.locale, "staffVerifiedYes", { date: input.verifiedAt.toLocaleString(dateLocale), name: input.verifiedByName ?? dash })
+      : pdfT(input.locale, "staffVerifiedNo"),
   );
 
   return collectPdf(doc);

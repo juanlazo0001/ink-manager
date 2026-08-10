@@ -8,6 +8,8 @@ import PublicPageFooter from '../components/PublicPageFooter'
 import SignaturePadField, { type SignaturePadHandle } from '../components/SignaturePadField'
 import PaymentFlowStages from '../components/payments/PaymentFlowStages'
 import PaymentConfirmationStage from '../components/payments/PaymentConfirmationStage'
+import { LocaleProvider, useLocale, useTranslations, persistPickerLocale } from '../i18n'
+import LanguagePicker from '../i18n/LanguagePicker'
 import DepositAppointmentCard from '../components/payments/DepositAppointmentCard'
 import DepositGiftCardCard from '../components/payments/DepositGiftCardCard'
 
@@ -106,15 +108,50 @@ interface VerifyResponse {
   // existed (redirect to hosted Checkout).
   embeddedPaymentsEnabled: boolean
   terms: Term[]
+  // Multi-language public forms: which locale the API actually resolved
+  // (explicit ?locale= > this client's own stored preference > the
+  // studio's own default) -- synced back into LocaleProvider on load so
+  // the picker reflects the server's own resolution immediately, not
+  // always defaulting to English until a client manually toggles it.
+  resolvedLocale?: string
+}
+
+// Multi-language public forms: this page's own hardcoded 8-clause
+// agreement (Term.label from the API) is platform copy, not studio
+// content -- see routes/deposits.ts's TERMS array and the Part 1
+// investigation's Finding 1. Term.key is still the API's own source of
+// truth for WHICH terms exist and in what order; Term.label itself is
+// ignored in favor of this lookup, so the platform copy is translated
+// here, once, rather than trusting whatever single-locale text the API
+// happens to send.
+const TERM_TRANSLATION_KEYS: Record<string, Parameters<ReturnType<typeof useTranslations>['t']>[0]> = {
+  agreedNonRefundable: 'deposit.terms.agreedNonRefundable',
+  agreedLatePolicy: 'deposit.terms.agreedLatePolicy',
+  agreedNoShowForfeit: 'deposit.terms.agreedNoShowForfeit',
+  agreedNewDepositAfterNoShow: 'deposit.terms.agreedNewDepositAfterNoShow',
+  agreedRescheduleLimit: 'deposit.terms.agreedRescheduleLimit',
+  agreedExpiration: 'deposit.terms.agreedExpiration',
+  agreedIdAndVoucher: 'deposit.terms.agreedIdAndVoucher',
+  agreedAge18: 'deposit.terms.agreedAge18',
 }
 
 export default function DepositResponse() {
+  return (
+    <LocaleProvider>
+      <DepositResponseContent />
+    </LocaleProvider>
+  )
+}
+
+function DepositResponseContent() {
+  const { t } = useTranslations()
+  const { locale, setLocale } = useLocale()
   const { token } = useParams<{ token: string }>()
   const [searchParams] = useSearchParams()
   const justReturnedFromStripe = searchParams.get('paid') === '1'
 
   const [state, setState] = useState<PageState>('loading')
-  const [invalidMessage, setInvalidMessage] = useState('This link is invalid or has expired.')
+  const [invalidMessage, setInvalidMessage] = useState(t('common.linkExpiredHeading'))
   const [verifyData, setVerifyData] = useState<VerifyResponse | null>(null)
 
   const [agreed, setAgreed] = useState<Record<string, boolean>>({})
@@ -142,16 +179,35 @@ export default function DepositResponse() {
 
   const signaturePadRef = useRef<SignaturePadHandle | null>(null)
 
+  // Set only INSIDE the fetch's own .then() below -- see the picker
+  // effect's comment for why a plain "is this the first render" ref
+  // isn't a safe enough guard on its own under React 18 StrictMode.
+  const hasLoadedRef = useRef(false)
+
   const loadVerify = useCallback(
-    (opts?: { poll?: boolean }) => {
+    (opts?: { poll?: boolean; explicitLocale?: boolean }) => {
       if (!token) return
       let pollAttempts = 0
 
       function load() {
-        apiFetch<VerifyResponse>(`/deposits/verify/${token}`)
+        // Fix pass: the FIRST fetch must NOT send ?locale= at all -- an
+        // explicit query param always wins in resolveRequestLocale's own
+        // precedence, so echoing this component's still-default 'en'
+        // state back at the server as if it were a real choice defeated
+        // the whole "resolve from Client.preferredLocale" mechanism on
+        // every fresh link, permanently. Only a genuine later change
+        // (the picker effect below, explicitLocale: true) sends it.
+        const url = opts?.explicitLocale ? `/deposits/verify/${token}?locale=${locale}` : `/deposits/verify/${token}`
+        apiFetch<VerifyResponse>(url)
           .then((data) => {
+            hasLoadedRef.current = true
             setVerifyData(data)
             setState('ready')
+            // Server-resolved locale (client's own stored preference or
+            // the studio's default) wins on first load -- a no-op once
+            // this client has already picked one explicitly, since a
+            // later load's own ?locale= param would just echo it back.
+            if (data.resolvedLocale && data.resolvedLocale !== locale) setLocale(data.resolvedLocale as typeof locale)
 
             if (opts?.poll && !data.paidVia && pollAttempts < 5) {
               pollAttempts += 1
@@ -161,7 +217,7 @@ export default function DepositResponse() {
             }
           })
           .catch((err) => {
-            setInvalidMessage(err instanceof Error ? err.message : 'This link is invalid or has expired.')
+            setInvalidMessage(err instanceof Error ? err.message : t('common.linkExpiredHeading'))
             setState('invalid')
             setConfirmingPayment(false)
           })
@@ -169,6 +225,7 @@ export default function DepositResponse() {
 
       load()
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [token],
   )
 
@@ -177,6 +234,30 @@ export default function DepositResponse() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
 
+  // Re-fetch with the new locale whenever the client toggles the picker,
+  // so studio-authored content (depositBreakdownNote) re-resolves too --
+  // platform strings already re-render instantly from LocaleContext
+  // alone, this covers the half of the page that only useTranslations()
+  // can't reach.
+  //
+  // Gated on hasLoadedRef (set inside loadVerify's own .then() above),
+  // not a plain "have I run before" ref: React 18 StrictMode's dev-only
+  // mount -> cleanup -> remount dance re-invokes this effect a second
+  // time in the same synchronous tick, before the mount effect's fetch
+  // has had any chance to resolve. A ref flipped synchronously at the
+  // top of this effect would already read false-turned-true by that
+  // second invocation and fire a stray `loadVerify({ explicitLocale:
+  // true })` with `locale` still at its default 'en' -- that request
+  // then races the correct one for whichever renders last (reproduced
+  // live on WaiverSign.tsx's identical pattern). hasLoadedRef only
+  // flips once the real fetch actually completes, well after
+  // StrictMode's synchronous double-invoke window has passed.
+  useEffect(() => {
+    if (!hasLoadedRef.current) return
+    loadVerify({ explicitLocale: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locale])
+
   const allAgreed = verifyData ? verifyData.terms.every((term) => agreed[term.key]) : false
 
   async function handleSubmit(e: React.FormEvent) {
@@ -184,18 +265,18 @@ export default function DepositResponse() {
     if (!token || !verifyData) return
 
     if (!allAgreed) {
-      setSubmitError('Please agree to every term before signing.')
+      setSubmitError(t('deposit.pleaseAgreeToEveryTerm'))
       return
     }
 
     if (signatureName.trim().length === 0) {
-      setSubmitError('Please type your full name.')
+      setSubmitError(t('deposit.pleaseTypeFullName'))
       return
     }
 
     if (!signaturePadRef.current || signaturePadRef.current.isEmpty()) {
       setSignatureEmptyError(true)
-      setSubmitError('Please sign before submitting.')
+      setSubmitError(t('common.pleaseSignBeforeSubmitting'))
       return
     }
 
@@ -233,7 +314,7 @@ export default function DepositResponse() {
         setState('success')
       }
     } catch (err) {
-      setSubmitError(err instanceof ApiError ? err.message : 'Something went wrong. Please try again.')
+      setSubmitError(err instanceof ApiError ? err.message : t('common.somethingWentWrong'))
     } finally {
       setSubmitting(false)
     }
@@ -247,7 +328,7 @@ export default function DepositResponse() {
       const { url } = await apiFetch<{ url: string }>(`/deposits/${token}/checkout-session`, { method: 'POST' })
       window.location.href = url
     } catch (err) {
-      setPayError(err instanceof ApiError ? err.message : 'Something went wrong. Please try again.')
+      setPayError(err instanceof ApiError ? err.message : t('common.somethingWentWrong'))
       setPayingNow(false)
     }
   }
@@ -276,11 +357,12 @@ export default function DepositResponse() {
         if (!ignore) setEmbeddedSecret(data)
       })
       .catch((err) => {
-        if (!ignore) setEmbeddedLoadError(err instanceof ApiError ? err.message : 'Something went wrong. Please try again.')
+        if (!ignore) setEmbeddedLoadError(err instanceof ApiError ? err.message : t('common.somethingWentWrong'))
       })
     return () => {
       ignore = true
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showEmbedded, token, embeddedSecret])
 
   function handleEmbeddedPaid() {
@@ -299,23 +381,24 @@ export default function DepositResponse() {
     // app-bg-wash deliberately are (see that pair's own comment).
     <div className="login-shell flex min-h-screen items-center justify-center px-4 py-10 text-fg">
       <div className="login-panel-surface w-full max-w-lg px-4 py-8 sm:p-8">
-        {state === 'loading' && <p className="text-center text-sm text-fg-secondary">Loading…</p>}
+        <div className="mb-4 flex justify-end">
+          <LanguagePicker onChange={(next) => token && persistPickerLocale(`/deposits/${token}/locale`, next)} />
+        </div>
+
+        {state === 'loading' && <p className="text-center text-sm text-fg-secondary">{t('common.loading')}</p>}
 
         {state === 'invalid' && (
           <div className="text-center">
-            <h1 className="login-jura text-xl font-semibold text-fg">This link has expired</h1>
+            <h1 className="login-jura text-xl font-semibold text-fg">{t('common.linkExpiredHeading')}</h1>
             <p className="mt-2 text-sm text-fg-secondary">{invalidMessage}</p>
-            <p className="mt-4 text-sm text-fg-secondary">Please contact the studio to request a new deposit form.</p>
+            <p className="mt-4 text-sm text-fg-secondary">{t('deposit.linkExpiredBody')}</p>
           </div>
         )}
 
         {state === 'success' && (
           <div className="text-center">
-            <h1 className="login-jura text-xl font-semibold text-fg">Thanks — you're all set!</h1>
-            <p className="mt-2 text-sm text-fg-secondary">
-              Your signed deposit form has been received. No payment has been collected yet — the studio will reach
-              out to collect your deposit and confirm your appointment.
-            </p>
+            <h1 className="login-jura text-xl font-semibold text-fg">{t('deposit.receivedNoPaymentHeading')}</h1>
+            <p className="mt-2 text-sm text-fg-secondary">{t('deposit.receivedNoPaymentBody')}</p>
           </div>
         )}
 
@@ -329,18 +412,16 @@ export default function DepositResponse() {
                 referenceBackgroundUrl: verifyData.referenceBackgroundUrl,
               }}
               amountCents={dollarsToCents(verifyData.totalCharged)}
-              heading="Payment received"
+              heading={t('deposit.paidHeading')}
               // State-accurate rather than a blanket "confirmed your
               // appointment" claim -- paying a deposit doesn't always
               // result in a real appointment (a scheduling conflict
               // re-checked at payment time can leave it unbooked). The
               // appointment card right below carries the actual state;
-              // this line only ever claims what's universally true.
-              body={
-                verifyData.paidVia === 'STRIPE'
-                  ? "We've received your payment."
-                  : 'The studio has recorded your payment.'
-              }
+              // this line only ever claims what's universally true. (See
+              // en.ts/es.ts: paidHeadingStripe/paidHeadingManual updated to
+              // drop the "confirmed your appointment" clause to match.)
+              body={verifyData.paidVia === 'STRIPE' ? t('deposit.paidHeadingStripe') : t('deposit.paidHeadingManual')}
               // Part 2: the amount would otherwise appear twice -- once
               // here, once in DepositGiftCardCard's own large amount right
               // below -- whenever a gift card was actually issued.
@@ -370,10 +451,8 @@ export default function DepositResponse() {
               // own comment -- keeps this above the fixed personalized
               // background.
               <div className="relative z-10 mt-5 rounded-2xl border border-accent/30 bg-accent/5 p-5 text-left">
-                <p className="text-sm font-medium uppercase tracking-wider text-fg-muted">Know someone else who'd love this?</p>
-                <p className="mt-2 text-sm text-fg-secondary">
-                  Share your referral code — when a friend you refer pays their own deposit, you'll earn a reward.
-                </p>
+                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('deposit.shareReferralHeading')}</p>
+                <p className="mt-2 text-sm text-fg-secondary">{t('deposit.shareReferralBody')}</p>
                 <p className="mt-3 text-center font-mono text-xl font-semibold tracking-widest text-fg">
                   {verifyData.clientReferralCode}
                 </p>
@@ -384,8 +463,8 @@ export default function DepositResponse() {
 
         {state === 'ready' && verifyData && !verifyData.paidVia && confirmingPayment && (
           <div className="text-center">
-            <h1 className="login-jura text-xl font-semibold text-fg">Confirming your payment…</h1>
-            <p className="mt-2 text-sm text-fg-secondary">This should only take a moment.</p>
+            <h1 className="login-jura text-xl font-semibold text-fg">{t('deposit.confirmingPayment')}</h1>
+            <p className="mt-2 text-sm text-fg-secondary">{t('deposit.confirmingPaymentBody')}</p>
           </div>
         )}
 
@@ -405,36 +484,35 @@ export default function DepositResponse() {
               }}
               headlineAmountCents={dollarsToCents(verifyData.totalCharged)}
               breakdown={[
-                { label: 'Deposit', valueCents: dollarsToCents(verifyData.depositAmount) },
-                { label: 'Fee', valueCents: dollarsToCents(verifyData.feeAmount) },
+                { label: t('deposit.depositLabel'), valueCents: dollarsToCents(verifyData.depositAmount) },
+                { label: t('deposit.feeLabel'), valueCents: dollarsToCents(verifyData.feeAmount) },
               ]}
               payment={embeddedSecret}
               paymentLoadError={embeddedLoadError}
               returnUrl={`${window.location.origin}/deposit/${token}?paid=1`}
-              successHeading="Payment received"
-              successBody="We've received your payment and confirmed your appointment."
+              successHeading={t('deposit.paidHeading')}
+              successBody={t('deposit.paidHeadingStripe')}
               onPaid={handleEmbeddedPaid}
             />
           ) : (
             <div>
-              <h1 className="login-jura text-xl font-semibold text-fg">Deposit Agreement Signed</h1>
+              <h1 className="login-jura text-xl font-semibold text-fg">{t('deposit.agreementSignedHeading')}</h1>
               <p className="mt-1 text-sm font-medium text-fg-secondary">{verifyData.studioName}</p>
               <p className="mt-2 text-sm text-fg-secondary">
-                {verifyData.clientFirstName}, your agreement is on file. Pay your deposit below to confirm your
-                appointment.
+                {t('deposit.agreementSignedBody', { firstName: verifyData.clientFirstName })}
               </p>
 
               <div className="mt-4 grid grid-cols-3 gap-3">
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Deposit</p>
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('deposit.depositLabel')}</p>
                   <p className="mt-1 text-lg font-semibold text-fg">${verifyData.depositAmount}</p>
                 </div>
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Fee</p>
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('deposit.feeLabel')}</p>
                   <p className="mt-1 text-lg font-semibold text-fg">${verifyData.feeAmount}</p>
                 </div>
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Total</p>
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('deposit.totalLabel')}</p>
                   <p className="mt-1 text-lg font-semibold text-fg">${verifyData.totalCharged}</p>
                 </div>
               </div>
@@ -455,7 +533,7 @@ export default function DepositResponse() {
                 disabled={payingNow}
                 className="mt-6 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
               >
-                {payingNow ? 'Redirecting…' : `Pay $${verifyData.totalCharged}`}
+                {payingNow ? t('deposit.redirecting') : t('deposit.payAmount', { amount: `$${verifyData.totalCharged}` })}
               </button>
             </div>
           ))}
@@ -467,17 +545,14 @@ export default function DepositResponse() {
           verifyData.signedAt &&
           !verifyData.stripeConnected && (
             <div className="text-center">
-              <h1 className="login-jura text-xl font-semibold text-fg">Thanks — you're all set!</h1>
-              <p className="mt-2 text-sm text-fg-secondary">
-                Your signed deposit form has been received. No payment has been collected yet — the studio will
-                reach out to collect your deposit and confirm your appointment.
-              </p>
+              <h1 className="login-jura text-xl font-semibold text-fg">{t('deposit.receivedNoPaymentHeading')}</h1>
+              <p className="mt-2 text-sm text-fg-secondary">{t('deposit.receivedNoPaymentBody')}</p>
             </div>
         )}
 
         {state === 'ready' && verifyData && !verifyData.paidVia && !confirmingPayment && !verifyData.signedAt && (
           <div>
-            <h1 className="login-jura text-xl font-semibold text-fg">Deposit Agreement</h1>
+            <h1 className="login-jura text-xl font-semibold text-fg">{t('deposit.agreementHeading')}</h1>
             <p className="mt-1 text-sm font-medium text-fg-secondary">{verifyData.studioName}</p>
             {verifyData.artistName && (
               <div className="mt-3 flex items-center gap-2">
@@ -486,15 +561,17 @@ export default function DepositResponse() {
               </div>
             )}
             <p className="mt-2 text-sm text-fg-secondary">
-              {verifyData.clientFirstName}, please review and sign below to confirm your appointment
-              {verifyData.artistName ? ` with ${verifyData.artistName}` : ''}.
+              {t('deposit.agreementIntro', {
+                firstName: verifyData.clientFirstName,
+                withArtist: verifyData.artistName ? t('deposit.withArtistSuffix', { artistName: verifyData.artistName }) : '',
+              })}
             </p>
 
             {verifyData.appointmentStart && verifyData.appointmentEnd && (
               <div className="mt-4 rounded-lg border border-border p-3">
-                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Appointment</p>
+                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('deposit.appointmentLabel')}</p>
                 <p className="mt-1 text-sm text-fg">
-                  {formatDateTime(verifyData.appointmentStart)} – {formatDateTime(verifyData.appointmentEnd)}
+                  {formatDateTime(verifyData.appointmentStart, locale)} – {formatDateTime(verifyData.appointmentEnd, locale)}
                 </p>
               </div>
             )}
@@ -503,11 +580,11 @@ export default function DepositResponse() {
                 purely informational and never implies a confirmed booking. */}
             {!verifyData.appointmentStart && verifyData.proposedStartAt && verifyData.proposedEndAt && (
               <div className="mt-4 rounded-lg border border-border bg-surface-inset p-3">
-                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Tentative Time</p>
+                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('deposit.tentativeTimeLabel')}</p>
                 <p className="mt-1 text-sm text-fg">
-                  Your appointment will be tentatively scheduled for{' '}
-                  {formatDateTime(verifyData.proposedStartAt)} – {formatDateTime(verifyData.proposedEndAt)}, pending
-                  your deposit. We'll confirm exact scheduling once payment is received.
+                  {t('deposit.tentativeTimeBody', {
+                    range: `${formatDateTime(verifyData.proposedStartAt, locale)} – ${formatDateTime(verifyData.proposedEndAt, locale)}`,
+                  })}
                 </p>
               </div>
             )}
@@ -517,12 +594,17 @@ export default function DepositResponse() {
             {verifyData.plannedSession && (
               <div className="mt-4 rounded-lg border border-border bg-surface-inset p-3">
                 <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
-                  Session {verifyData.plannedSession.sessionNumber} of {verifyData.plannedSession.totalSessions}
+                  {t('deposit.sessionOf', {
+                    n: verifyData.plannedSession.sessionNumber,
+                    total: verifyData.plannedSession.totalSessions,
+                  })}
                 </p>
                 {verifyData.plannedSession.estimatedHoursMin != null && verifyData.plannedSession.estimatedHoursMax != null && (
                   <p className="mt-1 text-sm text-fg">
-                    Estimated {verifyData.plannedSession.estimatedHoursMin}-{verifyData.plannedSession.estimatedHoursMax}{' '}
-                    hours
+                    {t('deposit.estimatedHours', {
+                      min: verifyData.plannedSession.estimatedHoursMin,
+                      max: verifyData.plannedSession.estimatedHoursMax,
+                    })}
                   </p>
                 )}
               </div>
@@ -530,15 +612,15 @@ export default function DepositResponse() {
 
             <div className="mt-4 grid grid-cols-3 gap-3">
               <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Deposit</p>
+                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('deposit.depositLabel')}</p>
                 <p className="mt-1 text-lg font-semibold text-fg">${verifyData.depositAmount}</p>
               </div>
               <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Fee</p>
+                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('deposit.feeLabel')}</p>
                 <p className="mt-1 text-lg font-semibold text-fg">${verifyData.feeAmount}</p>
               </div>
               <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Total</p>
+                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('deposit.totalLabel')}</p>
                 <p className="mt-1 text-lg font-semibold text-fg">${verifyData.totalCharged}</p>
               </div>
             </div>
@@ -548,7 +630,7 @@ export default function DepositResponse() {
             )}
 
             <form onSubmit={handleSubmit} className="mt-6 space-y-3">
-              <p className="text-sm font-medium text-fg-secondary">Please read and agree to each term:</p>
+              <p className="text-sm font-medium text-fg-secondary">{t('deposit.pleaseReadAndAgree')}</p>
 
               {verifyData.terms.map((term) => (
                 <label
@@ -561,12 +643,12 @@ export default function DepositResponse() {
                     onChange={(e) => setAgreed({ ...agreed, [term.key]: e.target.checked })}
                     className="mt-0.5 h-4 w-4 shrink-0 rounded border-border bg-surface-inset accent-accent"
                   />
-                  <span>{term.label}</span>
+                  <span>{TERM_TRANSLATION_KEYS[term.key] ? t(TERM_TRANSLATION_KEYS[term.key]) : term.label}</span>
                 </label>
               ))}
 
               <div>
-                <label className="mb-1 block text-sm font-medium text-fg-secondary">Type your full name</label>
+                <label className="mb-1 block text-sm font-medium text-fg-secondary">{t('deposit.typeFullName')}</label>
                 <input
                   type="text"
                   value={signatureName}
@@ -577,7 +659,7 @@ export default function DepositResponse() {
 
               <SignaturePadField
                 ref={signaturePadRef}
-                label="Sign below"
+                label={t('common.signBelow')}
                 showError={signatureEmptyError}
                 onClear={() => setSignatureEmptyError(false)}
               />
@@ -593,7 +675,7 @@ export default function DepositResponse() {
                 disabled={submitting || !allAgreed}
                 className="w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
               >
-                {submitting ? 'Submitting…' : 'Sign and Confirm'}
+                {submitting ? t('deposit.submitting') : t('deposit.signAndConfirm')}
               </button>
             </form>
           </div>

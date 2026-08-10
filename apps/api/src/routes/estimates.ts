@@ -7,6 +7,7 @@ import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 import { redactedSessionHours } from "../lib/plannedSessions";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { SELF_SCHEDULE_TOKEN_TTL_DAYS } from "../lib/selfSchedule";
+import { persistClientLocale, resolveRequestLocale } from "../lib/contentTranslation";
 
 const router = Router();
 
@@ -54,6 +55,28 @@ async function supersededResponse(token: string) {
     : ({ status: 404, error: "This link is invalid." } as const);
 }
 
+// Multi-language public forms, fix pass: estimateTermsSnapshot is frozen
+// at SEND-ESTIMATE time (lib/estimates.ts), same immutability guarantee
+// as every other signed/sent snapshot in this codebase -- a later edit to
+// the studio's live English template must never retroactively change
+// what an already-sent estimate shows. Same seed-equality resolution as
+// waivers.ts's resolveWaiverSnapshotContent, just for this one string
+// field: the studio's StudioSettingsTranslation.estimateTerms only
+// applies when this inquiry's own frozen snapshot is still byte-identical
+// to the studio's CURRENT live English -- the moment they diverge, this
+// estimate's own frozen English renders as-is.
+function resolveEstimateTermsSnapshot(
+  snapshot: string | null,
+  settings: { estimateTerms: string | null; translations: { locale: string; estimateTerms: string | null }[] } | null | undefined,
+  locale: string,
+): string | null {
+  const translation = settings?.translations.find((t) => t.locale === locale);
+  if (translation?.estimateTerms && snapshot === settings?.estimateTerms) {
+    return translation.estimateTerms;
+  }
+  return snapshot;
+}
+
 // Public: the estimate response link is unauthenticated, same pattern as
 // consent form signing links.
 router.get("/verify/:token", async (req, res) => {
@@ -63,7 +86,13 @@ router.get("/verify/:token", async (req, res) => {
     where: { estimateToken: token },
     include: {
       client: true,
-      studio: { include: { settings: { select: { themePreset: true } } } },
+      studio: {
+        include: {
+          settings: {
+            select: { themePreset: true, defaultLocale: true, estimateTerms: true, translations: true },
+          },
+        },
+      },
       assignedArtist: { include: { user: true } },
       // Multi-session planning: empty for every estimate that never
       // declared more than one session -- the client-facing page falls
@@ -133,7 +162,10 @@ router.get("/verify/:token", async (req, res) => {
     emitInvalidation({ type: "inquiry.updated", studioId: inquiry!.studioId, inquiryId: inquiry!.id });
   }
 
+  const locale = resolveRequestLocale(req.query.locale, inquiry!.client.preferredLocale, inquiry!.studio.settings?.defaultLocale);
+
   res.json({
+    resolvedLocale: locale,
     clientFirstName: inquiry!.client.firstName,
     studioName: inquiry!.studio.name,
     studioSlug: inquiry!.studio.slug,
@@ -151,9 +183,39 @@ router.get("/verify/:token", async (req, res) => {
       estimatedPriceLow: ps.estimatedPriceLow,
       estimatedPriceHigh: ps.estimatedPriceHigh,
     })),
-    estimateTermsSnapshot: inquiry!.estimateTermsSnapshot,
+    estimateTermsSnapshot: resolveEstimateTermsSnapshot(inquiry!.estimateTermsSnapshot, inquiry!.studio.settings, locale),
     collaborativeDesignPolicy: COLLABORATIVE_DESIGN_POLICY,
   });
+});
+
+// Multi-language public forms, Part 5: see deposits.ts's own identical
+// endpoint for the full reasoning. Covers both the original estimate
+// token and a revision's own separate token -- two different Inquiry
+// columns, same client either way.
+router.patch("/:token/locale", async (req, res) => {
+  const token = req.params.token as string;
+  const inquiry = await prisma.inquiry.findUnique({ where: { estimateToken: token }, select: { clientId: true } });
+  if (!inquiry) {
+    return res.status(404).json({ error: "This link is invalid." });
+  }
+  const result = await persistClientLocale(inquiry.clientId, req.body?.locale);
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error });
+  }
+  res.json({ success: true });
+});
+
+router.patch("/revision/:token/locale", async (req, res) => {
+  const token = req.params.token as string;
+  const inquiry = await prisma.inquiry.findUnique({ where: { estimateRevisionToken: token }, select: { clientId: true } });
+  if (!inquiry) {
+    return res.status(404).json({ error: "This link is invalid." });
+  }
+  const result = await persistClientLocale(inquiry.clientId, req.body?.locale);
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error });
+  }
+  res.json({ success: true });
 });
 
 const DECISIONS = ["PROCEED", "BUDGET_TOO_HIGH", "DECLINE"] as const;
@@ -172,7 +234,11 @@ router.patch("/respond/:token", async (req, res) => {
 
   const inquiry = await prisma.inquiry.findUnique({
     where: { estimateToken: token },
-    include: { assignedArtist: { select: { allowsClientSelfScheduling: true } } },
+    include: {
+      assignedArtist: { select: { allowsClientSelfScheduling: true } },
+      client: { select: { preferredLocale: true } },
+      studio: { select: { settings: { select: { defaultLocale: true } } } },
+    },
   });
 
   if (!inquiry) {
@@ -205,6 +271,16 @@ router.patch("/respond/:token", async (req, res) => {
   }
 
   const clearToken = { estimateToken: null, estimateTokenExpiresAt: null };
+
+  // Multi-language public forms: which language the client was looking at
+  // when they accepted/declined/flagged-budget. collaborativeDesignPolicy
+  // stays a platform-immutable string (never studio-authored, so no
+  // translation to thread). estimateTermsSnapshot itself isn't touched
+  // here -- it was already frozen at send-estimate time (lib/estimates.ts)
+  // and is resolved to this same locale, seed-equality-checked against
+  // the studio's live English, on every read (GET /verify above, same
+  // pattern as waivers.ts's resolveWaiverSnapshotContent).
+  const signedLocale = resolveRequestLocale(req.query.locale, inquiry!.client.preferredLocale, inquiry!.studio.settings?.defaultLocale);
 
   let selfScheduleToken: string | null = null;
 
@@ -240,6 +316,7 @@ router.patch("/respond/:token", async (req, res) => {
       where: { id: inquiry!.id },
       data: {
         estimateRespondedAt: new Date(),
+        signedLocale,
         // Token-lifecycle bug fix: estimateToken/ExpiresAt deliberately
         // NOT cleared here when self-scheduling is issued -- see that
         // field's own schema comment. Cleared normally otherwise.
@@ -259,6 +336,7 @@ router.patch("/respond/:token", async (req, res) => {
       data: {
         ...clearToken,
         estimateRespondedAt: new Date(),
+        signedLocale,
         status: InquiryStatus.BUDGET_NEGOTIATION,
         clientStatedBudget: statedBudget.trim(),
       },
@@ -269,6 +347,7 @@ router.patch("/respond/:token", async (req, res) => {
       data: {
         ...clearToken,
         estimateRespondedAt: new Date(),
+        signedLocale,
         status: InquiryStatus.CLOSED_LOST,
         closedReason: "Client declined the estimate.",
       },
@@ -304,7 +383,7 @@ router.get("/revision/verify/:token", async (req, res) => {
     where: { estimateRevisionToken: token },
     include: {
       client: true,
-      studio: { include: { settings: { select: { themePreset: true } } } },
+      studio: { include: { settings: { select: { themePreset: true, defaultLocale: true } } } },
       assignedArtist: { include: { user: true } },
       // Multi-session planning: empty for every Project that never
       // declared more than one session -- the client-facing page falls
@@ -330,6 +409,7 @@ router.get("/revision/verify/:token", async (req, res) => {
   }
 
   res.json({
+    resolvedLocale: resolveRequestLocale(req.query.locale, inquiry!.client.preferredLocale, inquiry!.studio.settings?.defaultLocale),
     clientFirstName: inquiry!.client.firstName,
     studioName: inquiry!.studio.name,
     studioSlug: inquiry!.studio.slug,
@@ -361,7 +441,13 @@ router.patch("/revision/respond/:token", async (req, res) => {
     return res.status(400).json({ error: `decision must be one of: ${REVISION_DECISIONS.join(", ")}` });
   }
 
-  const inquiry = await prisma.inquiry.findUnique({ where: { estimateRevisionToken: token } });
+  const inquiry = await prisma.inquiry.findUnique({
+    where: { estimateRevisionToken: token },
+    include: {
+      client: { select: { preferredLocale: true } },
+      studio: { select: { settings: { select: { defaultLocale: true } } } },
+    },
+  });
 
   const invalidity = isRevisionExpiredOrInvalid(inquiry);
   if (invalidity) {
@@ -378,6 +464,8 @@ router.patch("/revision/respond/:token", async (req, res) => {
   // unwinding a paid deposit or scheduled appointment automatically would
   // be unsafe; staff sees the flag (Inquiry detail page + audit trail)
   // and follows up manually.
+  const signedLocale = resolveRequestLocale(req.query.locale, inquiry!.client.preferredLocale, inquiry!.studio.settings?.defaultLocale);
+
   await prisma.inquiry.update({
     where: { id: inquiry!.id },
     data: {
@@ -385,6 +473,7 @@ router.patch("/revision/respond/:token", async (req, res) => {
       estimateRevisionTokenExpiresAt: null,
       estimateRevisionRespondedAt: new Date(),
       estimateRevisionApproved: decision === "APPROVE",
+      signedLocale,
     },
   });
 

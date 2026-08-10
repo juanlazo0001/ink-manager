@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
+import { Prisma } from "../../generated/prisma/client";
 import { IntakeFieldKind, IntakeCustomQuestionType, Role } from "../../generated/prisma/enums";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { diffObjects, logAudit } from "../lib/audit";
@@ -48,8 +49,16 @@ router.get("/:id/fields", requireRole(Role.OWNER, Role.FRONT_DESK, Role.ARTIST),
   const fields = await prisma.intakeFormField.findMany({
     where: { intakeFormId: formId },
     orderBy: { order: "asc" },
+    include: { translations: true },
   });
-  res.json(fields);
+  res.json(
+    fields.map(({ translations, ...field }) => ({
+      ...field,
+      translations: Object.fromEntries(
+        translations.map((t) => [t.locale, { label: t.label, helpText: t.helpText, options: t.options }]),
+      ),
+    })),
+  );
 });
 
 router.use(requireRole(Role.OWNER));
@@ -181,13 +190,25 @@ router.delete("/:id", async (req, res) => {
 // Full-list replace, scoped to one form -- the drag-and-drop editor always
 // sends the complete ordered list back for the form it has open (system
 // rows can never be removed from the payload, only reordered/disabled --
-// enforced below), so delete-all-then-recreate for THIS form's own rows
-// only is safe and simpler than diffing. IDs are preserved because the
-// client always round-trips each row's existing id (and mints one
-// client-side for a brand-new custom question via crypto.randomUUID()) --
-// nothing here generates a fresh id itself, so a CUSTOM row's id -- and
-// therefore its historical Inquiry.customFieldAnswers linkage -- never
-// changes just because the list around it was reordered or edited.
+// enforced below). IDs are preserved because the client always round-trips
+// each row's existing id (and mints one client-side for a brand-new custom
+// question via crypto.randomUUID()) -- nothing here generates a fresh id
+// itself, so a CUSTOM row's id -- and therefore its historical Inquiry.
+// customFieldAnswers linkage -- never changes just because the list around
+// it was reordered or edited.
+//
+// Multi-language public forms, Part 6 fix: this used to be a genuine
+// delete-all-then-recreate (deleteMany + createMany, reusing each row's own
+// id string on the new row). That was harmless before this epic --
+// customFieldAnswers only ever matches by id STRING, no real FK -- but
+// IntakeFormFieldTranslation.intakeFormFieldId IS a real FK with
+// onDelete: Cascade, and a cascade fires at the moment of physical
+// deletion, not "does a row with this id exist afterward." So every save
+// of this list (even just a reorder) was silently wiping every field's
+// translations. Fixed by upserting each row in place -- a row that's
+// merely being reordered/edited is never physically deleted, only a row
+// genuinely absent from the incoming payload (a removed CUSTOM question)
+// is.
 router.put("/:id/fields", requireRole(Role.OWNER), async (req, res) => {
   const studioId = req.user!.studioId;
   const formId = req.params.id as string;
@@ -219,14 +240,46 @@ router.put("/:id/fields", requireRole(Role.OWNER), async (req, res) => {
     enabled: row.enabled,
     options: row.fieldKind === IntakeFieldKind.CUSTOM ? row.options ?? undefined : undefined,
     order: i,
+    translations: row.translations,
   }));
 
-  await prisma.$transaction([
-    prisma.intakeFormField.deleteMany({ where: { intakeFormId: formId } }),
-    prisma.intakeFormField.createMany({ data: rows }),
-  ]);
+  const incomingIds = new Set(rows.map((r) => r.id).filter((id): id is string => !!id));
+  const idsToRemove = before.filter((f) => !incomingIds.has(f.id)).map((f) => f.id);
 
-  const after = await prisma.intakeFormField.findMany({ where: { intakeFormId: formId }, orderBy: { order: "asc" } });
+  await prisma.$transaction(async (tx) => {
+    if (idsToRemove.length > 0) {
+      await tx.intakeFormField.deleteMany({ where: { id: { in: idsToRemove } } });
+    }
+
+    for (const { translations, ...fields } of rows) {
+      const saved = fields.id
+        ? await tx.intakeFormField.update({ where: { id: fields.id }, data: { ...fields, id: undefined } })
+        : await tx.intakeFormField.create({ data: fields });
+
+      if (translations) {
+        for (const [locale, translationFields] of Object.entries(translations)) {
+          const data = {
+            ...(translationFields.label !== undefined ? { label: translationFields.label } : {}),
+            ...(translationFields.helpText !== undefined ? { helpText: translationFields.helpText } : {}),
+            ...(translationFields.options !== undefined
+              ? { options: (translationFields.options ?? Prisma.JsonNull) as Prisma.InputJsonValue }
+              : {}),
+          };
+          await tx.intakeFormFieldTranslation.upsert({
+            where: { intakeFormFieldId_locale: { intakeFormFieldId: saved.id, locale } },
+            create: { intakeFormFieldId: saved.id, studioId, locale, ...data },
+            update: data,
+          });
+        }
+      }
+    }
+  });
+
+  const after = await prisma.intakeFormField.findMany({
+    where: { intakeFormId: formId },
+    orderBy: { order: "asc" },
+    include: { translations: true },
+  });
 
   await logAudit({
     studioId,
@@ -240,7 +293,18 @@ router.put("/:id/fields", requireRole(Role.OWNER), async (req, res) => {
     },
   });
 
-  res.json(after);
+  // Multi-language public forms, Part 6: reshaped into { es: { label,
+  // helpText, options } } per field -- same by-locale object shape the
+  // editor sends back on save (see customPolicies.ts/services.ts for the
+  // identical convention).
+  res.json(
+    after.map(({ translations, ...field }) => ({
+      ...field,
+      translations: Object.fromEntries(
+        translations.map((t) => [t.locale, { label: t.label, helpText: t.helpText, options: t.options }]),
+      ),
+    })),
+  );
 });
 
 export default router;

@@ -1086,6 +1086,45 @@
   font-weight: 400;
 }
 
+/* Typography audit: PaymentTakeoverOverlay, the session checkout client-
+   facing payment moment, is meant to look byte-for-byte identical to the
+   public deposit and flash-payment pages -- staged full-screen in
+   Editorial Gold, same reasoning as its own comment states -- but text
+   inside it (the CTA buttons own font-bold, PaymentTipStage own h2
+   font-semibold title, and its Total-today font-semibold value) was
+   silently caught by the downgrade rule above anyway: unlike the public
+   pages, which never set the data-theme attribute at all and rely on the
+   login-shell selector instead, this overlay mounts inside the
+   authenticated app shell, where ThemeApplier already sets data-theme to
+   editorial-gold on the html element for any studio using that preset.
+   Confirmed live: computed font-weight was 400 inside the overlay versus
+   700 or 600 on the standalone deposit page for byte-identical
+   classNames -- not something source-reading alone would have caught.
+   login-shell already is this apps own marker for a self-contained fixed
+   platform identity, independent of whatever theme is otherwise active
+   (it redefines every color and font token regardless of data-theme --
+   see its own comment above) -- the correct scope for this override, not
+   a narrower per-component fix that the next new component in this
+   overlay would just need again. Two-class specificity (login-shell
+   font-bold, weight 0-0-2-0) ties the downgrade rule above on specificity
+   rather than beating it, and forcing an unrelated element to also carry
+   login-jura just to win a third selector is not an option: the Total-
+   today value is correctly set in Outfit, not Jura, and adding that class
+   would be a real font-family change, not just a specificity trick. The
+   important flag settles the tie explicitly instead. This breaks this
+   files own general no-important-needed convention on purpose: that
+   convention holds when one rule is simply more specific, which is not
+   true here -- two independently-justified always-win rules are
+   colliding, and this is the narrower, more specific intent (a single
+   self-contained design system) that should take precedence over the
+   broader app-wide one. */
+.login-shell .font-bold {
+  font-weight: 700 !important;
+}
+.login-shell .font-semibold {
+  font-weight: 600 !important;
+}
+
 /* Same gradient-vignette technique as the marketing site's own
    .hero-shade (marketing/index.html) -- darkens the background photo
    more toward the edges/bottom than the flat black overlay this replaced,

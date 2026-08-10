@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma";
 import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 import { createFlashPaymentCheckoutSession, createOrRetrieveFlashPaymentIntent } from "../lib/flashPayments";
 import { getChargeableConnectedAccountId } from "../lib/stripeConnect";
+import { resolveRequestLocale, withLocale, persistClientLocale } from "../lib/contentTranslation";
 import { API_PUBLIC_URL } from "../lib/publicUrl";
 import { serveBlurredRemoteImage } from "./publicAssets";
 
@@ -41,9 +42,9 @@ router.get("/verify/:token", async (req, res) => {
     where: { flashPaymentToken: token },
     include: {
       client: true,
-      studio: { include: { settings: { select: { themePreset: true, embeddedPaymentsEnabled: true } } } },
+      studio: { include: { settings: { select: { themePreset: true, embeddedPaymentsEnabled: true, defaultLocale: true } } } },
       assignedArtist: { include: { user: true } },
-      flashPiece: true,
+      flashPiece: { include: { translations: true } },
     },
   });
 
@@ -52,6 +53,10 @@ router.get("/verify/:token", async (req, res) => {
     const status = invalidity.code === "invalid" ? 404 : 410;
     return res.status(status).json(invalidity);
   }
+
+  const locale = resolveRequestLocale(req.query.locale, inquiry!.client.preferredLocale, inquiry!.studio.settings?.defaultLocale);
+  const pieceTranslation = inquiry!.flashPiece?.translations.find((t) => t.locale === locale);
+  const localizedPiece = inquiry!.flashPiece ? withLocale(inquiry!.flashPiece, pieceTranslation, ["title"]) : null;
 
   const stripeAccountId = await getChargeableConnectedAccountId(inquiry!.studioId);
 
@@ -68,6 +73,7 @@ router.get("/verify/:token", async (req, res) => {
     : null;
 
   res.json({
+    resolvedLocale: locale,
     clientFirstName: inquiry!.client.firstName,
     studioName: inquiry!.studio.name,
     studioSlug: inquiry!.studio.slug,
@@ -76,7 +82,7 @@ router.get("/verify/:token", async (req, res) => {
     artistName: inquiry!.assignedArtist?.user.name ?? null,
     artistAvatarUrl: inquiry!.assignedArtist?.user.avatarUrl ?? null,
     referenceBackgroundUrl,
-    pieceTitle: inquiry!.flashPiece?.title ?? null,
+    pieceTitle: localizedPiece?.title ?? null,
     pieceImageUrl: inquiry!.flashPiece?.imageUrl ?? null,
     priceCents: inquiry!.flashPiece?.priceCents ?? null,
     stripeConnected: stripeAccountId !== null,
@@ -89,6 +95,21 @@ router.get("/verify/:token", async (req, res) => {
     paidAt: inquiry!.flashPaidAt,
     selfScheduleToken: inquiry!.flashPaidAt ? inquiry!.selfScheduleToken : null,
   });
+});
+
+// Multi-language public forms, Part 5: see deposits.ts's own identical
+// endpoint for the full reasoning.
+router.patch("/:token/locale", async (req, res) => {
+  const token = req.params.token as string;
+  const inquiry = await prisma.inquiry.findUnique({ where: { flashPaymentToken: token }, select: { clientId: true } });
+  if (!inquiry) {
+    return res.status(404).json({ error: "This link is invalid." });
+  }
+  const result = await persistClientLocale(inquiry.clientId, req.body?.locale);
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error });
+  }
+  res.json({ success: true });
 });
 
 // Same referenceImages-only rule as deposits.ts's sibling route -- see its

@@ -13,6 +13,7 @@ import Modal from '../components/Modal'
 import ImageLightbox from '../components/ImageLightbox'
 import { PlusIcon, SparkleIcon, CopyIcon, ViewIcon } from '../components/icons'
 import { formatDurationHours } from '../lib/format'
+import { LOCALE_LABELS, type Locale } from '../i18n/locales'
 
 interface FlashPiece {
   id: string
@@ -24,6 +25,9 @@ interface FlashPiece {
   isOneOfOne: boolean
   status: 'AVAILABLE' | 'PENDING_APPROVAL' | 'BOOKED' | 'RETIRED'
   artist: { id: string; user: { name: string | null; email: string; avatarUrl: string | null } }
+  // Multi-language public forms, Part 6: keyed by locale, absent entirely
+  // for a piece that's never been translated.
+  translations?: Record<string, { title: string | null; description: string | null }>
 }
 
 const STATUS_LABEL: Record<FlashPiece['status'], string> = {
@@ -53,6 +57,8 @@ const EMPTY_FORM = {
   priceDollars: '',
   estimatedDurationHours: '',
   isOneOfOne: false,
+  titleEs: '',
+  descriptionEs: '',
 }
 
 export default function FlashGallery() {
@@ -75,6 +81,7 @@ export default function FlashGallery() {
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState(EMPTY_FORM)
+  const [formLocale, setFormLocale] = useState<Locale>('en')
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -153,12 +160,14 @@ export default function FlashGallery() {
   function openCreate() {
     setEditingId(null)
     setForm(EMPTY_FORM)
+    setFormLocale('en')
     setUploadError(null)
     setSaveError(null)
     setShowForm(true)
   }
 
   function openEdit(piece: FlashPiece) {
+    const es = piece.translations?.es
     setEditingId(piece.id)
     setForm({
       artistId: piece.artist.id,
@@ -168,7 +177,10 @@ export default function FlashGallery() {
       priceDollars: (piece.priceCents / 100).toString(),
       estimatedDurationHours: (Math.round((piece.estimatedDurationMinutes / 60) * 100) / 100).toString(),
       isOneOfOne: piece.isOneOfOne,
+      titleEs: es?.title ?? '',
+      descriptionEs: es?.description ?? '',
     })
+    setFormLocale('en')
     setUploadError(null)
     setSaveError(null)
     setShowForm(true)
@@ -203,6 +215,9 @@ export default function FlashGallery() {
 
     setSaving(true)
     try {
+      const esTitle = form.titleEs.trim()
+      const esDescription = form.descriptionEs.trim()
+
       const body = {
         ...(canManageOthers && !editingId ? { artistId: form.artistId } : {}),
         imageUrl: form.imageUrl,
@@ -211,6 +226,9 @@ export default function FlashGallery() {
         priceCents: Math.round(Number(form.priceDollars) * 100),
         estimatedDurationMinutes: Math.round(Number(form.estimatedDurationHours) * 60),
         isOneOfOne: form.isOneOfOne,
+        ...(esTitle || esDescription
+          ? { translations: { es: { title: esTitle || null, description: esDescription || null } } }
+          : {}),
       }
 
       if (editingId) {
@@ -415,25 +433,70 @@ export default function FlashGallery() {
               {uploadError && <p className="mt-1 text-xs text-danger">{uploadError}</p>}
             </div>
 
-            <div>
-              <label className="mb-1 block text-sm font-medium text-fg-secondary">Title *</label>
-              <input
-                type="text"
-                value={form.title}
-                onChange={(e) => setForm({ ...form, title: e.target.value })}
-                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-              />
+            <div className="flex gap-1 border-b border-border">
+              {(Object.keys(LOCALE_LABELS) as Locale[]).map((locale) => (
+                <button
+                  key={locale}
+                  type="button"
+                  onClick={() => setFormLocale(locale)}
+                  className={[
+                    'shrink-0 border-b-2 px-3 py-1.5 text-xs font-medium transition',
+                    formLocale === locale ? 'border-accent text-fg' : 'border-transparent text-fg-secondary hover:text-fg',
+                  ].join(' ')}
+                >
+                  {LOCALE_LABELS[locale]}
+                </button>
+              ))}
             </div>
 
-            <div>
-              <label className="mb-1 block text-sm font-medium text-fg-secondary">Description</label>
-              <textarea
-                rows={2}
-                value={form.description}
-                onChange={(e) => setForm({ ...form, description: e.target.value })}
-                className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-              />
-            </div>
+            {formLocale === 'en' ? (
+              <>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-fg-secondary">Title *</label>
+                  <input
+                    type="text"
+                    value={form.title}
+                    onChange={(e) => setForm({ ...form, title: e.target.value })}
+                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-fg-secondary">Description</label>
+                  <textarea
+                    rows={2}
+                    value={form.description}
+                    onChange={(e) => setForm({ ...form, description: e.target.value })}
+                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                  />
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-fg-secondary">Title (Español)</label>
+                  <input
+                    type="text"
+                    value={form.titleEs}
+                    onChange={(e) => setForm({ ...form, titleEs: e.target.value })}
+                    placeholder={form.title}
+                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                  />
+                  <p className="mt-1 text-xs text-fg-muted">Falls back to the English title above until filled in.</p>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-fg-secondary">Description (Español)</label>
+                  <textarea
+                    rows={2}
+                    value={form.descriptionEs}
+                    onChange={(e) => setForm({ ...form, descriptionEs: e.target.value })}
+                    placeholder={form.description}
+                    className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                  />
+                </div>
+              </>
+            )}
 
             <div className="grid grid-cols-2 gap-4">
               <div>

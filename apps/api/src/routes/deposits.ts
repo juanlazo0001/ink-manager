@@ -11,12 +11,13 @@ import { getOrCreateClientConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { callerBelongsToStudio, effectiveRoleAt, hasPermissionAt } from "../lib/artistAccess";
+import { resolveRequestLocale, withLocale, persistClientLocale } from "../lib/contentTranslation";
 import { shortenUrl } from "../lib/shortLinks";
 import { PUBLIC_APP_URL, API_PUBLIC_URL } from "../lib/publicUrl";
 import { serveDataUrl, serveBlurredRemoteImage } from "./publicAssets";
 
 // Exact SOP wording, in the order the client must agree to each one.
-const TERMS = [
+export const TERMS = [
   {
     key: "agreedNonRefundable",
     label:
@@ -53,6 +54,43 @@ const TERMS = [
 ] as const;
 
 const TERM_KEYS = TERMS.map((t) => t.key);
+
+// Multi-language public forms, Part 5: TERMS above is Finding 1's
+// platform-owned copy (see the frontend's own deposit.terms dictionary for
+// the display-side half of this) -- this is the Spanish counterpart, kept
+// here rather than in lib/pdfStrings.ts since TERMS itself already lives in
+// this file and termsForLocale is what actually gets snapshotted onto
+// DepositForm.termsSnapshot at sign time, not just used for PDF chrome.
+// Keys must match TERMS exactly; termsForLocale below is the only place
+// that reads this map, so a missing key surfaces as English text rather
+// than a runtime crash.
+export const TERMS_ES: Record<(typeof TERM_KEYS)[number], string> = {
+  agreedNonRefundable:
+    "Se requiere un depósito para fijar una cita. Los depósitos no son reembolsables y se aplican al precio final del tatuaje.",
+  agreedLatePolicy:
+    "Los artistas se reservan el derecho de reprogramar la cita si el cliente llega con más de 15 minutos de retraso sin previo aviso.",
+  agreedNoShowForfeit:
+    "La falta de asistencia sin aviso previo resulta en la pérdida del depósito. Se requiere un aviso de 48 horas para cambiar una cita programada.",
+  agreedNewDepositAfterNoShow:
+    "Después de una falta de asistencia sin aviso previo, se requiere un nuevo depósito para programar otra cita.",
+  agreedRescheduleLimit:
+    "Las citas pueden reprogramarse hasta 3 veces; el depósito se pierde en la tercera reprogramación.",
+  agreedExpiration: "Los depósitos vencen un año después de la fecha en que fueron creados.",
+  agreedIdAndVoucher:
+    "El cliente debe traer una identificación oficial con fotografía y el comprobante de depósito (emitido después del pago) el día de la cita.",
+  agreedAge18: "El cliente reconfirma que tiene al menos 18 años de edad.",
+};
+
+// The exact wording shown to the client at sign time, snapshotted onto
+// DepositForm.termsSnapshot -- so a later edit to TERMS/TERMS_ES never
+// retroactively changes what an already-signed deposit form appears to say
+// (same guarantee LiabilityWaiver's own snapshots already provide).
+function termsForLocale(locale: string): { key: string; label: string }[] {
+  if (locale === "es") {
+    return TERMS.map((t) => ({ key: t.key, label: TERMS_ES[t.key] }));
+  }
+  return TERMS.map((t) => ({ key: t.key, label: t.label }));
+}
 
 // Phase 7C: "already signed" is no longer unconditionally terminal -- a
 // studio with Stripe connected still needs this same token to work AFTER
@@ -104,7 +142,13 @@ publicRouter.get("/verify/:token", async (req, res) => {
           studio: {
             include: {
               settings: {
-                select: { themePreset: true, referralProgramEnabled: true, embeddedPaymentsEnabled: true, timezone: true },
+                select: {
+                  themePreset: true,
+                  referralProgramEnabled: true,
+                  embeddedPaymentsEnabled: true,
+                  defaultLocale: true,
+                  timezone: true,
+                },
               },
               // Confirmation-screen appointment card: no Appointment/
               // Inquiry/Artist row anywhere in this schema carries a
@@ -120,12 +164,18 @@ publicRouter.get("/verify/:token", async (req, res) => {
             include: {
               // The one real per-artist location signal that exists --
               // preferred over the studio-has-one-location fallback below
-              // when set, since it's more specific.
-              user: { include: { location: { select: { address: true } } } },
+              // when set, since it's more specific. name/avatarUrl are the
+              // only other user fields this route ever reads (artistName/
+              // artistAvatarUrl/artistPublicAvatarUrl below).
+              user: { select: { name: true, avatarUrl: true, location: { select: { address: true } } } },
             },
           },
           appointment: { select: { startTime: true, endTime: true } },
-          service: { select: { depositBreakdownNote: true } },
+          // translations: tiny (at most a couple of locales per studio) --
+          // fetched in full and matched in JS rather than a second
+          // locale-filtered query, same as every other public verify
+          // route this epic touches.
+          service: { select: { depositBreakdownNote: true, translations: true } },
           // Multi-session planning: only its length is needed here (the
           // "of Y" in "Session X of Y") -- the specific session THIS
           // deposit form is for comes from depositForm.plannedSession
@@ -170,6 +220,15 @@ publicRouter.get("/verify/:token", async (req, res) => {
   }
 
   const { inquiry } = depositForm!;
+
+  // Multi-language public forms: the only studio-authored content on this
+  // page is the service's own depositBreakdownNote -- studio name/logo,
+  // artist name, and the 8 terms are either plain data or platform
+  // strings (see deposit.terms in the frontend's own dictionary for the
+  // terms' own Finding-1 treatment).
+  const locale = resolveRequestLocale(req.query.locale, inquiry.client.preferredLocale, inquiry.studio.settings?.defaultLocale);
+  const serviceTranslation = inquiry.service.translations.find((t) => t.locale === locale);
+  const localizedService = withLocale(inquiry.service, serviceTranslation, ["depositBreakdownNote"]);
 
   // Multi-session-aware appointment resolution: a planned session's own
   // resulting appointment (auto-booked, or already-booked via self-
@@ -238,6 +297,7 @@ publicRouter.get("/verify/:token", async (req, res) => {
     : null;
 
   res.json({
+    resolvedLocale: locale,
     clientFirstName: inquiry.client.firstName,
     // Surfaced on the "your deposit is paid" success state, only when the
     // studio's referral program is actually on -- reuses the code already
@@ -286,7 +346,7 @@ publicRouter.get("/verify/:token", async (req, res) => {
     // Shown alongside the total on the public deposit page when set (e.g.
     // Powder Brows' "$50 deposit + $10 processing fee") -- purely
     // informational, null for every service that doesn't set one.
-    depositBreakdownNote: inquiry.service.depositBreakdownNote,
+    depositBreakdownNote: localizedService.depositBreakdownNote,
     // Multi-session planning: null for every un-planned deposit form.
     plannedSession: depositForm!.plannedSession
       ? {
@@ -312,6 +372,25 @@ publicRouter.get("/verify/:token", async (req, res) => {
     embeddedPaymentsEnabled: inquiry.studio.settings?.embeddedPaymentsEnabled ?? false,
     terms: TERMS,
   });
+});
+
+// Multi-language public forms, Part 5: the language picker's own
+// persistence -- fired the moment a client toggles it, so every later
+// link (a future deposit, waiver, estimate...) for this same client
+// defaults to their own choice. Reuses this exact same token-scoped
+// pattern (CLAUDE.md's own "public unauthenticated flows" rule) rather
+// than inventing a new mechanism.
+publicRouter.patch("/:token/locale", async (req, res) => {
+  const token = req.params.token as string;
+  const depositForm = await prisma.depositForm.findUnique({ where: { token }, select: { inquiry: { select: { clientId: true } } } });
+  if (!depositForm) {
+    return res.status(404).json({ error: "This link is invalid." });
+  }
+  const result = await persistClientLocale(depositForm.inquiry.clientId, req.body?.locale);
+  if (!result.ok) {
+    return res.status(400).json({ error: result.error });
+  }
+  res.json({ success: true });
 });
 
 // Confirmation-screen hero avatar, fixed: the publicAssets artist-avatar
@@ -373,7 +452,15 @@ publicRouter.patch("/sign/:token", async (req, res) => {
 
   const depositForm = await prisma.depositForm.findUnique({
     where: { token },
-    include: { inquiry: { select: { studioId: true } } },
+    include: {
+      inquiry: {
+        select: {
+          studioId: true,
+          client: { select: { preferredLocale: true } },
+          studio: { select: { settings: { select: { defaultLocale: true } } } },
+        },
+      },
+    },
   });
 
   if (!depositForm) {
@@ -415,6 +502,15 @@ publicRouter.patch("/sign/:token", async (req, res) => {
     return res.status(400).json({ error: "signatureData is required" });
   }
 
+  // Multi-language public forms, Part 5: captured at the moment of signing,
+  // not re-derived later -- same reasoning as every other signed-document
+  // snapshot in this codebase (see termsForLocale's own comment above).
+  const signedLocale = resolveRequestLocale(
+    req.query.locale,
+    depositForm!.inquiry.client.preferredLocale,
+    depositForm!.inquiry.studio.settings?.defaultLocale,
+  );
+
   await prisma.depositForm.update({
     where: { id: depositForm!.id },
     data: {
@@ -429,6 +525,8 @@ publicRouter.patch("/sign/:token", async (req, res) => {
       signatureName: signatureName.trim(),
       signatureData,
       signedAt: new Date(),
+      signedLocale,
+      termsSnapshot: termsForLocale(signedLocale),
     },
   });
 
@@ -690,10 +788,15 @@ staffRouter.get("/:id/pdf", requireAuth, async (req, res) => {
     depositAmount: depositForm.depositAmount,
     feeAmount: depositForm.feeAmount,
     totalCharged: depositForm.totalCharged,
-    terms: TERMS,
+    // Falls back to TERMS (today's live English) for any deposit form
+    // signed before this snapshot existed -- termsSnapshot is null for
+    // every one of those, never an empty array, so this fallback only ever
+    // fires for genuinely pre-migration records.
+    terms: (depositForm.termsSnapshot as unknown as { key: string; label: string }[] | null) ?? TERMS,
     signatureName: depositForm.signatureName,
     signatureData: depositForm.signatureData,
     signedAt: depositForm.signedAt,
+    locale: depositForm.signedLocale,
   });
 
   res.setHeader("Content-Type", "application/pdf");
