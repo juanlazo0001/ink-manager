@@ -14104,3 +14104,115 @@ merge to `main`.
 
 REPORT.md line count before this entry: 13971 (verified via `git show
 HEAD:REPORT.md | wc -l`) — pure addition.
+
+# Public journey restyle Part 2: identity-line accent, hero price, referral tint, motion
+
+Continuation of Part 1 (immediately above), picked up in a later context
+window of the same task. Investigated the live codebase fresh rather than
+trusting Part 1's own writeup at face value, per this repo's own standing
+"verify premises" practice — confirmed directly against source (not just
+the report) that `IntakeForm.tsx`/`FlashPublicGallery.tsx`/
+`EstimateResponse.tsx`/`EstimateRevisionResponse.tsx` already carry Part
+1's `login-shell`/`login-panel-surface` shell, the studio logo, and
+`login-jura text-xl font-semibold` headings computing to real Jura/600
+(via `index.css`'s `.login-shell .font-semibold { font-weight: 600
+!important }`, which correctly overrides the app-wide editorial-gold
+downgrade rule). That baseline held; four gaps remained versus the
+deposit/payment family's own fuller treatment, found by direct comparison
+against `DepositResponse.tsx`/`PaymentAmountStage.tsx`/
+`PaymentConfirmationStage.tsx`:
+
+1. The artist-intro/identity line on all three estimate-family pages was
+   still on the pre-fix pattern (`text-sm text-fg-secondary`) that the
+   payment typography audit's own finding #4 already fixed elsewhere
+   (`PaymentAmountStage.tsx` → `text-base text-accent`) — never backported
+   here.
+2. No hero moment for the estimate price — styled identically to the time
+   estimate beside it, despite being the one number a client cares about
+   most.
+3. The referral-code reveal on `IntakeForm.tsx` had no accent treatment,
+   unlike `DepositResponse.tsx`'s own `border-accent/30 bg-accent/5`
+   referral block.
+4. Zero motion anywhere on these four pages, vs. the payment family's
+   `uiSpringTransition`/`crossfadeVariants` (`lib/motion.ts`) stage
+   crossfades.
+
+## Changes (one commit per file)
+
+- `IntakeForm.tsx`: referral-code reveal wrapped in the same
+  `border-accent/30 bg-accent/5` tint as `DepositResponse.tsx`'s referral
+  block; `AnimatePresence`/`crossfadeVariants`/`uiSpringTransition`
+  crossfades on the three top-level states and the referral reveal.
+- `FlashPublicGallery.tsx`: artist-intro line → `text-base text-accent`;
+  same crossfade treatment on all five states plus the phone-lookup
+  found/not-found field reveal.
+- `EstimateResponse.tsx`: intro line → `text-base text-accent`; price
+  value gets a `font-display` (Fraunces) hero treatment, `text-2xl
+  sm:text-3xl font-medium` — scaled down from the payment family's 36-48px
+  full-page hero since this sits in a two-column card grid, not a
+  dedicated confirmation screen; time estimate stays on its existing
+  card-value style so price reads as the headline number; crossfades on
+  all five states plus the budget-too-high textbox reveal.
+- `EstimateRevisionResponse.tsx`: same three fixes as `EstimateResponse.tsx`
+  (no budget-form reveal on this page — only APPROVE/FLAG).
+
+No shared component/hook extracted from the two estimate pages' existing
+price/session-plan duplication — pre-existing, out of scope for a visual
+restyle. No card-wrapping of individual intake fields — the flat stack
+already matches `StaffInquiryForm.tsx`, the native-chrome reference.
+
+## Verification
+
+`apps/web` `tsc -b` clean after every file; full production `vite build`
+clean; API suite 161/161 (no API files touched). Real browser at 390px
+against a disposable studio (`createStudioWithOwner`, solo artist, own
+logo/default form/a second form covering all eight
+`IntakeCustomQuestionType`s + SMS consent + referral code — dev-studio's
+own data never touched):
+
+- Default-form and custom-form submissions both confirmed against the live
+  `Inquiry` row afterward — every field intact (referral match resolved
+  correctly, both Cloudinary uploads recorded, all eight custom-question
+  answers present), no silent-strip.
+- Estimate approve/decline driven via real button clicks against seeded
+  tokens (multi-session + terms-snapshot target for approve, single-
+  session/no-terms target for decline) — both landed the correct `Inquiry`
+  status (`DEPOSIT_PENDING` / `CLOSED_LOST`) afterward. Expired (410) and
+  superseded (409 via `previousEstimateToken`) tokens render their correct
+  distinct messaging. Revision-pending approved live against a seeded
+  `estimateRevisionToken`.
+- Flash gallery: existing-client phone lookup exercised against a seeded
+  client (`"Welcome back, Returning!"`, name/email fields correctly
+  skipped), full request submitted end-to-end.
+- Spanish repeat: intake submission, estimate approve, and estimate
+  decline all re-driven in Spanish (picker click for intake, a client
+  with `preferredLocale: "es"` auto-resolving server-side for the
+  estimate pages, matching this app's real locale-resolution precedence)
+  — all functionally identical to the English runs. Confirmed the one
+  visible gap (a few system-field labels staying in English under
+  Spanish) is this session's own seed data not byte-matching the
+  platform's canonical default label text required for the seed-equality
+  auto-translation fallback (`IntakeFormFieldTranslation`'s own documented
+  behavior) — not a regression, not touched.
+- `getComputedStyle()` spot-check on the new elements: page title Jura
+  20px/600, price eyebrow label Inter 12px/500 uppercase, hero price
+  Fraunces 24px/500, identity line Inter 16px/400 at `#c99a5b` — matching
+  the payment family's own audited scale and gold token exactly.
+- Zero console errors across every state driven, both languages (the
+  browser's own resource-load logging for the deliberate 410/409 verify
+  responses on expired/superseded tokens is not an application error).
+
+Screenshots of all 17 states/languages captured and published as a
+private review artifact for Juan. All seeded rows (one disposable studio
+and everything under it — client, inquiry, planned-session, intake-form,
+service, flash-piece, conversation/message, audit-log rows) deleted
+afterward via a scripted cleanup; all scratch seed/check scripts and
+screenshots removed from the working tree; both dev servers stopped and
+ports (4000, 5173) confirmed free.
+
+Per the task's own instruction, stays as commits on
+`explore/public-journey-restyle` awaiting Juan's visual approval before
+any merge to `main`.
+
+REPORT.md line count before this entry: 14106 (verified via `git show
+HEAD:REPORT.md | wc -l`) — pure addition.
