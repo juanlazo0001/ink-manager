@@ -50,7 +50,7 @@ completeness check).
 | Key | English | Spanish (draft) |
 |---|---|---|
 | linkExpiredBody | Please contact the studio to request a new deposit form. | Por favor, contacta al estudio para solicitar un nuevo formulario de depósito. |
-| paidHeadingStripe | We've received your payment. | Hemos recibido tu pago. |
+| paidHeadingStripe | Thank you! | ¡Gracias! |
 | paidHeadingManual | The studio has recorded your payment. | El estudio ha registrado tu pago. |
 | paidHeading | Thanks — your deposit is paid! | ¡Gracias — tu depósito está pagado! |
 | shareReferralHeading | Know someone else who'd love this? | ¿Conoces a alguien más a quien le encantaría esto? |
@@ -94,6 +94,7 @@ completeness check).
 | appointmentCard.addToCalendar | Add to Calendar (.ics) | Agregar al calendario (.ics) |
 | appointmentCard.googleCalendar | Google Calendar | Google Calendar |
 | appointmentCard.eventTitle | Tattoo session{{withArtist}} — {{studioName}} | Sesión de tatuaje{{withArtist}} — {{studioName}} |
+| appointmentCard.openInMaps | Open address in Maps | Abrir dirección en Maps |
 | giftCardCard.label | Your deposit voucher | Tu comprobante de depósito |
 | giftCardCard.showQrAtStudio | Show this QR code at the studio. | Muestra este código QR en el estudio. |
 | giftCardCard.validUntil | Valid until {{date}} | Válido hasta {{date}} |
@@ -117,6 +118,8 @@ completeness check).
 | priceRangeLabel | Price range | Rango de precio |
 | priceLabel | Price | Precio |
 | estimatedTimeLabel | Estimated time | Tiempo estimado |
+| hourSingular | hour | hora |
+| hourPlural | hours | horas |
 | toBeDiscussed | To be discussed | Por definir |
 | sessionPlan | {{n}}-session plan | Plan de {{n}} sesiones |
 | sessionLabel | Session {{n}} | Sesión {{n}} |

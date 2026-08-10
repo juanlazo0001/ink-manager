@@ -1,6 +1,8 @@
 import { formatAppointmentDateTime } from '../../lib/format'
 import { buildGoogleCalendarUrl, buildIcsContent, downloadIcs } from '../../lib/calendar'
+import { buildMapsUrl } from '../../lib/maps'
 import { useTranslations, useLocale } from '../../i18n'
+import { AppointmentsIcon, GoogleGIcon, MapPinIcon } from '../icons'
 
 // State-aware, per the real post-payment states (investigated against
 // issueGiftCardForPaidDeposit, apps/api/src/lib/deposits.ts): paying a
@@ -86,22 +88,41 @@ export default function DepositAppointmentCard({
     <div className={CARD_CLASS}>
       <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('deposit.appointmentCard.label')}</p>
       <p className="mt-2 text-lg font-semibold text-fg">{formatAppointmentDateTime(startIso!, timeZone, locale)}</p>
-      {address && <p className="mt-1 text-sm text-fg-secondary">{address}</p>}
+      {/* Tappable maps link, not a plain address string -- subtle by
+          design (a small pin + underline, the app's own established
+          "this is tappable but not a primary action" affordance), never
+          the big gold link treatment a primary CTA gets. buildMapsUrl
+          picks Apple Maps vs. Google Maps per platform so this always
+          opens each device's own native map app, not a generic web page. */}
+      {address && (
+        <a
+          href={buildMapsUrl(address)}
+          target="_blank"
+          rel="noreferrer"
+          aria-label={t('deposit.appointmentCard.openInMaps')}
+          className="mt-1 inline-flex items-center gap-1 text-sm text-fg-secondary underline decoration-fg-muted/50 underline-offset-2 transition hover:text-fg hover:decoration-fg"
+        >
+          <MapPinIcon className="h-3.5 w-3.5 shrink-0" />
+          {address}
+        </a>
+      )}
 
       <div className="mt-4 flex flex-wrap gap-2">
         <button
           type="button"
           onClick={handleDownloadIcs}
-          className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface-inset"
+          className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface-inset"
         >
+          <AppointmentsIcon className="h-4 w-4" />
           {t('deposit.appointmentCard.addToCalendar')}
         </button>
         <a
           href={buildGoogleCalendarUrl(event)}
           target="_blank"
           rel="noreferrer"
-          className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface-inset"
+          className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface-inset"
         >
+          <GoogleGIcon className="h-4 w-4 shrink-0" />
           {t('deposit.appointmentCard.googleCalendar')}
         </a>
       </div>

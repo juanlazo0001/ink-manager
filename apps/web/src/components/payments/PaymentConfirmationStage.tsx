@@ -63,7 +63,25 @@ export default function PaymentConfirmationStage({
         {/* Short gold divider under the checkmark -- purely decorative,
             matching the reference's own hero treatment. */}
         <div className="mx-auto mt-2 h-px w-10 bg-accent/60" aria-hidden="true" />
-        <h1 className="font-display mt-4 text-5xl leading-[1.05] font-medium text-fg">{heading}</h1>
+        {/* clamp(), not a fixed text-5xl -- "Payment received" (and the
+            Spanish "Pago recibido") must render on one line at both 390px
+            and 320px, never wrapping; the clamp is sized for exactly that.
+            No whitespace-nowrap, deliberately: a heading this component
+            has never actually been asked to guarantee one-line for
+            ("Thanks -- your deposit is paid!"/"¡Gracias -- tu depósito
+            está pagado!", deposit's own, 31/36 characters) genuinely
+            cannot fit on one line at 320px at any size that still reads as
+            a hero title -- measured live, needs ~15px to fit, which stops
+            looking like a hero at all. nowrap would force that content to
+            overflow the card horizontally instead (confirmed live, a real
+            visual break -- text bleeding past the screen edge), which is
+            worse than a graceful two-line wrap for content outside what
+            was actually asked to stay single-line. The two named strings
+            fit within this clamp's own floor with room to spare, so they
+            never reach that wrap case in practice. */}
+        <h1 className="font-display mt-4 text-[clamp(1.75rem,7vw,3rem)] leading-[1.05] font-medium text-fg">
+          {heading}
+        </h1>
         {!hideAmount && (
           <p className="font-display mt-3 text-4xl font-medium text-fg">{formatCents(amountCents)}</p>
         )}

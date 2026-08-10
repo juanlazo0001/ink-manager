@@ -42,7 +42,7 @@ export const en = {
     // paying a deposit doesn't always produce a real appointment (a
     // scheduling conflict re-checked at payment time can leave it
     // unbooked), so this line only claims what's universally true.
-    paidHeadingStripe: "We've received your payment.",
+    paidHeadingStripe: 'Thank you!',
     paidHeadingManual: 'The studio has recorded your payment.',
     paidHeading: 'Thanks — your deposit is paid!',
     shareReferralHeading: "Know someone else who'd love this?",
@@ -106,6 +106,11 @@ export const en = {
       // rendered as page UI -- still user-facing (lands in the client's
       // own calendar app), so translated the same as everything else here.
       eventTitle: 'Tattoo session{{withArtist}} — {{studioName}}',
+      // Payment Received refinements: the address link's own accessible
+      // name -- the visible text is the address itself (not translatable
+      // content), so screen readers need this instead to know what tapping
+      // it does.
+      openInMaps: 'Open address in Maps',
     },
     giftCardCard: {
       label: 'Your deposit voucher',

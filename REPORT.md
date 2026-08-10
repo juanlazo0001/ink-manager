@@ -13866,3 +13866,106 @@ this session -- once ruling out stale HMR, once recovering from the CSS
 parser issue above) stopped and ports confirmed free before ending. REPORT.md
 line count before this entry: 12236 (verified via `git show HEAD:REPORT.md |
 wc -l`) -- pure addition.
+
+# Payment Received page — four refinements (post multi-language merge)
+
+Four targeted, task-scoped refinements to the deposit confirmation page's
+`DepositAppointmentCard`/`PaymentConfirmationStage` pair, run once the
+multi-language branch (public-form `t()` strings, `LocaleProvider`,
+`en.ts`/`es.ts`) genuinely landed on `main` — the task's own explicit
+prerequisite. Verified the merge was actually present via `git fetch` +
+`git merge-base --is-ancestor` before starting; an earlier claim that it had
+merged did not match `origin/main` at that moment and was not acted on until
+a fresh fetch showed the real merge commit.
+
+## 1. Calendar button icons
+
+`AppointmentsIcon` (existing) added to "Add to Calendar (.ics)"; a new
+`GoogleGIcon` added to "Google Calendar" — Google's own official four-path
+18×18 "G" mark with fixed brand colors (`#4285F4`/`#34A853`/`#FBBC05`/
+`#EA4335`), deliberately not `currentColor` like every other icon in
+`icons.tsx`, since Google's own brand guidance calls for the multicolor mark
+specifically on a "Google Calendar"-style action rather than a monochrome
+recolor. Both icons sized `h-4 w-4` inside the existing `flex items-center
+gap-2` button layout, matching this app's existing icon-in-button spacing
+convention rather than inventing a new one.
+
+## 2. Tappable studio address (native maps deep link)
+
+New `apps/web/src/lib/maps.ts`: `buildMapsUrl(address)` picks
+`https://maps.apple.com/?q=<encoded>` on iOS (UA sniff plus the iPadOS-13+
+desktop-UA fallback, `platform === 'MacIntel' && maxTouchPoints > 1`) or
+`https://www.google.com/maps/search/?api=1&query=<encoded>` (Google's own
+registered Android App Link) otherwise — both are the platforms' own
+universal links, not a generic `geo:`/`maps:` scheme, so each opens the
+native map app when installed and falls back to the map provider's own web
+UI otherwise. The address is now an `<a>` with a small `MapPinIcon` (a
+deliberately plainer one-outline-one-dot glyph, sized `h-3.5 w-3.5`, next to
+`text-sm` copy — not a nav-sized icon) plus an underline, styled
+`text-fg-secondary` rather than the brand gold, per the task's explicit "not
+a big gold link" instruction. Verified live with spoofed iOS and Android
+Playwright user-agent strings: iOS UA resolves to `maps.apple.com`, Android
+UA resolves to `google.com/maps`.
+
+## 3. One-line "Payment received" / "Pago recibido" at 390px and 320px
+
+`PaymentConfirmationStage.tsx`'s shared hero `<h1>` (used by deposit, flash,
+and session-checkout confirmations) already had a `clamp()` font size; the
+first implementation also had `whitespace-nowrap`, which turned out to be
+the wrong tool — live screenshot inspection at 390px caught deposit's own,
+longer heading ("Thanks — your deposit is paid!" / the Spanish equivalent,
+31/36 characters) visibly overflowing the card and bleeding past the
+viewport's right edge, a strictly worse failure mode than wrapping that an
+initial height-only check had missed entirely (it only measured vertical
+line-wrapping, never horizontal overflow). A follow-up binary-search
+measurement confirmed the longest realistic heading needs ≤15px to fit at
+320px — too small to impose on the whole clamp range for content the task
+never named. Fix: removed `whitespace-nowrap` entirely (long/un-named
+content now gracefully wraps to two lines instead of overflowing
+horizontally) and kept `clamp(1.75rem,7vw,3rem)`, which comfortably fits
+both task-required short strings, "Payment received" and "Pago recibido", on
+exactly one line at both 390px and 320px with zero horizontal overflow —
+confirmed live via `scrollWidth`-vs-`parentElement.clientWidth` overflow
+checks, not just line-height/height heuristics, at both widths in both
+languages. Since "Payment received" is actually
+`flashPayment.paymentReceivedHeading` (not deposit's own heading key), the
+literal named strings were verified via direct DOM text injection into the
+live, real-CSS `<h1>` — the same constraint an earlier session segment
+established for reaching flash's own post-payment confirmation state, which
+requires a completed live Stripe charge.
+
+## 4. Copy: "We've received your payment." → "Thank you!"
+
+`deposit.paidHeadingStripe` in both `en.ts` (`'Thank you!'`) and `es.ts`
+(`'¡Gracias!'`) — the one key whose English value exactly matched the task's
+quoted old string. Re-ran `scripts/generate-es-review.ts` to regenerate
+`PLATFORM_STRINGS_ES_REVIEW.md`; confirmed the new pairing landed in the
+reviewable list. Hit a latent bug in the generator script itself (not fixed,
+just worked around for this one-off run): it calls `dotenv.config()`
+textually before its other imports, but ESM/CJS transpilation hoists all
+`import` statements to execute first regardless of source order, so
+`apps/api/src/lib/jwt.ts` (pulled in transitively) throws `JWT_SECRET is not
+set` before `dotenv.config()` ever runs. Worked around by sourcing
+`apps/api/.env` into the shell before invoking the script.
+
+## Verification
+
+Two seeded paid-deposit fixtures (EN: `preferredLocale: null`; ES:
+`preferredLocale: 'es'`), each with a full appointment/gift-card/deposit-form
+chain, driven with Playwright at 390×844 and 320×844. Confirmed: both
+calendar buttons render icons, the Google G's four paths carry the correct
+brand-color fills, the maps link carries the pin icon and underline and
+resolves to the platform-correct universal link under iOS/Android/desktop
+UAs, "Thank you!"/"¡Gracias!" render with the old strings absent, and the
+literal "Payment received"/"Pago recibido" strings render on one line with
+zero horizontal overflow at both widths in both languages — while deposit's
+own longer heading now wraps instead of overflowing. Zero console errors
+across every check. `tsc -b` clean in both `apps/web` and `apps/api`, lint
+clean on every touched file, full API test suite 161/161. Seeded fixture
+rows and all scratch scripts/screenshot directories removed; the `--no-save`
+`playwright` install (needed fresh after a post-merge `npm install` wiped
+the previous one) uninstalled afterward, confirmed not declared in any
+`package.json`/lockfile.
+
+REPORT.md line count before this entry: 13868 (verified via `git show
+HEAD:REPORT.md | wc -l`) — pure addition.

@@ -31,7 +31,7 @@ export const es: typeof en = {
 
   deposit: {
     linkExpiredBody: 'Por favor, contacta al estudio para solicitar un nuevo formulario de depósito.',
-    paidHeadingStripe: 'Hemos recibido tu pago.',
+    paidHeadingStripe: '¡Gracias!',
     paidHeadingManual: 'El estudio ha registrado tu pago.',
     paidHeading: '¡Gracias — tu depósito está pagado!',
     shareReferralHeading: '¿Conoces a alguien más a quien le encantaría esto?',
@@ -83,6 +83,7 @@ export const es: typeof en = {
       addToCalendar: 'Agregar al calendario (.ics)',
       googleCalendar: 'Google Calendar',
       eventTitle: 'Sesión de tatuaje{{withArtist}} — {{studioName}}',
+      openInMaps: 'Abrir dirección en Maps',
     },
     giftCardCard: {
       label: 'Tu comprobante de depósito',
