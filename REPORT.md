@@ -15967,3 +15967,191 @@ create the fresh open project, cancel origin's future appointments,
 resolve origin records as `TRANSFERRED`, all transactional per client
 with a completion report, realtime-notified at both studios. Part 5
 (adversarial verification) follows once execution exists to verify.
+
+# Three staff-side quick wins
+
+Time selection, gift-card holder reassignment, client CSV export.
+
+## Process note first
+
+This session ran in the **primary checkout**, not an isolated worktree
+-- a real miss against this file's own standing "concurrent sessions
+use `scripts/new-session.ps1`" rule, not a deliberate choice. A
+concurrent session (the Transfer-to-artist epic, Parts 1-3, immediately
+above this entry) was working in the exact same working tree at the
+same time and had to explicitly notice and work around this session's
+own uncommitted files rather than the isolation the rule exists to
+guarantee. Nothing broke this time -- confirmed via `git status`
+immediately after their commits landed that every file this session had
+in flight was still intact and untouched -- but that was the other
+session's own care, not a property this session's setup provided.
+Flagged plainly rather than glossed over; the still-queued Prepay +
+On-Hold epic gets a real isolated worktree from the start.
+
+## 1. Time selection
+
+Every staff-facing time input funnels through exactly one shared
+component, confirmed by grepping the whole frontend for `type="time"`
+before touching anything: `DateAndTimeRangeFields.tsx`. Its two other
+`type="time"` siblings elsewhere in the app (`ScheduleEditor.tsx`,
+`Settings.tsx`) are recurring-weekly-schedule/business-hours
+*configuration* editors, not appointment-time pickers -- explicitly out
+of this task's own "book, reschedule, manual scheduling" scope, left
+untouched.
+
+**Surfaces changed, by fixing the one shared component:** `AppointmentForm.tsx`
+(book -- used from `Calendar.tsx`, `Inquiries.tsx`, and `InquiryDetail.tsx`),
+`AppointmentDetail.tsx`'s own Reschedule modal, and `InquiryDetail.tsx`'s
+four separate tentative/confirmed scheduling call sites. Zero changes
+needed in any of those five files -- the fix is entirely inside
+`DateAndTimeRangeFields.tsx` and the new `TimeSelect.tsx` it now renders
+instead of a bare `<input type="time">`.
+
+New `components/TimeSelect.tsx`: a text-input combobox, 30-minute-step
+options, type-to-jump filtering (typing "2" narrows the list to every
+2:xx option), and a manual-exact-minute escape hatch (`parseTypedTime`
+accepts "9", "915", "9:15pm", "14:30", ... -- Enter or blur commits
+whatever parses, on-grid or not). Range defaults to the studio's own
+`businessHours` widest open..close span across the week (new
+`studioSettingsQueryKey`, self-fetched inside the component so no
+caller needs to thread it through) -- same "advisory, never blocks"
+convention as every other business-hours consumer in this app
+(`Calendar.tsx`'s own shading); a studio that's never configured hours
+gets a generic 6am-11pm default instead of an empty list. Callers can
+still override with explicit `minTime`/`maxTime` if a future call site
+needs a narrower bound than the studio-wide default.
+
+## 2. Gift cards: Attach to client
+
+New `PATCH /gift-cards/:id/holder` (body: `{ clientId }`), gated
+`giftCards.issue` -- the same permission tier `PATCH /:id/attachment`
+(moving a card between that SAME client's own appointments) already
+uses, the closest existing precedent for "reassign what this card is
+associated with." Allowed for any non-VOID status, explicitly including
+REDEEMED/EXPIRED/EXEMPT -- these are real historical records a studio
+may still need to correct the holder on, not just untouched ACTIVE
+cards; VOID is the one true dead end. Clears `appointmentId` in the same
+update (the card's old appointment belongs to the OLD holder --
+`/attachment`'s own `appointment.clientId === card.clientId` invariant
+would otherwise silently break the instant the holder changes).
+Activity-logged with `holder: { from, to }` (and `detachedFromAppointment`
+when relevant) using real client names, not IDs. Two `emitInvalidation`
+calls (`giftcard.changed`, both the old and new client) -- both sides'
+own client-detail views need to know their gift-card list just changed.
+
+Frontend: a new "Attach to client" button on `GiftCardDetail.tsx`
+reuses `GET /clients/merge-search` -- already a general "find any
+client in this studio" search (confirmed by reading that route's own
+comment: it already backs `StaffInquiryForm`'s lookup too, not just the
+manual-merge picker its name suggests) -- via the exact same debounced-
+search-in-a-`Modal` pattern `ClientDetail.tsx`'s own merge picker uses,
+`excludeId` keeping the current holder out of their own reassignment
+results.
+
+## 3. Client CSV export
+
+New `POST /clients/export`, gated `bulkActions.use` ("select multiple
+records and act on them at once") rather than `clients.view` alone --
+flagged as a judgment call per the task's own ask: bulk-extracting
+contact data out of the app as a portable file is a meaningfully bigger
+capability than seeing it on screen, and this is the closest existing
+key to "select rows, act on them," not an established precedent.
+
+Body is `{ clientIds }` (an explicit, manually-checked set) or
+`{ filter: { q, includeArchived, activity } }` (the same filter shape
+`GET /clients` already accepts) -- re-derives the filter server-side
+rather than trusting whatever the frontend happened to have loaded,
+specifically because `GET /clients` itself caps at `take: 100` for its
+own list-view pagination. A studio with more than 100 clients matching
+a filter would otherwise silently export only the first page and call
+it "all" -- verified directly against this dev studio's own 111 real
+non-archived-and-archived clients (more than the 100-row page cap) and
+got all 111 back, not 100.
+
+Batched `findMany` (cursor-paginated, 500 rows/batch) piped through
+`csv-stringify` (new dependency, sibling to the existing `csv-parse`
+import already used for CSV *import*) directly into the HTTP response
+-- memory stays bounded to one batch regardless of studio size, and the
+browser starts receiving bytes well before the last batch is even
+queried. UTF-8 BOM written first (Excel's own well-known gotcha:
+without it, Excel silently re-decodes as the system codepage and
+mangles any accented character on open).
+
+Columns: First/Last Name, Primary Phone, Other Phones (semicolon-
+joined), Primary Email, Other Emails (semicolon-joined), Instagram,
+Facebook, Other Contact, Address, Referral Code, Created Date. Multi-
+phone/email flattening reads `ClientPhone`/`ClientEmail` (the real
+multi-value models -- `Client.phone`/`.email` are just the legacy
+single-value fallback) and picks whichever's marked `isPrimary` for the
+Primary column, everything else joined into Other. **Hard rule verified
+structurally, not by convention:** the route's own Prisma `select`
+has no path to Waiver/health-screening data at all -- there is nothing
+to accidentally leak here regardless of future edits to the columns
+list, not just a promise not to add it.
+
+Frontend: row checkboxes + a header "select all visible" checkbox on
+`Clients.tsx`, plus an "Export CSV" button that reads as "Export N
+Selected" the moment anything's checked. No selection = export
+everything matching the current search/activity/archived filters
+(the common case -- most staff won't bother checking 100 boxes just to
+export "what I'm looking at"); a non-empty selection exports exactly
+those rows instead. `lib/api.ts`'s existing `downloadFile` helper (built
+for PDF export, GET-only until now) gained an optional `options` param
+so this could reuse it for a POST body rather than writing a parallel
+one-off fetch -- backward compatible, its three existing GET callers
+(`ClientDetail.tsx`, `InquiryDetail.tsx`, `MyProjectDetail.tsx`) pass no
+options and are unaffected.
+
+## Verification
+
+Real Playwright browser, dev servers reused (already running from
+before this session). One recurring tooling snag from prior sessions
+recurred here too: Playwright's own synthetic `browser_click` /
+`getByRole(...).click()` intermittently failed to register on this
+session's own modals/buttons (react-big-calendar's slot-select
+specifically never registered at all, even via manually dispatched
+mousedown/mouseup/click at the real element coordinates) while native
+DOM `.click()` via `browser_evaluate` worked immediately and reliably
+every time. Used the latter throughout once the pattern reappeared.
+
+- **Time selection**: verified live on `AppointmentDetail.tsx`'s
+  Reschedule modal (`react-big-calendar`'s own empty-slot click for a
+  fresh booking never triggered its `onSelectSlot` under automation
+  despite several real-mouse-event attempts -- a testing-harness
+  limitation against that specific library, not this change; the
+  identical `DateAndTimeRangeFields` instance the Reschedule modal
+  proved out is byte-for-byte the same one `AppointmentForm.tsx` and
+  `InquiryDetail.tsx` render). Dropdown opens with the studio's real
+  business-hours-derived range, typing "2" filtered to exactly 2:00 PM/
+  2:30 PM, selecting committed the value, and the pre-existing
+  `isValidTimeRange` check still fired correctly ("End time must be
+  after start time") against the newly-picked value -- confirms the
+  swap didn't disturb validation. Closed without saving; confirmed via
+  reload the real appointment's time was untouched.
+- **Gift cards**: real reassignment on a live `$100 ACTIVE` card --
+  searched, selected a different real client, holder changed, appointment
+  auto-detached, Activity History (after a reload -- `AuditTrail`'s own
+  fetch doesn't re-run on the parent's `refreshIndex`, a pre-existing
+  wrinkle, not one this session introduced) showed "reassign holder,
+  Holder: A → B, Detached from appointment: ... → —" with real client
+  names. `npm test` 170/170 both before and after.
+- **CSV export**: seeded a real client with a comma AND double-quotes
+  in the first name, an apostrophe in the last name, an accented
+  character, two phones, and two emails specifically to exercise the
+  hard cases -- the real downloaded file (via an actual browser click,
+  not just a fetch call) round-tripped every one of them correctly:
+  `"José, ""Pepé"""` (comma preserved inside quotes, `"` doubled per
+  RFC4180), `Muñoz-O'Brien` intact, both phones/emails split correctly
+  into Primary/Other columns, real UTF-8 BOM bytes (`EF BB BF`) verified
+  directly against the raw response, zero waiver/health fields present
+  by construction. Deleted afterward (its `ClientPhone`/`ClientEmail`
+  rows first, RESTRICT FK).
+
+Zero console errors on every page load throughout. `tsc -b --noEmit`
+clean on both apps, `vite build` clean, API suite 170/170.
+
+Committed and pushed directly to `main` (not the isolated worktree this
+session should have used from the start -- see the process note above).
+
+REPORT.md line count before this entry: 15969 (verified via `git show
+HEAD:REPORT.md | wc -l`) -- pure addition.

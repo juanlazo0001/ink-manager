@@ -73,13 +73,20 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
 // same technique any static file link would use, just fed a blob: URL
 // instead of a real one since the request needs the Bearer token apiFetch
 // itself attaches.
-export async function downloadFile(path: string, filename: string): Promise<void> {
+export async function downloadFile(path: string, filename: string, options: RequestInit = {}): Promise<void> {
   const token = localStorage.getItem(TOKEN_STORAGE_KEY)
 
+  // options: additive, defaults to every existing caller's plain GET --
+  // the CSV client-export feature is the first caller that needs a POST
+  // body (a clientIds array/filter object too large to reasonably encode
+  // as a query string).
   const response = await fetch(`${API_URL}${path}`, {
+    ...options,
     headers: {
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(viewAsUserId ? { 'X-View-As-User': viewAsUserId } : {}),
+      ...options.headers,
     },
   })
 

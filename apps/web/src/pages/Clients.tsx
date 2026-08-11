@@ -5,7 +5,7 @@ import Modal from '../components/Modal'
 import PhoneInput from '../components/PhoneInput'
 import MultiSelectFilter from '../components/MultiSelectFilter'
 import { SkeletonTableRows } from '../components/Skeleton'
-import { apiFetch, ApiError } from '../lib/api'
+import { apiFetch, ApiError, downloadFile } from '../lib/api'
 import { formatPhoneInput, formatDateTime, isValidPhoneDigits } from '../lib/format'
 import { PlusIcon, SearchIcon } from '../components/icons'
 import { useUserProfile } from '../context/useUserProfile'
@@ -64,6 +64,7 @@ export default function Clients() {
   // backend), Import Clients is its own dedicated clients.import permission.
   const canAddClient = profile?.permissions.includes('clients.edit') ?? false
   const canImportClients = profile?.permissions.includes('clients.import') ?? false
+  const canExportClients = profile?.permissions.includes('bulkActions.use') ?? false
   const [search, setSearch] = useState('')
   const [activityFilter, setActivityFilter] = useState<string[]>(() => loadClientFilterState().activityFilter)
   const [showArchived, setShowArchived] = useState(() => loadClientFilterState().showArchived)
@@ -90,6 +91,10 @@ export default function Clients() {
   const [showAddModal, setShowAddModal] = useState(false)
   const [form, setForm] = useState(EMPTY_FORM)
   const [formError, setFormError] = useState<string | null>(null)
+
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [exporting, setExporting] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
 
   const queryClient = useQueryClient()
   const baseQueryKey = clientsQueryKey(user!.studioId)
@@ -151,6 +156,54 @@ export default function Clients() {
     `${client.firstName} ${client.lastName}`.toLowerCase().includes(search.toLowerCase()),
   )
 
+  const allVisibleSelected = !!filteredClients && filteredClients.length > 0 && filteredClients.every((c) => selectedIds.has(c.id))
+
+  function toggleSelectAllVisible() {
+    if (!filteredClients) return
+    setSelectedIds((prev) => {
+      if (allVisibleSelected) {
+        const next = new Set(prev)
+        for (const c of filteredClients) next.delete(c.id)
+        return next
+      }
+      const next = new Set(prev)
+      for (const c of filteredClients) next.add(c.id)
+      return next
+    })
+  }
+
+  function toggleSelectOne(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  // No selection = export everything matching the current filters (not
+  // just what's loaded/visible -- the backend re-derives the filter with
+  // no cap, see clients.ts's own POST /export). A non-empty selection
+  // exports exactly those rows instead, whichever way staff picked them.
+  async function handleExport() {
+    setExporting(true)
+    setExportError(null)
+    try {
+      const body =
+        selectedIds.size > 0
+          ? { clientIds: [...selectedIds] }
+          : { filter: { q: search.trim() || undefined, includeArchived: showArchived, activity: activityFilter } }
+      await downloadFile(`/clients/export`, `clients-export-${new Date().toISOString().slice(0, 10)}.csv`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      })
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : 'Failed to export clients')
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <>
         <div className="mx-auto max-w-7xl px-6 py-6 sm:px-10 sm:py-8">
@@ -192,6 +245,20 @@ export default function Clients() {
                     Import Clients
                   </Link>
                 )}
+                {canExportClients && (
+                  <button
+                    type="button"
+                    onClick={handleExport}
+                    disabled={exporting}
+                    className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                  >
+                    {exporting
+                      ? 'Exporting…'
+                      : selectedIds.size > 0
+                        ? `Export ${selectedIds.size} Selected`
+                        : 'Export CSV'}
+                  </button>
+                )}
                 {canAddClient && (
                   <button
                     type="button"
@@ -209,6 +276,7 @@ export default function Clients() {
               </div>
             )}
           </div>
+          {exportError && <p className="mt-2 text-sm text-danger">{exportError}</p>}
 
           <div className="mt-6 flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2 rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg sm:w-64">
@@ -268,6 +336,18 @@ export default function Clients() {
                 <table className="w-full text-left text-sm">
                   <thead>
                     <tr className="bg-surface-inset text-xs text-fg-muted">
+                      {canExportClients && (
+                        <th className="w-8 py-2 font-medium">
+                          <input
+                            type="checkbox"
+                            checked={allVisibleSelected}
+                            onChange={toggleSelectAllVisible}
+                            onClick={(e) => e.stopPropagation()}
+                            aria-label="Select all visible clients"
+                            className="accent-accent"
+                          />
+                        </th>
+                      )}
                       <th className="py-2 font-medium">Name</th>
                       <th className="hidden py-2 font-medium md:table-cell">Email</th>
                       <th className="hidden py-2 font-medium sm:table-cell">Phone</th>
@@ -288,6 +368,17 @@ export default function Clients() {
                           onClick={() => navigate(`/clients/${client.id}`)}
                           className="cursor-pointer hover:bg-surface/40"
                         >
+                          {canExportClients && (
+                            <td className="py-3" onClick={(e) => e.stopPropagation()}>
+                              <input
+                                type="checkbox"
+                                checked={selectedIds.has(client.id)}
+                                onChange={() => toggleSelectOne(client.id)}
+                                aria-label={`Select ${client.firstName} ${client.lastName}`}
+                                className="accent-accent"
+                              />
+                            </td>
+                          )}
                           <td className="py-3 text-fg">
                             {client.firstName} {client.lastName}
                             {client.archivedAt && (

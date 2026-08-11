@@ -138,6 +138,174 @@ router.get("/", requirePermission("clients.view"), async (req, res) => {
   res.json(clients);
 });
 
+// Staff quick win: CSV export. Gated behind bulkActions.use ("select
+// multiple records and act on them at once") rather than clients.view
+// alone -- bulk-extracting contact data out of the app as a portable
+// file is a meaningfully bigger capability than seeing it on screen,
+// and this key is the closest existing match to "select rows, act on
+// them" in the matrix; flagged as a judgment call, not an established
+// convention.
+//
+// A static path, registered before GET /:id below for the same
+// Express-routing reason /merge-search is.
+//
+// HARD RULE, enforced structurally, not by convention: this route's
+// Prisma `select` never reaches into Waiver/health-screening data --
+// there is no path from Client to that data in this query at all, so
+// there's nothing to accidentally leak here regardless of future edits
+// to the columns list below.
+//
+// Body is exactly one of:
+//   { clientIds: string[] }                          -- an explicit, manually-checked set
+//   { filter: { q?, includeArchived?, activity? } }   -- "select all N matching" (same
+//                                                         filter semantics as GET / above,
+//                                                         but never capped at that route's
+//                                                         own take: 100 list-view limit)
+router.post("/export", requirePermission("bulkActions.use"), async (req, res) => {
+  const { clientIds, filter } = req.body ?? {};
+
+  if (clientIds !== undefined && (!Array.isArray(clientIds) || clientIds.some((v) => typeof v !== "string"))) {
+    return res.status(400).json({ error: "clientIds must be an array of strings" });
+  }
+  if (filter !== undefined && (typeof filter !== "object" || filter === null || Array.isArray(filter))) {
+    return res.status(400).json({ error: "filter must be an object" });
+  }
+  if (!clientIds && !filter) {
+    return res.status(400).json({ error: "Provide either clientIds or filter" });
+  }
+
+  const studioIds = await activeStudioIdsForCaller(req.user!);
+  let where: Prisma.ClientWhereInput;
+
+  if (clientIds) {
+    where = { id: { in: clientIds }, studioId: { in: studioIds }, ...NOT_MERGED };
+  } else {
+    const q = typeof filter.q === "string" ? filter.q.trim() : "";
+    const includeArchived = filter.includeArchived === true;
+    const activity = (Array.isArray(filter.activity) ? filter.activity : []).filter((v: unknown): v is ActivityFilter =>
+      VALID_ACTIVITY_FILTERS.includes(v as ActivityFilter),
+    );
+    const now = new Date();
+    const activityConditions: Prisma.ClientWhereInput[] = [];
+    if (activity.includes("upcoming_appointment")) {
+      activityConditions.push({ appointments: { some: { startTime: { gte: now }, status: "CONFIRMED" } } });
+    }
+    if (activity.includes("active_project")) {
+      activityConditions.push({ inquiries: { some: { status: { in: ACTIVE_PROJECT_STATUSES } } } });
+    }
+    if (activity.includes("no_activity")) {
+      activityConditions.push({
+        appointments: { none: { startTime: { gte: now }, status: "CONFIRMED" } },
+        inquiries: { none: { status: { in: ACTIVE_PROJECT_STATUSES } } },
+      });
+    }
+    const nameConditions: Prisma.ClientWhereInput[] = q
+      ? q.split(/\s+/).filter(Boolean).map((word: string) => {
+          const contains = { contains: word, mode: "insensitive" as const };
+          return { OR: [{ firstName: contains }, { lastName: contains }] };
+        })
+      : [];
+
+    const baseWhere: Prisma.ClientWhereInput = {
+      studioId: { in: studioIds },
+      ...NOT_MERGED,
+      ...(includeArchived ? {} : NOT_ARCHIVED),
+    };
+    where = {
+      AND: [baseWhere, ...(activityConditions.length > 0 ? [{ OR: activityConditions }] : []), ...nameConditions],
+    };
+  }
+
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="clients-export-${new Date().toISOString().slice(0, 10)}.csv"`);
+
+  // Excel's own well-known gotcha: without a UTF-8 byte-order mark, it
+  // silently re-decodes the file using the system's default codepage
+  // instead of UTF-8, mangling any accented character the instant the
+  // file is double-clicked open. The BOM is invisible everywhere else
+  // (every other CSV/text tool either strips or ignores it).
+  res.write("﻿");
+
+  const { stringify } = await import("csv-stringify");
+  const stringifier = stringify({
+    header: true,
+    columns: [
+      "First Name",
+      "Last Name",
+      "Primary Phone",
+      "Other Phones",
+      "Primary Email",
+      "Other Emails",
+      "Instagram",
+      "Facebook",
+      "Other Contact",
+      "Address",
+      "Referral Code",
+      "Created Date",
+    ],
+  });
+  stringifier.pipe(res);
+
+  // Batched, not one giant findMany -- the actual "stream for large
+  // sets" guarantee: memory use stays bounded to one batch's worth of
+  // rows regardless of how many thousand clients match, and the
+  // response starts flowing to the browser well before the last batch
+  // is even queried.
+  const BATCH_SIZE = 500;
+  let cursor: string | undefined;
+  for (;;) {
+    const batch = await prisma.client.findMany({
+      where,
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        phone: true,
+        email: true,
+        instagramHandle: true,
+        facebookProfileUrl: true,
+        otherContact: true,
+        address: true,
+        referralCode: true,
+        createdAt: true,
+        phones: { select: { phone: true, isPrimary: true }, orderBy: { isPrimary: "desc" } },
+        emails: { select: { email: true, isPrimary: true }, orderBy: { isPrimary: "desc" } },
+      },
+      orderBy: { id: "asc" },
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      take: BATCH_SIZE,
+    });
+    if (batch.length === 0) break;
+
+    for (const c of batch) {
+      const primaryPhone = c.phones.find((p) => p.isPrimary)?.phone ?? c.phones[0]?.phone ?? c.phone ?? "";
+      const otherPhones = c.phones.map((p) => p.phone).filter((p) => p !== primaryPhone);
+      const primaryEmail = c.emails.find((e) => e.isPrimary)?.email ?? c.emails[0]?.email ?? c.email ?? "";
+      const otherEmails = c.emails.map((e) => e.email).filter((e) => e !== primaryEmail);
+
+      stringifier.write([
+        c.firstName,
+        c.lastName,
+        primaryPhone,
+        otherPhones.join("; "),
+        primaryEmail,
+        otherEmails.join("; "),
+        c.instagramHandle ?? "",
+        c.facebookProfileUrl ?? "",
+        c.otherContact ?? "",
+        c.address ?? "",
+        c.referralCode,
+        c.createdAt.toISOString().slice(0, 10),
+      ]);
+    }
+
+    cursor = batch[batch.length - 1]!.id;
+    if (batch.length < BATCH_SIZE) break;
+  }
+
+  stringifier.end();
+});
+
 // Backs the manual-merge search picker (§2): find ANY client in the
 // studio by name/email/phone, not just contact-matching auto-suggestions.
 // A static path, so it must be registered before GET /:id below --

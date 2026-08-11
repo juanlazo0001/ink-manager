@@ -27,3 +27,4 @@ export const widgetLayoutQueryKey = (userId: string, pageKey: string) => ['widge
 export const eligibleTransferArtistsQueryKey = (studioId: string) =>
   ['artist-transfers', studioId, 'eligible-artists'] as const
 export const artistTransfersQueryKey = (studioId: string) => ['artist-transfers', studioId] as const
+export const studioSettingsQueryKey = (studioId: string) => ['studio-settings', studioId] as const

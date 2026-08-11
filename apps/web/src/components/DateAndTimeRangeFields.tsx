@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { DayPicker } from 'react-day-picker'
 import 'react-day-picker/style.css'
 import DropdownPortal from './DropdownPortal'
+import TimeSelect from './TimeSelect'
 
 // Phase UI-4: an appointment never spans more than one calendar day, so
 // this is deliberately one date + two times -- never a separate end-date
@@ -135,23 +136,19 @@ export default function DateAndTimeRangeFields({
 
         <div>
           <label className="mb-1 block text-sm font-medium text-fg-secondary">Start Time</label>
-          <input
-            type="time"
+          <TimeSelect
             disabled={disabled}
             value={value.startTime}
-            onChange={(event) => onChange({ ...value, startTime: event.target.value })}
-            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-60"
+            onChange={(startTime) => onChange({ ...value, startTime })}
           />
         </div>
 
         <div>
           <label className="mb-1 block text-sm font-medium text-fg-secondary">End Time</label>
-          <input
-            type="time"
+          <TimeSelect
             disabled={disabled}
             value={value.endTime}
-            onChange={(event) => onChange({ ...value, endTime: event.target.value })}
-            className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-60"
+            onChange={(endTime) => onChange({ ...value, endTime })}
           />
         </div>
       </div>

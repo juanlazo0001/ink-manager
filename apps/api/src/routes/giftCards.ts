@@ -487,6 +487,80 @@ router.patch("/:id/attachment", async (req, res) => {
   });
 });
 
+// Staff quick win: reassign which client holds this card -- a genuinely
+// different action from PATCH /:id/attachment above (which moves an
+// already-this-client's card onto/off one of THEIR OWN appointments).
+// Same giftCards.issue permission tier as that route (this is the
+// closest existing precedent: "modify what this card is associated
+// with," not a terminal action like void). Deliberately allowed for
+// any non-VOID status -- REDEEMED/EXPIRED/EXEMPT cards are real
+// historical records a studio may still need to correct the holder on,
+// not just untouched ACTIVE ones; VOID is the one true dead end.
+router.patch("/:id/holder", async (req, res) => {
+  const id = req.params.id as string;
+  const { clientId } = req.body ?? {};
+
+  if (typeof clientId !== "string" || !clientId) {
+    return res.status(400).json({ error: "clientId is required" });
+  }
+
+  const card = await prisma.giftCard.findUnique({ where: { id }, include: { client: true } });
+  if (!card || !(await callerBelongsToStudio(req.user!, card.studioId))) {
+    return res.status(404).json({ error: "Gift card not found" });
+  }
+
+  // Permission-context fix: evaluated at the gift card's own studio.
+  if (!(await hasPermissionAt(req.user!, card.studioId, "giftCards.issue"))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const synced = await syncExpiredStatus(card);
+  if (synced.status === GiftCardStatus.VOID) {
+    return res.status(400).json({ error: "A voided card can't be reassigned to a different client" });
+  }
+
+  const newClient = await prisma.client.findUnique({ where: { id: clientId } });
+  if (!newClient || newClient.studioId !== card.studioId) {
+    return res.status(400).json({ error: "clientId must belong to this card's studio" });
+  }
+  if (newClient.id === card.clientId) {
+    return res.status(400).json({ error: "This card is already attached to that client" });
+  }
+
+  const fromClient = card.client;
+  const hadAppointmentId = card.appointmentId;
+
+  // The card's own appointmentId (if set) belongs to the OLD holder --
+  // /attachment's own invariant (appointment.clientId === card.clientId)
+  // would otherwise silently break the instant the holder changes, so
+  // this clears it in the same update rather than leaving a dangling
+  // reference for staff to discover later as a confusing bug.
+  const updated = await prisma.giftCard.update({
+    where: { id },
+    data: { clientId: newClient.id, appointmentId: null },
+  });
+
+  await logAudit({
+    studioId: req.user!.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "GiftCard",
+    entityId: id,
+    action: "reassign-holder",
+    changes: {
+      holder: {
+        from: `${fromClient.firstName} ${fromClient.lastName}`,
+        to: `${newClient.firstName} ${newClient.lastName}`,
+      },
+      ...(hadAppointmentId ? { detachedFromAppointment: { from: hadAppointmentId, to: null } } : {}),
+    },
+  });
+
+  emitInvalidation({ type: "giftcard.changed", studioId: req.user!.studioId, clientId: fromClient.id });
+  emitInvalidation({ type: "giftcard.changed", studioId: req.user!.studioId, clientId: newClient.id });
+
+  res.json({ ...updated, detachedFromAppointment: hadAppointmentId ?? null });
+});
+
 // Scanner feature: the front-desk "redeem/apply" action a QR scan routes
 // staff to. No dedicated redeem endpoint existed before this -- the only
 // prior way a card became REDEEMED was as a side effect of a full session

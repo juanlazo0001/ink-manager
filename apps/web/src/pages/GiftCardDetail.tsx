@@ -1,13 +1,22 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { apiFetch, ApiError } from '../lib/api'
-import { formatDateTime } from '../lib/format'
+import { formatDateTime, formatPhoneInput } from '../lib/format'
 import { ArrowLeftIcon } from '../components/icons'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useUserProfile } from '../context/useUserProfile'
 import QrCode from '../components/QrCode'
 import AuditTrail from '../components/AuditTrail'
 import StatusPill from '../components/StatusPill'
+import Modal from '../components/Modal'
+
+interface HolderSearchCandidate {
+  id: string
+  firstName: string
+  lastName: string
+  email: string | null
+  phone: string | null
+}
 
 interface GiftCard {
   id: string
@@ -42,6 +51,9 @@ export default function GiftCardDetail() {
   const canTextReceipt = profile?.permissions.includes('giftCards.issue') ?? false
   const canViewAudit = profile?.permissions.includes('audit.view') ?? false
   const canVoid = profile?.permissions.includes('giftCards.void') ?? false
+  // Same tier as canTextReceipt above -- PATCH /:id/holder's own gate.
+  // Named separately for readability at each call site.
+  const canReassignHolder = canTextReceipt
   // PATCH /:id (expiration) is deliberately left hardcoded OWNER-only on
   // the API -- no configurable permission key covers "edit a card's
   // expiration" without either overreaching giftCards.issue's default
@@ -68,6 +80,13 @@ export default function GiftCardDetail() {
   const [savingExpiry, setSavingExpiry] = useState(false)
   const [expiryError, setExpiryError] = useState<string | null>(null)
 
+  const [showReassignHolder, setShowReassignHolder] = useState(false)
+  const [holderSearchQuery, setHolderSearchQuery] = useState('')
+  const [holderSearchResults, setHolderSearchResults] = useState<HolderSearchCandidate[]>([])
+  const [holderSearchLoading, setHolderSearchLoading] = useState(false)
+  const [reassigning, setReassigning] = useState(false)
+  const [reassignError, setReassignError] = useState<string | null>(null)
+
   useEffect(() => {
     if (!id) return
 
@@ -92,6 +111,40 @@ export default function GiftCardDetail() {
       ignore = true
     }
   }, [id, refreshIndex])
+
+  // Same debounced-search pattern as ClientDetail.tsx's own manual-merge
+  // picker, reusing that exact endpoint -- it's already a general "find
+  // any client in this studio" search, not merge-specific despite the
+  // route name (see that route's own comment). excludeId keeps the
+  // current holder out of their own reassignment results.
+  useEffect(() => {
+    if (!showReassignHolder || !card) return
+    if (holderSearchQuery.trim().length < 2) {
+      setHolderSearchResults([])
+      setHolderSearchLoading(false)
+      return
+    }
+
+    let ignore = false
+    setHolderSearchLoading(true)
+    const timeout = setTimeout(async () => {
+      try {
+        const results = await apiFetch<HolderSearchCandidate[]>(
+          `/clients/merge-search?q=${encodeURIComponent(holderSearchQuery.trim())}&excludeId=${card.client.id}`,
+        )
+        if (!ignore) setHolderSearchResults(results)
+      } catch {
+        if (!ignore) setHolderSearchResults([])
+      } finally {
+        if (!ignore) setHolderSearchLoading(false)
+      }
+    }, 300)
+
+    return () => {
+      ignore = true
+      clearTimeout(timeout)
+    }
+  }, [holderSearchQuery, showReassignHolder, card])
 
   // The API's own shortLinks.shortenUrl -- same short code the client's
   // text-receipt SMS and the shareable-links composer already send them,
@@ -156,6 +209,28 @@ export default function GiftCardDetail() {
       setReceiptError(err instanceof Error ? err.message : 'Failed to send receipt')
     } finally {
       setSendingReceipt(false)
+    }
+  }
+
+  async function handleReassignHolder(candidate: HolderSearchCandidate) {
+    if (!id) return
+
+    setReassigning(true)
+    setReassignError(null)
+
+    try {
+      await apiFetch(`/gift-cards/${id}/holder`, {
+        method: 'PATCH',
+        body: JSON.stringify({ clientId: candidate.id }),
+      })
+      setShowReassignHolder(false)
+      setHolderSearchQuery('')
+      setHolderSearchResults([])
+      setRefreshIndex((index) => index + 1)
+    } catch (err) {
+      setReassignError(err instanceof Error ? err.message : 'Failed to reassign this card')
+    } finally {
+      setReassigning(false)
     }
   }
 
@@ -332,6 +407,16 @@ export default function GiftCardDetail() {
                       {voiding ? 'Voiding…' : 'Void card'}
                     </button>
                   )}
+
+                  {canReassignHolder && card.status !== 'VOID' && (
+                    <button
+                      type="button"
+                      onClick={() => setShowReassignHolder(true)}
+                      className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
+                    >
+                      Attach to client
+                    </button>
+                  )}
                 </div>
 
                 {redeemError && <p className="mt-3 text-sm text-danger">{redeemError}</p>}
@@ -361,6 +446,60 @@ export default function GiftCardDetail() {
                   </div>
                 )}
               </div>
+
+              {showReassignHolder && (
+                <Modal
+                  title="Attach to client"
+                  onClose={() => {
+                    setShowReassignHolder(false)
+                    setHolderSearchQuery('')
+                    setHolderSearchResults([])
+                    setReassignError(null)
+                  }}
+                >
+                  <p className="text-sm text-fg-secondary">
+                    Currently held by{' '}
+                    <span className="font-medium text-fg">
+                      {card.client.firstName} {card.client.lastName}
+                    </span>
+                    . Search for who this card should belong to instead.
+                  </p>
+                  <input
+                    type="text"
+                    autoFocus
+                    placeholder="Search by name, email, or phone…"
+                    value={holderSearchQuery}
+                    onChange={(e) => setHolderSearchQuery(e.target.value)}
+                    disabled={reassigning}
+                    className="mt-3 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-60"
+                  />
+
+                  {reassignError && <p className="mt-2 text-sm text-danger">{reassignError}</p>}
+                  {holderSearchLoading && <p className="mt-3 text-sm text-fg-secondary">Searching…</p>}
+                  {!holderSearchLoading && holderSearchQuery.trim().length >= 2 && holderSearchResults.length === 0 && (
+                    <p className="mt-3 text-sm text-fg-secondary">No clients found.</p>
+                  )}
+
+                  <ul className="mt-3 max-h-72 space-y-2 overflow-y-auto">
+                    {holderSearchResults.map((candidate) => (
+                      <li key={candidate.id}>
+                        <button
+                          type="button"
+                          disabled={reassigning}
+                          onClick={() => handleReassignHolder(candidate)}
+                          className="flex w-full items-center justify-between gap-2 rounded-lg border border-border px-3 py-2 text-left text-sm text-fg transition hover:bg-surface disabled:opacity-60"
+                        >
+                          <span>
+                            {candidate.firstName} {candidate.lastName}
+                            {candidate.email ? ` — ${candidate.email}` : ''}
+                            {candidate.phone ? ` — ${formatPhoneInput(candidate.phone)}` : ''}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </Modal>
+              )}
 
               {canViewAudit && <AuditTrail entityType="GiftCard" entityId={card.id} />}
             </>
