@@ -377,6 +377,15 @@ export function FacebookIcon({ className }: IconProps) {
   )
 }
 
+export function EmailIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <rect x="2.5" y="4.5" width="15" height="11" rx="2" />
+      <path d="M3.5 5.75 10 10.75l6.5-5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 export function CopyIcon({ className }: IconProps) {
   return (
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>

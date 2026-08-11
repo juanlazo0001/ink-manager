@@ -12,7 +12,7 @@ import ScheduleEditor, {
   scheduleBlocksToDays,
   type ScheduleBlock,
 } from '../components/ScheduleEditor'
-import { InstagramIcon, FacebookIcon, SparkleIcon } from '../components/icons'
+import { InstagramIcon, FacebookIcon, EmailIcon, SparkleIcon } from '../components/icons'
 import { crossfadeVariants, uiSpringTransition } from '../lib/motion'
 
 interface ServiceOption {
@@ -28,6 +28,7 @@ interface ArtistFull {
   portfolioImages: string[]
   instagramHandle: string | null
   facebookProfileUrl: string | null
+  publicContactEmail: string | null
   hourlyRateCents: number | null
   flatRateCents: number | null
   schedulingBufferMinutes: number | null
@@ -69,6 +70,7 @@ export default function ArtistWelcomeWizard() {
   const [portfolioUploading, setPortfolioUploading] = useState(false)
   const [instagramHandle, setInstagramHandle] = useState('')
   const [facebookProfileUrl, setFacebookProfileUrl] = useState('')
+  const [publicContactEmail, setPublicContactEmail] = useState('')
   const [hourlyRate, setHourlyRate] = useState('')
   const [flatRate, setFlatRate] = useState('')
   const [schedulingBufferMinutes, setSchedulingBufferMinutes] = useState('')
@@ -94,6 +96,7 @@ export default function ArtistWelcomeWizard() {
         setPortfolioImages(artist.portfolioImages)
         setInstagramHandle(artist.instagramHandle ?? '')
         setFacebookProfileUrl(artist.facebookProfileUrl ?? '')
+        setPublicContactEmail(artist.publicContactEmail ?? '')
         setHourlyRate(artist.hourlyRateCents != null ? (artist.hourlyRateCents / 100).toString() : '')
         setFlatRate(artist.flatRateCents != null ? (artist.flatRateCents / 100).toString() : '')
         setSchedulingBufferMinutes(
@@ -127,6 +130,7 @@ export default function ArtistWelcomeWizard() {
           portfolioImages,
           instagramHandle: instagramHandle.trim() || null,
           facebookProfileUrl: facebookProfileUrl.trim() || null,
+          publicContactEmail: publicContactEmail.trim() || null,
         }
       case 'business':
         return {
@@ -288,6 +292,23 @@ export default function ArtistWelcomeWizard() {
                         value={facebookProfileUrl}
                         onChange={(e) => setFacebookProfileUrl(e.target.value)}
                         placeholder="https://facebook.com/yourname"
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-fg-secondary">Public contact email</label>
+                    <p className="mb-1 text-xs text-fg-muted">
+                      Optional -- shown to clients on your public page. Separate from your login email, which is
+                      never shown publicly.
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <EmailIcon className="h-4 w-4 shrink-0 text-fg-muted" />
+                      <input
+                        type="email"
+                        value={publicContactEmail}
+                        onChange={(e) => setPublicContactEmail(e.target.value)}
+                        placeholder="you@example.com"
                         className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                       />
                     </div>

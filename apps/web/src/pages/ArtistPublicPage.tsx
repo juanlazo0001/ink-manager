@@ -5,7 +5,7 @@ import { apiFetch } from '../lib/api'
 import { buildMapsUrl } from '../lib/maps'
 import { dateLocale } from '../i18n/locales'
 import { LocaleProvider, useLocale, useTranslations } from '../i18n'
-import { FacebookIcon, InstagramIcon, MapPinIcon } from '../components/icons'
+import { EmailIcon, FacebookIcon, InstagramIcon, MapPinIcon } from '../components/icons'
 
 // Artist public page v2 -- full rebuild against Juan's authoritative HTML
 // spec (public/desktop/screenshots/artist-page-v12.html, saved to the repo
@@ -57,6 +57,7 @@ interface ArtistPublicProfile {
   upcomingResidencies: UpcomingResidency[]
   instagramHandle: string | null
   facebookProfileUrl: string | null
+  publicContactEmail: string | null
   backgroundImageUrl: string | null
   resolvedLocale?: string
 }
@@ -146,6 +147,9 @@ function ArtistPublicPageContent() {
   if (profile.facebookProfileUrl) {
     socials.push({ key: 'facebook', href: profile.facebookProfileUrl, Icon: FacebookIcon, label: 'Facebook' })
   }
+  if (profile.publicContactEmail) {
+    socials.push({ key: 'email', href: `mailto:${profile.publicContactEmail}`, Icon: EmailIcon, label: 'Email' })
+  }
 
   const hasArtistTexture = Boolean(profile.backgroundImageUrl)
   const showPlatformPhoto = !hasArtistTexture || PLATFORM_BACKGROUND_LAYERING === 'over'
@@ -164,15 +168,14 @@ function ArtistPublicPageContent() {
             />
           )}
           <span className="artist-bg-wash" aria-hidden="true" />
+          <div className="artist-ambient artist-ambient--one" aria-hidden="true" />
+          <div className="artist-ambient artist-ambient--two" aria-hidden="true" />
         </>,
         document.body,
       )}
 
       <div className="relative z-10">
         <section className="artist-hero-shell">
-          <div className="artist-ambient artist-ambient--one" aria-hidden="true" />
-          <div className="artist-ambient artist-ambient--two" aria-hidden="true" />
-
           <div className="artist-hero-copy">
             <div className="artist-eyebrow">
               <span>{t('artistPublic.eyebrow')}</span>
@@ -204,9 +207,6 @@ function ArtistPublicPageContent() {
                   <span className="font-display text-6xl font-medium text-fg-muted">{profile.name.slice(0, 1).toUpperCase()}</span>
                 </div>
               )}
-            </div>
-            <div className="artist-portrait-mark" aria-hidden="true">
-              ✦
             </div>
             <div className="artist-orbit-dots" aria-hidden="true">
               <i />
@@ -288,11 +288,20 @@ function ArtistPublicPageContent() {
               <p>{t('artistPublic.letsConnect')}</p>
               <b aria-hidden="true">+</b>
               <div className="artist-socials">
-                {socials.map(({ key, href, Icon, label }) => (
-                  <a key={key} href={href} target="_blank" rel="noopener noreferrer" aria-label={label}>
-                    <Icon className="h-full w-full" />
-                  </a>
-                ))}
+                {socials.map(({ key, href, Icon, label }) => {
+                  const isMailto = href.startsWith('mailto:')
+                  return (
+                    <a
+                      key={key}
+                      href={href}
+                      target={isMailto ? undefined : '_blank'}
+                      rel={isMailto ? undefined : 'noopener noreferrer'}
+                      aria-label={label}
+                    >
+                      <Icon className="h-full w-full" />
+                    </a>
+                  )
+                })}
               </div>
             </div>
           )}

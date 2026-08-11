@@ -259,6 +259,7 @@ router.patch("/:id", requirePermissionOrSelfArtist("artists.manage"), async (req
     portfolioImages,
     instagramHandle,
     facebookProfileUrl,
+    publicContactEmail,
   } = req.body ?? {};
   let {
     isGuest,
@@ -355,6 +356,7 @@ router.patch("/:id", requirePermissionOrSelfArtist("artists.manage"), async (req
     portfolioImages = undefined;
     instagramHandle = undefined;
     facebookProfileUrl = undefined;
+    publicContactEmail = undefined;
     hourlyRateCents = undefined;
     flatRateCents = undefined;
     schedulingBufferMinutes = undefined;
@@ -405,6 +407,15 @@ router.patch("/:id", requirePermissionOrSelfArtist("artists.manage"), async (req
     return res.status(400).json({ error: "facebookProfileUrl must be a string or null" });
   }
 
+  // Stricter than instagramHandle/facebookProfileUrl above -- this becomes
+  // a public mailto: link on the artist's page, so a bare format check
+  // (never a deliverability check) catches obvious typos before they ship.
+  if (publicContactEmail !== undefined && publicContactEmail !== null) {
+    if (typeof publicContactEmail !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(publicContactEmail.trim())) {
+      return res.status(400).json({ error: "publicContactEmail must be a valid email address or null" });
+    }
+  }
+
   if (isGuest !== undefined && typeof isGuest !== "boolean") {
     return res.status(400).json({ error: "isGuest must be a boolean" });
   }
@@ -453,6 +464,7 @@ router.patch("/:id", requirePermissionOrSelfArtist("artists.manage"), async (req
       ? { instagramHandle: instagramHandle?.trim().replace(/^@/, "") || null }
       : {}),
     ...(facebookProfileUrl !== undefined ? { facebookProfileUrl: facebookProfileUrl?.trim() || null } : {}),
+    ...(publicContactEmail !== undefined ? { publicContactEmail: publicContactEmail?.trim() || null } : {}),
     ...(isGuest !== undefined ? { isGuest } : {}),
     ...(guestStartDate !== undefined ? { guestStartDate: guestStartDate ? new Date(guestStartDate) : null } : {}),
     ...(guestEndDate !== undefined ? { guestEndDate: guestEndDate ? new Date(guestEndDate) : null } : {}),
@@ -489,6 +501,7 @@ router.patch("/:id", requirePermissionOrSelfArtist("artists.manage"), async (req
         "portfolioImages",
         "instagramHandle",
         "facebookProfileUrl",
+        "publicContactEmail",
         "isGuest",
         "guestStartDate",
         "guestEndDate",

@@ -14958,5 +14958,151 @@ scripted cleanup; Playwright uninstalled; both dev servers (API 4002, web
 Committed on `session/customer-language-preference`, pushed -- not
 merged, per this repo's established review-then-merge convention.
 
-REPORT.md line count before this entry: 14797 (verified via `git show
-HEAD:REPORT.md | wc -l`) -- pure addition.
+# Artist public page -- four small fixes (design-iteration pass)
+
+Four targeted fixes against the already-shipped Artist public page v2
+(`ArtistPublicPage.tsx` / `index.css`'s own "Artist public page v2"
+section). The v12 reference HTML
+(`public/desktop/screenshots/artist-page-v12.html`) stays untouched as
+the historical record -- these are deltas layered on top of it, same
+convention as the three deltas already called out in that section's own
+comments.
+
+## 1. Missing email icon under LET'S CONNECT
+
+Investigated which field the section actually reads before touching
+anything, per the task's own explicit branching instruction. Ground
+truth: the `socials` array in `ArtistPublicPage.tsx` only ever read
+`profile.instagramHandle` / `profile.facebookProfileUrl` -- there was no
+email field anywhere on the `Artist` model or in this component's
+payload. This is **Case 2**, not a render bug: the fix is a genuinely new,
+explicit opt-in `publicContactEmail` field, not a fix to existing
+plumbing. Per the task's own hard constraint, the account login email
+(`User.email`) is never surfaced here -- it's a private credential, not
+public contact info.
+
+Built end-to-end:
+
+- **Schema**: `Artist.publicContactEmail String?`
+  (`prisma/migrations/20260810224439_artist_public_contact_email`),
+  applied via `prisma migrate deploy` (never `migrate dev`, per this
+  file's own standing rule).
+- **Backend** (`routes/artists.ts`, `PATCH /:id`): threaded through the
+  same delegation gate as `instagramHandle`/`facebookProfileUrl` --
+  self-edit always allowed, staff edit requires
+  `StudioMembership.allowsStudioProfileEdits`. Validated with a real
+  (if bare) email-format regex, stricter than the neighboring two fields'
+  "just a string" check, since this becomes a public `mailto:` link.
+  Added to the audit-log diff field list.
+- **Public route** (`routes/artistPublicProfile.ts`): added to the
+  `select` and response JSON; updated that route's own stale "only the
+  two fields" comment.
+- **Self-edit UI, both places an artist's profile is editable**:
+  `ArtistWelcomeWizard.tsx`'s portfolio step and `ArtistDetail.tsx`'s
+  Social Links widget -- both get a new "Public contact email" input
+  (type=`email`, `EmailIcon`, explicit copy: "Optional -- shown to
+  clients on the public artist page. Separate from your login email,
+  which is never shown publicly."). `ArtistDetail.tsx`'s read-only
+  (non-editing) view also gets a third mailto icon alongside the
+  existing Instagram/Facebook ones when set.
+- **Public page**: `EmailIcon` added to `components/icons.tsx` (same
+  stroke convention as the existing icons). `socials` array gets a third
+  entry, `href: mailto:${publicContactEmail}`, rendered without
+  `target="_blank"`/`rel` (unlike the other two, which do open in a new
+  tab) since a `mailto:` link opening a blank tab behind the mail client
+  is a real, if minor, UX defect worth avoiding.
+
+## 2. Red emblem removed
+
+`.artist-portrait-mark` (the ✦ sparkle badge, red gradient background)
+deleted outright -- the `<div>` in `ArtistPublicPage.tsx`, its base CSS
+rule, and its 820px responsive override. `.artist-orbit`/`.artist-orbit-1/
+2/3` (the plain rings) and `.artist-orbit-dots` (the three detail dots)
+are untouched, per the task's explicit "rings and detail dots stay."
+
+## 3. Ambient rings no longer scroll
+
+`.artist-ambient--one`/`--two` were `position: absolute` inside
+`.artist-hero-shell`, a normal-flow element -- they scrolled away with
+the rest of the page. Moved the two `<div>`s into the same
+`createPortal(..., document.body)` block the background photo/wash
+already uses (this file's own established pattern for exactly this
+class of bug -- see this section's own CLAUDE.md gotcha about
+`backdrop-filter`/`transform` ancestors trapping `position: fixed`
+descendants), and changed `.artist-ambient` from `position: absolute` to
+`position: fixed`, `z-index: 2` (same tier as, and painted after,
+`.artist-bg-wash`).
+
+Verified structurally, not just visually: `getComputedStyle(...).position
+=== 'fixed'` and `parentElement.tagName === 'BODY'` on both elements, and
+`getBoundingClientRect()` on `.artist-ambient--two` identical
+(`{ top: -60, right: -300 }`) before and after `window.scrollTo(0, 340)`
+on a real, longer (1240px-tall) page -- confirms the elements don't move
+on scroll, not just that they look static in two screenshots.
+
+## 4. Artist name one step smaller
+
+`.artist-h1`'s `clamp()` reduced ~10% at all three breakpoints
+(desktop/820px/430px), proportionally across min/preferred/max, keeping
+`text-wrap: balance` / `overflow-wrap: break-word` (Delta 3) untouched:
+
+| Breakpoint | Before | After |
+| --- | --- | --- |
+| Desktop (base) | `clamp(80px, 9vw, 146px)` | `clamp(72px, 8.1vw, 132px)` |
+| ≤820px | `clamp(54px, 15vw, 88px)` | `clamp(49px, 13.5vw, 79px)` |
+| ≤430px | `clamp(50px, 16.2vw, 70px)` | `clamp(45px, 14.6vw, 63px)` |
+
+`font-variation-settings` opsz values left as-is (not part of the ask).
+
+## Verification
+
+Real Playwright browser, dev servers on :4000/:5173, both dev servers
+restarted (not reused as-is) after the schema change so the already-
+running API process picked up the regenerated Prisma client -- a stale
+in-memory client would have silently 500'd on the new
+`publicContactEmail` select otherwise.
+
+Two published test artists at `dev-studio`, both cleaned up back to
+their prior state after verification (see below):
+
+- **"Louie G"** (the existing dev-studio scheduling-test artist, per
+  this file's own established convention -- reused, not duplicated),
+  temporarily published with `publicContactEmail: hello@louiegtattoo.test`
+  set. Confirmed at 390px and 1440px, English and Spanish: email icon
+  present in LET'S CONNECT, `mailto:hello@louiegtattoo.test` href
+  correct, no red emblem, rings fixed under scroll (see above), name
+  sized down.
+- **A throwaway stress-name artist** ("Bartholomew Fitzgerald-Whitmore
+  III," 6 specialty pills, no `publicContactEmail`) -- confirmed no
+  social/connect section renders at all (matches the established
+  "collapses entirely when there's nothing to show" behavior, now also
+  true with three possible fields instead of two), long name wraps
+  cleanly across multiple lines at both 390px and 1440px without
+  overflowing the hero, deleted after verification.
+
+Zero console errors on every page load tested (checked explicitly as an
+anonymous visitor -- an initial check that reused a stale authenticated
+browser session showed unrelated pre-existing 401s from the app shell's
+own authenticated-only fetches firing on this public route with an
+expired token; cleared `localStorage`/`sessionStorage` and re-verified
+clean, since that's the actual condition a real public visitor is in).
+`tsc -b --noEmit` clean on both apps; `vite build` clean.
+
+Louie G reverted to its original unpublished state
+(`publicSlug`/`publishedAt`/`publicContactEmail`/`bio`/`specialties` all
+cleared back to null/empty) after verification -- it's a scheduling-
+test fixture with an established prior purpose, not meant to stay
+published under this feature's test data. The stress-name artist and its
+user were deleted outright (throwaway, same as the original
+artist-page-v2 stress-test artist's own fate).
+
+Both dev servers (API :4000, web :5173) left running -- already active
+from before this session's restart, standard for this shared dev
+environment. No scratch scripts committed.
+
+Committed directly to `main`, per this task's own explicit instruction
+(no separate review-gated branch this time).
+
+REPORT.md line count before this entry: 14960 (verified via `git show
+HEAD:REPORT.md | wc -l` after rebasing onto origin/main's "Language
+becomes customer-specific" entry, appended just above) -- pure addition.

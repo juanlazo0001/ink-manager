@@ -1217,8 +1217,15 @@
   mix-blend-mode: multiply;
 }
 
+/* Portaled to document.body alongside .artist-bg-wash (see this page's own
+   createPortal call) so these stay pinned to the viewport instead of
+   scrolling with .artist-hero-shell's normal-flow content -- position:
+   fixed, not absolute, and z-index 2 (same tier as, and painted after,
+   the wash) puts them in the same "fixed background layer" as the rest of
+   that portal's contents. */
 .artist-ambient {
-  position: absolute;
+  position: fixed;
+  z-index: 2;
   border: 1px solid rgba(215, 164, 94, 0.07);
   border-radius: 50%;
   pointer-events: none;
@@ -1246,7 +1253,10 @@
   font-family: var(--font-display);
   font-weight: 400;
   font-variation-settings: 'opsz' 96;
-  font-size: clamp(80px, 9vw, 146px);
+  /* Delta 4: one step smaller than the spec's clamp(80px, 9vw, 146px) at
+     every breakpoint (~10% down, proportionally, here and in both media
+     queries below). */
+  font-size: clamp(72px, 8.1vw, 132px);
   line-height: 0.8;
   letter-spacing: 0;
   /* Delta 3: a wrapping safety valve the spec's own single-line clamp
@@ -1330,24 +1340,6 @@
 .artist-orbit--1 { width: 79%; opacity: 0.34; border-color: rgba(215, 164, 94, 0.42); }
 .artist-orbit--2 { width: 87%; opacity: 0.2; border-color: rgba(215, 164, 94, 0.34); }
 .artist-orbit--3 { width: 95%; opacity: 0.1; border-color: rgba(215, 164, 94, 0.28); }
-
-.artist-portrait-mark {
-  position: absolute;
-  bottom: 11%;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 48px;
-  height: 48px;
-  display: grid;
-  place-items: center;
-  border: 1px solid #d89151;
-  border-radius: 50%;
-  background: linear-gradient(145deg, #b94432, #7f241d);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-  color: #f6cf96;
-  font-size: 20px;
-  z-index: 3;
-}
 
 .artist-orbit-dots {
   position: absolute;
@@ -1527,7 +1519,7 @@
   .artist-eyebrow { gap: 10px; margin-bottom: 24px; font-size: 8px; letter-spacing: 0.32em; white-space: nowrap; }
   .artist-h1 {
     font-variation-settings: 'opsz' 72;
-    font-size: clamp(54px, 15vw, 88px);
+    font-size: clamp(49px, 13.5vw, 79px);
     line-height: 0.82;
     margin: 0 0 20px;
   }
@@ -1541,7 +1533,6 @@
     color: #cfc8bd;
   }
   .artist-portrait-frame { width: 72%; height: 72%; }
-  .artist-portrait-mark { width: 34px; height: 34px; font-size: 13px; bottom: 10%; }
   .artist-orbit--1 { width: 80%; }
   .artist-orbit--2 { width: 88%; }
   .artist-orbit--3 { width: 96%; }
@@ -1588,7 +1579,7 @@
   .artist-hero-shell { width: calc(100% - 30px); grid-template-columns: 54% 46%; padding-top: 30px; padding-bottom: 18px; }
   .artist-content-shell { width: calc(100% - 30px); }
   .artist-portrait-stage { width: 112%; transform: translateX(10%); }
-  .artist-h1 { font-size: clamp(50px, 16.2vw, 70px); margin-bottom: 18px; }
+  .artist-h1 { font-size: clamp(45px, 14.6vw, 63px); margin-bottom: 18px; }
   .artist-eyebrow { margin-bottom: 20px; font-size: 7px; }
   .artist-tags { gap: 6px; margin-bottom: 22px; }
   .artist-tags span { padding: 8px 10px 7px; font-size: 7px; }

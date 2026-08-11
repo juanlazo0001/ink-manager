@@ -6,7 +6,7 @@ import { uploadPortfolioImage } from '../lib/cloudinary'
 import { formatPhoneInput } from '../lib/format'
 import { useUserProfile } from '../context/useUserProfile'
 import { useEffectiveUser } from '../context/useEffectiveUser'
-import { ArrowLeftIcon, CloseIcon, InstagramIcon, FacebookIcon } from '../components/icons'
+import { ArrowLeftIcon, CloseIcon, InstagramIcon, FacebookIcon, EmailIcon } from '../components/icons'
 import DatePickerField from '../components/DatePickerField'
 import ScheduleEditor, {
   defaultScheduleDays,
@@ -24,6 +24,7 @@ interface Artist {
   portfolioImages: string[]
   instagramHandle: string | null
   facebookProfileUrl: string | null
+  publicContactEmail: string | null
   preferredSchedule: ScheduleBlock[] | null
   isGuest: boolean
   guestStartDate: string | null
@@ -92,6 +93,7 @@ export default function ArtistDetail() {
   const [portfolioImages, setPortfolioImages] = useState<string[]>([])
   const [instagramHandle, setInstagramHandle] = useState('')
   const [facebookProfileUrl, setFacebookProfileUrl] = useState('')
+  const [publicContactEmail, setPublicContactEmail] = useState('')
   const [isGuest, setIsGuest] = useState(false)
   const [guestStartDate, setGuestStartDate] = useState('')
   const [guestEndDate, setGuestEndDate] = useState('')
@@ -168,6 +170,7 @@ export default function ArtistDetail() {
     setPortfolioImages(artist.portfolioImages)
     setInstagramHandle(artist.instagramHandle ?? '')
     setFacebookProfileUrl(artist.facebookProfileUrl ?? '')
+    setPublicContactEmail(artist.publicContactEmail ?? '')
     setIsGuest(artist.isGuest)
     // guestStartDate/guestEndDate come back as UTC-midnight ISO strings
     // (e.g. "2026-07-01T00:00:00.000Z") for what's really just a plain
@@ -302,6 +305,7 @@ export default function ArtistDetail() {
           portfolioImages,
           instagramHandle: instagramHandle || null,
           facebookProfileUrl: facebookProfileUrl || null,
+          publicContactEmail: publicContactEmail || null,
           isGuest,
           guestStartDate: guestStartDate || null,
           guestEndDate: guestEndDate || null,
@@ -636,8 +640,25 @@ export default function ArtistDetail() {
                         />
                       </div>
                     </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-fg-secondary">Public contact email</label>
+                      <p className="mb-1 text-xs text-fg-muted">
+                        Optional -- shown to clients on the public artist page. Separate from the account login
+                        email, which is never shown publicly.
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <EmailIcon className="h-4 w-4 shrink-0 text-fg-muted" />
+                        <input
+                          type="email"
+                          value={publicContactEmail}
+                          onChange={(e) => setPublicContactEmail(e.target.value)}
+                          placeholder="artist@example.com"
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                        />
+                      </div>
+                    </div>
                   </div>
-                ) : artist.instagramHandle || artist.facebookProfileUrl ? (
+                ) : artist.instagramHandle || artist.facebookProfileUrl || artist.publicContactEmail ? (
                   <div className="mt-3 flex items-center gap-3">
                     {artist.instagramHandle && (
                       <a
@@ -661,6 +682,16 @@ export default function ArtistDetail() {
                         className="flex h-9 w-9 items-center justify-center rounded-full border border-border text-fg-secondary transition hover:bg-surface-raised hover:text-fg"
                       >
                         <FacebookIcon className="h-4 w-4" />
+                      </a>
+                    )}
+                    {artist.publicContactEmail && (
+                      <a
+                        href={`mailto:${artist.publicContactEmail}`}
+                        aria-label="Email"
+                        title="Email"
+                        className="flex h-9 w-9 items-center justify-center rounded-full border border-border text-fg-secondary transition hover:bg-surface-raised hover:text-fg"
+                      >
+                        <EmailIcon className="h-4 w-4" />
                       </a>
                     )}
                   </div>

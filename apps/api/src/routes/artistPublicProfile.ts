@@ -59,6 +59,7 @@ router.get("/public/:publicSlug", async (req, res) => {
       publicSlug: true,
       instagramHandle: true,
       facebookProfileUrl: true,
+      publicContactEmail: true,
       portfolioImages: true,
       flashPieces: { select: { id: true }, take: 1 },
       user: { select: { name: true, avatarUrl: true, studioId: true } },
@@ -131,11 +132,15 @@ router.get("/public/:publicSlug", async (req, res) => {
     publicSlug: artist.publicSlug,
     homeStudio,
     upcomingResidencies,
-    // v2: only the two fields the profile wizard's own social step
-    // actually collects -- ArtistPublicPage.tsx renders an icon per
-    // non-null field, and nothing at all when both are null.
+    // v2: the fields the profile wizard's own social step actually
+    // collects -- ArtistPublicPage.tsx renders an icon per non-null field,
+    // and nothing at all when all three are null. publicContactEmail is
+    // deliberately separate from the artist's account login email
+    // (User.email, never exposed here) -- an explicit opt-in field the
+    // artist fills in themselves if they want a public contact address.
     instagramHandle: artist.instagramHandle,
     facebookProfileUrl: artist.facebookProfileUrl,
+    publicContactEmail: artist.publicContactEmail,
     // Ambient background texture: null when the artist has neither a
     // portfolio image nor a flash piece on file -- avoids a guaranteed-404
     // fetch on the frontend when we already know there's nothing to show.

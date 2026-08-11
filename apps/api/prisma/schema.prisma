@@ -527,6 +527,12 @@ model Artist {
   instagramHandle    String?
   facebookProfileUrl String?
 
+  // Explicit opt-in public contact channel -- deliberately separate from
+  // the account login email (User.email), which must never be surfaced on
+  // the public artist page. Null until the artist (or a staff member with
+  // profile-edit delegation) fills this in.
+  publicContactEmail String?
+
   // Advisory weekly availability, not enforced (same philosophy as the
   // scheduling buffer warning -- it informs staff, doesn't block them).
   // Shape: Array<{ dayOfWeek: 0-6 (0 = Sunday), startTime: "HH:MM", endTime: "HH:MM" }>
