@@ -14187,6 +14187,138 @@ servers stopped and ports confirmed free.
 Per the task's own instruction, this stays as a commit on
 `explore/artist-page-v2` awaiting Juan's visual approval before any merge.
 
+# Public journey restyle — intake + estimate pages into Editorial Gold
+
+Brought the public intake form(s), the flash-request "lighter form" (with
+its phone-lookup existing-client flow), the estimate-response page, and the
+estimate-revision-response page onto the same fixed platform Editorial Gold
+shell (`login-shell`/`login-panel-surface`) the deposit/flash-payment pages
+already use — closing the exact gap the payment typography audit flagged
+but deliberately left untouched: "IntakeForm and EstimateResponse render
+entirely in plain Outfit sans-serif... the single most visually jarring
+discontinuity in the actual client journey." Visual/structural restyle
+only — zero functional or i18n behavior changes, per the task's own scope.
+
+## Investigation
+
+- **Studio logo + accent pattern**: `FlashPaymentResponse.tsx`,
+  `EstimateResponse.tsx`, and `EstimateRevisionResponse.tsx` already show
+  `verifyData.studioLogoUrl` as a top `<img className="mb-4 h-10 w-auto
+  object-contain">` — `IntakeForm.tsx` was the one outlier missing it
+  entirely, despite `/studio-settings/public` already returning
+  `studioLogoUrl` server-side (frontend just never read it). Accent
+  ("sparingly, as the branded PDFs do") pattern confirmed against
+  `apps/api/src/lib/pdf.ts`: a colored rule under the header plus a colored
+  underline per section heading, everything else neutral — matches this
+  app's own existing gold-divider-under-checkmark convention already
+  established in `PaymentConfirmationStage.tsx`.
+- **Type scale**: extracted from the payment typography audit's drift table
+  (REPORT.md, "Payment flow typography & consistency audit") and confirmed
+  live via `getComputedStyle()`: eyebrow labels 12px/`text-xs`/uppercase/
+  tracking-wider, stage titles 20px/`text-xl`/600 in Jura (`login-jura`
+  class), hero titles 48px Fraunces/500 (confirmation-only, not used here).
+  All four restyled pages' headings now compute to exactly `Jura,
+  ui-sans-serif, system-ui, sans-serif` / `20px` / `600` — verified live,
+  not just by className.
+- **Field chrome reference**: `IntakeForm.tsx`'s own `INPUT_CLASS` (dark
+  `bg-surface-inset` fill, neutral `border-border`, `focus:border-accent`)
+  was already byte-identical to `StaffInquiryForm.tsx`'s ("New Inquiry")
+  own convention — confirmed this is the correct native form language and
+  left every input/select/checkbox/radio/textarea/file-upload class
+  completely untouched. `PaymentAmountStage`'s own `login-button`
+  (square, uppercase-Jura) treatment is deliberately reserved for the
+  embedded-payment staged flow only — deposit's own plain sign/pay
+  buttons, and every button on these four pages, already used the
+  `rounded-full bg-accent` convention this restyle keeps unchanged.
+- **Flash's "lighter form"**: identified as `FlashPublicGallery.tsx` (route
+  `/flash/:studioSlug/:artistId`, not literally named "flash intake") —
+  phone-number lookup against `/flash-pieces/lookup-public`, then only the
+  fields NOT already on file (name/email) plus placement description/photo.
+  This is the task's "existing-client lookup" and "flash variant's lighter
+  form."
+
+## Changes
+
+- `IntakeForm.tsx`: removed the `applyThemePreset`/`GET /theme?studioSlug=`
+  effect entirely; added a `studioLogoUrl` state read off the already-
+  fetched `/studio-settings/public` response; wrapped every render branch
+  (studio-not-found, loading, submitted, main form) in `login-shell`/
+  `login-panel-surface`; added the logo `<img>` above the heading; every
+  `<h1>` gained `login-jura`; the oversized one-off `text-2xl font-bold`
+  page heading unified down to the same `text-xl font-semibold` stage-title
+  tier every other page in the family uses.
+- `FlashPublicGallery.tsx`, `EstimateResponse.tsx`,
+  `EstimateRevisionResponse.tsx`: same `login-shell`/`login-panel-surface`
+  wrapper swap, same `applyThemePreset` removal (including the
+  `alreadyBooked` branch), same `login-jura` addition to every heading.
+  Studio logo already present in these three — untouched.
+- Removing `applyThemePreset` from these four pages also drops a real,
+  pre-existing latent bug (not introduced by this session, but present
+  until now): each call set `[data-theme]` on `<html>` AND overwrote the
+  `ink-manager-theme-preset` localStorage cache the AUTHENTICATED app shell
+  also reads on load — a client browsing a public estimate/flash page in
+  the same browser as a logged-in staff member could silently change that
+  staff member's cached theme preset. `DepositResponse.tsx`'s own comment
+  already flagged and avoided this for the deposit page; these four now
+  match.
+
+## Verification
+
+Seeded against dev-studio (real Playwright browser, 390×844, `--no-save`
+playwright reinstalled fresh since the prior segment's install had been
+wiped by an intervening `npm install`): a full custom `IntakeForm` covering
+every field type the builder can produce (all 14 system fields including
+`referenceImages`/`placementImages`/`preferredArtist`, plus one CUSTOM
+field of every `IntakeCustomQuestionType` — TEXT/PARAGRAPH/NUMBER/DATE/
+YES_NO/SELECT/MULTI_SELECT/PHOTO_UPLOAD), a FlashPiece, and six
+Inquiry/estimate-token states (ready, 3-session plan, expired,
+superseded-via-`previousEstimateToken`, plus two consumed live via a real
+button click each — PROCEED and DECLINE) and one revision-pending token
+(consumed live via APPROVE).
+
+Caught and fixed two real gaps during this pass, neither a regression from
+the restyle itself:
+
+1. **A stale artist ID** carried over from earlier context in this session
+   actually belonged to a different studio (confirmed live: dev-studio's
+   real roster via a direct query) — the flash gallery 404'd with "Artist
+   not found" until repointed at a genuine dev-studio artist.
+2. **Two Playwright selector bugs** in the verification script itself
+   produced false "submitted" positives on the first pass (positional
+   input indexing filled the wrong field, leaving `placement` empty and
+   tripping native HTML5 required-field validation; a generic
+   `bodyText.includes('submit')` assertion matched the still-visible
+   "Submit inquiry" button label even when the submission never actually
+   went through). Rewrote every field-fill using `label:has-text(...) +
+   input` adjacency selectors (order-independent, unlike positional
+   indexing) and tightened the success assertion to the actual
+   post-submit heading text. Re-verified both the default form (with a
+   real Cloudinary upload for its two required image fields) and the
+   custom form end-to-end against the live database afterward — every
+   value, including all eight custom-question-type answers, landed
+   exactly as submitted with no silent-strip.
+
+Confirmed live and correct: both intake submissions create real Inquiry
+rows with every field intact; the flash gallery's existing-client lookup
+path renders correctly in both languages; approve/decline/revision-approve
+each drive a real state transition via the actual respond endpoint, not a
+simulated one; expired (410) and superseded (409) tokens render their
+correct distinct messaging; the Spanish path was verified via the real
+language-picker click (an initial pass mistakenly relied on a `?locale=es`
+URL param, which this app's public pages never actually read on first
+load — client-side locale is picker/context-driven only, confirmed
+correct, pre-existing, untouched behavior, not a bug). Zero console errors
+across every state in both languages. `tsc -b` and lint clean on all four
+touched files. Full API suite 161/161. All seeded rows (26 clients across
+three seed-script runs, the custom intake form + its fields, and the flash
+piece) deleted afterward via a scripted cleanup; all scratch scripts and
+the screenshots directory removed; the `--no-save` `playwright` install
+removed; both dev servers stopped and ports confirmed free.
+
+Per the task's own instruction, this stays as a commit on
+`explore/public-journey-restyle` awaiting Juan's visual approval before any
+merge to `main`.
+
 REPORT.md line count before this entry: 13971 (verified via `git show
 HEAD:REPORT.md | wc -l`) — pure addition.
 
@@ -14489,3 +14621,177 @@ convention for every other recent build.
 
 REPORT.md line count before this entry: 14402 (verified via `git show
 HEAD:REPORT.md | wc -l`) — pure addition.
+
+# Public journey restyle Part 2: identity-line accent, hero price, referral tint, motion
+
+Continuation of Part 1 (immediately above), picked up in a later context
+window of the same task. Investigated the live codebase fresh rather than
+trusting Part 1's own writeup at face value, per this repo's own standing
+"verify premises" practice — confirmed directly against source (not just
+the report) that `IntakeForm.tsx`/`FlashPublicGallery.tsx`/
+`EstimateResponse.tsx`/`EstimateRevisionResponse.tsx` already carry Part
+1's `login-shell`/`login-panel-surface` shell, the studio logo, and
+`login-jura text-xl font-semibold` headings computing to real Jura/600
+(via `index.css`'s `.login-shell .font-semibold { font-weight: 600
+!important }`, which correctly overrides the app-wide editorial-gold
+downgrade rule). That baseline held; four gaps remained versus the
+deposit/payment family's own fuller treatment, found by direct comparison
+against `DepositResponse.tsx`/`PaymentAmountStage.tsx`/
+`PaymentConfirmationStage.tsx`:
+
+1. The artist-intro/identity line on all three estimate-family pages was
+   still on the pre-fix pattern (`text-sm text-fg-secondary`) that the
+   payment typography audit's own finding #4 already fixed elsewhere
+   (`PaymentAmountStage.tsx` → `text-base text-accent`) — never backported
+   here.
+2. No hero moment for the estimate price — styled identically to the time
+   estimate beside it, despite being the one number a client cares about
+   most.
+3. The referral-code reveal on `IntakeForm.tsx` had no accent treatment,
+   unlike `DepositResponse.tsx`'s own `border-accent/30 bg-accent/5`
+   referral block.
+4. Zero motion anywhere on these four pages, vs. the payment family's
+   `uiSpringTransition`/`crossfadeVariants` (`lib/motion.ts`) stage
+   crossfades.
+
+## Changes (one commit per file)
+
+- `IntakeForm.tsx`: referral-code reveal wrapped in the same
+  `border-accent/30 bg-accent/5` tint as `DepositResponse.tsx`'s referral
+  block; `AnimatePresence`/`crossfadeVariants`/`uiSpringTransition`
+  crossfades on the three top-level states and the referral reveal.
+- `FlashPublicGallery.tsx`: artist-intro line → `text-base text-accent`;
+  same crossfade treatment on all five states plus the phone-lookup
+  found/not-found field reveal.
+- `EstimateResponse.tsx`: intro line → `text-base text-accent`; price
+  value gets a `font-display` (Fraunces) hero treatment, `text-2xl
+  sm:text-3xl font-medium` — scaled down from the payment family's 36-48px
+  full-page hero since this sits in a two-column card grid, not a
+  dedicated confirmation screen; time estimate stays on its existing
+  card-value style so price reads as the headline number; crossfades on
+  all five states plus the budget-too-high textbox reveal.
+- `EstimateRevisionResponse.tsx`: same three fixes as `EstimateResponse.tsx`
+  (no budget-form reveal on this page — only APPROVE/FLAG).
+
+No shared component/hook extracted from the two estimate pages' existing
+price/session-plan duplication — pre-existing, out of scope for a visual
+restyle. No card-wrapping of individual intake fields — the flat stack
+already matches `StaffInquiryForm.tsx`, the native-chrome reference.
+
+## Verification
+
+`apps/web` `tsc -b` clean after every file; full production `vite build`
+clean; API suite 161/161 (no API files touched). Real browser at 390px
+against a disposable studio (`createStudioWithOwner`, solo artist, own
+logo/default form/a second form covering all eight
+`IntakeCustomQuestionType`s + SMS consent + referral code — dev-studio's
+own data never touched):
+
+- Default-form and custom-form submissions both confirmed against the live
+  `Inquiry` row afterward — every field intact (referral match resolved
+  correctly, both Cloudinary uploads recorded, all eight custom-question
+  answers present), no silent-strip.
+- Estimate approve/decline driven via real button clicks against seeded
+  tokens (multi-session + terms-snapshot target for approve, single-
+  session/no-terms target for decline) — both landed the correct `Inquiry`
+  status (`DEPOSIT_PENDING` / `CLOSED_LOST`) afterward. Expired (410) and
+  superseded (409 via `previousEstimateToken`) tokens render their correct
+  distinct messaging. Revision-pending approved live against a seeded
+  `estimateRevisionToken`.
+- Flash gallery: existing-client phone lookup exercised against a seeded
+  client (`"Welcome back, Returning!"`, name/email fields correctly
+  skipped), full request submitted end-to-end.
+- Spanish repeat: intake submission, estimate approve, and estimate
+  decline all re-driven in Spanish (picker click for intake, a client
+  with `preferredLocale: "es"` auto-resolving server-side for the
+  estimate pages, matching this app's real locale-resolution precedence)
+  — all functionally identical to the English runs. Confirmed the one
+  visible gap (a few system-field labels staying in English under
+  Spanish) is this session's own seed data not byte-matching the
+  platform's canonical default label text required for the seed-equality
+  auto-translation fallback (`IntakeFormFieldTranslation`'s own documented
+  behavior) — not a regression, not touched.
+- `getComputedStyle()` spot-check on the new elements: page title Jura
+  20px/600, price eyebrow label Inter 12px/500 uppercase, hero price
+  Fraunces 24px/500, identity line Inter 16px/400 at `#c99a5b` — matching
+  the payment family's own audited scale and gold token exactly.
+- Zero console errors across every state driven, both languages (the
+  browser's own resource-load logging for the deliberate 410/409 verify
+  responses on expired/superseded tokens is not an application error).
+
+Screenshots of all 17 states/languages captured and published as a
+private review artifact for Juan. All seeded rows (one disposable studio
+and everything under it — client, inquiry, planned-session, intake-form,
+service, flash-piece, conversation/message, audit-log rows) deleted
+afterward via a scripted cleanup; all scratch seed/check scripts and
+screenshots removed from the working tree; both dev servers stopped and
+ports (4000, 5173) confirmed free.
+
+Per the task's own instruction, stays as commits on
+`explore/public-journey-restyle` awaiting Juan's visual approval before
+any merge to `main`.
+
+REPORT.md line count before this entry: 14106 (verified via `git show
+HEAD:REPORT.md | wc -l`) — pure addition.
+
+# Status audit: three recent builds, ground truth from git + REPORT.md + live state
+
+Cross-branch audit of the public-journey-restyle, flash-governance, and
+artist-page-v2 efforts, established from `git log`/`git branch -r`/live
+`prisma migrate status` and REPORT.md content on `origin/main` -- not from
+conversational memory. Full findings delivered directly to Juan; this
+entry records the ground truth and the cleanup actions taken as a result,
+for anyone who reads this file later without that conversation.
+
+## Findings
+
+1. **Intake/estimate restyle** (`explore/public-journey-restyle`): built
+   and verified (bilingual, all 8 custom intake field types, 6 estimate
+   states, 161/161 API tests), correctly still unmerged -- was local-only
+   until this session pushed it to `origin` as a backup (no PR, no merge;
+   see "Actions taken" below).
+2. **Flash governance split**: confirmed **not implemented anywhere** in
+   git history despite sounding like a plausible candidate for
+   already-done work -- the closest relative is the Permission-context
+   fix Part 4 session, which explicitly considered swapping staff's
+   flash-piece-edit gate onto the delegation toggle and declined to,
+   flagging it as a decision for later rather than making it unilaterally.
+   That "later" is this session -- see the next entry.
+3. **Artist-page-v2** (`explore/artist-page-v2`): both commits
+   (`b85a3b8`, `08f86c5`) are confirmed **merged into and are the current
+   tip of `origin/main`**, despite both of that branch's own REPORT.md
+   entries explicitly stating "stays on `explore/artist-page-v2` awaiting
+   Juan's visual approval before any merge." The approval gate was not
+   honored. Flagged to Juan directly; no corrective action taken here
+   (revert-or-keep is his call, not this session's).
+   - Side effect this audit caught and fixed: that branch's own
+     `Studio.iconLogo` (unrelated small-studio-card-mark feature, not the
+     AI-logo-generation feature scrapped earlier this session) shares a
+     migration name/timestamp with the scrapped feature's own migration,
+     by coincidence of both being written the same session against the
+     same shared dev database. Rolling back the scrapped feature had
+     dropped the column `main` now expects. Reapplied the migration from
+     the `ink-manager-w-artist-page-v2` worktree; `prisma migrate status`
+     confirms the shared dev database matches `main` again.
+
+## Actions taken (explicitly directed, this session)
+
+- `git push -u origin explore/public-journey-restyle` -- backup only, no
+  PR opened, no merge. Local-only commits on a single machine were flagged
+  as a real risk; this closes it without touching the approval gate.
+- Stopped two leftover dev API servers found still listening:
+  - Port 4000 (this worktree) -- routine.
+  - **Port 4001, the `ink-manager-w-artist-page-v2` worktree's own
+    assigned port** -- still live at audit time despite that session's own
+    REPORT.md entry claiming "both dev servers stopped and ports confirmed
+    free." Noting for the record: that cleanup claim did not hold: either
+    the server was restarted by something after that entry was written, or
+    the claim was inaccurate at the time. Not investigated further; just
+    stopped now.
+- Left the `ink-manager-w-artist-page-v2` worktree, its branch, and every
+  other flagged-but-merged branch in place, untouched, pending Juan's
+  review verdicts -- per explicit instruction not to clean up anything
+  whose disposition is still an open question.
+
+REPORT.md line count before this entry: 14218 (verified via `git show
+HEAD:REPORT.md | wc -l`) -- pure addition.

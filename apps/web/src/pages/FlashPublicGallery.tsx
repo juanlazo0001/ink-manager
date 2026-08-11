@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { AnimatePresence } from 'framer-motion'
+import { AnimatePresence, motion } from 'framer-motion'
 import { apiFetch, ApiError } from '../lib/api'
 import { uploadImageToCloudinary } from '../lib/cloudinary'
-import { applyThemePreset } from '../lib/themePresets'
 import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import PublicPageFooter from '../components/PublicPageFooter'
 import PhoneInput from '../components/PhoneInput'
@@ -13,6 +12,7 @@ import { ViewIcon, SparkleIcon } from '../components/icons'
 import { isValidPhoneDigits, formatDurationHours } from '../lib/format'
 import { LocaleProvider, useLocale, useTranslations } from '../i18n'
 import LanguagePicker from '../i18n/LanguagePicker'
+import { crossfadeVariants, uiSpringTransition } from '../lib/motion'
 
 type PageState = 'loading' | 'invalid' | 'gallery' | 'request' | 'success'
 
@@ -106,7 +106,6 @@ function FlashPublicGalleryContent() {
         if (ignore) return
         hasLoadedRef.current = true
         setGallery(data)
-        applyThemePreset(data.themePreset)
         setState('gallery')
         if (data.resolvedLocale && data.resolvedLocale !== locale) setLocale(data.resolvedLocale as typeof locale)
       })
@@ -207,166 +206,192 @@ function FlashPublicGalleryContent() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
-      <div className="w-full max-w-2xl rounded-2xl card-surface border border-border bg-surface p-8">
+    <div className="login-shell flex min-h-screen items-center justify-center px-4 py-10 text-fg">
+      <div className="login-panel-surface w-full max-w-2xl px-4 py-8 sm:p-8">
         <div className="mb-4 flex justify-end">
           <LanguagePicker />
         </div>
 
-        {state === 'loading' && <p className="text-center text-sm text-fg-secondary">{t('common.loading')}</p>}
+        <AnimatePresence mode="wait">
+          {state === 'loading' && (
+            <motion.p key="loading" variants={crossfadeVariants} initial="initial" animate="animate" exit="exit" transition={uiSpringTransition} className="text-center text-sm text-fg-secondary">
+              {t('common.loading')}
+            </motion.p>
+          )}
 
-        {state === 'invalid' && (
-          <div className="text-center">
-            <h1 className="text-xl font-semibold text-fg">{t('flashGallery.unavailableHeading')}</h1>
-            <p className="mt-2 text-sm text-fg-secondary">{invalidMessage}</p>
-          </div>
-        )}
+          {state === 'invalid' && (
+            <motion.div key="invalid" variants={crossfadeVariants} initial="initial" animate="animate" exit="exit" transition={uiSpringTransition} className="text-center">
+              <h1 className="login-jura text-xl font-semibold text-fg">{t('flashGallery.unavailableHeading')}</h1>
+              <p className="mt-2 text-sm text-fg-secondary">{invalidMessage}</p>
+            </motion.div>
+          )}
 
-        {state === 'success' && (
-          <div className="text-center">
-            <h1 className="text-xl font-semibold text-fg">{t('flashGallery.requestSentHeading')}</h1>
-            <p className="mt-2 text-sm text-fg-secondary">
-              {t('flashGallery.requestSentBody', { studioName: gallery?.studioName ?? '' })}
-            </p>
-          </div>
-        )}
-
-        {state === 'gallery' && gallery && (
-          <div>
-            {gallery.studioLogoUrl && (
-              <img src={gallery.studioLogoUrl} alt={gallery.studioName} className="mb-4 h-10 w-auto object-contain" />
-            )}
-            <h1 className="text-xl font-semibold text-fg">{t('flashGallery.pageHeading')}</h1>
-            <div className="mt-2 flex items-center gap-2.5">
-              <FlatArtistAvatar name={gallery.artistName} avatarUrl={gallery.artistAvatarUrl} className="h-8 w-8" />
-              <p className="text-sm text-fg-secondary">
-                {t('flashGallery.intro', { artistName: gallery.artistName, studioName: gallery.studioName })}
+          {state === 'success' && (
+            <motion.div key="success" variants={crossfadeVariants} initial="initial" animate="animate" exit="exit" transition={uiSpringTransition} className="text-center">
+              <h1 className="login-jura text-xl font-semibold text-fg">{t('flashGallery.requestSentHeading')}</h1>
+              <p className="mt-2 text-sm text-fg-secondary">
+                {t('flashGallery.requestSentBody', { studioName: gallery?.studioName ?? '' })}
               </p>
-            </div>
+            </motion.div>
+          )}
 
-            {gallery.pieces.length === 0 ? (
-              <p className="mt-6 text-sm text-fg-secondary">{t('flashGallery.noPiecesAvailable')}</p>
-            ) : (
-              <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3">
-                {gallery.pieces.map((piece, pieceIndex) => (
-                  <div
-                    key={piece.id}
-                    className="overflow-hidden rounded-xl border border-border bg-surface-inset transition hover:border-accent"
-                  >
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setLightbox({ images: gallery.pieces.map((p) => p.imageUrl), index: pieceIndex })
-                      }
-                      aria-label={t('flashGallery.viewFullSize', { title: piece.title })}
-                      className="group relative block aspect-square w-full overflow-hidden bg-surface"
-                    >
-                      <img src={piece.imageUrl} alt={piece.title} className="h-full w-full object-cover" />
-                      <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition group-hover:bg-black/30 group-hover:opacity-100">
-                        <ViewIcon className="h-6 w-6 text-white" />
-                      </div>
-                      {piece.isOneOfOne && (
-                        <span className="absolute left-2 top-2 flex items-center gap-1 rounded-full bg-fg/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-bg backdrop-blur-sm">
-                          <SparkleIcon className="h-3 w-3" />
-                          {t('flashGallery.oneOfOne')}
-                        </span>
-                      )}
-                    </button>
-                    <button type="button" onClick={() => selectPiece(piece)} className="block w-full p-2.5 text-left">
-                      <p className="truncate text-sm font-medium text-fg">{piece.title}</p>
-                      <p className="mt-0.5 text-xs text-fg-secondary">${(piece.priceCents / 100).toFixed(2)}</p>
-                    </button>
-                  </div>
-                ))}
+          {state === 'gallery' && gallery && (
+            <motion.div key="gallery" variants={crossfadeVariants} initial="initial" animate="animate" exit="exit" transition={uiSpringTransition}>
+              {gallery.studioLogoUrl && (
+                <img src={gallery.studioLogoUrl} alt={gallery.studioName} className="mb-4 h-10 w-auto object-contain" />
+              )}
+              <h1 className="login-jura text-xl font-semibold text-fg">{t('flashGallery.pageHeading')}</h1>
+              <div className="mt-2 flex items-center gap-2.5">
+                <FlatArtistAvatar name={gallery.artistName} avatarUrl={gallery.artistAvatarUrl} className="h-8 w-8" />
+                <p className="text-base text-accent">
+                  {t('flashGallery.intro', { artistName: gallery.artistName, studioName: gallery.studioName })}
+                </p>
               </div>
-            )}
-          </div>
-        )}
 
-        {state === 'request' && selectedPiece && (
-          <div>
-            <button type="button" onClick={() => setState('gallery')} className="text-xs font-medium text-fg-muted hover:text-fg">
-              {t('flashGallery.backToGallery')}
-            </button>
-            <h1 className="mt-2 text-xl font-semibold text-fg">{t('flashGallery.requestTitle', { title: selectedPiece.title })}</h1>
-            <p className="mt-1 text-sm text-fg-secondary">
-              ${(selectedPiece.priceCents / 100).toFixed(2)} &middot; {t('flashGallery.durationApprox', { duration: formatDurationHours(selectedPiece.estimatedDurationMinutes) })}
-              {selectedPiece.isOneOfOne && ` ${t('flashGallery.oneOfOneFirstRequestWins')}`}
-            </p>
-
-            <form onSubmit={handleSubmit} className="mt-6 space-y-4">
-              <div>
-                <label className="mb-1 block text-sm font-medium text-fg-secondary">{t('flashGallery.phoneNumber')}</label>
-                <div className="flex gap-2">
-                  <PhoneInput value={phone} onChange={setPhone} disabled={lookupState !== 'idle'} className={INPUT_CLASS} />
-                  {lookupState === 'idle' && (
-                    <button
-                      type="button"
-                      onClick={handleLookup}
-                      className="mt-1 shrink-0 rounded-lg border border-border px-3 py-2 text-sm font-medium text-fg transition hover:bg-surface-inset"
+              {gallery.pieces.length === 0 ? (
+                <p className="mt-6 text-sm text-fg-secondary">{t('flashGallery.noPiecesAvailable')}</p>
+              ) : (
+                <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3">
+                  {gallery.pieces.map((piece, pieceIndex) => (
+                    <div
+                      key={piece.id}
+                      className="overflow-hidden rounded-xl border border-border bg-surface-inset transition hover:border-accent"
                     >
-                      {t('flashGallery.continueButton')}
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setLightbox({ images: gallery.pieces.map((p) => p.imageUrl), index: pieceIndex })
+                        }
+                        aria-label={t('flashGallery.viewFullSize', { title: piece.title })}
+                        className="group relative block aspect-square w-full overflow-hidden bg-surface"
+                      >
+                        <img src={piece.imageUrl} alt={piece.title} className="h-full w-full object-cover" />
+                        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition group-hover:bg-black/30 group-hover:opacity-100">
+                          <ViewIcon className="h-6 w-6 text-white" />
+                        </div>
+                        {piece.isOneOfOne && (
+                          <span className="absolute left-2 top-2 flex items-center gap-1 rounded-full bg-fg/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-bg backdrop-blur-sm">
+                            <SparkleIcon className="h-3 w-3" />
+                            {t('flashGallery.oneOfOne')}
+                          </span>
+                        )}
+                      </button>
+                      <button type="button" onClick={() => selectPiece(piece)} className="block w-full p-2.5 text-left">
+                        <p className="truncate text-sm font-medium text-fg">{piece.title}</p>
+                        <p className="mt-0.5 text-xs text-fg-secondary">${(piece.priceCents / 100).toFixed(2)}</p>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </motion.div>
+          )}
+
+          {state === 'request' && selectedPiece && (
+            <motion.div key="request" variants={crossfadeVariants} initial="initial" animate="animate" exit="exit" transition={uiSpringTransition}>
+              <button type="button" onClick={() => setState('gallery')} className="text-xs font-medium text-fg-muted hover:text-fg">
+                {t('flashGallery.backToGallery')}
+              </button>
+              <h1 className="login-jura mt-2 text-xl font-semibold text-fg">{t('flashGallery.requestTitle', { title: selectedPiece.title })}</h1>
+              <p className="mt-1 text-sm text-fg-secondary">
+                ${(selectedPiece.priceCents / 100).toFixed(2)} &middot; {t('flashGallery.durationApprox', { duration: formatDurationHours(selectedPiece.estimatedDurationMinutes) })}
+                {selectedPiece.isOneOfOne && ` ${t('flashGallery.oneOfOneFirstRequestWins')}`}
+              </p>
+
+              <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-fg-secondary">{t('flashGallery.phoneNumber')}</label>
+                  <div className="flex gap-2">
+                    <PhoneInput value={phone} onChange={setPhone} disabled={lookupState !== 'idle'} className={INPUT_CLASS} />
+                    {lookupState === 'idle' && (
+                      <button
+                        type="button"
+                        onClick={handleLookup}
+                        className="mt-1 shrink-0 rounded-lg border border-border px-3 py-2 text-sm font-medium text-fg transition hover:bg-surface-inset"
+                      >
+                        {t('flashGallery.continueButton')}
+                      </button>
+                    )}
+                  </div>
+                  {lookupState === 'checking' && <p className="mt-1 text-xs text-fg-muted">{t('flashGallery.checking')}</p>}
+                  {lookupError && <p className="mt-1 text-xs text-danger">{lookupError}</p>}
+                  {lookupState === 'found' && (
+                    <p className="mt-1 text-xs text-success">{t('flashGallery.welcomeBack', { firstName })}</p>
                   )}
                 </div>
-                {lookupState === 'checking' && <p className="mt-1 text-xs text-fg-muted">{t('flashGallery.checking')}</p>}
-                {lookupError && <p className="mt-1 text-xs text-danger">{lookupError}</p>}
-                {lookupState === 'found' && (
-                  <p className="mt-1 text-xs text-success">{t('flashGallery.welcomeBack', { firstName })}</p>
-                )}
-              </div>
 
-              {lookupState === 'not-found' && (
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-fg-secondary">{t('flashGallery.firstName')}</label>
-                    <input type="text" value={firstName} onChange={(e) => setFirstName(e.target.value)} className={INPUT_CLASS} />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-fg-secondary">{t('flashGallery.lastName')}</label>
-                    <input type="text" value={lastName} onChange={(e) => setLastName(e.target.value)} className={INPUT_CLASS} />
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className="mb-1 block text-sm font-medium text-fg-secondary">{t('flashGallery.email')}</label>
-                    <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={INPUT_CLASS} />
-                  </div>
-                </div>
-              )}
+                <AnimatePresence initial={false}>
+                  {lookupState === 'not-found' && (
+                    <motion.div
+                      key="lookup-fields"
+                      variants={crossfadeVariants}
+                      initial="initial"
+                      animate="animate"
+                      exit="exit"
+                      transition={uiSpringTransition}
+                      className="grid grid-cols-1 gap-4 sm:grid-cols-2"
+                    >
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-fg-secondary">{t('flashGallery.firstName')}</label>
+                        <input type="text" value={firstName} onChange={(e) => setFirstName(e.target.value)} className={INPUT_CLASS} />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-fg-secondary">{t('flashGallery.lastName')}</label>
+                        <input type="text" value={lastName} onChange={(e) => setLastName(e.target.value)} className={INPUT_CLASS} />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="mb-1 block text-sm font-medium text-fg-secondary">{t('flashGallery.email')}</label>
+                        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={INPUT_CLASS} />
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
 
-              {(lookupState === 'found' || lookupState === 'not-found') && (
-                <>
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-fg-secondary">{t('flashGallery.placementPrompt')}</label>
-                    <textarea
-                      rows={2}
-                      placeholder={t('flashGallery.placementPlaceholder')}
-                      value={placementDescription}
-                      onChange={(e) => setPlacementDescription(e.target.value)}
-                      className={INPUT_CLASS}
-                    />
-                  </div>
+                <AnimatePresence initial={false}>
+                  {(lookupState === 'found' || lookupState === 'not-found') && (
+                    <motion.div
+                      key="lookup-continuation"
+                      variants={crossfadeVariants}
+                      initial="initial"
+                      animate="animate"
+                      exit="exit"
+                      transition={uiSpringTransition}
+                      className="space-y-4"
+                    >
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-fg-secondary">{t('flashGallery.placementPrompt')}</label>
+                        <textarea
+                          rows={2}
+                          placeholder={t('flashGallery.placementPlaceholder')}
+                          value={placementDescription}
+                          onChange={(e) => setPlacementDescription(e.target.value)}
+                          className={INPUT_CLASS}
+                        />
+                      </div>
 
-                  <ImageUploadSection
-                    label={t('flashGallery.placementPhotoLabel')}
-                    hint={t('flashGallery.placementPhotoHint')}
-                    onChange={setPlacementPhoto}
-                    uploadFn={uploadImageToCloudinary}
-                  />
+                      <ImageUploadSection
+                        label={t('flashGallery.placementPhotoLabel')}
+                        hint={t('flashGallery.placementPhotoHint')}
+                        onChange={setPlacementPhoto}
+                        uploadFn={uploadImageToCloudinary}
+                      />
 
-                  {submitError && <p className="text-sm text-danger">{submitError}</p>}
+                      {submitError && <p className="text-sm text-danger">{submitError}</p>}
 
-                  <button
-                    type="submit"
-                    disabled={submitting || placementPhoto.uploading}
-                    className="w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
-                  >
-                    {submitting ? t('flashGallery.sending') : t('flashGallery.sendRequest')}
-                  </button>
-                </>
-              )}
-            </form>
-          </div>
-        )}
+                      <button
+                        type="submit"
+                        disabled={submitting || placementPhoto.uploading}
+                        className="w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                      >
+                        {submitting ? t('flashGallery.sending') : t('flashGallery.sendRequest')}
+                      </button>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </form>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <PublicPageFooter studioSlug={gallery?.studioSlug} />
       </div>
