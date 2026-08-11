@@ -107,6 +107,33 @@ Get-ChildItem -Path $envSourceRoot -Recurse -Filter '.env*' -File -Force |
     Write-Host "  Copied $relativePath"
   }
 
+# --- Verify Playwright MCP browser isolation -------------------------
+# A git worktree isolates the REPO, not the Playwright MCP server's
+# browser profile -- that persists at one fixed, machine-wide path by
+# default, so two concurrent sessions' browser tool calls collide
+# ("Browser is already in use") no matter how well the worktrees
+# themselves are separated. The fix lives in .mcp.json (--isolated on
+# the playwright server, tracked and inherited by every worktree
+# automatically) -- this is just a sanity check that it's actually
+# there, so a reverted/edited .mcp.json doesn't silently reintroduce the
+# collision for whoever launches next.
+$worktreeMcpConfigPath = Join-Path $worktreePath '.mcp.json'
+$playwrightIsolated = $false
+if (Test-Path $worktreeMcpConfigPath) {
+  try {
+    $mcpConfig = Get-Content $worktreeMcpConfigPath -Raw | ConvertFrom-Json
+    $playwrightArgs = $mcpConfig.mcpServers.playwright.args
+    if ($playwrightArgs -and ($playwrightArgs -contains '--isolated')) {
+      $playwrightIsolated = $true
+    }
+  } catch {
+    Write-Warning "Could not parse $worktreeMcpConfigPath to verify Playwright MCP isolation."
+  }
+}
+if (-not $playwrightIsolated) {
+  Write-Warning "Playwright MCP server in this worktree's .mcp.json is missing --isolated -- a second concurrent session's browser tool calls will collide with this one's. See CLAUDE.md's Concurrent sessions section."
+}
+
 Write-Host "Running npm ci in the new worktree (repo root, full monorepo install)..."
 Push-Location $worktreePath
 try {
@@ -142,6 +169,11 @@ Write-Host '=================================================='
 Write-Host 'Worktree ready.'
 Write-Host "  Path:   $worktreePath"
 Write-Host "  Branch: $branchName (cut from latest origin/main)"
+if ($playwrightIsolated) {
+  Write-Host "  Playwright MCP: --isolated confirmed -- safe to run browser tool calls alongside other sessions."
+} else {
+  Write-Host "  Playwright MCP: --isolated NOT found -- see warning above before using browser tool calls."
+}
 if ($apiPort -and $webPort) {
   Write-Host "  Free dev ports -- API: $apiPort   WEB: $webPort"
   Write-Host "  e.g. (from the worktree's apps/api):  `$env:PORT=$apiPort; npm run dev"

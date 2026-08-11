@@ -39,6 +39,18 @@ Concise operating rules, not a project history — see REPORT.md for history.
 - **Concurrent sessions MUST be launched via `scripts/new-session.ps1`.** It creates the worktree
   (fresh branch off latest `main`), runs `npm ci` in it, and prints a free dev-port pair — the
   single entry point that ends shared-tree collisions at session-launch time, not after the fact.
+- **A git worktree isolates the repo, not the Playwright MCP browser.** By default the Playwright
+  MCP server persists its browser profile at one fixed, machine-wide path
+  (`%LOCALAPPDATA%\ms-playwright-mcp\...`), identical across every worktree/session — a second
+  concurrent session's browser tool calls fail with "Browser is already in use" the moment a first
+  session's browser is open, worktree isolation notwithstanding. Fixed at the root: `.mcp.json`'s
+  `playwright` server is launched with `--isolated` (in-memory profile per server process, never
+  written to that shared disk path, so two sessions' browsers never collide). If a browser tool
+  still reports "already in use" after this, don't wait on it and don't silently skip the
+  browser-dependent work — that error means the CURRENT session's own MCP connection was spawned
+  before this fix landed (MCP servers don't hot-reload `.mcp.json` mid-session); ask the user to
+  reconnect (`/mcp` in their terminal, or a session restart) rather than treating the lock as
+  permanent.
 
 ## Trusting a build
 

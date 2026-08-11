@@ -205,11 +205,20 @@ async function processLineItem(
           data: {
             studioId: transfer.originStudioId,
             appointmentId: appt.id,
-            // No human clicked this -- authorId nullable specifically so a
-            // note "survives its author's deletion" (schema comment);
-            // null is more honest here than attributing it to whoever
-            // happened to accept.
-            authorId: null,
+            // Reconsidered live during Part 5's browser walkthrough:
+            // authorId: null was the original choice here (reasoning: "no
+            // human clicked this, null is more honest"), but every
+            // existing note-rendering call site across this app
+            // (NotesSection.tsx, ClientDetail.tsx, MyProjectDetail.tsx)
+            // treats a null author as "Deleted user" -- a label written
+            // for the case of a real author whose account was later
+            // removed, not "never had one." That reads as misleading here,
+            // not honest. Attributing it to the artist who accepted (the
+            // same actor the AuditLog rows for this whole execution
+            // already use) is both more accurate -- their accept action is
+            // literally what caused this cancellation -- and avoids the
+            // mislabel.
+            authorId: transfer.respondedById,
             bodyHtml: `<p>Cancelled: client transferred to ${destinationStudioName}.</p>`,
           },
         });

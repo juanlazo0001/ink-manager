@@ -2,6 +2,7 @@ import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import PhoneInput from '../components/PhoneInput'
 import Modal from '../components/Modal'
+import TransfersPanel from '../components/TransfersPanel'
 import { apiFetch } from '../lib/api'
 import { formatPhoneInput, isValidPhoneDigits, readFileAsDataUrl, MAX_IMAGE_FILE_BYTES } from '../lib/format'
 import { useUserProfile } from '../context/useUserProfile'
@@ -561,6 +562,17 @@ export default function Profile() {
               </form>
             )}
           </div>
+
+          {/* Transfer-to-artist epic: Team.tsx (where this otherwise lives)
+              redirects away entirely for a solo studio ("no team to
+              manage" -- soloStudio.ts) -- exactly the state the epic's own
+              primary case (an artist who's already left) commonly leaves
+              the origin studio in. Without this, a solo-studio OWNER could
+              still START a transfer (StartArtistTransfer.tsx has no such
+              gate) but could never see, cancel, or review one they'd
+              already sent. showHeader supplies the entry point Team.tsx's
+              own toolbar button would otherwise provide. */}
+          {profile?.role === 'OWNER' && profile.isSoloStudio && <TransfersPanel showHeader />}
 
           {profile && isArtist && profile.artist && (
             <div className="mt-6 rounded-2xl card-surface border border-border bg-surface p-6">
