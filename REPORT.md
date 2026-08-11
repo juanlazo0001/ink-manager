@@ -16826,3 +16826,389 @@ document.
 
 Next: merge latest `main` into this branch, full suite green, merge to
 `main`, push, confirm Railway deploys healthy.
+
+# Transfer-to-artist epic -- Part 4 (execution)
+
+Parts 1-3 get a transfer to `ACCEPTED` and stop there deliberately. Part 4
+is where data actually moves: per accepted client, create the contact
+(and a fresh project) at the destination, cancel the client's future
+appointments at origin, and resolve the origin Client/Inquiry as
+`TRANSFERRED` -- full history intact, nothing signed/financial/
+note-shaped crossing. Highest-stakes part of the epic so far (real
+cross-studio writes, must be resumable, must never silently duplicate a
+contact) -- Part 5 will adversarially verify it, but it had to be built
+correctly first.
+
+Two research passes (backend: `findMatchingClientForImportRow`,
+appointment-cancellation conventions, the real state of Service
+seeding, list-query bucketing; frontend: how `CLOSED_LOST`/merged/
+archived states already render) grounded every decision below.
+
+## Judgment calls made explicit
+
+1. **On a destination-contact match, no second Client row is ever
+   created.** Part 5's own checklist says "merge suggestion raised,
+   **zero duplicate records**" -- a new row for the same real person,
+   even flagged, IS a duplicate record. `findMatchingClientForImportRow`
+   (`lib/duplicateDetection.ts`, exact phone/email match, the same
+   function mass import already uses) runs against the destination
+   studio; on a match, the new project attaches to the *existing*
+   client -- nothing about that client is edited or merged into. This
+   corrects my own Part 1/2 code comments, which said "creation was
+   skipped" without spelling out that the project still gets created
+   against the existing row rather than nothing happening at all.
+2. **Resume is the same `POST /:id/accept` endpoint, made idempotent.**
+   No job queue exists anywhere in this codebase. `PENDING_ARTIST` ->
+   transitions + executes; already-`ACCEPTED` (a prior run didn't
+   finish) -> skips the transition, re-triggers execution; `COMPLETED`
+   -> re-triggers too, but it's a safe no-op (zero `PENDING` line items
+   left); `DECLINED`/`CANCELLED_BY_ORIGIN` -> 400. Resumability itself
+   comes from the execution engine only ever touching `outcome: PENDING`
+   line items -- exactly what Part 1's schema (`@@unique([transferId,
+   originClientId])` + `processedAt`) was built for.
+3. **Reads happen with the plain `prisma` client, before opening a
+   transaction; only the writes for one client are wrapped in
+   `prisma.$transaction`.** `findMatchingClientForImportRow` isn't
+   parameterized to accept a transaction client (confirmed -- same as
+   mass import's own use of it), so the duplicate check can't be inside
+   the transaction anyway. Everything that actually mutates state
+   (contact, project, sessions, appointment cancellations, origin
+   Transferred marking, the line item's own outcome) commits together
+   or not at all, matching "transactional per client" literally. The
+   `FAILED` + `errorMessage` write happens in a small separate update
+   *after* a rolled-back transaction, mirroring `clientImport.ts`'s own
+   try/catch-outside-the-transaction shape.
+4. **Service resolution has a real failure mode.** Confirmed via
+   research: unlike `IntakeForm`, `Service` has no self-healing default
+   creation -- a studio can genuinely have zero `Service` rows (every
+   studio created after the one-time 2026-07-25 backfill migration).
+   Fallback chain: exact `slug` match at destination -> case-insensitive
+   `name` match -> destination's oldest active service -> if still
+   nothing, that one client's line item fails cleanly (`FAILED`, clear
+   `errorMessage`), never a crash. Verified live (Scenario C below).
+5. **A selected client with no open origin project still gets a
+   project**, using placeholder values for the schema's required
+   non-nullable fields (e.g. `"Not specified"` for placement/size,
+   `false` for hasBeenTattooedBefore) -- rare, but skipping the project
+   would leave that client's transfer incomplete relative to the rest
+   of the batch.
+6. **"Session plan" maps to `PlannedSession` rows**, recreated fresh
+   against the new project (sessionNumber, estimated hours/price range,
+   `showDurationToClient`) -- explicitly without `depositFormId`
+   (financial, stays at origin) or `appointmentId` (origin-specific).
+7. **Audit logging: one row per client + one summary row**, mirroring
+   `clientImport.ts`'s own two-tier pattern exactly, not a row per
+   cancelled appointment (the client-level row's `changes` payload lists
+   which appointment ids were cancelled). Every dual-studio-consequence
+   action in this codebase logs one row with the other studio folded
+   into `changes` (confirmed again, no counterexample) -- Part 4 follows
+   that, logging at `originStudioId`.
+8. **`AppointmentNote.authorId: null`** for the cancellation note -- the
+   field is nullable specifically so a note "survives its author's
+   deletion"; there's no real human clicking this button, and `null` is
+   more honest than attributing it to whoever happened to accept.
+9. **A real, previously-latent bug fixed in the same pass**:
+   `apps/api/src/routes/inquiries.ts`'s `NON_TERMINAL_STATUSES` (used to
+   gate artist assignment, mark-lost, and valid reopen targets) was
+   computed as "everything except `CLOSED_LOST`/`COLD_LEAD`" -- which,
+   the moment `TRANSFERRED` existed as a status (Part 1), would have
+   silently treated a transferred-away project as still assignable/
+   estimate-able/reopenable-into. Added `TRANSFERRED` to the exclusion
+   filter and updated the mirrored frontend comment
+   (`InquiryDetail.tsx`'s `REOPEN_TARGET_STATUSES`) in the same commit,
+   before this ever shipped as a live gap.
+
+## Backend
+
+`apps/api/src/lib/artistTransferExecution.ts` (new) --
+`executeArtistTransfer(transferId)`: no-ops unless the transfer is
+`ACCEPTED`; `for...of` over `PENDING` line items (sequential, matching
+`clientImport.ts`'s own reasoning about the in-memory duplicate scan);
+per client, contact resolution (match-or-create, secondary
+`ClientPhone`/`ClientEmail` aliases copied via `createClientFromFields`
++ a follow-up upsert loop, `lib/clientContacts.ts` reused rather than
+reinvented), service resolution, a new `Inquiry` (work-state fields
+copied, `status: SCHEDULING`, `assignedArtistId`/`preferredArtistId` =
+the artist), `PlannedSession` rows recreated, origin future appointments
+(`startTime >= now`, `REQUESTED`/`CONFIRMED`, scoped to this client +
+artist + origin studio) cancelled with an `AppointmentNote`, origin
+`Client`/`Inquiry` marked `TRANSFERRED`, line item outcome updated --
+all in one `prisma.$transaction`. After the loop: transfer flips to
+`COMPLETED` once every line item is non-`PENDING`; one summary
+`logAudit`; `emitInvalidation` at both studios (`client.imported`,
+`inquiry.updated`/`inquiry.created`, `appointment.changed` if anything
+was cancelled, `transfer.changed`) -- matching `clientImport.ts`'s own
+"final invalidation calls after the loop, not per-row" shape.
+
+`apps/api/src/routes/artistTransfers.ts`: `myTransfersRouter.post(
+"/:id/accept")` extended for resume (judgment call #2); `GET /:id`
+rewritten to join through `ArtistTransferClient` (shared with the new
+origin-side `GET /:studioId/artist-transfers/:transferId` via a common
+`buildTransferDetailResponse` helper) so `outcome`/`errorMessage` are
+available once execution has run.
+
+`apps/api/src/routes/clients.ts`: `NOT_TRANSFERRED = { transferredAt:
+null }`, spread unconditionally next to `NOT_MERGED` in `GET /`,
+`POST /export` (both branches), and `/merge-search` -- the last one
+wasn't explicitly in the plan but follows the same reasoning (a
+transferred client showing up as a "create inquiry for this client" or
+merge-target search result would be actively wrong) and was added for
+consistency once the pattern was already being touched.
+`transferredToStudio` relation added to the `GET /:id` include
+(mirroring `mergedInto`'s own shape) so the client detail page can name
+the destination studio, not just show a bare timestamp.
+
+`apps/api/src/routes/inquiries.ts`: `transferredToStudio` added to
+`INQUIRY_INCLUDE` (same reasoning); `NON_TERMINAL_STATUSES` fixed per
+judgment call #9.
+
+## Frontend
+
+`apps/web/src/components/StatusPill.tsx`: `TransferStatus` and
+`TransferLineItemOutcome` tones added to the shared `STATUS_TONE` map.
+One real collision found and avoided: `AppointmentStatus.COMPLETED`
+already claims `'progress'` in this flat shared map -- `TransferStatus.
+COMPLETED` would have silently overwritten it for every appointment
+pill in the app. Used the same synthetic-key trick `PROJECT_COMPLETE`
+already established for exactly this class of collision (`TRANSFER_
+COMPLETE`, passed as the `status` prop with an explicit `label` at both
+call sites) rather than accepting the collision or inventing a new one.
+
+`apps/web/src/pages/MyTransferDetail.tsx`: per-client `StatusPill` once
+`ACCEPTED`/`COMPLETED`; accept no longer navigates away immediately --
+it stays on the page and shows the completion report (decline still
+navigates away, since nothing moved to report).
+
+`apps/web/src/pages/Team.tsx`: a "Completed transfers" panel alongside
+the existing "Pending transfers" one, click-to-expand per row (fetches
+the origin-side detail route on demand, keeping the list payload light)
+showing the same per-client `StatusPill` outcome.
+
+`apps/web/src/pages/Inquiries.tsx` / `InquiryDetail.tsx`: `TRANSFERRED`
+joined `CLOSED_LOST`/`COLD_LEAD` in the "Inactive" Kanban bucket and the
+`isTerminal` banner -- no Reopen arm for it (irreversible, per the
+schema's own comment), a third banner branch naming the destination
+studio instead.
+
+`apps/web/src/pages/ClientDetail.tsx`: every action-gate that used to
+check `!client.mergedIntoId` alone (message, edit, add phone/email,
+merge, create inquiry, generate waiver -- 13 call sites) now checks a
+derived `isEnded = mergedIntoId || transferredAt`, since a transferred
+client is the same "record continues elsewhere" category as a merged
+one, not the reversible-hide category `archivedAt` belongs to (which
+leaves every button enabled). A new banner mirrors the existing merge
+banner's exact styling, plain text (no link -- cross-studio -- no
+button -- irreversible).
+
+## Verification
+
+`tsc -b --noEmit` clean on both apps throughout (checked after every
+file group, not just once at the end).
+
+Real-HTTP + direct-DB smoke test against the live dev DB (throwaway
+fixtures, four independent scenarios, deleted after; script lived
+temporarily inside `apps/api/`, same bare-import reason as Parts 2-3,
+deleted before this commit): 25 assertions, all passing.
+
+- **Scenario A, happy path**: destination client created with correct
+  identity fields *and* a secondary phone alias (not just the primary);
+  destination project has copied work-state fields, correct service
+  (slug-matched), and its `PlannedSession` row; origin client/inquiry
+  both resolved as Transferred with the correct cross-reference; the
+  future appointment is `CANCELLED` with a note, the past one is
+  untouched; per-client and summary audit rows both present.
+- **Scenario B, duplicate**: pre-seeded a destination client sharing
+  phone+email with the origin client -- after execution, exactly **one**
+  client row exists at destination matching that phone (a direct count,
+  not an assumption), outcome `MERGE_FLAGGED`, the new project attached
+  to the pre-existing client, not a fresh one.
+- **Scenario C, no service at destination**: a destination studio with
+  zero `Service` rows -- that line item `FAILED` with an error mentioning
+  "service," the transfer still reached `COMPLETED` (batch-level "done"
+  independent of one item's failure), and critically: zero Client rows
+  were created at that destination and the origin client was confirmed
+  **not** marked transferred -- proving the transaction actually rolled
+  back rather than partially committing.
+- **Scenario D, resumability**: pre-marked one of two line items as
+  already `CREATED` with a real destination client/project attached
+  (simulating "a prior accept call finished this client, then crashed
+  before the second"), called accept again on the already-`ACCEPTED`
+  transfer -- resume touched only the still-`PENDING` line item, the
+  first client's destination record was byte-for-byte unchanged, and a
+  direct count confirmed zero duplicate client rows were created for it.
+
+Browser walkthrough via Playwright was attempted again this session
+(same as Parts 2-3) but the shared `ms-playwright-mcp` profile is still
+held by another concurrent session actively working in this repo
+(confirmed again via unrelated changes in `git status`/`git log` --
+`0b4022a`, a time-selection/gift-card/CSV-export commit from that other
+session, landed mid-session here without conflicting with this session's
+own `clients.ts` edits, diffed to confirm). Declined to force it open.
+Backend correctness is fully covered by the 25-assertion test above;
+new frontend surfaces were written by directly copying existing verified
+patterns (the merge banner's exact classes, the pending-transfers
+table's exact shell, `StatusPill`'s existing usage) rather than
+inventing new markup. A live click-through is still worth doing before
+Part 5's adversarial pass.
+
+## CLAUDE.md hygiene
+
+No schema touched this part (Part 1 already built everything Part 4
+needed). No database reset offered or accepted. Throwaway fixture
+script lived temporarily inside `apps/api/` and was deleted before this
+commit -- confirmed via `git status` showing no trace of it. REPORT.md
+line count before this entry: 16157 (verified via `git show HEAD:
+REPORT.md | wc -l`) -- pure addition. This session staged and committed
+only its own files -- diffed `clients.ts` specifically against HEAD
+before committing to confirm this session's `NOT_TRANSFERRED` additions
+layered cleanly on top of the other concurrent session's already-merged
+CSV-export work, with zero overlap or duplication. No dev servers were
+started by this session (both were already running from elsewhere when
+this session began).
+
+## What's next
+
+Part 5 (adversarial verification) is a new session's work: the full
+live happy-path-through-UI walkthrough (this session's own gap, still
+open), the permissions matrix with real HTTP, a genuine interrupted-
+execution kill test (this session simulated resume via pre-seeded
+partial state, not an actual process kill), and everything else on the
+epic's own Part 5 checklist. A screenshot-backed evidence report is
+explicitly called for there.
+
+# Transfer-to-artist epic -- Part 5 (adversarial verification)
+
+Parts 1-4 built the feature; Part 5 is a hostile read of it -- every
+claim on the epic's own Part 5 checklist checked against a live dev
+database and live HTTP calls, not assumed from the code that made it.
+No new feature surface this part, one real product bug found and fixed
+along the way, and one bug in this session's own first test query
+(documented rather than quietly rewritten).
+
+Evidence report (full findings, a permissions matrix, and the
+transparency note on the test-script bug):
+https://claude.ai/code/artifact/c7d08107-f2e1-4a03-a576-8befdaf8cdcf
+
+## What got checked
+
+1. **Full live happy path, documents/financials/notes isolation.** Built
+   a client with a signed `LiabilityWaiver`, a paid `DepositForm`, and
+   an internal `InquiryNote` at origin, ran a real accept. Zero of any
+   of the three exist at destination (direct counts); all three
+   confirmed unchanged at origin. Raw HTTP, authenticated as the
+   *destination* studio's own OWNER: `GET /waivers/:originWaiverId` ->
+   404, `GET /deposit-forms/:originDepositId/pdf` -> 403 -- confirmed
+   the record-scoping on both of those pre-existing routes correctly
+   blocks a studio with no relationship to the record, exactly as
+   designed, not something this epic had to add.
+2. **Duplicate case.** Pre-seeded a destination client sharing phone +
+   email with the transferring client. Outcome `MERGE_FLAGGED`, exactly
+   one client row at destination with that phone (id-confirmed as the
+   pre-existing one), new project attached to it rather than a second
+   identity.
+3. **Appointments.** Future `CONFIRMED` appointment -> `CANCELLED` with
+   a visible note; a past `COMPLETED` one on the same client/artist
+   untouched.
+4. **Permissions, real HTTP.** FRONT_DESK 403 on initiate; the
+   transferring artist's own token 403 on initiating their own transfer
+   (new this part -- Part 2 only ever tested FRONT_DESK); a different,
+   unrelated artist 404 on accept (never 403 -- doesn't reveal the
+   transfer exists to someone it isn't theirs); origin cancel-while-
+   pending and artist decline both confirmed to move nothing
+   (`transferredAt` stays null, zero projects created at destination).
+5. **Interrupted-execution resume -- the real thing this time.** Part
+   4's own verification pre-seeded partial state to stand in for a
+   crash. This pass went further: a temporary, data-gated `throw` was
+   placed directly in `executeArtistTransfer`'s loop (fires only for a
+   client literally named `"PART5CRASHTEST"`, so it's inert against
+   anything the other concurrent session in this repo might be doing),
+   run against the *already-running shared dev server* without
+   restarting it. A real accept call genuinely 500'd. Read the DB
+   immediately after: transfer still `ACCEPTED`, client 1's line item
+   `CREATED`, client 2's still `PENDING` -- an actual crash mid-batch,
+   not a simulation. Reverted the throw (diffed against `HEAD` after to
+   confirm zero trace), let the dev server's own file-watcher pick up
+   the clean code, then called accept again: `200`, `COMPLETED`, only
+   the one still-pending line item touched, client 1's row byte-for-byte
+   unchanged. My own first duplicate-count check here was wrong -- it
+   counted clients by name with no studio filter, so it "found" the
+   (correctly) same-named origin and destination rows as two duplicates.
+   Re-scoped to `studioId`, the real count is one. Fixed the test, not
+   the product, and said so in the evidence report rather than silently
+   rewriting the number.
+6. **Eligibility.** Re-confirmed already-left succeeds, still-home and
+   no-active-home-anywhere both blocked with their own distinct,
+   specific messages.
+7. **Activity log at both ends -- a real gap, fixed.** Every audit row
+   Parts 2-4 wrote was origin-studio-only. Destination staff had zero
+   activity-log explanation for a client/project suddenly appearing in
+   their own studio. Fixed:
+   `apps/api/src/lib/artistTransferExecution.ts` now writes a second row
+   at `destinationStudioId` (`entityType: "Client"`, `action:
+   "arrived_via_transfer"`) alongside the existing origin-side
+   `"transferred"` row, right after execution's per-client transaction
+   commits. Confirmed both rows exist after a live run. Also reviewed
+   every route this epic added against CLAUDE.md's own rule (never
+   trust a stale ARTIST-token studio claim): the artist-facing routes
+   resolve identity via a fresh `Artist.findUnique` lookup, never a JWT
+   claim -- correct by construction, the strongest case here. The
+   OWNER-facing routes use the same bare-equality studio check
+   `studios.ts`'s own precedent already uses; that pattern's
+   theoretical staleness window (a solo OWNER-with-Artist-profile whose
+   home moved without a fresh token) applies equally to code this epic
+   never touched -- refactoring it here would've been scope creep
+   dressed as a fix. Documented in the evidence report, not silently
+   skipped.
+
+## Verification
+
+`tsc -b --noEmit` clean on the API throughout, including with the
+temporary crash-injection code present (before it was reverted).
+
+32 Part 5 assertions across four scenarios (E: happy path/isolation, F:
+permissions, G: eligibility, plus the standalone kill/resume pass), all
+passing -- full breakdown, including the corrected test bug, in the
+evidence report linked above. Combined with Part 4's own 25, this
+epic's execution engine has 57 real HTTP/DB assertions behind it across
+the two sessions.
+
+Browser walkthrough via Playwright was attempted again (fourth time --
+Parts 2, 3, 4, and now 5) and the shared `ms-playwright-mcp` profile was
+still locked by the other concurrent session, confirmed still active
+via commits landing on `main` mid-session in prior parts. Every finding
+above is backed by real HTTP responses and direct database reads
+instead, which is a stronger correctness signal than a screenshot would
+be -- but the epic explicitly asks for screenshots and none exist yet.
+Flagged plainly in the evidence report's own "known gaps" section
+rather than glossed over.
+
+## CLAUDE.md hygiene
+
+No schema touched. No database reset offered or accepted. Every
+throwaway verification script (three separate ones across this part:
+the E/F/G scenario script, the kill-test setup/trigger/verify/resume/
+cleanup scripts, and a small re-check script that caught my own test
+bug) lived temporarily inside `apps/api/` and was deleted immediately
+after use -- confirmed via `git status` showing no trace before this
+commit. The one temporary product-code change (the crash-injection
+hook in `artistTransferExecution.ts`) was reverted in the same sitting
+and diffed against the working tree to confirm zero residue before the
+real fix (the destination audit log) was committed. REPORT.md line
+count before this entry: 16406 (verified via `git show HEAD:REPORT.md
+| wc -l`) -- pure addition. No dev servers were started by this
+session (the shared one was already running); it was never restarted
+or killed, even during the crash-injection test, specifically so as not
+to disrupt the other concurrent session's own work.
+
+## Epic status
+
+All five parts of the Transfer-to-artist epic are now built and
+adversarially verified: schema (Part 1), origin flow (Part 2), artist
+acceptance (Part 3), execution (Part 4), and this verification pass
+(Part 5). Two open items carry forward, both explicitly flagged rather
+than hidden: a live browser screenshot walkthrough (blocked by
+environment contention across four sessions, not attempted-and-failed),
+and live observation of a realtime socket event actually arriving
+client-side (verified by code review, not watched happen). Both are
+good candidates for a short, focused follow-up session once the shared
+dev environment is free.

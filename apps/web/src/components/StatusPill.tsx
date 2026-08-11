@@ -100,6 +100,23 @@ const STATUS_TONE: Record<string, Tone> = {
   RUNNING: 'info',
   SUCCEEDED: 'success',
   FAILED: 'danger',
+
+  // Transfer-to-artist epic: ArtistTransfer.status. COMPLETED is
+  // deliberately NOT a key here -- AppointmentStatus already claims it
+  // ('progress' above), and this is a flat shared map. Call sites pass the
+  // synthetic TRANSFER_COMPLETE key instead (with an explicit label) for a
+  // completed transfer, same "synthetic key to dodge a collision" pattern
+  // PROJECT_COMPLETE already established for Inquiry/Appointment COMPLETED.
+  PENDING_ARTIST: 'warning',
+  ACCEPTED: 'success',
+  DECLINED: 'neutral',
+  CANCELLED_BY_ORIGIN: 'neutral',
+  TRANSFER_COMPLETE: 'highlight',
+
+  // ArtistTransferClient.outcome -- PENDING/FAILED already map correctly
+  // via the shared keys above.
+  CREATED: 'success',
+  MERGE_FLAGGED: 'warning',
 }
 
 // Tone -> className must stay as literal strings (not built from a

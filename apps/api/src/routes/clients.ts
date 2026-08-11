@@ -85,6 +85,12 @@ const NOT_MERGED = { mergedIntoId: null } as const;
 // GET /:id -- see Client.archivedAt.
 const NOT_ARCHIVED = { archivedAt: null } as const;
 
+// Transfer-to-artist epic, Part 4: unconditional, same as NOT_MERGED --
+// never cleared, a transfer isn't reversible (Client.transferredAt's own
+// schema comment), so unlike archivedAt there's no includeTransferred
+// toggle to bring it back into the list.
+const NOT_TRANSFERRED = { transferredAt: null } as const;
+
 const VALID_ACTIVITY_FILTERS = ["upcoming_appointment", "active_project", "no_activity"] as const;
 type ActivityFilter = (typeof VALID_ACTIVITY_FILTERS)[number];
 
@@ -127,6 +133,7 @@ router.get("/", requirePermission("clients.view"), async (req, res) => {
   const baseWhere: Prisma.ClientWhereInput = {
     studioId: { in: studioIds },
     ...NOT_MERGED,
+    ...NOT_TRANSFERRED,
     ...(includeArchived ? {} : NOT_ARCHIVED),
   };
 
@@ -178,7 +185,7 @@ router.post("/export", requirePermission("bulkActions.use"), async (req, res) =>
   let where: Prisma.ClientWhereInput;
 
   if (clientIds) {
-    where = { id: { in: clientIds }, studioId: { in: studioIds }, ...NOT_MERGED };
+    where = { id: { in: clientIds }, studioId: { in: studioIds }, ...NOT_MERGED, ...NOT_TRANSFERRED };
   } else {
     const q = typeof filter.q === "string" ? filter.q.trim() : "";
     const includeArchived = filter.includeArchived === true;
@@ -209,6 +216,7 @@ router.post("/export", requirePermission("bulkActions.use"), async (req, res) =>
     const baseWhere: Prisma.ClientWhereInput = {
       studioId: { in: studioIds },
       ...NOT_MERGED,
+      ...NOT_TRANSFERRED,
       ...(includeArchived ? {} : NOT_ARCHIVED),
     };
     where = {
@@ -329,6 +337,7 @@ router.get("/merge-search", requirePermission("clients.view"), async (req, res) 
     where: {
       studioId: { in: studioIds },
       ...NOT_MERGED,
+      ...NOT_TRANSFERRED,
       ...(excludeId ? { id: { not: excludeId } } : {}),
       AND: words.map((word) => {
         const contains = { contains: word, mode: "insensitive" as const };
@@ -454,6 +463,7 @@ router.get("/:id", async (req, res) => {
         orderBy: { createdAt: "desc" },
       },
       mergedInto: { select: { id: true, firstName: true, lastName: true } },
+      transferredToStudio: { select: { id: true, name: true } },
       phones: { orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }] },
       emails: { orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }] },
       // Package O: "who referred this client" (display-only, on this

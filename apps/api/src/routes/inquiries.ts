@@ -530,13 +530,17 @@ router.post("/", optionalAuth, async (req, res) => {
   res.status(201).json(inquiry);
 });
 
-// Phase 7A: everything except the two terminal enum values. Used by
-// mark-lost (valid FROM any of these) and reopen (valid target TO any of
-// these) -- broader than coldLeadSweep.ts's own eligible-statuses list,
-// since reopening a lost Projects-side inquiry (e.g. back to CONFIRMED) is
-// legitimate and isn't the sweep's concern.
+// Phase 7A: everything except the terminal enum values. Used by mark-lost
+// (valid FROM any of these) and reopen (valid target TO any of these) --
+// broader than coldLeadSweep.ts's own eligible-statuses list, since
+// reopening a lost Projects-side inquiry (e.g. back to CONFIRMED) is
+// legitimate and isn't the sweep's concern. TRANSFERRED joined
+// CLOSED_LOST/COLD_LEAD here in the transfer-to-artist epic -- unlike
+// those two, it has no reopen path at all (enforced separately, see
+// POST /:id/reopen's own status check), but it still must not be a valid
+// artist-assign/estimate-send target, same as any other terminal status.
 const NON_TERMINAL_STATUSES: InquiryStatus[] = (Object.values(InquiryStatus) as InquiryStatus[]).filter(
-  (s) => s !== InquiryStatus.CLOSED_LOST && s !== InquiryStatus.COLD_LEAD,
+  (s) => s !== InquiryStatus.CLOSED_LOST && s !== InquiryStatus.COLD_LEAD && s !== InquiryStatus.TRANSFERRED,
 );
 
 // The "converted to a Project" line, mirrored from apps/web's own
@@ -563,6 +567,7 @@ const ESTIMATE_REVISION_ONLY_STATUSES: InquiryStatus[] = [InquiryStatus.DEPOSIT_
 
 const INQUIRY_INCLUDE = {
   client: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
+  transferredToStudio: { select: { id: true, name: true } },
   projectCompletedBy: { select: { id: true, name: true, email: true } },
   preferredArtist: { select: { id: true, user: { select: { name: true, email: true, avatarUrl: true } } } },
   // email/avatarUrl added for the Kanban board's card (Package E) --
@@ -2217,7 +2222,7 @@ router.post("/:id/mark-lost", requireAuth, async (req, res) => {
   }
 
   if (!NON_TERMINAL_STATUSES.includes(inquiry.status)) {
-    return res.status(400).json({ error: "This inquiry is already in a terminal state (CLOSED_LOST or COLD_LEAD)" });
+    return res.status(400).json({ error: "This inquiry is already in a terminal state (CLOSED_LOST, COLD_LEAD, or TRANSFERRED)" });
   }
 
   const lostData = {

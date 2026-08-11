@@ -5,6 +5,8 @@ import { apiFetch, ApiError } from '../lib/api'
 import { tasksQueryKey } from '../lib/queryKeys'
 import { useAuth } from '../context/useAuth'
 import { useUserProfile } from '../context/useUserProfile'
+import StatusPill from '../components/StatusPill'
+import { formatStatus } from '../lib/format'
 
 interface TransferDetail {
   id: string
@@ -12,7 +14,13 @@ interface TransferDetail {
   createdAt: string
   originStudio: { id: string; name: string }
   destinationStudio: { id: string; name: string }
-  clients: { id: string; name: string; openProject: { description: string } | null }[]
+  clients: {
+    id: string
+    name: string
+    openProject: { description: string } | null
+    outcome: 'PENDING' | 'CREATED' | 'MERGE_FLAGGED' | 'FAILED'
+    errorMessage: string | null
+  }[]
 }
 
 export default function MyTransferDetail() {
@@ -39,7 +47,14 @@ export default function MyTransferDetail() {
     try {
       await apiFetch(`/artist-transfers/${id}/${action}`, { method: 'POST' })
       if (user) queryClient.invalidateQueries({ queryKey: tasksQueryKey(user.userId) })
-      navigate('/tasks')
+      if (action === 'decline') {
+        // Nothing moved -- no completion report to look at, so just leave.
+        navigate('/tasks')
+      } else {
+        // Stay put and show the completion report below (execution runs
+        // synchronously as part of accept).
+        queryClient.invalidateQueries({ queryKey: ['my-transfer', id] })
+      }
     } catch (err) {
       setResponseError(err instanceof ApiError ? err.message : `Failed to ${action} this transfer`)
     } finally {
@@ -86,17 +101,36 @@ export default function MyTransferDetail() {
             <p className="mb-2 text-xs font-medium uppercase tracking-wider text-fg-muted">Clients</p>
             <ul className="space-y-1 text-fg-secondary">
               {transfer.clients.map((c) => (
-                <li key={c.id}>
-                  {c.name}
-                  {c.openProject ? ` — ${c.openProject.description}` : ' — no open project'}
+                <li key={c.id} className="flex items-center justify-between gap-2">
+                  <span>
+                    {c.name}
+                    {c.openProject ? ` — ${c.openProject.description}` : ' — no open project'}
+                    {c.outcome === 'FAILED' && c.errorMessage && (
+                      <span className="block text-xs text-danger">{c.errorMessage}</span>
+                    )}
+                  </span>
+                  {(transfer.status === 'ACCEPTED' || transfer.status === 'COMPLETED') && c.outcome !== 'PENDING' && (
+                    <StatusPill status={c.outcome} className="shrink-0" />
+                  )}
                 </li>
               ))}
             </ul>
           </div>
 
-          {transfer.status !== 'PENDING_ARTIST' && (
+          {transfer.status === 'COMPLETED' && (
+            <div className="flex items-center gap-2 rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg-secondary">
+              <StatusPill status="TRANSFER_COMPLETE" label="Completed" />
+              <span>This transfer is done -- see each client's outcome above.</span>
+            </div>
+          )}
+          {transfer.status === 'ACCEPTED' && (
+            <div className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
+              Still finishing up -- reload this page in a moment if any client above is missing an outcome.
+            </div>
+          )}
+          {(transfer.status === 'DECLINED' || transfer.status === 'CANCELLED_BY_ORIGIN') && (
             <div className="rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg-secondary">
-              You already responded to this request: <strong>{transfer.status}</strong>.
+              You already responded to this request: <strong>{formatStatus(transfer.status)}</strong>.
             </div>
           )}
 
