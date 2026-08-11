@@ -127,7 +127,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
   {
     label: 'Flash Gallery',
     keys: [
-      { key: 'flashGallery.manage', label: 'Manage flash pieces', description: 'Upload, edit, and retire flash pieces -- an artist can always manage their own regardless of this setting; this governs managing OTHER artists’ pieces too.' },
+      { key: 'flashGallery.manage', label: 'Manage flash pieces', description: 'Upload new pieces for other artists and retire existing ones -- an artist can always manage their own regardless of this setting. Editing another artist’s existing piece (image, title, price, duration) additionally requires that artist’s own delegation setting to be on (Team → artist → Guest/Home access).' },
     ],
   },
 ]

@@ -118,14 +118,19 @@ export const PERMISSION_KEYS = [
   "kanban.reorder",
   "bulkActions.use",
 
-  // Flash gallery: genuine self-scoped-or-staff-managed, same shape as
-  // artistSchedules.manage/preferredSchedule (an artist manages their OWN
-  // flash pieces, checked via an inline "-own" narrowing in the route
-  // itself; OWNER/FRONT_DESK manage any artist's). Not the same mechanism
-  // schedulingBufferMinutes/allowsClientSelfScheduling actually use --
-  // those two are OWNER-only via artists.manage, despite reading like a
-  // similar "per-artist setting" at a glance; artistSchedules.manage is
-  // the real precedent for genuine artist self-editing in this codebase.
+  // Flash gallery: an artist always manages their OWN pieces (inline
+  // "-own" narrowing in the route itself, unconditional, not gated by
+  // this key at all). This key still governs OWNER/FRONT_DESK creating a
+  // NEW piece for another artist and the studio-facing lifecycle action
+  // (retire). Flash governance split (REPORT.md, approved -- previously
+  // flagged and deliberately deferred in "Permission-context fix Part
+  // 4"): it no longer governs staff EDITING an existing piece's own
+  // content (image/title/price/duration/isOneOfOne) on another artist's
+  // behalf -- that's gated by the artist's own per-membership
+  // profile-delegation toggle instead (StudioMembership.
+  // allowsStudioProfileEdits, see lib/artistAccess.ts's
+  // hasProfileDelegationAt), same category bio/portfolio/rates are
+  // already in.
   "flashGallery.manage",
 ] as const;
 

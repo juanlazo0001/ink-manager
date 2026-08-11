@@ -79,6 +79,7 @@ after(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
   await prisma.auditLog.deleteMany({ where: { studioId: { in: studioIds } } });
   await prisma.flashPiece.deleteMany({ where: { id: { in: flashPieceIds } } });
+  await prisma.studioMembership.deleteMany({ where: { artistId: { in: artistIds } } });
   await prisma.artist.deleteMany({ where: { id: { in: artistIds } } });
   await prisma.customPolicy.deleteMany({ where: { id: { in: customPolicyIds } } });
   await prisma.service.deleteMany({ where: { id: { in: serviceIds } } });
@@ -179,6 +180,12 @@ test("POST /flash-pieces with translations, then PATCH updates them, GET / refle
   userIds.push(user.id);
   const artist = await prisma.artist.create({ data: { userId: user.id, specialties: [], portfolioImages: [] } });
   artistIds.push(artist.id);
+  // Flash governance split: the later PATCH below is the OWNER editing
+  // (translation) content on this artist's behalf, on purpose -- this
+  // test is about translation round-tripping, not authorization (that has
+  // its own dedicated coverage in flashGovernance.test.ts), so delegation
+  // is granted here to keep testing what this test has always tested.
+  await prisma.studioMembership.create({ data: { studioId, artistId: artist.id, type: "HOME", allowsStudioProfileEdits: true } });
 
   const createRes = await fetch(`${baseUrl}/flash-pieces`, {
     method: "POST",

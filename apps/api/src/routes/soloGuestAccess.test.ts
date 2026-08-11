@@ -228,6 +228,14 @@ before(async () => {
   const hostHomeArtist = await prisma.artist.create({ data: { userId: hostHomeArtistUserId, specialties: [], portfolioImages: [] } });
   hostHomeArtistId = hostHomeArtist.id;
   artistIds.push(hostHomeArtistId);
+  // Flash governance split: the "host OWNER staff (control)" test below
+  // edits this artist's flash piece on their behalf as a legitimate-staff-
+  // access control -- delegation granted so that control keeps validating
+  // "authorized staff access still works," not this split's own new gate
+  // (which has its own dedicated coverage in flashGovernance.test.ts).
+  await prisma.studioMembership.create({
+    data: { studioId: hostStudioId, artistId: hostHomeArtistId, type: StudioMembershipType.HOME, allowsStudioProfileEdits: true },
+  });
 
   // Solo owner-artist: role OWNER, the ONLY active user at soloStudio, ALSO
   // has an Artist profile, ALSO an active GUEST at hostStudio.
