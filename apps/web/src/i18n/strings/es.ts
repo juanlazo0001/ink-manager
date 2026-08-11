@@ -107,6 +107,32 @@ export const es: typeof en = {
     },
   },
 
+  prepay: {
+    linkExpiredBody: 'Por favor, contacta al estudio para solicitar un nuevo formulario de pago por adelantado.',
+    paidHeading: '¡Gracias — tu pago por adelantado está confirmado!',
+    agreementSignedHeading: 'Acuerdo de Pago por Adelantado Firmado',
+    agreementSignedBody: '{{firstName}}, tu acuerdo está registrado. Completa tu pago por adelantado a continuación para confirmar tu cita.',
+    amountLabel: 'Pago por adelantado',
+    receivedNoPaymentBody:
+      'Hemos recibido tu formulario de pago por adelantado firmado. Aún no se ha cobrado ningún pago — el estudio se pondrá en contacto contigo para cobrar tu pago por adelantado y confirmar tu cita.',
+    agreementHeading: 'Acuerdo de Pago por Adelantado',
+    tentativeTimeBody:
+      'Tu cita se programará provisionalmente para el {{range}}, sujeto a tu pago por adelantado. Confirmaremos el horario exacto una vez recibido el pago.',
+    voucherLabel: 'Tu comprobante de pago por adelantado',
+    terms: {
+      agreedNonRefundable:
+        'Se requiere el pago completo por adelantado para fijar una cita. Los pagos por adelantado no son reembolsables y se aplican al precio final del tatuaje.',
+      agreedNoShowForfeit:
+        'La falta de asistencia sin aviso previo resulta en la pérdida del pago por adelantado. Se requiere un aviso de 48 horas para cambiar una cita programada.',
+      agreedNewDepositAfterNoShow:
+        'Después de una falta de asistencia sin aviso previo, se requiere un nuevo pago por adelantado para programar otra cita.',
+      agreedRescheduleLimit: 'Las citas pueden reprogramarse hasta 3 veces; el pago por adelantado se pierde en la tercera reprogramación.',
+      agreedExpiration: 'Los pagos por adelantado vencen un año después de la fecha en que fueron creados.',
+      agreedIdAndVoucher:
+        'El cliente debe traer una identificación oficial con fotografía y el comprobante de pago por adelantado (emitido después del pago) el día de la cita.',
+    },
+  },
+
   estimate: {
     contactStudioForNewEstimate: 'Por favor, contacta al estudio para solicitar una nueva cotización.',
     alreadyBookedHeading: '¡Ya está todo listo, {{firstName}}!',

@@ -24,11 +24,16 @@ export default function DepositGiftCardCard({
   amountCents,
   expiresAt,
   publicUrl,
+  isPrepay,
 }: {
   code: string
   amountCents: number
   expiresAt: string | null
   publicUrl: string | null
+  // Prepay: swaps the voucher label for prepay.voucherLabel -- the rest of
+  // this card's copy (QR instructions, expiry) doesn't mention "deposit"
+  // at all, so it's shared between both modes unchanged.
+  isPrepay?: boolean
 }) {
   const { t } = useTranslations()
   const { locale } = useLocale()
@@ -36,7 +41,9 @@ export default function DepositGiftCardCard({
     // relative z-10: same reasoning as DepositAppointmentCard's own comment
     // -- keeps this above the fixed personalized background.
     <div className="relative z-10 mt-5 rounded-2xl border border-border p-5 text-center">
-      <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('deposit.giftCardCard.label')}</p>
+      <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">
+        {isPrepay ? t('prepay.voucherLabel') : t('deposit.giftCardCard.label')}
+      </p>
       {/* font-medium, not font-semibold -- every other font-display amount
           in this family (PaymentAmountStage's headline, PaymentConfirmation
           Stage's own confirmed amount) uses font-medium; this was the lone

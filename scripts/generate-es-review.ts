@@ -16,7 +16,7 @@ dotenv.config({ path: join(__dirname, "..", "apps/api/.env") });
 import { en } from "../apps/web/src/i18n/strings/en";
 import { es } from "../apps/web/src/i18n/strings/es";
 import { EN as PDF_EN, ES as PDF_ES } from "../apps/api/src/lib/pdfStrings";
-import { TERMS, TERMS_ES } from "../apps/api/src/routes/deposits";
+import { TERMS, TERMS_ES, PREPAY_TERMS, PREPAY_TERMS_ES } from "../apps/api/src/routes/deposits";
 import { SYSTEM_FIELD_DEFAULTS_ES } from "../apps/api/src/lib/contentTranslation";
 import { SYSTEM_FIELD_DEFAULTS } from "../apps/api/src/lib/intakeFormFields";
 
@@ -71,6 +71,20 @@ const termsSection = renderSection(
   TERMS_ES as unknown as Dict,
 );
 
+// Prepay: only the 6 keys that actually have prepay-specific wording --
+// PREPAY_TERMS/PREPAY_TERMS_ES are deliberately partial maps (see their own
+// comment in deposits.ts), so this section is shorter than termsSection
+// above by design, not a gap.
+const prepayTermsRows = Object.keys(PREPAY_TERMS).map((key) => ({
+  key,
+  value: PREPAY_TERMS[key as keyof typeof PREPAY_TERMS]!,
+}));
+const prepayTermsSection = renderSection(
+  "Prepayment agreement clause overrides -- platform copy (`apps/api/src/routes/deposits.ts` PREPAY_TERMS/PREPAY_TERMS_ES)",
+  prepayTermsRows,
+  PREPAY_TERMS_ES as unknown as Dict,
+);
+
 const sysFieldRows = SYSTEM_FIELD_DEFAULTS.map((f) => ({ key: f.key, value: f.label }));
 const sysFieldSection = renderSection(
   "SYSTEM intake field seed labels (`apps/api/src/lib/intakeFormFields.ts` / `contentTranslation.ts`)",
@@ -117,6 +131,7 @@ legal/native-speaker review, not just a fluency check** (this is the exact text 
 ## Backend platform strings
 
 ${termsSection}
+${prepayTermsSection}
 ${sysFieldSection}
 ${pdfSection}
 

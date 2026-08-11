@@ -2558,10 +2558,13 @@ router.post("/:id/reopen-project", requireAuth, async (req, res) => {
 // "latest row missing" is true there too, so it still creates session 1.
 router.post("/:id/deposit-form", requireAuth, async (req, res) => {
   const id = req.params.id as string;
-  const { proposedStartAt, proposedEndAt, autoSend, plannedSessionId } = req.body ?? {};
+  const { proposedStartAt, proposedEndAt, autoSend, plannedSessionId, amountMode } = req.body ?? {};
 
   if (plannedSessionId !== undefined && typeof plannedSessionId !== "string") {
     return res.status(400).json({ error: "plannedSessionId must be a string" });
+  }
+  if (amountMode !== undefined && amountMode !== "DEPOSIT" && amountMode !== "FULL_PREPAY") {
+    return res.status(400).json({ error: "amountMode must be DEPOSIT or FULL_PREPAY" });
   }
 
   // Artist mobility bug fix: verify the caller against the PROJECT's own
@@ -2588,6 +2591,7 @@ router.post("/:id/deposit-form", requireAuth, async (req, res) => {
     proposedEndAt: typeof proposedEndAt === "string" ? proposedEndAt : undefined,
     autoSend,
     plannedSessionId,
+    amountMode,
   });
 
   if (!result.ok) {

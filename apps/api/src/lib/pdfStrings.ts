@@ -12,6 +12,12 @@ import { DEFAULT_LOCALE, isSupportedLocale, type Locale } from "./locale";
 export const EN = {
   generatedOn: "Generated {{date}}",
   depositAgreementTitle: "Deposit Agreement",
+  // Prepay + On-Hold epic, Part 2: prepayment-mode counterparts of the two
+  // above -- picked instead of them (never both) by generateDepositFormPdf
+  // based on the form's own amountMode, same "one substitution point"
+  // shape as routes/deposits.ts's own PREPAY_TERMS.
+  prepayAgreementTitle: "Prepayment Agreement",
+  prepayAmount: "Prepayment amount: {{amount}}",
   client: "Client: {{name}}",
   project: "Project: {{title}}",
   session: "Session: #{{n}}",
@@ -48,6 +54,8 @@ export const EN = {
 export const ES: typeof EN = {
   generatedOn: "Generado el {{date}}",
   depositAgreementTitle: "Acuerdo de Depósito",
+  prepayAgreementTitle: "Acuerdo de Pago por Adelantado",
+  prepayAmount: "Monto del pago por adelantado: {{amount}}",
   client: "Cliente: {{name}}",
   project: "Proyecto: {{title}}",
   session: "Sesión: #{{n}}",

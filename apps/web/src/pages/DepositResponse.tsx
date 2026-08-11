@@ -113,6 +113,9 @@ interface VerifyResponse {
   // the picker reflects the server's own resolution immediately, not
   // always defaulting to English until a client manually toggles it.
   resolvedLocale?: string
+  // Prepay: DEPOSIT (tier, default) or FULL_PREPAY (full estimated price) --
+  // drives which copy namespace (deposit.* vs prepay.*) this page renders.
+  amountMode: 'DEPOSIT' | 'FULL_PREPAY'
 }
 
 // Multi-language public forms: this page's own hardcoded 8-clause
@@ -132,6 +135,18 @@ const TERM_TRANSLATION_KEYS: Record<string, Parameters<ReturnType<typeof useTran
   agreedExpiration: 'deposit.terms.agreedExpiration',
   agreedIdAndVoucher: 'deposit.terms.agreedIdAndVoucher',
   agreedAge18: 'deposit.terms.agreedAge18',
+}
+
+// Prepay: only 6 of the 8 term keys have prepay-specific wording
+// (agreedLatePolicy and agreedAge18 don't mention "deposit" at all, so
+// they fall back to the base deposit.terms.* copy for both modes).
+const PREPAY_TERM_TRANSLATION_KEYS: Partial<Record<string, Parameters<ReturnType<typeof useTranslations>['t']>[0]>> = {
+  agreedNonRefundable: 'prepay.terms.agreedNonRefundable',
+  agreedNoShowForfeit: 'prepay.terms.agreedNoShowForfeit',
+  agreedNewDepositAfterNoShow: 'prepay.terms.agreedNewDepositAfterNoShow',
+  agreedRescheduleLimit: 'prepay.terms.agreedRescheduleLimit',
+  agreedExpiration: 'prepay.terms.agreedExpiration',
+  agreedIdAndVoucher: 'prepay.terms.agreedIdAndVoucher',
 }
 
 export default function DepositResponse() {
@@ -331,6 +346,15 @@ function DepositResponseContent() {
     loadVerify({ poll: true })
   }
 
+  // Prepay: only the small set of client-facing strings whose wording
+  // actually differs ("deposit" -> "prepayment") get a prepay.* override --
+  // everything else falls back to the base deposit.* copy, matching the
+  // "partial mirror, not full duplicate" shape of the two namespaces
+  // themselves (see en.ts/es.ts). Each call site below ternaries between
+  // the two literal keys directly (rather than a dynamic-key helper) so
+  // both keys stay checked against the translation dictionary's own type.
+  const isPrepay = verifyData?.amountMode === 'FULL_PREPAY'
+
   return (
     // bg-bg deliberately dropped (Part 1) -- same as AuthLayout's own
     // .login-shell wrapper, which never had it: body already carries this
@@ -348,14 +372,18 @@ function DepositResponseContent() {
           <div className="text-center">
             <h1 className="login-jura text-xl font-semibold text-fg">{t('common.linkExpiredHeading')}</h1>
             <p className="mt-2 text-sm text-fg-secondary">{invalidMessage}</p>
-            <p className="mt-4 text-sm text-fg-secondary">{t('deposit.linkExpiredBody')}</p>
+            <p className="mt-4 text-sm text-fg-secondary">
+              {isPrepay ? t('prepay.linkExpiredBody') : t('deposit.linkExpiredBody')}
+            </p>
           </div>
         )}
 
         {state === 'success' && (
           <div className="text-center">
             <h1 className="login-jura text-xl font-semibold text-fg">{t('deposit.receivedNoPaymentHeading')}</h1>
-            <p className="mt-2 text-sm text-fg-secondary">{t('deposit.receivedNoPaymentBody')}</p>
+            <p className="mt-2 text-sm text-fg-secondary">
+              {isPrepay ? t('prepay.receivedNoPaymentBody') : t('deposit.receivedNoPaymentBody')}
+            </p>
           </div>
         )}
 
@@ -369,7 +397,7 @@ function DepositResponseContent() {
                 referenceBackgroundUrl: verifyData.referenceBackgroundUrl,
               }}
               amountCents={dollarsToCents(verifyData.totalCharged)}
-              heading={t('deposit.paidHeading')}
+              heading={isPrepay ? t('prepay.paidHeading') : t('deposit.paidHeading')}
               // State-accurate rather than a blanket "confirmed your
               // appointment" claim -- paying a deposit doesn't always
               // result in a real appointment (a scheduling conflict
@@ -400,6 +428,7 @@ function DepositResponseContent() {
                 amountCents={verifyData.giftCard.amountCents}
                 expiresAt={verifyData.giftCard.expiresAt}
                 publicUrl={verifyData.giftCard.publicUrl}
+                isPrepay={isPrepay}
               />
             )}
 
@@ -453,15 +482,19 @@ function DepositResponseContent() {
             />
           ) : (
             <div>
-              <h1 className="login-jura text-xl font-semibold text-fg">{t('deposit.agreementSignedHeading')}</h1>
+              <h1 className="login-jura text-xl font-semibold text-fg">
+                {isPrepay ? t('prepay.agreementSignedHeading') : t('deposit.agreementSignedHeading')}
+              </h1>
               <p className="mt-1 text-sm font-medium text-fg-secondary">{verifyData.studioName}</p>
               <p className="mt-2 text-sm text-fg-secondary">
-                {t('deposit.agreementSignedBody', { firstName: verifyData.clientFirstName })}
+                {isPrepay
+                  ? t('prepay.agreementSignedBody', { firstName: verifyData.clientFirstName })
+                  : t('deposit.agreementSignedBody', { firstName: verifyData.clientFirstName })}
               </p>
 
               <div className="mt-4 grid grid-cols-3 gap-3">
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('deposit.depositLabel')}</p>
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{isPrepay ? t('prepay.amountLabel') : t('deposit.depositLabel')}</p>
                   <p className="mt-1 text-lg font-semibold text-fg">${verifyData.depositAmount}</p>
                 </div>
                 <div>
@@ -503,13 +536,17 @@ function DepositResponseContent() {
           !verifyData.stripeConnected && (
             <div className="text-center">
               <h1 className="login-jura text-xl font-semibold text-fg">{t('deposit.receivedNoPaymentHeading')}</h1>
-              <p className="mt-2 text-sm text-fg-secondary">{t('deposit.receivedNoPaymentBody')}</p>
+              <p className="mt-2 text-sm text-fg-secondary">
+                {isPrepay ? t('prepay.receivedNoPaymentBody') : t('deposit.receivedNoPaymentBody')}
+              </p>
             </div>
         )}
 
         {state === 'ready' && verifyData && !verifyData.paidVia && !confirmingPayment && !verifyData.signedAt && (
           <div>
-            <h1 className="login-jura text-xl font-semibold text-fg">{t('deposit.agreementHeading')}</h1>
+            <h1 className="login-jura text-xl font-semibold text-fg">
+              {isPrepay ? t('prepay.agreementHeading') : t('deposit.agreementHeading')}
+            </h1>
             <p className="mt-1 text-sm font-medium text-fg-secondary">{verifyData.studioName}</p>
             {verifyData.artistName && (
               <div className="mt-3 flex items-center gap-2">
@@ -539,9 +576,13 @@ function DepositResponseContent() {
               <div className="mt-4 rounded-lg border border-border bg-surface-inset p-3">
                 <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('deposit.tentativeTimeLabel')}</p>
                 <p className="mt-1 text-sm text-fg">
-                  {t('deposit.tentativeTimeBody', {
-                    range: `${formatDateTime(verifyData.proposedStartAt, locale)} – ${formatDateTime(verifyData.proposedEndAt, locale)}`,
-                  })}
+                  {isPrepay
+                    ? t('prepay.tentativeTimeBody', {
+                        range: `${formatDateTime(verifyData.proposedStartAt, locale)} – ${formatDateTime(verifyData.proposedEndAt, locale)}`,
+                      })
+                    : t('deposit.tentativeTimeBody', {
+                        range: `${formatDateTime(verifyData.proposedStartAt, locale)} – ${formatDateTime(verifyData.proposedEndAt, locale)}`,
+                      })}
                 </p>
               </div>
             )}
@@ -569,7 +610,7 @@ function DepositResponseContent() {
 
             <div className="mt-4 grid grid-cols-3 gap-3">
               <div>
-                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{t('deposit.depositLabel')}</p>
+                <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">{isPrepay ? t('prepay.amountLabel') : t('deposit.depositLabel')}</p>
                 <p className="mt-1 text-lg font-semibold text-fg">${verifyData.depositAmount}</p>
               </div>
               <div>
@@ -600,7 +641,11 @@ function DepositResponseContent() {
                     onChange={(e) => setAgreed({ ...agreed, [term.key]: e.target.checked })}
                     className="mt-0.5 h-4 w-4 shrink-0 rounded border-border bg-surface-inset accent-accent"
                   />
-                  <span>{TERM_TRANSLATION_KEYS[term.key] ? t(TERM_TRANSLATION_KEYS[term.key]) : term.label}</span>
+                  <span>
+                    {(isPrepay && PREPAY_TERM_TRANSLATION_KEYS[term.key]) || TERM_TRANSLATION_KEYS[term.key]
+                      ? t((isPrepay && PREPAY_TERM_TRANSLATION_KEYS[term.key]) || TERM_TRANSLATION_KEYS[term.key])
+                      : term.label}
+                  </span>
                 </label>
               ))}
 

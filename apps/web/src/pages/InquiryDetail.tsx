@@ -385,6 +385,39 @@ function ArtistDetailField({ label, artist, emptyLabel }: { label: string; artis
   )
 }
 
+// Prepay: staff's send-time choice between the normal tiered deposit and a
+// full prepayment of the estimated price. Only shown when a fresh session
+// form is about to be generated -- resending an existing unsigned form
+// preserves whatever mode it already has (see handleSendDepositForm).
+function DepositAmountModePicker({
+  value,
+  onChange,
+}: {
+  value: 'DEPOSIT' | 'FULL_PREPAY'
+  onChange: (mode: 'DEPOSIT' | 'FULL_PREPAY') => void
+}) {
+  return (
+    <div className="mt-3">
+      <p className="mb-1.5 text-xs font-medium text-fg-secondary">Amount</p>
+      <div className="flex gap-2">
+        {(['DEPOSIT', 'FULL_PREPAY'] as const).map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            onClick={() => onChange(mode)}
+            className={[
+              'rounded-full border px-3 py-1.5 text-xs font-medium transition',
+              value === mode ? 'border-accent bg-accent/15 text-accent' : 'border-border text-fg-secondary hover:bg-surface',
+            ].join(' ')}
+          >
+            {mode === 'DEPOSIT' ? 'Deposit' : 'Full prepayment'}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // Built-in fallback order for a user who's never customized this page's
 // layout (or one shipped after their last save). "assignment-section"/
 // "estimate-section"/"appointments" match the ?openFlow= deep-link scroll
@@ -669,6 +702,14 @@ export default function InquiryDetail() {
     queryFn: () => apiFetch<{ depositTiers: DepositTier[] }>('/studio-settings'),
     select: (data) => resolveDepositTiers(data.depositTiers),
   })
+  // Prepay: the studio-level default staff pickers below seed from --
+  // separate query rather than folding into the one above since that one's
+  // `select` already narrows to just the tier array.
+  const { data: defaultDepositAmountMode } = useQuery({
+    queryKey: ['studio-default-deposit-amount-mode'],
+    queryFn: () => apiFetch<{ defaultDepositAmountMode: 'DEPOSIT' | 'FULL_PREPAY' }>('/studio-settings'),
+    select: (data) => data.defaultDepositAmountMode,
+  })
   const requiredDepositCents = resolveRequiredDepositCents(
     inquiry?.service,
     inquiry?.priceEstimateLow,
@@ -868,6 +909,12 @@ export default function InquiryDetail() {
   const [sendingDeposit, setSendingDeposit] = useState(false)
   const [sendDepositError, setSendDepositError] = useState<string | null>(null)
   const [depositSendNotice, setDepositSendNotice] = useState<string | null>(null)
+  // Prepay: staff's explicit pick at send time, when they've touched the
+  // picker -- null means "use the studio-level default" (Settings), so this
+  // reflects that default once it loads without needing an effect to sync
+  // it in.
+  const [depositAmountModeOverride, setDepositAmountModeOverride] = useState<'DEPOSIT' | 'FULL_PREPAY' | null>(null)
+  const depositAmountMode = depositAmountModeOverride ?? defaultDepositAmountMode ?? 'DEPOSIT'
   // Package M: several deposit forms can exist per inquiry now, so "which
   // one is being marked paid" needs its own id rather than one shared flag.
   const [markingPaidId, setMarkingPaidId] = useState<string | null>(null)
@@ -1537,9 +1584,18 @@ export default function InquiryDetail() {
         : {}
       const result = await apiFetch<{ depositSendResult: ClientSendResult | null }>(`/inquiries/${id}/deposit-form`, {
         method: 'POST',
-        body: JSON.stringify({ ...proposedTime, plannedSessionId }),
+        // amountMode only sent for a genuinely new session -- omitting it on
+        // a resend lets the API preserve whatever mode the existing unsigned
+        // form already has (see lib/deposits.ts's own resolution order).
+        body: JSON.stringify({
+          ...proposedTime,
+          plannedSessionId,
+          ...(isNewSessionForTarget ? { amountMode: depositAmountMode } : {}),
+        }),
       })
-      setDepositSendNotice(describeSendResult('Deposit form', result.depositSendResult))
+      setDepositSendNotice(
+        describeSendResult(depositAmountMode === 'FULL_PREPAY' ? 'Prepayment form' : 'Deposit form', result.depositSendResult),
+      )
       setDepositTargetPlannedSessionId(null)
       invalidateInquiry()
     } catch (err) {
@@ -2970,6 +3026,8 @@ export default function InquiryDetail() {
                           {suggestTimeError && <p className="mt-2 text-sm text-danger">{suggestTimeError}</p>}
                         </div>
 
+                        <DepositAmountModePicker value={depositAmountMode} onChange={setDepositAmountModeOverride} />
+
                         {sendDepositError && <p className="mt-3 text-sm text-danger">{sendDepositError}</p>}
 
                         <button
@@ -3458,6 +3516,9 @@ export default function InquiryDetail() {
                                   {plannedSessionSuggestError && (
                                     <p className="mt-2 text-xs text-danger">{plannedSessionSuggestError}</p>
                                   )}
+
+                                  <DepositAmountModePicker value={depositAmountMode} onChange={setDepositAmountModeOverride} />
+
                                   {sendDepositError && <p className="mt-2 text-xs text-danger">{sendDepositError}</p>}
                                   <div className="mt-2 flex gap-2">
                                     <button

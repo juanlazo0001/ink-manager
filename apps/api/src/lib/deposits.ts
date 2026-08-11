@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { prisma } from "./prisma";
-import { InquiryStatus, AppointmentStatus, AppointmentType } from "../../generated/prisma/enums";
+import { InquiryStatus, AppointmentStatus, AppointmentType, DepositAmountMode } from "../../generated/prisma/enums";
 import { diffObjects, logAudit } from "./audit";
 import { dollarsToCents } from "./money";
 import { computeGiftCardExpiration, generateUniqueGiftCardCode } from "./giftCards";
@@ -38,6 +38,11 @@ export interface GenerateAndSendDepositFormOptions {
   proposedEndAt?: string;
   autoSend?: boolean;
   plannedSessionId?: string;
+  // Prepay + On-Hold epic, Part 2: staff's per-send choice. Undefined
+  // (never null -- "unset" and "explicitly DEPOSIT" are different only
+  // in that the former falls back to the studio's own configured
+  // default) falls back to StudioSettings.defaultDepositAmountMode.
+  amountMode?: DepositAmountMode;
 }
 
 export type GenerateAndSendDepositFormResult =
@@ -63,7 +68,7 @@ export async function generateAndSendDepositForm(
   inquiryId: string,
   opts: GenerateAndSendDepositFormOptions,
 ): Promise<GenerateAndSendDepositFormResult> {
-  const { studioId, actorUserId, proposedStartAt, proposedEndAt, autoSend, plannedSessionId } = opts;
+  const { studioId, actorUserId, proposedStartAt, proposedEndAt, autoSend, plannedSessionId, amountMode } = opts;
 
   const inquiry = await prisma.inquiry.findUnique({
     where: { id: inquiryId },
@@ -102,7 +107,7 @@ export async function generateAndSendDepositForm(
     }
   }
 
-  let latest: { id: string; signedAt: Date | null; sessionNumber: number } | undefined;
+  let latest: { id: string; signedAt: Date | null; sessionNumber: number; amountMode: DepositAmountMode } | undefined;
   let isNewSession: boolean;
   let sessionNumber: number;
 
@@ -138,8 +143,25 @@ export async function generateAndSendDepositForm(
   const settings = await prisma.studioSettings.findUnique({ where: { studioId } });
   const tiers = resolveDepositTiers(settings?.depositTiers);
 
+  // Resending an existing unsigned form (isNewSession false) preserves
+  // THAT form's own already-chosen amountMode when the caller doesn't
+  // explicitly override it -- "Resend" rotates the token/expiry, it isn't
+  // a fresh decision point, so it must never silently revert to the
+  // studio's current default out from under whatever staff picked when
+  // this session's form was first generated.
+  const resolvedAmountMode =
+    amountMode ?? (!isNewSession ? latest?.amountMode : undefined) ?? settings?.defaultDepositAmountMode ?? DepositAmountMode.DEPOSIT;
   const average = (inquiry.priceEstimateLow + inquiry.priceEstimateHigh) / 2;
-  const { depositAmount, totalCharged } = resolveDepositAmounts(inquiry.service, average, tiers, settings?.depositFeeCents);
+  // FULL_PREPAY: the full estimated price becomes the "deposit" amount
+  // itself (still just an estimate average, same basis DEPOSIT mode's own
+  // tier math already uses) -- the flat processing fee still applies on
+  // top, same as every DEPOSIT-mode form, since that fee is about the
+  // payment transaction, not about which amount is being collected.
+  const feeCents = settings?.depositFeeCents ?? 1000;
+  const { depositAmount, totalCharged } =
+    resolvedAmountMode === DepositAmountMode.FULL_PREPAY
+      ? { depositAmount: average, totalCharged: average + feeCents / 100 }
+      : resolveDepositAmounts(inquiry.service, average, tiers, settings?.depositFeeCents);
   const feeAmount = totalCharged - depositAmount;
 
   const token = crypto.randomBytes(32).toString("hex");
@@ -152,6 +174,7 @@ export async function generateAndSendDepositForm(
           sessionNumber,
           token,
           tokenExpiresAt,
+          amountMode: resolvedAmountMode,
           depositAmount,
           feeAmount,
           totalCharged,
@@ -161,7 +184,7 @@ export async function generateAndSendDepositForm(
       })
     : await prisma.depositForm.update({
         where: { id: latest!.id },
-        data: { token, tokenExpiresAt, depositAmount, feeAmount, totalCharged },
+        data: { token, tokenExpiresAt, amountMode: resolvedAmountMode, depositAmount, feeAmount, totalCharged },
       });
 
   if (plannedSession && isNewSession) {
@@ -642,7 +665,7 @@ export async function createDepositCheckoutSession(depositFormId: string): Promi
     session = await createDirectChargeCheckoutSession({
       connectedAccountId: stripeAccountId,
       amountCents: totalCents,
-      productName: "Deposit",
+      productName: depositForm.amountMode === DepositAmountMode.FULL_PREPAY ? "Prepayment" : "Deposit",
       successUrl: `${PUBLIC_APP_URL}/deposit/${depositForm.token}?paid=1`,
       cancelUrl: `${PUBLIC_APP_URL}/deposit/${depositForm.token}?canceled=1`,
       metadata: { depositFormId: depositForm.id },

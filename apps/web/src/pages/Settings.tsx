@@ -148,6 +148,10 @@ interface StudioSettingsData {
   // hardcoded constants, now studio-level defaults.
   schedulingBufferMinutes: number
   depositFeeCents: number
+  // Prepay: studio-level default for which amount mode a fresh deposit form
+  // starts on -- staff can still override it per-send (InquiryDetail.tsx's
+  // DepositAmountModePicker).
+  defaultDepositAmountMode: 'DEPOSIT' | 'FULL_PREPAY'
   reminderWeekBeforeDays: number
   reminderNightBeforeDays: number
   // false (default): a specific referred client can earn their referrer a
@@ -362,6 +366,7 @@ const EMPTY_DEFAULTS_FORM = {
   // the prior hardcoded behavior exactly.
   schedulingBufferMinutes: '90',
   depositFeeDollars: '10',
+  defaultDepositAmountMode: 'DEPOSIT' as 'DEPOSIT' | 'FULL_PREPAY',
   referralAllowRepeatRedemption: false,
   referralProgramEnabled: true,
 }
@@ -1207,6 +1212,7 @@ export default function Settings() {
       showSidebarBadges: policies.showSidebarBadges,
       schedulingBufferMinutes: String(policies.schedulingBufferMinutes),
       depositFeeDollars: centsToDollarsInput(policies.depositFeeCents),
+      defaultDepositAmountMode: policies.defaultDepositAmountMode,
       referralAllowRepeatRedemption: policies.referralAllowRepeatRedemption,
       referralProgramEnabled: policies.referralProgramEnabled,
     })
@@ -1243,6 +1249,7 @@ export default function Settings() {
           showSidebarBadges: defaultsForm.showSidebarBadges,
           schedulingBufferMinutes: Number(defaultsForm.schedulingBufferMinutes) || 0,
           depositFeeCents: dollarsToCents(Number(defaultsForm.depositFeeDollars) || 0),
+          defaultDepositAmountMode: defaultsForm.defaultDepositAmountMode,
         }),
       })
       setPolicies(updated)
@@ -2382,6 +2389,12 @@ export default function Settings() {
                 <div>
                   <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Deposit processing fee</p>
                   <p className="mt-1 text-sm text-fg-secondary">${(policies.depositFeeCents / 100).toFixed(2)}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Default deposit form amount</p>
+                  <p className="mt-1 text-sm text-fg-secondary">
+                    {policies.defaultDepositAmountMode === 'FULL_PREPAY' ? 'Full prepayment' : 'Deposit (tier-based)'}
+                  </p>
                 </div>
                 {policies.referralProgramEnabled && (
                   <div>
@@ -3700,6 +3713,25 @@ export default function Settings() {
                         onChange={(e) => setDefaultsForm({ ...defaultsForm, depositFeeDollars: e.target.value })}
                         className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                       />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-fg-secondary">Default deposit form amount</label>
+                      <p className="mb-1 text-xs text-fg-muted">
+                        What a fresh deposit form starts as when staff sends one -- they can still switch it per-send.
+                      </p>
+                      <select
+                        value={defaultsForm.defaultDepositAmountMode}
+                        onChange={(e) =>
+                          setDefaultsForm({
+                            ...defaultsForm,
+                            defaultDepositAmountMode: e.target.value as 'DEPOSIT' | 'FULL_PREPAY',
+                          })
+                        }
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                      >
+                        <option value="DEPOSIT">Deposit (tier-based)</option>
+                        <option value="FULL_PREPAY">Full prepayment</option>
+                      </select>
                     </div>
                   </>
                 )}

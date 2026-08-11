@@ -168,6 +168,10 @@ export interface DepositFormPdfInput extends PdfBrand {
   clientName: string;
   inquiryTitle: string | null;
   sessionNumber: number;
+  // Prepay + On-Hold epic, Part 2: picks the "Deposit"/"Prepayment"
+  // title+amount-label pair below. Defaults to "DEPOSIT" so every caller
+  // that predates this field keeps generating byte-identical PDFs.
+  amountMode?: "DEPOSIT" | "FULL_PREPAY";
   depositAmount: number;
   feeAmount: number;
   totalCharged: number;
@@ -186,15 +190,16 @@ export interface DepositFormPdfInput extends PdfBrand {
 // has the same "never retroactively changes what a client already saw"
 // guarantee LiabilityWaiver's own snapshots always had.
 export async function generateDepositFormPdf(input: DepositFormPdfInput): Promise<Buffer> {
+  const isPrepay = input.amountMode === "FULL_PREPAY";
   const doc = new PDFDocument({ margin: 50, size: "LETTER" });
-  addDocumentHeader(doc, input.studioName, pdfT(input.locale, "depositAgreementTitle"), input);
+  addDocumentHeader(doc, input.studioName, pdfT(input.locale, isPrepay ? "prepayAgreementTitle" : "depositAgreementTitle"), input);
 
   doc.fontSize(10).font("Helvetica");
   doc.text(pdfT(input.locale, "client", { name: input.clientName }));
   if (input.inquiryTitle) doc.text(pdfT(input.locale, "project", { title: input.inquiryTitle }));
   doc.text(pdfT(input.locale, "session", { n: input.sessionNumber }));
   doc.moveDown(0.5);
-  doc.text(pdfT(input.locale, "depositAmount", { amount: `$${input.depositAmount.toFixed(2)}` }));
+  doc.text(pdfT(input.locale, isPrepay ? "prepayAmount" : "depositAmount", { amount: `$${input.depositAmount.toFixed(2)}` }));
   doc.text(pdfT(input.locale, "processingFee", { amount: `$${input.feeAmount.toFixed(2)}` }));
   doc.font("Helvetica-Bold").text(pdfT(input.locale, "totalCharged", { amount: `$${input.totalCharged.toFixed(2)}` }));
   doc.font("Helvetica");

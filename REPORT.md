@@ -16223,3 +16223,194 @@ fields/values yet. `tsc -b --noEmit` clean on both apps, API suite
 
 REPORT.md line count before this entry: 16157 (verified via `git show
 HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Prepay + On-Hold epic, Part 2: Prepay flow
+
+Built the full staff-send -> client-sign -> pay -> checkout path for
+`FULL_PREPAY` on top of Part 1's schema, reusing the deposit-tier
+pipeline exactly as that part's own writeup described.
+
+## Backend
+
+- **`lib/deposits.ts`**: `generateAndSendDepositForm` now resolves
+  `amountMode` in this order: explicit per-send choice -> (on a resend
+  of an unsigned form only) that form's own already-chosen mode -> the
+  studio's `defaultDepositAmountMode` -> `DEPOSIT`. The middle rule
+  exists so "Resend" never silently reverts an in-flight `FULL_PREPAY`
+  form back to whatever the studio default happens to be today.
+  `FULL_PREPAY`'s `depositAmount` is the plain price-estimate average
+  (no tier lookup); the flat processing fee still applies on top,
+  unchanged -- it's about the transaction, not which amount is being
+  collected. `createDepositCheckoutSession`'s Stripe product name
+  switches to "Prepayment" for this mode.
+- **`routes/inquiries.ts`** (`POST /:id/deposit-form`) and
+  **`routes/studioSettings.ts`** (`defaultDepositAmountMode` added to
+  the `settings.manageDefaults` permission group, validated and
+  audit-logged same as `depositFeeCents`).
+- **`routes/deposits.ts`**: `PREPAY_TERMS`/`PREPAY_TERMS_ES` -- partial
+  maps, only the 6 of 8 clauses that actually say "deposit" (
+  `agreedLatePolicy`/`agreedAge18` don't, so they fall back to the base
+  `TERMS`/`TERMS_ES` text for both modes). `termsForLocale` now takes
+  `amountMode` and overlays per key. `GET /verify/:token` returns
+  `amountMode`; the PDF route passes it through too.
+- **`lib/pdf.ts`** / **`lib/pdfStrings.ts`**: `generateDepositFormPdf`
+  swaps the header title and amount-line label when `amountMode` is
+  `FULL_PREPAY` (`prepayAgreementTitle`/`prepayAmount`, EN+ES).
+
+## Frontend
+
+- **`i18n/strings/en.ts` / `es.ts`**: new `prepay` namespace --
+  deliberately a *partial mirror* of `deposit`, not a full duplicate:
+  only the ~9 top-level keys and 6 term keys whose wording actually
+  differs get an entry; everything else (fee/total labels, PDF chrome
+  the client never disagrees to, session-plan copy, etc.) is shared.
+  Considered fully duplicating the namespace first and rejected it as
+  needless drift-risk -- two copies of unchanged text is a second place
+  to forget an edit.
+- **`pages/DepositResponse.tsx`**: `VerifyResponse.amountMode` added;
+  every call site that has a `prepay.*` counterpart now ternaries on
+  `isPrepay = verifyData?.amountMode === 'FULL_PREPAY'` rather than
+  going through a dynamic-key helper, so both branches stay checked
+  against the translation dictionary's own literal-key type. The terms
+  checkbox list resolves through a small `PREPAY_TERM_TRANSLATION_KEYS`
+  partial map (6 keys) layered over the existing 8-key `TERM_TRANSLATION_KEYS`.
+- **`components/payments/DepositGiftCardCard.tsx`**: new optional
+  `isPrepay` prop, swaps the voucher label to `prepay.voucherLabel`;
+  everything else in that card (QR instructions, expiry) doesn't
+  mention "deposit" and stays shared.
+- **`pages/InquiryDetail.tsx`**: new `DepositAmountModePicker` (module-
+  level component, two-button toggle) shown at exactly the two send
+  sites that generate a *fresh* session's form (the top-level "Send
+  Deposit Form"/"Send Another Deposit Form" button and the per-planned-
+  session "Send Deposit Form" mini-form) -- never on either "Resend"
+  site, matching the backend's own "resend preserves mode" rule. Local
+  state is `depositAmountModeOverride: 'DEPOSIT' | 'FULL_PREPAY' | null`
+  (`null` = "use the studio default"), so the picker reflects the
+  studio's configured default the moment it loads without needing an
+  effect to sync it in. `handleSendDepositForm` only includes
+  `amountMode` in the request body for a genuinely new session.
+- **`pages/Settings.tsx`**: `defaultDepositAmountMode` added to
+  `StudioSettingsData`, the Defaults edit form, and its save payload --
+  plus a read-only display row in the Defaults card itself (`Default
+  deposit form amount`), which was missed on the first pass (caught
+  during live verification, see below) and had to be added as a
+  follow-up edit.
+
+## Spanish review doc
+
+`scripts/generate-es-review.ts` only walked `TERMS`/`TERMS_ES` from
+`routes/deposits.ts`, not the new `PREPAY_TERMS`/`PREPAY_TERMS_ES` --
+extended it with a dedicated section (`PREPAY_TERMS` wasn't even
+exported before this; fixed). The frontend `prepay` namespace needed no
+script changes -- the generator already walks `en`/`es` generically by
+namespace. Regenerated `PLATFORM_STRINGS_ES_REVIEW.md`; the diff also
+picked up an unrelated drift (the Flash Gallery section had gone stale
+against a restyle that landed on `main` after this branch's last
+regen) -- expected, not a regression this session introduced.
+
+## Live verification -- and a real environment bug it caught
+
+Verified against this worktree's own dev servers, logged in as
+`owner@dev-studio.test` / the documented dev password, using an
+existing "Referred ClientB" test inquiry (assigned artist, estimate
+accepted via a direct `PATCH /estimates/respond/:token` call to reach
+`DEPOSIT_PENDING` without fighting the pipeline-stage buttons, which
+turned out to be non-interactive status indicators, not click targets).
+
+**First attempt was silently testing the wrong server.** This
+worktree's own `npm run dev` for the API crashed on startup
+(`EADDRINUSE`, port 4000) because a *different* worktree's API process
+(command line confirmed: `...\ink-manager\node_modules\tsx\...`, the
+primary checkout, not this session's) was already bound to port 4000 --
+`apps/web/.env`'s `VITE_API_URL` still pointed there from before this
+session entered its worktree. Every `POST /inquiries/:id/deposit-form`
+call with `amountMode: FULL_PREPAY` returned `201` and looked
+successful, but silently produced a `DEPOSIT`-mode row at the tier
+default ($100) -- the other worktree's checked-out code has no
+`amountMode` support at all, so Express just ignored the unrecognized
+body field. Caught by cross-checking the persisted `depositAmount`
+against the expected price-estimate average instead of trusting the
+`201`. Fixed by starting this worktree's API on the free port 4003
+(matching this session's originally-assigned port from `new-session.ps1`,
+just never actually used until now), pointing `VITE_API_URL` at it, and
+restarting the web dev server. **Lesson for any future worktree
+session sharing this machine: a successful HTTP response is not proof
+you're talking to your own code -- verify the response *data* matches
+what your own worktree's logic should produce, especially right after
+a `npm run dev` port conflict.**
+
+Once pointed at the correct server:
+- **Send (new session, `FULL_PREPAY`)**: `POST /inquiries/:id/deposit-form`
+  with `amountMode: "FULL_PREPAY"` against a $300-$450 estimate ->
+  `depositAmount: 375` (the average, not a tier lookup), `feeAmount: 10`,
+  `totalCharged: 385`. A same-inquiry `DEPOSIT`-mode send (session 3,
+  regression check) -> `depositAmount: 100` (correct tier), confirming
+  the two modes don't cross-contaminate.
+- **Client-facing sign page (English)**: "Prepayment Agreement" heading,
+  "PREPAYMENT $375 / FEE $10 / TOTAL $385" breakdown, all 8 terms
+  showing the 6 prepay-specific overrides with the 2 unmodified ones
+  (late policy, age 18) falling back correctly.
+- **Client-facing sign page (Spanish)**: same page with the client's
+  `preferredLocale` set to `es` (this page deliberately has no `?locale=`
+  query override -- confirmed by reading its own route comment after
+  `?locale=es` had no effect) -- "Acuerdo de Pago por Adelantado", all
+  8 terms in Spanish matching the drafted translations.
+- **Sign + pay**: signed via a synthetic `PointerEvent` sequence on the
+  signature canvas (drag-based tools don't respond to plain `.click()`/
+  scripted mouse coordinates the way this environment's browser
+  automation needs -- pointer events did). Redirected to real Stripe
+  test-mode Checkout: heading "Prepayment", amount "$385.00" -- correct
+  product name and total. No tip-selection UI anywhere on the page,
+  confirming tips really are checkout-only, not a Part 1/2 regression
+  risk to begin with (this page never collected one).
+- **Payment confirmation dead-end, and why**: completing the Stripe
+  test-mode card form (4242..., real submission, disclosed via the
+  "I am an AI agent" checkbox Stripe's own Checkout now surfaces) left
+  the client-facing page polling "Confirming your payment..." forever.
+  Root cause: this worktree's API on port 4003 isn't the endpoint the
+  environment's shared Stripe CLI webhook forwarder is pointed at (that
+  forwarder -- one process, shared across every concurrent worktree
+  session -- forwards to whichever port was configured first), so
+  `checkout.session.completed` never reached this server. Not a code
+  bug; a dev-environment limitation of running multiple worktree API
+  instances against one shared Stripe CLI listener. Worked around via
+  the existing staff-facing `PATCH /deposit-forms/:id/mark-paid` route
+  (real code path, not a shortcut invented for this test) to reach the
+  same downstream state a webhook would have produced.
+- **Gift-card issuance for the full amount**: after marking paid,
+  `depositForm.giftCardId` was set and the resulting `GiftCard.amountCents`
+  was `37500` -- exactly the $375 prepayment, confirming
+  `issueGiftCardForPaidDeposit` (unmodified, generic code) correctly
+  issues off `depositAmount` regardless of which mode produced it.
+- **Post-paid client page**: "Thanks -- your prepayment is paid!",
+  "YOUR PREPAYMENT VOUCHER $375.00" -- `prepay.paidHeading` and the
+  gift-card card's `isPrepay`-aware label both confirmed live.
+- **Checkout-time zero-balance redemption and the checkout tip step
+  itself were not re-driven live** -- `appointments.ts` (session
+  checkout, stackable gift-card redemption, the tip step) has zero
+  `amountMode` references; this feature never touched it. Verified by
+  reading the file instead: gift-card redemption there reads
+  `GiftCard.amountCents` generically (already confirmed correct above),
+  and the tip step is its own route gated on session checkout only, with
+  no dependency on how the card was funded. Treating an unmodified,
+  already-tested code path as a live-verification target for a change
+  that never touches it would have been theater, not verification.
+- **Studio-level default toggle** (`Settings.tsx` Defaults tab): the
+  read-only display row was missing on first pass -- caught here, fixed
+  (see Frontend section above), then re-verified: opened the edit
+  modal, switched the select to "Full prepayment," saved, confirmed the
+  read-only card immediately showed "Full prepayment," then switched it
+  back to "Deposit (tier-based)" to leave the shared dev studio's
+  settings as found.
+
+API suite: 170/170 passing (`npm test`, both before and after the
+Settings.tsx follow-up fix). `tsc -b --noEmit` clean on both apps.
+
+Cleanup: reverted the test client's `preferredLocale` override used for
+the Spanish check; deleted all scratch DB-inspection scripts
+(`scratch-get-token.ts`, `scratch-check-card.ts`, `scratch-set-locale.ts`)
+before committing -- none were ever intended to ship.
+
+Not yet done: Part 3 (On-Hold) and Part 4 (combined final verification,
+screenshots) remain. `apps/web/.env`'s `VITE_API_URL` now correctly
+points at this worktree's own port 4003 going forward.
