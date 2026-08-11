@@ -11,7 +11,8 @@ import { getOrCreateClientConversation } from "../lib/conversations";
 import { sendClientSms } from "../lib/clientSms";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { callerBelongsToStudio, effectiveRoleAt, hasPermissionAt } from "../lib/artistAccess";
-import { resolveRequestLocale, withLocale, persistClientLocale } from "../lib/contentTranslation";
+import { resolveRequestLocale, withLocale } from "../lib/contentTranslation";
+import { parseAcceptLanguage } from "../lib/locale";
 import { shortenUrl } from "../lib/shortLinks";
 import { PUBLIC_APP_URL, API_PUBLIC_URL } from "../lib/publicUrl";
 import { serveDataUrl, serveBlurredRemoteImage } from "./publicAssets";
@@ -146,7 +147,6 @@ publicRouter.get("/verify/:token", async (req, res) => {
                   themePreset: true,
                   referralProgramEnabled: true,
                   embeddedPaymentsEnabled: true,
-                  defaultLocale: true,
                   timezone: true,
                 },
               },
@@ -221,12 +221,14 @@ publicRouter.get("/verify/:token", async (req, res) => {
 
   const { inquiry } = depositForm!;
 
-  // Multi-language public forms: the only studio-authored content on this
-  // page is the service's own depositBreakdownNote -- studio name/logo,
-  // artist name, and the 8 terms are either plain data or platform
-  // strings (see deposit.terms in the frontend's own dictionary for the
-  // terms' own Finding-1 treatment).
-  const locale = resolveRequestLocale(req.query.locale, inquiry.client.preferredLocale, inquiry.studio.settings?.defaultLocale);
+  // Language becomes customer-specific: no picker, no query override --
+  // the client's own stored preferredLocale first, else their browser's
+  // Accept-Language. The only studio-authored content on this page is the
+  // service's own depositBreakdownNote -- studio name/logo, artist name,
+  // and the 8 terms are either plain data or platform strings (see
+  // deposit.terms in the frontend's own dictionary for the terms' own
+  // Finding-1 treatment).
+  const locale = resolveRequestLocale(null, inquiry.client.preferredLocale, parseAcceptLanguage(req.headers["accept-language"]));
   const serviceTranslation = inquiry.service.translations.find((t) => t.locale === locale);
   const localizedService = withLocale(inquiry.service, serviceTranslation, ["depositBreakdownNote"]);
 
@@ -374,25 +376,6 @@ publicRouter.get("/verify/:token", async (req, res) => {
   });
 });
 
-// Multi-language public forms, Part 5: the language picker's own
-// persistence -- fired the moment a client toggles it, so every later
-// link (a future deposit, waiver, estimate...) for this same client
-// defaults to their own choice. Reuses this exact same token-scoped
-// pattern (CLAUDE.md's own "public unauthenticated flows" rule) rather
-// than inventing a new mechanism.
-publicRouter.patch("/:token/locale", async (req, res) => {
-  const token = req.params.token as string;
-  const depositForm = await prisma.depositForm.findUnique({ where: { token }, select: { inquiry: { select: { clientId: true } } } });
-  if (!depositForm) {
-    return res.status(404).json({ error: "This link is invalid." });
-  }
-  const result = await persistClientLocale(depositForm.inquiry.clientId, req.body?.locale);
-  if (!result.ok) {
-    return res.status(400).json({ error: result.error });
-  }
-  res.json({ success: true });
-});
-
 // Confirmation-screen hero avatar, fixed: the publicAssets artist-avatar
 // endpoint (keyed by publicSlug, gated on publishedAt) only ever serves an
 // artist who's opted into the SEPARATE public marketing/booking page --
@@ -457,7 +440,6 @@ publicRouter.patch("/sign/:token", async (req, res) => {
         select: {
           studioId: true,
           client: { select: { preferredLocale: true } },
-          studio: { select: { settings: { select: { defaultLocale: true } } } },
         },
       },
     },
@@ -502,13 +484,14 @@ publicRouter.patch("/sign/:token", async (req, res) => {
     return res.status(400).json({ error: "signatureData is required" });
   }
 
-  // Multi-language public forms, Part 5: captured at the moment of signing,
-  // not re-derived later -- same reasoning as every other signed-document
-  // snapshot in this codebase (see termsForLocale's own comment above).
+  // Captured at the moment of signing, not re-derived later -- same
+  // reasoning as every other signed-document snapshot in this codebase
+  // (see termsForLocale's own comment above). No query override anymore
+  // (no picker): the client's stored preference, else Accept-Language.
   const signedLocale = resolveRequestLocale(
-    req.query.locale,
+    null,
     depositForm!.inquiry.client.preferredLocale,
-    depositForm!.inquiry.studio.settings?.defaultLocale,
+    parseAcceptLanguage(req.headers["accept-language"]),
   );
 
   await prisma.depositForm.update({

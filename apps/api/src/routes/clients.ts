@@ -14,6 +14,7 @@ import { clientMatchesPhoneOrEmail, findStudioClientsForMatching } from "../lib/
 import { performMerge, validateMergePair } from "../lib/clientMerge";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { callerBelongsToStudio, activeStudioIdsForCaller, hasPermissionAt } from "../lib/artistAccess";
+import { isSupportedLocale } from "../lib/locale";
 
 const router = Router();
 
@@ -793,6 +794,11 @@ const EDITABLE_CLIENT_FIELDS = [
   "facebookProfileUrl",
   "otherContact",
   "address",
+  // Language becomes customer-specific: the staff escape hatch for a
+  // client's stored preference (Client.preferredLocale) -- front desk can
+  // fix a wrong/unset value when a client mentions it, matrix-gated by
+  // the same clients.edit permission as every other field here.
+  "preferredLocale",
 ] as const;
 
 router.patch("/:id", async (req, res) => {
@@ -828,6 +834,11 @@ router.patch("/:id", async (req, res) => {
         return res.status(400).json({ error: "phone must be a string or null" });
       }
       data.phone = typeof body.phone === "string" && body.phone.trim() ? normalizePhone(body.phone) : null;
+    } else if (field === "preferredLocale") {
+      if (body.preferredLocale !== null && !isSupportedLocale(body.preferredLocale)) {
+        return res.status(400).json({ error: "preferredLocale must be one of the supported locales, or null" });
+      }
+      data.preferredLocale = body.preferredLocale;
     } else {
       if (body[field] !== null && typeof body[field] !== "string") {
         return res.status(400).json({ error: `${field} must be a string or null` });
@@ -844,7 +855,10 @@ router.patch("/:id", async (req, res) => {
   });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    // Artist studio scoping: the client's OWN studio, never the caller's
+    // (possibly stale/guest-mismatched) home studioId -- see CLAUDE.md's
+    // standing rule on this exact class of bug.
+    studioId: client.studioId,
     actorUserId: req.user!.userId,
     entityType: "Client",
     entityId: id,
@@ -852,7 +866,7 @@ router.patch("/:id", async (req, res) => {
     changes: diffObjects(client, data, EDITABLE_CLIENT_FIELDS as unknown as (keyof typeof client)[]),
   });
 
-  emitInvalidation({ type: "client.updated", studioId: req.user!.studioId, clientId: id });
+  emitInvalidation({ type: "client.updated", studioId: client.studioId, clientId: id });
 
   res.json(updated);
 });

@@ -126,6 +126,12 @@ interface Client {
   facebookProfileUrl: string | null
   otherContact: string | null
   address: string | null
+  // Language becomes customer-specific: the single source of truth for
+  // which language this client's own public pages/documents render in
+  // (Client.preferredLocale). null = no preference set yet -- falls back
+  // to Accept-Language detection. Editable here as the staff escape
+  // hatch for front desk to correct a wrong/unset value.
+  preferredLocale: string | null
   mergedIntoId: string | null
   mergedInto: { id: string; firstName: string; lastName: string } | null
   referralCode: string
@@ -283,6 +289,9 @@ const EMPTY_EDIT_FORM = {
   facebookProfileUrl: '',
   otherContact: '',
   address: '',
+  // '' means no preference set (null) -- distinct from 'en', a genuine
+  // explicit choice.
+  preferredLocale: '' as '' | 'en' | 'es',
 }
 
 const EMPTY_GIFT_CARD_FORM = { amountDollars: '', expiresAt: '' }
@@ -721,6 +730,7 @@ export default function ClientDetail() {
       facebookProfileUrl: client.facebookProfileUrl ?? '',
       otherContact: client.otherContact ?? '',
       address: client.address ?? '',
+      preferredLocale: client.preferredLocale === 'es' ? 'es' : client.preferredLocale === 'en' ? 'en' : '',
     })
     setEditError(null)
     setEditing(true)
@@ -750,6 +760,7 @@ export default function ClientDetail() {
           facebookProfileUrl: editForm.facebookProfileUrl.trim() || null,
           otherContact: editForm.otherContact.trim() || null,
           address: editForm.address.trim() || null,
+          preferredLocale: editForm.preferredLocale || null,
         }),
       })
 
@@ -1296,6 +1307,22 @@ export default function ClientDetail() {
                           placeholder="Freeform -- street, city, state, zip"
                           className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                         />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-fg-secondary">Language</label>
+                        <select
+                          value={editForm.preferredLocale}
+                          onChange={(e) => setEditForm({ ...editForm, preferredLocale: e.target.value as typeof editForm.preferredLocale })}
+                          className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                        >
+                          <option value="">No preference set (auto-detected)</option>
+                          <option value="en">English</option>
+                          <option value="es">Spanish</option>
+                        </select>
+                        <p className="mt-1 text-xs text-fg-muted">
+                          Which language this client's public pages/documents render in. Fix this if a client mentions
+                          they got the wrong language.
+                        </p>
                       </div>
                     </div>
 

@@ -5,8 +5,7 @@ import { apiFetch, ApiError } from '../lib/api'
 import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import PublicPageFooter from '../components/PublicPageFooter'
 import { formatPriceEstimate } from '../lib/format'
-import { LocaleProvider, useLocale, useTranslations, persistPickerLocale } from '../i18n'
-import LanguagePicker from '../i18n/LanguagePicker'
+import { LocaleProvider, useLocale, useTranslations } from '../i18n'
 import { crossfadeVariants, uiSpringTransition } from '../lib/motion'
 
 type PageState = 'loading' | 'invalid' | 'ready' | 'success'
@@ -170,10 +169,6 @@ function EstimateRevisionResponseContent() {
   return (
     <div className="login-shell flex min-h-screen items-center justify-center px-4 py-10 text-fg">
       <div className="login-panel-surface w-full max-w-lg px-4 py-8 sm:p-8">
-        <div className="mb-4 flex justify-end">
-          <LanguagePicker onChange={(next) => token && persistPickerLocale(`/estimates/revision/${token}/locale`, next)} />
-        </div>
-
         <AnimatePresence mode="wait">
           {state === 'loading' && (
             <motion.p key="loading" variants={crossfadeVariants} initial="initial" animate="animate" exit="exit" transition={uiSpringTransition} className="text-center text-sm text-fg-secondary">

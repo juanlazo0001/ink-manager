@@ -164,7 +164,7 @@ test("GET /studio-settings/public?locale=es: a field's own IntakeFormFieldTransl
   assert.equal(bodyEn.intakeFormFields[0]?.label, "Favorite color?");
 });
 
-test("GET /deposits/verify/:token?locale=es applies the service's ServiceTranslation to depositBreakdownNote", async () => {
+test("GET /deposits/verify/:token applies the service's ServiceTranslation to depositBreakdownNote, resolved via Accept-Language then stored client preference", async () => {
   const studio = await prisma.studio.create({ data: { name: `Studio ${suffix}-4`, slug: `studio-${suffix}-4` } });
   studioIds.push(studio.id);
   await prisma.studioSettings.create({ data: { studioId: studio.id } });
@@ -226,7 +226,10 @@ test("GET /deposits/verify/:token?locale=es applies the service's ServiceTransla
   });
   depositFormIds.push(depositForm.id);
 
-  const resEs = await fetch(`${baseUrl}/deposits/verify/dep-${suffix}?locale=es`);
+  // Language becomes customer-specific: no picker, no query override on
+  // this route anymore -- Accept-Language is the only way to force a
+  // locale absent a stored client preference.
+  const resEs = await fetch(`${baseUrl}/deposits/verify/dep-${suffix}`, { headers: { "Accept-Language": "es-MX" } });
   const bodyEs = (await resEs.json()) as { depositBreakdownNote: string; resolvedLocale: string };
   assert.equal(bodyEs.resolvedLocale, "es");
   assert.equal(bodyEs.depositBreakdownNote, "$50 de depósito + $10 de cargo");
@@ -235,78 +238,18 @@ test("GET /deposits/verify/:token?locale=es applies the service's ServiceTransla
   const bodyEn = (await resEn.json()) as { depositBreakdownNote: string };
   assert.equal(bodyEn.depositBreakdownNote, "$50 deposit + $10 fee");
 
-  // Multi-language public forms, Part 5: the language picker's own
-  // persistence -- PATCH .../locale writes Client.preferredLocale, so a
-  // LATER verify call with no explicit ?locale= at all still resolves to
-  // the client's own stored choice.
-  const patchRes = await fetch(`${baseUrl}/deposits/dep-${suffix}/locale`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ locale: "es" }),
-  });
-  assert.equal(patchRes.status, 200);
+  // Client.preferredLocale (set directly here -- there's no picker/PATCH
+  // endpoint anymore, only intake/flash-request submission and the staff
+  // escape hatch write this field) wins over Accept-Language once set.
+  await prisma.client.update({ where: { id: client.id }, data: { preferredLocale: "es" } });
 
-  const updatedClient = await prisma.client.findUnique({ where: { id: client.id } });
-  assert.equal(updatedClient?.preferredLocale, "es");
-
-  const resNoParam = await fetch(`${baseUrl}/deposits/verify/dep-${suffix}`);
-  const bodyNoParam = (await resNoParam.json()) as { resolvedLocale: string; depositBreakdownNote: string };
-  assert.equal(bodyNoParam.resolvedLocale, "es");
-  assert.equal(bodyNoParam.depositBreakdownNote, "$50 de depósito + $10 de cargo");
+  const resStoredPref = await fetch(`${baseUrl}/deposits/verify/dep-${suffix}`, { headers: { "Accept-Language": "en-US" } });
+  const bodyStoredPref = (await resStoredPref.json()) as { resolvedLocale: string; depositBreakdownNote: string };
+  assert.equal(bodyStoredPref.resolvedLocale, "es");
+  assert.equal(bodyStoredPref.depositBreakdownNote, "$50 de depósito + $10 de cargo");
 });
 
-test("PATCH /deposits/:token/locale rejects an unsupported locale", async () => {
-  const studio = await prisma.studio.create({ data: { name: `Studio ${suffix}-6`, slug: `studio-${suffix}-6` } });
-  studioIds.push(studio.id);
-  const client = await prisma.client.create({
-    data: { studioId: studio.id, firstName: "A", lastName: "B", referralCode: `REF6${suffix}` },
-  });
-  clientIds.push(client.id);
-  const intakeForm = await prisma.intakeForm.create({
-    data: { studioId: studio.id, name: "Default", slug: "default", isDefault: true },
-  });
-  intakeFormIds.push(intakeForm.id);
-  const service = await prisma.service.create({
-    data: { studioId: studio.id, name: "Tattoo", slug: "tattoo", pricingModel: "RANGE", depositModel: "TIER_BASED", intakeFormId: intakeForm.id },
-  });
-  serviceIds.push(service.id);
-  const inquiry = await prisma.inquiry.create({
-    data: {
-      studioId: studio.id,
-      clientId: client.id,
-      serviceId: service.id,
-      channel: "EMAIL",
-      description: "test",
-      colorOrBlackGrey: "Color",
-      placement: "Arm",
-      estimatedSize: "Small",
-      hasBeenTattooedBefore: false,
-      referenceImages: [],
-      placementImages: [],
-    },
-  });
-  inquiryIds.push(inquiry.id);
-  const depositForm = await prisma.depositForm.create({
-    data: {
-      inquiryId: inquiry.id,
-      token: `dep6-${suffix}`,
-      tokenExpiresAt: new Date(Date.now() + 86400000),
-      depositAmount: 50,
-      feeAmount: 10,
-      totalCharged: 60,
-    },
-  });
-  depositFormIds.push(depositForm.id);
-
-  const res = await fetch(`${baseUrl}/deposits/dep6-${suffix}/locale`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ locale: "fr" }),
-  });
-  assert.equal(res.status, 400);
-});
-
-test("GET /flash-pieces/public?locale=es applies FlashPieceTranslation to title/description", async () => {
+test("GET /flash-pieces/public applies FlashPieceTranslation to title/description, resolved from Accept-Language (anonymous, detect-only)", async () => {
   const studio = await prisma.studio.create({ data: { name: `Studio ${suffix}-5`, slug: `studio-${suffix}-5` } });
   studioIds.push(studio.id);
 
@@ -333,10 +276,20 @@ test("GET /flash-pieces/public?locale=es applies FlashPieceTranslation to title/
     data: { flashPieceId: piece.id, studioId: studio.id, locale: "es", title: "Rosa", description: "Una rosa roja" },
   });
 
-  const res = await fetch(`${baseUrl}/flash-pieces/public?studioSlug=${studio.slug}&artistId=${artist.id}&locale=es`);
+  const res = await fetch(`${baseUrl}/flash-pieces/public?studioSlug=${studio.slug}&artistId=${artist.id}`, {
+    headers: { "Accept-Language": "es-CA,es;q=0.9,en;q=0.8" },
+  });
   const body = (await res.json()) as { pieces: { title: string; description: string }[] };
   assert.equal(body.pieces[0]?.title, "Rosa");
   assert.equal(body.pieces[0]?.description, "Una rosa roja");
+
+  // Detect-only, no override: a Spanish query param is deliberately
+  // ignored on this fully-anonymous browse page now (no picker, no
+  // persistence) -- only the request's own Accept-Language header drives
+  // resolution.
+  const resIgnoredParam = await fetch(`${baseUrl}/flash-pieces/public?studioSlug=${studio.slug}&artistId=${artist.id}&locale=es`);
+  const bodyIgnoredParam = (await resIgnoredParam.json()) as { pieces: { title: string; description: string }[] };
+  assert.equal(bodyIgnoredParam.pieces[0]?.title, "Rose");
 });
 
 // Multi-language public forms, Part 5: signed-document locale capture.
@@ -344,7 +297,7 @@ test("GET /flash-pieces/public?locale=es applies FlashPieceTranslation to title/
 // records signedLocale/termsSnapshot at the moment of signing, not just
 // that the read side (tested above) can resolve a locale.
 
-test("PATCH /deposits/sign/:token?locale=es writes signedLocale and a Spanish termsSnapshot", async () => {
+test("PATCH /deposits/sign/:token (Accept-Language: es) writes signedLocale and a Spanish termsSnapshot", async () => {
   const studio = await prisma.studio.create({ data: { name: `Studio ${suffix}-7`, slug: `studio-${suffix}-7` } });
   studioIds.push(studio.id);
   await prisma.studioSettings.create({ data: { studioId: studio.id } });
@@ -393,9 +346,9 @@ test("PATCH /deposits/sign/:token?locale=es writes signedLocale and a Spanish te
   });
   depositFormIds.push(depositForm.id);
 
-  const res = await fetch(`${baseUrl}/deposits/sign/dep7-${suffix}?locale=es`, {
+  const res = await fetch(`${baseUrl}/deposits/sign/dep7-${suffix}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "Accept-Language": "es" },
     body: JSON.stringify({
       agreedNonRefundable: true,
       agreedLatePolicy: true,
@@ -421,7 +374,7 @@ test("PATCH /deposits/sign/:token?locale=es writes signedLocale and a Spanish te
   assert.equal(snapshot.length, 8);
 });
 
-test("PATCH /waivers/sign/:token?locale=es writes signedLocale (the frozen English snapshot fields stay untouched)", async () => {
+test("PATCH /waivers/sign/:token (Accept-Language: es) writes signedLocale (the frozen English snapshot fields stay untouched)", async () => {
   const studio = await prisma.studio.create({ data: { name: `Studio ${suffix}-8`, slug: `studio-${suffix}-8` } });
   studioIds.push(studio.id);
   await prisma.studioSettings.create({ data: { studioId: studio.id } });
@@ -491,9 +444,9 @@ test("PATCH /waivers/sign/:token?locale=es writes signedLocale (the frozen Engli
   });
   waiverIds.push(waiver.id);
 
-  const res = await fetch(`${baseUrl}/waivers/sign/wai8-${suffix}?locale=es`, {
+  const res = await fetch(`${baseUrl}/waivers/sign/wai8-${suffix}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "Accept-Language": "es" },
     body: JSON.stringify({
       legalName: "Jane Doe",
       dateOfBirth: "1990-01-01",
@@ -512,7 +465,7 @@ test("PATCH /waivers/sign/:token?locale=es writes signedLocale (the frozen Engli
   assert.equal(updated?.signedLocale, "es");
 });
 
-test("PATCH /estimates/respond/:token?locale=es writes Inquiry.signedLocale", async () => {
+test("PATCH /estimates/respond/:token (Accept-Language: es) writes Inquiry.signedLocale", async () => {
   const studio = await prisma.studio.create({ data: { name: `Studio ${suffix}-9`, slug: `studio-${suffix}-9` } });
   studioIds.push(studio.id);
   await prisma.studioSettings.create({ data: { studioId: studio.id } });
@@ -551,9 +504,9 @@ test("PATCH /estimates/respond/:token?locale=es writes Inquiry.signedLocale", as
   });
   inquiryIds.push(inquiry.id);
 
-  const res = await fetch(`${baseUrl}/estimates/respond/est9-${suffix}?locale=es`, {
+  const res = await fetch(`${baseUrl}/estimates/respond/est9-${suffix}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "Accept-Language": "es" },
     body: JSON.stringify({ decision: "DECLINE" }),
   });
   assert.equal(res.status, 200);

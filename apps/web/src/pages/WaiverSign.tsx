@@ -8,8 +8,7 @@ import PhoneInput from '../components/PhoneInput'
 import { applyThemePreset } from '../lib/themePresets'
 import PublicPageFooter from '../components/PublicPageFooter'
 import SignaturePadField, { type SignaturePadHandle } from '../components/SignaturePadField'
-import { LocaleProvider, useLocale, useTranslations, persistPickerLocale } from '../i18n'
-import LanguagePicker from '../i18n/LanguagePicker'
+import { LocaleProvider, useLocale, useTranslations } from '../i18n'
 
 const INPUT_CLASS =
   'mt-1 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
@@ -87,39 +86,16 @@ function WaiverSignContent() {
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
-  // Fix pass: the FIRST fetch must NOT send ?locale= at all -- an explicit
-  // query param always wins in resolveRequestLocale's own precedence, so
-  // echoing this component's still-default 'en' state back at the server
-  // as if it were a real choice defeated the whole "resolve from
-  // Client.preferredLocale" mechanism on every fresh link, permanently.
-  // Only a genuine later change (this same effect firing again because
-  // the picker's onChange updated `locale`) sends it explicitly.
-  //
-  // A plain ref flipped synchronously at the top of the effect isn't
-  // enough of a guard by itself: React 18 StrictMode's dev-only
-  // mount -> cleanup -> remount dance re-invokes this effect a SECOND
-  // time in the very same synchronous tick, before the first
-  // invocation's fetch has had any chance to resolve. Flipping the ref
-  // there just means the second invocation reads it as already-false and
-  // sends a stray explicit ?locale=en (the still-default state) that
-  // then races the correct no-param fetch for whichever renders last --
-  // reproduced live, the explicit one occasionally wins and the waiver
-  // opens in English despite a Spanish-preferring client. Gating on a
-  // ref that's only set INSIDE the fetch's own .then() sidesteps that:
-  // both synchronous StrictMode invocations see it as unset (nothing has
-  // resolved yet either way) and both send the safe no-param request;
-  // only a genuine LATER change (the picker's onChange, well after that
-  // promise settled) sees it set and sends the real explicit locale.
-  const hasLoadedRef = useRef(false)
+  // Language becomes customer-specific: no picker on this page anymore --
+  // resolvedLocale comes purely from the server (client's own stored
+  // preference, else Accept-Language), synced once on load.
   useEffect(() => {
     if (!token) return
     let ignore = false
 
-    const url = hasLoadedRef.current ? `/waivers/verify/${token}?locale=${locale}` : `/waivers/verify/${token}`
-    apiFetch<VerifyResponse>(url)
+    apiFetch<VerifyResponse>(`/waivers/verify/${token}`)
       .then((result) => {
         if (ignore) return
-        hasLoadedRef.current = true
         setData(result)
         applyThemePreset(result.themePreset)
         setState('ready')
@@ -135,7 +111,7 @@ function WaiverSignContent() {
       ignore = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, locale])
+  }, [token])
 
   async function handleIdImageChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -252,10 +228,6 @@ function WaiverSignContent() {
   return (
     <div className="min-h-screen bg-bg px-4 py-8 text-fg">
       <div className="mx-auto w-full max-w-lg">
-        <div className="mb-4 flex justify-end">
-          <LanguagePicker onChange={(next) => token && persistPickerLocale(`/waivers/${token}/locale`, next)} />
-        </div>
-
         {state === 'loading' && <p className="text-center text-sm text-fg-secondary">{t('common.loading')}</p>}
 
         {state === 'invalid' && (

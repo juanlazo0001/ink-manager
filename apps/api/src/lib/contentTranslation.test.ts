@@ -1,37 +1,7 @@
 import "dotenv/config";
-import { test, after } from "node:test";
+import { test } from "node:test";
 import assert from "node:assert/strict";
-import { prisma } from "./prisma";
-import { resolveRequestLocale, withLocale, resolveSystemFieldLabel, persistClientLocale } from "./contentTranslation";
-
-const suffix = `pcl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-const studioIds: string[] = [];
-const clientIds: string[] = [];
-
-after(async () => {
-  await prisma.client.deleteMany({ where: { id: { in: clientIds } } });
-  await prisma.studio.deleteMany({ where: { id: { in: studioIds } } });
-});
-
-test("persistClientLocale rejects an unsupported locale without touching the DB", async () => {
-  const result = await persistClientLocale("nonexistent-client-id", "fr");
-  assert.equal(result.ok, false);
-});
-
-test("persistClientLocale writes Client.preferredLocale for a real client", async () => {
-  const studio = await prisma.studio.create({ data: { name: `Studio ${suffix}`, slug: `studio-${suffix}` } });
-  studioIds.push(studio.id);
-  const client = await prisma.client.create({
-    data: { studioId: studio.id, firstName: "Jane", lastName: "Doe", referralCode: `REF${suffix}` },
-  });
-  clientIds.push(client.id);
-
-  const result = await persistClientLocale(client.id, "es");
-  assert.equal(result.ok, true);
-
-  const updated = await prisma.client.findUnique({ where: { id: client.id } });
-  assert.equal(updated?.preferredLocale, "es");
-});
+import { resolveRequestLocale, withLocale, resolveSystemFieldLabel } from "./contentTranslation";
 
 test("resolveRequestLocale prefers an explicit query param over everything else", () => {
   assert.equal(resolveRequestLocale("es", "en", "en"), "es");
@@ -42,7 +12,7 @@ test("resolveRequestLocale falls back to the client's own preferredLocale when n
   assert.equal(resolveRequestLocale(null, "es", "en"), "es");
 });
 
-test("resolveRequestLocale falls back to the studio's defaultLocale when neither query nor client preference exists", () => {
+test("resolveRequestLocale falls back to the caller-supplied fallback (Accept-Language-derived) when neither query nor client preference exists", () => {
   assert.equal(resolveRequestLocale(undefined, null, "es"), "es");
 });
 

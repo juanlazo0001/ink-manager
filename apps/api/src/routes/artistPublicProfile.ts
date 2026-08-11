@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { ResidencyStatus } from "../../generated/prisma/enums";
-import { resolveRequestLocale } from "../lib/contentTranslation";
+import { parseAcceptLanguage } from "../lib/locale";
 import { API_PUBLIC_URL } from "../lib/publicUrl";
 
 // 6a Epic Part 4: genuinely public, unauthenticated -- artists.ts's own
@@ -73,7 +73,7 @@ router.get("/public/:publicSlug", async (req, res) => {
 
   const homeStudioRow = await prisma.studio.findUnique({
     where: { id: artist.user.studioId },
-    select: { id: true, name: true, slug: true, settings: { select: { defaultLocale: true } } },
+    select: { id: true, name: true, slug: true },
   });
   // Should be unreachable (publish requires a real home studio to exist),
   // but never assume -- a studio-deletion edge case shouldn't crash this
@@ -82,11 +82,11 @@ router.get("/public/:publicSlug", async (req, res) => {
     return res.status(404).json({ error: "This artist page isn't available." });
   }
 
-  // Multi-language public forms (retrofit -- this page predated that epic
-  // and was out of scope then): no Client/studio-content concept here, so
-  // resolution is just explicit ?locale= over the home studio's own
-  // defaultLocale, same two-tier precedence intake's pre-client state uses.
-  const locale = resolveRequestLocale(req.query.locale, null, homeStudioRow.settings?.defaultLocale);
+  // Language becomes customer-specific: this page is a fully anonymous
+  // flow (no Client, no token, no picker) -- render language is
+  // DETECT-ONLY from the visitor's own Accept-Language header on every
+  // load. No stored state, no query-param override.
+  const locale = parseAcceptLanguage(req.headers["accept-language"]);
 
   const homeStudio = await studioSummary(homeStudioRow.id, homeStudioRow.name, homeStudioRow.slug);
 

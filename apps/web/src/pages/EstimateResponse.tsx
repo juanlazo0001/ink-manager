@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { apiFetch, ApiError } from '../lib/api'
@@ -6,8 +6,7 @@ import { sanitizeHtml } from '../lib/sanitizeHtml'
 import { formatPriceEstimate } from '../lib/format'
 import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import PublicPageFooter from '../components/PublicPageFooter'
-import { LocaleProvider, useLocale, useTranslations, persistPickerLocale } from '../i18n'
-import LanguagePicker from '../i18n/LanguagePicker'
+import { LocaleProvider, useLocale, useTranslations } from '../i18n'
 import { crossfadeVariants, uiSpringTransition } from '../lib/motion'
 
 const INPUT_CLASS =
@@ -136,14 +135,9 @@ function EstimateResponseContent() {
 
     let ignore = false
 
-    // Fix pass: the FIRST fetch must NOT send ?locale= explicitly -- an
-    // explicit query param always wins in resolveRequestLocale's own
-    // precedence, so echoing this component's still-default 'en' state
-    // back at the server as if it were a real choice defeated the whole
-    // "resolve from Client.preferredLocale" mechanism on every fresh
-    // link, permanently. A later picker toggle re-fetches explicitly via
-    // the separate effect below (needed so estimateTermsSnapshot's own
-    // seed-equality resolution re-runs in the new language too).
+    // Language becomes customer-specific: no picker on this page anymore
+    // -- resolvedLocale comes purely from the server (client's own
+    // stored preference, else Accept-Language), synced once on load.
     apiFetch<VerifyResponse | AlreadyRespondedResponse | AlreadyBookedResponse>(`/estimates/verify/${token}`)
       .then((data) => {
         if (ignore) return
@@ -180,31 +174,6 @@ function EstimateResponseContent() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, navigate])
-
-  // Re-fetch with the new locale explicitly whenever the client toggles
-  // the picker, so estimateTermsSnapshot's own seed-equality resolution
-  // (server-side) re-runs in the new language too -- platform strings
-  // already re-render instantly from LocaleContext alone; this covers
-  // the one piece of this page only useTranslations() can't reach.
-  // Skipped on the very first render (that fetch already happened,
-  // deliberately without an explicit locale, above).
-  const isFirstLocaleRender = useRef(true)
-  useEffect(() => {
-    if (isFirstLocaleRender.current) {
-      isFirstLocaleRender.current = false
-      return
-    }
-    if (!token || state !== 'ready') return
-    apiFetch<VerifyResponse | AlreadyRespondedResponse | AlreadyBookedResponse>(`/estimates/verify/${token}?locale=${locale}`)
-      .then((data) => {
-        if ('alreadyResponded' in data || 'alreadyBooked' in data) return
-        setVerifyData(data)
-      })
-      .catch(() => {
-        /* Best-effort re-translation only -- the page already has usable data from the first load. */
-      })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locale])
 
   async function respond(decision: Decision) {
     if (!token) return
@@ -253,10 +222,6 @@ function EstimateResponseContent() {
   return (
     <div className="login-shell flex min-h-screen items-center justify-center px-4 py-10 text-fg">
       <div className="login-panel-surface w-full max-w-lg px-4 py-8 sm:p-8">
-        <div className="mb-4 flex justify-end">
-          <LanguagePicker onChange={(next) => token && persistPickerLocale(`/estimates/${token}/locale`, next)} />
-        </div>
-
         <AnimatePresence mode="wait">
           {state === 'loading' && (
             <motion.p key="loading" variants={crossfadeVariants} initial="initial" animate="animate" exit="exit" transition={uiSpringTransition} className="text-center text-sm text-fg-secondary">

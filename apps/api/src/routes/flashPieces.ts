@@ -10,8 +10,8 @@ import { syncPrimaryEmail, syncPrimaryPhone } from "../lib/clientContacts";
 import { generateUniqueReferralCode } from "../lib/referrals";
 import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 import { studioHasActiveMembership, activeStudioIdsForCaller, effectiveRoleAt, hasProfileDelegationAt } from "../lib/artistAccess";
-import { resolveRequestLocale, withLocale } from "../lib/contentTranslation";
-import { isSupportedLocale } from "../lib/locale";
+import { withLocale } from "../lib/contentTranslation";
+import { isSupportedLocale, parseAcceptLanguage } from "../lib/locale";
 
 const router = Router();
 
@@ -81,7 +81,7 @@ router.get("/public", async (req, res) => {
 
   const studio = await prisma.studio.findUnique({
     where: { slug: studioSlug },
-    include: { settings: { select: { themePreset: true, defaultLocale: true } } },
+    include: { settings: { select: { themePreset: true } } },
   });
   if (!studio) {
     return res.status(404).json({ error: "Studio not found" });
@@ -96,11 +96,10 @@ router.get("/public", async (req, res) => {
     return res.status(404).json({ error: "Artist not found" });
   }
 
-  // Multi-language public forms: no Client record exists yet on this
-  // purely-anonymous browse page (before any contact-lookup step) --
-  // resolution here can only ever use ?locale= or the studio's own
-  // defaultLocale, never a stored client preference.
-  const locale = resolveRequestLocale(req.query.locale, null, studio.settings?.defaultLocale);
+  // Language becomes customer-specific: this is the purely-anonymous
+  // browse page (before any contact-lookup step) -- DETECT-ONLY from
+  // Accept-Language, no query override, no Client, no persistence.
+  const locale = parseAcceptLanguage(req.headers["accept-language"]);
 
   const pieces = await prisma.flashPiece.findMany({
     where: { studioId: studio.id, artistId, status: FlashPieceStatus.AVAILABLE },

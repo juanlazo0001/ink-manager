@@ -8,8 +8,7 @@ import PublicPageFooter from '../components/PublicPageFooter'
 import SignaturePadField, { type SignaturePadHandle } from '../components/SignaturePadField'
 import PaymentFlowStages from '../components/payments/PaymentFlowStages'
 import PaymentConfirmationStage from '../components/payments/PaymentConfirmationStage'
-import { LocaleProvider, useLocale, useTranslations, persistPickerLocale } from '../i18n'
-import LanguagePicker from '../i18n/LanguagePicker'
+import { LocaleProvider, useLocale, useTranslations } from '../i18n'
 import DepositAppointmentCard from '../components/payments/DepositAppointmentCard'
 import DepositGiftCardCard from '../components/payments/DepositGiftCardCard'
 
@@ -179,34 +178,20 @@ function DepositResponseContent() {
 
   const signaturePadRef = useRef<SignaturePadHandle | null>(null)
 
-  // Set only INSIDE the fetch's own .then() below -- see the picker
-  // effect's comment for why a plain "is this the first render" ref
-  // isn't a safe enough guard on its own under React 18 StrictMode.
-  const hasLoadedRef = useRef(false)
-
+  // Language becomes customer-specific: no picker on this page anymore --
+  // resolvedLocale comes purely from the server (client's own stored
+  // preference, else Accept-Language), synced once on load. No re-fetch
+  // mechanism needed since there's no toggle to react to.
   const loadVerify = useCallback(
-    (opts?: { poll?: boolean; explicitLocale?: boolean }) => {
+    (opts?: { poll?: boolean }) => {
       if (!token) return
       let pollAttempts = 0
 
       function load() {
-        // Fix pass: the FIRST fetch must NOT send ?locale= at all -- an
-        // explicit query param always wins in resolveRequestLocale's own
-        // precedence, so echoing this component's still-default 'en'
-        // state back at the server as if it were a real choice defeated
-        // the whole "resolve from Client.preferredLocale" mechanism on
-        // every fresh link, permanently. Only a genuine later change
-        // (the picker effect below, explicitLocale: true) sends it.
-        const url = opts?.explicitLocale ? `/deposits/verify/${token}?locale=${locale}` : `/deposits/verify/${token}`
-        apiFetch<VerifyResponse>(url)
+        apiFetch<VerifyResponse>(`/deposits/verify/${token}`)
           .then((data) => {
-            hasLoadedRef.current = true
             setVerifyData(data)
             setState('ready')
-            // Server-resolved locale (client's own stored preference or
-            // the studio's default) wins on first load -- a no-op once
-            // this client has already picked one explicitly, since a
-            // later load's own ?locale= param would just echo it back.
             if (data.resolvedLocale && data.resolvedLocale !== locale) setLocale(data.resolvedLocale as typeof locale)
 
             if (opts?.poll && !data.paidVia && pollAttempts < 5) {
@@ -233,30 +218,6 @@ function DepositResponseContent() {
     loadVerify({ poll: justReturnedFromStripe })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
-
-  // Re-fetch with the new locale whenever the client toggles the picker,
-  // so studio-authored content (depositBreakdownNote) re-resolves too --
-  // platform strings already re-render instantly from LocaleContext
-  // alone, this covers the half of the page that only useTranslations()
-  // can't reach.
-  //
-  // Gated on hasLoadedRef (set inside loadVerify's own .then() above),
-  // not a plain "have I run before" ref: React 18 StrictMode's dev-only
-  // mount -> cleanup -> remount dance re-invokes this effect a second
-  // time in the same synchronous tick, before the mount effect's fetch
-  // has had any chance to resolve. A ref flipped synchronously at the
-  // top of this effect would already read false-turned-true by that
-  // second invocation and fire a stray `loadVerify({ explicitLocale:
-  // true })` with `locale` still at its default 'en' -- that request
-  // then races the correct one for whichever renders last (reproduced
-  // live on WaiverSign.tsx's identical pattern). hasLoadedRef only
-  // flips once the real fetch actually completes, well after
-  // StrictMode's synchronous double-invoke window has passed.
-  useEffect(() => {
-    if (!hasLoadedRef.current) return
-    loadVerify({ explicitLocale: true })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locale])
 
   const allAgreed = verifyData ? verifyData.terms.every((term) => agreed[term.key]) : false
 
@@ -381,10 +342,6 @@ function DepositResponseContent() {
     // app-bg-wash deliberately are (see that pair's own comment).
     <div className="login-shell flex min-h-screen items-center justify-center px-4 py-10 text-fg">
       <div className="login-panel-surface w-full max-w-lg px-4 py-8 sm:p-8">
-        <div className="mb-4 flex justify-end">
-          <LanguagePicker onChange={(next) => token && persistPickerLocale(`/deposits/${token}/locale`, next)} />
-        </div>
-
         {state === 'loading' && <p className="text-center text-sm text-fg-secondary">{t('common.loading')}</p>}
 
         {state === 'invalid' && (

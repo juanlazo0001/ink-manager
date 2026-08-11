@@ -5,7 +5,6 @@ import { apiFetch } from '../lib/api'
 import { buildMapsUrl } from '../lib/maps'
 import { dateLocale } from '../i18n/locales'
 import { LocaleProvider, useLocale, useTranslations } from '../i18n'
-import LanguagePicker from '../i18n/LanguagePicker'
 import { FacebookIcon, InstagramIcon, MapPinIcon } from '../components/icons'
 
 // Artist public page v2 -- full rebuild against Juan's authoritative HTML
@@ -173,10 +172,6 @@ function ArtistPublicPageContent() {
         <section className="artist-hero-shell">
           <div className="artist-ambient artist-ambient--one" aria-hidden="true" />
           <div className="artist-ambient artist-ambient--two" aria-hidden="true" />
-
-          <div className="mb-4 flex justify-end sm:absolute sm:right-0 sm:top-0 sm:mb-0">
-            <LanguagePicker />
-          </div>
 
           <div className="artist-hero-copy">
             <div className="artist-eyebrow">

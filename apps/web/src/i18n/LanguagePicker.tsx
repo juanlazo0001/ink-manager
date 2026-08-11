@@ -1,14 +1,17 @@
 import { useLocale } from './LocaleContext';
 import { SUPPORTED_LOCALES, LOCALE_LABELS } from './locales';
 
-// Mounted in the header area of each of the six public flow pages,
-// consistently placed near the studio name/logo each page already
-// renders (per the Part 1 proposal's own placement decision). Compact
-// on purpose -- a toggle, not a settings panel. Persistence (writing
-// the choice onto Client.preferredLocale) is a separate concern wired
-// in by each page's own onChange handler, not this component -- this
-// is presentation only, so it stays reusable across pages with very
-// different persistence endpoints.
+// Language becomes customer-specific: this is now the ONLY place a
+// client explicitly states a language preference (every other public
+// page resolves purely from Client.preferredLocale/Accept-Language,
+// no picker at all). Mounted on IntakeForm.tsx (page chrome, always
+// present) and FlashPublicGallery.tsx (only once a visitor opens a
+// specific piece's request form -- not during anonymous gallery
+// browsing). Compact on purpose -- a toggle, not a settings panel.
+// Persistence happens at submission (there's no Client to attach a
+// preference to until the request/inquiry creates one), wired in by
+// each page's own submit body, not this component -- this stays
+// presentation only.
 export default function LanguagePicker({
   onChange,
   className = '',

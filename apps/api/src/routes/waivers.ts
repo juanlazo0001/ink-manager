@@ -13,7 +13,8 @@ import { PUBLIC_APP_URL } from "../lib/publicUrl";
 import { generateWaiverPdf } from "../lib/pdf";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { effectiveRoleAt, hasPermissionAt } from "../lib/artistAccess";
-import { resolveRequestLocale, persistClientLocale } from "../lib/contentTranslation";
+import { resolveRequestLocale } from "../lib/contentTranslation";
+import { parseAcceptLanguage } from "../lib/locale";
 
 // Multi-language public forms, Part 5: shared by GET /verify/:token (public,
 // pre-signing) and staffRouter's GET /:id/pdf (post-signing export) so the
@@ -105,7 +106,6 @@ publicRouter.get("/verify/:token", async (req, res) => {
           settings: {
             select: {
               themePreset: true,
-              defaultLocale: true,
               // Multi-language public forms: fetched only to compare
               // against this waiver's OWN snapshot below -- never
               // rendered directly. See the comment further down for why.
@@ -128,7 +128,7 @@ publicRouter.get("/verify/:token", async (req, res) => {
     return res.status(status).json(invalidity);
   }
 
-  const locale = resolveRequestLocale(req.query.locale, waiver!.client.preferredLocale, waiver!.studio.settings?.defaultLocale);
+  const locale = resolveRequestLocale(null, waiver!.client.preferredLocale, parseAcceptLanguage(req.headers["accept-language"]));
 
   // Multi-language public forms: healthQuestionsSnapshot/clausesSnapshot/
   // etc. are frozen at WAIVER-LINK-CREATION time (lib/waivers.ts's own
@@ -169,22 +169,6 @@ publicRouter.get("/verify/:token", async (req, res) => {
   });
 });
 
-// Multi-language public forms, Part 5: see deposits.ts's own identical
-// endpoint for the full reasoning -- same token-scoped persistence
-// pattern, repeated per flow rather than a shared cross-flow route.
-publicRouter.patch("/:token/locale", async (req, res) => {
-  const token = req.params.token as string;
-  const waiver = await prisma.liabilityWaiver.findUnique({ where: { token }, select: { clientId: true } });
-  if (!waiver) {
-    return res.status(404).json({ error: "This link is invalid." });
-  }
-  const result = await persistClientLocale(waiver.clientId, req.body?.locale);
-  if (!result.ok) {
-    return res.status(400).json({ error: result.error });
-  }
-  res.json({ success: true });
-});
-
 publicRouter.patch("/sign/:token", async (req, res) => {
   const token = req.params.token as string;
   const body = req.body ?? {};
@@ -194,7 +178,6 @@ publicRouter.patch("/sign/:token", async (req, res) => {
     include: {
       appointment: { select: { inquiryId: true } },
       client: { select: { preferredLocale: true } },
-      studio: { select: { settings: { select: { defaultLocale: true } } } },
     },
   });
 
@@ -301,9 +284,9 @@ publicRouter.patch("/sign/:token", async (req, res) => {
   // (those stay the studio's own frozen English, unchanged by this),
   // only which language the staff PDF export later renders in.
   const signedLocale = resolveRequestLocale(
-    req.query.locale,
+    null,
     waiver!.client.preferredLocale,
-    waiver!.studio.settings?.defaultLocale,
+    parseAcceptLanguage(req.headers["accept-language"]),
   );
 
   await prisma.liabilityWaiver.update({
@@ -470,7 +453,6 @@ staffRouter.get("/:id/pdf", requirePermission("waivers.viewStatus"), async (req,
           settings: {
             select: {
               themePreset: true,
-              defaultLocale: true,
               waiverHealthQuestions: true,
               waiverClauses: true,
               waiverAcknowledgment: true,
@@ -492,11 +474,12 @@ staffRouter.get("/:id/pdf", requirePermission("waivers.viewStatus"), async (req,
     return res.status(400).json({ error: "This waiver has not been signed yet" });
   }
 
-  // Multi-language public forms, Part 5: pre-migration waivers have no
-  // signedLocale recorded -- resolveRequestLocale's own "en" floor covers
-  // that (no query param, no client preference passed here, only the
-  // studio's own default) rather than a separate null-check.
-  const locale = resolveRequestLocale(undefined, waiver.signedLocale, waiver.studio.settings?.defaultLocale);
+  // Pre-migration waivers have no signedLocale recorded -- there's no live
+  // visitor to detect-from for a historical document export, so this
+  // falls straight to resolveRequestLocale's own "en" floor rather than a
+  // separate null-check (StudioSettings.defaultLocale no longer feeds
+  // this chain at all).
+  const locale = resolveRequestLocale(undefined, waiver.signedLocale, null);
   const { healthQuestions, clauses, acknowledgment, photoRelease } = resolveWaiverSnapshotContent(
     waiver,
     waiver.studio.settings,

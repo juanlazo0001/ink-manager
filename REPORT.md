@@ -14795,3 +14795,168 @@ for anyone who reads this file later without that conversation.
 
 REPORT.md line count before this entry: 14218 (verified via `git show
 HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Language becomes customer-specific -- remove per-page pickers
+
+Made `Client.preferredLocale` (already existed, unused for this purpose
+before now) the single source of truth for which language a customer's
+public pages render in, replacing the per-page `LanguagePicker` toggle
+almost everywhere with a three-tier priority chain: stored preference ->
+browser `Accept-Language` -> English. Branch `session/customer-language-
+preference`, launched via `scripts/new-session.ps1` off latest `main`
+(which already carried both the artist-page-v2 and public-journey-restyle
+merges, completed earlier this session -- see those two entries above).
+
+## Merges completed first (blocking prerequisite)
+
+Per this task's own instruction ("RUN ONLY AFTER explore/public-journey-
+restyle is merged to main"), first fast-forward-merged `explore/artist-
+page-v2` (`08f86c5`) into `main` on the user's explicit "lets merge it,"
+verified via a clean `npm ci` + build in that worktree. Then merged
+`explore/public-journey-restyle` into `main` as a real merge commit
+(`5551b19`, non-fast-forward -- main had moved on with the artist-page-v2
+and flash-governance-split merges by then), resolving a REPORT.md conflict
+by keeping both sides' appended sections concatenated (append-only file,
+never drop content on a merge) and confirming zero conflict markers +
+pure line-count growth (14491 -> 14797) before committing. Both apps
+rebuilt clean from that merged state before pushing.
+
+## The new resolution chain
+
+`apps/api/src/lib/locale.ts` gained `parseAcceptLanguage(header)`: parses
+the header's comma-separated ranges, respects `q=` weighting (not just
+header order -- a lower-weighted `es` further down a header no longer
+wins over a higher-weighted non-Spanish range), and maps any `es*` primary
+subtag to `es`, everything else (including a missing header) to `en`. Per
+the feature's own spec this is deliberately not a full RFC 4647 matcher.
+
+`resolveRequestLocale` (`contentTranslation.ts`) keeps its existing
+three-arg signature and generic behavior (query param > second arg >
+third arg > `"en"` floor) -- only its callers changed. Every one of the
+nine call sites across `deposits.ts`, `estimates.ts` (x4), `waivers.ts`
+(x2 + one read-back), `selfSchedule.ts`, and `flashPayments.ts` now passes
+`parseAcceptLanguage(req.headers["accept-language"])` as the third
+argument instead of `studio.settings?.defaultLocale`, and `null` instead
+of `req.query.locale` as the first (no more picker on these pages to
+generate a query override). `StudioSettings.defaultLocale` is fully
+retired from customer-locale resolution as a result -- the field stays in
+the schema (no destructive change requested), but every `select`/`include`
+that only fetched it for this purpose had the clause dropped. Confirmed
+via grep this field had no staff-facing UI to set it anyway (always `'en'`
+by migration default, effectively dead for this purpose already).
+
+Two anonymous, no-Client pages (`GET /artists/public/:publicSlug`, the
+flash gallery's `GET /flash-pieces/public` browse endpoint) bypass
+`resolveRequestLocale` entirely now -- straight `parseAcceptLanguage(...)`,
+no query override at all, matching the spec's explicit "no query-param
+persistence" instruction for this tier (query override remains legitimate
+elsewhere, e.g. intake's own live-refetch-on-toggle mechanism, which isn't
+persistence outside the Client record).
+
+## Per-flow behavior
+
+1. **Intake + flash-request-form** (the one place a client explicitly
+   states a language): `IntakeForm.tsx`'s page-chrome `LanguagePicker`
+   already existed exactly as specced (page chrome, not a form-builder
+   field, present on every intake form) from the earlier multi-language
+   epic -- only its backend fallback needed to change (studio default ->
+   Accept-Language, done above). `FlashPublicGallery.tsx` needed a real
+   split: the picker used to render unconditionally at the top of the
+   whole component; moved it out of the anonymous gallery-browsing state
+   entirely and into the `request` state only (once a visitor opens a
+   specific piece's request form), pre-filled from whatever locale the
+   anonymous browsing phase already detected (same React state, no
+   reload). Persistence-at-submission (both flows write `preferredLocale`
+   into the same transaction that creates-or-updates the Client row) was
+   already correct, unchanged.
+2. **Anonymous pages** (artist public page, flash gallery browsing):
+   `LanguagePicker` removed entirely from `ArtistPublicPage.tsx`; removed
+   from `FlashPublicGallery.tsx`'s gallery state (see above). Render
+   locale is DETECT-ONLY -- no picker, no cookie, no localStorage, no
+   query param, confirmed live (see Verification).
+3. **Tokened client pages** (deposit, waiver, estimate response, estimate
+   revision, self-schedule, flash-payment): picker removed from all six
+   pages (`DepositResponse.tsx`, `WaiverSign.tsx`, `EstimateResponse.tsx`,
+   `EstimateRevisionResponse.tsx`, `SelfSchedule.tsx`,
+   `FlashPaymentResponse.tsx`), along with each page's own "re-fetch with
+   an explicit `?locale=` when the picker toggles" apparatus (dead weight
+   with no picker left to toggle it) -- `DepositResponse.tsx`/
+   `FlashPaymentResponse.tsx` lost an `explicitLocale`-gated second fetch
+   path inside `loadVerify`; `EstimateResponse.tsx` lost a whole second
+   `useEffect` keyed on `locale`; `WaiverSign.tsx`/`SelfSchedule.tsx`/
+   `EstimateRevisionResponse.tsx` simplified their single fetch effect to
+   never send `?locale=` at all. The six backend `PATCH .../:token/locale`
+   endpoints (one per flow) are deleted, along with the now-fully-unused
+   `persistClientLocale` helper (`contentTranslation.ts`) and
+   `persistPickerLocale` (`apps/web/src/i18n/persistLocale.ts`, file
+   removed, export dropped from `i18n/index.ts`). `signedLocale` capture
+   at sign/respond time is unchanged in behavior (still snapshots
+   "whatever actually rendered") -- only its own inputs follow the new
+   chain (no query, Accept-Language instead of studio default).
+4. **Staff escape hatch**: `Client.preferredLocale` added to
+   `EDITABLE_CLIENT_FIELDS` in `apps/api/src/routes/clients.ts`'s
+   `PATCH /:id`, validated via `isSupportedLocale` (or `null` to clear
+   back to "no preference"), matrix-gated by the existing `clients.edit`
+   permission check already on that route -- no new gating needed, one
+   shared route. `ClientDetail.tsx` gained a "Language" `<select>`
+   (English / Spanish / "No preference set (auto-detected)") in the
+   existing edit form, wired through the same `editForm` state/submit
+   pattern every other field on that form already uses. While in this
+   route: found and fixed a real instance of the exact bug class
+   CLAUDE.md's "Artist studio scoping" section calls out by name -- the
+   audit-log `studioId` and `emitInvalidation` call both used
+   `req.user!.studioId` (the caller's own, possibly-stale/guest-mismatched
+   home studio) instead of `client.studioId` (the record's own studio,
+   already correctly used for the route's permission check three lines
+   above). Fixed both to `client.studioId`; this affects every field this
+   route edits, not just the new one, since it's one shared code path.
+
+## Verification
+
+Backend: `apps/api/src/lib/locale.test.ts` (new, `parseAcceptLanguage` --
+missing header, `es*` variants incl. `es-419`, q-value-ordering
+correctness against a header where a lower-weighted `es` shouldn't win),
+`contentTranslation.test.ts` updated (dropped the two now-deleted
+`persistClientLocale` tests and their now-unused DB scaffolding; renamed
+one `resolveRequestLocale` test's description for the new third-tier
+framing), `contentTranslationHttp.test.ts` and `localeEndToEnd.test.ts`
+updated everywhere a test relied on `?locale=` against a now-query-
+stripped route or the six deleted PATCH endpoints -- switched to
+`Accept-Language` headers on the `fetch()` calls instead, plus a new
+assertion that a stale `?locale=es` query param is now silently ignored
+on the anonymous flash-pieces browse route. New
+`clientPreferredLocale.test.ts`: set/clear via PATCH, rejects an
+unsupported locale (400, DB unchanged), and matrix-gated by `clients.edit`
+(403 for an ARTIST explicitly denied that permission). Full API suite:
+170/170. `tsc --noEmit` clean on both apps; full production `vite build`
+clean; `eslint` clean on every touched file (two pre-existing errors
+surfaced by a full-repo lint sweep -- `ClientDetail.tsx`'s unrelated
+merge-search effect, `Settings.tsx`/`Team.tsx` -- confirmed via `git diff`
+to predate this branch entirely, left untouched).
+
+Real browser (Playwright, `--no-save`, removed after), disposable seeded
+studio (artist with a published public page, a flash piece, two deposit-
+form tokens -- one client with a staff-set `preferredLocale: "es"`, one
+with no preference at all), 390x844 viewport, fresh incognito context per
+check via `extraHTTPHeaders`/`locale`: artist page with an `es-CA` Accept-
+Language renders Spanish with zero picker, zero locale-related
+cookie/localStorage (Stripe's own unrelated fraud-detection cookies were
+the one false positive caught and excluded); the staff-set-Spanish
+client's deposit page renders Spanish even against an `en-US` browser
+(stored preference wins); the no-preference client's same page renders
+Spanish against an `es-MX` browser and English against `en-US` (pure
+detection, confirmed via a direct DB read that VIEWING never silently
+writes a preference row -- only an explicit submission or the staff field
+does); intake pre-selects Spanish from detection and the picker
+live-toggles to English; flash gallery browsing has zero picker and
+resolves via detection, the picker appears (pre-filled Spanish) only once
+the request form for a specific piece opens. All 13 checks passed on the
+final run. Seeded studio and all rows under it deleted afterward via a
+scripted cleanup; Playwright uninstalled; both dev servers (API 4002, web
+5174) stopped and ports confirmed free.
+
+Committed on `session/customer-language-preference`, pushed -- not
+merged, per this repo's established review-then-merge convention.
+
+REPORT.md line count before this entry: 14797 (verified via `git show
+HEAD:REPORT.md | wc -l`) -- pure addition.

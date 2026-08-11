@@ -11,7 +11,7 @@ import { hasPermission, type PermissionKey } from "../lib/permissions";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { normalizeArtistFieldVisibility } from "../lib/artistFieldVisibility";
 import { resolveRequestLocale, resolveSystemFieldLabel, withLocale } from "../lib/contentTranslation";
-import { isSupportedLocale } from "../lib/locale";
+import { isSupportedLocale, parseAcceptLanguage } from "../lib/locale";
 
 // Public: /privacy/:studioSlug and /terms/:studioSlug (unauthenticated) need
 // to read these two fields by slug, same "public sub-router mounted first"
@@ -54,10 +54,13 @@ publicRouter.get("/public", async (req, res) => {
   // disagree about what a form with zero rows requires.
   const allFields = await getEffectiveIntakeFormFields(form.id);
 
-  // Multi-language public forms: no Client exists yet at this, the very
-  // first step of the whole funnel -- resolution here can only ever use
-  // ?locale= or the studio's own defaultLocale.
-  const locale = resolveRequestLocale(req.query.locale, null, settings?.defaultLocale);
+  // Language becomes customer-specific: no Client exists yet at this, the
+  // very first step of the whole funnel. ?locale= still wins when present
+  // -- that's IntakeForm.tsx's own live-refetch-on-toggle mechanism (the
+  // page-chrome picker changing state, never a persisted signal) -- else
+  // the visitor's own Accept-Language, pre-selecting the picker on first
+  // load. StudioSettings.defaultLocale no longer plays into this at all.
+  const locale = resolveRequestLocale(req.query.locale, null, parseAcceptLanguage(req.headers["accept-language"]));
   const settingsTranslation = settings?.translations.find((t) => t.locale === locale);
   const localizedSettings = settings
     ? withLocale(settings, settingsTranslation, [

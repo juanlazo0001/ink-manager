@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { apiFetch, ApiError } from '../lib/api'
@@ -82,29 +82,20 @@ function FlashPublicGalleryContent() {
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
-  // Fix pass: see IntakeForm.tsx's identical comment -- the FIRST fetch
-  // must not send ?locale= explicitly, or it overrides the studio's own
-  // configured defaultLocale on a fresh, never-toggled load (no Client
-  // exists yet on this pre-request browse page to protect either way).
-  //
-  // Also see WaiverSign.tsx's comment: a plain ref flipped synchronously
-  // at the top of the effect isn't enough of a guard on its own under
-  // React 18 StrictMode's dev-only double-invoke (the second invocation
-  // would see the ref already-false and send a stray explicit
-  // ?locale=en that races the correct fetch). Gating on a ref that's
-  // only set INSIDE the fetch's own .then() sidesteps that.
-  const hasLoadedRef = useRef(false)
+  // Language becomes customer-specific: this browse page is anonymous
+  // (no Client, no token) -- DETECT-ONLY from the visitor's own
+  // Accept-Language header, resolved server-side, no query param, no
+  // picker, no persistence. Fetched once; nothing here re-fetches on a
+  // locale change since there's no picker on this state to toggle it.
   useEffect(() => {
     if (!studioSlug || !artistId) return
 
     let ignore = false
-    const localeParam = hasLoadedRef.current ? `&locale=${locale}` : ''
     apiFetch<GalleryResponse>(
-      `/flash-pieces/public?studioSlug=${encodeURIComponent(studioSlug)}&artistId=${encodeURIComponent(artistId)}${localeParam}`,
+      `/flash-pieces/public?studioSlug=${encodeURIComponent(studioSlug)}&artistId=${encodeURIComponent(artistId)}`,
     )
       .then((data) => {
         if (ignore) return
-        hasLoadedRef.current = true
         setGallery(data)
         setState('gallery')
         if (data.resolvedLocale && data.resolvedLocale !== locale) setLocale(data.resolvedLocale as typeof locale)
@@ -119,7 +110,7 @@ function FlashPublicGalleryContent() {
       ignore = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [studioSlug, artistId, locale])
+  }, [studioSlug, artistId])
 
   function selectPiece(piece: FlashPieceSummary) {
     setSelectedPiece(piece)
@@ -208,10 +199,6 @@ function FlashPublicGalleryContent() {
   return (
     <div className="login-shell flex min-h-screen items-center justify-center px-4 py-10 text-fg">
       <div className="login-panel-surface w-full max-w-2xl px-4 py-8 sm:p-8">
-        <div className="mb-4 flex justify-end">
-          <LanguagePicker />
-        </div>
-
         <AnimatePresence mode="wait">
           {state === 'loading' && (
             <motion.p key="loading" variants={crossfadeVariants} initial="initial" animate="animate" exit="exit" transition={uiSpringTransition} className="text-center text-sm text-fg-secondary">
@@ -289,9 +276,17 @@ function FlashPublicGalleryContent() {
 
           {state === 'request' && selectedPiece && (
             <motion.div key="request" variants={crossfadeVariants} initial="initial" animate="animate" exit="exit" transition={uiSpringTransition}>
-              <button type="button" onClick={() => setState('gallery')} className="text-xs font-medium text-fg-muted hover:text-fg">
-                {t('flashGallery.backToGallery')}
-              </button>
+              <div className="flex items-start justify-between gap-4">
+                <button type="button" onClick={() => setState('gallery')} className="text-xs font-medium text-fg-muted hover:text-fg">
+                  {t('flashGallery.backToGallery')}
+                </button>
+                {/* Language becomes customer-specific: this is the moment an
+                    anonymous browser crosses into an identified flow (about
+                    to create/match a Client record on submit) -- the picker
+                    appears here, pre-filled from Accept-Language detection,
+                    never during gallery browsing above. */}
+                <LanguagePicker />
+              </div>
               <h1 className="login-jura mt-2 text-xl font-semibold text-fg">{t('flashGallery.requestTitle', { title: selectedPiece.title })}</h1>
               <p className="mt-1 text-sm text-fg-secondary">
                 ${(selectedPiece.priceCents / 100).toFixed(2)} &middot; {t('flashGallery.durationApprox', { duration: formatDurationHours(selectedPiece.estimatedDurationMinutes) })}

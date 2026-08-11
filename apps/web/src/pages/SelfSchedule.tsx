@@ -9,8 +9,7 @@ import { FlatArtistAvatar } from '../components/ArtistAvatar'
 import { applyThemePreset } from '../lib/themePresets'
 import PublicPageFooter from '../components/PublicPageFooter'
 import { toDateString, parseDateString } from '../components/DateAndTimeRangeFields'
-import { LocaleProvider, useLocale, useTranslations, persistPickerLocale, dateLocale, type Locale } from '../i18n'
-import LanguagePicker from '../i18n/LanguagePicker'
+import { LocaleProvider, useLocale, useTranslations, dateLocale, type Locale } from '../i18n'
 
 // Token-lifecycle bug fix: 'alreadyBooked' is new -- a client revisiting
 // their own link after their booking already completed (see
@@ -47,10 +46,10 @@ interface VerifyResponse {
   // every other date is disabled outright in the calendar below, not just
   // greyed, since this picker only ever offers what's actually available.
   availableDates: string[]
-  // Multi-language public forms: which locale the API actually resolved
-  // (explicit ?locale= > this client's own stored preference > the
-  // studio's own default) -- synced back into LocaleProvider on load,
-  // same pattern as every other flow's own verify response.
+  // Language becomes customer-specific: which locale the API actually
+  // resolved (this client's own stored preference, else Accept-Language)
+  // -- synced back into LocaleProvider on load, same pattern as every
+  // other flow's own verify response.
   resolvedLocale?: string
 }
 
@@ -195,10 +194,6 @@ function SelfScheduleContent() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-fg">
       <div className="w-full max-w-lg rounded-2xl card-surface border border-border bg-surface p-8">
-        <div className="mb-4 flex justify-end">
-          <LanguagePicker onChange={(next) => token && persistPickerLocale(`/self-schedule/${token}/locale`, next)} />
-        </div>
-
         {state === 'loading' && <p className="text-center text-sm text-fg-secondary">{t('common.loading')}</p>}
 
         {state === 'invalid' && (

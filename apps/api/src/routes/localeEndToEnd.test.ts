@@ -137,10 +137,10 @@ test("end-to-end: Spanish-signed deposit produces a real PDF via the staff expor
   });
   depositFormIds.push(depositForm.id);
 
-  // Client signs with the Spanish tab active.
-  const signRes = await fetch(`${baseUrl}/deposits/sign/depe2e-${suffix}?locale=es`, {
+  // Client's browser reports Spanish (no picker/query override anymore).
+  const signRes = await fetch(`${baseUrl}/deposits/sign/depe2e-${suffix}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "Accept-Language": "es" },
     body: JSON.stringify({
       agreedNonRefundable: true,
       agreedLatePolicy: true,
@@ -236,9 +236,9 @@ test("end-to-end: Spanish-signed waiver (seed-equality translation) produces a r
   });
   waiverIds.push(waiver.id);
 
-  const signRes = await fetch(`${baseUrl}/waivers/sign/waie2e-${suffix}?locale=es`, {
+  const signRes = await fetch(`${baseUrl}/waivers/sign/waie2e-${suffix}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "Accept-Language": "es" },
     body: JSON.stringify({
       legalName: "Jane Doe",
       dateOfBirth: "1990-01-01",

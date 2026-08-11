@@ -164,10 +164,11 @@ function IntakeFormContent() {
   // resolving exactly like it always has.
   // Fix pass: the FIRST fetch must NOT send ?locale= explicitly -- an
   // explicit query param always wins in resolveRequestLocale's own
-  // precedence, so it would override even a studio's own configured
-  // defaultLocale (no Client exists yet here to protect, but the
-  // studio default still deserves to win on a fresh, never-toggled
-  // load). Only a genuine later change (the picker) sends it.
+  // precedence, so it would override the visitor's own Accept-Language
+  // detection (no Client exists yet here to protect, but the picker
+  // still deserves to pre-select from the browser's own signal on a
+  // fresh, never-toggled load, per "Language becomes customer-specific").
+  // Only a genuine later change (the picker) sends it.
   //
   // A plain ref flipped synchronously at the top of the effect isn't
   // enough of a guard by itself: React 18 StrictMode's dev-only
