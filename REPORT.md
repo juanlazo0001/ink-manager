@@ -16155,3 +16155,71 @@ session should have used from the start -- see the process note above).
 
 REPORT.md line count before this entry: 15969 (verified via `git show
 HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Prepay + On-Hold, Part 1: schema
+
+Solo schema pass, isolated worktree this time (`session/prepay-onhold`,
+via `scripts/new-session.ps1` -- the process this session's own
+previous entry flagged missing). `migrate diff` + hand-written
+migration file + `migrate deploy`, never `migrate dev`.
+
+## A premise correction, found before writing any of this
+
+The task's own instruction was "reuse the flash-prepay machinery --
+payment issues a gift card for the full amount... checkout consumes it
+via the existing stackable-card logic." Read the actual flash-payment
+code (`lib/flashPayments.ts`, the Stripe webhook handler in
+`webhooks.ts`, and `InquiryStatus.FLASH_PAYMENT_PENDING`'s own schema
+comment) before writing any schema against that premise, per this
+file's own repeated "verify task premises" lesson -- and it doesn't
+hold. Flash prepayment is a direct Stripe Connect charge straight to
+`Inquiry.flashPaidAt`, with **no signing step and no GiftCard at all**
+-- it skips straight to `SCHEDULING` on webhook confirmation. The
+schema's own comment on `FLASH_PAYMENT_PENDING` says as much verbatim:
+"a distinct mechanism from the deposit-tier gift-card system."
+
+The properties the task actually wants -- signed terms, gift-card
+issuance, Stripe Checkout AND embedded Payment Element, stackable
+redeem/roll-forward at checkout -- already fully exist, just on the
+**deposit-tier** pipeline (`DepositForm` + `GiftCard`), not the flash
+one. So `FULL_PREPAY` is built as a new `DepositForm.amountMode`
+alongside the existing `DEPOSIT` mode: same form, same signing, same
+gift-card issuance, same checkout-time stackable redemption -- only the
+computed `depositAmount` (full price instead of a tier) and the
+client-facing copy change. This is a substitution of WHICH existing
+mechanism gets reused, not a deviation from the task's actual intent --
+flagged here rather than silently building against a premise that
+doesn't match the code, or silently building the wrong thing to match
+the letter of an instruction based on a mistaken belief about what
+"the flash-prepay machinery" does.
+
+## Schema changes
+
+- **`DepositAmountMode` enum** (`DEPOSIT`, `FULL_PREPAY`) -- new.
+- **`DepositForm.amountMode`**: `DepositAmountMode @default(DEPOSIT)`.
+  Default matches every existing row's real, unchanged behavior (all of
+  them were tier-based deposits).
+- **`StudioSettings.defaultDepositAmountMode`**: `DepositAmountMode
+  @default(DEPOSIT)` -- the studio-level default Part 2's send-time UI
+  will pre-select (still per-send overridable). Added now, in the same
+  schema pass, since Part 2 needs it to already exist.
+- **`InquiryStatus.ON_HOLD`**: new value. NOT terminal like
+  `CLOSED_LOST`/`TRANSFERRED` -- release restores the prior stage,
+  it doesn't end the pipeline.
+- **`Inquiry.statusBeforeHold`** (`InquiryStatus?`), **`.holdReason`**
+  (`String?`), **`.heldAt`** (`DateTime?`): same out-of-band-fields-
+  alongside-a-status shape as the existing `lostAt`/`lostReason` pair
+  next to `CLOSED_LOST` -- `statusBeforeHold` is captured at the moment
+  of going on hold (not derived after the fact, since by then `status`
+  itself already reads `ON_HOLD` and the prior stage would be gone).
+  `heldAt` wasn't explicitly requested but mirrors `lostAt`'s own
+  established convention exactly, for the same audit/reporting reason
+  that field exists.
+
+Schema only -- inert until Part 2 (prepay flow) and Part 3 (on-hold
+actions) exist. No route reads or writes any of these five new
+fields/values yet. `tsc -b --noEmit` clean on both apps, API suite
+170/170 (unchanged -- nothing yet reads the new columns).
+
+REPORT.md line count before this entry: 16157 (verified via `git show
+HEAD:REPORT.md | wc -l`) -- pure addition.

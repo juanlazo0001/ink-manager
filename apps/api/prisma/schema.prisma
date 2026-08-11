@@ -257,6 +257,13 @@ enum InquiryStatus {
   // (Part 3's own Stripe Checkout flow, a distinct mechanism from the
   // deposit-tier gift-card system -- see that part's own comment).
   FLASH_PAYMENT_PENDING
+  // Prepay + On-Hold epic, Part 1: a staff-initiated pause on an
+  // already-converted Project, paired with statusBeforeHold/holdReason/
+  // heldAt below (same out-of-band-fields-alongside-a-status shape as
+  // lostAt/lostReason next to CLOSED_LOST) -- NOT terminal like
+  // CLOSED_LOST/TRANSFERRED, since release restores statusBeforeHold and
+  // resumes the pipeline exactly where it left off.
+  ON_HOLD
 }
 
 model Studio {
@@ -1831,6 +1838,17 @@ model Inquiry {
   lostReason             String?
   lostAt                 DateTime?
 
+  // Prepay + On-Hold epic, Part 1: paired with InquiryStatus.ON_HOLD,
+  // same out-of-band-fields-alongside-a-status shape as lostAt/lostReason
+  // above. statusBeforeHold is what release restores `status` back to --
+  // captured at the moment of going on hold, not derived after the fact,
+  // since by then `status` itself is already ON_HOLD and the prior stage
+  // would otherwise be lost. holdReason is optional, same "staff may or
+  // may not explain why" convention as lostReason.
+  statusBeforeHold       InquiryStatus?
+  holdReason             String?
+  heldAt                 DateTime?
+
   // Staff revising the estimate on an already-converted Project
   // (SCHEDULING/WAITLISTED/CONFIRMED/DEPOSIT_PENDING) -- distinct from
   // estimateToken/estimateOpenedAt/estimateRespondedAt above, which govern
@@ -2265,6 +2283,11 @@ model StudioSettings {
   // reasoning as themePreset above. "en" matches every existing studio's
   // current, unchanged behavior.
   defaultLocale                 String   @default("en")
+  // Prepay + On-Hold epic, Part 1: which DepositAmountMode a new deposit
+  // form starts on when staff generate one -- staff can still override
+  // per-send (Part 2), this only sets the pre-selected default. DEPOSIT
+  // matches every studio's current, unchanged behavior.
+  defaultDepositAmountMode      DepositAmountMode @default(DEPOSIT)
   createdAt                     DateTime @default(now())
   updatedAt                     DateTime @updatedAt
 
@@ -2454,10 +2477,31 @@ model PlannedSession {
   @@index([inquiryId])
 }
 
+// Prepay + On-Hold epic, Part 1: DEPOSIT is every existing row's implicit
+// behavior before this field existed (a tier amount, per depositTiers.ts)
+// -- FULL_PREPAY charges the session's full estimated price instead,
+// through the exact same signed-form + gift-card-issuance + stackable-
+// checkout-redemption pipeline this model and GiftCard already have, just
+// a different computed depositAmount and swapped client-facing copy (see
+// routes/deposits.ts's own terms-text branch once Part 2 exists). This is
+// a genuinely different mechanism from Inquiry.flashPaidAt's own direct-
+// Stripe-charge/no-gift-card flow (see FLASH_PAYMENT_PENDING's own schema
+// comment) -- despite the surface-level similarity of "pay the full price
+// up front," flash payment skips signing AND the gift-card/checkout step
+// entirely, neither of which this feature can skip.
+enum DepositAmountMode {
+  DEPOSIT
+  FULL_PREPAY
+}
+
 model DepositForm {
   id                          String    @id @default(cuid())
   token                       String    @unique
   tokenExpiresAt              DateTime
+  // Which amount this form actually charged for -- see DepositAmountMode's
+  // own comment. Default DEPOSIT matches every row that predates this
+  // field, all of which really were tier-based deposits.
+  amountMode                  DepositAmountMode @default(DEPOSIT)
   agreedNonRefundable         Boolean   @default(false)
   agreedLatePolicy            Boolean   @default(false)
   agreedNoShowForfeit         Boolean   @default(false)
