@@ -16541,3 +16541,200 @@ and live observation of a realtime socket event actually arriving
 client-side (verified by code review, not watched happen). Both are
 good candidates for a short, focused follow-up session once the shared
 dev environment is free.
+
+# Transfer-to-artist epic — Part 6 (browser gate closed)
+
+## Context
+
+Parts 1-5 built and adversarially verified the full transfer engine via
+real HTTP/DB assertions, but Part 5 explicitly flagged two open gaps:
+no live browser walkthrough (blocked across four sessions by a shared,
+locked Playwright profile) and no live-witnessed realtime event (only
+verified by code review). This short session closes both, plus fixes
+the root cause of the browser lock so it stops recurring for every
+concurrent session, not just this one.
+
+## Playwright profile lock — fixed at the class, not the instance
+
+Root cause: by default the Playwright MCP server persists its browser
+profile at one fixed, machine-wide path
+(%LOCALAPPDATA%\ms-playwright-mcp\...), identical across every
+worktree -- so a second concurrent session's browser tool calls fail
+with "Browser is already in use" the instant a first session's browser
+is open, regardless of git worktree isolation. Confirmed via
+`npx @playwright/mcp@latest --help`: --isolated keeps the browser
+profile in memory only, never written to that shared disk path.
+
+Fixed in three places:
+- .mcp.json -- the playwright server's args now include --isolated.
+- CLAUDE.md -- new bullet under "Concurrent sessions" documenting the
+  root cause and the fix, plus an explicit instruction: if a browser
+  tool still reports "already in use" after this, don't wait on it and
+  don't silently skip browser-dependent work (MCP servers don't
+  hot-reload .mcp.json mid-session, so the current session's own
+  connection may predate the fix) -- ask the user to reconnect (/mcp)
+  or restart the session instead of treating the lock as permanent.
+- scripts/new-session.ps1 -- added a verification block that parses
+  the new worktree's own .mcp.json, checks the playwright server's
+  args for --isolated, and warns in the summary output if missing --
+  so a future regression here is caught at session-launch time, not
+  discovered mid-walkthrough for the fourth time.
+
+This session's own MCP connection had been spawned before the fix
+landed; asked the user to reconnect via /mcp rather than waiting on
+the lock indefinitely, per the new CLAUDE.md rule.
+
+## Live browser walkthrough -- both viewports, full click-through
+
+Ran the full origin-to-destination flow live at 390px and desktop,
+screenshotting every step: OWNER picks an artist and clients, the
+review screen naming what moves (contact plus fresh project) versus
+what stays (documents, financial records, notes) and which
+appointments will cancel, the artist accepting in their own UI, the
+destination showing the arrived client and fresh project, and the
+origin resolved as Transferred with its own activity-log entry. Full
+curated evidence (10 screenshots) published as an Artifact:
+"Transfer-to-Artist — Browser Gate Closed."
+
+Three real bugs surfaced by this live pass, none caught by Parts 1-5's
+HTTP/DB-only verification because none of them are backend-observable:
+
+1. Solo-studio origin OWNER lost all transfer visibility. Team.tsx
+   redirects an OWNER whose studio has exactly one active user
+   (isSoloStudio, apps/web/src/lib/soloStudio.ts) to /profile
+   entirely, on the theory that a one-person studio has no "team" to
+   manage. But the epic's own primary scenario -- an artist who has
+   already left -- commonly leaves the origin studio in exactly that
+   state, and StartArtistTransfer.tsx has no matching gate: a
+   solo-studio OWNER could start a transfer but then never see it
+   again (no pending list, no cancel, no completion report). Fixed by
+   extracting the pending/completed transfer panels out of Team.tsx
+   into a new standalone apps/web/src/components/TransfersPanel.tsx
+   and mounting it on Profile.tsx (with its own header/entry button)
+   whenever profile.role === 'OWNER' && profile.isSoloStudio. Team.tsx
+   itself now just renders <TransfersPanel /> inline in its existing
+   toolbar, unchanged for multi-person studios.
+2. /my-transfers/:id intermittently redirected artists to /dashboard
+   on a fresh page load. MyTransferDetail.tsx gated its !isArtist
+   redirect on `user` alone. useUserProfile()'s loading flag is
+   initialized false via useState(false) and only flips true once its
+   fetch effect actually fires -- so on a direct/fresh load (deep
+   link, bookmark, refresh) there's a real render where user is set,
+   profile is still null, and loading is also still false,
+   simultaneously. !isArtist reads Boolean(null) as false and fires
+   the redirect before the profile fetch has even started. Fixed by
+   also requiring profile truthiness: if (user && profile &&
+   !isArtist). A structurally identical gap exists in at least one
+   other page (ArtistCreate.tsx) -- flagged, explicitly left untouched
+   as out of this session's scope.
+3. Cancellation note misattributed to "Deleted user." Part 4's
+   execution engine wrote the appointment-cancellation
+   AppointmentNote with authorId: null, reasoning at the time that no
+   real human clicks the cancel button. But every note-rendering call
+   site in this app (NotesSection.tsx, ClientDetail.tsx,
+   GiftCardDetail.tsx, MyProjectDetail.tsx) treats a null author as
+   "Deleted user" -- a label written for an account later removed, not
+   for "never had one." Seeing it live made the mislabel obvious in a
+   way the DB-only Part 4/5 checks never would have. Fixed by
+   attributing the note to transfer.respondedById (the artist who
+   accepted) instead -- the same actor the transfer's own AuditLog
+   rows already credit, so it's accurate as well as no longer
+   misleading. Verified live: a fresh transfer's cancellation note now
+   shows the accepting artist's real name.
+
+All three fixes typecheck clean (tsc -b --noEmit, both apps) and were
+re-verified live after the fix, not just by inspection.
+
+## Realtime -- witnessed, not implied
+
+Part 5 could only confirm the realtime invalidation path by code
+review (Socket.IO emitInvalidation -> SocketContext.tsx's listener ->
+queryClient.invalidateQueries). This session ran three genuinely
+isolated identities simultaneously in one browser (via
+browser.newContext() per identity, since this app's auth token lives
+in localStorage and is otherwise shared within a context/tab group)
+and watched the events land without any reload:
+
+- Origin OWNER (Dana) initiates a transfer -> the destination artist's
+  (Mara's) Tasks card shows the new pending transfer within
+  milliseconds, no refresh.
+- Artist (Mara) accepts -> destination staff's (Theo's) Clients list
+  shows the arrived client within seconds, no refresh.
+
+One honest miss during this pass: the first attempt at the
+accept-side test clicked the wrong pending transfer in Mara's task
+list (an older pre-existing transfer sorted before the new one,
+oldest-first) -- the realtime push itself worked correctly, it was
+aimed at the wrong target. Caught by clicking through, not by the
+assertion; re-run against the correct task row afterward and
+confirmed. Documented in the evidence report rather than silently
+redone and hidden.
+
+## Activity log rendering -- confirmed human-readable at both ends
+
+Part 5 added the arrived_via_transfer destination-side audit row;
+this session confirmed both the origin transferred row and the
+destination arrived_via_transfer row render as prose, not raw IDs, in
+the live UI:
+
+- apps/api/src/routes/audit.ts's ID_FIELD_CATEGORIES whitelist
+  extended with originStudioId/destinationStudioId (new studio
+  category), destinationInquiryId (new inquiry category), and
+  destinationClientId/originClientId added to the existing client
+  category -- each resolved server-side to a human label
+  (studio/client name, inquiry description) before the frontend ever
+  sees the payload.
+- apps/web/src/components/AuditTrail.tsx's shared FIELD_LABELS and
+  ACTION_LABELS maps extended: field labels for the above IDs plus
+  outcome/cancelledAppointmentCount; exactly two action labels added
+  (transferred, arrived_via_transfer). Deliberately did NOT add labels
+  for the transfer engine's other internal actions
+  (initiated/accepted/declined/cancelled/executed, all entityType:
+  "ArtistTransfer") -- confirmed via grep that no page renders that
+  entity type through this shared component yet, and
+  "cancelled"/"executed" already carry different meaning for
+  ImportBatch's own audit rows in clientImport.ts. These maps are
+  global, not scoped per entity type; adding unnecessary labels here
+  risked silently relabeling an unrelated feature's history.
+
+Confirmed live: origin's activity log reads as prose naming the
+destination studio and client; destination's activity log reads as
+prose naming the origin studio, with no raw cuid visible at either
+end.
+
+## Verification
+
+tsc -b --noEmit clean on both apps/api and apps/web with every fix
+applied. Full live click-through at 390px and desktop, screenshotted
+end to end. Realtime witnessed live with three isolated browser
+identities. All database fixtures created for this walkthrough (two
+studios, their users/artists/clients/inquiries/appointments/audit
+rows) deleted afterward, including a fix to the cleanup ordering
+(StudioSettings must be deleted before its Studio row, a RESTRICT FK
+this session hadn't hit before). All temporary scripts and this
+session's own .playwright-mcp/page-*.png screenshot artifacts removed
+-- carefully distinguished by timestamp from another concurrent
+session's own pre-existing artifacts in the same directory, which were
+left untouched.
+
+## CLAUDE.md hygiene
+
+No schema touched. No database reset offered or accepted. REPORT.md
+line count before this entry: 16543 (verified via git show
+HEAD:REPORT.md | wc -l against the working copy, matching -- no other
+concurrent session had appended since Part 5) -- pure addition. No dev
+servers were started, restarted, or killed by this session.
+
+## Epic status
+
+All five original parts plus this closing session are complete. The
+Transfer-to-artist epic's two previously-open items -- a live browser
+walkthrough and a live-witnessed realtime event -- are now closed with
+real evidence, not code-review inference. Three real bugs found only
+by actually clicking through the UI (none reachable by HTTP/DB
+assertions alone) are fixed and re-verified live. One item
+intentionally carried forward as out of scope: the same
+profile-loading race fixed in MyTransferDetail.tsx likely also affects
+ArtistCreate.tsx's own !isArtist redirect -- flagged for a future
+short session, not fixed here to keep this session's diff scoped to
+the epic's own two reported gaps.

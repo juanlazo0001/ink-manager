@@ -66,6 +66,17 @@ const FIELD_LABELS: Record<string, string> = {
   fromAppointmentId: 'From appointment',
   toAppointmentId: 'To appointment',
   detachedFromAppointment: 'Detached from appointment',
+  // Transfer-to-artist epic -- resolved to names/labels server-side
+  // (apps/api/src/routes/audit.ts's own ID_FIELD_CATEGORIES), same as
+  // clientId/giftCardId above; these are just the display labels for
+  // those already-resolved values.
+  destinationStudioId: 'Destination studio',
+  originStudioId: 'Origin studio',
+  destinationClientId: 'Destination client',
+  originClientId: 'Origin client',
+  destinationInquiryId: 'Destination project',
+  outcome: 'Outcome',
+  cancelledAppointmentCount: 'Appointments cancelled',
 }
 
 // Fallback for anything not in the map above -- "someFieldName" -> "Some field name" --
@@ -84,7 +95,7 @@ const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/
 function formatValue(field: string, value: unknown): string {
   if (value === null || value === undefined || value === '') return '—'
   if (typeof value === 'boolean') return value ? 'Yes' : 'No'
-  if (field === 'status' && typeof value === 'string') return formatStatus(value)
+  if ((field === 'status' || field === 'outcome') && typeof value === 'string') return formatStatus(value)
   if (typeof value === 'string' && ISO_DATE_RE.test(value)) return formatDateTime(value)
   if (typeof value === 'object') return JSON.stringify(value)
   return String(value)
@@ -180,6 +191,21 @@ const ACTION_LABELS: Record<string, string> = {
   reference_image_added: 'added a reference image',
   auto_booked_from_deposit: 'auto-booked the appointment on deposit payment',
   auto_book_conflict: 'could not auto-book -- the tentative time was no longer available',
+  // Transfer-to-artist epic. Both logged with entityType: "Client" and
+  // actually rendered today (ClientDetail.tsx's own AuditTrail usage) --
+  // "transferred" at the ORIGIN studio (actor is the artist who
+  // accepted), "arrived_via_transfer" at the DESTINATION studio for the
+  // same execution (see artistTransferExecution.ts's own comment on why
+  // that's two rows, not one). Deliberately NOT adding labels here for
+  // the epic's other action strings (initiated/accepted/declined/
+  // cancelled/executed, all entityType: "ArtistTransfer") -- no page
+  // renders that entity type through this shared component yet, and
+  // "cancelled"/"executed" already mean something different for
+  // ImportBatch's own audit rows; adding them now would be dead code
+  // today and a real relabeling collision the moment someone builds
+  // that view later.
+  transferred: 'transferred this client to another studio',
+  arrived_via_transfer: 'brought this client here via transfer',
 }
 
 // Fallback for anything not in the map above -- spaces out both

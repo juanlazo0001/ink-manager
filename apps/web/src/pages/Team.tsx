@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import Eyebrow from '../components/Eyebrow'
@@ -9,7 +9,8 @@ import StatusPill from '../components/StatusPill'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatStatus, isValidPhoneDigits, readFileAsDataUrl, MAX_IMAGE_FILE_BYTES } from '../lib/format'
 import { PERMISSION_GROUPS, DISPLAYED_ROLES } from '../lib/permissions'
-import { artistsQueryKey, artistInvitesQueryKey, artistTransfersQueryKey } from '../lib/queryKeys'
+import { artistsQueryKey, artistInvitesQueryKey } from '../lib/queryKeys'
+import TransfersPanel from '../components/TransfersPanel'
 import { useAuth } from '../context/useAuth'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useUserProfile } from '../context/useUserProfile'
@@ -55,33 +56,6 @@ interface ArtistInvite {
   name: string | null
   membershipType: 'HOME' | 'GUEST'
   tokenExpiresAt: string
-}
-
-// Transfer-to-artist epic, Part 2: a request this studio (as origin) has
-// sent, awaiting the artist's own accept/decline (Part 3). Same row shape
-// backs both the PENDING_ARTIST and COMPLETED list queries below.
-interface PendingTransfer {
-  id: string
-  status: 'PENDING_ARTIST' | 'ACCEPTED' | 'DECLINED' | 'CANCELLED_BY_ORIGIN' | 'COMPLETED'
-  createdAt: string
-  artistId: string
-  artistName: string
-  destinationStudio: { id: string; name: string }
-  clientCount: number
-}
-
-// Transfer-to-artist epic, Part 4: the completion report -- fetched on
-// demand per transfer (GET /studios/:studioId/artist-transfers/:id), not
-// bundled into the list above, so the common case (just showing counts)
-// stays a light payload.
-interface TransferOutcomeDetail {
-  id: string
-  clients: {
-    id: string
-    name: string
-    outcome: 'PENDING' | 'CREATED' | 'MERGE_FLAGGED' | 'FAILED'
-    errorMessage: string | null
-  }[]
 }
 
 interface PermissionsResponse {
@@ -231,32 +205,6 @@ export default function Team() {
     enabled: isOwner,
   })
 
-  const { data: pendingTransfers } = useQuery({
-    queryKey: artistTransfersQueryKey(user!.studioId),
-    queryFn: () =>
-      apiFetch<PendingTransfer[]>(`/studios/${user!.studioId}/artist-transfers?status=PENDING_ARTIST`),
-    enabled: isOwner,
-  })
-
-  // Transfer-to-artist epic, Part 4: the completion report's own list --
-  // prefix-compatible with artistTransfersQueryKey above via the shared
-  // ['artist-transfers', studioId] prefix, so the same transfer.changed WS
-  // event that refreshes "Pending transfers" also refreshes this one.
-  const { data: completedTransfers } = useQuery({
-    queryKey: [...artistTransfersQueryKey(user!.studioId), 'completed'],
-    queryFn: () =>
-      apiFetch<PendingTransfer[]>(`/studios/${user!.studioId}/artist-transfers?status=COMPLETED`),
-    enabled: isOwner,
-  })
-
-  const [expandedTransferId, setExpandedTransferId] = useState<string | null>(null)
-  const { data: expandedTransferDetail, isLoading: expandedTransferLoading } = useQuery({
-    queryKey: ['transfer-detail', expandedTransferId],
-    queryFn: () =>
-      apiFetch<TransferOutcomeDetail>(`/studios/${user!.studioId}/artist-transfers/${expandedTransferId}`),
-    enabled: isOwner && !!expandedTransferId,
-  })
-
   const [users, setUsers] = useState<TeamUser[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [refreshIndex, setRefreshIndex] = useState(0)
@@ -350,10 +298,6 @@ export default function Team() {
   const [removingArtist, setRemovingArtist] = useState<ArtistCard | null>(null)
   const [removeArtistError, setRemoveArtistError] = useState<string | null>(null)
   const [removeArtistSubmitting, setRemoveArtistSubmitting] = useState(false)
-
-  const [cancellingTransfer, setCancellingTransfer] = useState<PendingTransfer | null>(null)
-  const [cancelTransferError, setCancelTransferError] = useState<string | null>(null)
-  const [cancelTransferSubmitting, setCancelTransferSubmitting] = useState(false)
 
   // 6a Epic: residency management panel for one guest membership.
   const [managingResidenciesFor, setManagingResidenciesFor] = useState<ArtistCard | null>(null)
@@ -458,21 +402,6 @@ export default function Team() {
       setRemoveArtistError(err instanceof Error ? err.message : 'Failed to remove artist')
     } finally {
       setRemoveArtistSubmitting(false)
-    }
-  }
-
-  async function handleConfirmCancelTransfer() {
-    if (!user?.studioId || !cancellingTransfer) return
-    setCancelTransferSubmitting(true)
-    setCancelTransferError(null)
-    try {
-      await apiFetch(`/studios/${user.studioId}/artist-transfers/${cancellingTransfer.id}/cancel`, { method: 'POST' })
-      setCancellingTransfer(null)
-      queryClient.invalidateQueries({ queryKey: artistTransfersQueryKey(user.studioId) })
-    } catch (err) {
-      setCancelTransferError(err instanceof Error ? err.message : 'Failed to cancel transfer')
-    } finally {
-      setCancelTransferSubmitting(false)
     }
   }
 
@@ -1235,113 +1164,7 @@ export default function Team() {
             </div>
           )}
 
-          {activeTab === 'artists' && isOwner && pendingTransfers && pendingTransfers.length > 0 && (
-            <div className="mt-6 rounded-2xl border border-warning/30 bg-warning/5 p-5">
-              <h2 className="text-sm font-semibold text-fg">Pending transfers</h2>
-              <p className="mt-1 text-xs text-fg-secondary">
-                Sent to the artist, awaiting their accept or decline. Nothing moves until they respond.
-              </p>
-              {cancelTransferError && <p className="mt-3 text-sm text-danger">{cancelTransferError}</p>}
-
-              <div className="mt-4 overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead>
-                    <tr className="text-xs text-fg-muted">
-                      <th className="pb-2 font-medium">Artist</th>
-                      <th className="pb-2 font-medium">Destination</th>
-                      <th className="pb-2 font-medium">Clients</th>
-                      <th className="pb-2 font-medium"></th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-warning/20">
-                    {pendingTransfers.map((transfer) => (
-                      <tr key={transfer.id}>
-                        <td className="py-2.5 text-fg">{transfer.artistName}</td>
-                        <td className="py-2.5 text-fg-secondary">{transfer.destinationStudio.name}</td>
-                        <td className="py-2.5 text-fg-secondary">{transfer.clientCount}</td>
-                        <td className="py-2.5 text-right">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setCancellingTransfer(transfer)
-                              setCancelTransferError(null)
-                            }}
-                            className="rounded-full border border-danger/40 px-3 py-1.5 text-xs font-medium text-danger transition hover:bg-danger/10"
-                          >
-                            Cancel
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'artists' && isOwner && completedTransfers && completedTransfers.length > 0 && (
-            <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
-              <h2 className="text-sm font-semibold text-fg">Completed transfers</h2>
-              <p className="mt-1 text-xs text-fg-secondary">
-                The completion report for each client -- what actually moved, and what needs a second look.
-              </p>
-
-              <div className="mt-4 overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead>
-                    <tr className="text-xs text-fg-muted">
-                      <th className="pb-2 font-medium">Artist</th>
-                      <th className="pb-2 font-medium">Destination</th>
-                      <th className="pb-2 font-medium">Clients</th>
-                      <th className="pb-2 font-medium"></th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {completedTransfers.map((transfer) => (
-                      <Fragment key={transfer.id}>
-                        <tr>
-                          <td className="py-2.5 text-fg">{transfer.artistName}</td>
-                          <td className="py-2.5 text-fg-secondary">{transfer.destinationStudio.name}</td>
-                          <td className="py-2.5 text-fg-secondary">{transfer.clientCount}</td>
-                          <td className="py-2.5 text-right">
-                            <button
-                              type="button"
-                              onClick={() => setExpandedTransferId(expandedTransferId === transfer.id ? null : transfer.id)}
-                              className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface-raised"
-                            >
-                              {expandedTransferId === transfer.id ? 'Hide' : 'View outcome'}
-                            </button>
-                          </td>
-                        </tr>
-                        {expandedTransferId === transfer.id && (
-                          <tr>
-                            <td colSpan={4} className="bg-surface-inset px-3 py-3">
-                              {expandedTransferLoading && <p className="text-xs text-fg-secondary">Loading…</p>}
-                              {expandedTransferDetail && (
-                                <ul className="space-y-1.5">
-                                  {expandedTransferDetail.clients.map((c) => (
-                                    <li key={c.id} className="flex items-center justify-between gap-2 text-sm">
-                                      <span className="text-fg-secondary">
-                                        {c.name}
-                                        {c.outcome === 'FAILED' && c.errorMessage && (
-                                          <span className="block text-xs text-danger">{c.errorMessage}</span>
-                                        )}
-                                      </span>
-                                      <StatusPill status={c.outcome} className="shrink-0" />
-                                    </li>
-                                  ))}
-                                </ul>
-                              )}
-                            </td>
-                          </tr>
-                        )}
-                      </Fragment>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
+          {activeTab === 'artists' && <TransfersPanel />}
 
           {activeTab === 'artists' && (
             <div className="mt-6">
@@ -2241,38 +2064,6 @@ export default function Team() {
               className="rounded-full bg-danger px-4 py-2 text-sm font-medium text-bg transition hover:bg-danger/90 disabled:opacity-60"
             >
               {removeArtistSubmitting ? 'Removing…' : 'Remove from studio'}
-            </button>
-          </div>
-        </Modal>
-      )}
-
-      {cancellingTransfer && (
-        <Modal title="Cancel transfer" onClose={() => setCancellingTransfer(null)}>
-          <p className="text-sm text-fg-secondary">
-            Cancel the pending transfer of <span className="font-semibold">{cancellingTransfer.clientCount}</span>{' '}
-            client{cancellingTransfer.clientCount === 1 ? '' : 's'} for{' '}
-            <span className="font-semibold">{cancellingTransfer.artistName}</span>? Nothing has moved yet -- this
-            just withdraws the request before the artist responds.
-          </p>
-
-          {cancelTransferError && <p className="mt-3 text-sm text-danger">{cancelTransferError}</p>}
-
-          <div className="mt-5 flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => setCancellingTransfer(null)}
-              disabled={cancelTransferSubmitting}
-              className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
-            >
-              Keep transfer
-            </button>
-            <button
-              type="button"
-              onClick={handleConfirmCancelTransfer}
-              disabled={cancelTransferSubmitting}
-              className="rounded-full bg-danger px-4 py-2 text-sm font-medium text-bg transition hover:bg-danger/90 disabled:opacity-60"
-            >
-              {cancelTransferSubmitting ? 'Cancelling…' : 'Cancel transfer'}
             </button>
           </div>
         </Modal>

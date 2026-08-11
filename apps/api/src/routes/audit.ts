@@ -29,6 +29,11 @@ const ID_FIELD_CATEGORIES = {
     "survivorId",
     "referrerClientId",
     "referredClientId",
+    // Transfer-to-artist epic: the two sides of a transfer's own client
+    // pointer -- same "raw cuid means nothing to a human" problem every
+    // other category here already solves.
+    "destinationClientId",
+    "originClientId",
   ]),
   giftCard: new Set([
     "giftCardId",
@@ -38,6 +43,13 @@ const ID_FIELD_CATEGORIES = {
     "derivedFromGiftCardId",
     "satisfiedByExistingGiftCardId",
   ]),
+  // Transfer-to-artist epic: the origin/destination studio a transfer's
+  // own audit rows reference -- resolved to the studio's name, not left
+  // as a bare id, same treatment as every category above.
+  studio: new Set(["originStudioId", "destinationStudioId"]),
+  // Transfer-to-artist epic: the fresh project execution created at the
+  // destination, referenced from the origin-side "transferred" row.
+  inquiry: new Set(["destinationInquiryId"]),
 } as const;
 
 type IdCategory = keyof typeof ID_FIELD_CATEGORIES;
@@ -108,6 +120,8 @@ router.get("/", requireAuth, requirePermission("audit.view"), async (req, res) =
     appointment: new Set(),
     client: new Set(),
     giftCard: new Set(),
+    studio: new Set(),
+    inquiry: new Set(),
   };
 
   for (const log of logs) {
@@ -120,7 +134,7 @@ router.get("/", requireAuth, requirePermission("audit.view"), async (req, res) =
     }
   }
 
-  const [artists, appointments, clients, giftCards] = await Promise.all([
+  const [artists, appointments, clients, giftCards, studios, inquiries] = await Promise.all([
     idsByCategory.artist.size > 0
       ? prisma.artist.findMany({
           where: { id: { in: [...idsByCategory.artist] } },
@@ -142,6 +156,12 @@ router.get("/", requireAuth, requirePermission("audit.view"), async (req, res) =
     idsByCategory.giftCard.size > 0
       ? prisma.giftCard.findMany({ where: { id: { in: [...idsByCategory.giftCard] } }, select: { id: true, code: true } })
       : [],
+    idsByCategory.studio.size > 0
+      ? prisma.studio.findMany({ where: { id: { in: [...idsByCategory.studio] } }, select: { id: true, name: true } })
+      : [],
+    idsByCategory.inquiry.size > 0
+      ? prisma.inquiry.findMany({ where: { id: { in: [...idsByCategory.inquiry] } }, select: { id: true, description: true } })
+      : [],
   ]);
 
   const labelsByCategory: Record<IdCategory, Map<string, string>> = {
@@ -149,6 +169,8 @@ router.get("/", requireAuth, requirePermission("audit.view"), async (req, res) =
     appointment: new Map(appointments.map((a) => [a.id, a.startTime.toISOString()])),
     client: new Map(clients.map((c) => [c.id, `${c.firstName} ${c.lastName}`.trim()])),
     giftCard: new Map(giftCards.map((g) => [g.id, g.code])),
+    studio: new Map(studios.map((s) => [s.id, s.name])),
+    inquiry: new Map(inquiries.map((i) => [i.id, i.description])),
   };
 
   const enriched = logs.map((log) => {

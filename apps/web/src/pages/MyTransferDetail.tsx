@@ -62,7 +62,17 @@ export default function MyTransferDetail() {
     }
   }
 
-  if (user && !isArtist) {
+  // A real bug found live during Part 5's browser walkthrough: gating this
+  // on `user` alone races `useUserProfile()`'s own fetch on a fresh/direct
+  // page load (a deep link, a bookmark, a page refresh -- anything that
+  // isn't in-app client-side navigation from a page where profile was
+  // already loaded). UserProfileProvider's `loading` flag starts false
+  // and only flips true once its effect fires, so checking `!loading`
+  // alone doesn't close the gap either -- the first render still has
+  // `loading: false, profile: null` simultaneously. Requiring `profile`
+  // itself to be truthy is what actually closes it: no redirect fires
+  // until a real fetch has resolved one way or the other.
+  if (user && profile && !isArtist) {
     return <Navigate to="/dashboard" replace />
   }
 
