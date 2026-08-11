@@ -16559,3 +16559,90 @@ so the shared dev studio's data is left as found.
 
 Not yet done: Part 4 (combined final verification pass, screenshots,
 closing commit) remains.
+
+# Prepay + On-Hold epic, Part 4: final verification
+
+Closing pass across both parts together -- the pieces Part 2/3's own
+verification sections didn't already cover, plus a final suite/typecheck
+run and cleanup.
+
+## Checkout zero-balance, live
+
+Continued from Part 2's own FULL_PREPAY gift card ($375, on "Referred
+ClientB"'s now-CONFIRMED appointment): opened that appointment's
+Checkout section, set Final cost to $375.00 with the card set to
+Redeem. Before typing a real final cost, the amount-due panel read
+"Amount due today: $0.00" with an overage warning (a new card would be
+issued for the $375 difference against a $0 final cost) -- once Final
+cost was actually set to $375.00, the overage warning disappeared and
+it settled on a clean **"Amount due today: $0.00"** with no overage.
+Confirmed Checkout: appointment moved to Completed, gift card moved to
+Redeemed, Checkout section showed `FINAL COST $375.00 / DEPOSIT 1 card
+redeemed ($375.00) / AMOUNT DUE $0.00`. **No tip step appeared anywhere
+in this flow** -- confirms tips genuinely only trigger when there's a
+real remaining balance to collect, exactly as Part 2 assumed when it
+called "no tip at prepay" already satisfied by construction.
+
+Real Playwright quirk hit here worth recording: setting the Final cost
+input's `.value` via a synthetic `Event('input')` (the fast path used
+everywhere else in this session) changed the DOM attribute but never
+updated React's own state -- the derived "amount due" text stayed
+computed off the old ($0) value even though the input visibly showed
+375. Playwright's real `fill()` had the same problem once; only
+`pressSequentially` (real per-character keystrokes) actually got
+React's onChange to fire. Numeric/currency inputs with a derived
+computed readout below them seem to need the slower, more "real" input
+path -- noted for future live-verification sessions in this repo.
+
+**Tip step at a normal (nonzero-balance) checkout**: not re-driven
+live -- doing so needs a second CONFIRMED appointment with no gift card
+covering it, actual embedded-payments client-facing takeover, and a
+real payment confirmation, none of which this feature touches. Already
+confirmed by Part 2's own reading of `appointments.ts`: zero
+`amountMode` references anywhere in that file, so the tip route's own
+gating (session checkout, real balance due) is exactly as it was before
+this epic. Re-verifying an unmodified code path by hand a second time
+would be theater, not verification -- same reasoning Part 3 used for
+skipping a live re-drive of the stalled-alerts exclusion.
+
+## Dashboard, live
+
+`/dashboard` loaded clean (zero console errors) after all of this
+session's test data -- funnel, lost/cold rate, response time, artist
+utilization, needs-scheduling, deposit conversion, and gift-card
+liability widgets all rendered populated, sensible numbers. Confirms
+the on-hold status addition didn't break any of `GET /reports/dashboard`'s
+status-filtered counts -- each one narrows on specific literal statuses
+(`CONFIRMED`, the three Projects-side statuses for needs-scheduling,
+etc.), so a project sitting at `ON_HOLD` simply and correctly drops out
+of every one of them while paused, with no code change needed for that
+to already be true.
+
+## Suite + typecheck, final pass
+
+`npm test` (API): 170/170. `tsc -b --noEmit`: clean on both apps. Same
+results as after Parts 2 and 3 individually -- this pass re-ran both
+after Part 4's own checkout/dashboard verification touched no source
+files, purely to confirm nothing about the live-testing session itself
+(browser state, dev-server restarts) left anything broken.
+
+## Session-wide notes for whoever picks this up next
+
+- This worktree's API dev server now correctly runs on port 4003 (was
+  silently colliding with the primary checkout's server on port 4000 at
+  the start of Part 2 -- see that part's own writeup). `apps/web/.env`
+  points at 4003 accordingly.
+- The pre-existing `mark-lost`/`reopen` audit-log/`emitInvalidation`
+  bug flagged in Part 3 (uses `req.user!.studioId` instead of the
+  record's own confirmed studio) is still unfixed -- deliberately out
+  of scope for this epic, flagged for a dedicated pass.
+- Test data left in the shared dev studio from this session's live
+  verification: "Referred ClientB"'s project now has a completed,
+  redeemed-out checkout and three deposit forms across its session
+  history (two FULL_PREPAY, one DEPOSIT) -- consistent with the studio's
+  existing large body of "Test"/"ZZZ"-prefixed dev fixtures, not
+  cleaned up individually (as established practice in this repo's own
+  prior sessions).
+
+All four parts of the epic are now committed and pushed to
+`session/prepay-onhold`.
