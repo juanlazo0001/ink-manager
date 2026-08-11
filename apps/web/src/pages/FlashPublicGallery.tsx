@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useParams } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { apiFetch, ApiError } from '../lib/api'
 import { uploadImageToCloudinary } from '../lib/cloudinary'
-import { FlatArtistAvatar } from '../components/ArtistAvatar'
+import { buildMapsUrl } from '../lib/maps'
 import PublicPageFooter from '../components/PublicPageFooter'
 import PhoneInput from '../components/PhoneInput'
 import ImageUploadSection, { type ImageUploadState } from '../components/ImageUploadSection'
 import ImageLightbox from '../components/ImageLightbox'
-import { ViewIcon, SparkleIcon, CalendarIcon } from '../components/icons'
+import { ViewIcon, SparkleIcon, CalendarIcon, MapPinIcon } from '../components/icons'
 import { isValidPhoneDigits, formatDurationHours } from '../lib/format'
 import { LocaleProvider, useLocale, useTranslations } from '../i18n'
 import LanguagePicker from '../i18n/LanguagePicker'
@@ -30,6 +31,7 @@ interface GalleryResponse {
   studioName: string
   studioSlug: string
   studioLogoUrl: string | null
+  studioAddress: string | null
   themePreset: string
   artistId: string | null
   artistName: string | null
@@ -223,12 +225,29 @@ function FlashPublicGalleryContent() {
   }
 
   if (state === 'gallery' && gallery) {
+    // Artist-filtered only ("Currently at {studio}") -- describes which
+    // studio THIS gallery/URL is for, not a live residency check. If this
+    // artist has an active CONFIRMED residency at a DIFFERENT studio right
+    // now, this line can read stale for a visitor who lands on an old/
+    // bookmarked link -- flagged, not solved, see REPORT.md.
+    const isArtistFiltered = Boolean(gallery.artistName)
+
     return (
-      <div className="login-shell flash-gallery-page relative min-h-screen px-4 py-10 text-fg">
+      <div className="login-shell flash-gallery-page relative z-10 min-h-screen px-4 py-10 text-fg">
+        {createPortal(<span className="flash-gallery-ambient" aria-hidden="true" />, document.body)}
+
         <div className="flash-gallery-shell">
           <header className="flash-gallery-header">
             <div className="flash-gallery-logo">
-              {gallery.studioLogoUrl ? (
+              {isArtistFiltered ? (
+                <span className="flash-gallery-avatar">
+                  {gallery.artistAvatarUrl ? (
+                    <img src={gallery.artistAvatarUrl} alt={gallery.artistName!} />
+                  ) : (
+                    <span className="flash-gallery-avatar-fallback">{gallery.artistName!.slice(0, 1).toUpperCase()}</span>
+                  )}
+                </span>
+              ) : gallery.studioLogoUrl ? (
                 <img src={gallery.studioLogoUrl} alt={gallery.studioName} />
               ) : (
                 <span className="flash-gallery-logo-fallback">{gallery.studioName.slice(0, 1).toUpperCase()}</span>
@@ -238,13 +257,28 @@ function FlashPublicGalleryContent() {
           </header>
 
           <div className="flash-gallery-titleblock">
-            <h1 className="flash-gallery-h1">{t('flashGallery.pageHeading')}</h1>
+            <h1 className="flash-gallery-h1">
+              {t('flashGallery.titleFirst')} <em>{t('flashGallery.titleSecond')}</em>
+            </h1>
             <span className="flash-gallery-rule" aria-hidden="true" />
             <div className="flash-gallery-context">
-              {gallery.artistName ? (
+              {isArtistFiltered ? (
                 <>
-                  <FlatArtistAvatar name={gallery.artistName} avatarUrl={gallery.artistAvatarUrl} className="h-8 w-8" />
-                  <p>{t('flashGallery.intro', { artistName: gallery.artistName, studioName: gallery.studioName })}</p>
+                  <p className="flash-gallery-currently-at">
+                    {t('flashGallery.currentlyAt', { studioName: gallery.studioName })}
+                  </p>
+                  {gallery.studioAddress && (
+                    <a
+                      href={buildMapsUrl(gallery.studioAddress)}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label={t('flashGallery.openInMaps')}
+                      className="flash-gallery-address"
+                    >
+                      <MapPinIcon className="h-3.5 w-3.5 shrink-0" />
+                      {gallery.studioAddress}
+                    </a>
+                  )}
                 </>
               ) : (
                 <p>{t('flashGallery.introStudioWide', { studioName: gallery.studioName })}</p>

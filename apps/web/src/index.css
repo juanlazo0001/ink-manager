@@ -1599,6 +1599,30 @@
    system. RESTYLE ONLY: no booking-flow/state-machine changes live here.
    ============================================================ */
 
+/* Delta (Juan's review pass): the house ambient recipe, at low
+   intensity, standing in for the flat black this page started with --
+   deliberately NO photography (the flash artwork itself is the star; a
+   personalized/platform photo layer like the artist page's own would
+   compete with it). Same "ink" -> "wall" (this file's own --color-bg/
+   --color-surface-inset, both reference-labeled against the exact
+   marketing-site tokens they're derived from) vertical gradient, two
+   faint gold radial glows, and a subtle side vignette -- all pre-
+   processed/static CSS, no live filters. Portaled to document.body
+   (never a descendant div) per this file's own backdrop-filter/
+   transform containing-block gotcha for fixed full-viewport layers;
+   z-index 0 under the page content's own z-10 wrapper. */
+.flash-gallery-ambient {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(900px 600px at 82% 6%, rgba(201, 154, 91, 0.09), transparent 65%),
+    radial-gradient(700px 500px at 12% 88%, rgba(201, 154, 91, 0.06), transparent 60%),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.25) 0%, transparent 18%, transparent 82%, rgba(0, 0, 0, 0.25) 100%),
+    linear-gradient(180deg, var(--color-bg) 0%, var(--color-surface-inset) 100%);
+}
+
 .flash-gallery-shell {
   width: min(880px, calc(100% - 48px));
   margin: 0 auto;
@@ -1628,14 +1652,57 @@
   font-size: 22px;
   color: var(--artist-gold);
 }
+/* Artist-filtered view only: the header mark becomes the artist's own
+   avatar -- same ring + grayscale treatment as the artist public page's
+   .artist-portrait-frame (border color/width, grayscale filter), scaled
+   down to header size instead of that page's own triple-orbit hero
+   treatment (too busy at 56px). */
+.flash-gallery-avatar {
+  display: block;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 1px solid rgba(215, 164, 94, 0.92);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  background: #111;
+}
+.flash-gallery-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: grayscale(1) contrast(1.03);
+}
+.flash-gallery-avatar-fallback {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  font-family: var(--font-display);
+  font-size: 22px;
+  color: var(--artist-gold);
+}
 
 .flash-gallery-titleblock { margin-bottom: 40px; }
+/* Delta (Juan's review pass): the marketing site's own hero pairing
+   (index.html's #cta h2 / h2 em -- "Run your shop like *the art it
+   makes*"), read from that source rather than approximated: roman
+   Fraunces 400 in plain white for the first word, the exact same
+   family/weight/size but italic and --gold-hi (here var(--color-accent-
+   hover), the app's own identical hex) for the second. Supersedes the
+   previous "same color throughout" delta. */
 .flash-gallery-h1 {
   margin: 0;
   font-family: var(--font-display);
   font-weight: 400;
-  font-size: clamp(38px, 5.4vw, 58px);
-  line-height: 1;
+  font-size: clamp(34px, 5vw, 58px);
+  line-height: 1.08;
+  letter-spacing: -0.015em;
+  color: #fff;
+}
+.flash-gallery-h1 em {
+  font-style: italic;
+  color: var(--color-accent-hover);
 }
 /* Delta (Juan's review pass): a plain small solid divider -- the
    feathered/gradient-fade treatment stays the artist page's own
@@ -1647,13 +1714,32 @@
   margin: 18px 0 20px;
   background: var(--artist-gold);
 }
-.flash-gallery-context { display: flex; align-items: center; gap: 12px; }
+.flash-gallery-context { display: flex; flex-direction: column; gap: 8px; }
 .flash-gallery-context p {
   margin: 0;
   color: var(--artist-gold);
   font-family: var(--font-sans);
   font-size: 15px;
 }
+.flash-gallery-currently-at {
+  margin: 0;
+  color: var(--artist-gold);
+  font-family: var(--font-sans);
+  font-size: 15px;
+}
+.flash-gallery-address {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  color: var(--color-fg-muted);
+  font-size: 13px;
+  text-decoration: underline;
+  text-decoration-color: rgba(155, 146, 127, 0.5);
+  text-underline-offset: 2px;
+  transition: color 0.2s ease;
+}
+.flash-gallery-address:hover { color: var(--color-fg); }
 
 .flash-gallery-empty {
   padding: 48px 0;

@@ -113,6 +113,17 @@ router.get("/public", async (req, res) => {
   // Accept-Language, no query override, no Client, no persistence.
   const locale = parseAcceptLanguage(req.headers["accept-language"]);
 
+  // Artist-filtered view only ("Currently at {studio}" + tappable address
+  // in the header) -- same "single-location fallback, never guess wrong
+  // for a multi-location studio" rule artistPublicProfile.ts's own
+  // studioSummary() uses; null for a multi-location studio (no address
+  // line rendered) or the studio-wide view (never fetched).
+  let studioAddress: string | null = null;
+  if (artist) {
+    const locations = await prisma.location.findMany({ where: { studioId: studio.id }, select: { address: true } });
+    studioAddress = locations.length === 1 ? (locations[0]!.address ?? null) : null;
+  }
+
   const pieces = await prisma.flashPiece.findMany({
     where: { studioId: studio.id, ...(artist ? { artistId: artist.id } : {}), status: FlashPieceStatus.AVAILABLE },
     select: {
@@ -145,16 +156,22 @@ router.get("/public", async (req, res) => {
     : studio.logoUrl
       ? `${API_PUBLIC_URL}/public-assets/studio-logo/${studio.slug}`
       : null;
+  // Same proxy convention as studioLogoUrl above -- publicAssets' own new
+  // flash-artist-avatar route (deliberately NOT the artist-profile-page's
+  // publishedAt-gated artist-avatar route; this artist may never have
+  // published that separate page).
+  const artistAvatarUrl = artist?.user.avatarUrl ? `${API_PUBLIC_URL}/public-assets/flash-artist-avatar/${artist.id}` : null;
 
   res.json({
     resolvedLocale: locale,
     studioName: studio.name,
     studioSlug: studio.slug,
     studioLogoUrl,
+    studioAddress,
     themePreset: studio.settings?.themePreset ?? DEFAULT_THEME_PRESET,
     artistId: artist?.id ?? null,
     artistName: artist?.user.name ?? null,
-    artistAvatarUrl: artist?.user.avatarUrl ?? null,
+    artistAvatarUrl,
     pieces: localizedPieces,
   });
 });

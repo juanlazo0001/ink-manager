@@ -15450,3 +15450,141 @@ artist lookup, the pre-confirm review screen, `PENDING_ARTIST`
 initiation, and cancel-while-pending, all activity-logged. This schema
 is inert until that part (and 3-5 after it) exist -- no route reads or
 writes `ArtistTransfer`/`ArtistTransferClient` yet.
+
+# Flash gallery -- three more review deltas
+
+Same pass/branch as the last round (already merged, so this stayed a
+direct commit on `main`, not a new review-gated branch). Three changes.
+
+## 1. Artist-filtered identity flip
+
+The header mark and context line now lead with the ARTIST's own
+identity, not the studio's -- studio-wide (`/flash/:studioSlug`, no
+artist) is completely untouched, still the studio logo and its own
+`introStudioWide` line.
+
+- Header: artist's own avatar, grayscale + a thin gold ring -- the
+  exact `.artist-portrait-frame` treatment from the artist public page
+  (same border color/width, same `filter: grayscale(1) contrast(1.03)`),
+  scaled to header size (56px) rather than that page's own triple-orbit
+  hero presentation, which would be far too busy at this size.
+- Context line: `flashGallery.currentlyAt` ("Currently at {studio}") +
+  the studio's address on its own line, tappable via `buildMapsUrl` --
+  the exact same native-maps-link pattern `StudioCard` already uses on
+  the artist page (`target="_blank"`, `MapPinIcon`, `aria-label` from a
+  new `flashGallery.openInMaps` key -- reused the *exact* existing
+  English/Spanish copy from `common.openInMaps`/`artistPublic.openInMaps`
+  rather than inventing new wording for the same action). Both keys
+  localized in `en.ts`/`es.ts`.
+- Backend: `GET /flash-pieces/public` gained `studioAddress` (same
+  single-location-fallback rule as `artistPublicProfile.ts`'s own
+  `studioSummary()` -- null for any multi-location studio, no address
+  line rendered) and switched `artistAvatarUrl` from sending
+  `User.avatarUrl` raw (a real bug -- same class as the `studioLogoUrl`
+  fix two rounds ago, just never caught for this field) to a new
+  proxied route.
+- New route: `publicAssets.ts`'s `GET /flash-artist-avatar/:artistId`.
+  Deliberately NOT a reuse of that file's existing `artist-avatar`
+  route, which gates on `Artist.publishedAt` -- that flag belongs to
+  this artist's *separate* `/artist/:publicSlug` profile page, which
+  they may never have set up. Gated instead on simple existence (the
+  artist has an avatar on file): if they're rendering in this response
+  at all, `/flash-pieces/public` already found them via a real
+  AVAILABLE piece at this studio, so their name and pieces are already
+  public through that same response -- serving their avatar too leaks
+  nothing new. Same "existence, not identity, is public here" principle
+  this file's own routes already state, just scoped to flash gallery's
+  own public-existence condition instead of the profile page's.
+
+**Flagged, not solved, per the task's own instruction:** "Currently at
+{studio}" describes which studio *this specific gallery URL* is for --
+it is not a live check of where the artist is actually working today.
+`lib/residencies.ts`'s own `isArtistBookableAtStudioOnDate` confirms an
+artist can hold an active CONFIRMED residency at only one studio at a
+time (a real DB-level EXCLUDE constraint on `Residency`, not just an
+app-level convention) -- so if this artist has an active residency
+somewhere else *right now*, a visitor on an old/bookmarked link to
+*this* studio's gallery would see a technically stale "Currently at."
+Checked the dev database for how often that's even possible: 74
+artists, 8 CONFIRMED residencies ever created, **0** currently active
+today. Illustrative only (dev data, not real usage), but nowhere near
+common enough here to justify solving now -- copy refinement candidate
+if it turns out to matter in practice.
+
+## 2. Title: the marketing site's own hero pairing
+
+Read `marketing/index.html`'s actual source rather than approximating:
+`#cta h2` renders "Run your shop like *the art it makes*" via a plain
+`h2{font-family:'Fraunces',serif;font-weight:400;font-size:clamp(34px,
+5vw,58px);letter-spacing:-0.015em;line-height:1.08;color:#fff}` base
+rule plus `h2 em{font-style:italic;color:var(--gold-hi)}` for the
+`<em>`-wrapped half -- same family and size for both halves (no size
+ratio to speak of; the split is roman-vs-italic and white-vs-gold, not
+a size relationship). Applied verbatim to `.flash-gallery-h1`/
+`.flash-gallery-h1 em`, down to the literal clamp/letter-spacing/
+line-height values -- `var(--color-accent-hover)` for the em color
+since that token is already labeled `/* reference --gold-hi */` in this
+file's own `.login-shell` block, the exact same hex the marketing site
+defines directly. Went back to a `titleFirst`/`titleSecond` two-key
+split (re-added -- the prior round had deleted these when the "same
+color" delta made them pointless) since the roman/italic split still
+needs to track whichever word lands where per locale, same reasoning
+as before. This delta explicitly **supersedes** last round's "Gallery
+same color as Flash."
+
+## 3. Background: the house ambient recipe, no photography
+
+Replaced the flat black with a low-intensity version of the same
+recipe the artist page's own `.artist-profile-page::before` already
+uses, adapted to stand alone (no photo layer underneath -- this page's
+own brief is explicit that the flash artwork itself is the star and
+must stay uncontested): a vertical gradient from `--color-bg` to
+`--color-surface-inset` (this file's own tokens, both already labeled
+`/* reference --ink */` / `/* reference --wall */` against the exact
+marketing-site values they're derived from -- confirms "the house
+ambient recipe" and the marketing site's own palette are one and the
+same system, not two things to reconcile), two faint gold radial glows
+(~0.06-0.09 opacity, deliberately fainter than the marketing hero's own
+0.10-0.55 range -- "at low intensity" was explicit), and the same
+subtle horizontal side-vignette shape the artist page's overlay uses.
+Fully static CSS, no live filters. Portaled to `document.body` (a
+`<span className="flash-gallery-ambient">`, `position: fixed`) per this
+file's own backdrop-filter/transform containing-block gotcha for
+full-viewport fixed layers -- verified structurally (`getComputedStyle
+(...).position === 'fixed'`, `parentElement.tagName === 'BODY'`), same
+check as the artist page's own ambient rings two sessions ago.
+
+## Verification
+
+Real Playwright browser, dev servers reused (not restarted). Seeded a
+real base64 data-URL avatar (fetched a real photo, stored the way
+`User.avatarUrl` actually is in production) on the existing throwaway
+test artist and a single `Location` on the throwaway test studio, so
+both the grayscale-avatar treatment and the tappable-address line had
+real data to render against rather than just their fallback states.
+
+390px and desktop, English and Spanish, both gallery views:
+
+- Artist-filtered: avatar renders grayscale-ringed with a real photo
+  (not just the fallback initial), "Currently at Iron and Ink Tattoo" /
+  "Actualmente en Iron and Ink Tattoo" + tappable address, title
+  correctly roman/italic in both locales (word order flips in Spanish,
+  the styling role -- first word roman, second italic -- doesn't).
+- Studio-wide: confirmed completely unaffected -- still the studio
+  logo, still `introStudioWide`, only the title/background deltas
+  (shared across both views) show up here.
+- Zero console errors on every genuine anonymous load (checked with
+  `localStorage`/`sessionStorage` cleared first, same false-alarm-
+  avoidance step as every prior session in this file).
+- `tsc -b --noEmit` clean on both apps (re-checked again after
+  `prisma generate` picked up the unrelated `ArtistTransfer` schema
+  Juan's own session pushed to `main` mid-session here), `vite build`
+  clean, API suite 170/170.
+
+Updated screenshot review for Juan:
+https://claude.ai/code/artifact/8d687cb4-f2ac-45e9-be94-5c43b97269a2
+
+Committed and pushed directly to `main`, same as last round.
+
+REPORT.md line count before this entry: 15452 (verified via `git show
+HEAD:REPORT.md | wc -l`) -- pure addition.

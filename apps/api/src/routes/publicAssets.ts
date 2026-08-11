@@ -167,4 +167,24 @@ router.get("/artist-background/:publicSlug", async (req, res) => {
   }
 });
 
+// Flash gallery restyle: a SEPARATE gate from artist-avatar above --
+// deliberately NOT the publishedAt/publicSlug check (that's specific to
+// this artist's own /artist/:publicSlug profile page, a different public
+// flow this artist may never have set up). An artist showing up here at
+// all means /flash-pieces/public already found them via a real AVAILABLE
+// piece at this studio -- their name and pieces are already public
+// through that same response, so serving their avatar image too leaks
+// nothing new. "Existence, not identity, is public here," same as every
+// route in this file, just scoped to flash gallery's own existence
+// condition instead of the profile page's.
+router.get("/flash-artist-avatar/:artistId", async (req, res) => {
+  const artist = await prisma.artist.findUnique({
+    where: { id: req.params.artistId as string },
+    select: { user: { select: { avatarUrl: true } } },
+  });
+  if (!artist?.user.avatarUrl || !serveDataUrl(res, artist.user.avatarUrl)) {
+    res.status(404).end();
+  }
+});
+
 export default router;
