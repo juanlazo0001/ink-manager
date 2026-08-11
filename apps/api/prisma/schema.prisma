@@ -236,6 +236,13 @@ enum InquiryStatus {
   CONFIRMED
   CLOSED_LOST
   COLD_LEAD
+  // Transfer-to-artist epic: this project's client and work state moved to
+  // the artist's new home studio as a fresh Inquiry there. Same shape as
+  // CLOSED_LOST -- a terminal, out-of-pipeline status paired with
+  // out-of-band transferredAt/transferredToStudioId/transferredToInquiryId
+  // fields below, set once by execution and never reopened (unlike
+  // CLOSED_LOST's own reopen route -- a transfer is not reversible).
+  TRANSFERRED
   // Flash gallery: the two statuses a flash-sourced inquiry moves through
   // BEFORE it rejoins the normal pipeline at SCHEDULING (reused as-is once
   // paid -- Part 3, not yet built). Skips ARTIST_ASSIGNED/
@@ -313,6 +320,13 @@ model Studio {
   flashPieces             FlashPiece[]
   artistMemberships       StudioMembership[]
   artistMembershipInvites ArtistMembershipInvite[]
+
+  // Transfer-to-artist epic: this studio as either side of a transfer, or
+  // as the recorded destination on a moved Client/Inquiry.
+  transfersAsOrigin             ArtistTransfer[] @relation("TransferOrigin")
+  transfersAsDestination        ArtistTransfer[] @relation("TransferDestination")
+  clientsTransferredIn          Client[]         @relation("ClientTransferredToStudio")
+  inquiriesTransferredIn        Inquiry[]        @relation("InquiryTransferredToStudio")
 
   // Multi-language public forms, Part 2: studioId is duplicated onto every
   // translation row (see e.g. FlashPieceTranslation's own comment for why),
@@ -506,6 +520,10 @@ model User {
   widgetLayouts             UserWidgetLayout[]
   calendarPreference        UserCalendarPreference?
 
+  initiatedTransfers        ArtistTransfer[]          @relation("TransferInitiatedBy")
+  respondedTransfers        ArtistTransfer[]          @relation("TransferRespondedBy")
+  cancelledTransfers        ArtistTransfer[]          @relation("TransferCancelledBy")
+
   locationId String?
   location   Location? @relation(fields: [locationId], references: [id])
 
@@ -632,6 +650,8 @@ model Artist {
   // ("Solo artist architecture -- Phase 1") for the full investigation this
   // was built from.
   memberships StudioMembership[]
+
+  transfers ArtistTransfer[]
 }
 
 // HOME: the artist's normal, primary studio membership -- every existing
@@ -1031,6 +1051,15 @@ model Client {
   smsConsentGivenAt DateTime?
   smsConsentSource  String?
 
+  // Transfer-to-artist epic: set once execution creates this client's
+  // counterpart at the destination studio -- same exclude-from-list-views
+  // pattern as archivedAt/mergedIntoId above, but (unlike a merge) the
+  // record and its full history stay fully intact and queryable here,
+  // it's just ended. Never cleared; a transfer is not reversible.
+  transferredAt          DateTime?
+  transferredToStudioId  String?
+  transferredToStudio    Studio?    @relation("ClientTransferredToStudio", fields: [transferredToStudioId], references: [id])
+
   appointments      Appointment[]
   inquiries         Inquiry[]
   giftCards         GiftCard[]
@@ -1043,6 +1072,10 @@ model Client {
   // merging into this client); nothing about this client's own fields is
   // affected by having one.
   matchedImportRows ImportRow[]
+  // Transfer-to-artist epic: line items naming this client as either the
+  // origin record being moved or the freshly-created destination record.
+  transferLineItemsAsOrigin      ArtistTransferClient[] @relation("TransferLineItemOriginClient")
+  transferLineItemsAsDestination ArtistTransferClient[] @relation("TransferLineItemDestinationClient")
 
   @@index([studioId])
   @@index([studioId, createdAt])
@@ -1483,6 +1516,101 @@ model DismissedDuplicatePair {
   @@index([studioId])
 }
 
+// Transfer-to-artist epic: a departing artist's client contacts + a fresh
+// open project carrying work state follow them to their new home studio.
+// Everything signed, financial, or note-shaped stays at origin -- the
+// origin Client/Inquiry rows resolve as ended (TRANSFERRED/transferredAt),
+// never deleted, full history intact.
+//
+// Job/line-item split, same shape as ImportBatch/ImportRow above: this is
+// the job (overall status, who initiated/responded/cancelled, when), each
+// ArtistTransferClient is one line item. Execution loops per line item,
+// each wrapped in its own transaction (Part 4) -- @@unique([transferId,
+// originClientId]) below is the resume-safe idempotency key: an
+// interrupted execution just re-runs the loop and skips any row whose
+// outcome is no longer PENDING, same "processedAt as the already-handled
+// marker" convention ImportRow already uses, no separate synthetic key
+// column.
+enum TransferStatus {
+  PENDING_ARTIST
+  ACCEPTED
+  DECLINED
+  CANCELLED_BY_ORIGIN
+  COMPLETED
+}
+
+enum TransferLineItemOutcome {
+  PENDING
+  CREATED
+  // Destination already has a matching contact (existing duplicate-
+  // detection machinery, lib/duplicateDetection.ts) -- creation was
+  // skipped, the standard merge suggestion is left for destination staff.
+  // Never a silent auto-merge.
+  MERGE_FLAGGED
+  FAILED
+}
+
+model ArtistTransfer {
+  id     String         @id @default(cuid())
+  status TransferStatus @default(PENDING_ARTIST)
+
+  createdAt   DateTime  @default(now())
+  respondedAt DateTime?
+  cancelledAt DateTime?
+  completedAt DateTime?
+
+  originStudioId      String
+  originStudio        Studio @relation("TransferOrigin", fields: [originStudioId], references: [id])
+  destinationStudioId String
+  destinationStudio   Studio @relation("TransferDestination", fields: [destinationStudioId], references: [id])
+
+  artistId String
+  artist   Artist @relation(fields: [artistId], references: [id])
+
+  initiatedById String
+  initiatedBy   User   @relation("TransferInitiatedBy", fields: [initiatedById], references: [id])
+
+  // The artist's own User id, set on accept or decline.
+  respondedById String?
+  respondedBy   User?   @relation("TransferRespondedBy", fields: [respondedById], references: [id])
+
+  cancelledById String?
+  cancelledBy   User?   @relation("TransferCancelledBy", fields: [cancelledById], references: [id])
+
+  lineItems ArtistTransferClient[]
+
+  @@index([originStudioId])
+  @@index([destinationStudioId])
+  @@index([artistId])
+  @@index([status])
+}
+
+model ArtistTransferClient {
+  id         String         @id @default(cuid())
+  transferId String
+  transfer   ArtistTransfer @relation(fields: [transferId], references: [id])
+
+  originClientId String
+  originClient   Client  @relation("TransferLineItemOriginClient", fields: [originClientId], references: [id])
+  // The specific open project carrying work state to the destination --
+  // nullable, since a selected client need not have an open project with
+  // this artist.
+  originInquiryId String?
+  originInquiry   Inquiry? @relation("TransferLineItemOriginInquiry", fields: [originInquiryId], references: [id])
+
+  destinationClientId  String?
+  destinationClient    Client?  @relation("TransferLineItemDestinationClient", fields: [destinationClientId], references: [id])
+  destinationInquiryId String?
+  destinationInquiry   Inquiry? @relation("TransferLineItemDestinationInquiry", fields: [destinationInquiryId], references: [id])
+
+  outcome      TransferLineItemOutcome @default(PENDING)
+  errorMessage String?
+  processedAt  DateTime?
+
+  @@unique([transferId, originClientId])
+  @@index([transferId])
+}
+
 model Appointment {
   id              String            @id @default(cuid())
   startTime       DateTime
@@ -1861,6 +1989,21 @@ model Inquiry {
   flashPaidAt                DateTime?
   stripeCheckoutSessionId    String?   @unique
   stripePaymentIntentId      String?
+
+  // Transfer-to-artist epic: paired with InquiryStatus.TRANSFERRED, same
+  // out-of-band-fields-alongside-a-terminal-status shape as
+  // lostAt/lostReason next to CLOSED_LOST. transferredToInquiryId points at
+  // the fresh Inquiry execution created at the destination studio.
+  transferredAt           DateTime?
+  transferredToStudioId   String?
+  transferredToStudio     Studio?   @relation("InquiryTransferredToStudio", fields: [transferredToStudioId], references: [id])
+  transferredToInquiryId  String?   @unique
+  transferredToInquiry    Inquiry?  @relation("InquiryTransferPair", fields: [transferredToInquiryId], references: [id])
+  transferredFromInquiry  Inquiry?  @relation("InquiryTransferPair")
+  // Line items naming this project as either the origin work state being
+  // carried over, or the freshly-created destination project.
+  transferLineItemsAsOrigin      ArtistTransferClient[] @relation("TransferLineItemOriginInquiry")
+  transferLineItemsAsDestination ArtistTransferClient[] @relation("TransferLineItemDestinationInquiry")
 
   @@index([studioId])
   @@index([studioId, status])

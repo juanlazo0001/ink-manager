@@ -15326,3 +15326,127 @@ review-gated branch.
 
 REPORT.md line count before this entry: 15272 (verified via `git show
 HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Transfer-to-artist epic -- Part 1 (schema)
+
+New epic: when an artist leaves a studio, their client contacts and
+in-flight project work should be able to follow them to their new home
+studio, while everything signed, financial, or note-shaped stays behind
+at the origin studio, intact. Five parts total (schema / origin flow /
+artist acceptance / execution / adversarial verification); this session
+was Part 1 only, deliberately solo since it's the one part that touches
+`schema.prisma`. Nothing built this session is wired to any route or
+UI yet -- the feature is completely inert until Part 2+ lands.
+
+## Investigation: how "Transferred" fits existing status modeling
+
+Read the real schema and `apps/api/src/lib/artistAccess.ts` before
+designing anything, specifically to answer this epic's own question of
+whether "Transferred" should widen an existing enum or be new fields:
+
+- **`Client` has no status enum at all.** Its terminal states
+  (`mergedIntoId`, `archivedAt`) are each their own nullable field,
+  excluded from list views by a `WHERE` clause at the query site, not a
+  shared enum. Followed that exact convention: added
+  `transferredAt DateTime?` + `transferredToStudioId String?` to
+  `Client`, no new enum.
+- **`Inquiry` (the "Project") already has a status enum**
+  (`InquiryStatus`) that mixes pipeline stages with terminal outcomes --
+  `CLOSED_LOST` is a real enum value paired with out-of-band
+  `lostReason`/`lostAt`. Added `TRANSFERRED` to `InquiryStatus` on that
+  precedent, paired with `transferredAt` / `transferredToStudioId` /
+  `transferredToInquiryId` (the last one a unique self-relation pointing
+  at the fresh Inquiry Part 4's execution will create at the
+  destination). This status is a one-way door -- unlike `CLOSED_LOST`,
+  there's no `reopen` counterpart, since the epic's design explicitly
+  treats a transfer as irreversible.
+- **Home studio is `Artist.user.studioId`**, re-read fresh, never
+  trusted from the JWT (the entire reason `artistAccess.ts` exists --
+  its own comments document a JWT keeping a stale home for up to 7
+  days). Part 1 doesn't touch `StudioMembership` at all: a transfer
+  only *reads* the artist's already-existing home as the destination,
+  it never creates or ends a membership itself.
+- **Idempotent per-item execution with an overall job status** already
+  has a working template in this codebase: `ImportBatch` (job) +
+  `ImportRow` (line item), executed by a per-row loop with each row in
+  its own `prisma.$transaction`, `processedAt` as the "already handled"
+  marker. No dedicated `idempotencyKey` column exists anywhere in this
+  schema. Followed that precedent for `ArtistTransferClient` rather
+  than inventing a synthetic key column: `@@unique([transferId,
+  originClientId])` is the resume-safe idempotency guarantee (Part 4's
+  execution loop skips any row whose `outcome` is no longer `PENDING`),
+  paired with `processedAt`.
+- **Duplicate detection is live-computed, never persisted as a
+  "suggestion" row** (`lib/duplicateDetection.ts` +
+  `GET /:id/potential-duplicates`; only a *dismissal* is persisted, via
+  `DismissedDuplicatePair`). Part 4 will call this same machinery when
+  creating a destination contact -- no new duplicate-detection schema
+  needed this session. `TransferLineItemOutcome.MERGE_FLAGGED` just
+  means "skipped creation, standard merge suggestion left for
+  destination staff to act on" -- never a silent auto-merge, per the
+  epic's own explicit instruction.
+- **Flagged for Part 4, not resolved this session:** `Inquiry` requires
+  a `serviceId` FK and `Service` is studio-scoped (its own `slug` per
+  studio) -- creating the destination project will need a
+  service-matching strategy at execution time. No schema change needed
+  for it now; just noted so it isn't a surprise later.
+
+## Schema added
+
+`TransferStatus` (`PENDING_ARTIST | ACCEPTED | DECLINED |
+CANCELLED_BY_ORIGIN | COMPLETED`) and `TransferLineItemOutcome`
+(`PENDING | CREATED | MERGE_FLAGGED | FAILED`) enums; `ArtistTransfer`
+(the job: origin/destination studio, artist, initiator, responder,
+canceller, status, four milestone timestamps) and
+`ArtistTransferClient` (the line item: origin client + origin project
+being carried, destination client + destination project once created,
+outcome, error message, processedAt) models. Plus, on existing models:
+`Client.transferredAt`/`transferredToStudioId`;
+`Inquiry.TRANSFERRED` status value +
+`transferredAt`/`transferredToStudioId`/`transferredToInquiryId`; and
+the corresponding back-relations on `Studio`, `User`, and `Artist`. No
+change to `Appointment` -- future-appointment cancellation (Part 4)
+reuses the existing `CANCELLED` status with the reason recorded via
+`AppointmentNote`/`AuditLog`, same as every other uncommon cancellation
+reason today; this epic isn't the one adding a dedicated reason column.
+
+Migration `20260811101702_artist_transfer`, generated the standing way
+-- `prisma migrate diff --from-config-datasource prisma.config.ts
+--to-schema prisma/schema.prisma --script` (stdout and stderr captured
+to separate files this time specifically to avoid the exact
+stray-log-line-in-the-SQL mistake a much earlier session in this file
+hit and had to recover from via `migrate resolve --rolled-back`) then
+`prisma migrate deploy` -- never `migrate dev`. No database reset
+offered or accepted.
+
+## Verification for this part
+
+`prisma validate` clean. Migration applied to the real dev DB with zero
+interactive prompts. `prisma generate` succeeded. A scratch `tsx`
+script (run against the live dev DB, deleted afterward per CLAUDE.md
+end-of-session hygiene -- never committed) round-tripped: created an
+`ArtistTransfer` with one `ArtistTransferClient` line item; confirmed a
+second insert at the same `(transferId, originClientId)` pair is
+rejected with Prisma's `P2002` (the idempotency guarantee actually
+holds, not just assumed); updated the line item's outcome to `CREATED`
+with a `processedAt` stamp; transitioned the transfer to `COMPLETED`;
+deleted both rows, leaving zero residue in the dev DB.
+
+## CLAUDE.md hygiene
+
+`prisma migrate dev` never used -- `migrate diff` + `migrate deploy`
+only, against the dev DB. No database reset offered or accepted. This
+REPORT.md entry is pure addition (line count before this entry: 15328,
+verified via `git show HEAD:REPORT.md | wc -l`). Scratch verification
+script lived only in the session scratchpad and was deleted before
+ending the session -- nothing left in the repo tree. No dev servers or
+background shells were started this session, so there's nothing to
+tear down there either.
+
+## What's next
+
+Part 2 (origin flow, OWNER-only) is a new session's work: eligible-
+artist lookup, the pre-confirm review screen, `PENDING_ARTIST`
+initiation, and cancel-while-pending, all activity-logged. This schema
+is inert until that part (and 3-5 after it) exist -- no route reads or
+writes `ArtistTransfer`/`ArtistTransferClient` yet.
