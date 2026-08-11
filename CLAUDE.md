@@ -47,6 +47,10 @@ Concise operating rules, not a project history — see REPORT.md for history.
   fresh `npm ci` + build passes from that clean state.
 - An uncommitted-but-imported file has broken production twice in this repo's history. A diff
   review is not sufficient on its own — confirm with an actual clean-checkout build.
+- "Typecheck passed" means the **full production build** (`tsc -b && vite build` for `apps/web`,
+  `tsc` for `apps/api`) — not `tsc --noEmit -p .` alone. `--noEmit` on its own has already missed a
+  real error (`ConversationsPanel.tsx`'s separate `Record<Tone, string>` maps needing a new `hold`
+  key) that only the real `vite build` caught, after passing silently all session.
 
 ## Design
 

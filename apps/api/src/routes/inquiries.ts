@@ -1309,7 +1309,7 @@ router.patch("/:id", requireAuth, async (req, res) => {
   const updated = await prisma.inquiry.update({ where: { id }, data, include: INQUIRY_INCLUDE });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: inquiry.studioId,
     actorUserId: req.user!.userId,
     entityType: "Inquiry",
     entityId: id,
@@ -1366,9 +1366,15 @@ router.patch("/:id/assign", requireAuth, async (req, res) => {
   // studio is this," never "does this studio have a live relationship with
   // them," so a solo artist guesting elsewhere was always rejected here
   // even though GET /artists already lists them as assignable.
+  //
+  // Studio-scoping bug fix: checked against the inquiry's own studio, not
+  // req.user!.studioId (the caller's possibly-different HOME studio) -- a
+  // guest-assigned caller acting on a project at their guest studio must
+  // validate the target artist against THAT studio, or a legitimate same-
+  // studio artist gets wrongly rejected.
   const artistBelongsToStudio =
     artist != null &&
-    (artist.user.studioId === req.user!.studioId || (await studioHasActiveMembership(req.user!.studioId, artist.id)));
+    (artist.user.studioId === inquiry.studioId || (await studioHasActiveMembership(inquiry.studioId, artist.id)));
   if (!artistBelongsToStudio) {
     return res.status(400).json({ error: "artistId must belong to your studio" });
   }
@@ -1386,7 +1392,7 @@ router.patch("/:id/assign", requireAuth, async (req, res) => {
   });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: inquiry.studioId,
     actorUserId: req.user!.userId,
     entityType: "Inquiry",
     entityId: id,
@@ -1398,7 +1404,7 @@ router.patch("/:id/assign", requireAuth, async (req, res) => {
     ),
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
+  emitInvalidation({ type: "inquiry.updated", studioId: inquiry.studioId, inquiryId: id });
 
   res.json(updated);
 });
@@ -2029,9 +2035,15 @@ router.post("/:id/schedule", requireAuth, async (req, res) => {
     return res.status(400).json({ error: "This inquiry has no assigned artist" });
   }
 
+  // Studio-scoping bug fix: everything below is scoped to the PROJECT's own
+  // studio, not req.user!.studioId (the caller's possibly-different HOME
+  // studio) -- getting this wrong would look up the wrong studio's deposit
+  // tiers/buffer settings, validate gift cards against the wrong studio,
+  // and (worst of all) create the new Appointment itself under the wrong
+  // studio.
   const [studioSettings, assignedArtist] = await Promise.all([
     prisma.studioSettings.findUnique({
-      where: { studioId: req.user!.studioId },
+      where: { studioId: inquiry.studioId },
       select: { depositTiers: true, schedulingBufferMinutes: true },
     }),
     prisma.artist.findUnique({ where: { id: inquiry.assignedArtistId }, select: { schedulingBufferMinutes: true } }),
@@ -2045,7 +2057,7 @@ router.post("/:id/schedule", requireAuth, async (req, res) => {
 
   const giftCardResult = await validateGiftCardsForAttachment(
     giftCardIds,
-    req.user!.studioId,
+    inquiry.studioId,
     inquiry.clientId,
     requiredCents,
   );
@@ -2062,7 +2074,7 @@ router.post("/:id/schedule", requireAuth, async (req, res) => {
   const appointment = await prisma.$transaction(async (tx) => {
     const created = await tx.appointment.create({
       data: {
-        studioId: req.user!.studioId,
+        studioId: inquiry.studioId,
         artistId: inquiry.assignedArtistId!,
         clientId: inquiry.clientId,
         inquiryId: id,
@@ -2090,7 +2102,7 @@ router.post("/:id/schedule", requireAuth, async (req, res) => {
   });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: inquiry.studioId,
     actorUserId: req.user!.userId,
     entityType: "Inquiry",
     entityId: id,
@@ -2098,8 +2110,8 @@ router.post("/:id/schedule", requireAuth, async (req, res) => {
     changes: diffObjects(inquiry, scheduleData, ["status", "appointmentId"]),
   });
 
-  emitInvalidation({ type: "appointment.changed", studioId: req.user!.studioId });
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
+  emitInvalidation({ type: "appointment.changed", studioId: inquiry.studioId });
+  emitInvalidation({ type: "inquiry.updated", studioId: inquiry.studioId, inquiryId: id });
 
   res.status(201).json({
     ...updated,
@@ -2142,7 +2154,7 @@ router.post("/:id/waitlist", requireAuth, async (req, res) => {
   });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: inquiry.studioId,
     actorUserId: req.user!.userId,
     entityType: "Inquiry",
     entityId: id,
@@ -2150,7 +2162,7 @@ router.post("/:id/waitlist", requireAuth, async (req, res) => {
     changes: diffObjects(inquiry, waitlistData, ["status", "declineNote"]),
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
+  emitInvalidation({ type: "inquiry.updated", studioId: inquiry.studioId, inquiryId: id });
 
   res.json(updated);
 });
@@ -2185,7 +2197,7 @@ router.post("/:id/unwaitlist", requireAuth, async (req, res) => {
   });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: inquiry.studioId,
     actorUserId: req.user!.userId,
     entityType: "Inquiry",
     entityId: id,
@@ -2193,7 +2205,7 @@ router.post("/:id/unwaitlist", requireAuth, async (req, res) => {
     changes: diffObjects(inquiry, unwaitlistData, ["status"]),
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
+  emitInvalidation({ type: "inquiry.updated", studioId: inquiry.studioId, inquiryId: id });
 
   res.json(updated);
 });
@@ -2234,7 +2246,7 @@ router.post("/:id/mark-lost", requireAuth, async (req, res) => {
   const updated = await prisma.inquiry.update({ where: { id }, data: lostData, include: INQUIRY_INCLUDE });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: inquiry.studioId,
     actorUserId: req.user!.userId,
     entityType: "Inquiry",
     entityId: id,
@@ -2242,7 +2254,7 @@ router.post("/:id/mark-lost", requireAuth, async (req, res) => {
     changes: diffObjects(inquiry, lostData, ["status", "lostAt", "lostReason"]),
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
+  emitInvalidation({ type: "inquiry.updated", studioId: inquiry.studioId, inquiryId: id });
 
   res.json(updated);
 });
@@ -2286,7 +2298,7 @@ router.post("/:id/flash/approve", requireAuth, async (req, res) => {
   });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: inquiry.studioId,
     actorUserId: req.user!.userId,
     entityType: "Inquiry",
     entityId: id,
@@ -2294,19 +2306,23 @@ router.post("/:id/flash/approve", requireAuth, async (req, res) => {
     changes: diffObjects(inquiry, { status: InquiryStatus.FLASH_PAYMENT_PENDING }, ["status"]),
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
+  emitInvalidation({ type: "inquiry.updated", studioId: inquiry.studioId, inquiryId: id });
 
   // Best-effort, same convention as the deposit-form/checkout-link sends
   // above -- the token/link is already saved regardless of whether the
   // text goes out, so staff still has paymentUrl to share manually if this
   // skips or fails.
+  //
+  // Studio-scoping bug fix: everything below is scoped to the PROJECT's
+  // own studio, not req.user!.studioId -- wrong studio's name in the SMS,
+  // and a wrong-studio conversation/message, for a guest-assigned caller.
   const paymentUrl = await shortenUrl(`${PUBLIC_APP_URL}/flash-payment/${flashPaymentToken}`);
   let flashPaymentSendResult: Awaited<ReturnType<typeof sendClientSms>> | null = null;
   if (req.body?.autoSend !== false) {
-    const studio = await prisma.studio.findUnique({ where: { id: req.user!.studioId }, select: { name: true } });
-    const conversation = await getOrCreateClientConversation(req.user!.studioId, inquiry.clientId, req.user!.userId);
+    const studio = await prisma.studio.findUnique({ where: { id: inquiry.studioId }, select: { name: true } });
+    const conversation = await getOrCreateClientConversation(inquiry.studioId, inquiry.clientId, req.user!.userId);
     flashPaymentSendResult = await sendClientSms({
-      studioId: req.user!.studioId,
+      studioId: inquiry.studioId,
       clientId: inquiry.clientId,
       conversationId: conversation.conversation.id,
       body: `Hi ${inquiry.client.firstName}, your flash request "${inquiry.flashPiece?.title ?? "your design"}" is approved! Complete payment here to lock in your booking: ${paymentUrl} (expires in ${FLASH_PAYMENT_TOKEN_TTL_HOURS / 24} days)`,
@@ -2380,7 +2396,7 @@ router.post("/:id/flash/decline", requireAuth, async (req, res) => {
   ]);
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: inquiry.studioId,
     actorUserId: req.user!.userId,
     entityType: "Inquiry",
     entityId: id,
@@ -2388,9 +2404,9 @@ router.post("/:id/flash/decline", requireAuth, async (req, res) => {
     changes: diffObjects(inquiry, closedData, ["status", "lostAt", "lostReason"]),
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
+  emitInvalidation({ type: "inquiry.updated", studioId: inquiry.studioId, inquiryId: id });
   if (inquiry.flashPiece?.isOneOfOne) {
-    emitInvalidation({ type: "flash.changed", studioId: req.user!.studioId });
+    emitInvalidation({ type: "flash.changed", studioId: inquiry.studioId });
   }
 
   res.json(updated);
@@ -2427,7 +2443,7 @@ router.post("/:id/reopen", requireAuth, async (req, res) => {
   const updated = await prisma.inquiry.update({ where: { id }, data: reopenData, include: INQUIRY_INCLUDE });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: inquiry.studioId,
     actorUserId: req.user!.userId,
     entityType: "Inquiry",
     entityId: id,
@@ -2435,7 +2451,7 @@ router.post("/:id/reopen", requireAuth, async (req, res) => {
     changes: diffObjects(inquiry, reopenData, ["status", "lostAt", "lostReason"]),
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
+  emitInvalidation({ type: "inquiry.updated", studioId: inquiry.studioId, inquiryId: id });
 
   res.json(updated);
 });
@@ -2571,7 +2587,7 @@ router.post("/:id/mark-good-candidate", requireAuth, async (req, res) => {
   const updated = await prisma.inquiry.update({ where: { id }, data: goodCandidateData, include: INQUIRY_INCLUDE });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: inquiry.studioId,
     actorUserId: req.user!.userId,
     entityType: "Inquiry",
     entityId: id,
@@ -2579,7 +2595,7 @@ router.post("/:id/mark-good-candidate", requireAuth, async (req, res) => {
     changes: diffObjects(inquiry, goodCandidateData, ["status"]),
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
+  emitInvalidation({ type: "inquiry.updated", studioId: inquiry.studioId, inquiryId: id });
 
   res.json(updated);
 });
@@ -2618,7 +2634,7 @@ router.post("/:id/complete-project", requireAuth, async (req, res) => {
   const updated = await prisma.inquiry.update({ where: { id }, data: completeData, include: INQUIRY_INCLUDE });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: inquiry.studioId,
     actorUserId: req.user!.userId,
     entityType: "Inquiry",
     entityId: id,
@@ -2626,7 +2642,7 @@ router.post("/:id/complete-project", requireAuth, async (req, res) => {
     changes: diffObjects(inquiry, completeData, ["projectCompletedAt", "projectCompletedById"]),
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
+  emitInvalidation({ type: "inquiry.updated", studioId: inquiry.studioId, inquiryId: id });
 
   res.json(updated);
 });
@@ -2657,7 +2673,7 @@ router.post("/:id/reopen-project", requireAuth, async (req, res) => {
   const updated = await prisma.inquiry.update({ where: { id }, data: reopenData, include: INQUIRY_INCLUDE });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: inquiry.studioId,
     actorUserId: req.user!.userId,
     entityType: "Inquiry",
     entityId: id,
@@ -2665,7 +2681,7 @@ router.post("/:id/reopen-project", requireAuth, async (req, res) => {
     changes: diffObjects(inquiry, reopenData, ["projectCompletedAt", "projectCompletedById"]),
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
+  emitInvalidation({ type: "inquiry.updated", studioId: inquiry.studioId, inquiryId: id });
 
   res.json(updated);
 });
@@ -2789,7 +2805,7 @@ router.patch(
     });
 
     await logAudit({
-      studioId: req.user!.studioId,
+      studioId: inquiry.studioId,
       actorUserId: req.user!.userId,
       entityType: "DepositForm",
       entityId: updated.id,
@@ -2856,7 +2872,7 @@ router.post("/:id/attach-gift-card", requireAuth, async (req, res) => {
     return res.status(400).json({ error: "This client has already signed a deposit form for this inquiry" });
   }
 
-  const giftCardResult = await validateGiftCardForAttachment(giftCardId, req.user!.studioId, inquiry.clientId);
+  const giftCardResult = await validateGiftCardForAttachment(giftCardId, inquiry.studioId, inquiry.clientId);
   if ("error" in giftCardResult) {
     return res.status(400).json({ error: giftCardResult.error });
   }
@@ -2869,7 +2885,7 @@ router.post("/:id/attach-gift-card", requireAuth, async (req, res) => {
   });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: inquiry.studioId,
     actorUserId: req.user!.userId,
     entityType: "Inquiry",
     entityId: id,
@@ -2881,7 +2897,7 @@ router.post("/:id/attach-gift-card", requireAuth, async (req, res) => {
     },
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
+  emitInvalidation({ type: "inquiry.updated", studioId: inquiry.studioId, inquiryId: id });
 
   res.json(updated);
 });
@@ -3332,7 +3348,7 @@ router.patch("/:id/notes/:noteId", requireAuth, async (req, res) => {
   });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: note.studioId,
     actorUserId: req.user!.userId,
     entityType: "InquiryNote",
     entityId: noteId,
@@ -3340,7 +3356,7 @@ router.patch("/:id/notes/:noteId", requireAuth, async (req, res) => {
     changes: diffObjects(note, { bodyHtml: trimmed }, ["bodyHtml"]),
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
+  emitInvalidation({ type: "inquiry.updated", studioId: note.studioId, inquiryId: id });
 
   res.json(updated);
 });
@@ -3366,7 +3382,7 @@ router.delete("/:id/notes/:noteId", requireAuth, async (req, res) => {
   await prisma.inquiryNote.delete({ where: { id: noteId } });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: note.studioId,
     actorUserId: req.user!.userId,
     entityType: "InquiryNote",
     entityId: noteId,
@@ -3374,7 +3390,7 @@ router.delete("/:id/notes/:noteId", requireAuth, async (req, res) => {
     changes: { inquiryId: id, deletedBodyHtml: note.bodyHtml },
   });
 
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId, inquiryId: id });
+  emitInvalidation({ type: "inquiry.updated", studioId: note.studioId, inquiryId: id });
 
   res.json({ success: true });
 });

@@ -882,10 +882,13 @@ router.get("/:id/potential-duplicates", async (req, res) => {
     return res.status(403).json({ error: "Forbidden" });
   }
 
+  // Studio-scoping bug fix: scoped to the CLIENT's own studio, not
+  // req.user!.studioId (the caller's possibly-different HOME studio) --
+  // same class fixed elsewhere in this file.
   const [candidates, dismissedPairs] = await Promise.all([
-    findStudioClientsForMatching(req.user!.studioId, id),
+    findStudioClientsForMatching(client.studioId, id),
     prisma.dismissedDuplicatePair.findMany({
-      where: { studioId: req.user!.studioId, OR: [{ clientAId: id }, { clientBId: id }] },
+      where: { studioId: client.studioId, OR: [{ clientAId: id }, { clientBId: id }] },
     }),
   ]);
 
@@ -1100,7 +1103,7 @@ router.post("/:id/phones", async (req, res) => {
   }
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: client.studioId,
     actorUserId: req.user!.userId,
     entityType: "Client",
     entityId: id,
@@ -1108,7 +1111,7 @@ router.post("/:id/phones", async (req, res) => {
     changes: { phone: normalized, label: label || null },
   });
 
-  emitInvalidation({ type: "client.updated", studioId: req.user!.studioId, clientId: id });
+  emitInvalidation({ type: "client.updated", studioId: client.studioId, clientId: id });
 
   res.status(201).json(created);
 });
@@ -1144,7 +1147,7 @@ router.delete("/:id/phones/:phoneId", async (req, res) => {
   }
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: client.studioId,
     actorUserId: req.user!.userId,
     entityType: "Client",
     entityId: id,
@@ -1152,7 +1155,7 @@ router.delete("/:id/phones/:phoneId", async (req, res) => {
     changes: { phone: target.phone, wasPrimary: target.isPrimary },
   });
 
-  emitInvalidation({ type: "client.updated", studioId: req.user!.studioId, clientId: id });
+  emitInvalidation({ type: "client.updated", studioId: client.studioId, clientId: id });
 
   res.status(204).end();
 });
@@ -1181,7 +1184,7 @@ router.post("/:id/phones/:phoneId/make-primary", async (req, res) => {
     });
 
     await logAudit({
-      studioId: req.user!.studioId,
+      studioId: client.studioId,
       actorUserId: req.user!.userId,
       entityType: "Client",
       entityId: id,
@@ -1189,7 +1192,7 @@ router.post("/:id/phones/:phoneId/make-primary", async (req, res) => {
       changes: { phone: target.phone },
     });
 
-    emitInvalidation({ type: "client.updated", studioId: req.user!.studioId, clientId: id });
+    emitInvalidation({ type: "client.updated", studioId: client.studioId, clientId: id });
   }
 
   const updatedClient = await prisma.client.findUnique({ where: { id } });
@@ -1229,7 +1232,7 @@ router.post("/:id/emails", async (req, res) => {
   }
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: client.studioId,
     actorUserId: req.user!.userId,
     entityType: "Client",
     entityId: id,
@@ -1237,7 +1240,7 @@ router.post("/:id/emails", async (req, res) => {
     changes: { email: normalized, label: label || null },
   });
 
-  emitInvalidation({ type: "client.updated", studioId: req.user!.studioId, clientId: id });
+  emitInvalidation({ type: "client.updated", studioId: client.studioId, clientId: id });
 
   res.status(201).json(created);
 });
@@ -1273,7 +1276,7 @@ router.delete("/:id/emails/:emailId", async (req, res) => {
   }
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: client.studioId,
     actorUserId: req.user!.userId,
     entityType: "Client",
     entityId: id,
@@ -1281,7 +1284,7 @@ router.delete("/:id/emails/:emailId", async (req, res) => {
     changes: { email: target.email, wasPrimary: target.isPrimary },
   });
 
-  emitInvalidation({ type: "client.updated", studioId: req.user!.studioId, clientId: id });
+  emitInvalidation({ type: "client.updated", studioId: client.studioId, clientId: id });
 
   res.status(204).end();
 });
@@ -1310,7 +1313,7 @@ router.post("/:id/emails/:emailId/make-primary", async (req, res) => {
     });
 
     await logAudit({
-      studioId: req.user!.studioId,
+      studioId: client.studioId,
       actorUserId: req.user!.userId,
       entityType: "Client",
       entityId: id,
@@ -1318,7 +1321,7 @@ router.post("/:id/emails/:emailId/make-primary", async (req, res) => {
       changes: { email: target.email },
     });
 
-    emitInvalidation({ type: "client.updated", studioId: req.user!.studioId, clientId: id });
+    emitInvalidation({ type: "client.updated", studioId: client.studioId, clientId: id });
   }
 
   const updatedClient = await prisma.client.findUnique({ where: { id } });
@@ -1411,7 +1414,7 @@ router.post("/:id/archive", async (req, res) => {
   const updated = await prisma.client.update({ where: { id }, data: { archivedAt: new Date() } });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: client.studioId,
     actorUserId: req.user!.userId,
     entityType: "Client",
     entityId: id,
@@ -1419,7 +1422,7 @@ router.post("/:id/archive", async (req, res) => {
     changes: { archivedAt: updated.archivedAt },
   });
 
-  emitInvalidation({ type: "client.updated", studioId: req.user!.studioId, clientId: id });
+  emitInvalidation({ type: "client.updated", studioId: client.studioId, clientId: id });
 
   res.json(updated);
 });
@@ -1443,7 +1446,7 @@ router.post("/:id/unarchive", async (req, res) => {
   const updated = await prisma.client.update({ where: { id }, data: { archivedAt: null } });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: client.studioId,
     actorUserId: req.user!.userId,
     entityType: "Client",
     entityId: id,
@@ -1451,7 +1454,7 @@ router.post("/:id/unarchive", async (req, res) => {
     changes: { archivedAt: null },
   });
 
-  emitInvalidation({ type: "client.updated", studioId: req.user!.studioId, clientId: id });
+  emitInvalidation({ type: "client.updated", studioId: client.studioId, clientId: id });
 
   res.json(updated);
 });
@@ -1581,7 +1584,7 @@ router.delete("/:id", requireRole(Role.OWNER), async (req, res) => {
   });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: client.studioId,
     actorUserId: req.user!.userId,
     entityType: "Client",
     entityId: id,
@@ -1592,8 +1595,8 @@ router.delete("/:id", requireRole(Role.OWNER), async (req, res) => {
   // Deletes every inquiry this client had too (see the transaction above),
   // so the Inquiries list/Kanban board needs to drop them live as well, not
   // just the client list.
-  emitInvalidation({ type: "client.updated", studioId: req.user!.studioId, clientId: id });
-  emitInvalidation({ type: "inquiry.updated", studioId: req.user!.studioId });
+  emitInvalidation({ type: "client.updated", studioId: client.studioId, clientId: id });
+  emitInvalidation({ type: "inquiry.updated", studioId: client.studioId });
 
   res.json({ success: true });
 });

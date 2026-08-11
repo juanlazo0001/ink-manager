@@ -709,14 +709,16 @@ staffRouter.post(
     // draft" flow opt out, same as the estimate/deposit-form send routes.
     let sendResult: Awaited<ReturnType<typeof sendClientSms>> | null = null;
     if (req.body?.autoSend !== false) {
-      const studio = await prisma.studio.findUnique({ where: { id: req.user!.studioId }, select: { name: true } });
+      // Studio-scoping bug fix: scoped to the deposit form's own inquiry's
+      // studio, not req.user!.studioId -- same class fixed elsewhere.
+      const studio = await prisma.studio.findUnique({ where: { id: depositForm.inquiry.studioId }, select: { name: true } });
       const conversation = await getOrCreateClientConversation(
-        req.user!.studioId,
+        depositForm.inquiry.studioId,
         depositForm.inquiry.clientId,
         req.user!.userId,
       );
       sendResult = await sendClientSms({
-        studioId: req.user!.studioId,
+        studioId: depositForm.inquiry.studioId,
         clientId: depositForm.inquiry.clientId,
         conversationId: conversation.conversation.id,
         body: `Hi ${depositForm.inquiry.client.firstName}, here's your payment link to complete your deposit for ${studio?.name ?? "our studio"}: ${result.url}`,
