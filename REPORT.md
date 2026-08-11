@@ -17212,3 +17212,45 @@ and live observation of a realtime socket event actually arriving
 client-side (verified by code review, not watched happen). Both are
 good candidates for a short, focused follow-up session once the shared
 dev environment is free.
+
+# Prepay + On-Hold epic: merged to main, deploy confirmed
+
+Merge sequence, in order: merged `main` into `session/prepay-onhold`
+(resolved REPORT.md's append-only conflict by concatenating both
+sides -- nothing dropped, both parents' unique content fully present in
+17214 lines). Full production build caught a real gap the session's own
+narrower `tsc --noEmit -p .` checks had missed all session:
+`ConversationsPanel.tsx`'s own `TONE_RING_CLASSES`/`TONE_RING_COLORS`
+(the conversation-list avatar-ring colors, a *separate* pair of
+`Record<Tone, string>` maps from StatusPill's three) never got the
+`hold` tone added in Part 3 -- `tsc -b && vite build` (the actual
+Railway build command) caught it; the flatter `--noEmit -p .` invocation
+this session had been trusting throughout apparently doesn't check
+every project reference the real build does. Fixed, rebuilt clean,
+committed (`790dfac`).
+
+API suite 170/170 against the fully-merged tree; `tsc -b` and `vite
+build` both clean on the actual production build commands (not just
+`--noEmit`) for both apps.
+
+Pushed `session/prepay-onhold` to origin, then fast-forwarded `main` to
+the same commit (`git push origin session/prepay-onhold:main` --
+`main` was still exactly at the commit this branch had already merged
+in, confirmed via `merge-base --is-ancestor` immediately before
+pushing, so this was a genuine fast-forward, not a forced rewrite).
+
+**Railway, confirmed healthy post-deploy**: `api.inkmanager.app/health`
+and `web.inkmanager.app` both `200` before and after the push (no
+downtime observed). Waited for the auto-deploy-on-push build to finish,
+then confirmed the NEW code specifically -- not just that the service
+stayed up -- by hitting the new `POST /inquiries/:id/hold` and
+`/:id/release` routes unauthenticated: both correctly returned `401`
+(route exists, auth required) rather than `404` (route missing), proof
+the deploy actually picked up this merge's backend changes rather than
+still serving the pre-merge build.
+
+All four parts of the Prepay + On-Hold epic, plus the pre-merge
+Session-Plan linkage fix, are now live on `main` and in production.
+Carried forward, not addressed here (deliberately out of scope for this
+merge, per instruction): the `mark-lost`/`reopen` wrong-studio
+audit-log/`emitInvalidation` bug flagged in Part 3.
