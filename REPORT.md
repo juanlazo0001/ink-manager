@@ -16404,3 +16404,140 @@ execution kill test (this session simulated resume via pre-seeded
 partial state, not an actual process kill), and everything else on the
 epic's own Part 5 checklist. A screenshot-backed evidence report is
 explicitly called for there.
+
+# Transfer-to-artist epic -- Part 5 (adversarial verification)
+
+Parts 1-4 built the feature; Part 5 is a hostile read of it -- every
+claim on the epic's own Part 5 checklist checked against a live dev
+database and live HTTP calls, not assumed from the code that made it.
+No new feature surface this part, one real product bug found and fixed
+along the way, and one bug in this session's own first test query
+(documented rather than quietly rewritten).
+
+Evidence report (full findings, a permissions matrix, and the
+transparency note on the test-script bug):
+https://claude.ai/code/artifact/c7d08107-f2e1-4a03-a576-8befdaf8cdcf
+
+## What got checked
+
+1. **Full live happy path, documents/financials/notes isolation.** Built
+   a client with a signed `LiabilityWaiver`, a paid `DepositForm`, and
+   an internal `InquiryNote` at origin, ran a real accept. Zero of any
+   of the three exist at destination (direct counts); all three
+   confirmed unchanged at origin. Raw HTTP, authenticated as the
+   *destination* studio's own OWNER: `GET /waivers/:originWaiverId` ->
+   404, `GET /deposit-forms/:originDepositId/pdf` -> 403 -- confirmed
+   the record-scoping on both of those pre-existing routes correctly
+   blocks a studio with no relationship to the record, exactly as
+   designed, not something this epic had to add.
+2. **Duplicate case.** Pre-seeded a destination client sharing phone +
+   email with the transferring client. Outcome `MERGE_FLAGGED`, exactly
+   one client row at destination with that phone (id-confirmed as the
+   pre-existing one), new project attached to it rather than a second
+   identity.
+3. **Appointments.** Future `CONFIRMED` appointment -> `CANCELLED` with
+   a visible note; a past `COMPLETED` one on the same client/artist
+   untouched.
+4. **Permissions, real HTTP.** FRONT_DESK 403 on initiate; the
+   transferring artist's own token 403 on initiating their own transfer
+   (new this part -- Part 2 only ever tested FRONT_DESK); a different,
+   unrelated artist 404 on accept (never 403 -- doesn't reveal the
+   transfer exists to someone it isn't theirs); origin cancel-while-
+   pending and artist decline both confirmed to move nothing
+   (`transferredAt` stays null, zero projects created at destination).
+5. **Interrupted-execution resume -- the real thing this time.** Part
+   4's own verification pre-seeded partial state to stand in for a
+   crash. This pass went further: a temporary, data-gated `throw` was
+   placed directly in `executeArtistTransfer`'s loop (fires only for a
+   client literally named `"PART5CRASHTEST"`, so it's inert against
+   anything the other concurrent session in this repo might be doing),
+   run against the *already-running shared dev server* without
+   restarting it. A real accept call genuinely 500'd. Read the DB
+   immediately after: transfer still `ACCEPTED`, client 1's line item
+   `CREATED`, client 2's still `PENDING` -- an actual crash mid-batch,
+   not a simulation. Reverted the throw (diffed against `HEAD` after to
+   confirm zero trace), let the dev server's own file-watcher pick up
+   the clean code, then called accept again: `200`, `COMPLETED`, only
+   the one still-pending line item touched, client 1's row byte-for-byte
+   unchanged. My own first duplicate-count check here was wrong -- it
+   counted clients by name with no studio filter, so it "found" the
+   (correctly) same-named origin and destination rows as two duplicates.
+   Re-scoped to `studioId`, the real count is one. Fixed the test, not
+   the product, and said so in the evidence report rather than silently
+   rewriting the number.
+6. **Eligibility.** Re-confirmed already-left succeeds, still-home and
+   no-active-home-anywhere both blocked with their own distinct,
+   specific messages.
+7. **Activity log at both ends -- a real gap, fixed.** Every audit row
+   Parts 2-4 wrote was origin-studio-only. Destination staff had zero
+   activity-log explanation for a client/project suddenly appearing in
+   their own studio. Fixed:
+   `apps/api/src/lib/artistTransferExecution.ts` now writes a second row
+   at `destinationStudioId` (`entityType: "Client"`, `action:
+   "arrived_via_transfer"`) alongside the existing origin-side
+   `"transferred"` row, right after execution's per-client transaction
+   commits. Confirmed both rows exist after a live run. Also reviewed
+   every route this epic added against CLAUDE.md's own rule (never
+   trust a stale ARTIST-token studio claim): the artist-facing routes
+   resolve identity via a fresh `Artist.findUnique` lookup, never a JWT
+   claim -- correct by construction, the strongest case here. The
+   OWNER-facing routes use the same bare-equality studio check
+   `studios.ts`'s own precedent already uses; that pattern's
+   theoretical staleness window (a solo OWNER-with-Artist-profile whose
+   home moved without a fresh token) applies equally to code this epic
+   never touched -- refactoring it here would've been scope creep
+   dressed as a fix. Documented in the evidence report, not silently
+   skipped.
+
+## Verification
+
+`tsc -b --noEmit` clean on the API throughout, including with the
+temporary crash-injection code present (before it was reverted).
+
+32 Part 5 assertions across four scenarios (E: happy path/isolation, F:
+permissions, G: eligibility, plus the standalone kill/resume pass), all
+passing -- full breakdown, including the corrected test bug, in the
+evidence report linked above. Combined with Part 4's own 25, this
+epic's execution engine has 57 real HTTP/DB assertions behind it across
+the two sessions.
+
+Browser walkthrough via Playwright was attempted again (fourth time --
+Parts 2, 3, 4, and now 5) and the shared `ms-playwright-mcp` profile was
+still locked by the other concurrent session, confirmed still active
+via commits landing on `main` mid-session in prior parts. Every finding
+above is backed by real HTTP responses and direct database reads
+instead, which is a stronger correctness signal than a screenshot would
+be -- but the epic explicitly asks for screenshots and none exist yet.
+Flagged plainly in the evidence report's own "known gaps" section
+rather than glossed over.
+
+## CLAUDE.md hygiene
+
+No schema touched. No database reset offered or accepted. Every
+throwaway verification script (three separate ones across this part:
+the E/F/G scenario script, the kill-test setup/trigger/verify/resume/
+cleanup scripts, and a small re-check script that caught my own test
+bug) lived temporarily inside `apps/api/` and was deleted immediately
+after use -- confirmed via `git status` showing no trace before this
+commit. The one temporary product-code change (the crash-injection
+hook in `artistTransferExecution.ts`) was reverted in the same sitting
+and diffed against the working tree to confirm zero residue before the
+real fix (the destination audit log) was committed. REPORT.md line
+count before this entry: 16406 (verified via `git show HEAD:REPORT.md
+| wc -l`) -- pure addition. No dev servers were started by this
+session (the shared one was already running); it was never restarted
+or killed, even during the crash-injection test, specifically so as not
+to disrupt the other concurrent session's own work.
+
+## Epic status
+
+All five parts of the Transfer-to-artist epic are now built and
+adversarially verified: schema (Part 1), origin flow (Part 2), artist
+acceptance (Part 3), execution (Part 4), and this verification pass
+(Part 5). Two open items carry forward, both explicitly flagged rather
+than hidden: a live browser screenshot walkthrough (blocked by
+environment contention across four sessions, not attempted-and-failed),
+and live observation of a realtime socket event actually arriving
+client-side (verified by code review, not watched happen). Both are
+good candidates for a short, focused follow-up session once the shared
+dev environment is free.

@@ -256,6 +256,27 @@ async function processLineItem(
       },
     });
 
+    // Adversarial-review fix (Part 5): the row above is origin-only, by
+    // this file's own established "one row, other studio folded into
+    // changes" convention for a single cross-studio ACTION (matches
+    // Part 3's accept/decline). But client/project creation is a second,
+    // genuinely distinct, destination-scoped mutation -- without this,
+    // destination staff had no activity-log explanation at all for why an
+    // unfamiliar client/project just appeared in their own studio.
+    await logAudit({
+      studioId: transfer.destinationStudioId,
+      actorUserId: transfer.respondedById,
+      entityType: "Client",
+      entityId: txResult.destinationClientId,
+      action: "arrived_via_transfer",
+      changes: {
+        originStudioId: transfer.originStudioId,
+        originClientId: originClient.id,
+        destinationInquiryId: txResult.destinationInquiryId,
+        outcome: txResult.outcome,
+      },
+    });
+
     return { ...base, outcome: txResult.outcome, destinationClientId: txResult.destinationClientId, destinationInquiryId: txResult.destinationInquiryId, cancelledAppointmentCount: txResult.cancelledAppointmentCount };
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : "Unknown error";
