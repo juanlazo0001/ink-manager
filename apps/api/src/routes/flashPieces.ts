@@ -12,6 +12,7 @@ import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
 import { studioHasActiveMembership, activeStudioIdsForCaller, effectiveRoleAt, hasProfileDelegationAt } from "../lib/artistAccess";
 import { withLocale } from "../lib/contentTranslation";
 import { isSupportedLocale, parseAcceptLanguage } from "../lib/locale";
+import { API_PUBLIC_URL } from "../lib/publicUrl";
 
 const router = Router();
 
@@ -63,20 +64,27 @@ function parseFlashPieceTranslations(
   return { ok: true, value: result };
 }
 
-// Public: one artist's available flash pieces -- studio + artist scoped,
-// same two-segment shape as the existing /inquiry/:studioSlug public
-// convention. Repeatable pieces (isOneOfOne: false) always show while
+// Public: a studio's available flash pieces -- either one artist's (the
+// original two-segment /flash/:studioSlug/:artistId shape) or, when
+// artistId is omitted, every artist's at that studio (the studio-wide
+// gallery view). Repeatable pieces (isOneOfOne: false) always show while
 // AVAILABLE; a one-of-one piece disappears the instant someone requests it
 // (status moves to PENDING_APPROVAL, see POST /:id/request below) and
 // never reappears once RETIRED or BOOKED -- this query is naturally
 // correct for all of that just by filtering on AVAILABLE, no separate
-// isOneOfOne branching needed.
+// isOneOfOne branching needed. FlashPiece.studioId is its own field
+// (independent of the artist's home studio), so the studio-wide query
+// below correctly picks up guest artists' pieces uploaded at this studio
+// too, not just home-artist ones.
 router.get("/public", async (req, res) => {
   const studioSlug = req.query.studioSlug;
   const artistId = req.query.artistId;
 
-  if (typeof studioSlug !== "string" || !studioSlug || typeof artistId !== "string" || !artistId) {
-    return res.status(400).json({ error: "studioSlug and artistId are required" });
+  if (typeof studioSlug !== "string" || !studioSlug) {
+    return res.status(400).json({ error: "studioSlug is required" });
+  }
+  if (artistId !== undefined && (typeof artistId !== "string" || !artistId)) {
+    return res.status(400).json({ error: "artistId, if provided, must be a non-empty string" });
   }
 
   const studio = await prisma.studio.findUnique({
@@ -87,13 +95,17 @@ router.get("/public", async (req, res) => {
     return res.status(404).json({ error: "Studio not found" });
   }
 
-  const artist = await prisma.artist.findUnique({ where: { id: artistId }, include: { user: true } });
-  // Artist mobility bug fix: a guest artist's public gallery page at their
-  // GUEST studio was 404ing (their user.studioId is only ever their HOME).
-  const artistBelongsToStudio =
-    artist != null && (artist.user.studioId === studio.id || (await studioHasActiveMembership(studio.id, artist.id)));
-  if (!artistBelongsToStudio) {
-    return res.status(404).json({ error: "Artist not found" });
+  let artist: { id: string; user: { name: string | null; avatarUrl: string | null } } | null = null;
+  if (artistId) {
+    const found = await prisma.artist.findUnique({ where: { id: artistId }, include: { user: true } });
+    // Artist mobility bug fix: a guest artist's public gallery page at their
+    // GUEST studio was 404ing (their user.studioId is only ever their HOME).
+    const artistBelongsToStudio =
+      found != null && (found.user.studioId === studio.id || (await studioHasActiveMembership(studio.id, found.id)));
+    if (!artistBelongsToStudio) {
+      return res.status(404).json({ error: "Artist not found" });
+    }
+    artist = found;
   }
 
   // Language becomes customer-specific: this is the purely-anonymous
@@ -102,7 +114,7 @@ router.get("/public", async (req, res) => {
   const locale = parseAcceptLanguage(req.headers["accept-language"]);
 
   const pieces = await prisma.flashPiece.findMany({
-    where: { studioId: studio.id, artistId, status: FlashPieceStatus.AVAILABLE },
+    where: { studioId: studio.id, ...(artist ? { artistId: artist.id } : {}), status: FlashPieceStatus.AVAILABLE },
     select: {
       id: true,
       imageUrl: true,
@@ -122,15 +134,27 @@ router.get("/public", async (req, res) => {
     return rest;
   });
 
+  // publicAssets' own studio-logo/studio-icon-logo routes proxy the
+  // actual stored data: URL (see that file's own comment) -- never send
+  // Studio.logoUrl/iconLogo directly, same "existence, not identity, is
+  // public here" convention as every other public-page image URL in this
+  // codebase. Icon mark preferred (small header lockup) with the full
+  // wordmark as fallback.
+  const studioLogoUrl = studio.iconLogo
+    ? `${API_PUBLIC_URL}/public-assets/studio-icon-logo/${studio.slug}`
+    : studio.logoUrl
+      ? `${API_PUBLIC_URL}/public-assets/studio-logo/${studio.slug}`
+      : null;
+
   res.json({
     resolvedLocale: locale,
     studioName: studio.name,
     studioSlug: studio.slug,
-    studioLogoUrl: studio.logoUrl,
+    studioLogoUrl,
     themePreset: studio.settings?.themePreset ?? DEFAULT_THEME_PRESET,
-    artistId: artist.id,
-    artistName: artist.user.name ?? "this artist",
-    artistAvatarUrl: artist.user.avatarUrl,
+    artistId: artist?.id ?? null,
+    artistName: artist?.user.name ?? null,
+    artistAvatarUrl: artist?.user.avatarUrl ?? null,
     pieces: localizedPieces,
   });
 });

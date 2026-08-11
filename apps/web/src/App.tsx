@@ -144,6 +144,7 @@ function AppRoutes() {
         <Route path="/inquiry/:studioSlug" element={<IntakeForm />} />
         <Route path="/inquiry/:studioSlug/:formSlug" element={<IntakeForm />} />
         <Route path="/flash/:studioSlug/:artistId" element={<FlashPublicGallery />} />
+        <Route path="/flash/:studioSlug" element={<FlashPublicGallery />} />
         <Route path="/artist/:publicSlug" element={<ArtistPublicPage />} />
         <Route path="/policies/:studioSlug" element={<Policies />} />
         {/* No React routes for bare /privacy and /terms anymore -- Ink

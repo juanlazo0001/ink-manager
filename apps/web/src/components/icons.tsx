@@ -345,6 +345,25 @@ export function ClockIcon({ className }: IconProps) {
   )
 }
 
+export function CalendarIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <rect x="2.5" y="4" width="15" height="13.5" rx="2" />
+      <path d="M2.5 8h15" strokeLinecap="round" />
+      <path d="M6.5 2.5v3M13.5 2.5v3" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+export function ShieldIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <path d="M10 2.5 16.5 5v5c0 4.2-2.8 6.8-6.5 7.5-3.7-.7-6.5-3.3-6.5-7.5V5L10 2.5Z" strokeLinejoin="round" />
+      <path d="M7.25 9.75 9.25 11.75 12.75 8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 // Loading spinner -- pair with Tailwind's animate-spin utility at the call
 // site (e.g. className="h-4 w-4 animate-spin").
 export function SpinnerIcon({ className }: IconProps) {
