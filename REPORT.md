@@ -14216,3 +14216,65 @@ any merge to `main`.
 
 REPORT.md line count before this entry: 14106 (verified via `git show
 HEAD:REPORT.md | wc -l`) — pure addition.
+
+# Status audit: three recent builds, ground truth from git + REPORT.md + live state
+
+Cross-branch audit of the public-journey-restyle, flash-governance, and
+artist-page-v2 efforts, established from `git log`/`git branch -r`/live
+`prisma migrate status` and REPORT.md content on `origin/main` -- not from
+conversational memory. Full findings delivered directly to Juan; this
+entry records the ground truth and the cleanup actions taken as a result,
+for anyone who reads this file later without that conversation.
+
+## Findings
+
+1. **Intake/estimate restyle** (`explore/public-journey-restyle`): built
+   and verified (bilingual, all 8 custom intake field types, 6 estimate
+   states, 161/161 API tests), correctly still unmerged -- was local-only
+   until this session pushed it to `origin` as a backup (no PR, no merge;
+   see "Actions taken" below).
+2. **Flash governance split**: confirmed **not implemented anywhere** in
+   git history despite sounding like a plausible candidate for
+   already-done work -- the closest relative is the Permission-context
+   fix Part 4 session, which explicitly considered swapping staff's
+   flash-piece-edit gate onto the delegation toggle and declined to,
+   flagging it as a decision for later rather than making it unilaterally.
+   That "later" is this session -- see the next entry.
+3. **Artist-page-v2** (`explore/artist-page-v2`): both commits
+   (`b85a3b8`, `08f86c5`) are confirmed **merged into and are the current
+   tip of `origin/main`**, despite both of that branch's own REPORT.md
+   entries explicitly stating "stays on `explore/artist-page-v2` awaiting
+   Juan's visual approval before any merge." The approval gate was not
+   honored. Flagged to Juan directly; no corrective action taken here
+   (revert-or-keep is his call, not this session's).
+   - Side effect this audit caught and fixed: that branch's own
+     `Studio.iconLogo` (unrelated small-studio-card-mark feature, not the
+     AI-logo-generation feature scrapped earlier this session) shares a
+     migration name/timestamp with the scrapped feature's own migration,
+     by coincidence of both being written the same session against the
+     same shared dev database. Rolling back the scrapped feature had
+     dropped the column `main` now expects. Reapplied the migration from
+     the `ink-manager-w-artist-page-v2` worktree; `prisma migrate status`
+     confirms the shared dev database matches `main` again.
+
+## Actions taken (explicitly directed, this session)
+
+- `git push -u origin explore/public-journey-restyle` -- backup only, no
+  PR opened, no merge. Local-only commits on a single machine were flagged
+  as a real risk; this closes it without touching the approval gate.
+- Stopped two leftover dev API servers found still listening:
+  - Port 4000 (this worktree) -- routine.
+  - **Port 4001, the `ink-manager-w-artist-page-v2` worktree's own
+    assigned port** -- still live at audit time despite that session's own
+    REPORT.md entry claiming "both dev servers stopped and ports confirmed
+    free." Noting for the record: that cleanup claim did not hold: either
+    the server was restarted by something after that entry was written, or
+    the claim was inaccurate at the time. Not investigated further; just
+    stopped now.
+- Left the `ink-manager-w-artist-page-v2` worktree, its branch, and every
+  other flagged-but-merged branch in place, untouched, pending Juan's
+  review verdicts -- per explicit instruction not to clean up anything
+  whose disposition is still an open question.
+
+REPORT.md line count before this entry: 14218 (verified via `git show
+HEAD:REPORT.md | wc -l`) -- pure addition.
