@@ -16646,3 +16646,183 @@ files, purely to confirm nothing about the live-testing session itself
 
 All four parts of the epic are now committed and pushed to
 `session/prepay-onhold`.
+
+# Pre-merge: Session-Plan/DepositForm linkage bug fix
+
+Before merging, checked ground truth on whether a specific bug fix the
+user described (a paid deposit invisible to the Session Plan widget;
+Send Deposit Form staying actionable for an already-paid session) was
+already on `main`. It was not -- searched `main`'s REPORT.md, `git log`
+on `main` and every local branch, and the current `generateAndSendDepositForm`
+code itself; found no matching fix anywhere. Per instruction, built it
+as part of this pass instead of merging on top of the unfixed bug.
+
+## Investigation -- exact mechanism, confirmed live before writing any fix
+
+The Deposit widget (`inquiry.depositForms`, a flat list) and the Session
+Plan widget (`plannedSessions[].depositForm`, a per-session FK relation)
+derive their state from two different places that are supposed to stay
+in sync via `PlannedSession.depositFormId`. Set up a real repro against
+this worktree's own dev API (not simulated): a fresh inquiry, sent an
+**un-planned** deposit form (`POST /inquiries/:id/deposit-form`, no
+`plannedSessionId` -- the only way a deposit form can exist before any
+session plan does), signed it, paid it. Then called
+`POST /:id/revise-estimate` declaring a 2-session plan for the same
+inquiry. Result: the new `PlannedSession` row for session 1 had
+`depositFormId: null` and `depositForm: null`, despite a real, signed,
+paid `DepositForm{sessionNumber: 1}` already existing on the same
+inquiry -- confirmed via the raw API response, not assumed.
+
+**Root cause, and where it actually lives**: reconciling `PlannedSession`
+rows against a revised/declared plan never looks up whether a matching
+`DepositForm` already exists for that `sessionNumber` before minting or
+touching a row -- it only trusts whichever FK was already stored. This
+logic is **duplicated in two independent places** (a real, pre-existing
+DRY violation, not something introduced by this session):
+- `lib/estimates.ts`'s `reconcilePlannedSessions` (used by
+  `POST /:id/send-estimate` and `saveEstimateDraft`).
+- A second, entirely separate, copy-pasted implementation directly
+  inline inside `POST /:id/revise-estimate`'s own route handler in
+  `routes/inquiries.ts` -- **this is the one actually reached by the
+  reported repro shape** (a single-session project revised into a real
+  plan after its deposit was already collected), since revise-estimate
+  is the only route reachable once an inquiry is `DEPOSIT_PENDING` or
+  later. Missed on a first pass that only fixed the shared lib
+  function -- caught by re-testing the exact repro shape against a
+  freshly-restarted server and finding it still broken, not by
+  inspection alone.
+
+**How many existing projects were desynced**: queried every inquiry
+with a declared plan in the shared dev DB directly (5 total). Before
+any fix, only 1 had a desynced session, and it was neither signed nor
+paid (a token-rotated, abandoned form) -- the reported PAID-and-invisible
+symptom hadn't actually occurred yet in this dataset. This is NOT
+"estimate-approval auto-generation" (that path -- front-desk approving a
+self-scheduled `REQUESTED` appointment -- is gated to single-session-only
+inquiries by the same `timeEstimateHoursMin/Max`-nulled-once-a-plan-
+exists mechanism the multi-session-planning work already established,
+so it can't produce this desync); it's specifically **an inquiry whose
+deposit was collected before any plan existed, later revised into a
+real multi-session plan** -- confirmed by direct reproduction, not
+inferred from dev-data alone.
+
+## Fix
+
+- **`lib/estimates.ts`** (`reconcilePlannedSessions`) and
+  **`routes/inquiries.ts`** (`/revise-estimate`'s own inline copy):
+  both now look up the inquiry's existing `DepositForm` rows by
+  `sessionNumber` before creating or updating a `PlannedSession` row,
+  and set `depositFormId` from that lookup whenever the target row's
+  own link is currently null -- never overwriting an already-linked
+  row (that link came from the real send-deposit-form flow, always the
+  more authoritative source). Fixed identically in both places, with
+  matching comments cross-referencing each other, since a future fix to
+  one without the other would silently reintroduce exactly this gap.
+- **`lib/deposits.ts`** (`generateAndSendDepositForm`): the double-charge
+  guard for a planned-session send no longer trusts
+  `PlannedSession.depositFormId` alone. It now looks up the real latest
+  `DepositForm` for that exact `sessionNumber` directly (regardless of
+  whether the FK happens to be linked) and blocks with a clear message
+  ("This session's deposit has already been paid" / "...has already
+  been signed") whenever it's signed or paid -- amount-mode-agnostic
+  (never reads `amountMode`), so a `FULL_PREPAY` session is guarded
+  identically to a tiered `DEPOSIT` one. The same lookup also now
+  re-links a found-but-previously-unlinked form on every send/resend,
+  not just brand-new ones, so a stale link self-heals the next time
+  staff touches that session.
+- **`scripts/backfill-planned-session-deposit-linkage.ts`** (new,
+  checked in, not scratch): one-time catch-up for rows that desynced
+  before this fix shipped. Links only when exactly one matching
+  `DepositForm` exists for a given unlinked `PlannedSession`'s
+  `sessionNumber` on the same inquiry; anything ambiguous (more than
+  one candidate) is reported, never guessed at. Idempotent -- only ever
+  fills a currently-null link, safe to re-run. Run against this
+  worktree's local dev DB: 2 unambiguous links applied, 0 ambiguous.
+  **Not run against production** -- that's a separate, deliberate action
+  for the user to authorize once this fix is actually deployed, not
+  something to fold into a merge pass sight-unseen against a database
+  this session has no credentials for anyway.
+
+## Live verification
+
+- **Reported repro shape, after the fix**: re-ran the exact same
+  send -> sign -> pay -> revise-estimate sequence against a freshly
+  restarted server (see the "stray `tsx watch` restart race" note
+  below) -- the Session Plan widget correctly showed **"Deposit paid"**
+  for the paid session, screenshot captured, with no "Send Deposit
+  Form" action offered for it (a "Book Appointment" prompt showed
+  instead, for an unrelated reason -- the tentative time this test used
+  happened to collide with another booking by the time the deposit was
+  marked paid, a real and correctly-handled "Scheduling conflict" state,
+  not a bug).
+- **Genuinely-unpaid session, same project**: session 2 (no deposit
+  ever sent) showed "Deposit pending" once its own form was generated
+  and stayed fully actionable ("Resend Deposit Form" available) --
+  confirmed the fix doesn't over-lock sessions that were never touched.
+- **`FULL_PREPAY`-paid session**: built a second, independent repro
+  (single-session `FULL_PREPAY` deposit, signed, paid, then revised
+  into a 2-session plan) -- correctly linked after the fix, and the
+  guard blocked a resend attempt with the same "already been paid"
+  message, confirming the fix and the guard are both amount-mode-blind
+  as designed.
+- **Guard, both modes, direct**: `POST /inquiries/:id/deposit-form`
+  with `plannedSessionId` pointing at an already-paid session returned
+  `400 "This session's deposit has already been paid."` for both the
+  `DEPOSIT` repro and the `FULL_PREPAY` repro.
+- **Classic tiered-deposit mode, regression-checked**: session 2's
+  plain `DEPOSIT`-mode public sign page still rendered "Deposit
+  Agreement," "SESSION 2 OF 2," `$200 / $10 / $210` -- unchanged, and
+  correctly still showing the right session-plan context after this
+  fix touched the exact code path that produces it.
+
+### A second environment bug this investigation caught: `tsx watch` restart races
+
+Editing two files within the same few seconds (as this fix's two-file
+change did) can trigger a `tsx watch` restart while the previous
+restart's HTTP listener hasn't released its port yet -- the new process
+crashes on `EADDRINUSE` while the *old*, pre-fix process instance keeps
+running underneath, un-killed, silently serving every subsequent
+request with stale code. This produced a confusing false negative
+mid-investigation (the `routes/inquiries.ts` fix appeared not to work
+immediately after being written, because the running server was still
+the pre-`routes/inquiries.ts`-fix instance from moments earlier).
+Caught by checking which PID actually held the listening port and
+cross-referencing it against the dev-server log's own restart/crash
+timestamps, not by assuming a saved file is a running file. **Lesson
+for this repo's `tsx watch` dev servers generally: after any multi-file
+edit made in quick succession, verify the actually-listening PID is
+fresh (kill everything bound to the port and start clean) before
+trusting a live-verification result** -- the same discipline as Part
+2's cross-worktree collision finding, one layer further in.
+
+## Two spot-confirmations from Part 4, now genuinely live (not just code-read)
+
+- **Tip step absent on a prepay payment**: already confirmed in Part 4
+  (the FULL_PREPAY Stripe Checkout page had no tip UI anywhere).
+- **Tip step present on a normal session checkout**: NOT actually
+  driven live in Part 4 (flagged there as "verified by code instead").
+  Fixed that gap here: built a fresh appointment with a $100 gift card
+  attached and a $300 final cost (a real $200 balance due), confirmed
+  checkout -- with this studio's `embeddedPaymentsEnabled` temporarily
+  switched on for the test (was off; reverted after) -- and the
+  client-facing payment takeover correctly opened straight into "Add a
+  tip?" (15%/18%/20%/Custom/No tip, "100% goes to your artist,"
+  computed on the $300 session price). Confirms the tip step's own
+  gating (embedded takeover + a real balance > $0) is exactly what it
+  was before this epic touched anything nearby -- `appointments.ts` has
+  zero `amountMode` references, so this was never at risk, but is now
+  actually demonstrated rather than only reasoned about.
+
+API suite: 170/170 (`npm test`, final run after the linkage fix).
+`tsc -b --noEmit` clean on both apps.
+
+Cleanup: reverted `embeddedPaymentsEnabled` back to off for the shared
+dev studio; deleted all scratch scripts used for this investigation
+(kept the real backfill script, which is meant to ship). New test data
+left in the dev DB (two "LinkageRepro..." projects, two "TipStep
+TestClient" projects) -- same "shared dev studio, not individually
+cleaned up" precedent as every other live-verification pass in this
+document.
+
+Next: merge latest `main` into this branch, full suite green, merge to
+`main`, push, confirm Railway deploys healthy.

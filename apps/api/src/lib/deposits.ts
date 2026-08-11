@@ -112,13 +112,30 @@ export async function generateAndSendDepositForm(
   let sessionNumber: number;
 
   if (plannedSession) {
-    if (plannedSession.depositFormId) {
-      const linkedForm = await prisma.depositForm.findUnique({ where: { id: plannedSession.depositFormId } });
-      if (linkedForm?.signedAt) {
-        return { ok: false, status: 400, error: "This planned session's deposit form has already been signed" };
-      }
-      latest = linkedForm ?? undefined;
+    // Double-charge guard, regardless of linkage: looks up the REAL latest
+    // deposit form for this exact session number directly, rather than
+    // trusting PlannedSession.depositFormId alone. That FK can be null even
+    // when a real, already-signed-or-paid DepositForm exists for this same
+    // session -- the exact desync reconcilePlannedSessions's own "Linkage
+    // bug fix" comment describes (a plan declared/revised after an
+    // un-planned deposit was already collected). Blocking (or resuming)
+    // off this direct lookup instead closes that gap for good, and works
+    // identically whichever DepositAmountMode produced it -- this check
+    // never reads amountMode at all.
+    const matchingForm = await prisma.depositForm.findFirst({
+      where: { inquiryId, sessionNumber: plannedSession.sessionNumber },
+      orderBy: { createdAt: "desc" },
+    });
+    if (matchingForm?.signedAt) {
+      return {
+        ok: false,
+        status: 400,
+        error: matchingForm.paidAt
+          ? "This session's deposit has already been paid."
+          : "This planned session's deposit form has already been signed",
+      };
     }
+    latest = matchingForm ?? undefined;
     isNewSession = !latest;
     sessionNumber = plannedSession.sessionNumber;
   } else {
@@ -187,7 +204,13 @@ export async function generateAndSendDepositForm(
         data: { token, tokenExpiresAt, amountMode: resolvedAmountMode, depositAmount, feeAmount, totalCharged },
       });
 
-  if (plannedSession && isNewSession) {
+  // Covers a brand-new session's form (isNewSession) AND the case this same
+  // guard just fixed above -- a matching form found by sessionNumber that
+  // was never actually linked (plannedSession.depositFormId was stale/null
+  // going in). Comparing against the resolved form's own id (not just
+  // isNewSession) means an already-correctly-linked session is a no-op,
+  // not a wasted write.
+  if (plannedSession && plannedSession.depositFormId !== depositForm.id) {
     await prisma.plannedSession.update({ where: { id: plannedSession.id }, data: { depositFormId: depositForm.id } });
   }
 

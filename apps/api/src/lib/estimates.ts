@@ -43,6 +43,7 @@ type PlannedSessionForReconcile = {
   id: string;
   sessionNumber: number;
   appointmentId: string | null;
+  depositFormId: string | null;
   depositForm: { paidAt: Date | null } | null;
 };
 
@@ -215,6 +216,22 @@ function validateEstimateInputs(
 // Shared verbatim between the send path and the save-only path so a
 // prepared-but-not-yet-sent multi-session plan is exactly what front desk
 // sees and can send later.
+//
+// Linkage bug fix: a plan declared/revised on an inquiry that ALREADY has
+// an un-planned DepositForm (e.g. a single-session project that collected
+// its deposit before staff realized -- or the client asked -- to split it
+// into a real multi-session plan) previously created a brand-new
+// PlannedSession row with depositFormId left null, even though a real,
+// possibly-already-signed-or-paid DepositForm with the exact same
+// sessionNumber already existed on the same inquiry. The Session Plan
+// widget (InquiryDetail.tsx) derives its "Deposit paid/pending/not yet
+// generated" badge purely from ps.depositForm (the FK relation), so that
+// session silently read as "not yet generated" and stayed fully
+// actionable (Send Deposit Form) despite already being paid -- a real
+// double-charge risk. Fixed at the source here (both toCreate AND
+// toUpdate) rather than in the widget, so the FK itself is correct and
+// every other consumer of PlannedSession.depositForm (PDF/reminder/
+// checkout code, none of which re-derive it independently) is correct too.
 async function reconcilePlannedSessions(
   inquiryId: string,
   existingPlannedSessions: PlannedSessionForReconcile[],
@@ -226,17 +243,37 @@ async function reconcilePlannedSessions(
   const lockedSessionNumbers = new Set(lockedSessions.map((s) => s.sessionNumber));
   const existingByNumber = new Map(existingPlannedSessions.map((ps) => [ps.sessionNumber, ps]));
 
-  const toUpdate: (ReconcilableSession & { id: string })[] = [];
-  const toCreate: (ReconcilableSession & { sessionNumber: number })[] = [];
+  // sessionNumber is unique per inquiry across DepositForm (create only
+  // ever mints a new one for a genuinely new session; a resend/rotate is
+  // always an update to the existing row -- see generateAndSendDepositForm's
+  // own isNewSession branch) -- orderBy is defensive, not load-bearing.
+  const existingDepositForms = await prisma.depositForm.findMany({
+    where: { inquiryId },
+    select: { id: true, sessionNumber: true },
+    orderBy: { createdAt: "asc" },
+  });
+  const depositFormIdBySessionNumber = new Map(existingDepositForms.map((df) => [df.sessionNumber, df.id]));
+
+  const toUpdate: (ReconcilableSession & { id: string; depositFormId?: string })[] = [];
+  const toCreate: (ReconcilableSession & { sessionNumber: number; depositFormId?: string })[] = [];
 
   plannedSessionInputs.forEach((session, index) => {
     const sessionNumber = index + 1;
     if (lockedSessionNumbers.has(sessionNumber)) return;
     const existing = existingByNumber.get(sessionNumber);
+    const matchingDepositFormId = depositFormIdBySessionNumber.get(sessionNumber);
     if (existing) {
-      toUpdate.push({ id: existing.id, ...session });
+      toUpdate.push({
+        id: existing.id,
+        ...session,
+        // Only ever fills a currently-null link -- never overwrites an
+        // already-linked row (that link was set by the real send-deposit-
+        // form flow, which is always the more specific/authoritative
+        // source for it).
+        ...(existing.depositFormId == null && matchingDepositFormId ? { depositFormId: matchingDepositFormId } : {}),
+      });
     } else {
-      toCreate.push({ sessionNumber, ...session });
+      toCreate.push({ sessionNumber, ...session, ...(matchingDepositFormId ? { depositFormId: matchingDepositFormId } : {}) });
     }
   });
 
@@ -254,6 +291,7 @@ async function reconcilePlannedSessions(
           estimatedPriceLow: s.estimatedPriceLow,
           estimatedPriceHigh: s.estimatedPriceHigh,
           showDurationToClient: s.showDurationToClient,
+          ...(s.depositFormId ? { depositFormId: s.depositFormId } : {}),
         },
       }),
     ),

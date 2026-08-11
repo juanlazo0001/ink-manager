@@ -1840,7 +1840,25 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
   // provided. A locked session's own hour range and existence are never
   // touched regardless of what was submitted for its slot -- see the
   // lockedSessions filter above.
+  //
+  // Linkage bug fix (same root cause and same fix shape as lib/estimates.ts's
+  // reconcilePlannedSessions -- this route has its own independent, copy-
+  // pasted reconciliation block rather than calling that shared function,
+  // so the same gap had to be fixed here too): a plan revised on an inquiry
+  // that already has an un-planned DepositForm previously created/updated
+  // PlannedSession rows with depositFormId left null, even when a real,
+  // possibly-already-paid DepositForm with the same sessionNumber already
+  // existed on the inquiry -- the Session Plan widget then showed that
+  // session as "Deposit not yet generated" and left it fully actionable
+  // (Send Deposit Form) despite already being paid.
   if (plannedSessionInputs) {
+    const existingDepositForms = await prisma.depositForm.findMany({
+      where: { inquiryId: id },
+      select: { id: true, sessionNumber: true },
+      orderBy: { createdAt: "asc" },
+    });
+    const depositFormIdBySessionNumber = new Map(existingDepositForms.map((df) => [df.sessionNumber, df.id]));
+
     const toUpdate: {
       id: string;
       estimatedHoursMin: number;
@@ -1848,6 +1866,7 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
       estimatedPriceLow: number;
       estimatedPriceHigh: number;
       showDurationToClient: boolean;
+      depositFormId?: string;
     }[] = [];
     const toCreate: {
       sessionNumber: number;
@@ -1856,12 +1875,14 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
       estimatedPriceLow: number;
       estimatedPriceHigh: number;
       showDurationToClient: boolean;
+      depositFormId?: string;
     }[] = [];
 
     plannedSessionInputs.forEach((session, index) => {
       const sessionNumber = index + 1;
       if (lockedSessionNumbers.has(sessionNumber)) return;
       const existing = existingByNumber.get(sessionNumber);
+      const matchingDepositFormId = depositFormIdBySessionNumber.get(sessionNumber);
       if (existing) {
         toUpdate.push({
           id: existing.id,
@@ -1870,6 +1891,10 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
           estimatedPriceLow: session.estimatedPriceLow,
           estimatedPriceHigh: session.estimatedPriceHigh,
           showDurationToClient: session.showDurationToClient,
+          // Only ever fills a currently-null link -- never overwrites an
+          // already-linked row (that link was set by the real send-
+          // deposit-form flow, always the more authoritative source for it).
+          ...(existing.depositFormId == null && matchingDepositFormId ? { depositFormId: matchingDepositFormId } : {}),
         });
       } else {
         toCreate.push({
@@ -1879,6 +1904,7 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
           estimatedPriceLow: session.estimatedPriceLow,
           estimatedPriceHigh: session.estimatedPriceHigh,
           showDurationToClient: session.showDurationToClient,
+          ...(matchingDepositFormId ? { depositFormId: matchingDepositFormId } : {}),
         });
       }
     });
@@ -1901,6 +1927,7 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
             estimatedPriceLow: s.estimatedPriceLow,
             estimatedPriceHigh: s.estimatedPriceHigh,
             showDurationToClient: s.showDurationToClient,
+            ...(s.depositFormId ? { depositFormId: s.depositFormId } : {}),
           },
         }),
       ),
