@@ -1845,7 +1845,25 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
   // provided. A locked session's own hour range and existence are never
   // touched regardless of what was submitted for its slot -- see the
   // lockedSessions filter above.
+  //
+  // Linkage bug fix (same root cause and same fix shape as lib/estimates.ts's
+  // reconcilePlannedSessions -- this route has its own independent, copy-
+  // pasted reconciliation block rather than calling that shared function,
+  // so the same gap had to be fixed here too): a plan revised on an inquiry
+  // that already has an un-planned DepositForm previously created/updated
+  // PlannedSession rows with depositFormId left null, even when a real,
+  // possibly-already-paid DepositForm with the same sessionNumber already
+  // existed on the inquiry -- the Session Plan widget then showed that
+  // session as "Deposit not yet generated" and left it fully actionable
+  // (Send Deposit Form) despite already being paid.
   if (plannedSessionInputs) {
+    const existingDepositForms = await prisma.depositForm.findMany({
+      where: { inquiryId: id },
+      select: { id: true, sessionNumber: true },
+      orderBy: { createdAt: "asc" },
+    });
+    const depositFormIdBySessionNumber = new Map(existingDepositForms.map((df) => [df.sessionNumber, df.id]));
+
     const toUpdate: {
       id: string;
       estimatedHoursMin: number;
@@ -1853,6 +1871,7 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
       estimatedPriceLow: number;
       estimatedPriceHigh: number;
       showDurationToClient: boolean;
+      depositFormId?: string;
     }[] = [];
     const toCreate: {
       sessionNumber: number;
@@ -1861,12 +1880,14 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
       estimatedPriceLow: number;
       estimatedPriceHigh: number;
       showDurationToClient: boolean;
+      depositFormId?: string;
     }[] = [];
 
     plannedSessionInputs.forEach((session, index) => {
       const sessionNumber = index + 1;
       if (lockedSessionNumbers.has(sessionNumber)) return;
       const existing = existingByNumber.get(sessionNumber);
+      const matchingDepositFormId = depositFormIdBySessionNumber.get(sessionNumber);
       if (existing) {
         toUpdate.push({
           id: existing.id,
@@ -1875,6 +1896,10 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
           estimatedPriceLow: session.estimatedPriceLow,
           estimatedPriceHigh: session.estimatedPriceHigh,
           showDurationToClient: session.showDurationToClient,
+          // Only ever fills a currently-null link -- never overwrites an
+          // already-linked row (that link was set by the real send-
+          // deposit-form flow, always the more authoritative source for it).
+          ...(existing.depositFormId == null && matchingDepositFormId ? { depositFormId: matchingDepositFormId } : {}),
         });
       } else {
         toCreate.push({
@@ -1884,6 +1909,7 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
           estimatedPriceLow: session.estimatedPriceLow,
           estimatedPriceHigh: session.estimatedPriceHigh,
           showDurationToClient: session.showDurationToClient,
+          ...(matchingDepositFormId ? { depositFormId: matchingDepositFormId } : {}),
         });
       }
     });
@@ -1906,6 +1932,7 @@ router.post("/:id/revise-estimate", requireAuth, requireRole(Role.OWNER, Role.FR
             estimatedPriceLow: s.estimatedPriceLow,
             estimatedPriceHigh: s.estimatedPriceHigh,
             showDurationToClient: s.showDurationToClient,
+            ...(s.depositFormId ? { depositFormId: s.depositFormId } : {}),
           },
         }),
       ),
@@ -2413,6 +2440,105 @@ router.post("/:id/reopen", requireAuth, async (req, res) => {
   res.json(updated);
 });
 
+// On-Hold, Part 3: pause a project without losing its place in the
+// pipeline -- statusBeforeHold captures wherever it was AT THE MOMENT of
+// holding (not derivable afterward, since `status` itself becomes ON_HOLD),
+// so release can restore it exactly. Deliberately scoped to PROJECT_STATUSES
+// only (SCHEDULING/WAITLISTED/CONFIRMED) -- the task's own language is
+// "place a PROJECT on hold," and restricting to the Projects tab's three
+// statuses keeps ON_HOLD's tab/Kanban placement unambiguous (always
+// Projects, never Inquiries) rather than needing a rule for what happens to
+// a pre-conversion lead that's paused.
+router.post("/:id/hold", requireAuth, async (req, res) => {
+  const id = req.params.id as string;
+  const { reason } = req.body ?? {};
+
+  if (reason !== undefined && reason !== null && typeof reason !== "string") {
+    return res.status(400).json({ error: "reason must be a string" });
+  }
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  // Permission-context fix: evaluated at the inquiry's own studio, same
+  // precedent as every other action route in this file.
+  if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.edit"))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  if (!PROJECT_STATUSES.includes(inquiry.status)) {
+    return res.status(400).json({ error: "Only a converted project (Scheduling, Waitlisted, or Confirmed) can be put on hold" });
+  }
+
+  const holdData = {
+    statusBeforeHold: inquiry.status,
+    status: InquiryStatus.ON_HOLD,
+    holdReason: typeof reason === "string" && reason.trim().length > 0 ? reason.trim() : null,
+    heldAt: new Date(),
+  };
+
+  const updated = await prisma.inquiry.update({ where: { id }, data: holdData, include: INQUIRY_INCLUDE });
+
+  await logAudit({
+    studioId: inquiry.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Inquiry",
+    entityId: id,
+    action: "status_change",
+    changes: diffObjects(inquiry, holdData, ["status", "statusBeforeHold", "holdReason", "heldAt"]),
+  });
+
+  emitInvalidation({ type: "inquiry.updated", studioId: inquiry.studioId, inquiryId: id });
+
+  res.json(updated);
+});
+
+// On-Hold, Part 3: the reverse of hold above -- restores whatever status
+// was captured at hold time and clears the three hold-only fields. No body
+// needed (unlike reopen, which must be told a target since CLOSED_LOST/
+// COLD_LEAD don't remember where they came from) -- statusBeforeHold
+// already knows.
+router.post("/:id/release", requireAuth, async (req, res) => {
+  const id = req.params.id as string;
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.edit"))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  if (inquiry.status !== InquiryStatus.ON_HOLD || !inquiry.statusBeforeHold) {
+    return res.status(400).json({ error: "This project is not currently on hold" });
+  }
+
+  const releaseData = {
+    status: inquiry.statusBeforeHold,
+    statusBeforeHold: null,
+    holdReason: null,
+    heldAt: null,
+  };
+
+  const updated = await prisma.inquiry.update({ where: { id }, data: releaseData, include: INQUIRY_INCLUDE });
+
+  await logAudit({
+    studioId: inquiry.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Inquiry",
+    entityId: id,
+    action: "status_change",
+    changes: diffObjects(inquiry, releaseData, ["status", "statusBeforeHold", "holdReason", "heldAt"]),
+  });
+
+  emitInvalidation({ type: "inquiry.updated", studioId: inquiry.studioId, inquiryId: id });
+
+  res.json(updated);
+});
+
 // Service lines: the first of CANDIDACY_REVIEW's three actions -- proceeds
 // a candidate straight into the normal pipeline (NEW), where staff assign
 // an artist and get a price estimate exactly as any other inquiry would.
@@ -2563,10 +2689,13 @@ router.post("/:id/reopen-project", requireAuth, async (req, res) => {
 // "latest row missing" is true there too, so it still creates session 1.
 router.post("/:id/deposit-form", requireAuth, async (req, res) => {
   const id = req.params.id as string;
-  const { proposedStartAt, proposedEndAt, autoSend, plannedSessionId } = req.body ?? {};
+  const { proposedStartAt, proposedEndAt, autoSend, plannedSessionId, amountMode } = req.body ?? {};
 
   if (plannedSessionId !== undefined && typeof plannedSessionId !== "string") {
     return res.status(400).json({ error: "plannedSessionId must be a string" });
+  }
+  if (amountMode !== undefined && amountMode !== "DEPOSIT" && amountMode !== "FULL_PREPAY") {
+    return res.status(400).json({ error: "amountMode must be DEPOSIT or FULL_PREPAY" });
   }
 
   // Artist mobility bug fix: verify the caller against the PROJECT's own
@@ -2593,6 +2722,7 @@ router.post("/:id/deposit-form", requireAuth, async (req, res) => {
     proposedEndAt: typeof proposedEndAt === "string" ? proposedEndAt : undefined,
     autoSend,
     plannedSessionId,
+    amountMode,
   });
 
   if (!result.ok) {

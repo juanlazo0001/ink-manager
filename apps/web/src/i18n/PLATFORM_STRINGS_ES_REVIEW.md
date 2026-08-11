@@ -116,6 +116,26 @@ completeness check).
 | giftCardCard.showQrAtStudio | Show this QR code at the studio. | Muestra este código QR en el estudio. |
 | giftCardCard.validUntil | Valid until {{date}} | Válido hasta {{date}} |
 
+### prepay
+
+| Key | English | Spanish (draft) |
+|---|---|---|
+| linkExpiredBody | Please contact the studio to request a new prepayment form. | Por favor, contacta al estudio para solicitar un nuevo formulario de pago por adelantado. |
+| paidHeading | Thanks — your prepayment is paid! | ¡Gracias — tu pago por adelantado está confirmado! |
+| agreementSignedHeading | Prepayment Agreement Signed | Acuerdo de Pago por Adelantado Firmado |
+| agreementSignedBody | {{firstName}}, your agreement is on file. Complete your prepayment below to confirm your appointment. | {{firstName}}, tu acuerdo está registrado. Completa tu pago por adelantado a continuación para confirmar tu cita. |
+| amountLabel | Prepayment | Pago por adelantado |
+| receivedNoPaymentBody | Your signed prepayment form has been received. No payment has been collected yet — the studio will reach out to collect your prepayment and confirm your appointment. | Hemos recibido tu formulario de pago por adelantado firmado. Aún no se ha cobrado ningún pago — el estudio se pondrá en contacto contigo para cobrar tu pago por adelantado y confirmar tu cita. |
+| agreementHeading | Prepayment Agreement | Acuerdo de Pago por Adelantado |
+| tentativeTimeBody | Your appointment will be tentatively scheduled for {{range}}, pending your prepayment. We'll confirm exact scheduling once payment is received. | Tu cita se programará provisionalmente para el {{range}}, sujeto a tu pago por adelantado. Confirmaremos el horario exacto una vez recibido el pago. |
+| voucherLabel | Your prepayment voucher | Tu comprobante de pago por adelantado |
+| terms.agreedNonRefundable | Full prepayment is required to set an appointment. Prepayments are non-refundable and are applied to the final price of the tattoo. | Se requiere el pago completo por adelantado para fijar una cita. Los pagos por adelantado no son reembolsables y se aplican al precio final del tatuaje. |
+| terms.agreedNoShowForfeit | A no-call/no-show forfeits the prepayment. A 48-hour notice is required to change a scheduled appointment. | La falta de asistencia sin aviso previo resulta en la pérdida del pago por adelantado. Se requiere un aviso de 48 horas para cambiar una cita programada. |
+| terms.agreedNewDepositAfterNoShow | After a no-call/no-show, a new prepayment is required to set up another appointment. | Después de una falta de asistencia sin aviso previo, se requiere un nuevo pago por adelantado para programar otra cita. |
+| terms.agreedRescheduleLimit | Appointments may be rescheduled up to 3 times; the prepayment is forfeited on the 3rd reschedule. | Las citas pueden reprogramarse hasta 3 veces; el pago por adelantado se pierde en la tercera reprogramación. |
+| terms.agreedExpiration | Prepayments expire one year after the date they were created. | Los pagos por adelantado vencen un año después de la fecha en que fueron creados. |
+| terms.agreedIdAndVoucher | Client must bring a government-issued ID and the Prepayment Voucher (issued after payment) on the day of the appointment. | El cliente debe traer una identificación oficial con fotografía y el comprobante de pago por adelantado (emitido después del pago) el día de la cita. |
+
 ### estimate
 
 | Key | English | Spanish (draft) |
@@ -236,9 +256,13 @@ completeness check).
 | unavailableDefault | This gallery is unavailable. | Esta galería no está disponible. |
 | requestSentHeading | Request sent! | ¡Solicitud enviada! |
 | requestSentBody | {{studioName}} will review your placement and get back to you shortly to confirm and collect payment -- this isn't booked yet. | {{studioName}} revisará tu ubicación y se pondrá en contacto contigo pronto para confirmar y cobrar el pago -- esto todavía no está reservado. |
-| pageHeading | Flash Gallery | Galería Flash |
-| intro | {{artistName}}'s ready-to-book designs at {{studioName}}. | Diseños de {{artistName}} listos para reservar en {{studioName}}. |
+| titleFirst | Flash | Galería |
+| titleSecond | Gallery | Flash |
+| currentlyAt | Currently at {{studioName}} | Actualmente en {{studioName}} |
+| openInMaps | Open address in Maps | Abrir dirección en Maps |
+| introStudioWide | Ready-to-book designs at {{studioName}}. | Diseños listos para reservar en {{studioName}}. |
 | noPiecesAvailable | No flash pieces are available right now. | No hay piezas flash disponibles en este momento. |
+| bookThisDesign | Book This Design | Reservar Este Diseño |
 | viewFullSize | View {{title}} full size | Ver {{title}} en tamaño completo |
 | oneOfOne | One of one | Pieza única |
 | backToGallery | ← Back to gallery | ← Volver a la galería |
@@ -345,6 +369,17 @@ legal/native-speaker review, not just a fluency check** (this is the exact text 
 | agreedIdAndVoucher | Client must bring a government-issued ID and the Deposit Voucher (issued after payment) on the day of the appointment. | El cliente debe traer una identificación oficial con fotografía y el comprobante de depósito (emitido después del pago) el día de la cita. |
 | agreedAge18 | Client reconfirms they are at least 18 years of age. | El cliente reconfirma que tiene al menos 18 años de edad. |
 
+### Prepayment agreement clause overrides -- platform copy (`apps/api/src/routes/deposits.ts` PREPAY_TERMS/PREPAY_TERMS_ES)
+
+| Key | English | Spanish (draft) |
+|---|---|---|
+| agreedNonRefundable | Full prepayment is required to set an appointment. Prepayments are non-refundable and are applied to the final price of the tattoo. | Se requiere el pago completo por adelantado para fijar una cita. Los pagos por adelantado no son reembolsables y se aplican al precio final del tatuaje. |
+| agreedNoShowForfeit | A no-call/no-show forfeits the prepayment. A 48-hour notice is required to change a scheduled appointment. | La falta de asistencia sin aviso previo resulta en la pérdida del pago por adelantado. Se requiere un aviso de 48 horas para cambiar una cita programada. |
+| agreedNewDepositAfterNoShow | After a no-call/no-show, a new prepayment is required to set up another appointment. | Después de una falta de asistencia sin aviso previo, se requiere un nuevo pago por adelantado para programar otra cita. |
+| agreedRescheduleLimit | Appointments may be rescheduled up to 3 times; the prepayment is forfeited on the 3rd reschedule. | Las citas pueden reprogramarse hasta 3 veces; el pago por adelantado se pierde en la tercera reprogramación. |
+| agreedExpiration | Prepayments expire one year after the date they were created. | Los pagos por adelantado vencen un año después de la fecha en que fueron creados. |
+| agreedIdAndVoucher | Client must bring a government-issued ID and the Prepayment Voucher (issued after payment) on the day of the appointment. | El cliente debe traer una identificación oficial con fotografía y el comprobante de pago por adelantado (emitido después del pago) el día de la cita. |
+
 ### SYSTEM intake field seed labels (`apps/api/src/lib/intakeFormFields.ts` / `contentTranslation.ts`)
 
 | Key | English | Spanish (draft) |
@@ -370,6 +405,8 @@ legal/native-speaker review, not just a fluency check** (this is the exact text 
 |---|---|---|
 | generatedOn | Generated {{date}} | Generado el {{date}} |
 | depositAgreementTitle | Deposit Agreement | Acuerdo de Depósito |
+| prepayAgreementTitle | Prepayment Agreement | Acuerdo de Pago por Adelantado |
+| prepayAmount | Prepayment amount: {{amount}} | Monto del pago por adelantado: {{amount}} |
 | client | Client: {{name}} | Cliente: {{name}} |
 | project | Project: {{title}} | Proyecto: {{title}} |
 | session | Session: #{{n}} | Sesión: #{{n}} |

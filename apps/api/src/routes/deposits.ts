@@ -56,6 +56,37 @@ export const TERMS = [
 
 const TERM_KEYS = TERMS.map((t) => t.key);
 
+// Prepay + On-Hold epic, Part 2: mechanical "deposit" -> "prepayment"
+// substitutions of TERMS above, for a FULL_PREPAY-mode form -- same exact
+// legal structure/meaning per clause, only the noun changes. Only a
+// partial map: agreedLatePolicy and agreedAge18 never mention "deposit"
+// at all, so they're deliberately absent here and termsForLocale below
+// falls back to TERMS'/TERMS_ES's own text for those two regardless of
+// mode -- there is nothing to override.
+export const PREPAY_TERMS: Partial<Record<(typeof TERM_KEYS)[number], string>> = {
+  agreedNonRefundable:
+    "Full prepayment is required to set an appointment. Prepayments are non-refundable and are applied to the final price of the tattoo.",
+  agreedNoShowForfeit: "A no-call/no-show forfeits the prepayment. A 48-hour notice is required to change a scheduled appointment.",
+  agreedNewDepositAfterNoShow: "After a no-call/no-show, a new prepayment is required to set up another appointment.",
+  agreedRescheduleLimit: "Appointments may be rescheduled up to 3 times; the prepayment is forfeited on the 3rd reschedule.",
+  agreedExpiration: "Prepayments expire one year after the date they were created.",
+  agreedIdAndVoucher: "Client must bring a government-issued ID and the Prepayment Voucher (issued after payment) on the day of the appointment.",
+};
+
+export const PREPAY_TERMS_ES: Partial<Record<(typeof TERM_KEYS)[number], string>> = {
+  agreedNonRefundable:
+    "Se requiere el pago completo por adelantado para fijar una cita. Los pagos por adelantado no son reembolsables y se aplican al precio final del tatuaje.",
+  agreedNoShowForfeit:
+    "La falta de asistencia sin aviso previo resulta en la pérdida del pago por adelantado. Se requiere un aviso de 48 horas para cambiar una cita programada.",
+  agreedNewDepositAfterNoShow:
+    "Después de una falta de asistencia sin aviso previo, se requiere un nuevo pago por adelantado para programar otra cita.",
+  agreedRescheduleLimit:
+    "Las citas pueden reprogramarse hasta 3 veces; el pago por adelantado se pierde en la tercera reprogramación.",
+  agreedExpiration: "Los pagos por adelantado vencen un año después de la fecha en que fueron creados.",
+  agreedIdAndVoucher:
+    "El cliente debe traer una identificación oficial con fotografía y el comprobante de pago por adelantado (emitido después del pago) el día de la cita.",
+};
+
 // Multi-language public forms, Part 5: TERMS above is Finding 1's
 // platform-owned copy (see the frontend's own deposit.terms dictionary for
 // the display-side half of this) -- this is the Spanish counterpart, kept
@@ -86,11 +117,15 @@ export const TERMS_ES: Record<(typeof TERM_KEYS)[number], string> = {
 // DepositForm.termsSnapshot -- so a later edit to TERMS/TERMS_ES never
 // retroactively changes what an already-signed deposit form appears to say
 // (same guarantee LiabilityWaiver's own snapshots already provide).
-function termsForLocale(locale: string): { key: string; label: string }[] {
+// amountMode "FULL_PREPAY" swaps in PREPAY_TERMS/PREPAY_TERMS_ES's own
+// override per key, falling back to the DEPOSIT wording for either of the
+// two keys with no prepay-specific text (see PREPAY_TERMS's own comment).
+function termsForLocale(locale: string, amountMode: "DEPOSIT" | "FULL_PREPAY" = "DEPOSIT"): { key: string; label: string }[] {
+  const isPrepay = amountMode === "FULL_PREPAY";
   if (locale === "es") {
-    return TERMS.map((t) => ({ key: t.key, label: TERMS_ES[t.key] }));
+    return TERMS.map((t) => ({ key: t.key, label: (isPrepay ? PREPAY_TERMS_ES[t.key] : undefined) ?? TERMS_ES[t.key] }));
   }
-  return TERMS.map((t) => ({ key: t.key, label: t.label }));
+  return TERMS.map((t) => ({ key: t.key, label: (isPrepay ? PREPAY_TERMS[t.key] : undefined) ?? t.label }));
 }
 
 // Phase 7C: "already signed" is no longer unconditionally terminal -- a
@@ -342,6 +377,7 @@ publicRouter.get("/verify/:token", async (req, res) => {
     giftCard: giftCard
       ? { code: giftCard.code, amountCents: giftCard.amountCents, expiresAt: giftCard.expiresAt, publicUrl: giftCardPublicUrl }
       : null,
+    amountMode: depositForm!.amountMode,
     depositAmount: depositForm!.depositAmount,
     feeAmount: depositForm!.feeAmount,
     totalCharged: depositForm!.totalCharged,
@@ -509,7 +545,7 @@ publicRouter.patch("/sign/:token", async (req, res) => {
       signatureData,
       signedAt: new Date(),
       signedLocale,
-      termsSnapshot: termsForLocale(signedLocale),
+      termsSnapshot: termsForLocale(signedLocale, depositForm!.amountMode),
     },
   });
 
@@ -768,6 +804,7 @@ staffRouter.get("/:id/pdf", requireAuth, async (req, res) => {
     clientName: `${inquiry.client.firstName} ${inquiry.client.lastName}`,
     inquiryTitle: `${inquiry.service.name} — ${inquiry.placement}`,
     sessionNumber: depositForm.sessionNumber,
+    amountMode: depositForm.amountMode,
     depositAmount: depositForm.depositAmount,
     feeAmount: depositForm.feeAmount,
     totalCharged: depositForm.totalCharged,

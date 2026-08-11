@@ -104,6 +104,13 @@
   --color-neutral: #b4b4bd;
   --color-progress: #a78bfa;
   --color-highlight: #d97706;
+  /* On-Hold: a cool slate-blue, deliberately unlike every other tone here
+     (warm ambers/greens/violets/reds) -- a paused project needs to read as
+     "different kind of state," not just a color already meaning something
+     else nearby in the same Kanban/list. Never used for a fill on its own
+     -- StatusPill's bg-{name}/15 tint keeps it a translucent badge, same
+     as every other tone. */
+  --color-hold: #7c93b5;
 
   /* Motion -- one shared timing vocabulary instead of each component
      picking its own duration. fast: small state changes (hover, toggle,
@@ -255,6 +262,7 @@
   --color-neutral: #9b927f;
   --color-progress: #c1a6de;
   --color-highlight: #e0995a;
+  --color-hold: #8fa3c2;
 }
 
 @utility duration-fast {

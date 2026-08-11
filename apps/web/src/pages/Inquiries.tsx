@@ -90,7 +90,12 @@ export const INQUIRIES_TAB_STATUSES = [
   // converted project when it transferred.
   'TRANSFERRED',
 ] as const
-export const PROJECTS_TAB_STATUSES = ['SCHEDULING', 'WAITLISTED', 'CONFIRMED'] as const
+// On-Hold, Part 3: ON_HOLD is only ever reached from a converted project
+// (see the API's own PROJECT_STATUSES-scoped POST /:id/hold), so it belongs
+// on this tab, not Inquiries -- appended, not interleaved, so it always
+// renders as its own trailing Kanban column (below) rather than looking
+// like a fourth step in the SCHEDULING -> WAITLISTED -> CONFIRMED sequence.
+export const PROJECTS_TAB_STATUSES = ['SCHEDULING', 'WAITLISTED', 'CONFIRMED', 'ON_HOLD'] as const
 
 // Kanban columns (Package E). Inquiries tab reuses InquiryPipeline's own
 // 5-step grouping (its first four steps -- the fifth, 'Scheduled', belongs
@@ -127,6 +132,18 @@ export const PROJECT_TAB_COLUMNS: KanbanColumn[] = PROJECTS_TAB_STATUSES.map((st
   label: formatStatus(status),
   statuses: [status],
 }))
+
+// On-Hold: the Projects tab's list-view "Group by status" + its Status
+// filter dropdown both key off the DERIVED 5-stage pipeline
+// (deriveProjectStage), not the raw status -- ON_HOLD has no derived stage
+// (deriveProjectStage returns null for it, correctly, since a pause isn't a
+// pipeline position), so both need their own explicit 'ON_HOLD' group
+// alongside the 5 real stages rather than silently dropping paused projects
+// whenever a stage filter is active. The actual Kanban board (columns prop
+// above) already gets this for free from PROJECTS_TAB_STATUSES.
+function projectGroupKey(inquiry: { status: string }): string {
+  return inquiry.status === 'ON_HOLD' ? 'ON_HOLD' : (deriveProjectStage(inquiry) ?? '')
+}
 
 interface ArtistOption {
   id: string
@@ -394,6 +411,21 @@ export default function Inquiries() {
         message: `This project belongs to ${inquiry.fromGuestStudio.name} -- status changes happen from that studio's side.`,
       }
     }
+    // On-Hold: same open-flow-to-a-modal pattern as CLOSED_LOST's own
+    // mark-lost/reopen drag above -- hold takes an optional reason a card
+    // drag can't prompt for, so the drop opens InquiryDetail.tsx's hold
+    // section instead of firing the request directly. Release (dragging
+    // OUT of On Hold) is data-free on the backend, but still opens the
+    // same section rather than firing blind -- restoring statusBeforeHold
+    // straight from a drop, with no confirmation, risks a client-visible
+    // change (a re-opened Confirmed appointment) the staff member dragging
+    // didn't mean to trigger.
+    if (toColumnKey === 'ON_HOLD') {
+      return { kind: 'open-flow', run: () => navigate(`/inquiries/${inquiry.id}?openFlow=hold`) }
+    }
+    if (fromColumnKey === 'ON_HOLD') {
+      return { kind: 'open-flow', run: () => navigate(`/inquiries/${inquiry.id}?openFlow=release`) }
+    }
     if (fromColumnKey === 'SCHEDULING' && toColumnKey === 'CONFIRMED') {
       return { kind: 'open-flow', run: () => navigate(`/inquiries/${inquiry.id}?openFlow=schedule`) }
     }
@@ -484,7 +516,7 @@ export default function Inquiries() {
   // by Status already uses for this same tab.
   const filteredInquiries =
     activeTab === 'projects' && activeStatusFilter.length > 0
-      ? inquiries?.filter((inquiry) => activeStatusFilter.includes(deriveProjectStage(inquiry) ?? ''))
+      ? inquiries?.filter((inquiry) => activeStatusFilter.includes(projectGroupKey(inquiry)))
       : inquiries
 
   // Groups follow the same pipeline order as the tab's own status list, so
@@ -501,11 +533,18 @@ export default function Inquiries() {
   // "group by status isn't working" report this fixes.
   const groupedInquiries = groupByStatus
     ? activeTab === 'projects'
-      ? PROJECT_STAGE_ORDER.map((stage) => ({
-          key: stage as string,
-          label: PROJECT_STAGE_LABELS[stage],
-          items: (filteredInquiries ?? []).filter((inquiry) => deriveProjectStage(inquiry) === stage),
-        })).filter((group) => group.items.length > 0)
+      ? [
+          ...PROJECT_STAGE_ORDER.map((stage) => ({
+            key: stage as string,
+            label: PROJECT_STAGE_LABELS[stage],
+            items: (filteredInquiries ?? []).filter((inquiry) => deriveProjectStage(inquiry) === stage),
+          })),
+          {
+            key: 'ON_HOLD',
+            label: 'On Hold',
+            items: (filteredInquiries ?? []).filter((inquiry) => inquiry.status === 'ON_HOLD'),
+          },
+        ].filter((group) => group.items.length > 0)
       : tabStatuses
           .map((status) => ({
             key: status,
@@ -731,7 +770,10 @@ export default function Inquiries() {
               placeholder="All statuses"
               options={
                 activeTab === 'projects'
-                  ? PROJECT_STAGE_ORDER.map((stage) => ({ value: stage, label: PROJECT_STAGE_LABELS[stage] }))
+                  ? [
+                      ...PROJECT_STAGE_ORDER.map((stage) => ({ value: stage as string, label: PROJECT_STAGE_LABELS[stage] })),
+                      { value: 'ON_HOLD', label: 'On Hold' },
+                    ]
                   : tabStatuses.map((status) => ({ value: status, label: formatStatus(status) }))
               }
               selected={activeTab === 'projects' ? projectStatusFilter : inquiryStatusFilter}

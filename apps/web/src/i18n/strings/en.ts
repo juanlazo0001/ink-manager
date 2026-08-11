@@ -140,6 +140,36 @@ export const en = {
     },
   },
 
+  // Prepay + On-Hold epic, Part 2: a deliberately PARTIAL mirror of
+  // `deposit` above, not a full duplicate -- only the keys whose text
+  // actually says "deposit" get an override here (see DepositResponse.tsx's
+  // own pt() helper, which falls back to the `deposit` namespace for
+  // every key without one). agreedLatePolicy/agreedAge18 never mention
+  // "deposit" at all, so they're absent from `terms` below on purpose.
+  prepay: {
+    linkExpiredBody: 'Please contact the studio to request a new prepayment form.',
+    paidHeading: 'Thanks — your prepayment is paid!',
+    agreementSignedHeading: 'Prepayment Agreement Signed',
+    agreementSignedBody: '{{firstName}}, your agreement is on file. Complete your prepayment below to confirm your appointment.',
+    amountLabel: 'Prepayment',
+    receivedNoPaymentBody:
+      'Your signed prepayment form has been received. No payment has been collected yet — the studio will reach out to collect your prepayment and confirm your appointment.',
+    agreementHeading: 'Prepayment Agreement',
+    tentativeTimeBody:
+      "Your appointment will be tentatively scheduled for {{range}}, pending your prepayment. We'll confirm exact scheduling once payment is received.",
+    voucherLabel: 'Your prepayment voucher',
+    terms: {
+      agreedNonRefundable:
+        'Full prepayment is required to set an appointment. Prepayments are non-refundable and are applied to the final price of the tattoo.',
+      agreedNoShowForfeit: 'A no-call/no-show forfeits the prepayment. A 48-hour notice is required to change a scheduled appointment.',
+      agreedNewDepositAfterNoShow: 'After a no-call/no-show, a new prepayment is required to set up another appointment.',
+      agreedRescheduleLimit: 'Appointments may be rescheduled up to 3 times; the prepayment is forfeited on the 3rd reschedule.',
+      agreedExpiration: 'Prepayments expire one year after the date they were created.',
+      agreedIdAndVoucher:
+        'Client must bring a government-issued ID and the Prepayment Voucher (issued after payment) on the day of the appointment.',
+    },
+  },
+
   estimate: {
     contactStudioForNewEstimate: 'Please contact the studio to request a new estimate.',
     alreadyBookedHeading: "You're all set, {{firstName}}!",

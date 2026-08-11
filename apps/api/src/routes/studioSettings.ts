@@ -367,7 +367,8 @@ function presentSettingsPermissionGroups(body: Record<string, unknown>): Set<Per
     body.schedulingBufferMinutes !== undefined ||
     body.depositFeeCents !== undefined ||
     body.reminderWeekBeforeDays !== undefined ||
-    body.reminderNightBeforeDays !== undefined
+    body.reminderNightBeforeDays !== undefined ||
+    body.defaultDepositAmountMode !== undefined
   ) {
     groups.add("settings.manageDefaults");
   }
@@ -466,6 +467,13 @@ staffRouter.patch("/", async (req, res) => {
       return res.status(400).json({ error: "depositFeeCents must be a non-negative number" });
     }
     data.depositFeeCents = body.depositFeeCents;
+  }
+
+  if (body.defaultDepositAmountMode !== undefined) {
+    if (body.defaultDepositAmountMode !== "DEPOSIT" && body.defaultDepositAmountMode !== "FULL_PREPAY") {
+      return res.status(400).json({ error: "defaultDepositAmountMode must be DEPOSIT or FULL_PREPAY" });
+    }
+    data.defaultDepositAmountMode = body.defaultDepositAmountMode;
   }
 
   if (body.reminderWeekBeforeDays !== undefined) {
@@ -661,6 +669,7 @@ staffRouter.patch("/", async (req, res) => {
       "themePreset",
       "schedulingBufferMinutes",
       "depositFeeCents",
+      "defaultDepositAmountMode",
       "reminderWeekBeforeDays",
       "reminderNightBeforeDays",
       "referralAllowRepeatRedemption",

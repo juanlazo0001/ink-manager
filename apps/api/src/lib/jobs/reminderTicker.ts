@@ -1,5 +1,5 @@
 import { prisma } from "../prisma";
-import { AppointmentStatus } from "../../../generated/prisma/enums";
+import { AppointmentStatus, InquiryStatus } from "../../../generated/prisma/enums";
 import { registerJob, type JobDetails } from "./registry";
 import { civilDateKey, daysBetweenCivilDates, isWithinSendWindow } from "../reminderWindow";
 import { ensureLiabilityWaiver } from "../waivers";
@@ -79,6 +79,11 @@ async function sendClientReminders(
       status: AppointmentStatus.CONFIRMED,
       [sentAtField]: null,
       startTime: { gte: rangeStart, lte: rangeEnd },
+      // On-Hold: a session whose project is paused gets no client reminders
+      // while paused -- resumes on its own the next tick after release,
+      // since this query re-evaluates live status every run rather than
+      // tracking a separate "paused" flag to unset.
+      inquiryProject: { status: { not: InquiryStatus.ON_HOLD } },
     },
     include: { client: true, artist: { include: { user: true } } },
   });
@@ -141,7 +146,14 @@ async function sendArtistDigest(
   const rangeEnd = new Date(now.getTime() + 2 * 86_400_000);
 
   const candidates = await prisma.appointment.findMany({
-    where: { studioId, status: AppointmentStatus.CONFIRMED, startTime: { gte: rangeStart, lte: rangeEnd } },
+    where: {
+      studioId,
+      status: AppointmentStatus.CONFIRMED,
+      startTime: { gte: rangeStart, lte: rangeEnd },
+      // On-Hold: same pause as the client cadence above -- an artist's
+      // digest shouldn't list a session whose project is currently paused.
+      inquiryProject: { status: { not: InquiryStatus.ON_HOLD } },
+    },
     include: { client: true, artist: { include: { user: true } } },
     orderBy: { startTime: "asc" },
   });
@@ -209,6 +221,10 @@ async function sendEstimateFollowUps(
       estimateRespondedAt: null,
       estimateFollowUpSentAt: null,
       estimateToken: { not: null },
+      // On-Hold: defensive -- estimate follow-up is a pre-deposit stage
+      // hold isn't expected to reach, but a paused project gets no
+      // reminders of any kind while paused, same as the two cadences above.
+      status: { not: InquiryStatus.ON_HOLD },
     },
     include: { client: true },
   });

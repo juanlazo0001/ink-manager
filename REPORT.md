@@ -16156,6 +16156,677 @@ session should have used from the start -- see the process note above).
 REPORT.md line count before this entry: 15969 (verified via `git show
 HEAD:REPORT.md | wc -l`) -- pure addition.
 
+# Prepay + On-Hold, Part 1: schema
+
+Solo schema pass, isolated worktree this time (`session/prepay-onhold`,
+via `scripts/new-session.ps1` -- the process this session's own
+previous entry flagged missing). `migrate diff` + hand-written
+migration file + `migrate deploy`, never `migrate dev`.
+
+## A premise correction, found before writing any of this
+
+The task's own instruction was "reuse the flash-prepay machinery --
+payment issues a gift card for the full amount... checkout consumes it
+via the existing stackable-card logic." Read the actual flash-payment
+code (`lib/flashPayments.ts`, the Stripe webhook handler in
+`webhooks.ts`, and `InquiryStatus.FLASH_PAYMENT_PENDING`'s own schema
+comment) before writing any schema against that premise, per this
+file's own repeated "verify task premises" lesson -- and it doesn't
+hold. Flash prepayment is a direct Stripe Connect charge straight to
+`Inquiry.flashPaidAt`, with **no signing step and no GiftCard at all**
+-- it skips straight to `SCHEDULING` on webhook confirmation. The
+schema's own comment on `FLASH_PAYMENT_PENDING` says as much verbatim:
+"a distinct mechanism from the deposit-tier gift-card system."
+
+The properties the task actually wants -- signed terms, gift-card
+issuance, Stripe Checkout AND embedded Payment Element, stackable
+redeem/roll-forward at checkout -- already fully exist, just on the
+**deposit-tier** pipeline (`DepositForm` + `GiftCard`), not the flash
+one. So `FULL_PREPAY` is built as a new `DepositForm.amountMode`
+alongside the existing `DEPOSIT` mode: same form, same signing, same
+gift-card issuance, same checkout-time stackable redemption -- only the
+computed `depositAmount` (full price instead of a tier) and the
+client-facing copy change. This is a substitution of WHICH existing
+mechanism gets reused, not a deviation from the task's actual intent --
+flagged here rather than silently building against a premise that
+doesn't match the code, or silently building the wrong thing to match
+the letter of an instruction based on a mistaken belief about what
+"the flash-prepay machinery" does.
+
+## Schema changes
+
+- **`DepositAmountMode` enum** (`DEPOSIT`, `FULL_PREPAY`) -- new.
+- **`DepositForm.amountMode`**: `DepositAmountMode @default(DEPOSIT)`.
+  Default matches every existing row's real, unchanged behavior (all of
+  them were tier-based deposits).
+- **`StudioSettings.defaultDepositAmountMode`**: `DepositAmountMode
+  @default(DEPOSIT)` -- the studio-level default Part 2's send-time UI
+  will pre-select (still per-send overridable). Added now, in the same
+  schema pass, since Part 2 needs it to already exist.
+- **`InquiryStatus.ON_HOLD`**: new value. NOT terminal like
+  `CLOSED_LOST`/`TRANSFERRED` -- release restores the prior stage,
+  it doesn't end the pipeline.
+- **`Inquiry.statusBeforeHold`** (`InquiryStatus?`), **`.holdReason`**
+  (`String?`), **`.heldAt`** (`DateTime?`): same out-of-band-fields-
+  alongside-a-status shape as the existing `lostAt`/`lostReason` pair
+  next to `CLOSED_LOST` -- `statusBeforeHold` is captured at the moment
+  of going on hold (not derived after the fact, since by then `status`
+  itself already reads `ON_HOLD` and the prior stage would be gone).
+  `heldAt` wasn't explicitly requested but mirrors `lostAt`'s own
+  established convention exactly, for the same audit/reporting reason
+  that field exists.
+
+Schema only -- inert until Part 2 (prepay flow) and Part 3 (on-hold
+actions) exist. No route reads or writes any of these five new
+fields/values yet. `tsc -b --noEmit` clean on both apps, API suite
+170/170 (unchanged -- nothing yet reads the new columns).
+
+REPORT.md line count before this entry: 16157 (verified via `git show
+HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Prepay + On-Hold epic, Part 2: Prepay flow
+
+Built the full staff-send -> client-sign -> pay -> checkout path for
+`FULL_PREPAY` on top of Part 1's schema, reusing the deposit-tier
+pipeline exactly as that part's own writeup described.
+
+## Backend
+
+- **`lib/deposits.ts`**: `generateAndSendDepositForm` now resolves
+  `amountMode` in this order: explicit per-send choice -> (on a resend
+  of an unsigned form only) that form's own already-chosen mode -> the
+  studio's `defaultDepositAmountMode` -> `DEPOSIT`. The middle rule
+  exists so "Resend" never silently reverts an in-flight `FULL_PREPAY`
+  form back to whatever the studio default happens to be today.
+  `FULL_PREPAY`'s `depositAmount` is the plain price-estimate average
+  (no tier lookup); the flat processing fee still applies on top,
+  unchanged -- it's about the transaction, not which amount is being
+  collected. `createDepositCheckoutSession`'s Stripe product name
+  switches to "Prepayment" for this mode.
+- **`routes/inquiries.ts`** (`POST /:id/deposit-form`) and
+  **`routes/studioSettings.ts`** (`defaultDepositAmountMode` added to
+  the `settings.manageDefaults` permission group, validated and
+  audit-logged same as `depositFeeCents`).
+- **`routes/deposits.ts`**: `PREPAY_TERMS`/`PREPAY_TERMS_ES` -- partial
+  maps, only the 6 of 8 clauses that actually say "deposit" (
+  `agreedLatePolicy`/`agreedAge18` don't, so they fall back to the base
+  `TERMS`/`TERMS_ES` text for both modes). `termsForLocale` now takes
+  `amountMode` and overlays per key. `GET /verify/:token` returns
+  `amountMode`; the PDF route passes it through too.
+- **`lib/pdf.ts`** / **`lib/pdfStrings.ts`**: `generateDepositFormPdf`
+  swaps the header title and amount-line label when `amountMode` is
+  `FULL_PREPAY` (`prepayAgreementTitle`/`prepayAmount`, EN+ES).
+
+## Frontend
+
+- **`i18n/strings/en.ts` / `es.ts`**: new `prepay` namespace --
+  deliberately a *partial mirror* of `deposit`, not a full duplicate:
+  only the ~9 top-level keys and 6 term keys whose wording actually
+  differs get an entry; everything else (fee/total labels, PDF chrome
+  the client never disagrees to, session-plan copy, etc.) is shared.
+  Considered fully duplicating the namespace first and rejected it as
+  needless drift-risk -- two copies of unchanged text is a second place
+  to forget an edit.
+- **`pages/DepositResponse.tsx`**: `VerifyResponse.amountMode` added;
+  every call site that has a `prepay.*` counterpart now ternaries on
+  `isPrepay = verifyData?.amountMode === 'FULL_PREPAY'` rather than
+  going through a dynamic-key helper, so both branches stay checked
+  against the translation dictionary's own literal-key type. The terms
+  checkbox list resolves through a small `PREPAY_TERM_TRANSLATION_KEYS`
+  partial map (6 keys) layered over the existing 8-key `TERM_TRANSLATION_KEYS`.
+- **`components/payments/DepositGiftCardCard.tsx`**: new optional
+  `isPrepay` prop, swaps the voucher label to `prepay.voucherLabel`;
+  everything else in that card (QR instructions, expiry) doesn't
+  mention "deposit" and stays shared.
+- **`pages/InquiryDetail.tsx`**: new `DepositAmountModePicker` (module-
+  level component, two-button toggle) shown at exactly the two send
+  sites that generate a *fresh* session's form (the top-level "Send
+  Deposit Form"/"Send Another Deposit Form" button and the per-planned-
+  session "Send Deposit Form" mini-form) -- never on either "Resend"
+  site, matching the backend's own "resend preserves mode" rule. Local
+  state is `depositAmountModeOverride: 'DEPOSIT' | 'FULL_PREPAY' | null`
+  (`null` = "use the studio default"), so the picker reflects the
+  studio's configured default the moment it loads without needing an
+  effect to sync it in. `handleSendDepositForm` only includes
+  `amountMode` in the request body for a genuinely new session.
+- **`pages/Settings.tsx`**: `defaultDepositAmountMode` added to
+  `StudioSettingsData`, the Defaults edit form, and its save payload --
+  plus a read-only display row in the Defaults card itself (`Default
+  deposit form amount`), which was missed on the first pass (caught
+  during live verification, see below) and had to be added as a
+  follow-up edit.
+
+## Spanish review doc
+
+`scripts/generate-es-review.ts` only walked `TERMS`/`TERMS_ES` from
+`routes/deposits.ts`, not the new `PREPAY_TERMS`/`PREPAY_TERMS_ES` --
+extended it with a dedicated section (`PREPAY_TERMS` wasn't even
+exported before this; fixed). The frontend `prepay` namespace needed no
+script changes -- the generator already walks `en`/`es` generically by
+namespace. Regenerated `PLATFORM_STRINGS_ES_REVIEW.md`; the diff also
+picked up an unrelated drift (the Flash Gallery section had gone stale
+against a restyle that landed on `main` after this branch's last
+regen) -- expected, not a regression this session introduced.
+
+## Live verification -- and a real environment bug it caught
+
+Verified against this worktree's own dev servers, logged in as
+`owner@dev-studio.test` / the documented dev password, using an
+existing "Referred ClientB" test inquiry (assigned artist, estimate
+accepted via a direct `PATCH /estimates/respond/:token` call to reach
+`DEPOSIT_PENDING` without fighting the pipeline-stage buttons, which
+turned out to be non-interactive status indicators, not click targets).
+
+**First attempt was silently testing the wrong server.** This
+worktree's own `npm run dev` for the API crashed on startup
+(`EADDRINUSE`, port 4000) because a *different* worktree's API process
+(command line confirmed: `...\ink-manager\node_modules\tsx\...`, the
+primary checkout, not this session's) was already bound to port 4000 --
+`apps/web/.env`'s `VITE_API_URL` still pointed there from before this
+session entered its worktree. Every `POST /inquiries/:id/deposit-form`
+call with `amountMode: FULL_PREPAY` returned `201` and looked
+successful, but silently produced a `DEPOSIT`-mode row at the tier
+default ($100) -- the other worktree's checked-out code has no
+`amountMode` support at all, so Express just ignored the unrecognized
+body field. Caught by cross-checking the persisted `depositAmount`
+against the expected price-estimate average instead of trusting the
+`201`. Fixed by starting this worktree's API on the free port 4003
+(matching this session's originally-assigned port from `new-session.ps1`,
+just never actually used until now), pointing `VITE_API_URL` at it, and
+restarting the web dev server. **Lesson for any future worktree
+session sharing this machine: a successful HTTP response is not proof
+you're talking to your own code -- verify the response *data* matches
+what your own worktree's logic should produce, especially right after
+a `npm run dev` port conflict.**
+
+Once pointed at the correct server:
+- **Send (new session, `FULL_PREPAY`)**: `POST /inquiries/:id/deposit-form`
+  with `amountMode: "FULL_PREPAY"` against a $300-$450 estimate ->
+  `depositAmount: 375` (the average, not a tier lookup), `feeAmount: 10`,
+  `totalCharged: 385`. A same-inquiry `DEPOSIT`-mode send (session 3,
+  regression check) -> `depositAmount: 100` (correct tier), confirming
+  the two modes don't cross-contaminate.
+- **Client-facing sign page (English)**: "Prepayment Agreement" heading,
+  "PREPAYMENT $375 / FEE $10 / TOTAL $385" breakdown, all 8 terms
+  showing the 6 prepay-specific overrides with the 2 unmodified ones
+  (late policy, age 18) falling back correctly.
+- **Client-facing sign page (Spanish)**: same page with the client's
+  `preferredLocale` set to `es` (this page deliberately has no `?locale=`
+  query override -- confirmed by reading its own route comment after
+  `?locale=es` had no effect) -- "Acuerdo de Pago por Adelantado", all
+  8 terms in Spanish matching the drafted translations.
+- **Sign + pay**: signed via a synthetic `PointerEvent` sequence on the
+  signature canvas (drag-based tools don't respond to plain `.click()`/
+  scripted mouse coordinates the way this environment's browser
+  automation needs -- pointer events did). Redirected to real Stripe
+  test-mode Checkout: heading "Prepayment", amount "$385.00" -- correct
+  product name and total. No tip-selection UI anywhere on the page,
+  confirming tips really are checkout-only, not a Part 1/2 regression
+  risk to begin with (this page never collected one).
+- **Payment confirmation dead-end, and why**: completing the Stripe
+  test-mode card form (4242..., real submission, disclosed via the
+  "I am an AI agent" checkbox Stripe's own Checkout now surfaces) left
+  the client-facing page polling "Confirming your payment..." forever.
+  Root cause: this worktree's API on port 4003 isn't the endpoint the
+  environment's shared Stripe CLI webhook forwarder is pointed at (that
+  forwarder -- one process, shared across every concurrent worktree
+  session -- forwards to whichever port was configured first), so
+  `checkout.session.completed` never reached this server. Not a code
+  bug; a dev-environment limitation of running multiple worktree API
+  instances against one shared Stripe CLI listener. Worked around via
+  the existing staff-facing `PATCH /deposit-forms/:id/mark-paid` route
+  (real code path, not a shortcut invented for this test) to reach the
+  same downstream state a webhook would have produced.
+- **Gift-card issuance for the full amount**: after marking paid,
+  `depositForm.giftCardId` was set and the resulting `GiftCard.amountCents`
+  was `37500` -- exactly the $375 prepayment, confirming
+  `issueGiftCardForPaidDeposit` (unmodified, generic code) correctly
+  issues off `depositAmount` regardless of which mode produced it.
+- **Post-paid client page**: "Thanks -- your prepayment is paid!",
+  "YOUR PREPAYMENT VOUCHER $375.00" -- `prepay.paidHeading` and the
+  gift-card card's `isPrepay`-aware label both confirmed live.
+- **Checkout-time zero-balance redemption and the checkout tip step
+  itself were not re-driven live** -- `appointments.ts` (session
+  checkout, stackable gift-card redemption, the tip step) has zero
+  `amountMode` references; this feature never touched it. Verified by
+  reading the file instead: gift-card redemption there reads
+  `GiftCard.amountCents` generically (already confirmed correct above),
+  and the tip step is its own route gated on session checkout only, with
+  no dependency on how the card was funded. Treating an unmodified,
+  already-tested code path as a live-verification target for a change
+  that never touches it would have been theater, not verification.
+- **Studio-level default toggle** (`Settings.tsx` Defaults tab): the
+  read-only display row was missing on first pass -- caught here, fixed
+  (see Frontend section above), then re-verified: opened the edit
+  modal, switched the select to "Full prepayment," saved, confirmed the
+  read-only card immediately showed "Full prepayment," then switched it
+  back to "Deposit (tier-based)" to leave the shared dev studio's
+  settings as found.
+
+API suite: 170/170 passing (`npm test`, both before and after the
+Settings.tsx follow-up fix). `tsc -b --noEmit` clean on both apps.
+
+Cleanup: reverted the test client's `preferredLocale` override used for
+the Spanish check; deleted all scratch DB-inspection scripts
+(`scratch-get-token.ts`, `scratch-check-card.ts`, `scratch-set-locale.ts`)
+before committing -- none were ever intended to ship.
+
+Not yet done: Part 3 (On-Hold) and Part 4 (combined final verification,
+screenshots) remain. `apps/web/.env`'s `VITE_API_URL` now correctly
+points at this worktree's own port 4003 going forward.
+
+# Prepay + On-Hold epic, Part 3: On-Hold
+
+Staff can pause a converted project (deposit paid through completed) and
+release it back to exactly where it was, with reminders paused for the
+duration, its own Kanban column, and no red anywhere on it.
+
+## Backend
+
+- **`routes/inquiries.ts`**: `POST /:id/hold` and `POST /:id/release`,
+  placed right after `reopen` (the closest existing precedent -- a
+  status round-trip driven by a captured prior value). Deliberately
+  scoped to `PROJECT_STATUSES` (SCHEDULING/WAITLISTED/CONFIRMED) rather
+  than the broader `NON_TERMINAL_STATUSES` mark-lost/reopen use -- the
+  task's own language is "place a **project** on hold," and restricting
+  it keeps ON_HOLD's tab/Kanban placement unambiguous (always Projects)
+  instead of needing a rule for a paused pre-conversion lead. `hold`
+  captures `statusBeforeHold` at the moment of the call (not derivable
+  afterward, since `status` itself becomes `ON_HOLD`); `release` needs
+  no request body at all -- unlike `reopen` (CLOSED_LOST/COLD_LEAD don't
+  remember where they came from), `statusBeforeHold` already knows.
+  Both use the inquiry's own confirmed `studioId` for the permission
+  check, audit log, and `emitInvalidation` -- not `req.user!.studioId` --
+  following the artist-mobility-fix precedent already established
+  elsewhere in this file (deposit-form send, etc.).
+  - **Found but not fixed, flagged for a future pass**: `mark-lost` and
+    `reopen`, immediately above where hold/release were added, both
+    still audit-log and `emitInvalidation` against `req.user!.studioId`
+    instead of the confirmed `inquiry.studioId` -- the exact bug pattern
+    CLAUDE.md's own artist-studio-scoping section calls out as having
+    recurred before. Out of scope for this task (not touched, not asked
+    for), but worth a dedicated fix later: a guest-assigned artist
+    marking a host studio's inquiry lost would currently audit-log and
+    realtime-broadcast against their own home studio, not the record's.
+  - Permission: reused `inquiries.edit` (same as `reopen`) rather than
+    adding a dedicated `inquiries.hold` permission-matrix key -- a new
+    key needs its own migration/seed across every existing role, which
+    the task didn't ask for and the codebase doesn't have a lightweight
+    path to add.
+- **`lib/jobs/reminderTicker.ts`**: reminders are entirely computed live
+  each 15-minute tick (no stored "next reminder" row to pause) --
+  `sendClientReminders`/`sendArtistDigest`'s appointment queries and
+  `sendEstimateFollowUps`'s inquiry query all gained
+  `inquiryProject: { status: { not: ON_HOLD } }` (or `status: { not:
+  ON_HOLD }` directly, for the inquiry-level query). "Resume on
+  release" needed no separate code path -- the next tick just
+  re-evaluates live status and finds the appointment eligible again,
+  same as it would for a project that was never paused.
+
+## Frontend
+
+- **`index.css`**: new `--color-hold` token, added to both the base
+  `@theme` block and the editorial-gold `[data-theme]` override, same
+  as every other semantic status color. Checked first whether an
+  existing tone (danger excluded by the task itself; success/info/
+  warning/neutral/progress/highlight all already spoken for) was free
+  to reuse -- every one of the 7 existing tones turned out to already be
+  claimed by a status that can appear in the *same* Inquiries+Projects
+  combined status set ON_HOLD needs to coexist with (e.g. reusing
+  neutral, COLD_LEAD's tone, would make a paused project read as a dead
+  lead in the exact same Kanban board) -- so an 8th tone was the only
+  way to satisfy "distinct." Picked a cool slate-blue, deliberately
+  unlike the app's warm ambers/greens/violets and nothing like red.
+- **`components/StatusPill.tsx`**: `ON_HOLD: 'hold'` in the tone map,
+  `'hold'` added to the `Tone` union and all three tone-class records
+  (default fill, editorial border+dot, dot-only). `formatStatus`
+  (lib/format.ts) already title-cases `ON_HOLD` to "On Hold" correctly
+  with zero changes -- no special case needed there.
+- **`pages/Inquiries.tsx`**: `PROJECTS_TAB_STATUSES` gained `ON_HOLD`
+  (appended, not interleaved, so it's always the Kanban board's trailing
+  column rather than looking like a fourth pipeline step) -- the actual
+  Kanban board's columns (`PROJECT_TAB_COLUMNS`) derive from this array
+  automatically, so the board needed no separate edit. The list view's
+  own "Group by status" toggle and Status filter dropdown are a
+  *second*, independent grouping mechanism that keys off the derived
+  5-stage `ProjectStage` (`deriveProjectStage`), not the raw status --
+  ON_HOLD has no derived stage (correctly; a pause isn't a pipeline
+  position), so both would have silently dropped a paused project the
+  moment any stage filter was active, or omitted it from a grouped list
+  entirely. Fixed with a small `projectGroupKey` helper (`'ON_HOLD'` for
+  an on-hold row, else the derived stage) threaded through the filter
+  options, the filter predicate, and the grouped-list construction.
+  `resolveProjectsTabTransition` gained explicit `ON_HOLD` drag handling
+  -- both directions open the same modal/section every other button-driven
+  entry point uses (hold needs a reason field a drag can't collect;
+  release, though data-free on the backend, still scrolls to its own
+  explicit button rather than firing off a drop with no confirmation
+  step, since restoring a CONFIRMED project's status is a client-visible
+  change a stray drag shouldn't trigger unconfirmed).
+- **`pages/InquiryDetail.tsx`**: `Inquiry` interface gained
+  `statusBeforeHold`/`holdReason`/`heldAt` (Prisma returns them for
+  free, same as `lostReason`/`lostAt` already did -- no backend
+  serialization change needed). "Put On Hold" in the More-actions menu
+  (gated on `canEditInquiry && isConverted`, mirroring exactly how
+  `isConverted` already gates the Project-only "Mark Project Complete"
+  button right below it) opens a reason modal identical in shape to the
+  existing mark-lost modal. An `id="hold-section"` banner (shown only
+  when `status === 'ON_HOLD'`) displays the reason/`heldAt` and a
+  "Release" button -- this same element id is the scroll target for the
+  `?openFlow=release` deep link from the Kanban drag handler above.
+
+## Live verification
+
+Reused "Referred ClientB" (`cmsigobgh000058i266qxauu3`) from Part 2's
+own verification -- already a converted project by that point (a
+FULL_PREPAY session had been paid, auto-booking a CONFIRMED appointment
+via the deposit flow's own self-scheduling path -- confirmed via the raw
+`GET /inquiries/:id` response, `status: "CONFIRMED"`, one appointment).
+
+- **Hold**: More actions -> Put On Hold -> reason entered -> header pill
+  switched to "ON HOLD" in the new slate-blue tone (no red anywhere),
+  a banner appeared with the reason and timestamp, "Release" button
+  present.
+- **Release**: clicking Release restored the header pill to "SCHEDULED"
+  -- confirmed via the raw API response that `status` round-tripped
+  `CONFIRMED -> ON_HOLD -> CONFIRMED` exactly, `statusBeforeHold`/
+  `holdReason`/`heldAt` all correctly null again after release. (The
+  Pipeline widget's own derived-stage label read differently at two
+  points in this session for reasons traced to this same inquiry's
+  accumulated Part 2 test data -- not to hold/release, which touch only
+  the four status/hold fields, confirmed by reading the routes; noted
+  here rather than silently ignored.)
+- **Kanban board**: Projects tab now shows four columns --
+  SCHEDULING / WAITLISTED / CONFIRMED / ON HOLD -- with the held project
+  appearing only in its own trailing column, visually distinct
+  (slate-blue border, no red) from every neighboring card.
+- **Reminders/stalled-alerts exclusion**: not re-driven live (would need
+  a real CONFIRMED appointment inside a send window plus waiting for a
+  15-minute tick) -- verified by reading `reminderTicker.ts`'s own
+  updated queries instead, plus confirming the one other "staleness"
+  system in the codebase, `coldLeadSweep.ts`, already excludes every
+  Projects-side status by design (its own comment: "Projects-side
+  statuses... are never swept") -- since ON_HOLD is only reachable from
+  those same three Projects-side statuses, it was already outside that
+  sweep's scope with no change needed. No dashboard "stalled project"
+  widget was found anywhere in the codebase to check against.
+
+API suite: 170/170 (`npm test`, after all Part 3 backend changes).
+`tsc -b --noEmit` clean on both apps.
+
+Cleanup: released the test project back to CONFIRMED before moving on,
+so the shared dev studio's data is left as found.
+
+Not yet done: Part 4 (combined final verification pass, screenshots,
+closing commit) remains.
+
+# Prepay + On-Hold epic, Part 4: final verification
+
+Closing pass across both parts together -- the pieces Part 2/3's own
+verification sections didn't already cover, plus a final suite/typecheck
+run and cleanup.
+
+## Checkout zero-balance, live
+
+Continued from Part 2's own FULL_PREPAY gift card ($375, on "Referred
+ClientB"'s now-CONFIRMED appointment): opened that appointment's
+Checkout section, set Final cost to $375.00 with the card set to
+Redeem. Before typing a real final cost, the amount-due panel read
+"Amount due today: $0.00" with an overage warning (a new card would be
+issued for the $375 difference against a $0 final cost) -- once Final
+cost was actually set to $375.00, the overage warning disappeared and
+it settled on a clean **"Amount due today: $0.00"** with no overage.
+Confirmed Checkout: appointment moved to Completed, gift card moved to
+Redeemed, Checkout section showed `FINAL COST $375.00 / DEPOSIT 1 card
+redeemed ($375.00) / AMOUNT DUE $0.00`. **No tip step appeared anywhere
+in this flow** -- confirms tips genuinely only trigger when there's a
+real remaining balance to collect, exactly as Part 2 assumed when it
+called "no tip at prepay" already satisfied by construction.
+
+Real Playwright quirk hit here worth recording: setting the Final cost
+input's `.value` via a synthetic `Event('input')` (the fast path used
+everywhere else in this session) changed the DOM attribute but never
+updated React's own state -- the derived "amount due" text stayed
+computed off the old ($0) value even though the input visibly showed
+375. Playwright's real `fill()` had the same problem once; only
+`pressSequentially` (real per-character keystrokes) actually got
+React's onChange to fire. Numeric/currency inputs with a derived
+computed readout below them seem to need the slower, more "real" input
+path -- noted for future live-verification sessions in this repo.
+
+**Tip step at a normal (nonzero-balance) checkout**: not re-driven
+live -- doing so needs a second CONFIRMED appointment with no gift card
+covering it, actual embedded-payments client-facing takeover, and a
+real payment confirmation, none of which this feature touches. Already
+confirmed by Part 2's own reading of `appointments.ts`: zero
+`amountMode` references anywhere in that file, so the tip route's own
+gating (session checkout, real balance due) is exactly as it was before
+this epic. Re-verifying an unmodified code path by hand a second time
+would be theater, not verification -- same reasoning Part 3 used for
+skipping a live re-drive of the stalled-alerts exclusion.
+
+## Dashboard, live
+
+`/dashboard` loaded clean (zero console errors) after all of this
+session's test data -- funnel, lost/cold rate, response time, artist
+utilization, needs-scheduling, deposit conversion, and gift-card
+liability widgets all rendered populated, sensible numbers. Confirms
+the on-hold status addition didn't break any of `GET /reports/dashboard`'s
+status-filtered counts -- each one narrows on specific literal statuses
+(`CONFIRMED`, the three Projects-side statuses for needs-scheduling,
+etc.), so a project sitting at `ON_HOLD` simply and correctly drops out
+of every one of them while paused, with no code change needed for that
+to already be true.
+
+## Suite + typecheck, final pass
+
+`npm test` (API): 170/170. `tsc -b --noEmit`: clean on both apps. Same
+results as after Parts 2 and 3 individually -- this pass re-ran both
+after Part 4's own checkout/dashboard verification touched no source
+files, purely to confirm nothing about the live-testing session itself
+(browser state, dev-server restarts) left anything broken.
+
+## Session-wide notes for whoever picks this up next
+
+- This worktree's API dev server now correctly runs on port 4003 (was
+  silently colliding with the primary checkout's server on port 4000 at
+  the start of Part 2 -- see that part's own writeup). `apps/web/.env`
+  points at 4003 accordingly.
+- The pre-existing `mark-lost`/`reopen` audit-log/`emitInvalidation`
+  bug flagged in Part 3 (uses `req.user!.studioId` instead of the
+  record's own confirmed studio) is still unfixed -- deliberately out
+  of scope for this epic, flagged for a dedicated pass.
+- Test data left in the shared dev studio from this session's live
+  verification: "Referred ClientB"'s project now has a completed,
+  redeemed-out checkout and three deposit forms across its session
+  history (two FULL_PREPAY, one DEPOSIT) -- consistent with the studio's
+  existing large body of "Test"/"ZZZ"-prefixed dev fixtures, not
+  cleaned up individually (as established practice in this repo's own
+  prior sessions).
+
+All four parts of the epic are now committed and pushed to
+`session/prepay-onhold`.
+
+# Pre-merge: Session-Plan/DepositForm linkage bug fix
+
+Before merging, checked ground truth on whether a specific bug fix the
+user described (a paid deposit invisible to the Session Plan widget;
+Send Deposit Form staying actionable for an already-paid session) was
+already on `main`. It was not -- searched `main`'s REPORT.md, `git log`
+on `main` and every local branch, and the current `generateAndSendDepositForm`
+code itself; found no matching fix anywhere. Per instruction, built it
+as part of this pass instead of merging on top of the unfixed bug.
+
+## Investigation -- exact mechanism, confirmed live before writing any fix
+
+The Deposit widget (`inquiry.depositForms`, a flat list) and the Session
+Plan widget (`plannedSessions[].depositForm`, a per-session FK relation)
+derive their state from two different places that are supposed to stay
+in sync via `PlannedSession.depositFormId`. Set up a real repro against
+this worktree's own dev API (not simulated): a fresh inquiry, sent an
+**un-planned** deposit form (`POST /inquiries/:id/deposit-form`, no
+`plannedSessionId` -- the only way a deposit form can exist before any
+session plan does), signed it, paid it. Then called
+`POST /:id/revise-estimate` declaring a 2-session plan for the same
+inquiry. Result: the new `PlannedSession` row for session 1 had
+`depositFormId: null` and `depositForm: null`, despite a real, signed,
+paid `DepositForm{sessionNumber: 1}` already existing on the same
+inquiry -- confirmed via the raw API response, not assumed.
+
+**Root cause, and where it actually lives**: reconciling `PlannedSession`
+rows against a revised/declared plan never looks up whether a matching
+`DepositForm` already exists for that `sessionNumber` before minting or
+touching a row -- it only trusts whichever FK was already stored. This
+logic is **duplicated in two independent places** (a real, pre-existing
+DRY violation, not something introduced by this session):
+- `lib/estimates.ts`'s `reconcilePlannedSessions` (used by
+  `POST /:id/send-estimate` and `saveEstimateDraft`).
+- A second, entirely separate, copy-pasted implementation directly
+  inline inside `POST /:id/revise-estimate`'s own route handler in
+  `routes/inquiries.ts` -- **this is the one actually reached by the
+  reported repro shape** (a single-session project revised into a real
+  plan after its deposit was already collected), since revise-estimate
+  is the only route reachable once an inquiry is `DEPOSIT_PENDING` or
+  later. Missed on a first pass that only fixed the shared lib
+  function -- caught by re-testing the exact repro shape against a
+  freshly-restarted server and finding it still broken, not by
+  inspection alone.
+
+**How many existing projects were desynced**: queried every inquiry
+with a declared plan in the shared dev DB directly (5 total). Before
+any fix, only 1 had a desynced session, and it was neither signed nor
+paid (a token-rotated, abandoned form) -- the reported PAID-and-invisible
+symptom hadn't actually occurred yet in this dataset. This is NOT
+"estimate-approval auto-generation" (that path -- front-desk approving a
+self-scheduled `REQUESTED` appointment -- is gated to single-session-only
+inquiries by the same `timeEstimateHoursMin/Max`-nulled-once-a-plan-
+exists mechanism the multi-session-planning work already established,
+so it can't produce this desync); it's specifically **an inquiry whose
+deposit was collected before any plan existed, later revised into a
+real multi-session plan** -- confirmed by direct reproduction, not
+inferred from dev-data alone.
+
+## Fix
+
+- **`lib/estimates.ts`** (`reconcilePlannedSessions`) and
+  **`routes/inquiries.ts`** (`/revise-estimate`'s own inline copy):
+  both now look up the inquiry's existing `DepositForm` rows by
+  `sessionNumber` before creating or updating a `PlannedSession` row,
+  and set `depositFormId` from that lookup whenever the target row's
+  own link is currently null -- never overwriting an already-linked
+  row (that link came from the real send-deposit-form flow, always the
+  more authoritative source). Fixed identically in both places, with
+  matching comments cross-referencing each other, since a future fix to
+  one without the other would silently reintroduce exactly this gap.
+- **`lib/deposits.ts`** (`generateAndSendDepositForm`): the double-charge
+  guard for a planned-session send no longer trusts
+  `PlannedSession.depositFormId` alone. It now looks up the real latest
+  `DepositForm` for that exact `sessionNumber` directly (regardless of
+  whether the FK happens to be linked) and blocks with a clear message
+  ("This session's deposit has already been paid" / "...has already
+  been signed") whenever it's signed or paid -- amount-mode-agnostic
+  (never reads `amountMode`), so a `FULL_PREPAY` session is guarded
+  identically to a tiered `DEPOSIT` one. The same lookup also now
+  re-links a found-but-previously-unlinked form on every send/resend,
+  not just brand-new ones, so a stale link self-heals the next time
+  staff touches that session.
+- **`scripts/backfill-planned-session-deposit-linkage.ts`** (new,
+  checked in, not scratch): one-time catch-up for rows that desynced
+  before this fix shipped. Links only when exactly one matching
+  `DepositForm` exists for a given unlinked `PlannedSession`'s
+  `sessionNumber` on the same inquiry; anything ambiguous (more than
+  one candidate) is reported, never guessed at. Idempotent -- only ever
+  fills a currently-null link, safe to re-run. Run against this
+  worktree's local dev DB: 2 unambiguous links applied, 0 ambiguous.
+  **Not run against production** -- that's a separate, deliberate action
+  for the user to authorize once this fix is actually deployed, not
+  something to fold into a merge pass sight-unseen against a database
+  this session has no credentials for anyway.
+
+## Live verification
+
+- **Reported repro shape, after the fix**: re-ran the exact same
+  send -> sign -> pay -> revise-estimate sequence against a freshly
+  restarted server (see the "stray `tsx watch` restart race" note
+  below) -- the Session Plan widget correctly showed **"Deposit paid"**
+  for the paid session, screenshot captured, with no "Send Deposit
+  Form" action offered for it (a "Book Appointment" prompt showed
+  instead, for an unrelated reason -- the tentative time this test used
+  happened to collide with another booking by the time the deposit was
+  marked paid, a real and correctly-handled "Scheduling conflict" state,
+  not a bug).
+- **Genuinely-unpaid session, same project**: session 2 (no deposit
+  ever sent) showed "Deposit pending" once its own form was generated
+  and stayed fully actionable ("Resend Deposit Form" available) --
+  confirmed the fix doesn't over-lock sessions that were never touched.
+- **`FULL_PREPAY`-paid session**: built a second, independent repro
+  (single-session `FULL_PREPAY` deposit, signed, paid, then revised
+  into a 2-session plan) -- correctly linked after the fix, and the
+  guard blocked a resend attempt with the same "already been paid"
+  message, confirming the fix and the guard are both amount-mode-blind
+  as designed.
+- **Guard, both modes, direct**: `POST /inquiries/:id/deposit-form`
+  with `plannedSessionId` pointing at an already-paid session returned
+  `400 "This session's deposit has already been paid."` for both the
+  `DEPOSIT` repro and the `FULL_PREPAY` repro.
+- **Classic tiered-deposit mode, regression-checked**: session 2's
+  plain `DEPOSIT`-mode public sign page still rendered "Deposit
+  Agreement," "SESSION 2 OF 2," `$200 / $10 / $210` -- unchanged, and
+  correctly still showing the right session-plan context after this
+  fix touched the exact code path that produces it.
+
+### A second environment bug this investigation caught: `tsx watch` restart races
+
+Editing two files within the same few seconds (as this fix's two-file
+change did) can trigger a `tsx watch` restart while the previous
+restart's HTTP listener hasn't released its port yet -- the new process
+crashes on `EADDRINUSE` while the *old*, pre-fix process instance keeps
+running underneath, un-killed, silently serving every subsequent
+request with stale code. This produced a confusing false negative
+mid-investigation (the `routes/inquiries.ts` fix appeared not to work
+immediately after being written, because the running server was still
+the pre-`routes/inquiries.ts`-fix instance from moments earlier).
+Caught by checking which PID actually held the listening port and
+cross-referencing it against the dev-server log's own restart/crash
+timestamps, not by assuming a saved file is a running file. **Lesson
+for this repo's `tsx watch` dev servers generally: after any multi-file
+edit made in quick succession, verify the actually-listening PID is
+fresh (kill everything bound to the port and start clean) before
+trusting a live-verification result** -- the same discipline as Part
+2's cross-worktree collision finding, one layer further in.
+
+## Two spot-confirmations from Part 4, now genuinely live (not just code-read)
+
+- **Tip step absent on a prepay payment**: already confirmed in Part 4
+  (the FULL_PREPAY Stripe Checkout page had no tip UI anywhere).
+- **Tip step present on a normal session checkout**: NOT actually
+  driven live in Part 4 (flagged there as "verified by code instead").
+  Fixed that gap here: built a fresh appointment with a $100 gift card
+  attached and a $300 final cost (a real $200 balance due), confirmed
+  checkout -- with this studio's `embeddedPaymentsEnabled` temporarily
+  switched on for the test (was off; reverted after) -- and the
+  client-facing payment takeover correctly opened straight into "Add a
+  tip?" (15%/18%/20%/Custom/No tip, "100% goes to your artist,"
+  computed on the $300 session price). Confirms the tip step's own
+  gating (embedded takeover + a real balance > $0) is exactly what it
+  was before this epic touched anything nearby -- `appointments.ts` has
+  zero `amountMode` references, so this was never at risk, but is now
+  actually demonstrated rather than only reasoned about.
+
+API suite: 170/170 (`npm test`, final run after the linkage fix).
+`tsc -b --noEmit` clean on both apps.
+
+Cleanup: reverted `embeddedPaymentsEnabled` back to off for the shared
+dev studio; deleted all scratch scripts used for this investigation
+(kept the real backfill script, which is meant to ship). New test data
+left in the dev DB (two "LinkageRepro..." projects, two "TipStep
+TestClient" projects) -- same "shared dev studio, not individually
+cleaned up" precedent as every other live-verification pass in this
+document.
+
+Next: merge latest `main` into this branch, full suite green, merge to
+`main`, push, confirm Railway deploys healthy.
+
 # Transfer-to-artist epic -- Part 4 (execution)
 
 Parts 1-3 get a transfer to `ACCEPTED` and stop there deliberately. Part 4
@@ -16738,3 +17409,45 @@ profile-loading race fixed in MyTransferDetail.tsx likely also affects
 ArtistCreate.tsx's own !isArtist redirect -- flagged for a future
 short session, not fixed here to keep this session's diff scoped to
 the epic's own two reported gaps.
+
+# Prepay + On-Hold epic: merged to main, deploy confirmed
+
+Merge sequence, in order: merged `main` into `session/prepay-onhold`
+(resolved REPORT.md's append-only conflict by concatenating both
+sides -- nothing dropped, both parents' unique content fully present in
+17214 lines). Full production build caught a real gap the session's own
+narrower `tsc --noEmit -p .` checks had missed all session:
+`ConversationsPanel.tsx`'s own `TONE_RING_CLASSES`/`TONE_RING_COLORS`
+(the conversation-list avatar-ring colors, a *separate* pair of
+`Record<Tone, string>` maps from StatusPill's three) never got the
+`hold` tone added in Part 3 -- `tsc -b && vite build` (the actual
+Railway build command) caught it; the flatter `--noEmit -p .` invocation
+this session had been trusting throughout apparently doesn't check
+every project reference the real build does. Fixed, rebuilt clean,
+committed (`790dfac`).
+
+API suite 170/170 against the fully-merged tree; `tsc -b` and `vite
+build` both clean on the actual production build commands (not just
+`--noEmit`) for both apps.
+
+Pushed `session/prepay-onhold` to origin, then fast-forwarded `main` to
+the same commit (`git push origin session/prepay-onhold:main` --
+`main` was still exactly at the commit this branch had already merged
+in, confirmed via `merge-base --is-ancestor` immediately before
+pushing, so this was a genuine fast-forward, not a forced rewrite).
+
+**Railway, confirmed healthy post-deploy**: `api.inkmanager.app/health`
+and `web.inkmanager.app` both `200` before and after the push (no
+downtime observed). Waited for the auto-deploy-on-push build to finish,
+then confirmed the NEW code specifically -- not just that the service
+stayed up -- by hitting the new `POST /inquiries/:id/hold` and
+`/:id/release` routes unauthenticated: both correctly returned `401`
+(route exists, auth required) rather than `404` (route missing), proof
+the deploy actually picked up this merge's backend changes rather than
+still serving the pre-merge build.
+
+All four parts of the Prepay + On-Hold epic, plus the pre-merge
+Session-Plan linkage fix, are now live on `main` and in production.
+Carried forward, not addressed here (deliberately out of scope for this
+merge, per instruction): the `mark-lost`/`reopen` wrong-studio
+audit-log/`emitInvalidation` bug flagged in Part 3.
