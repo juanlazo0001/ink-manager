@@ -4,7 +4,7 @@ import { requireAuth, requireRole } from "../middleware/auth";
 import { Role, StudioMembershipType, TransferStatus } from "../../generated/prisma/enums";
 import type { Prisma } from "../../generated/prisma/client";
 import { logAudit } from "../lib/audit";
-import { emitInvalidation } from "../lib/realtime/registry";
+import { emitInvalidation, emitUserInvalidation } from "../lib/realtime/registry";
 import { gatherTransferPreview, TERMINAL_INQUIRY_STATUSES } from "../lib/artistTransferPreview";
 
 // Transfer-to-artist epic, Part 2 (origin flow). Every route here is
@@ -278,3 +278,115 @@ router.post("/:studioId/artist-transfers/:transferId/cancel", async (req, res) =
 });
 
 export default router;
+
+// Transfer-to-artist epic, Part 3 (artist acceptance). A separate router,
+// mounted separately (see index.ts) -- `router` above gates its whole
+// router on requireRole(OWNER), which would 403 a plain ARTIST before any
+// handler here ran. Accepting/declining is "theirs alone, inalienable-
+// rights family": no role check, no permission key, purely identity --
+// the caller must BE the transfer's own artist, exactly the same shape as
+// residencies.ts's accept/decline (a solo OWNER who also holds an Artist
+// profile must still be able to respond to their own transfer, which a
+// role check would wrongly block).
+export const myTransfersRouter = Router();
+myTransfersRouter.use(requireAuth);
+
+async function loadOwnTransfer(req: Request, res: Response, id: string) {
+  const artist = await prisma.artist.findUnique({ where: { userId: req.user!.userId } });
+  if (!artist) {
+    res.status(404).json({ error: "Transfer not found" });
+    return null;
+  }
+  const transfer = await prisma.artistTransfer.findUnique({ where: { id } });
+  if (!transfer || transfer.artistId !== artist.id) {
+    res.status(404).json({ error: "Transfer not found" });
+    return null;
+  }
+  return transfer;
+}
+
+myTransfersRouter.get("/:id", async (req, res) => {
+  const transfer = await loadOwnTransfer(req, res, req.params.id as string);
+  if (!transfer) return;
+
+  const [originStudio, destinationStudio, lineItems] = await Promise.all([
+    prisma.studio.findUnique({ where: { id: transfer.originStudioId }, select: { id: true, name: true } }),
+    prisma.studio.findUnique({ where: { id: transfer.destinationStudioId }, select: { id: true, name: true } }),
+    prisma.artistTransferClient.findMany({
+      where: { transferId: transfer.id },
+      select: {
+        originClient: { select: { id: true, firstName: true, lastName: true } },
+        originInquiry: { select: { description: true } },
+      },
+    }),
+  ]);
+
+  res.json({
+    id: transfer.id,
+    status: transfer.status,
+    createdAt: transfer.createdAt,
+    originStudio,
+    destinationStudio,
+    clients: lineItems.map((li) => ({
+      id: li.originClient.id,
+      name: `${li.originClient.firstName} ${li.originClient.lastName}`.trim(),
+      openProject: li.originInquiry ? { description: li.originInquiry.description } : null,
+    })),
+  });
+});
+
+myTransfersRouter.post("/:id/accept", async (req, res) => {
+  const transfer = await loadOwnTransfer(req, res, req.params.id as string);
+  if (!transfer) return;
+  if (transfer.status !== TransferStatus.PENDING_ARTIST) {
+    return res.status(400).json({ error: "Only a pending transfer can be accepted." });
+  }
+
+  const updated = await prisma.artistTransfer.update({
+    where: { id: transfer.id },
+    data: { status: TransferStatus.ACCEPTED, respondedAt: new Date(), respondedById: req.user!.userId },
+  });
+
+  await logAudit({
+    studioId: transfer.originStudioId,
+    actorUserId: req.user!.userId,
+    entityType: "ArtistTransfer",
+    entityId: transfer.id,
+    action: "accepted",
+    changes: { destinationStudioId: transfer.destinationStudioId },
+  });
+
+  emitInvalidation({ type: "transfer.changed", studioId: transfer.originStudioId, artistId: transfer.artistId });
+  emitInvalidation({ type: "transfer.changed", studioId: transfer.destinationStudioId, artistId: transfer.artistId });
+  emitUserInvalidation(req.user!.userId, [["tasks", req.user!.userId]]);
+
+  res.json(updated);
+});
+
+myTransfersRouter.post("/:id/decline", async (req, res) => {
+  const transfer = await loadOwnTransfer(req, res, req.params.id as string);
+  if (!transfer) return;
+  if (transfer.status !== TransferStatus.PENDING_ARTIST) {
+    return res.status(400).json({ error: "Only a pending transfer can be declined." });
+  }
+
+  const updated = await prisma.artistTransfer.update({
+    where: { id: transfer.id },
+    data: { status: TransferStatus.DECLINED, respondedAt: new Date(), respondedById: req.user!.userId },
+  });
+
+  await logAudit({
+    studioId: transfer.originStudioId,
+    actorUserId: req.user!.userId,
+    entityType: "ArtistTransfer",
+    entityId: transfer.id,
+    action: "declined",
+    changes: { destinationStudioId: transfer.destinationStudioId },
+  });
+
+  emitInvalidation({ type: "transfer.changed", studioId: transfer.originStudioId, artistId: transfer.artistId });
+  emitInvalidation({ type: "transfer.changed", studioId: transfer.destinationStudioId, artistId: transfer.artistId });
+  emitUserInvalidation(req.user!.userId, [["tasks", req.user!.userId]]);
+
+  res.json(updated);
+});

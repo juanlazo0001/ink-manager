@@ -15783,3 +15783,187 @@ Part 3 (artist acceptance) is a new session's work: the artist's own
 accept/decline UI, `emitUserInvalidation` to their personal room, and
 execution triggering on accept (Part 4). This UI is inert to anyone but
 the initiating OWNER until that part exists.
+
+# Transfer-to-artist epic -- Part 3 (artist acceptance)
+
+Parts 1-2 (`508865d` schema, `3908a36` origin flow) got a transfer as far
+as `PENDING_ARTIST`. Part 3 is the artist's own side: they see the
+incoming request in their own UI -- independent of studio, role, or
+permission matrix -- and accept or decline. The spec calls this "theirs
+alone, inalienable-rights family." Accept sets `ACCEPTED`; it does not
+execute anything. Execution (creating the destination contact/project,
+cancelling origin appointments, resolving origin records as Transferred)
+is explicitly Part 4's own separate spec (duplicate detection,
+transactional per-client, completion report) -- building any of that
+here would have been exactly the kind of half-finished implementation
+CLAUDE.md warns against, so Part 3 stops cleanly at the status
+transition and leaves every `ACCEPTED` transfer for Part 4 to pick up.
+
+Two research passes (backend "caller acts on their own record" patterns,
+frontend "artist's personal view" patterns) grounded every decision
+below.
+
+## Judgment calls made explicit
+
+1. **Permission check is identity-only, not role-based.** Mirrors
+   `residencies.ts`'s own accept/decline exactly: look up the caller's
+   `Artist` row via `userId`, 404 if none, 404 if
+   `transfer.artistId !== artist.id`. No `requireRole`, no permission
+   key -- a solo OWNER who also holds an Artist profile (a real,
+   documented case in this codebase, per `artistAccess.ts`) must still
+   be able to respond to their own transfer, which any role check would
+   wrongly block.
+2. **New sibling router in the same file, not a modification of Part
+   2's router.** `artistTransfers.ts`'s existing router gates the whole
+   thing on `requireRole(Role.OWNER)` at the router level -- adding
+   artist routes there would 403 them before the handler ever ran.
+   Added a second exported router (`myTransfersRouter`, `requireAuth`
+   only) in the same file, mounted separately in `index.ts` at
+   `/artist-transfers` -- the same "two routers, one file" shape
+   `studioSettings.ts`/`giftCards.ts` already use for public/staff
+   splits, applied here to staff/artist-personal instead.
+3. **Surfaced via the existing Tasks system, not a new banner
+   primitive.** `ARTIST_INVITE_PENDING`
+   (`apps/api/src/lib/tasks/artistInvitePending.ts`) is the one real
+   precedent for "personal, cross-studio, needs-your-yes-no" in this
+   codebase, and it's wired correctly: it drives the TopBar badge count
+   for free and has its own always-visible card in `Tasks.tsx`. The
+   alternative considered and rejected -- `residencies.ts`'s Profile.tsx
+   card -- turned out to have a real, live bug found during research:
+   it calls `emitUserInvalidation(userId, [["residencies","mine"],
+   ...])` but no query anywhere in the frontend is actually keyed
+   `["residencies","mine"]`, so that push is dead on arrival for a
+   second tab/device. Followed the working pattern, not the broken one.
+4. **No new "mine" list endpoint/query.** The Tasks feed
+   (`tasksQueryKey`) is already the live "here's what needs your
+   response" surface -- each pending transfer becomes its own task row
+   with a `deepLink`, exactly like multiple pending artist invites
+   already render as multiple rows. A redundant list endpoint with its
+   own unread query key would just reproduce the dead-key risk above.
+5. **Detail lives on its own page**, `/my-transfers/:id`, reached via
+   the task's `deepLink` -- the task row itself only carries a title,
+   not "origin studio, client count, scope summary" (the spec's own
+   required content), so a dedicated fetch is unavoidable regardless of
+   where it renders.
+6. **Realtime reuses the existing `transfer.changed` event unchanged**
+   (no new registry variant) -- now fired at *both*
+   `originStudioId`/`destinationStudioId` on accept/decline (Part 2 only
+   fired origin, on initiate/cancel), plus a new
+   `emitUserInvalidation(userId, [["tasks", userId]])` so the artist's
+   own Tasks list drops the resolved item live. The destination-studio
+   emit has no consumer yet (Part 4's job) -- firing it now anyway
+   matches this registry file's own stated precedent for exactly this
+   situation ("emitting the event now, even before its consumer exists,
+   means no route needs to be revisited later").
+
+## Backend
+
+`apps/api/src/routes/artistTransfers.ts` gained a second export,
+`myTransfersRouter` (`requireAuth` only): `GET /:id` (artist-scoped
+detail -- origin/destination studio names, per-client open-project
+summary, reusing the same shape Part 2's `gatherTransferPreview`
+established), `POST /:id/accept` (400 unless `PENDING_ARTIST`, else
+`ACCEPTED` + `respondedAt`/`respondedById`), `POST /:id/decline`
+(same shape, `DECLINED`). Both log one `AuditLog` row each
+(`entityType: "ArtistTransfer"`, `action: "accepted"`/`"declined"`,
+`studioId: originStudioId`, `destinationStudioId` folded into
+`changes` -- matching every existing two-studio-action precedent in
+this codebase, which never writes two audit rows for one action).
+
+`apps/api/src/lib/tasks/artistTransferPending.ts` -- new file, mirrors
+`artistInvitePending.ts` field-for-field: looks up the caller's own
+`Artist` row, queries their `PENDING_ARTIST` transfers, maps to
+`SystemTask` (`type: "ARTIST_TRANSFER_PENDING"`, `deepLink:
+/my-transfers/:id`). Deliberately excluded from `TASK_SOURCE_REGISTRY`
+(same reasoning as the invite source's own comment) -- wired directly
+into `routes/tasks.ts`'s `GET /` alongside `artistInvitePendingSource`,
+bypassing `tasks.viewQueue` for the same reason (personal, not
+front-desk work).
+
+Mounted in `index.ts`: `app.use("/artist-transfers", myTransfersRouter)`.
+
+## Frontend
+
+`apps/web/src/pages/MyTransferDetail.tsx` -- new page
+(`/my-transfers/:id`), gated on `Boolean(profile?.artist)` via
+`useUserProfile()` (the established "true artist-personal" gate --
+`ArtistCreate.tsx`/`Profile.tsx` already established this is right,
+`role === 'ARTIST'` would wrongly exclude a solo OWNER-with-Artist-
+profile). Renders origin/destination studio, the client list with
+open-project summaries, and Accept/Decline buttons when still
+`PENDING_ARTIST`; a plain "you already responded" line otherwise. On
+success: invalidates `tasksQueryKey`, navigates to `/tasks`.
+
+`apps/web/src/pages/Tasks.tsx` -- added `ARTIST_TRANSFER_PENDING` to the
+exact same filter/card pattern `ARTIST_INVITE_PENDING` already has (a
+`transferTasks` array pulled out of `otherSystemTasks` before grouping,
+its own always-visible "Transfer requests" card, "Respond" linking to
+the task's `deepLink`) -- copied the existing card's JSX/classes
+directly rather than writing new ones.
+
+`apps/web/src/App.tsx` -- registered `/my-transfers/:id`.
+
+No changes needed to `Team.tsx`'s "Pending transfers" panel -- it
+already queries `status=PENDING_ARTIST` via the existing
+`transfer.changed` invalidation, so an accepted/declined transfer just
+stops appearing there on its own once that event fires from either
+studio.
+
+## Verification
+
+`tsc -b --noEmit` clean on both apps.
+
+Real-HTTP smoke test against the live dev DB (throwaway fixtures,
+deleted after; script lived temporarily inside `apps/api/`, same
+bare-`bcrypt`-import reason as Part 2, deleted before this commit): 16
+assertions, all passing -- an unrelated impostor artist gets 404 (never
+a 403 that would leak existence) on detail/accept/decline for a
+transfer that isn't theirs; the real artist can view full detail
+(correct origin/destination studios, correct client + open-project
+summary); `GET /tasks` includes an `ARTIST_TRANSFER_PENDING` row with
+the right `deepLink` before responding and it disappears after; decline
+sets `DECLINED` and logs it; accept (on a second, fresh transfer) sets
+`ACCEPTED` and logs it; both accepting and declining an
+already-resolved transfer 400 rather than silently no-op'ing;
+`Client.transferredAt` stays null after accept, confirming nothing
+executes yet.
+
+Browser walkthrough via Playwright was attempted again this session
+(re-checked in case the lock from Part 2 had cleared) but the shared
+`ms-playwright-mcp` browser profile is still held by another concurrent
+session actively working in this same repo (confirmed by unrelated
+in-progress changes visible in `git status` -- `DateAndTimeRangeFields
+.tsx`, a new `TimeSelect.tsx`, debug screenshots -- none touched by this
+session). Declined to force it open a second time for the same reason
+as last part. Backend correctness is fully covered by the real-HTTP
+smoke test above; the new frontend page/card were written by directly
+copying the exact JSX/class patterns of the equivalent, already-shipped
+artist-invite flow rather than inventing new markup, which narrows the
+realistic risk of what a manual click-through would still catch. Worth
+doing before Part 4 builds further UI on top of this.
+
+## CLAUDE.md hygiene
+
+No schema touched this part, so no migration question arises.
+Throwaway fixture script lived temporarily inside `apps/api/` (bare
+`bcrypt` import can't resolve node_modules from the session scratchpad,
+same issue as Part 2) and was deleted before this commit -- confirmed
+via `git status` showing no trace of it. REPORT.md line count before
+this entry: 15785 (verified via `git show HEAD:REPORT.md | wc -l`) --
+pure addition. This session staged and committed only its own files --
+`git status` showed unrelated modified/untracked files from another
+concurrent session in the same working tree (`DateAndTimeRangeFields
+.tsx`, `TimeSelect.tsx`, `queryKeys.ts`'s own unrelated
+`studioSettingsQueryKey` addition, two debug PNGs) that were left
+completely untouched and unstaged. No dev servers were started by this
+session (both API and web dev servers were already running from
+elsewhere when this session began).
+
+## What's next
+
+Part 4 (execution) is a new session's work: on an `ACCEPTED` transfer,
+create the destination contact (running existing duplicate-detection),
+create the fresh open project, cancel origin's future appointments,
+resolve origin records as `TRANSFERRED`, all transactional per client
+with a completion report, realtime-notified at both studios. Part 5
+(adversarial verification) follows once execution exists to verify.

@@ -5,6 +5,7 @@ import { requireAuth, requireRole } from "../middleware/auth";
 import { diffObjects, logAudit } from "../lib/audit";
 import { TASK_SOURCE_REGISTRY } from "../lib/tasks/registry";
 import { artistInvitePendingSource } from "../lib/tasks/artistInvitePending";
+import { artistTransferPendingSource } from "../lib/tasks/artistTransferPending";
 import { emitInvalidation } from "../lib/realtime/registry";
 import { hasPermission, requirePermission } from "../lib/permissions";
 
@@ -12,10 +13,14 @@ const router = Router();
 router.use(requireAuth);
 router.use(requireRole(Role.OWNER, Role.FRONT_DESK, Role.ARTIST));
 
-// artistInvitePendingSource is deliberately excluded from the registry
-// itself (see that file's own comment) but still needs to be a valid
-// dismiss target, same as every registry source.
-const VALID_TASK_TYPES = new Set([...TASK_SOURCE_REGISTRY.map((s) => s.type), artistInvitePendingSource.type]);
+// artistInvitePendingSource / artistTransferPendingSource are deliberately
+// excluded from the registry itself (see each file's own comment) but
+// still need to be valid dismiss targets, same as every registry source.
+const VALID_TASK_TYPES = new Set([
+  ...TASK_SOURCE_REGISTRY.map((s) => s.type),
+  artistInvitePendingSource.type,
+  artistTransferPendingSource.type,
+]);
 
 // System tasks are front-desk work (front desk walks in and sees everything
 // needing attention) -- governed by tasks.viewQueue, defaulting true for
@@ -65,15 +70,16 @@ router.get("/", async (req, res) => {
   // comment).
   const viewsQueue = await hasPermission(studioId, role, "tasks.viewQueue");
 
-  const [registrySourceResults, artistInviteTasks, dismissals] = await Promise.all([
+  const [registrySourceResults, artistInviteTasks, artistTransferTasks, dismissals] = await Promise.all([
     viewsQueue ? Promise.all(TASK_SOURCE_REGISTRY.map((source) => source.fetch(studioId, userId))) : [],
     artistInvitePendingSource.fetch(studioId, userId),
+    artistTransferPendingSource.fetch(studioId, userId),
     prisma.taskDismissal.findMany({ where: { studioId, userId }, select: { taskType: true, entityId: true } }),
   ]);
 
   const dismissedKeys = new Set(dismissals.map((d) => `${d.taskType}:${d.entityId}`));
 
-  const system = [...registrySourceResults.flat(), ...artistInviteTasks]
+  const system = [...registrySourceResults.flat(), ...artistInviteTasks, ...artistTransferTasks]
     .filter((task) => !dismissedKeys.has(`${task.type}:${task.dismissalKey}`))
     .sort((a, b) => a.actionableAt.getTime() - b.actionableAt.getTime());
 

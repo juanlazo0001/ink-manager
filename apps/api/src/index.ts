@@ -4,7 +4,7 @@ import express, { type ErrorRequestHandler } from "express";
 import cors from "cors";
 import compression from "compression";
 import studiosRouter from "./routes/studios";
-import artistTransfersRouter from "./routes/artistTransfers";
+import artistTransfersRouter, { myTransfersRouter } from "./routes/artistTransfers";
 import authRouter from "./routes/auth";
 import invitesRouter from "./routes/invites";
 import artistInvitesRouter from "./routes/artistInvites";
@@ -109,6 +109,7 @@ app.get("/health", (_req, res) => {
 
 app.use("/studios", studiosRouter);
 app.use("/studios", artistTransfersRouter);
+app.use("/artist-transfers", myTransfersRouter);
 app.use(authRouter);
 app.use(invitesRouter);
 app.use(artistInvitesRouter);

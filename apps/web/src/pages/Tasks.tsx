@@ -418,7 +418,11 @@ export default function Tasks() {
   // before grouping so Studio Queue's own type-filter dropdown never
   // offers it as an option either.
   const artistInviteTasks = data?.system.filter((t) => t.type === 'ARTIST_INVITE_PENDING') ?? []
-  const otherSystemTasks = data?.system.filter((t) => t.type !== 'ARTIST_INVITE_PENDING') ?? []
+  // Transfer-to-artist epic, Part 3: same "personal, addressed to this
+  // account regardless of studio, always visible" shape as artist invites
+  // above -- see lib/tasks/artistTransferPending.ts on the backend.
+  const transferTasks = data?.system.filter((t) => t.type === 'ARTIST_TRANSFER_PENDING') ?? []
+  const otherSystemTasks = data?.system.filter((t) => t.type !== 'ARTIST_INVITE_PENDING' && t.type !== 'ARTIST_TRANSFER_PENDING') ?? []
 
   const systemGroups = groupByType(otherSystemTasks)
   const visibleSystemGroups = queueTypeFilter
@@ -487,6 +491,52 @@ export default function Tasks() {
                   <ul className="mt-4 space-y-2">
                     <AnimatePresence initial={false}>
                       {artistInviteTasks.map((task) => (
+                        <motion.li
+                          key={`${task.type}:${task.dismissalKey}`}
+                          layout
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          transition={uiSpringTransition}
+                          className="flex items-center justify-between gap-3 rounded-lg border border-border bg-surface p-3 text-sm"
+                        >
+                          <div className="min-w-0">
+                            <p className="text-fg">{task.title}</p>
+                            <p className="mt-0.5 text-xs text-fg-muted">Since {formatDateTime(task.actionableAt)}</p>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-1.5">
+                            <Link
+                              to={task.deepLink}
+                              className="rounded-full bg-accent px-3 py-1 text-xs font-semibold text-bg transition hover:bg-accent-hover"
+                            >
+                              Respond
+                            </Link>
+                            <button
+                              type="button"
+                              onClick={() => dismissMutation.mutate(task)}
+                              disabled={dismissMutation.isPending || !!viewAsTarget}
+                              className="rounded-full border border-border px-3 py-1 text-xs font-medium text-fg-secondary transition hover:bg-surface hover:text-fg disabled:opacity-60"
+                            >
+                              Dismiss
+                            </button>
+                          </div>
+                        </motion.li>
+                      ))}
+                    </AnimatePresence>
+                  </ul>
+                </div>
+              )}
+
+              {transferTasks.length > 0 && (
+                <div className="mt-6 rounded-2xl border border-accent/30 bg-accent/5 p-5">
+                  <h2 className={isEditorial ? 'sc text-[20px]' : 'text-base font-semibold text-fg'}>
+                    Transfer requests
+                  </h2>
+                  <p className="mt-1 text-sm text-fg-secondary">Waiting on your response.</p>
+
+                  <ul className="mt-4 space-y-2">
+                    <AnimatePresence initial={false}>
+                      {transferTasks.map((task) => (
                         <motion.li
                           key={`${task.type}:${task.dismissalKey}`}
                           layout
