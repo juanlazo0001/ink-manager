@@ -353,6 +353,7 @@ const TONE_RING_CLASSES: Record<Tone, string> = {
   neutral: 'ring-border-strong',
   progress: 'ring-progress/60',
   highlight: 'ring-highlight/60',
+  hold: 'ring-hold/60',
 }
 
 function truncateText(text: string, max: number): string {
@@ -465,6 +466,7 @@ const TONE_RING_COLORS: Record<Tone, string> = {
   neutral: 'var(--color-neutral)',
   progress: 'var(--color-progress)',
   highlight: 'var(--color-highlight)',
+  hold: 'var(--color-hold)',
 }
 
 // Progress-ring avatar for the conversation list (see
