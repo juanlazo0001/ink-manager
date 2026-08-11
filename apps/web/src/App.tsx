@@ -23,6 +23,7 @@ import StudioSetupWizard from './pages/StudioSetupWizard'
 import Settings from './pages/Settings'
 import Profile from './pages/Profile'
 import Team from './pages/Team'
+import StartArtistTransfer from './pages/StartArtistTransfer'
 import FlashGallery from './pages/FlashGallery'
 import FlashPublicGallery from './pages/FlashPublicGallery'
 import ArtistPublicPage from './pages/ArtistPublicPage'
@@ -233,6 +234,7 @@ function AppRoutes() {
           <Route path="/settings" element={<Settings />} />
           <Route path="/profile" element={<Profile />} />
           <Route path="/team" element={<Team />} />
+          <Route path="/team/transfer" element={<StartArtistTransfer />} />
           <Route path="/flash" element={<FlashGallery />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/conversations/:id" element={<ConversationDeepLink />} />

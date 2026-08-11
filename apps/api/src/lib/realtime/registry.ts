@@ -87,7 +87,13 @@ export type InvalidationEvent =
   // not this studio-scoped event -- a residency can change at a studio the
   // artist isn't currently connected "as," so studio-room broadcast alone
   // would miss them.
-  | { type: "residency.changed"; studioId: string; artistId: string };
+  | { type: "residency.changed"; studioId: string; artistId: string }
+  // Transfer-to-artist epic, Part 2: initiate/cancel on the ORIGIN studio's
+  // side only -- Part 3 (artist acceptance) will need its own
+  // emitUserInvalidation to the artist's personal room, since accepting is
+  // "theirs alone" and may happen from a studio room this event never
+  // reaches.
+  | { type: "transfer.changed"; studioId: string; artistId: string };
 
 function keysFor(event: InvalidationEvent): unknown[][] {
   switch (event.type) {
@@ -163,6 +169,8 @@ function keysFor(event: InvalidationEvent): unknown[][] {
       return [["flash-pieces"]];
     case "residency.changed":
       return [["residencies", event.studioId], ["artist", event.artistId], ["team-users"]];
+    case "transfer.changed":
+      return [["artist-transfers", event.studioId]];
   }
 }
 

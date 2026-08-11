@@ -9,7 +9,7 @@ import StatusPill from '../components/StatusPill'
 import { apiFetch, ApiError } from '../lib/api'
 import { formatStatus, isValidPhoneDigits, readFileAsDataUrl, MAX_IMAGE_FILE_BYTES } from '../lib/format'
 import { PERMISSION_GROUPS, DISPLAYED_ROLES } from '../lib/permissions'
-import { artistsQueryKey, artistInvitesQueryKey } from '../lib/queryKeys'
+import { artistsQueryKey, artistInvitesQueryKey, artistTransfersQueryKey } from '../lib/queryKeys'
 import { useAuth } from '../context/useAuth'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import { useUserProfile } from '../context/useUserProfile'
@@ -55,6 +55,18 @@ interface ArtistInvite {
   name: string | null
   membershipType: 'HOME' | 'GUEST'
   tokenExpiresAt: string
+}
+
+// Transfer-to-artist epic, Part 2: a request this studio (as origin) has
+// sent, awaiting the artist's own accept/decline (Part 3).
+interface PendingTransfer {
+  id: string
+  status: 'PENDING_ARTIST' | 'ACCEPTED' | 'DECLINED' | 'CANCELLED_BY_ORIGIN' | 'COMPLETED'
+  createdAt: string
+  artistId: string
+  artistName: string
+  destinationStudio: { id: string; name: string }
+  clientCount: number
 }
 
 interface PermissionsResponse {
@@ -204,6 +216,13 @@ export default function Team() {
     enabled: isOwner,
   })
 
+  const { data: pendingTransfers } = useQuery({
+    queryKey: artistTransfersQueryKey(user!.studioId),
+    queryFn: () =>
+      apiFetch<PendingTransfer[]>(`/studios/${user!.studioId}/artist-transfers?status=PENDING_ARTIST`),
+    enabled: isOwner,
+  })
+
   const [users, setUsers] = useState<TeamUser[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [refreshIndex, setRefreshIndex] = useState(0)
@@ -297,6 +316,10 @@ export default function Team() {
   const [removingArtist, setRemovingArtist] = useState<ArtistCard | null>(null)
   const [removeArtistError, setRemoveArtistError] = useState<string | null>(null)
   const [removeArtistSubmitting, setRemoveArtistSubmitting] = useState(false)
+
+  const [cancellingTransfer, setCancellingTransfer] = useState<PendingTransfer | null>(null)
+  const [cancelTransferError, setCancelTransferError] = useState<string | null>(null)
+  const [cancelTransferSubmitting, setCancelTransferSubmitting] = useState(false)
 
   // 6a Epic: residency management panel for one guest membership.
   const [managingResidenciesFor, setManagingResidenciesFor] = useState<ArtistCard | null>(null)
@@ -401,6 +424,21 @@ export default function Team() {
       setRemoveArtistError(err instanceof Error ? err.message : 'Failed to remove artist')
     } finally {
       setRemoveArtistSubmitting(false)
+    }
+  }
+
+  async function handleConfirmCancelTransfer() {
+    if (!user?.studioId || !cancellingTransfer) return
+    setCancelTransferSubmitting(true)
+    setCancelTransferError(null)
+    try {
+      await apiFetch(`/studios/${user.studioId}/artist-transfers/${cancellingTransfer.id}/cancel`, { method: 'POST' })
+      setCancellingTransfer(null)
+      queryClient.invalidateQueries({ queryKey: artistTransfersQueryKey(user.studioId) })
+    } catch (err) {
+      setCancelTransferError(err instanceof Error ? err.message : 'Failed to cancel transfer')
+    } finally {
+      setCancelTransferSubmitting(false)
     }
   }
 
@@ -862,6 +900,18 @@ export default function Team() {
                   <PlusIcon className="h-4 w-4" />
                   Invite Artist
                 </button>
+                <button
+                  type="button"
+                  onClick={() => navigate('/team/transfer')}
+                  title="Move a departing artist's client contacts and in-flight project work to their new home studio"
+                  className={
+                    isEditorial
+                      ? 'editorial-btn-secondary flex items-center gap-2 rounded-full border px-4 py-2.5 transition'
+                      : 'flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface'
+                  }
+                >
+                  Transfer clients
+                </button>
               </div>
             )}
           </div>
@@ -1145,6 +1195,50 @@ export default function Team() {
                         </tr>
                       )
                     })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'artists' && isOwner && pendingTransfers && pendingTransfers.length > 0 && (
+            <div className="mt-6 rounded-2xl border border-warning/30 bg-warning/5 p-5">
+              <h2 className="text-sm font-semibold text-fg">Pending transfers</h2>
+              <p className="mt-1 text-xs text-fg-secondary">
+                Sent to the artist, awaiting their accept or decline. Nothing moves until they respond.
+              </p>
+              {cancelTransferError && <p className="mt-3 text-sm text-danger">{cancelTransferError}</p>}
+
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="text-xs text-fg-muted">
+                      <th className="pb-2 font-medium">Artist</th>
+                      <th className="pb-2 font-medium">Destination</th>
+                      <th className="pb-2 font-medium">Clients</th>
+                      <th className="pb-2 font-medium"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-warning/20">
+                    {pendingTransfers.map((transfer) => (
+                      <tr key={transfer.id}>
+                        <td className="py-2.5 text-fg">{transfer.artistName}</td>
+                        <td className="py-2.5 text-fg-secondary">{transfer.destinationStudio.name}</td>
+                        <td className="py-2.5 text-fg-secondary">{transfer.clientCount}</td>
+                        <td className="py-2.5 text-right">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCancellingTransfer(transfer)
+                              setCancelTransferError(null)
+                            }}
+                            className="rounded-full border border-danger/40 px-3 py-1.5 text-xs font-medium text-danger transition hover:bg-danger/10"
+                          >
+                            Cancel
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -2049,6 +2143,38 @@ export default function Team() {
               className="rounded-full bg-danger px-4 py-2 text-sm font-medium text-bg transition hover:bg-danger/90 disabled:opacity-60"
             >
               {removeArtistSubmitting ? 'Removing…' : 'Remove from studio'}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {cancellingTransfer && (
+        <Modal title="Cancel transfer" onClose={() => setCancellingTransfer(null)}>
+          <p className="text-sm text-fg-secondary">
+            Cancel the pending transfer of <span className="font-semibold">{cancellingTransfer.clientCount}</span>{' '}
+            client{cancellingTransfer.clientCount === 1 ? '' : 's'} for{' '}
+            <span className="font-semibold">{cancellingTransfer.artistName}</span>? Nothing has moved yet -- this
+            just withdraws the request before the artist responds.
+          </p>
+
+          {cancelTransferError && <p className="mt-3 text-sm text-danger">{cancelTransferError}</p>}
+
+          <div className="mt-5 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setCancellingTransfer(null)}
+              disabled={cancelTransferSubmitting}
+              className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+            >
+              Keep transfer
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmCancelTransfer}
+              disabled={cancelTransferSubmitting}
+              className="rounded-full bg-danger px-4 py-2 text-sm font-medium text-bg transition hover:bg-danger/90 disabled:opacity-60"
+            >
+              {cancelTransferSubmitting ? 'Cancelling…' : 'Cancel transfer'}
             </button>
           </div>
         </Modal>

@@ -15588,3 +15588,198 @@ Committed and pushed directly to `main`, same as last round.
 
 REPORT.md line count before this entry: 15452 (verified via `git show
 HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Transfer-to-artist epic -- Part 2 (origin flow, OWNER-only)
+
+Part 1 (`508865d`) added the inert `ArtistTransfer`/`ArtistTransferClient`
+schema. Part 2 builds the first real surface: an OWNER at the origin studio
+picks a departing artist, picks which of that artist's clients go with
+them, sees an explicit review of what moves/stays/gets cancelled, and
+confirms -- creating the `ArtistTransfer` row as `PENDING_ARTIST`. Nothing
+executes yet (Part 4's job); this part only gets the request into
+existence and lets the origin OWNER cancel it while still pending. The
+artist's own accept/decline UI is Part 3, a separate session's work.
+
+Two research passes (backend route/permission/audit-log conventions,
+frontend wizard/UI conventions) grounded every decision below in real
+code before any of it was written.
+
+## Judgment calls made explicit (not asked as questions -- reasonable
+defaults, each with its own reasoning)
+
+1. **Origin != destination is a hard eligibility rule.** The spec says
+   destination = the artist's current home studio, ineligible if none --
+   but doesn't address an artist whose home is *still* the origin. A
+   same-studio transfer is a no-op that would break the whole
+   moves/stays model, so "home studio is already here" is its own
+   explicit ineligible reason, not a silent gap.
+2. **"Open project" carried over** = the client's most recently created
+   `Inquiry` at the origin, assigned to this artist, not in the terminal
+   set `{CLOSED_LOST, COLD_LEAD, TRANSFERRED}`.
+3. **Default "assigned work" client filter** = clients tied to this
+   artist via any Inquiry (`assignedArtistId`) or Appointment
+   (`artistId`) at this studio -- broader than "currently open," since a
+   past relationship is still legitimately "this artist's work," and
+   staff can always add more via search regardless.
+4. **Full page, not a modal**, for the 3-step wizard (pick artist -> pick
+   clients -> review/confirm), matching `ClientImport.tsx`'s own
+   precedent for multi-step OWNER-only flows.
+5. **New route file** `apps/api/src/routes/artistTransfers.ts`, mounted
+   at `/studios` alongside (not inside) `studios.ts` -- same
+   multiple-routers-one-base-path pattern `clients.ts` +
+   `clientImport.ts` already use on `/clients`.
+6. **Entry point is a studio-level action, not a per-artist-row button.**
+   The primary eligibility case (Part 1: "already-left case is the
+   primary case") means the artist has likely already left and no
+   longer appears in Team.tsx's active roster at all -- so the button
+   lives at the Team page level ("Transfer clients" -> a dedicated
+   artist-search wizard), not on an existing artist row.
+
+## Backend
+
+`apps/api/src/lib/artistTransferPreview.ts` -- `gatherTransferPreview
+(studioId, artistId, clientIds)`, the single source of truth for
+eligibility + what moves/stays/cancels, called by both the preview GET
+and the confirm POST so they can never disagree (same shape as
+`clients.ts`'s own `gatherClientDeletionSummary`). Returns destination
+studio, eligibility + reason, per-client open-project detection, future
+appointments that would be cancelled (`startTime >= now`, status
+`REQUESTED`/`CONFIRMED`, scoped to the artist), and a static, explicit
+"stays at origin" list (signed documents, financial records, internal
+notes) named directly per the epic's own instruction rather than
+inferred from data.
+
+`apps/api/src/routes/artistTransfers.ts` -- every route
+`requireAuth, requireRole(Role.OWNER)` (whole-router, hardcoded, same
+trust tier as `studios.ts`'s existing `/:studioId/artists/:artistId/
+remove`) plus the same bare `studioId !== req.user!.studioId -> 403`
+guard that route already uses:
+
+- `GET /:studioId/artist-transfers/eligible-artists` -- every artist
+  with a past-or-present `StudioMembership` at this studio (any
+  `endedAt`, matching "past or present"), annotated with their current
+  active HOME membership as the candidate destination and an explicit
+  `ineligibleReason` when there isn't a valid one.
+- `GET /:studioId/artist-transfers/artists/:artistId/clients?search=` --
+  default-filtered ("assigned work") without `search`; any client in
+  the studio with `search` (reused the exact word-split AND/OR logic
+  from `clients.ts`'s own `/merge-search`), so "any client addable"
+  works.
+- `GET /:studioId/artist-transfers/preview?artistId=&clientIds=` --
+  thin wrapper over `gatherTransferPreview`.
+- `POST /:studioId/artist-transfers` -- re-runs `gatherTransferPreview`
+  server-side (never trusts a client-submitted preview), 400s with the
+  real reason if not ready, else creates `ArtistTransfer` +
+  `ArtistTransferClient` line items in one write, `logAudit`
+  (`entityType: "ArtistTransfer"`, `action: "initiated"`, matching the
+  existing snake_case action-string convention), `emitInvalidation`.
+- `GET /:studioId/artist-transfers?status=` -- lists this studio's
+  transfers-as-origin, backing the pending-transfers panel.
+- `POST /:studioId/artist-transfers/:transferId/cancel` -- 404 if the
+  transfer isn't this studio's, 409 if it's no longer `PENDING_ARTIST`,
+  else `CANCELLED_BY_ORIGIN` + `logAudit` (`action: "cancelled"`,
+  matching `ImportBatch`'s own cancel-route action string) +
+  `emitInvalidation`.
+
+Realtime: added `{ type: "transfer.changed"; studioId; artistId }` to
+`InvalidationEvent` (`apps/api/src/lib/realtime/registry.ts`) mapping to
+`["artist-transfers", studioId]` -- prefix-compatible with the new
+`eligibleTransferArtistsQueryKey`/`artistTransfersQueryKey` pair on the
+frontend, following the file's own documented "add a variant, add its
+keysFor entry, emit after the mutation" recipe. Origin-studio-room only
+this part; Part 3 will need its own `emitUserInvalidation` to the
+artist's personal room for their accept/decline UI, since a studio-room
+broadcast alone won't reach them.
+
+Mounted in `apps/api/src/index.ts` next to the existing `studiosRouter`.
+
+## Frontend
+
+New page `apps/web/src/pages/StartArtistTransfer.tsx`
+(`/team/transfer`, OWNER-gated via the same `Navigate` redirect pattern
+`ArtistCreate.tsx` already uses, placed after every hook per that same
+file's own ordering comment). Three stages in one component (`stage`
+derived from state, matching `ClientImport.tsx`'s own shape): pick
+artist (ineligible rows disabled with their reason shown inline, no
+separate error state needed) -> pick clients (a genuinely new UI
+pattern here -- checkbox table + header select-all + running count,
+confirmed nothing existing to reuse; plus a debounced search box for
+"any client addable") -> review & confirm (fetches the preview fresh on
+entry, mirroring `ClientImport.tsx`'s confirm-modal fresh-fetch so it
+can never show stale data; rendered with Team.tsx's own delete-preview
+two-column bulleted "moves"/"stays" layout).
+
+`Team.tsx` gained: an OWNER-only "Transfer clients" button next to
+"Invite Artist" (Artists tab), and a "Pending transfers" panel mirroring
+its own existing "Pending invites" panel's exact structure (table +
+Cancel action + confirm modal reusing the simple two-button
+Cancel/Confirm pattern from its own "Remove artist" modal, not the
+typed-confirmation delete pattern -- this action is soft/reversible
+while pending).
+
+New query keys in `queryKeys.ts`:
+`eligibleTransferArtistsQueryKey`/`artistTransfersQueryKey`, the latter
+prefix-compatible with the former (same
+`appointmentsQueryKey`/`appointmentsRangeQueryKey` trick already used
+elsewhere in that file) so the WS `transfer.changed` event's bare
+`['artist-transfers', studioId]` prefix invalidates both.
+
+Plain English strings throughout (confirmed via research: staff-facing
+pages in this app are never translated, only the public flows are) --
+no new i18n keys.
+
+## Verification
+
+`tsc -b --noEmit` clean on both apps.
+
+Full real-HTTP smoke test against the live dev DB (throwaway
+studio/artist/client fixtures, deleted afterward -- script never
+committed, per CLAUDE.md hygiene): 22 assertions, all passing --
+eligible-artists correctly flags the departed artist as eligible with
+the right destination, a still-home artist as ineligible with the
+"already here" reason, and a no-active-HOME artist as ineligible with
+the "no home studio" reason; the default client list includes clients
+tied to the artist and excludes an unrelated one; search surfaces the
+unrelated client; the preview correctly detects the open project,
+counts exactly the one future appointment that would be cancelled, and
+names the three stays-at-origin categories explicitly; FRONT_DESK gets
+403 (real HTTP, not just hidden UI) on eligible-artists, create, and
+cancel; confirm creates a `PENDING_ARTIST` transfer with correct line
+items and an `initiated` audit log row; cancel-while-pending works and
+logs `cancelled`; re-cancelling an already-resolved transfer 409s;
+Client/Inquiry rows are confirmed untouched (nothing executes until
+Part 4).
+
+Browser walkthrough via Playwright was planned but the shared browser
+profile (`ms-playwright-mcp`) was locked by another concurrent session
+mid-work in this same repo -- declined to force it open rather than
+risk disrupting whatever that session was doing. Browser-test fixtures
+were created and then torn down again once it became clear the UI
+couldn't actually be driven this session; the code itself was still
+checked by hand against the real conventions pulled from research
+(exact class names, exact component patterns) rather than left
+unverified. Flagging this gap honestly rather than claiming a browser
+check that didn't happen -- a live click-through is still worth doing
+next session before Part 3 builds on top of this UI.
+
+## CLAUDE.md hygiene
+
+`prisma migrate dev` never used (no schema touched this part). No
+database reset offered or accepted. Both throwaway fixture scripts
+(HTTP smoke test + browser-test setup/cleanup) were written temporarily
+inside `apps/api/` -- not the scratchpad -- because a bare `bcrypt`
+import from a script outside the repo tree can't resolve node_modules;
+all three were deleted before this commit, confirmed via `git status`
+showing no trace of them. REPORT.md line count before this entry: 15590
+(verified via `git show HEAD:REPORT.md | wc -l`) -- pure addition. No
+dev servers were started by this session (both API and web dev servers
+were already running from elsewhere when this session began, confirmed
+via port checks before use) so there's nothing this session needs to
+tear down there.
+
+## What's next
+
+Part 3 (artist acceptance) is a new session's work: the artist's own
+accept/decline UI, `emitUserInvalidation` to their personal room, and
+execution triggering on accept (Part 4). This UI is inert to anyone but
+the initiating OWNER until that part exists.

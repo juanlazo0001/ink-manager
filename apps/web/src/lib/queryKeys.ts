@@ -20,3 +20,10 @@ export const navCountsQueryKey = (userId: string) => ['nav-counts', userId] as c
 export const reportsDashboardQueryKey = (studioId: string, startIso: string, endIso: string) =>
   ['reports-dashboard', studioId, startIso, endIso] as const
 export const widgetLayoutQueryKey = (userId: string, pageKey: string) => ['widget-layout', userId, pageKey] as const
+// Prefix-compatible with artistTransfersQueryKey below, matching the
+// appointmentsQueryKey/appointmentsRangeQueryKey trick -- the WS
+// transfer.changed event's bare ['artist-transfers', studioId] prefix
+// invalidates both.
+export const eligibleTransferArtistsQueryKey = (studioId: string) =>
+  ['artist-transfers', studioId, 'eligible-artists'] as const
+export const artistTransfersQueryKey = (studioId: string) => ['artist-transfers', studioId] as const
