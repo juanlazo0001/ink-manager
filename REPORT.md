@@ -14189,3 +14189,214 @@ Per the task's own instruction, this stays as a commit on
 
 REPORT.md line count before this entry: 13971 (verified via `git show
 HEAD:REPORT.md | wc -l`) — pure addition.
+
+# Artist public page v2 — full build against the authoritative HTML spec
+
+Superseded the prior mockup-driven pass on this same page/branch with a
+full rebuild against Juan's single-file HTML spec
+(`public/desktop/screenshots/artist-page-v12.html`, saved to the repo as
+the reference of record) — the spec is authoritative over the earlier
+static mockup image for every structural/visual decision. Publish gating,
+token behavior, and OG tags all remain untouched.
+
+## Spec file placement
+
+Checked whether `public/` at the repo root is inside a statically-served
+directory before committing a 546KB file with two embedded photos into it
+— it is not. Confirmed three separate `public/` directories exist in this
+repo (`apps/web/public`, Vite's real `publicDir` that ships into the
+production build; `apps/public`, a branding-asset folder; and `public/` at
+the repo root) and that the root one is a git-tracked design-reference
+archive only — no `express.static` call, Vite config, or deployment config
+anywhere in the repo points at it. Same folder every prior mockup HTML
+file in this repo's history has landed in.
+
+## Flattening the 12-layer cascade
+
+Rather than hand-trace 12 sequential `<style>` override blocks (`v5`
+through `v12`, several using `!important`, several redefining the same
+selector's same property more than once), flattened the cascade by
+rendering the spec file directly in a real Playwright browser at five
+representative widths (1400/800/500/420/390px) and reading
+`getComputedStyle()` for every relevant selector — eliminates the risk of
+a manual cascade-tracing error a "last `!important` wins, per breakpoint"
+exercise this deep invites. Cross-validated the resulting formulas (not
+just the sampled pixel values) against the source's own `clamp()`/`vw`
+expressions to confirm continuous responsiveness, not just five discrete
+snapshots — e.g. h1's `clamp(54px, 15vw, 88px)` at ≤820px reproduced the
+live-extracted 75px at a 500px viewport exactly (15vw × 500 = 75).
+
+Two embedded JPEGs were extracted directly from the spec's own base64
+`data:` URLs via a small script (not read into context): the `.artist-page`
+background photo (a tattoo hand + framed flash art on a brick wall, 1024×1536,
+441KB raw) and the mockup's own illustrative portrait photo of "Louie G"
+(unused — real artists get their own uploaded avatar).
+
+## Approved deltas (implemented as explicit overrides on top of the flattened base)
+
+1. Zero spacing above "WHERE TO FIND ME" — `.artist-content-shell`
+   padding-top and `.artist-section-title` margin-top are `0` at every
+   width, replacing the spec's own 72/58/48px and 28/24/22px.
+2. Bio one step larger per breakpoint — 25/12.5/11.5px, replacing the
+   spec's own 23/11/10px; max-width caps (500/230/205px) unchanged.
+3. Long-name/many-pill/multi-studio resilience: `h1` gained `text-wrap:
+   balance` + `overflow-wrap: break-word` (the spec's own single-line
+   `clamp()` alone would let a genuinely long name overflow the hero);
+   `.artist-tags` changed from the spec's own mobile `flex-wrap: nowrap`
+   (which would silently clip a 4th+ pill off-screen) to `wrap` at every
+   width; `.artist-studio-copy strong` gained `overflow: hidden;
+   text-overflow: ellipsis; white-space: nowrap` so an unusually long
+   studio name truncates instead of breaking the card's fixed-column grid.
+   All three verified live against a dedicated stress-test artist (7-word
+   hyphenated name, 6 specialty pills, 3 studio cards including one with a
+   long name and one with no resolvable address) at 390/430/820/1440px —
+   see Verification below.
+
+## Font mapping
+
+Georgia roles (bio/intro at desktop widths, studio names) → Fraunces;
+plain Inter (the bio/intro specifically switches to plain sans-serif at
+≤820px in the spec's own source — a deliberate compact-mobile choice, not
+uniform Georgia everywhere) → Outfit; every tracked-uppercase role
+(eyebrow, pills, section label, buttons, connect footer) → Jura. `h1`
+keeps the spec's own explicit Fraunces `font-variation-settings: "opsz"
+96/72/60` per breakpoint and weight 400 — the one role the spec had
+already opted into Fraunces for directly, no mapping ambiguity there.
+
+## Color
+
+Extracted the spec's own gold (#d7a45e / #efbd76, "gold"/"gold-2") and red
+(#b93d2f) and compared against this app's existing `--color-accent`
+(#c99a5b) and `--color-danger-strong` (#c2402f). Gold: a 14/10/3 RGB
+delta — close but measurably, visibly different — so shipped as its own
+new dedicated tokens (`--artist-gold`, `--artist-gold-2`), not forced
+equal to the app-wide accent; a swatch comparison ships in the review
+gallery for Juan's call rather than picking silently. Red: a 9/3/0 delta,
+close enough to reuse `--color-danger-strong` directly with no new token.
+
+## Studio.iconLogo (schema addition)
+
+New nullable `Studio.iconLogo` field, distinct from the existing `logoUrl`
+(that one is the full wordmark used in PDFs/OG tags; this one is a
+separate upload sized for the small circular studio-card mark, since a
+full logo often doesn't read cleanly cropped into a ~70px circle). Same
+base64-data-URL storage convention as `logoUrl`, same OWNER-only PATCH
+validation via `validateImageDataUrl`, own `GET
+/public-assets/studio-icon-logo/:studioSlug` publicAssets route mirroring
+the existing `studio-logo` one exactly. Settings → studio profile gained a
+matching "Icon logo" upload section (upload/change/remove), independent of
+the existing logo upload. Falls back to a Fraunces capital of the studio's
+first letter when absent — never a hardcoded generic icon (a prior pass on
+this same page/branch had built a generic storefront-glyph fallback before
+this task's own explicit "icon-else-initial" instruction superseded it;
+removed the now-unused icon along with an unused `ArrowRightIcon` from an
+earlier button-treatment attempt this same rebuild also superseded, since
+the spec's own arrow is a literal `→` character sized via `font-size`, not
+an SVG).
+
+Migration generated via `prisma migrate diff --from-config-datasource
+--to-schema prisma/schema.prisma --script` (never `migrate dev`, per
+CLAUDE.md) — hit a real, informative surprise: the diff came back empty
+because another concurrent session (this repo's shared dev database is
+shared across every worktree, and "other design branches are in flight"
+per this task's own preamble) had already applied a column named and
+shaped identically — same field name, same nullable-TEXT type — to the
+live database, under a migration named `20260810120000_studio_icon_logo`
+that exists in `_prisma_migrations` but had no corresponding file in this
+branch's own git history. Reconciled by hand-writing a migration file
+under that exact same name/timestamp with the standard
+`ADD COLUMN "iconLogo" TEXT;` SQL Prisma would have generated, confirmed
+via `prisma migrate status` reporting "up to date" with no checksum
+complaint.
+
+## Cloudinary transform (unchanged from the prior pass, reconfirmed)
+
+Reused the existing `ARTIST_AMBIENT_BACKGROUND_TRANSFORM` (blur-only,
+`e_brightness` dropped after being measured live with no visible effect at
+any tested magnitude — see the prior "Artist public page v2 — full build"
+entry above for the full investigation).
+
+## Background layering — both treatments built, live-compared, one shipped as default
+
+Built both approved-pending options behind a single `PLATFORM_BACKGROUND_LAYERING`
+constant: `'replace'` (only the artist's own texture) and `'over'` (the
+artist's texture layered above the platform photo, multiply blend, 55%
+opacity). Screenshotted both for the same full-featured test artist and
+compared live rather than deciding blind: this artist's seeded portfolio
+image (a bright, warm-toned photo, chosen for convenience during seeding)
+read jarring against the page's otherwise dark palette under `'replace'`,
+but resolved cleanly once grounded by the platform photo's own pre-graded
+dark tone under `'over'`. Shipped `'over'` as the default on that basis —
+a real, visually-verified reason, not a coin flip — with the reasoning and
+the one-line revert spelled out directly in the component's own comment,
+and both screenshots in the review gallery so Juan can override the
+default trivially if he prefers the simpler single-photo composite.
+
+## Verification
+
+Seeded four throwaway artists across four throwaway studios (never
+dev-studio): a full-featured one (bio, 2 pills, both socials, a portfolio
+image, a confirmed future guest residency), a minimal one (nothing
+optional set), an unpublished one (`publicSlug` reserved, `publishedAt`
+null), and a dedicated **stress-test artist** — "Bartholomew
+Fitzgerald-Whitmore III" (a genuinely long, hyphenated, multi-word name),
+6 specialty pills, and 3 studio cards: the home studio, a guest residency
+at a studio with an unusually long name ("Second Skin Tattoo Parlour &
+Piercing Studio," which correctly truncates with an ellipsis rather than
+breaking the card), and a second guest residency at a studio with no
+`Location` row on file at all (correctly renders with no chevron, since
+there's no address to expand into).
+
+Drove all four through a real Playwright browser at 390/430/820/1440px,
+English and Spanish. Confirmed live and correct: the long name wraps
+gracefully across seven lines at 390px without ever overflowing the hero
+(the `text-wrap: balance` delta actually earning its keep, not just
+theoretical); 6 pills wrap into three rows cleanly at every width tested;
+all 3 studio cards stack, the long studio name truncates, the
+address-less studio's card has no chevron; the platform fallback photo
+(tattoo hand + brick wall) renders correctly for the artist with no
+portfolio images, while the artist WITH one gets their own texture
+layered per the shipped `'over'` mode; chevron-expand reveals a real
+`buildMapsUrl` link with the studio's address; BOOK/FLASH render on the
+new gradient/outline tokens; LET'S CONNECT shows exactly the artist's own
+socials and collapses entirely for the minimal artist; unpublished and
+never-existed slugs both 404 identically. Desktop (1440px) and the 800px
+tablet tier both scale the two-column hero wider rather than staying
+letterboxed at a narrow column.
+
+Caught one real bug via the verification script itself (not by hand
+inspection): the not-found state's own heading was a `<p>`, not an `<h1>`
+— an inconsistency with every other state on this page (and every sibling
+public page's own invalid-link state) that a `waitForSelector('h1')` call
+surfaced immediately by timing out. Fixed to `<h1>`.
+
+Also hit, mid-session, a self-inflicted near-miss worth recording: ran a
+bare `git stash` to compare eslint output before/after a change, which
+silently hid every uncommitted file this entire task had touched (nine
+modified files plus three untracked new ones). Caught it immediately from
+the tool's own "file modified on disk" warnings on the next edit and ran
+`git stash pop` before anything was lost — but the right tool for "what
+did this look like before" is `git diff`/`git show`, never `git stash`,
+which is a working-tree mutation with its own stack semantics, not a
+read-only comparison. No work was actually lost; flagged here so the
+mistake doesn't get quietly repeated.
+
+Zero console errors across every state beyond the two expected
+StrictMode-doubled 404s on the two invalid-slug states (same established
+pattern as every other invalid-token state elsewhere in this app). `tsc -b`
+clean on both apps, lint clean on every touched file (two pre-existing,
+unrelated `react-hooks/set-state-in-effect` lint errors in `Settings.tsx`
+confirmed via `git show` to predate this entire branch, not introduced by
+this change — left alone, out of scope). Full API suite 161/161. All
+seeded rows, scratch scripts, and screenshot directories removed
+afterward; both temporary `--no-save` installs (`playwright`, `sharp` --
+the latter needed fresh for JPEG-recompressing the review gallery's own
+screenshots down from a 25MB raw-PNG payload to under the Artifact
+publish tool's 16MB cap) removed; both dev servers stopped and ports
+confirmed free.
+
+Per the task's own instruction, this stays as a commit on
+`explore/artist-page-v2` awaiting Juan's visual approval before any merge.
+
+REPORT.md line count before this entry: 14191 (verified via `git show
+HEAD:REPORT.md | wc -l`) — pure addition.

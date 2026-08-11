@@ -6,36 +6,39 @@ import { buildMapsUrl } from '../lib/maps'
 import { dateLocale } from '../i18n/locales'
 import { LocaleProvider, useLocale, useTranslations } from '../i18n'
 import LanguagePicker from '../i18n/LanguagePicker'
-import {
-  ArrowRightIcon,
-  ChevronDownIcon,
-  FacebookIcon,
-  InstagramIcon,
-  MapPinIcon,
-  SparkleIcon,
-  StudioMarkIcon,
-} from '../components/icons'
+import { FacebookIcon, InstagramIcon, MapPinIcon } from '../components/icons'
 
-// Artist public page v2: the artist's own public page, reached only via
-// Artist.publicSlug -- never studio-themed (this is the ARTIST's page, not
-// any one studio's), so the whole page wraps in .login-shell, the same
-// "fixed platform identity regardless of the active studio preset" class
-// Login/Signup/Deposit/Flash already establish. Rebuilt to match the v2
-// mockup's structure (see REPORT.md for the design plan); publish gating,
-// token behavior, and OG behavior are all untouched -- this is a visual
-// rebuild of an already-working page, not new plumbing.
+// Artist public page v2 -- full rebuild against Juan's authoritative HTML
+// spec (public/desktop/screenshots/artist-page-v12.html, saved to the repo
+// as the reference of record). See index.css's own "Artist public page v2"
+// section for the flattened CSS this component's classNames map onto, and
+// REPORT.md for the 12-layer flattening method, the three approved deltas,
+// and the color-mapping/background-layering decisions left for Juan's
+// review. Publish gating, token behavior, and OG behavior are all
+// untouched -- this is a visual rebuild of an already-working page.
+//
+// PLATFORM_BACKGROUND_LAYERING controls which of the two approved-pending
+// background treatments renders when an artist HAS portfolio/flash images
+// -- 'replace' shows only the artist's own texture, 'over' layers it above
+// the platform fallback photo (multiply blend, 55% opacity) at reduced
+// opacity. Both are fully built; screenshots of both ship in the review
+// gallery for Juan to pick from. Currently set to 'over' -- live
+// comparison showed 'replace' at the mercy of whatever brightness/color an
+// individual artist's own portfolio photo happens to have (a bright/warm
+// reference photo reads jarring against this page's otherwise dark,
+// moody palette), while 'over' always grounds the composition in the
+// platform photo's own pre-graded dark tone regardless. A one-line change
+// to flip back to 'replace' if Juan prefers the simpler single-photo
+// composite instead.
+const PLATFORM_BACKGROUND_LAYERING: 'replace' | 'over' = 'over'
+const PLATFORM_FALLBACK_BACKGROUND = '/branding/artist-page-ambient-fallback.jpg'
+
 interface StudioSummary {
   id: string
   name: string
   slug: string
-  // Best-effort, single-location-only resolution (server-side) -- null for
-  // a multi-location studio with no unambiguous signal to pick one, same
-  // "omit rather than guess wrong" rule the deposit confirmation card uses.
   address: string | null
-  // Real fetchable URL via publicAssets, or null when the studio has no
-  // logo on file -- StudioMarkIcon (a generic mark, never a hardcoded
-  // stand-in) covers that case below.
-  logoUrl: string | null
+  iconLogoUrl: string | null
 }
 
 interface UpcomingResidency {
@@ -79,13 +82,10 @@ function ArtistPublicPageContent() {
   const [showBookPicker, setShowBookPicker] = useState(false)
   const [expandedStudioId, setExpandedStudioId] = useState<string | null>(null)
 
-  // No re-fetch-on-locale-toggle effect here, deliberately -- unlike
-  // Estimate/Deposit/Waiver, this page has no server-resolved,
-  // locale-dependent content beyond the initial resolvedLocale sync below
-  // (the artist's own name/bio/specialties/studio names are never
-  // machine-translated, same as every other page's studio-authored
-  // content), so there's nothing a second fetch would actually change --
-  // same reasoning as EstimateRevisionResponse.tsx's identical comment.
+  // No re-fetch-on-locale-toggle effect -- see EstimateRevisionResponse.tsx's
+  // identical comment. Nothing on this page besides the initial
+  // resolvedLocale sync is server-resolved/locale-dependent; the artist's
+  // own name/bio/specialties/studio names are never machine-translated.
   useEffect(() => {
     if (!publicSlug) return
     let ignore = false
@@ -97,8 +97,6 @@ function ArtistPublicPageContent() {
         if (data.resolvedLocale && data.resolvedLocale !== locale) setLocale(data.resolvedLocale as typeof locale)
       })
       .catch(() => {
-        // Unpublished, missing slug, or any other failure all read
-        // identically here -- never leak WHY, same as the API's own 404.
         if (!ignore) setState('not-found')
       })
     return () => {
@@ -109,11 +107,6 @@ function ArtistPublicPageContent() {
 
   function bookAt(studio: StudioSummary) {
     if (!profile) return
-    // Location-first: everything downstream belongs to THIS studio -- its
-    // own intake form, pipeline, policies, payments. Reuses the existing
-    // public intake route entirely; bookingArtistId (read by IntakeForm.tsx)
-    // is the one new piece of glue, not a new pipeline. Same destination
-    // this page has always used -- restyle only, per this task's own scope.
     navigate(`/inquiry/${studio.slug}?bookingArtistId=${encodeURIComponent(profile.id)}`)
   }
 
@@ -155,127 +148,88 @@ function ArtistPublicPageContent() {
     socials.push({ key: 'facebook', href: profile.facebookProfileUrl, Icon: FacebookIcon, label: 'Facebook' })
   }
 
+  const hasArtistTexture = Boolean(profile.backgroundImageUrl)
+  const showPlatformPhoto = !hasArtistTexture || PLATFORM_BACKGROUND_LAYERING === 'over'
+
   return (
-    <div className="login-shell relative min-h-screen text-fg">
-      {/* Ambient background: the artist's own portfolio/flash imagery,
-          pre-processed server-side (heavy blur via a Cloudinary transform --
-          see publicAssets.ts's own ARTIST_AMBIENT_BACKGROUND_TRANSFORM
-          comment) rather than a live CSS filter, then portaled to
-          document.body -- backdrop-filter/transform ancestors elsewhere in
-          the tree would otherwise clip a `position: fixed` layer to their
-          own box instead of the viewport (see PaymentConfirmationStage's
-          identical comment). .payment-bg-wash (not .app-bg-wash) for the
-          heavier 80% scrim -- see that class's own comment for why an
-          entire page's worth of live text on top needs the photo to read
-          as pure texture, not the app-shell's lighter ambient treatment.
-          Absent entirely (not swapped for a stand-in photo) when the
-          artist has no portfolio/flash images -- the plain --color-bg
-          ink-black IS the platform editorial background in that case, same
-          as Login/Deposit's own no-personalization default. */}
-      {profile.backgroundImageUrl &&
-        createPortal(
-          <>
-            <img src={profile.backgroundImageUrl} alt="" aria-hidden="true" className="app-bg-photo" />
-            <span className="payment-bg-wash" aria-hidden="true" />
-          </>,
-          document.body,
-        )}
+    <div className="login-shell artist-profile-page relative text-fg">
+      {createPortal(
+        <>
+          {showPlatformPhoto && <img src={PLATFORM_FALLBACK_BACKGROUND} alt="" aria-hidden="true" className="app-bg-photo" />}
+          {hasArtistTexture && (
+            <img
+              src={profile.backgroundImageUrl!}
+              alt=""
+              aria-hidden="true"
+              className={PLATFORM_BACKGROUND_LAYERING === 'over' ? 'artist-bg-texture-overlay' : 'app-bg-photo'}
+            />
+          )}
+          <span className="artist-bg-wash" aria-hidden="true" />
+        </>,
+        document.body,
+      )}
 
-      <div className="relative z-10 mx-auto max-w-4xl px-4 py-10 sm:px-6 sm:py-16 lg:max-w-5xl lg:py-20">
-        <div className="flex justify-end">
-          <LanguagePicker />
-        </div>
+      <div className="relative z-10">
+        <section className="artist-hero-shell">
+          <div className="artist-ambient artist-ambient--one" aria-hidden="true" />
+          <div className="artist-ambient artist-ambient--two" aria-hidden="true" />
 
-        {/* Header: name/pills/bio stack beside the portrait from the sm
-            breakpoint up -- at true 390px this stacks (portrait first,
-            centered) rather than cramming a ~240px portrait next to
-            Fraunces display type, which the mockup's own wider reference
-            frame doesn't have to solve for. */}
-        <div className="mt-6 flex flex-col-reverse items-center gap-8 sm:mt-4 sm:flex-row sm:items-start sm:justify-between sm:gap-10 lg:gap-16">
-          <div className="w-full text-center sm:text-left">
-            <p className="login-jura inline-flex items-center gap-2.5 text-xs font-semibold uppercase tracking-[0.32em] text-accent">
-              {t('artistPublic.eyebrow')}
-              <span className="text-danger-strong" aria-hidden="true">
-                +
-              </span>
-            </p>
+          <div className="mb-4 flex justify-end sm:absolute sm:right-0 sm:top-0 sm:mb-0">
+            <LanguagePicker />
+          </div>
 
-            <h1 className="font-display mt-3 text-5xl font-medium leading-[0.95] text-fg sm:text-6xl lg:text-7xl">
-              {profile.name}
-            </h1>
+          <div className="artist-hero-copy">
+            <div className="artist-eyebrow">
+              <span>{t('artistPublic.eyebrow')}</span>
+              <b aria-hidden="true">+</b>
+            </div>
+
+            <h1 className="artist-h1">{profile.name}</h1>
 
             {profile.specialties.length > 0 && (
-              <div className="mt-5 flex flex-wrap justify-center gap-2.5 sm:justify-start">
+              <div className="artist-tags" aria-label="Styles">
                 {profile.specialties.map((s) => (
-                  <span
-                    key={s}
-                    className="login-jura rounded-full border border-border-strong px-4 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-fg-secondary"
-                  >
-                    {s}
-                  </span>
+                  <span key={s}>{s}</span>
                 ))}
               </div>
             )}
 
-            {profile.bio && (
-              <div className="mx-auto mt-5 max-w-md sm:mx-0">
-                <span className="text-danger-strong text-sm" aria-hidden="true">
-                  +
-                </span>
-                <p className="mt-1 text-sm leading-relaxed text-fg-secondary">{profile.bio}</p>
-              </div>
-            )}
+            {profile.bio && <p className="artist-intro">{profile.bio}</p>}
           </div>
 
-          {/* Arch portrait: rounded-t-full + a modest bottom radius reads
-              as the mockup's stadium/arch shape at any size, no fixed-px
-              border-radius hack needed. Double ring (a wide, very faint
-              outer line + a tighter, brighter inner one) rather than one
-              border, matching the mockup's own layered-frame look. */}
-          <div className="relative shrink-0">
-            <div className="absolute -inset-3 rounded-t-full rounded-b-[2.5rem] border border-accent/25" aria-hidden="true" />
-            <div className="relative h-72 w-56 overflow-hidden rounded-t-full rounded-b-[2.25rem] border border-accent/70 sm:h-80 sm:w-60 lg:h-96 lg:w-72">
+          <div className="artist-portrait-stage" aria-label={profile.name}>
+            <div className="artist-orbit artist-orbit--1" />
+            <div className="artist-orbit artist-orbit--2" />
+            <div className="artist-orbit artist-orbit--3" />
+            <div className="artist-portrait-frame">
               {profile.avatarUrl ? (
-                <img src={profile.avatarUrl} alt={profile.name} className="h-full w-full object-cover" />
+                <img src={profile.avatarUrl} alt={profile.name} />
               ) : (
                 <div className="flex h-full w-full items-center justify-center bg-surface">
                   <span className="font-display text-6xl font-medium text-fg-muted">{profile.name.slice(0, 1).toUpperCase()}</span>
                 </div>
               )}
             </div>
-            <span
-              className="absolute -bottom-3 left-1/2 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full bg-danger-strong text-fg shadow-lg"
-              aria-hidden="true"
-            >
-              <SparkleIcon className="h-4 w-4" />
-            </span>
+            <div className="artist-portrait-mark" aria-hidden="true">
+              ✦
+            </div>
+            <div className="artist-orbit-dots" aria-hidden="true">
+              <i />
+              <i />
+              <i />
+            </div>
           </div>
-        </div>
+        </section>
 
-        {/* + WHERE TO FIND ME + -- a centered rule flanked by red "+" and
-            hairlines, distinct from Eyebrow.tsx's own component: that one
-            is gated on useThemePreset() (the currently-VIEWED studio's own
-            cached preset), which this login-shell-locked page must never
-            read from -- a visitor arriving here straight from some other
-            studio's own [data-theme] would get Eyebrow's plain non-
-            editorial fallback instead of this page's own fixed identity.
-            Hand-rolled here for that reason, not because the shared
-            component couldn't otherwise fit. */}
-        <div className="mt-14 flex items-center justify-center gap-3 sm:mt-16">
-          <span className="h-px w-10 bg-border-strong sm:w-16" aria-hidden="true" />
-          <p className="login-jura flex items-center gap-2.5 text-[11px] font-semibold uppercase tracking-[0.28em] text-accent">
-            <span className="text-danger-strong" aria-hidden="true">
-              +
-            </span>
-            {t('artistPublic.whereToFindMe')}
-            <span className="text-danger-strong" aria-hidden="true">
-              +
-            </span>
-          </p>
-          <span className="h-px w-10 bg-border-strong sm:w-16" aria-hidden="true" />
-        </div>
+        <section className="artist-content-shell">
+          <div className="artist-section-title">
+            <span />
+            <b aria-hidden="true">+</b>
+            <em>{t('artistPublic.whereToFindMe')}</em>
+            <b aria-hidden="true">+</b>
+            <span />
+          </div>
 
-        <div className="mx-auto mt-6 max-w-lg space-y-3 sm:mx-0 sm:max-w-none">
           <StudioCard
             studio={profile.homeStudio}
             subtitle={t('artistPublic.homeStudio')}
@@ -293,29 +247,24 @@ function ArtistPublicPageContent() {
               openInMapsLabel={t('artistPublic.openInMaps')}
             />
           ))}
-        </div>
 
-        <div className="mx-auto mt-8 max-w-lg sm:mx-0 sm:max-w-none">
-          <div className="flex flex-col gap-3 sm:flex-row">
-            <button
-              type="button"
-              onClick={() => setShowBookPicker((v) => !v)}
-              className="btn-gold-gradient login-jura flex flex-1 items-center justify-center gap-2 px-6 py-3.5 text-sm font-bold uppercase tracking-[0.14em]"
-            >
+          <div className="artist-actions">
+            <button type="button" onClick={() => setShowBookPicker((v) => !v)} className="artist-btn btn-gold-gradient">
               {t('artistPublic.bookButton')}
-              <ArrowRightIcon className="h-4 w-4" />
+              <span className="artist-btn-arrow" aria-hidden="true">
+                →
+              </span>
             </button>
-            <a
-              href={`/flash/${profile.homeStudio.slug}/${profile.id}`}
-              className="btn-outline-refined login-jura flex flex-1 items-center justify-center gap-2 px-6 py-3.5 text-sm font-bold uppercase tracking-[0.14em]"
-            >
+            <a href={`/flash/${profile.homeStudio.slug}/${profile.id}`} className="artist-btn btn-outline-refined">
               {t('artistPublic.flashButton')}
-              <ArrowRightIcon className="h-4 w-4" />
+              <span className="artist-btn-arrow" aria-hidden="true">
+                →
+              </span>
             </a>
           </div>
 
           {showBookPicker && (
-            <div className="login-panel-surface mt-4 p-4">
+            <div className="login-panel-surface mx-auto mt-4 w-full max-w-[790px] p-4">
               <p className="text-sm font-medium text-fg">{t('artistPublic.bookPickerPrompt')}</p>
               <div className="mt-3 space-y-2">
                 <button
@@ -323,8 +272,7 @@ function ArtistPublicPageContent() {
                   onClick={() => bookAt(profile.homeStudio)}
                   className="w-full rounded-lg border border-border px-4 py-3 text-left text-sm text-fg transition hover:border-accent"
                 >
-                  {profile.homeStudio.name}{' '}
-                  <span className="text-fg-muted">{t('artistPublic.homeStudioSuffix')}</span>
+                  {profile.homeStudio.name} <span className="text-fg-muted">{t('artistPublic.homeStudioSuffix')}</span>
                 </button>
                 {profile.upcomingResidencies.map((r) => (
                   <button
@@ -339,34 +287,21 @@ function ArtistPublicPageContent() {
               </div>
             </div>
           )}
-        </div>
 
-        {/* LET'S CONNECT -- entirely absent when the artist has neither
-            social link on file, not just an empty section shell. */}
-        {socials.length > 0 && (
-          <div className="mt-10 text-center">
-            <p className="login-jura text-[11px] font-semibold uppercase tracking-[0.28em] text-accent">
-              {t('artistPublic.letsConnect')}
-            </p>
-            <p className="text-danger-strong mt-1 text-sm" aria-hidden="true">
-              +
-            </p>
-            <div className="mt-3 flex justify-center gap-3">
-              {socials.map(({ key, href, Icon, label }) => (
-                <a
-                  key={key}
-                  href={href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label={label}
-                  className="flex h-11 w-11 items-center justify-center rounded-full border border-border-strong text-fg-secondary transition hover:border-accent hover:text-accent"
-                >
-                  <Icon className="h-5 w-5" />
-                </a>
-              ))}
+          {socials.length > 0 && (
+            <div className="artist-connect">
+              <p>{t('artistPublic.letsConnect')}</p>
+              <b aria-hidden="true">+</b>
+              <div className="artist-socials">
+                {socials.map(({ key, href, Icon, label }) => (
+                  <a key={key} href={href} target="_blank" rel="noopener noreferrer" aria-label={label}>
+                    <Icon className="h-full w-full" />
+                  </a>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </section>
       </div>
     </div>
   )
@@ -388,33 +323,43 @@ function StudioCard({
   const hasAddress = Boolean(studio.address)
 
   return (
-    <div className="rounded-2xl border border-border bg-surface/70 px-4 py-3.5">
+    // .artist-studio-card is a <div>, not the spec's own <a href="#"> --
+    // this card is a real interactive expand/collapse control with a real
+    // nested link (the maps address) once expanded, and anchors can't
+    // nest inside anchors (invalid HTML, caught before it ever shipped).
+    <div className="artist-studio-card">
+      {/* display: contents -- a real interactive <button> for click
+          handling/accessibility, but structurally invisible to the grid,
+          so its icon/copy/arrow children lay out directly against
+          .artist-studio-card's own 78px/1fr/40px column tracks exactly
+          like the spec's own (non-interactive) markup does. Simpler and
+          more broadly supported than reaching for grid-template-columns:
+          subgrid just to get the same effect. */}
       <button
         type="button"
         onClick={hasAddress ? onToggle : undefined}
         aria-expanded={hasAddress ? expanded : undefined}
-        className={`flex w-full items-center gap-3.5 text-left ${hasAddress ? '' : 'cursor-default'}`}
+        disabled={!hasAddress}
+        className={`contents text-left ${hasAddress ? '' : 'cursor-default'}`}
       >
-        <span className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full border border-accent/50 text-accent">
-          {studio.logoUrl ? (
-            <img src={studio.logoUrl} alt="" className="h-full w-full object-cover" />
-          ) : (
-            <StudioMarkIcon className="h-5 w-5" />
-          )}
+        <span className="artist-studio-icon">
+          {studio.iconLogoUrl ? <img src={studio.iconLogoUrl} alt="" /> : studio.name.slice(0, 1).toUpperCase()}
         </span>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-[15px] font-medium text-fg">{studio.name}</span>
-          <span className="login-jura block text-[10.5px] font-semibold uppercase tracking-[0.16em] text-accent/80">
-            {subtitle}
-          </span>
+        <span className="artist-studio-copy">
+          <strong>{studio.name}</strong>
+          <span>{subtitle}</span>
         </span>
         {/* Chevron only if it does something -- omitted entirely for a
             studio with no resolvable single-location address, rather than
-            a chevron that expands to nothing. */}
+            one that expands to nothing. */}
         {hasAddress && (
-          <ChevronDownIcon
-            className={`h-4 w-4 shrink-0 text-fg-muted transition-transform ${expanded ? 'rotate-0' : '-rotate-90'}`}
-          />
+          <span
+            className="artist-arrow"
+            style={{ transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s ease' }}
+            aria-hidden="true"
+          >
+            ›
+          </span>
         )}
       </button>
 
@@ -424,7 +369,7 @@ function StudioCard({
           target="_blank"
           rel="noreferrer"
           aria-label={openInMapsLabel}
-          className="mt-3 inline-flex items-center gap-1.5 pl-[3.375rem] text-xs text-fg-secondary underline decoration-fg-muted/50 underline-offset-2 transition hover:text-fg hover:decoration-fg"
+          className="col-span-3 -mt-1 inline-flex items-center gap-1.5 pt-3 text-xs text-fg-secondary underline decoration-fg-muted/50 underline-offset-2 transition hover:text-fg hover:decoration-fg"
         >
           <MapPinIcon className="h-3.5 w-3.5 shrink-0" />
           {studio.address}

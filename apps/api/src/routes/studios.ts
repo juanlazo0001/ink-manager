@@ -163,6 +163,17 @@ router.patch("/:studioId", requireAuth, requireRole(Role.OWNER), async (req, res
     data.logoUrl = result.value;
   }
 
+  // Artist public page v2: same nullable-data-URL contract as logoUrl
+  // above, distinct field -- see Studio.iconLogo's own schema comment for
+  // why this isn't just a resize of logoUrl.
+  if (body.iconLogo !== undefined) {
+    const result = validateImageDataUrl(body.iconLogo, "iconLogo");
+    if ("error" in result) {
+      return res.status(400).json({ error: result.error });
+    }
+    data.iconLogo = result.value;
+  }
+
   const studio = await prisma.studio.update({ where: { id: studioId }, data });
   res.json(studio);
 });

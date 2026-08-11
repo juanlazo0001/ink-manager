@@ -1489,6 +1489,7 @@ export default function Settings() {
   const [editing, setEditing] = useState(false)
   const [form, setForm] = useState(EMPTY_STUDIO_FORM)
   const [logoUrl, setLogoUrl] = useState<string | null>(null)
+  const [iconLogo, setIconLogo] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -1539,6 +1540,7 @@ export default function Settings() {
     if (studio) {
       setForm({ name: studio.name, website: studio.website ?? '' })
       setLogoUrl(studio.logoUrl)
+      setIconLogo(studio.iconLogo)
     }
   }, [studio])
 
@@ -1586,6 +1588,7 @@ export default function Settings() {
     if (studio) {
       setForm({ name: studio.name, website: studio.website ?? '' })
       setLogoUrl(studio.logoUrl)
+      setIconLogo(studio.iconLogo)
     }
     setError(null)
     setEditing(false)
@@ -1617,6 +1620,36 @@ export default function Settings() {
     }
   }
 
+  // Artist public page v2: identical validation to handleLogoChange above,
+  // just targeting the separate iconLogo field -- see Studio.iconLogo's
+  // own schema comment for why this is a second upload, not a resize of
+  // the existing logo.
+  async function handleIconLogoChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+
+    setError(null)
+    setSuccess(false)
+
+    if (!file.type.startsWith('image/')) {
+      setError('Please choose an image file.')
+      return
+    }
+
+    if (file.size > MAX_IMAGE_FILE_BYTES) {
+      setError('Icon logo image must be under 5MB.')
+      return
+    }
+
+    try {
+      const dataUrl = await readFileAsDataUrl(file)
+      setIconLogo(dataUrl)
+    } catch {
+      setError('Could not read that image. Please try a different file.')
+    }
+  }
+
   async function handleSubmit(event: FormEvent) {
     event.preventDefault()
     if (!studio) return
@@ -1628,7 +1661,7 @@ export default function Settings() {
     try {
       await apiFetch(`/studios/${studio.id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ name: form.name, website: form.website, logoUrl }),
+        body: JSON.stringify({ name: form.name, website: form.website, logoUrl, iconLogo }),
       })
       await refresh()
       setSuccess(true)
@@ -1907,6 +1940,45 @@ export default function Settings() {
                       <button
                         type="button"
                         onClick={() => setLogoUrl(null)}
+                        className="text-sm font-medium text-fg-secondary transition hover:text-fg"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mb-5">
+                  <span className="mb-1 block text-sm font-medium text-fg-secondary">Icon logo</span>
+                  <p className="mb-3 text-xs text-fg-muted">
+                    A small circular mark, separate from your logo above -- shown on your artists' own public
+                    pages next to your studio's name. Falls back to your studio's first initial if not set.
+                  </p>
+
+                  <div className="flex items-center gap-4">
+                    {iconLogo ? (
+                      <img src={iconLogo} alt="Icon logo preview" className="h-14 w-14 rounded-full object-cover" />
+                    ) : (
+                      <div className="flex h-14 w-14 items-center justify-center rounded-full border border-border text-xs text-fg-muted">
+                        None
+                      </div>
+                    )}
+
+                    <label
+                      className={
+                        isEditorial
+                          ? 'editorial-btn-secondary cursor-pointer rounded-full border px-4 py-2 transition'
+                          : 'cursor-pointer rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface'
+                      }
+                    >
+                      {iconLogo ? 'Change icon' : 'Upload icon'}
+                      <input type="file" accept="image/*" onChange={handleIconLogoChange} className="hidden" />
+                    </label>
+
+                    {iconLogo && (
+                      <button
+                        type="button"
+                        onClick={() => setIconLogo(null)}
                         className="text-sm font-medium text-fg-secondary transition hover:text-fg"
                       >
                         Remove

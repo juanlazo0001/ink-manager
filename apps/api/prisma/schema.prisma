@@ -257,6 +257,18 @@ model Studio {
   slug      String   @unique
   name      String
   logoUrl   String?
+  // Artist public page v2: a distinct asset from logoUrl above -- logoUrl
+  // is the studio's full wordmark/lockup (used in PDFs, OG tags, the
+  // studio-facing branding contexts logoUrl already served before this
+  // field existed), sized and composed for those uses. iconLogo is a
+  // separate upload specifically for the small circular studio-card mark
+  // on the artist's own public page -- a studio's full logo often doesn't
+  // read cleanly cropped into a ~70px circle the way a dedicated outline
+  // icon does. Same base64 data: URL storage convention as logoUrl (see
+  // lib/images.ts), independently nullable -- most studios won't have one
+  // yet, in which case the studio card falls back to a Fraunces initial
+  // in a thin ring rather than blocking on it.
+  iconLogo  String?
   website   String?
   createdAt DateTime @default(now())
 

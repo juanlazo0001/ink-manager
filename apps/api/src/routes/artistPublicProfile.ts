@@ -24,24 +24,25 @@ interface StudioSummary {
   // single-location case or nothing.
   address: string | null;
   // Real fetchable URL (via publicAssets, same "existence, not identity,
-  // is public here" convention as artist-avatar below) -- null means the
-  // studio has no logo on file, not a fetch that might 404; the frontend
-  // renders StudioMarkIcon's generic mark for that case, never a
-  // hardcoded stand-in.
-  logoUrl: string | null;
+  // is public here" convention as artist-avatar below) -- sourced from
+  // Studio.iconLogo specifically, NOT the studio's general logoUrl (see
+  // that field's own schema comment for why these are separate uploads).
+  // Null means no icon logo on file, not a fetch that might 404; the
+  // frontend renders a Fraunces initial in a thin ring for that case.
+  iconLogoUrl: string | null;
 }
 
 async function studioSummary(studioId: string, name: string, slug: string): Promise<StudioSummary> {
   const [locations, studio] = await Promise.all([
     prisma.location.findMany({ where: { studioId }, select: { address: true } }),
-    prisma.studio.findUnique({ where: { id: studioId }, select: { logoUrl: true } }),
+    prisma.studio.findUnique({ where: { id: studioId }, select: { iconLogo: true } }),
   ]);
   return {
     id: studioId,
     name,
     slug,
     address: locations.length === 1 ? (locations[0]!.address ?? null) : null,
-    logoUrl: studio?.logoUrl ? `${API_PUBLIC_URL}/public-assets/studio-logo/${slug}` : null,
+    iconLogoUrl: studio?.iconLogo ? `${API_PUBLIC_URL}/public-assets/studio-icon-logo/${slug}` : null,
   };
 }
 

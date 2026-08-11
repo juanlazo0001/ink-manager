@@ -111,6 +111,19 @@ router.get("/studio-logo/:studioSlug", async (req, res) => {
   }
 });
 
+// Artist public page v2: separate route for the separate field -- see
+// Studio.iconLogo's own schema comment for why this isn't just
+// /studio-logo re-cropped client-side.
+router.get("/studio-icon-logo/:studioSlug", async (req, res) => {
+  const studio = await prisma.studio.findUnique({
+    where: { slug: req.params.studioSlug as string },
+    select: { iconLogo: true },
+  });
+  if (!studio?.iconLogo || !serveDataUrl(res, studio.iconLogo)) {
+    res.status(404).end();
+  }
+});
+
 // Same publishedAt gate artistPublicProfile.ts's own GET /public/:publicSlug
 // uses -- an unpublished artist's avatar shouldn't be fetchable via this
 // side door just because their publicSlug leaked somewhere.
