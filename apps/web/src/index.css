@@ -1614,18 +1614,18 @@
 .flash-gallery-logo {
   display: flex;
   align-items: center;
-  height: 40px;
+  height: 56px;
 }
 .flash-gallery-logo img { max-height: 100%; width: auto; object-fit: contain; }
 .flash-gallery-logo-fallback {
   display: grid;
   place-items: center;
-  width: 40px;
-  height: 40px;
+  width: 56px;
+  height: 56px;
   border: 1px solid rgba(215, 164, 94, 0.5);
   border-radius: 50%;
   font-family: var(--font-display);
-  font-size: 17px;
+  font-size: 22px;
   color: var(--artist-gold);
 }
 
@@ -1637,13 +1637,15 @@
   font-size: clamp(38px, 5.4vw, 58px);
   line-height: 1;
 }
-.flash-gallery-h1-gold { color: var(--artist-gold); }
+/* Delta (Juan's review pass): a plain small solid divider -- the
+   feathered/gradient-fade treatment stays the artist page's own
+   signature, not reused here. */
 .flash-gallery-rule {
   display: block;
-  width: 64px;
+  width: 48px;
   height: 2px;
   margin: 18px 0 20px;
-  background: linear-gradient(90deg, var(--artist-gold), rgba(215, 164, 94, 0));
+  background: var(--artist-gold);
 }
 .flash-gallery-context { display: flex; align-items: center; gap: 12px; }
 .flash-gallery-context p {
@@ -1783,6 +1785,10 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
+/* Delta (Juan's review pass): squared corners -- exactly
+   .btn-gold-gradient's own geometry (see the artist page's .artist-btn,
+   which declares no border-radius at all), not a locally pill-shaped
+   deviation from that shared token. */
 .flash-piece-book {
   display: inline-flex;
   align-items: center;
@@ -1790,7 +1796,6 @@
   gap: 9px;
   align-self: flex-start;
   padding: 13px 26px;
-  border-radius: 999px;
   font-family: var(--font-jura);
   font-size: 12.5px;
   font-weight: 500;

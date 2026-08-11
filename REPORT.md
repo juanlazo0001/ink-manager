@@ -15270,3 +15270,59 @@ Juan's review of the screenshot gallery above.
 
 REPORT.md line count before this entry: 15108 (verified via `git show
 HEAD:REPORT.md | wc -l`) -- pure addition.
+
+# Flash gallery restyle -- four review deltas
+
+Juan's screenshot review of the flash gallery restyle came back with four
+focused corrections. By the time this session started, that restyle had
+already merged to `main` (commit `3010c3f`, previous entry), so per the
+task's own instruction this was a small direct pass on `main`, not a new
+branch.
+
+1. **Book This Design: squared corners.** The gallery's own
+   `.flash-piece-book` had a local `border-radius: 999px` layered on top
+   of `.btn-gold-gradient` -- a real deviation from that shared token,
+   which (confirmed by reading `.artist-btn`, the artist page's own
+   BOOK/FLASH buttons) declares no border-radius at all. Removed the
+   override rather than picking a new radius -- the token's own geometry
+   is square, full stop.
+2. **Title: dropped the two-tone.** "Flash Gallery" / "Galería Flash" is
+   now a single paper-white Fraunces color throughout. Simplified the
+   markup to match: the `titleFirst`/`titleSecond` translation-key split
+   (added specifically to let either word land gold regardless of
+   locale word order) no longer serves a purpose with no color split to
+   make, so removed those two keys from both `en.ts`/`es.ts` and went
+   back to the single existing `pageHeading` key instead of leaving dead
+   translation surface behind.
+3. **Studio logo: 40px -> 56px.** Checked specifically at 390px per the
+   task's own ask -- the logo and the language toggle stay comfortably
+   balanced on the same header row at phone width, neither crowding the
+   other (screenshotted).
+4. **Rule under the title: plain solid, no fade.** Was
+   `linear-gradient(90deg, gold, transparent)`, matching the artist
+   page's own feathered dividers; now a flat `background: var(--artist-
+   gold)`, and narrowed from 64px to 48px ("small solid divider"). The
+   gradient-fade treatment stays exclusive to the artist page, per the
+   task's own instruction.
+
+## Verification
+
+Real Playwright browser against the primary checkout's own dev servers
+(reused, not restarted), the same seeded throwaway studio/artist/pieces
+from the restyle's own verification still in the shared dev database.
+390px and desktop, English and Spanish, zero console errors on every
+load (checked as a genuine anonymous visitor -- cleared `localStorage`/
+`sessionStorage` first, same false-alarm-avoidance step as prior
+sessions in this file). `tsc -b --noEmit` clean, `vite build` clean,
+API suite 170/170 (unaffected, since this pass never touched the
+backend).
+
+Updated screenshot review for Juan:
+https://claude.ai/code/artifact/4c8749aa-e895-422a-bf10-449789e62712
+
+Committed and pushed directly to `main` -- the restyle itself was
+already live, so this stayed a small follow-up fix rather than a new
+review-gated branch.
+
+REPORT.md line count before this entry: 15272 (verified via `git show
+HEAD:REPORT.md | wc -l`) -- pure addition.

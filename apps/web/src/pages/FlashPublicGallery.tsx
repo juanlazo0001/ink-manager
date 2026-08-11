@@ -238,9 +238,7 @@ function FlashPublicGalleryContent() {
           </header>
 
           <div className="flash-gallery-titleblock">
-            <h1 className="flash-gallery-h1">
-              <span>{t('flashGallery.titleFirst')}</span> <span className="flash-gallery-h1-gold">{t('flashGallery.titleSecond')}</span>
-            </h1>
+            <h1 className="flash-gallery-h1">{t('flashGallery.pageHeading')}</h1>
             <span className="flash-gallery-rule" aria-hidden="true" />
             <div className="flash-gallery-context">
               {gallery.artistName ? (

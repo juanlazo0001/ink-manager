@@ -260,8 +260,6 @@ export const en = {
     requestSentHeading: 'Request sent!',
     requestSentBody: "{{studioName}} will review your placement and get back to you shortly to confirm and collect payment -- this isn't booked yet.",
     pageHeading: 'Flash Gallery',
-    titleFirst: 'Flash',
-    titleSecond: 'Gallery',
     intro: "{{artistName}}'s ready-to-book designs at {{studioName}}.",
     introStudioWide: 'Ready-to-book designs at {{studioName}}.',
     noPiecesAvailable: 'No flash pieces are available right now.',
