@@ -1,7 +1,7 @@
 import { formatStatus } from '../lib/format'
 import { useThemePreset } from '../lib/useThemePreset'
 
-export type Tone = 'success' | 'info' | 'warning' | 'danger' | 'neutral' | 'progress' | 'highlight'
+export type Tone = 'success' | 'info' | 'warning' | 'danger' | 'neutral' | 'progress' | 'highlight' | 'hold'
 
 // Single source of truth for status -> semantic tone across the whole app.
 // Every status pill everywhere renders through this component so the
@@ -58,6 +58,13 @@ const STATUS_TONE: Record<string, Tone> = {
   // (a separate, hardcoded map there -- unaffected by this change).
   CLOSED_LOST: 'danger',
   COLD_LEAD: 'neutral',
+  // On-Hold: a genuinely new kind of state (paused, not any pipeline
+  // stage) -- every other tone here is already claimed by a status that
+  // can appear in the same Inquiries/Projects list or Kanban board, and
+  // red is reserved for punctuation (CLOSED_LOST), never reused for a
+  // pause. Its own 'hold' tone (index.css) keeps it distinct from all of
+  // them at once instead of reusing e.g. neutral and reading like COLD_LEAD.
+  ON_HOLD: 'hold',
 
   // Appointments -- COMPLETED gets its own tone (previously the same green
   // as CONFIRMED, so an appointment that already happened looked identical
@@ -109,6 +116,7 @@ const TONE_CLASSES_DEFAULT: Record<Tone, string> = {
   neutral: 'bg-neutral/15 text-neutral',
   progress: 'bg-progress/15 text-progress',
   highlight: 'bg-highlight/15 text-highlight',
+  hold: 'bg-hold/15 text-hold',
 }
 const TONE_CLASSES_EDITORIAL: Record<Tone, string> = {
   success: 'border-success/50 bg-success/10 text-success',
@@ -118,6 +126,7 @@ const TONE_CLASSES_EDITORIAL: Record<Tone, string> = {
   neutral: 'border-border-soft bg-white/[0.02] text-neutral',
   progress: 'border-progress/50 bg-progress/10 text-progress',
   highlight: 'border-highlight/50 bg-highlight/10 text-highlight',
+  hold: 'border-hold/50 bg-hold/10 text-hold',
 }
 const TONE_DOT_CLASSES: Record<Tone, string> = {
   success: 'bg-success',
@@ -127,6 +136,7 @@ const TONE_DOT_CLASSES: Record<Tone, string> = {
   neutral: 'bg-neutral',
   progress: 'bg-progress',
   highlight: 'bg-highlight',
+  hold: 'bg-hold',
 }
 
 // Exported so other components (e.g. the Conversations list's avatar rings)

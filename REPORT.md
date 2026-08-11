@@ -16414,3 +16414,148 @@ before committing -- none were ever intended to ship.
 Not yet done: Part 3 (On-Hold) and Part 4 (combined final verification,
 screenshots) remain. `apps/web/.env`'s `VITE_API_URL` now correctly
 points at this worktree's own port 4003 going forward.
+
+# Prepay + On-Hold epic, Part 3: On-Hold
+
+Staff can pause a converted project (deposit paid through completed) and
+release it back to exactly where it was, with reminders paused for the
+duration, its own Kanban column, and no red anywhere on it.
+
+## Backend
+
+- **`routes/inquiries.ts`**: `POST /:id/hold` and `POST /:id/release`,
+  placed right after `reopen` (the closest existing precedent -- a
+  status round-trip driven by a captured prior value). Deliberately
+  scoped to `PROJECT_STATUSES` (SCHEDULING/WAITLISTED/CONFIRMED) rather
+  than the broader `NON_TERMINAL_STATUSES` mark-lost/reopen use -- the
+  task's own language is "place a **project** on hold," and restricting
+  it keeps ON_HOLD's tab/Kanban placement unambiguous (always Projects)
+  instead of needing a rule for a paused pre-conversion lead. `hold`
+  captures `statusBeforeHold` at the moment of the call (not derivable
+  afterward, since `status` itself becomes `ON_HOLD`); `release` needs
+  no request body at all -- unlike `reopen` (CLOSED_LOST/COLD_LEAD don't
+  remember where they came from), `statusBeforeHold` already knows.
+  Both use the inquiry's own confirmed `studioId` for the permission
+  check, audit log, and `emitInvalidation` -- not `req.user!.studioId` --
+  following the artist-mobility-fix precedent already established
+  elsewhere in this file (deposit-form send, etc.).
+  - **Found but not fixed, flagged for a future pass**: `mark-lost` and
+    `reopen`, immediately above where hold/release were added, both
+    still audit-log and `emitInvalidation` against `req.user!.studioId`
+    instead of the confirmed `inquiry.studioId` -- the exact bug pattern
+    CLAUDE.md's own artist-studio-scoping section calls out as having
+    recurred before. Out of scope for this task (not touched, not asked
+    for), but worth a dedicated fix later: a guest-assigned artist
+    marking a host studio's inquiry lost would currently audit-log and
+    realtime-broadcast against their own home studio, not the record's.
+  - Permission: reused `inquiries.edit` (same as `reopen`) rather than
+    adding a dedicated `inquiries.hold` permission-matrix key -- a new
+    key needs its own migration/seed across every existing role, which
+    the task didn't ask for and the codebase doesn't have a lightweight
+    path to add.
+- **`lib/jobs/reminderTicker.ts`**: reminders are entirely computed live
+  each 15-minute tick (no stored "next reminder" row to pause) --
+  `sendClientReminders`/`sendArtistDigest`'s appointment queries and
+  `sendEstimateFollowUps`'s inquiry query all gained
+  `inquiryProject: { status: { not: ON_HOLD } }` (or `status: { not:
+  ON_HOLD }` directly, for the inquiry-level query). "Resume on
+  release" needed no separate code path -- the next tick just
+  re-evaluates live status and finds the appointment eligible again,
+  same as it would for a project that was never paused.
+
+## Frontend
+
+- **`index.css`**: new `--color-hold` token, added to both the base
+  `@theme` block and the editorial-gold `[data-theme]` override, same
+  as every other semantic status color. Checked first whether an
+  existing tone (danger excluded by the task itself; success/info/
+  warning/neutral/progress/highlight all already spoken for) was free
+  to reuse -- every one of the 7 existing tones turned out to already be
+  claimed by a status that can appear in the *same* Inquiries+Projects
+  combined status set ON_HOLD needs to coexist with (e.g. reusing
+  neutral, COLD_LEAD's tone, would make a paused project read as a dead
+  lead in the exact same Kanban board) -- so an 8th tone was the only
+  way to satisfy "distinct." Picked a cool slate-blue, deliberately
+  unlike the app's warm ambers/greens/violets and nothing like red.
+- **`components/StatusPill.tsx`**: `ON_HOLD: 'hold'` in the tone map,
+  `'hold'` added to the `Tone` union and all three tone-class records
+  (default fill, editorial border+dot, dot-only). `formatStatus`
+  (lib/format.ts) already title-cases `ON_HOLD` to "On Hold" correctly
+  with zero changes -- no special case needed there.
+- **`pages/Inquiries.tsx`**: `PROJECTS_TAB_STATUSES` gained `ON_HOLD`
+  (appended, not interleaved, so it's always the Kanban board's trailing
+  column rather than looking like a fourth pipeline step) -- the actual
+  Kanban board's columns (`PROJECT_TAB_COLUMNS`) derive from this array
+  automatically, so the board needed no separate edit. The list view's
+  own "Group by status" toggle and Status filter dropdown are a
+  *second*, independent grouping mechanism that keys off the derived
+  5-stage `ProjectStage` (`deriveProjectStage`), not the raw status --
+  ON_HOLD has no derived stage (correctly; a pause isn't a pipeline
+  position), so both would have silently dropped a paused project the
+  moment any stage filter was active, or omitted it from a grouped list
+  entirely. Fixed with a small `projectGroupKey` helper (`'ON_HOLD'` for
+  an on-hold row, else the derived stage) threaded through the filter
+  options, the filter predicate, and the grouped-list construction.
+  `resolveProjectsTabTransition` gained explicit `ON_HOLD` drag handling
+  -- both directions open the same modal/section every other button-driven
+  entry point uses (hold needs a reason field a drag can't collect;
+  release, though data-free on the backend, still scrolls to its own
+  explicit button rather than firing off a drop with no confirmation
+  step, since restoring a CONFIRMED project's status is a client-visible
+  change a stray drag shouldn't trigger unconfirmed).
+- **`pages/InquiryDetail.tsx`**: `Inquiry` interface gained
+  `statusBeforeHold`/`holdReason`/`heldAt` (Prisma returns them for
+  free, same as `lostReason`/`lostAt` already did -- no backend
+  serialization change needed). "Put On Hold" in the More-actions menu
+  (gated on `canEditInquiry && isConverted`, mirroring exactly how
+  `isConverted` already gates the Project-only "Mark Project Complete"
+  button right below it) opens a reason modal identical in shape to the
+  existing mark-lost modal. An `id="hold-section"` banner (shown only
+  when `status === 'ON_HOLD'`) displays the reason/`heldAt` and a
+  "Release" button -- this same element id is the scroll target for the
+  `?openFlow=release` deep link from the Kanban drag handler above.
+
+## Live verification
+
+Reused "Referred ClientB" (`cmsigobgh000058i266qxauu3`) from Part 2's
+own verification -- already a converted project by that point (a
+FULL_PREPAY session had been paid, auto-booking a CONFIRMED appointment
+via the deposit flow's own self-scheduling path -- confirmed via the raw
+`GET /inquiries/:id` response, `status: "CONFIRMED"`, one appointment).
+
+- **Hold**: More actions -> Put On Hold -> reason entered -> header pill
+  switched to "ON HOLD" in the new slate-blue tone (no red anywhere),
+  a banner appeared with the reason and timestamp, "Release" button
+  present.
+- **Release**: clicking Release restored the header pill to "SCHEDULED"
+  -- confirmed via the raw API response that `status` round-tripped
+  `CONFIRMED -> ON_HOLD -> CONFIRMED` exactly, `statusBeforeHold`/
+  `holdReason`/`heldAt` all correctly null again after release. (The
+  Pipeline widget's own derived-stage label read differently at two
+  points in this session for reasons traced to this same inquiry's
+  accumulated Part 2 test data -- not to hold/release, which touch only
+  the four status/hold fields, confirmed by reading the routes; noted
+  here rather than silently ignored.)
+- **Kanban board**: Projects tab now shows four columns --
+  SCHEDULING / WAITLISTED / CONFIRMED / ON HOLD -- with the held project
+  appearing only in its own trailing column, visually distinct
+  (slate-blue border, no red) from every neighboring card.
+- **Reminders/stalled-alerts exclusion**: not re-driven live (would need
+  a real CONFIRMED appointment inside a send window plus waiting for a
+  15-minute tick) -- verified by reading `reminderTicker.ts`'s own
+  updated queries instead, plus confirming the one other "staleness"
+  system in the codebase, `coldLeadSweep.ts`, already excludes every
+  Projects-side status by design (its own comment: "Projects-side
+  statuses... are never swept") -- since ON_HOLD is only reachable from
+  those same three Projects-side statuses, it was already outside that
+  sweep's scope with no change needed. No dashboard "stalled project"
+  widget was found anywhere in the codebase to check against.
+
+API suite: 170/170 (`npm test`, after all Part 3 backend changes).
+`tsc -b --noEmit` clean on both apps.
+
+Cleanup: released the test project back to CONFIRMED before moving on,
+so the shared dev studio's data is left as found.
+
+Not yet done: Part 4 (combined final verification pass, screenshots,
+closing commit) remains.

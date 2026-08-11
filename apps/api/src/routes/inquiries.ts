@@ -2408,6 +2408,105 @@ router.post("/:id/reopen", requireAuth, async (req, res) => {
   res.json(updated);
 });
 
+// On-Hold, Part 3: pause a project without losing its place in the
+// pipeline -- statusBeforeHold captures wherever it was AT THE MOMENT of
+// holding (not derivable afterward, since `status` itself becomes ON_HOLD),
+// so release can restore it exactly. Deliberately scoped to PROJECT_STATUSES
+// only (SCHEDULING/WAITLISTED/CONFIRMED) -- the task's own language is
+// "place a PROJECT on hold," and restricting to the Projects tab's three
+// statuses keeps ON_HOLD's tab/Kanban placement unambiguous (always
+// Projects, never Inquiries) rather than needing a rule for what happens to
+// a pre-conversion lead that's paused.
+router.post("/:id/hold", requireAuth, async (req, res) => {
+  const id = req.params.id as string;
+  const { reason } = req.body ?? {};
+
+  if (reason !== undefined && reason !== null && typeof reason !== "string") {
+    return res.status(400).json({ error: "reason must be a string" });
+  }
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  // Permission-context fix: evaluated at the inquiry's own studio, same
+  // precedent as every other action route in this file.
+  if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.edit"))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  if (!PROJECT_STATUSES.includes(inquiry.status)) {
+    return res.status(400).json({ error: "Only a converted project (Scheduling, Waitlisted, or Confirmed) can be put on hold" });
+  }
+
+  const holdData = {
+    statusBeforeHold: inquiry.status,
+    status: InquiryStatus.ON_HOLD,
+    holdReason: typeof reason === "string" && reason.trim().length > 0 ? reason.trim() : null,
+    heldAt: new Date(),
+  };
+
+  const updated = await prisma.inquiry.update({ where: { id }, data: holdData, include: INQUIRY_INCLUDE });
+
+  await logAudit({
+    studioId: inquiry.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Inquiry",
+    entityId: id,
+    action: "status_change",
+    changes: diffObjects(inquiry, holdData, ["status", "statusBeforeHold", "holdReason", "heldAt"]),
+  });
+
+  emitInvalidation({ type: "inquiry.updated", studioId: inquiry.studioId, inquiryId: id });
+
+  res.json(updated);
+});
+
+// On-Hold, Part 3: the reverse of hold above -- restores whatever status
+// was captured at hold time and clears the three hold-only fields. No body
+// needed (unlike reopen, which must be told a target since CLOSED_LOST/
+// COLD_LEAD don't remember where they came from) -- statusBeforeHold
+// already knows.
+router.post("/:id/release", requireAuth, async (req, res) => {
+  const id = req.params.id as string;
+
+  const inquiry = await prisma.inquiry.findUnique({ where: { id } });
+  if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
+    return res.status(404).json({ error: "Inquiry not found" });
+  }
+
+  if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.edit"))) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  if (inquiry.status !== InquiryStatus.ON_HOLD || !inquiry.statusBeforeHold) {
+    return res.status(400).json({ error: "This project is not currently on hold" });
+  }
+
+  const releaseData = {
+    status: inquiry.statusBeforeHold,
+    statusBeforeHold: null,
+    holdReason: null,
+    heldAt: null,
+  };
+
+  const updated = await prisma.inquiry.update({ where: { id }, data: releaseData, include: INQUIRY_INCLUDE });
+
+  await logAudit({
+    studioId: inquiry.studioId,
+    actorUserId: req.user!.userId,
+    entityType: "Inquiry",
+    entityId: id,
+    action: "status_change",
+    changes: diffObjects(inquiry, releaseData, ["status", "statusBeforeHold", "holdReason", "heldAt"]),
+  });
+
+  emitInvalidation({ type: "inquiry.updated", studioId: inquiry.studioId, inquiryId: id });
+
+  res.json(updated);
+});
+
 // Service lines: the first of CANDIDACY_REVIEW's three actions -- proceeds
 // a candidate straight into the normal pipeline (NEW), where staff assign
 // an artist and get a price estimate exactly as any other inquiry would.

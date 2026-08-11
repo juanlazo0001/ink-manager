@@ -111,6 +111,13 @@ interface Inquiry {
   closedReason: string | null
   lostReason: string | null
   lostAt: string | null
+  // On-Hold, Part 3: statusBeforeHold isn't rendered directly anywhere on
+  // this page (release restores it server-side, without the client needing
+  // to know or show it) -- included for type completeness with what the API
+  // actually returns, not because a call site reads it.
+  statusBeforeHold: string | null
+  holdReason: string | null
+  heldAt: string | null
   // Project pipeline timeline's final, non-derived stage -- explicitly set
   // by "Mark Project Complete", cleared by "Reopen Project". Null means
   // "not yet marked complete," never inferred from session/checkout state.
@@ -856,6 +863,17 @@ export default function InquiryDetail() {
   const [reopening, setReopening] = useState(false)
   const [reopenError, setReopenError] = useState<string | null>(null)
 
+  // On-Hold, Part 3: same modal-with-optional-reason shape as mark-lost
+  // above. Release needs no modal of its own (no input to collect --
+  // statusBeforeHold already knows where to restore to), just its own
+  // pending/error pair, same as handleReopenProject's fire-and-confirm shape.
+  const [showHoldModal, setShowHoldModal] = useState(false)
+  const [holdReasonInput, setHoldReasonInput] = useState('')
+  const [holdingProject, setHoldingProject] = useState(false)
+  const [holdError, setHoldError] = useState<string | null>(null)
+  const [releasingProject, setReleasingProject] = useState(false)
+  const [releaseError, setReleaseError] = useState<string | null>(null)
+
   // Project pipeline timeline's explicit final stage -- no modal needed for
   // either direction (unlike reopen above, which needs a target status
   // picker): complete-project/reopen-project only ever touch
@@ -881,6 +899,16 @@ export default function InquiryDetail() {
       setShowMarkLostModal(true)
     } else if (openFlow === 'reopen') {
       setShowReopenModal(true)
+    } else if (openFlow === 'hold') {
+      setShowHoldModal(true)
+    } else if (openFlow === 'release') {
+      // Data-free on the backend, but still scrolls to the explicit
+      // "Release" button rather than firing straight off a drag -- same
+      // reasoning as the resolveProjectsTabTransition comment that sends
+      // the drag here: restoring statusBeforeHold with no confirmation
+      // step risks a client-visible change the staff member dragging
+      // didn't mean to trigger.
+      document.getElementById('hold-section')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     } else if (openFlow === 'assign' || openFlow === 'send-estimate' || openFlow === 'schedule') {
       const sectionId =
         openFlow === 'assign' ? 'assignment-section' : openFlow === 'send-estimate' ? 'estimate-section' : 'appointments'
@@ -1461,6 +1489,44 @@ export default function InquiryDetail() {
     }
   }
 
+  async function handleHold() {
+    if (!id) return
+
+    setHoldingProject(true)
+    setHoldError(null)
+
+    try {
+      await apiFetch(`/inquiries/${id}/hold`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: holdReasonInput.trim() || undefined }),
+      })
+
+      setShowHoldModal(false)
+      setHoldReasonInput('')
+      invalidateInquiry()
+    } catch (err) {
+      setHoldError(err instanceof Error ? err.message : 'Failed to put this project on hold')
+    } finally {
+      setHoldingProject(false)
+    }
+  }
+
+  async function handleRelease() {
+    if (!id) return
+
+    setReleasingProject(true)
+    setReleaseError(null)
+
+    try {
+      await apiFetch(`/inquiries/${id}/release`, { method: 'POST' })
+      invalidateInquiry()
+    } catch (err) {
+      setReleaseError(err instanceof Error ? err.message : 'Failed to release this project from hold')
+    } finally {
+      setReleasingProject(false)
+    }
+  }
+
   async function handleArchive() {
     if (!id) return
     setArchiving(true)
@@ -1997,6 +2063,20 @@ export default function InquiryDetail() {
                               Mark as lost
                             </button>
                           )}
+                          {canEditInquiry && isConverted && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowMoreMenu(false)
+                                setHoldReasonInput('')
+                                setHoldError(null)
+                                setShowHoldModal(true)
+                              }}
+                              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg-secondary hover:bg-surface"
+                            >
+                              Put On Hold
+                            </button>
+                          )}
                           {canEditInquiry && (
                             <button
                               type="button"
@@ -2060,6 +2140,31 @@ export default function InquiryDetail() {
                         className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
                       >
                         Reopen
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {inquiry.status === 'ON_HOLD' && (
+                  <div
+                    id="hold-section"
+                    className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-hold/30 bg-hold/10 px-4 py-3"
+                  >
+                    <div>
+                      <p className="text-sm font-medium text-hold">
+                        On hold{inquiry.heldAt && ` — ${formatDateTime(inquiry.heldAt)}`}
+                      </p>
+                      {inquiry.holdReason && <p className="mt-1 text-sm text-fg-muted">{inquiry.holdReason}</p>}
+                      {releaseError && <p className="mt-1 text-sm text-danger">{releaseError}</p>}
+                    </div>
+                    {canEditInquiry && (
+                      <button
+                        type="button"
+                        onClick={handleRelease}
+                        disabled={releasingProject}
+                        className="shrink-0 rounded-full border border-hold/40 px-3 py-1.5 text-xs font-medium text-hold transition hover:bg-hold/10 disabled:opacity-60"
+                      >
+                        {releasingProject ? 'Releasing…' : 'Release'}
                       </button>
                     )}
                   </div>
@@ -4017,6 +4122,48 @@ export default function InquiryDetail() {
                           setMarkingLostAsCandidacy(false)
                         }}
                         disabled={markingLost}
+                        className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                </Modal>
+              )}
+
+              {showHoldModal && (
+                <Modal title="Put On Hold" onClose={() => setShowHoldModal(false)}>
+                  <div className="space-y-4">
+                    <p className="text-sm text-fg-secondary">
+                      Pauses this project without losing its place in the pipeline -- release restores it to exactly
+                      where it is now. Scheduled reminders for this project pause too, and resume once released.
+                    </p>
+
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-fg-secondary">Reason (optional)</label>
+                      <textarea
+                        rows={3}
+                        value={holdReasonInput}
+                        onChange={(e) => setHoldReasonInput(e.target.value)}
+                        className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                      />
+                    </div>
+
+                    {holdError && <p className="text-sm text-danger">{holdError}</p>}
+
+                    <div className="flex gap-3">
+                      <button
+                        type="button"
+                        onClick={handleHold}
+                        disabled={holdingProject}
+                        className="flex-1 rounded-full border border-hold/40 px-4 py-2 text-sm font-medium text-hold transition hover:bg-hold/10 disabled:opacity-60"
+                      >
+                        {holdingProject ? 'Putting on hold…' : 'Put On Hold'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowHoldModal(false)}
+                        disabled={holdingProject}
                         className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
                       >
                         Cancel
