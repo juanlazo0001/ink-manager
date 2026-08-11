@@ -100,6 +100,28 @@ export async function effectiveRoleAt(
   return null;
 }
 
+// Flash governance split (approved, REPORT.md: "Permission-context fix
+// Part 4" flagged this exact swap and deliberately left it for a later
+// decision -- this is that decision): whether STAFF (never the artist
+// themselves, who is always ungated on their own pieces via the
+// isSelf carve-out already established elsewhere) may edit an artist's
+// flash-piece CONTENT (image/title/price/duration/isOneOfOne) on that
+// artist's behalf, at recordStudioId specifically -- same "record's own
+// studio, never the caller's home" rule as studioHasActiveMembership.
+// Deliberately narrower than a bare membership check: mirrors
+// artists.ts's own `canEditProfileFields = isSelf ||
+// memberships[0]?.allowsStudioProfileEdits` pattern for bio/portfolio/
+// rates exactly, just as its own shared primitive rather than a second
+// inline copy -- flash-piece content is "artist-owned portable content,"
+// the same category those fields are already in.
+export async function hasProfileDelegationAt(artistId: string, studioId: string): Promise<boolean> {
+  const membership = await prisma.studioMembership.findFirst({
+    where: { studioId, artistId, endedAt: null },
+    select: { allowsStudioProfileEdits: true },
+  });
+  return membership?.allowsStudioProfileEdits ?? false;
+}
+
 export async function callerBelongsToStudio(
   user: Pick<AuthPayload, "studioId" | "role" | "userId">,
   recordStudioId: string,

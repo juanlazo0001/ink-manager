@@ -9,7 +9,7 @@ import { normalizePhone } from "../lib/phone";
 import { syncPrimaryEmail, syncPrimaryPhone } from "../lib/clientContacts";
 import { generateUniqueReferralCode } from "../lib/referrals";
 import { DEFAULT_THEME_PRESET } from "../lib/themePresets";
-import { studioHasActiveMembership, activeStudioIdsForCaller, effectiveRoleAt } from "../lib/artistAccess";
+import { studioHasActiveMembership, activeStudioIdsForCaller, effectiveRoleAt, hasProfileDelegationAt } from "../lib/artistAccess";
 import { resolveRequestLocale, withLocale } from "../lib/contentTranslation";
 import { isSupportedLocale } from "../lib/locale";
 
@@ -485,26 +485,31 @@ router.patch("/:id", async (req, res) => {
   const studioId = existing.studioId;
   const isSelf = existing.artist.userId === req.user!.userId;
 
-  // Carve-out: a flash piece is the artist's own portable content (image,
-  // title, price, duration) -- editing YOUR OWN piece is never gated by any
-  // studio's permission matrix, same "governed by the artist" carve-out
-  // artists.ts's own self-bypass already established for bio/portfolio/
-  // rates. An ARTIST can still never touch a DIFFERENT artist's piece
-  // (unchanged from before this fix) -- only staff manage on another
-  // artist's behalf, gated by flashGallery.manage evaluated at the piece's
-  // own studio (permission-context fix).
-  //
-  // Solo-guest fix: checked against `role` (the caller's EFFECTIVE role AT
-  // this piece's own studio), never their raw global role -- a solo OWNER
-  // guesting at this studio is exactly as much "just an ARTIST" here as any
-  // other guest, so they must hit the same hard block on a different
-  // artist's piece, not fall through to a staff flashGallery.manage check
-  // their OWNER-at-home role has nothing to do with.
+  // Flash governance split (approved -- REPORT.md: "Permission-context fix
+  // Part 4" flagged this exact swap and deliberately deferred it; this is
+  // that decision made). A flash piece's CONTENT (image, title, price,
+  // duration, isOneOfOne -- everything this route can write) is the
+  // artist's own portable content, same category bio/portfolio/rates are
+  // already in: editing YOUR OWN piece is still never gated by anything
+  // (unchanged). Staff editing content on another artist's behalf is now
+  // gated by that artist's OWN per-membership profile-delegation toggle
+  // (StudioMembership.allowsStudioProfileEdits) at THIS piece's own
+  // studio -- the exact same "record's studio, not the caller's home"
+  // rule effectiveRoleAt already applies, evaluated via
+  // hasProfileDelegationAt -- NOT flashGallery.manage anymore. That
+  // matrix key still fully governs everything else this file does
+  // (creating new pieces, and the studio-facing lifecycle action below --
+  // retire/gallery visibility); only this one route's staff-on-behalf-of
+  // branch changed. An ARTIST can still never touch a DIFFERENT artist's
+  // piece at all (unchanged) -- checked against `role`, the caller's
+  // EFFECTIVE role AT this piece's own studio, same solo-guest-fix
+  // reasoning as before: a solo OWNER guesting here is exactly as much
+  // "just an ARTIST" as any other guest.
   if (!isSelf) {
     if (role === Role.ARTIST) {
       return res.status(403).json({ error: "Forbidden" });
     }
-    if (!(await hasPermission(studioId, role, "flashGallery.manage"))) {
+    if (!(await hasProfileDelegationAt(existing.artistId, studioId))) {
       return res.status(403).json({ error: "Forbidden" });
     }
   }

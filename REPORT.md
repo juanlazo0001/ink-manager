@@ -14400,3 +14400,92 @@ Per the task's own instruction, this stays as a commit on
 
 REPORT.md line count before this entry: 14191 (verified via `git show
 HEAD:REPORT.md | wc -l`) — pure addition.
+
+# Flash governance split (approved)
+
+Closes the exact swap "Permission-context fix Part 4" flagged and
+deliberately deferred: a flash piece's own CONTENT (image, title, price,
+duration, `isOneOfOne`) is artist-owned portable data, same category
+bio/portfolio/rates are already in. Staff editing it on another artist's
+behalf now requires that artist's own per-membership profile-delegation
+toggle (`StudioMembership.allowsStudioProfileEdits`) — not the
+`flashGallery.manage` studio matrix key anymore. The artist editing their
+own piece stays unconditional (unchanged). The matrix key still fully
+governs everything else this file does: creating a new piece for another
+artist, and the studio-facing lifecycle action (retire — the only
+lifecycle action that lives in this router; booking approval happens
+through the associated `Inquiry`, in `routes/inquiries.ts`, untouched by
+this task).
+
+## Implementation
+
+- `lib/artistAccess.ts`: new `hasProfileDelegationAt(artistId, studioId)`
+  — same shape as `studioHasActiveMembership`, evaluated at the record's
+  own studio (never the caller's home), mirroring `artists.ts`'s own
+  inline `canEditProfileFields = isSelf ||
+  memberships[0]?.allowsStudioProfileEdits` pattern as a real shared
+  primitive instead of a second copy.
+- `routes/flashPieces.ts`, `PATCH /:id` only: the staff (`!isSelf`)
+  branch's `hasPermission(studioId, role, "flashGallery.manage")` check
+  replaced with `hasProfileDelegationAt(existing.artistId, studioId)`.
+  `POST /:id/retire` and `POST /` (create) both untouched — still
+  `flashGallery.manage`, exactly as before.
+- `lib/permissions.ts` (API) and `lib/permissions.ts` (web, the Settings
+  matrix description text): both updated to describe the narrower scope
+  — the key now reads as "create for others + retire," not "create, edit,
+  and retire."
+
+## Verification (adversarial, both directions, real HTTP)
+
+New `routes/flashGovernance.test.ts`, same real-Prisma-real-HTTP-self-
+contained-fixtures convention as `permissionContext.test.ts`. Five cases,
+all passing:
+
+1. Delegation OFF: staff (OWNER) editing another artist's piece content
+   → `403`, piece left untouched.
+2. Same OWNER, same delegation-OFF artist: retire → still `200` — proves
+   the matrix key still governs the lifecycle action, completely
+   unaffected by this split.
+3. Delegation ON: staff (OWNER) editing another artist's piece content →
+   `200`, new value persists.
+4. Artist editing their OWN piece → `200`, regardless of their own
+   delegation setting (the `isSelf` carve-out is unconditional, untouched).
+5. Solo owner-artist editing their own piece in their own studio → `200`
+   — the common solo case is unaffected.
+
+Two pre-existing tests asserted the OLD behavior (staff editing another
+artist's content via `flashGallery.manage` alone) as their own fixtures'
+baseline, not as their actual point of coverage — both updated to grant
+delegation in their fixtures rather than changed in what they assert,
+since neither test was actually ABOUT authorization:
+
+- `translationWrites.test.ts`: "POST /flash-pieces with translations,
+  then PATCH updates them" — about translation round-tripping.
+- `soloGuestAccess.test.ts`: "host OWNER staff (control): can edit any
+  artist's piece at their own studio" — a control proving *legitimate*
+  staff access is unaffected by that file's own solo-guest fix, not a
+  claim about what governs flash content specifically.
+
+Full API suite: 166/166 (161 existing + 5 new). `tsc -b` clean on both
+apps.
+
+## Behavior change on deploy
+
+**Wherever a studio's artist-to-staff delegation is off — the default for
+every new membership — staff lose the ability to edit that artist's
+flash-piece content (image/title/price/duration/one-of-one) the moment
+this deploys.** Retiring/removing a piece from the gallery is unaffected
+(still governed by `flashGallery.manage`, default TRUE for OWNER/
+FRONT_DESK). For any studio whose staff currently curate flash content on
+an artist's behalf without that artist having explicitly granted
+delegation (Team → artist → Guest/Home access), this is a real, immediate
+capability loss on deploy, not a null change — flagged here explicitly,
+per the task's own instruction, so it's a known and intentional
+consequence rather than a support surprise.
+
+Committed on a fresh branch off `main` (`flash-governance-split`) and
+pushed — not merged, per this repo's established review-then-merge
+convention for every other recent build.
+
+REPORT.md line count before this entry: 14402 (verified via `git show
+HEAD:REPORT.md | wc -l`) — pure addition.
