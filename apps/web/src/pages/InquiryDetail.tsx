@@ -121,6 +121,11 @@ interface Inquiry {
   estimateRevisionRespondedAt: string | null
   estimateRevisionApproved: boolean | null
   archivedAt: string | null
+  // Transfer-to-artist epic: set once this project's client and work state
+  // moved to the artist's new home studio (Part 4's execution) -- paired
+  // with status TRANSFERRED, never cleared (not reversible).
+  transferredAt: string | null
+  transferredToStudio: { id: string; name: string } | null
   clientId: string
   client: { firstName: string; lastName: string; email: string | null; phone: string | null }
   preferredArtist: { id: string; user: { name: string | null; email: string; avatarUrl: string | null } } | null
@@ -304,9 +309,10 @@ function deriveProjectStageIndex(inquiry: Inquiry): number {
 }
 
 // Phase 7A: mirrors apps/api/src/routes/inquiries.ts's NON_TERMINAL_STATUSES
-// (every InquiryStatus except CLOSED_LOST/COLD_LEAD) -- the reopen picker's
-// valid targets. Kept as a literal list for the same reason the backend's
-// own copy is: separate compilation units, no shared import.
+// (every InquiryStatus except CLOSED_LOST/COLD_LEAD/TRANSFERRED) -- the
+// reopen picker's valid targets. Kept as a literal list for the same
+// reason the backend's own copy is: separate compilation units, no shared
+// import.
 const REOPEN_TARGET_STATUSES = [
   'NEW',
   'ARTIST_ASSIGNED',
@@ -541,7 +547,8 @@ export default function InquiryDetail() {
   // in the audit trail, so the terminal-state banner below pulls the most
   // recent matching status_change entry from the same endpoint AuditTrail
   // already uses.
-  const isTerminal = inquiry?.status === 'CLOSED_LOST' || inquiry?.status === 'COLD_LEAD'
+  const isTerminal =
+    inquiry?.status === 'CLOSED_LOST' || inquiry?.status === 'COLD_LEAD' || inquiry?.status === 'TRANSFERRED'
   // Package H: same "converted to a Project" line as the backend's own
   // PROJECT_STATUSES (inquiries.ts) and the frontend's PROJECTS_TAB_STATUSES
   // (Inquiries.tsx) -- kept as a small local literal rather than importing
@@ -1980,10 +1987,17 @@ export default function InquiryDetail() {
                   <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface-inset px-4 py-3">
                     <div>
                       <p className="text-sm font-medium text-fg-secondary">
-                        {inquiry.status === 'CLOSED_LOST' ? 'Marked lost' : 'Cold lead'}
-                        {(inquiry.lostAt || terminalAuditEntry) &&
-                          ` — ${formatDateTime(inquiry.lostAt ?? terminalAuditEntry!.createdAt)}`}
-                        {terminalAuditEntry &&
+                        {inquiry.status === 'CLOSED_LOST'
+                          ? 'Marked lost'
+                          : inquiry.status === 'TRANSFERRED'
+                            ? 'Transferred'
+                            : 'Cold lead'}
+                        {inquiry.status === 'TRANSFERRED'
+                          ? inquiry.transferredAt && ` — ${formatDateTime(inquiry.transferredAt)}`
+                          : (inquiry.lostAt || terminalAuditEntry) &&
+                            ` — ${formatDateTime(inquiry.lostAt ?? terminalAuditEntry!.createdAt)}`}
+                        {inquiry.status !== 'TRANSFERRED' &&
+                          terminalAuditEntry &&
                           ` by ${terminalAuditEntry.actorUser?.name || terminalAuditEntry.actorUser?.email || 'System'}`}
                       </p>
                       {inquiry.status === 'CLOSED_LOST' && inquiry.lostReason && (
@@ -1992,8 +2006,17 @@ export default function InquiryDetail() {
                       {inquiry.status === 'COLD_LEAD' && (
                         <p className="mt-1 text-sm text-fg-muted">No activity for a while -- automatically marked cold.</p>
                       )}
+                      {inquiry.status === 'TRANSFERRED' && (
+                        <p className="mt-1 text-sm text-fg-muted">
+                          This client and project moved to{' '}
+                          {inquiry.transferredToStudio?.name ?? 'another studio'}. Kept for history -- fully intact,
+                          not reopenable.
+                        </p>
+                      )}
                     </div>
-                    {canEditInquiry && (
+                    {/* No Reopen for TRANSFERRED -- not reversible, per the
+                        schema's own comment on InquiryStatus.TRANSFERRED. */}
+                    {canEditInquiry && inquiry.status !== 'TRANSFERRED' && (
                       <button
                         type="button"
                         onClick={() => {

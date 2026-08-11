@@ -84,6 +84,11 @@ export const INQUIRIES_TAB_STATUSES = [
   'DEPOSIT_PENDING',
   'CLOSED_LOST',
   'COLD_LEAD',
+  // Transfer-to-artist epic: same terminal, out-of-pipeline treatment as
+  // CLOSED_LOST/COLD_LEAD -- collapses into the Inactive column below
+  // regardless of whether the inquiry was still a lead or already a
+  // converted project when it transferred.
+  'TRANSFERRED',
 ] as const
 export const PROJECTS_TAB_STATUSES = ['SCHEDULING', 'WAITLISTED', 'CONFIRMED'] as const
 
@@ -109,7 +114,7 @@ const CANDIDACY_REVIEW_COLUMN: KanbanColumn = {
 export const INQUIRY_TAB_COLUMNS: KanbanColumn[] = [
   CANDIDACY_REVIEW_COLUMN,
   ...PIPELINE_STEPS.slice(0, 4).map((step) => ({ key: step.label, label: step.label, statuses: step.statuses })),
-  { key: 'INACTIVE', label: 'Inactive', statuses: ['CLOSED_LOST', 'COLD_LEAD'] },
+  { key: 'INACTIVE', label: 'Inactive', statuses: ['CLOSED_LOST', 'COLD_LEAD', 'TRANSFERRED'] },
 ]
 
 // Projects tab: one column per actual status in PROJECTS_TAB_STATUSES

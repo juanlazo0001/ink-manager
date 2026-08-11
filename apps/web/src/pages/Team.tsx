@@ -1,4 +1,4 @@
-import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
+import { Fragment, useEffect, useState, type ChangeEvent, type FormEvent } from 'react'
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import Eyebrow from '../components/Eyebrow'
@@ -58,7 +58,8 @@ interface ArtistInvite {
 }
 
 // Transfer-to-artist epic, Part 2: a request this studio (as origin) has
-// sent, awaiting the artist's own accept/decline (Part 3).
+// sent, awaiting the artist's own accept/decline (Part 3). Same row shape
+// backs both the PENDING_ARTIST and COMPLETED list queries below.
 interface PendingTransfer {
   id: string
   status: 'PENDING_ARTIST' | 'ACCEPTED' | 'DECLINED' | 'CANCELLED_BY_ORIGIN' | 'COMPLETED'
@@ -67,6 +68,20 @@ interface PendingTransfer {
   artistName: string
   destinationStudio: { id: string; name: string }
   clientCount: number
+}
+
+// Transfer-to-artist epic, Part 4: the completion report -- fetched on
+// demand per transfer (GET /studios/:studioId/artist-transfers/:id), not
+// bundled into the list above, so the common case (just showing counts)
+// stays a light payload.
+interface TransferOutcomeDetail {
+  id: string
+  clients: {
+    id: string
+    name: string
+    outcome: 'PENDING' | 'CREATED' | 'MERGE_FLAGGED' | 'FAILED'
+    errorMessage: string | null
+  }[]
 }
 
 interface PermissionsResponse {
@@ -221,6 +236,25 @@ export default function Team() {
     queryFn: () =>
       apiFetch<PendingTransfer[]>(`/studios/${user!.studioId}/artist-transfers?status=PENDING_ARTIST`),
     enabled: isOwner,
+  })
+
+  // Transfer-to-artist epic, Part 4: the completion report's own list --
+  // prefix-compatible with artistTransfersQueryKey above via the shared
+  // ['artist-transfers', studioId] prefix, so the same transfer.changed WS
+  // event that refreshes "Pending transfers" also refreshes this one.
+  const { data: completedTransfers } = useQuery({
+    queryKey: [...artistTransfersQueryKey(user!.studioId), 'completed'],
+    queryFn: () =>
+      apiFetch<PendingTransfer[]>(`/studios/${user!.studioId}/artist-transfers?status=COMPLETED`),
+    enabled: isOwner,
+  })
+
+  const [expandedTransferId, setExpandedTransferId] = useState<string | null>(null)
+  const { data: expandedTransferDetail, isLoading: expandedTransferLoading } = useQuery({
+    queryKey: ['transfer-detail', expandedTransferId],
+    queryFn: () =>
+      apiFetch<TransferOutcomeDetail>(`/studios/${user!.studioId}/artist-transfers/${expandedTransferId}`),
+    enabled: isOwner && !!expandedTransferId,
   })
 
   const [users, setUsers] = useState<TeamUser[] | null>(null)
@@ -1238,6 +1272,70 @@ export default function Team() {
                           </button>
                         </td>
                       </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'artists' && isOwner && completedTransfers && completedTransfers.length > 0 && (
+            <div className="mt-6 rounded-2xl border border-border bg-surface p-5">
+              <h2 className="text-sm font-semibold text-fg">Completed transfers</h2>
+              <p className="mt-1 text-xs text-fg-secondary">
+                The completion report for each client -- what actually moved, and what needs a second look.
+              </p>
+
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="text-xs text-fg-muted">
+                      <th className="pb-2 font-medium">Artist</th>
+                      <th className="pb-2 font-medium">Destination</th>
+                      <th className="pb-2 font-medium">Clients</th>
+                      <th className="pb-2 font-medium"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {completedTransfers.map((transfer) => (
+                      <Fragment key={transfer.id}>
+                        <tr>
+                          <td className="py-2.5 text-fg">{transfer.artistName}</td>
+                          <td className="py-2.5 text-fg-secondary">{transfer.destinationStudio.name}</td>
+                          <td className="py-2.5 text-fg-secondary">{transfer.clientCount}</td>
+                          <td className="py-2.5 text-right">
+                            <button
+                              type="button"
+                              onClick={() => setExpandedTransferId(expandedTransferId === transfer.id ? null : transfer.id)}
+                              className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface-raised"
+                            >
+                              {expandedTransferId === transfer.id ? 'Hide' : 'View outcome'}
+                            </button>
+                          </td>
+                        </tr>
+                        {expandedTransferId === transfer.id && (
+                          <tr>
+                            <td colSpan={4} className="bg-surface-inset px-3 py-3">
+                              {expandedTransferLoading && <p className="text-xs text-fg-secondary">Loading…</p>}
+                              {expandedTransferDetail && (
+                                <ul className="space-y-1.5">
+                                  {expandedTransferDetail.clients.map((c) => (
+                                    <li key={c.id} className="flex items-center justify-between gap-2 text-sm">
+                                      <span className="text-fg-secondary">
+                                        {c.name}
+                                        {c.outcome === 'FAILED' && c.errorMessage && (
+                                          <span className="block text-xs text-danger">{c.errorMessage}</span>
+                                        )}
+                                      </span>
+                                      <StatusPill status={c.outcome} className="shrink-0" />
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     ))}
                   </tbody>
                 </table>

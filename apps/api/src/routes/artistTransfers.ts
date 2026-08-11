@@ -6,6 +6,8 @@ import type { Prisma } from "../../generated/prisma/client";
 import { logAudit } from "../lib/audit";
 import { emitInvalidation, emitUserInvalidation } from "../lib/realtime/registry";
 import { gatherTransferPreview, TERMINAL_INQUIRY_STATUSES } from "../lib/artistTransferPreview";
+import { executeArtistTransfer } from "../lib/artistTransferExecution";
+import type { ArtistTransfer } from "../../generated/prisma/client";
 
 // Transfer-to-artist epic, Part 2 (origin flow). Every route here is
 // OWNER-only, hardcoded -- same trust tier as studios.ts's own
@@ -30,6 +32,43 @@ function requireOwnStudio(req: Request, res: Response, studioId: string): boolea
     return false;
   }
   return true;
+}
+
+// Shared by both routers below (origin-side detail and artist-side
+// detail) -- joins through ArtistTransferClient rather than reading
+// originClient/originInquiry directly, so outcome/errorMessage/
+// destinationClientId are available once Part 4's execution has run, not
+// just the pre-execution scope summary Part 2/3 originally needed.
+async function buildTransferDetailResponse(transfer: ArtistTransfer) {
+  const [originStudio, destinationStudio, lineItems] = await Promise.all([
+    prisma.studio.findUnique({ where: { id: transfer.originStudioId }, select: { id: true, name: true } }),
+    prisma.studio.findUnique({ where: { id: transfer.destinationStudioId }, select: { id: true, name: true } }),
+    prisma.artistTransferClient.findMany({
+      where: { transferId: transfer.id },
+      select: {
+        originClient: { select: { id: true, firstName: true, lastName: true } },
+        originInquiry: { select: { description: true } },
+        outcome: true,
+        errorMessage: true,
+      },
+    }),
+  ]);
+
+  return {
+    id: transfer.id,
+    status: transfer.status,
+    createdAt: transfer.createdAt,
+    completedAt: transfer.completedAt,
+    originStudio,
+    destinationStudio,
+    clients: lineItems.map((li) => ({
+      id: li.originClient.id,
+      name: `${li.originClient.firstName} ${li.originClient.lastName}`.trim(),
+      openProject: li.originInquiry ? { description: li.originInquiry.description } : null,
+      outcome: li.outcome,
+      errorMessage: li.errorMessage,
+    })),
+  };
 }
 
 // Every artist with a past-or-present membership at this studio, annotated
@@ -192,6 +231,22 @@ router.get("/:studioId/artist-transfers", async (req, res) => {
   );
 });
 
+// Origin-scoped single-transfer detail -- Part 2 only built the list
+// route; the origin OWNER needs a detail view (with per-client outcome,
+// once execution has run) for the completion report too.
+router.get("/:studioId/artist-transfers/:transferId", async (req, res) => {
+  const studioId = req.params.studioId as string;
+  if (!requireOwnStudio(req, res, studioId)) return;
+  const transferId = req.params.transferId as string;
+
+  const transfer = await prisma.artistTransfer.findUnique({ where: { id: transferId } });
+  if (!transfer || transfer.originStudioId !== studioId) {
+    return res.status(404).json({ error: "Transfer not found" });
+  }
+
+  res.json(await buildTransferDetailResponse(transfer));
+});
+
 router.post("/:studioId/artist-transfers", async (req, res) => {
   const studioId = req.params.studioId as string;
   if (!requireOwnStudio(req, res, studioId)) return;
@@ -309,58 +364,45 @@ myTransfersRouter.get("/:id", async (req, res) => {
   const transfer = await loadOwnTransfer(req, res, req.params.id as string);
   if (!transfer) return;
 
-  const [originStudio, destinationStudio, lineItems] = await Promise.all([
-    prisma.studio.findUnique({ where: { id: transfer.originStudioId }, select: { id: true, name: true } }),
-    prisma.studio.findUnique({ where: { id: transfer.destinationStudioId }, select: { id: true, name: true } }),
-    prisma.artistTransferClient.findMany({
-      where: { transferId: transfer.id },
-      select: {
-        originClient: { select: { id: true, firstName: true, lastName: true } },
-        originInquiry: { select: { description: true } },
-      },
-    }),
-  ]);
-
-  res.json({
-    id: transfer.id,
-    status: transfer.status,
-    createdAt: transfer.createdAt,
-    originStudio,
-    destinationStudio,
-    clients: lineItems.map((li) => ({
-      id: li.originClient.id,
-      name: `${li.originClient.firstName} ${li.originClient.lastName}`.trim(),
-      openProject: li.originInquiry ? { description: li.originInquiry.description } : null,
-    })),
-  });
+  res.json(await buildTransferDetailResponse(transfer));
 });
 
+// Also the resume entry point for an interrupted execution (Part 4): a
+// transfer already ACCEPTED (or even COMPLETED) falls through to
+// executeArtistTransfer below rather than erroring -- it only ever
+// processes line items still `outcome: PENDING`, so calling this twice
+// is always safe, never duplicates work. Only a transfer that can no
+// longer move forward at all (DECLINED/CANCELLED_BY_ORIGIN) is rejected.
 myTransfersRouter.post("/:id/accept", async (req, res) => {
   const transfer = await loadOwnTransfer(req, res, req.params.id as string);
   if (!transfer) return;
-  if (transfer.status !== TransferStatus.PENDING_ARTIST) {
-    return res.status(400).json({ error: "Only a pending transfer can be accepted." });
+
+  if (transfer.status === TransferStatus.DECLINED || transfer.status === TransferStatus.CANCELLED_BY_ORIGIN) {
+    return res.status(400).json({ error: "Only a pending or in-progress transfer can be accepted." });
   }
 
-  const updated = await prisma.artistTransfer.update({
-    where: { id: transfer.id },
-    data: { status: TransferStatus.ACCEPTED, respondedAt: new Date(), respondedById: req.user!.userId },
-  });
+  if (transfer.status === TransferStatus.PENDING_ARTIST) {
+    await prisma.artistTransfer.update({
+      where: { id: transfer.id },
+      data: { status: TransferStatus.ACCEPTED, respondedAt: new Date(), respondedById: req.user!.userId },
+    });
 
-  await logAudit({
-    studioId: transfer.originStudioId,
-    actorUserId: req.user!.userId,
-    entityType: "ArtistTransfer",
-    entityId: transfer.id,
-    action: "accepted",
-    changes: { destinationStudioId: transfer.destinationStudioId },
-  });
+    await logAudit({
+      studioId: transfer.originStudioId,
+      actorUserId: req.user!.userId,
+      entityType: "ArtistTransfer",
+      entityId: transfer.id,
+      action: "accepted",
+      changes: { destinationStudioId: transfer.destinationStudioId },
+    });
 
-  emitInvalidation({ type: "transfer.changed", studioId: transfer.originStudioId, artistId: transfer.artistId });
-  emitInvalidation({ type: "transfer.changed", studioId: transfer.destinationStudioId, artistId: transfer.artistId });
-  emitUserInvalidation(req.user!.userId, [["tasks", req.user!.userId]]);
+    emitInvalidation({ type: "transfer.changed", studioId: transfer.originStudioId, artistId: transfer.artistId });
+    emitInvalidation({ type: "transfer.changed", studioId: transfer.destinationStudioId, artistId: transfer.artistId });
+    emitUserInvalidation(req.user!.userId, [["tasks", req.user!.userId]]);
+  }
 
-  res.json(updated);
+  const { transfer: executed, results } = await executeArtistTransfer(transfer.id);
+  res.json({ transfer: executed, results });
 });
 
 myTransfersRouter.post("/:id/decline", async (req, res) => {

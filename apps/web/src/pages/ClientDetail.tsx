@@ -134,6 +134,12 @@ interface Client {
   preferredLocale: string | null
   mergedIntoId: string | null
   mergedInto: { id: string; firstName: string; lastName: string } | null
+  // Transfer-to-artist epic: set once this client's contact identity and
+  // work state moved to the artist's new home studio (Part 4's
+  // execution). Never cleared -- not reversible, same permanence class
+  // as a merge, unlike archivedAt.
+  transferredAt: string | null
+  transferredToStudio: { id: string; name: string } | null
   referralCode: string
   referredBy: { id: string; firstName: string; lastName: string } | null
   archivedAt: string | null
@@ -511,6 +517,13 @@ export default function ClientDetail() {
   const [refreshIndex, setRefreshIndex] = useState(0)
 
   const projects = client?.inquiries.filter((inquiry) => PROJECT_STATUSES.includes(inquiry.status)) ?? []
+
+  // Transfer-to-artist epic: a transferred client is the same "record
+  // continues elsewhere" category as a merged one (not the reversible-hide
+  // category archivedAt belongs to) -- every action-gate below that used
+  // to check `!client.mergedIntoId` alone now checks `!isEnded`, so a
+  // transferred client is locked down the same way a merged one already was.
+  const isEnded = Boolean(client?.mergedIntoId) || Boolean(client?.transferredAt)
 
   // Single "Issue Gift Card" entry point -- issueMethod null shows the
   // method picker (Cash / Stripe / Deposit Exemption), then swaps in the
@@ -1210,6 +1223,14 @@ export default function ClientDetail() {
                 </div>
               )}
 
+              {client.transferredAt && (
+                <div className="mt-6 rounded-2xl border border-warning/30 bg-warning/10 p-4 text-sm text-warning">
+                  This client transferred to {client.transferredToStudio?.name ?? 'another studio'} on{' '}
+                  {formatDateTime(client.transferredAt)}. Kept for history -- fully intact, no longer an active
+                  record here.
+                </div>
+              )}
+
               {client.archivedAt && (
                 <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-warning/30 bg-warning/10 p-4 text-sm text-warning">
                   <span>Archived {formatDateTime(client.archivedAt)}. Hidden from the client list, but fully intact.</span>
@@ -1431,7 +1452,7 @@ export default function ClientDetail() {
                     </div>
 
                     <div className="flex shrink-0 gap-2">
-                      {canMessage && !client.mergedIntoId && (
+                      {canMessage && !isEnded && (
                         <button
                           type="button"
                           onClick={handleMessage}
@@ -1444,7 +1465,7 @@ export default function ClientDetail() {
                           <span className="hidden text-sm font-semibold md:inline">Message</span>
                         </button>
                       )}
-                      {canGeneratePrefillLink && !client.mergedIntoId && (
+                      {canGeneratePrefillLink && !isEnded && (
                         <div className="relative">
                           <button
                             type="button"
@@ -1492,7 +1513,7 @@ export default function ClientDetail() {
                           )}
                         </div>
                       )}
-                      {canEditClient && !client.mergedIntoId && (
+                      {canEditClient && !isEnded && (
                         <button
                           type="button"
                           onClick={startEditing}
@@ -1573,7 +1594,7 @@ export default function ClientDetail() {
                   <div>
                     <div className="flex items-center justify-between">
                       <h3 className="text-xs font-medium uppercase tracking-wider text-fg-muted">Phones</h3>
-                      {canEditClient && !client.mergedIntoId && !showAddPhone && (
+                      {canEditClient && !isEnded && !showAddPhone && (
                         <button
                           type="button"
                           onClick={() => {
@@ -1605,7 +1626,7 @@ export default function ClientDetail() {
                               </span>
                             )}
                           </span>
-                          {canEditClient && !client.mergedIntoId && (
+                          {canEditClient && !isEnded && (
                             <span className="flex shrink-0 gap-3">
                               {!p.isPrimary && (
                                 <button
@@ -1669,7 +1690,7 @@ export default function ClientDetail() {
                   <div>
                     <div className="flex items-center justify-between">
                       <h3 className="text-xs font-medium uppercase tracking-wider text-fg-muted">Emails</h3>
-                      {canEditClient && !client.mergedIntoId && !showAddEmail && (
+                      {canEditClient && !isEnded && !showAddEmail && (
                         <button
                           type="button"
                           onClick={() => {
@@ -1701,7 +1722,7 @@ export default function ClientDetail() {
                               </span>
                             )}
                           </span>
-                          {canEditClient && !client.mergedIntoId && (
+                          {canEditClient && !isEnded && (
                             <span className="flex shrink-0 gap-3">
                               {!e.isPrimary && (
                                 <button
@@ -1767,7 +1788,7 @@ export default function ClientDetail() {
 
                 {contactActionError && <p className="mt-3 text-sm text-danger">{contactActionError}</p>}
 
-                {canMergeClient && !client.mergedIntoId && (
+                {canMergeClient && !isEnded && (
                   <div className="mt-6 flex justify-end">
                     <button
                       type="button"
@@ -1780,7 +1801,7 @@ export default function ClientDetail() {
                   </div>
                 )}
 
-                {canMergeClient && !client.mergedIntoId && duplicates && duplicates.length > 0 && (
+                {canMergeClient && !isEnded && duplicates && duplicates.length > 0 && (
                   <div className="mt-6 rounded-2xl border border-warning/30 bg-warning/10 p-4">
                     <p className="text-sm font-medium text-warning">
                       {duplicates.length} potential duplicate{duplicates.length > 1 ? 's' : ''} found
@@ -1826,7 +1847,7 @@ export default function ClientDetail() {
                 id="inquiries"
                 title="Inquiries"
                 actions={
-                  canCreateInquiry && !client.mergedIntoId ? (
+                  canCreateInquiry && !isEnded ? (
                     <div className="flex shrink-0 items-center gap-2">
                       <button
                         type="button"
@@ -2084,7 +2105,7 @@ export default function ClientDetail() {
                 id="deposit-forms"
                 title="Deposit Forms"
                 actions={
-                  canEditInquiry && !client.mergedIntoId ? (
+                  canEditInquiry && !isEnded ? (
                     <div className="relative">
                       <button
                         type="button"
@@ -2295,7 +2316,7 @@ export default function ClientDetail() {
                 id="waivers"
                 title="Waivers"
                 actions={
-                  canGenerateWaiver && !client.mergedIntoId ? (
+                  canGenerateWaiver && !isEnded ? (
                     <div className="relative">
                       <button
                         type="button"
