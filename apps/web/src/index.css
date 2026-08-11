@@ -1591,6 +1591,247 @@
   }
 }
 
+/* ============================================================
+   Public flash gallery restyle -- matches Juan's mockup, reusing the
+   Artist public page v2 section's own design vocabulary (Fraunces/Jura,
+   --artist-gold, .btn-gold-gradient -- this is that token's first
+   adoption outside the artist page) rather than inventing a parallel
+   system. RESTYLE ONLY: no booking-flow/state-machine changes live here.
+   ============================================================ */
+
+.flash-gallery-shell {
+  width: min(880px, calc(100% - 48px));
+  margin: 0 auto;
+  padding: 8px 0 40px;
+}
+
+.flash-gallery-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 40px;
+}
+.flash-gallery-logo {
+  display: flex;
+  align-items: center;
+  height: 40px;
+}
+.flash-gallery-logo img { max-height: 100%; width: auto; object-fit: contain; }
+.flash-gallery-logo-fallback {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(215, 164, 94, 0.5);
+  border-radius: 50%;
+  font-family: var(--font-display);
+  font-size: 17px;
+  color: var(--artist-gold);
+}
+
+.flash-gallery-titleblock { margin-bottom: 40px; }
+.flash-gallery-h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: clamp(38px, 5.4vw, 58px);
+  line-height: 1;
+}
+.flash-gallery-h1-gold { color: var(--artist-gold); }
+.flash-gallery-rule {
+  display: block;
+  width: 64px;
+  height: 2px;
+  margin: 18px 0 20px;
+  background: linear-gradient(90deg, var(--artist-gold), rgba(215, 164, 94, 0));
+}
+.flash-gallery-context { display: flex; align-items: center; gap: 12px; }
+.flash-gallery-context p {
+  margin: 0;
+  color: var(--artist-gold);
+  font-family: var(--font-sans);
+  font-size: 15px;
+}
+
+.flash-gallery-empty {
+  padding: 48px 0;
+  text-align: center;
+  color: var(--color-fg-secondary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+}
+
+.flash-gallery-list {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.flash-piece-card {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border: 1px solid rgba(215, 164, 94, 0.18);
+  border-radius: 12px;
+  overflow: hidden;
+  background: linear-gradient(105deg, rgba(30, 29, 25, 0.9), rgba(15, 15, 14, 0.78));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02), 0 16px 60px rgba(0, 0, 0, 0.18);
+}
+
+.flash-piece-art {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-height: 260px;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  background: #100f0e;
+}
+.flash-piece-art img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* Graceful containment: an artwork whose own aspect ratio fights this
+   panel's fixed box (a very tall/narrow or very wide/short upload,
+   rather than the common square/portrait tattoo-flash shape) gets
+   letterboxed against the card's own dark surface instead of being
+   cropped illegibly by object-fit: cover above. */
+.flash-piece-art.contain img { object-fit: contain; }
+.flash-piece-art::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.15), transparent 40%);
+  pointer-events: none;
+}
+.flash-piece-art:hover .flash-piece-view {
+  opacity: 1;
+}
+.flash-piece-view {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.3);
+  color: #fff;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.flash-piece-badge {
+  position: absolute;
+  left: 14px;
+  top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px 4px;
+  border: 1px solid rgba(215, 164, 94, 0.5);
+  border-radius: 999px;
+  background: rgba(10, 9, 8, 0.72);
+  backdrop-filter: blur(6px);
+  color: var(--artist-gold-2);
+  font-family: var(--font-jura);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.flash-piece-details {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 32px 34px;
+}
+.flash-piece-details h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 26px;
+  line-height: 1.15;
+}
+.flash-piece-rule {
+  display: block;
+  width: 40px;
+  height: 1px;
+  margin: 14px 0;
+  background: rgba(215, 164, 94, 0.4);
+}
+.flash-piece-desc {
+  margin: 0 0 14px;
+  color: var(--color-fg-secondary);
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+.flash-piece-price {
+  margin: 0 0 4px;
+  color: var(--artist-gold);
+  font-family: var(--font-display);
+  font-size: 22px;
+}
+.flash-piece-meta {
+  margin: 0 0 22px;
+  color: var(--color-fg-muted);
+  font-family: var(--font-jura);
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.flash-piece-book {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  align-self: flex-start;
+  padding: 13px 26px;
+  border-radius: 999px;
+  font-family: var(--font-jura);
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.flash-gallery-footer {
+  display: flex;
+  justify-content: center;
+  gap: 32px;
+  margin-top: 44px;
+}
+.flash-gallery-footer a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-fg-muted);
+  font-family: var(--font-jura);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  transition: color 0.2s ease;
+}
+.flash-gallery-footer a:hover { color: var(--artist-gold); }
+
+@media (max-width: 640px) {
+  .flash-gallery-shell { width: calc(100% - 32px); padding-top: 4px; }
+  .flash-gallery-header { margin-bottom: 28px; }
+  .flash-gallery-titleblock { margin-bottom: 28px; }
+  .flash-gallery-h1 { font-size: clamp(32px, 9.5vw, 42px); }
+  .flash-gallery-rule { margin: 14px 0 16px; }
+  .flash-gallery-context p { font-size: 13px; }
+  .flash-gallery-list { gap: 18px; }
+  .flash-piece-card { grid-template-columns: 1fr; }
+  .flash-piece-art { min-height: 62vw; }
+  .flash-piece-details { padding: 22px 20px 26px; }
+  .flash-piece-details h2 { font-size: 21px; }
+  .flash-piece-book { width: 100%; }
+}
+
 /* Editorial Gold's two app-wide button treatments (item 5 of this
    session's own brief), typography-only -- color/shape/padding stay
    whatever Tailwind utilities each call site already used (bg-accent,

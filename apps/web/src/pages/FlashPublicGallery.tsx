@@ -8,7 +8,7 @@ import PublicPageFooter from '../components/PublicPageFooter'
 import PhoneInput from '../components/PhoneInput'
 import ImageUploadSection, { type ImageUploadState } from '../components/ImageUploadSection'
 import ImageLightbox from '../components/ImageLightbox'
-import { ViewIcon, SparkleIcon } from '../components/icons'
+import { ViewIcon, SparkleIcon, CalendarIcon } from '../components/icons'
 import { isValidPhoneDigits, formatDurationHours } from '../lib/format'
 import { LocaleProvider, useLocale, useTranslations } from '../i18n'
 import LanguagePicker from '../i18n/LanguagePicker'
@@ -31,7 +31,8 @@ interface GalleryResponse {
   studioSlug: string
   studioLogoUrl: string | null
   themePreset: string
-  artistName: string
+  artistId: string | null
+  artistName: string | null
   artistAvatarUrl: string | null
   pieces: FlashPieceSummary[]
   resolvedLocale?: string
@@ -48,6 +49,15 @@ interface LookupResponse {
 const INPUT_CLASS =
   'mt-1 w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent'
 
+// An artwork whose own aspect ratio falls well outside the common
+// square/portrait tattoo-flash shape (a panoramic forearm-strip design, a
+// tall single needle-and-thread piece, etc.) gets letterboxed via
+// object-fit: contain against the card's own dark surface instead of
+// being cropped illegibly by the default object-fit: cover treatment --
+// see this file's own "graceful containment" verification screenshot.
+const EXTREME_ASPECT_MIN = 0.42
+const EXTREME_ASPECT_MAX = 2.3
+
 export default function FlashPublicGallery() {
   return (
     <LocaleProvider>
@@ -59,12 +69,13 @@ export default function FlashPublicGallery() {
 function FlashPublicGalleryContent() {
   const { t } = useTranslations()
   const { locale, setLocale } = useLocale()
-  const { studioSlug, artistId } = useParams<{ studioSlug: string; artistId: string }>()
+  const { studioSlug, artistId } = useParams<{ studioSlug: string; artistId?: string }>()
   const [state, setState] = useState<PageState>('loading')
   const [invalidMessage, setInvalidMessage] = useState(t('flashGallery.unavailableDefault'))
   const [gallery, setGallery] = useState<GalleryResponse | null>(null)
   const [selectedPiece, setSelectedPiece] = useState<FlashPieceSummary | null>(null)
   const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null)
+  const [containPieceIds, setContainPieceIds] = useState<Set<string>>(new Set())
 
   // Contact lookup step -- phone is asked first (this app is SMS-centric),
   // then only the fields NOT already on file get shown, per the task's own
@@ -82,18 +93,19 @@ function FlashPublicGalleryContent() {
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
-  // Language becomes customer-specific: this browse page is anonymous
-  // (no Client, no token) -- DETECT-ONLY from the visitor's own
-  // Accept-Language header, resolved server-side, no query param, no
-  // picker, no persistence. Fetched once; nothing here re-fetches on a
-  // locale change since there's no picker on this state to toggle it.
+  // Language becomes customer-specific, amended: anonymous pages (this
+  // one included) get a STATELESS toggle -- LanguagePicker itself already
+  // persists nothing (see its own comment), so mounting it during
+  // anonymous browsing too (not just once the request form appears) is
+  // exactly the amendment's ask. Still pre-selected from the server's own
+  // Accept-Language detection below; toggling it only ever re-renders.
   useEffect(() => {
-    if (!studioSlug || !artistId) return
+    if (!studioSlug) return
 
     let ignore = false
-    apiFetch<GalleryResponse>(
-      `/flash-pieces/public?studioSlug=${encodeURIComponent(studioSlug)}&artistId=${encodeURIComponent(artistId)}`,
-    )
+    const query = new URLSearchParams({ studioSlug })
+    if (artistId) query.set('artistId', artistId)
+    apiFetch<GalleryResponse>(`/flash-pieces/public?${query.toString()}`)
       .then((data) => {
         if (ignore) return
         setGallery(data)
@@ -124,6 +136,20 @@ function FlashPublicGalleryContent() {
     setPlacementPhoto({ urls: [], uploading: false })
     setSubmitError(null)
     setState('request')
+  }
+
+  function handleArtLoad(pieceId: string, e: React.SyntheticEvent<HTMLImageElement>) {
+    const { naturalWidth, naturalHeight } = e.currentTarget
+    if (!naturalWidth || !naturalHeight) return
+    const ratio = naturalWidth / naturalHeight
+    if (ratio < EXTREME_ASPECT_MIN || ratio > EXTREME_ASPECT_MAX) {
+      setContainPieceIds((prev) => {
+        if (prev.has(pieceId)) return prev
+        const next = new Set(prev)
+        next.add(pieceId)
+        return next
+      })
+    }
   }
 
   async function handleLookup() {
@@ -196,6 +222,97 @@ function FlashPublicGalleryContent() {
     }
   }
 
+  if (state === 'gallery' && gallery) {
+    return (
+      <div className="login-shell flash-gallery-page relative min-h-screen px-4 py-10 text-fg">
+        <div className="flash-gallery-shell">
+          <header className="flash-gallery-header">
+            <div className="flash-gallery-logo">
+              {gallery.studioLogoUrl ? (
+                <img src={gallery.studioLogoUrl} alt={gallery.studioName} />
+              ) : (
+                <span className="flash-gallery-logo-fallback">{gallery.studioName.slice(0, 1).toUpperCase()}</span>
+              )}
+            </div>
+            <LanguagePicker />
+          </header>
+
+          <div className="flash-gallery-titleblock">
+            <h1 className="flash-gallery-h1">
+              <span>{t('flashGallery.titleFirst')}</span> <span className="flash-gallery-h1-gold">{t('flashGallery.titleSecond')}</span>
+            </h1>
+            <span className="flash-gallery-rule" aria-hidden="true" />
+            <div className="flash-gallery-context">
+              {gallery.artistName ? (
+                <>
+                  <FlatArtistAvatar name={gallery.artistName} avatarUrl={gallery.artistAvatarUrl} className="h-8 w-8" />
+                  <p>{t('flashGallery.intro', { artistName: gallery.artistName, studioName: gallery.studioName })}</p>
+                </>
+              ) : (
+                <p>{t('flashGallery.introStudioWide', { studioName: gallery.studioName })}</p>
+              )}
+            </div>
+          </div>
+
+          {gallery.pieces.length === 0 ? (
+            <p className="flash-gallery-empty">{t('flashGallery.noPiecesAvailable')}</p>
+          ) : (
+            <div className="flash-gallery-list">
+              {gallery.pieces.map((piece, pieceIndex) => (
+                <article key={piece.id} className="flash-piece-card">
+                  <button
+                    type="button"
+                    onClick={() => setLightbox({ images: gallery.pieces.map((p) => p.imageUrl), index: pieceIndex })}
+                    aria-label={t('flashGallery.viewFullSize', { title: piece.title })}
+                    className={`flash-piece-art${containPieceIds.has(piece.id) ? ' contain' : ''}`}
+                  >
+                    <img src={piece.imageUrl} alt={piece.title} onLoad={(e) => handleArtLoad(piece.id, e)} />
+                    <span className="flash-piece-view">
+                      <ViewIcon className="h-6 w-6" />
+                    </span>
+                    {piece.isOneOfOne && (
+                      <span className="flash-piece-badge">
+                        <SparkleIcon className="h-3 w-3" />
+                        {t('flashGallery.oneOfOne')}
+                      </span>
+                    )}
+                  </button>
+                  <div className="flash-piece-details">
+                    <h2>{piece.title}</h2>
+                    <span className="flash-piece-rule" aria-hidden="true" />
+                    {piece.description && <p className="flash-piece-desc">{piece.description}</p>}
+                    <p className="flash-piece-price">${(piece.priceCents / 100).toFixed(2)}</p>
+                    <p className="flash-piece-meta">
+                      {t('flashGallery.durationApprox', { duration: formatDurationHours(piece.estimatedDurationMinutes) })}
+                      {piece.isOneOfOne && ` ${t('flashGallery.oneOfOneFirstRequestWins')}`}
+                    </p>
+                    <button type="button" onClick={() => selectPiece(piece)} className="flash-piece-book btn-gold-gradient">
+                      <CalendarIcon className="h-4 w-4" />
+                      {t('flashGallery.bookThisDesign')}
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+
+          <PublicPageFooter studioSlug={gallery.studioSlug} variant="icons" />
+        </div>
+
+        <AnimatePresence>
+          {lightbox && (
+            <ImageLightbox
+              images={lightbox.images}
+              index={lightbox.index}
+              onIndexChange={(index) => setLightbox({ images: lightbox.images, index })}
+              onClose={() => setLightbox(null)}
+            />
+          )}
+        </AnimatePresence>
+      </div>
+    )
+  }
+
   return (
     <div className="login-shell flex min-h-screen items-center justify-center px-4 py-10 text-fg">
       <div className="login-panel-surface w-full max-w-2xl px-4 py-8 sm:p-8">
@@ -222,58 +339,6 @@ function FlashPublicGalleryContent() {
             </motion.div>
           )}
 
-          {state === 'gallery' && gallery && (
-            <motion.div key="gallery" variants={crossfadeVariants} initial="initial" animate="animate" exit="exit" transition={uiSpringTransition}>
-              {gallery.studioLogoUrl && (
-                <img src={gallery.studioLogoUrl} alt={gallery.studioName} className="mb-4 h-10 w-auto object-contain" />
-              )}
-              <h1 className="login-jura text-xl font-semibold text-fg">{t('flashGallery.pageHeading')}</h1>
-              <div className="mt-2 flex items-center gap-2.5">
-                <FlatArtistAvatar name={gallery.artistName} avatarUrl={gallery.artistAvatarUrl} className="h-8 w-8" />
-                <p className="text-base text-accent">
-                  {t('flashGallery.intro', { artistName: gallery.artistName, studioName: gallery.studioName })}
-                </p>
-              </div>
-
-              {gallery.pieces.length === 0 ? (
-                <p className="mt-6 text-sm text-fg-secondary">{t('flashGallery.noPiecesAvailable')}</p>
-              ) : (
-                <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3">
-                  {gallery.pieces.map((piece, pieceIndex) => (
-                    <div
-                      key={piece.id}
-                      className="overflow-hidden rounded-xl border border-border bg-surface-inset transition hover:border-accent"
-                    >
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setLightbox({ images: gallery.pieces.map((p) => p.imageUrl), index: pieceIndex })
-                        }
-                        aria-label={t('flashGallery.viewFullSize', { title: piece.title })}
-                        className="group relative block aspect-square w-full overflow-hidden bg-surface"
-                      >
-                        <img src={piece.imageUrl} alt={piece.title} className="h-full w-full object-cover" />
-                        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition group-hover:bg-black/30 group-hover:opacity-100">
-                          <ViewIcon className="h-6 w-6 text-white" />
-                        </div>
-                        {piece.isOneOfOne && (
-                          <span className="absolute left-2 top-2 flex items-center gap-1 rounded-full bg-fg/85 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-bg backdrop-blur-sm">
-                            <SparkleIcon className="h-3 w-3" />
-                            {t('flashGallery.oneOfOne')}
-                          </span>
-                        )}
-                      </button>
-                      <button type="button" onClick={() => selectPiece(piece)} className="block w-full p-2.5 text-left">
-                        <p className="truncate text-sm font-medium text-fg">{piece.title}</p>
-                        <p className="mt-0.5 text-xs text-fg-secondary">${(piece.priceCents / 100).toFixed(2)}</p>
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </motion.div>
-          )}
-
           {state === 'request' && selectedPiece && (
             <motion.div key="request" variants={crossfadeVariants} initial="initial" animate="animate" exit="exit" transition={uiSpringTransition}>
               <div className="flex items-start justify-between gap-4">
@@ -283,8 +348,8 @@ function FlashPublicGalleryContent() {
                 {/* Language becomes customer-specific: this is the moment an
                     anonymous browser crosses into an identified flow (about
                     to create/match a Client record on submit) -- the picker
-                    appears here, pre-filled from Accept-Language detection,
-                    never during gallery browsing above. */}
+                    appears here too, same stateless component as the
+                    gallery header above. */}
                 <LanguagePicker />
               </div>
               <h1 className="login-jura mt-2 text-xl font-semibold text-fg">{t('flashGallery.requestTitle', { title: selectedPiece.title })}</h1>
@@ -390,17 +455,6 @@ function FlashPublicGalleryContent() {
 
         <PublicPageFooter studioSlug={gallery?.studioSlug} />
       </div>
-
-      <AnimatePresence>
-        {lightbox && (
-          <ImageLightbox
-            images={lightbox.images}
-            index={lightbox.index}
-            onIndexChange={(index) => setLightbox({ images: lightbox.images, index })}
-            onClose={() => setLightbox(null)}
-          />
-        )}
-      </AnimatePresence>
     </div>
   )
 }

@@ -15106,3 +15106,167 @@ Committed directly to `main`, per this task's own explicit instruction
 REPORT.md line count before this entry: 14960 (verified via `git show
 HEAD:REPORT.md | wc -l` after rebasing onto origin/main's "Language
 becomes customer-specific" entry, appended just above) -- pure addition.
+
+# Public flash gallery restyle -- match Juan's mockup
+
+Full visual restyle of `/flash/:studioSlug/:artistId` to the Editorial
+Gold system already shipped on the artist public page -- same Fraunces/
+Jura pairing, `--artist-gold`, and (its first adoption outside that page)
+the shared `.btn-gold-gradient` token. Session gate: branch
+`explore/flash-gallery-restyle` via `scripts/new-session.ps1`, commit
+only -- merging is a separate, later instruction pending Juan's
+screenshot review. RESTYLE ONLY: booking flow, one-of-one/retired state
+machine, intake handoff, prepayment, OG tags, and public tokens are all
+untouched.
+
+## The language-model amendment, applied
+
+Task item 1 asked to check the merged spec rather than guess whether an
+anonymous-page stateless toggle had landed. Ground truth: it hadn't --
+`FlashPublicGallery.tsx`'s gallery-browse state was DETECT-ONLY (no
+picker at all; `LanguagePicker` only appeared once a visitor opened the
+request form, per that component's own "not during anonymous gallery
+browsing" comment), matching the base "Language becomes customer-
+specific" spec (this file's own immediately-preceding entry). The
+amendment provided this session (verbatim: anonymous pages get a
+stateless toggle -- re-renders only, persists nothing, pre-selected from
+Accept-Language) is new, unimplemented instruction, not yet-landed code.
+Applied it here: `LanguagePicker` now also mounts in the gallery
+header. No new persistence mechanism needed -- `LocaleContext` was
+already pure in-memory React state with zero storage/cookie/query-param
+writes (confirmed by reading it), so mounting the same component earlier
+in the flow already **is** the amendment's exact contract, not a new
+one built for it.
+
+## 1. Header
+
+Studio logo top-left, routed through `publicAssets` (never the raw
+stored field): prefers `Studio.iconLogo` via
+`/public-assets/studio-icon-logo/:slug`, falls back to `Studio.logoUrl`
+via `/public-assets/studio-logo/:slug`, null renders nothing (no broken-
+image flash). This was a real, pre-existing bug fix, not a style-only
+change -- the route previously sent `studioLogoUrl: studio.logoUrl`
+directly, the raw base64 `data:` URL, bypassing the proxy every other
+public page's own logo/avatar field uses (bloats the JSON payload,
+uncacheable, inconsistent with `artistPublicProfile.ts`'s own
+`studioSummary()` helper). Language control: the stateless
+`LanguagePicker`, top-right, per the amendment above.
+
+## 2. Title
+
+`.flash-gallery-h1`: "Flash Gallery" in Fraunces, second word gold,
+short two-tone gold rule beneath (`.flash-gallery-rule`). Deliberately
+NOT a hardcoded English word-split -- `titleFirst`/`titleSecond` are
+separate translation keys (`en`: Flash/Gallery, `es`: Galería/Flash),
+since Spanish's own translation ("Galería Flash") reorders the words
+entirely; whichever one is second in the current locale is the one that
+renders gold, matching "the second word in gold" literally rather than
+"the word Gallery" specifically. Context line: artist-filtered shows
+`FlatArtistAvatar` + the existing `flashGallery.intro` key ("{artist}'s
+ready-to-book designs at {studio}"); studio-wide (see below) shows a new
+`introStudioWide` key ("Ready-to-book designs at {studio}") with no
+avatar. Both localized via `t()`, both verified in English and Spanish.
+
+## 3. Piece cards -- split panels
+
+`.flash-piece-card`: CSS grid, artwork full-bleed left
+(`object-fit: cover`), details right (Fraunces title, thin gold rule,
+gold price, Jura-uppercase duration/one-of-one meta line, "Book This
+Design" with a new `CalendarIcon` on `.btn-gold-gradient`). One-of-one
+badge restyled to a pill (`.flash-piece-badge`) but the same
+`SparkleIcon` + `oneOfOne` translation key as before -- restyled, not
+reimplemented. Booked/retired pieces: confirmed these were ALREADY
+excluded from this endpoint entirely (`status: AVAILABLE` filter,
+unchanged) -- there's no "existing booked/retired badge" on this public
+page to preserve (that vocabulary lives only in the staff-facing
+`FlashGallery.tsx`, which this task never touches); "never dropped"
+here means the exclusion itself survives the restyle intact, verified
+directly (see Verification). Stacks image-over-details at phone width
+(`@media (max-width: 640px)`, single grid column).
+
+Graceful containment (item 5's own ask): an artwork whose aspect ratio
+falls outside a normal square/portrait range
+(`naturalWidth/naturalHeight` outside 0.42-2.3, checked on the image's
+own `onLoad`) gets `object-fit: contain` against the card's dark surface
+instead of `cover`'s crop. Verified against two deliberately extreme
+real test images (a 1800x380 panoramic strip, a 420x1400 tall column) --
+both letterbox cleanly, screenshotted (see the published review gallery,
+link below).
+
+## 4. Footer
+
+`PublicPageFooter` gets a new `variant="icons"` prop (default stays
+`"text"` -- every other caller unaffected) -- same `/privacy/:studioSlug`
+and `/terms/:studioSlug` targets, restyled with a leading `ShieldIcon`/
+`DocumentIcon` (both new) and Jura letter-spacing. Non-gallery states
+(loading/invalid/request/success) keep the original text-only footer,
+unchanged.
+
+## 5. Multiple pieces / studio-wide view
+
+Single-column split panels confirmed at both the artist-filtered and a
+new **studio-wide** view -- `/flash/:studioSlug` (no `artistId`), a new
+frontend route added alongside the existing `/flash/:studioSlug/
+:artistId`. Backend: `GET /flash-pieces/public` now treats `artistId` as
+optional; when absent, the query drops the `artistId` filter entirely
+and returns every AVAILABLE piece across the whole studio
+(`FlashPiece.studioId` is already its own field, independent of the
+artist's home studio, so this correctly includes guest artists' pieces
+too -- not just home-artist ones). Response's `artistId`/`artistName`/
+`artistAvatarUrl` become `null` in this mode; the frontend reads that to
+pick the studio-level context-line variant instead of the avatar one.
+
+## Verification
+
+Real Playwright browser against this worktree's own isolated dev
+servers (API :4003, web :5174 -- both started fresh for this session,
+never touching the primary checkout's :4000/:5173). Seeded a real
+throwaway studio/artist/four-piece gallery (one repeatable, one
+one-of-one, one extreme-wide, one extreme-tall) plus a fifth piece
+explicitly set to `RETIRED`.
+
+- 390px and 1440px, English and Spanish, both artist-filtered and
+  studio-wide: all render correctly, zero console errors as a genuine
+  page load (one intermediate check reused a stale authenticated
+  session and showed unrelated pre-existing 401s from the app shell --
+  same false alarm as the artist-page session before this one; a clean
+  anonymous load has none).
+- Retired piece: confirmed absent from the live API response (`GET
+  .../public` returned exactly 4 pieces, never the 5th) -- the
+  exclusion this task required left untouched actually still holds
+  post-restyle, not just assumed.
+- One-of-one piece: badge renders correctly on "Wildflower Bouquet."
+- Full booking click-through: Book This Design -> request form (byte-
+  for-byte the same untouched component) -> real phone-number lookup
+  against the live API -> not-found continuation reveals name/email/
+  placement/photo fields -> back to gallery. All confirmed working.
+- `npm test` (API): 170/170, matching main's own baseline -- no
+  regressions from either the backend query change or the logo-proxy
+  fix.
+- `tsc -b --noEmit` clean on both apps; `vite build` clean.
+- One real tooling snag, not an app bug: Playwright's own synthetic
+  `browser_click` intermittently failed to register clicks on this
+  page's language toggle and "Book This Design" buttons (no error, no
+  re-render, stale snapshot refs) while native DOM `.click()` via
+  `browser_evaluate` worked immediately and reliably every time --
+  confirmed via `performance.getEntriesByType('navigation')` staying at
+  a single entry throughout, ruling out an actual page reload. Recorded
+  here in case it recurs in a future session on this same page.
+
+Screenshot review gallery published for Juan:
+https://claude.ai/code/artifact/3b74b295-014e-4a22-a8b6-bb8d7438bfdb --
+nine states, real data, real API, no mocked screenshots.
+
+Test studio/artist/pieces left in the shared dev database (same
+standing convention as every prior verification session in this file);
+scratch seed scripts deleted. This worktree's own dev servers (API
+:4003, web :5174) stopped at session end -- unlike the primary
+checkout's :4000/:5173, nothing else depends on a throwaway worktree's
+isolated ports.
+
+Committed to `explore/flash-gallery-restyle` only -- **not merged**, per
+this task's own explicit gate. Merge is a separate instruction pending
+Juan's review of the screenshot gallery above.
+
+REPORT.md line count before this entry: 15108 (verified via `git show
+HEAD:REPORT.md | wc -l`) -- pure addition.
