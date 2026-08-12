@@ -469,7 +469,7 @@ router.patch("/:id/attachment", async (req, res) => {
   const updated = await prisma.giftCard.update({ where: { id }, data: { appointmentId: appointmentId ?? null } });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: card.studioId,
     actorUserId: req.user!.userId,
     entityType: "GiftCard",
     entityId: id,
@@ -477,7 +477,7 @@ router.patch("/:id/attachment", async (req, res) => {
     changes: { fromAppointmentId, toAppointmentId: appointmentId ?? null },
   });
 
-  emitInvalidation({ type: "giftcard.changed", studioId: req.user!.studioId, clientId: card.clientId });
+  emitInvalidation({ type: "giftcard.changed", studioId: card.studioId, clientId: card.clientId });
 
   res.json({
     ...updated,
@@ -541,7 +541,7 @@ router.patch("/:id/holder", async (req, res) => {
   });
 
   await logAudit({
-    studioId: req.user!.studioId,
+    studioId: card.studioId,
     actorUserId: req.user!.userId,
     entityType: "GiftCard",
     entityId: id,
@@ -555,8 +555,8 @@ router.patch("/:id/holder", async (req, res) => {
     },
   });
 
-  emitInvalidation({ type: "giftcard.changed", studioId: req.user!.studioId, clientId: fromClient.id });
-  emitInvalidation({ type: "giftcard.changed", studioId: req.user!.studioId, clientId: newClient.id });
+  emitInvalidation({ type: "giftcard.changed", studioId: card.studioId, clientId: fromClient.id });
+  emitInvalidation({ type: "giftcard.changed", studioId: card.studioId, clientId: newClient.id });
 
   res.json({ ...updated, detachedFromAppointment: hadAppointmentId ?? null });
 });
