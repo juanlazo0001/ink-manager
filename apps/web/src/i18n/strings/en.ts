@@ -365,10 +365,10 @@ export const en = {
     referenceImagesHint: 'Photos or designs that show the style you are going for.',
     placementPhotoHint: 'A photo of the area where you want the tattoo.',
     smsConsentDefault:
-      'By providing your phone number, you consent to receive SMS messages about your inquiry and appointment. Message and data rates may apply. Reply STOP to opt out.',
+      'By providing your phone number, you consent to receive SMS messages about your inquiry and appointment. Message frequency varies. Message and data rates may apply. Reply STOP to opt out.',
     seeOurPrivacyAndTerms: 'See our',
     smsOptInBody:
-      'I agree to receive text messages from {{studioName}} regarding my appointment, including reminders and updates. Message and data rates may apply. Reply STOP to opt out.',
+      'I agree to receive text messages from {{studioName}} regarding my appointment, including reminders, estimate follow-ups, and updates. Message frequency varies. Message and data rates may apply. Reply STOP to opt out or HELP for help.',
     viewOurPrivacyAndTerms: 'View our',
     smsOptInDefaultStudioName: 'the studio',
     pleaseAgreeToSms: 'Please agree to receive text messages to submit this form.',

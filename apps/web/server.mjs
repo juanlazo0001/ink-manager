@@ -363,7 +363,7 @@ async function renderInquirySsr(req, studioSlug, formSlug) {
         <p style="color:#c7bea9;font-size:0.8125rem">You must be 18 years or older to receive a tattoo. Submitting this form does not confirm an appointment — it starts a conversation with the studio.</p>
         <label style="display:flex;gap:0.5rem;align-items:flex-start;color:#c7bea9;font-size:0.875rem;margin-top:1.5rem">
           <input type="checkbox" disabled />
-          <span>I agree to receive text messages from ${safeName} regarding my appointment, including reminders and updates. Message and data rates may apply. Reply STOP to opt out. View our
+          <span>I agree to receive text messages from ${safeName} regarding my appointment, including reminders, estimate follow-ups, and updates. Message frequency varies. Message and data rates may apply. Reply STOP to opt out or HELP for help. View our
             <a href="https://inkmanager.app/privacy" style="color:#c99a5b">Privacy Policy</a> and
             <a href="https://inkmanager.app/terms" style="color:#c99a5b">Terms</a>.</span>
         </label>
