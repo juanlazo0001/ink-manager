@@ -1090,11 +1090,35 @@ router.post("/:id/phones", async (req, res) => {
 
   const normalized = normalizePhone(phone);
 
+  // Legacy-singular bug fix (validation pass, live-reproduced): this route
+  // used to create a bare ClientPhone row and stop there -- never
+  // isPrimary, never synced to Client.phone. `syncPrimaryPhone`'s own
+  // comment states the intended invariant plainly ("every code path that
+  // creates or edits [Client.phone] calls these"), but this route
+  // bypassed it entirely. For a client with zero existing phones, the one
+  // being added IS their primary going forward -- same promotion
+  // PATCH /:id/phones/:phoneId/make-primary already performs, just at
+  // creation time instead of after the fact. A client who already has a
+  // phone keeps today's "additional, non-primary contact" behavior
+  // unchanged.
+  const existingPhoneCount = await prisma.clientPhone.count({ where: { clientId: id } });
+  const isFirstPhone = existingPhoneCount === 0;
+
   let created;
   try {
-    created = await prisma.clientPhone.create({
-      data: { clientId: id, phone: normalized, label: label || null },
-    });
+    if (isFirstPhone) {
+      created = await prisma.$transaction(async (tx) => {
+        const row = await tx.clientPhone.create({
+          data: { clientId: id, phone: normalized, label: label || null, isPrimary: true },
+        });
+        await tx.client.update({ where: { id }, data: { phone: normalized } });
+        return row;
+      });
+    } else {
+      created = await prisma.clientPhone.create({
+        data: { clientId: id, phone: normalized, label: label || null },
+      });
+    }
   } catch (err) {
     if (isUniqueViolation(err)) {
       return res.status(400).json({ error: "This phone number is already on file for this client" });
@@ -1219,11 +1243,27 @@ router.post("/:id/emails", async (req, res) => {
 
   const normalized = email.trim().toLowerCase();
 
+  // Same legacy-singular bug fix as POST /:id/phones above -- a client's
+  // first email becomes their primary and syncs to Client.email; an
+  // additional one keeps today's non-primary behavior.
+  const existingEmailCount = await prisma.clientEmail.count({ where: { clientId: id } });
+  const isFirstEmail = existingEmailCount === 0;
+
   let created;
   try {
-    created = await prisma.clientEmail.create({
-      data: { clientId: id, email: normalized, label: label || null },
-    });
+    if (isFirstEmail) {
+      created = await prisma.$transaction(async (tx) => {
+        const row = await tx.clientEmail.create({
+          data: { clientId: id, email: normalized, label: label || null, isPrimary: true },
+        });
+        await tx.client.update({ where: { id }, data: { email: normalized } });
+        return row;
+      });
+    } else {
+      created = await prisma.clientEmail.create({
+        data: { clientId: id, email: normalized, label: label || null },
+      });
+    }
   } catch (err) {
     if (isUniqueViolation(err)) {
       return res.status(400).json({ error: "This email is already on file for this client" });

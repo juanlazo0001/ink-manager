@@ -32,7 +32,15 @@ interface GiftCard {
   status: string
   expiresAt: string | null
   createdAt: string
-  client: { id: string; firstName: string; lastName: string; phone: string | null; email: string | null }
+  client: {
+    id: string
+    firstName: string
+    lastName: string
+    phone: string | null
+    email: string | null
+    phones: { id: string }[]
+    emails: { id: string }[]
+  }
   appointment: {
     id: string
     startTime: string
@@ -437,7 +445,8 @@ export default function GiftCardDetail() {
                     <span className="flex items-center gap-2">
                       <SendChannelButton
                         label="Send Receipt"
-                        client={{ phone: card.client.phone, email: card.client.email }}
+                        hasPhone={card.client.phones.length > 0}
+                        hasEmail={card.client.emails.length > 0}
                         sending={sendingReceipt}
                         onSend={(channel) => handleSendReceipt(channel)}
                       />

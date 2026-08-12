@@ -30,10 +30,22 @@ const GIFT_CARD_DETAIL_INCLUDE = {
     },
   },
   issuedBy: { select: { id: true, name: true, email: true } },
-  // phone/email added for the detail page's own Send Receipt channel
-  // picker -- needs to know which channels are actually available for
-  // this card's holder.
-  client: { select: { id: true, firstName: true, lastName: true, phone: true, email: true } },
+  // phone/email (plus phones/emails, minimal -- just presence) for the
+  // detail page's own Send Receipt channel picker -- reads the real
+  // contact rows, not just the singular scalars, since those can drift
+  // null even when a client genuinely has a phone/email on file. See
+  // routes/inquiries.ts's own INQUIRY_INCLUDE comment for the full bug.
+  client: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      phone: true,
+      email: true,
+      phones: { select: { id: true } },
+      emails: { select: { id: true } },
+    },
+  },
   // Checkout overage (Part 3): when this card was issued from redeeming a
   // larger one down to its exact remaining difference, this surfaces
   // where it came from -- support/audit clarity, not needed for the

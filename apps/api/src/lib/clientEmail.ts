@@ -140,8 +140,17 @@ export async function sendClientEmail(params: {
     return { sent: false, reason, error };
   }
 
-  const client = await prisma.client.findUnique({ where: { id: clientId } });
-  if (!client?.email) {
+  const client = await prisma.client.findUnique({
+    where: { id: clientId },
+    include: { emails: { orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }], take: 1 } },
+  });
+  // Legacy-singular bug fix (validation pass, live-reproduced): same gap
+  // sendClientSms's own comment describes, for email -- Client.email can
+  // drift null even when a real ClientEmail row exists (POST /:id/emails'
+  // own write-path gap, now fixed, but this falls back regardless so an
+  // already-drifted client isn't wrongly refused).
+  const resolvedEmail = client?.email ?? client?.emails[0]?.email ?? null;
+  if (!resolvedEmail) {
     return { sent: false, reason: "no_email" };
   }
 
@@ -158,7 +167,7 @@ export async function sendClientEmail(params: {
         const sendResult = await sendGmailMessage({
           accessToken,
           from: metadata.emailAddress,
-          to: client.email,
+          to: resolvedEmail,
           subject,
           body: bodyText,
         });
@@ -215,7 +224,7 @@ export async function sendClientEmail(params: {
     const result = await sendViaBirdOnBehalfOfStudio({
       studioName: studio?.name ?? "Your studio",
       replyTo: primaryLocation?.email ?? null,
-      to: client.email,
+      to: resolvedEmail,
       subject,
       text: bodyText,
       html: bodyHtml,

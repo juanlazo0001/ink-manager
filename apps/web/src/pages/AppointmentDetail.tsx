@@ -81,7 +81,16 @@ interface Appointment {
   checkedOutAt: string | null
   checkedOutBy: { id: string; name: string | null; email: string } | null
   paidVia: 'STRIPE' | 'MANUAL' | null
-  client: { id: string; firstName: string; lastName: string; referralCode: string; phone: string | null; email: string | null }
+  client: {
+    id: string
+    firstName: string
+    lastName: string
+    referralCode: string
+    phone: string | null
+    email: string | null
+    phones: { id: string }[]
+    emails: { id: string }[]
+  }
   // Default true elsewhere -- matches every studio's always-on behavior
   // before this flag existed. Not defaulted here since `appointment` is
   // always a live fetch result, never a hand-built placeholder.
@@ -1120,14 +1129,16 @@ export default function AppointmentDetail() {
                 {!appointment.liabilityWaiver && canManage && canGenerateWaiver && (
                   <div className="mt-4">
                     <p className="text-sm text-fg-secondary">No waiver created for this appointment yet.</p>
-                    <SendChannelButton
-                      label="Create & Send Waiver"
-                      client={{ phone: appointment.client.phone, email: appointment.client.email }}
-                      sending={creatingWaiver}
-                      sendingLabel="Creating…"
-                      onSend={(channel) => handleCreateWaiver(channel)}
-                      className="mt-3 flex shrink-0 items-center gap-2 rounded-full border border-border px-4 py-2 text-fg transition hover:bg-surface disabled:opacity-60"
-                    />
+                    <div className="mt-3">
+                      <SendChannelButton
+                        label="Create & Send Waiver"
+                        hasPhone={appointment.client.phones.length > 0}
+                        hasEmail={appointment.client.emails.length > 0}
+                        sending={creatingWaiver}
+                        sendingLabel="Creating…"
+                        onSend={(channel) => handleCreateWaiver(channel)}
+                      />
+                    </div>
                     {waiverError && <p className="mt-2 text-sm text-danger">{waiverError}</p>}
                     {waiverSendNotice && <p className="mt-2 text-sm text-fg-secondary">{waiverSendNotice}</p>}
                   </div>

@@ -241,26 +241,26 @@ export default function Clients() {
             </div>
 
             {(canImportClients || canAddClient) && (
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {canImportClients && (
                   <Link
                     to="/clients/import"
                     className={
                       isEditorial
-                        ? 'editorial-btn-secondary flex items-center gap-2 rounded-full border px-4 py-2 transition'
-                        : 'flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface'
+                        ? 'editorial-btn-secondary flex shrink-0 items-center gap-2 rounded-full border px-4 py-2 transition'
+                        : 'flex shrink-0 items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface'
                     }
                   >
-                    Import Clients
+                    <span className="whitespace-nowrap">Import Clients</span>
                   </Link>
                 )}
                 {canExportClients && !selectionMode && (
                   <button
                     type="button"
                     onClick={() => setSelectionMode(true)}
-                    className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
+                    className="shrink-0 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
                   >
-                    Export CSV
+                    <span className="whitespace-nowrap">Export CSV</span>
                   </button>
                 )}
                 {canExportClients && selectionMode && (
@@ -269,21 +269,23 @@ export default function Clients() {
                       type="button"
                       onClick={exitSelectionMode}
                       disabled={exporting}
-                      className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                      className="shrink-0 rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
                     >
-                      Cancel
+                      <span className="whitespace-nowrap">Cancel</span>
                     </button>
                     <button
                       type="button"
                       onClick={handleExport}
                       disabled={exporting}
-                      className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                      className="shrink-0 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
                     >
-                      {exporting
-                        ? 'Exporting…'
-                        : selectedIds.size > 0
-                          ? `Export ${selectedIds.size} Selected`
-                          : 'Export All'}
+                      <span className="whitespace-nowrap">
+                        {exporting
+                          ? 'Exporting…'
+                          : selectedIds.size > 0
+                            ? `Export ${selectedIds.size} Selected`
+                            : 'Export All'}
+                      </span>
                     </button>
                   </>
                 )}
@@ -293,12 +295,12 @@ export default function Clients() {
                     onClick={() => setShowAddModal(true)}
                     className={
                       isEditorial
-                        ? 'editorial-btn-primary flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-bg transition hover:bg-accent-hover'
-                        : 'flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover'
+                        ? 'editorial-btn-primary flex shrink-0 items-center gap-2 rounded-full bg-accent px-4 py-2 text-bg transition hover:bg-accent-hover'
+                        : 'flex shrink-0 items-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover'
                     }
                   >
                     <PlusIcon className="h-4 w-4" />
-                    Add Client
+                    <span className="whitespace-nowrap">Add Client</span>
                   </button>
                 )}
               </div>

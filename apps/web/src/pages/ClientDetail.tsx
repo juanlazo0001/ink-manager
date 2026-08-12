@@ -1855,7 +1855,8 @@ export default function ClientDetail() {
                     <div className="flex flex-wrap shrink-0 items-center gap-2">
                       <SendChannelButton
                         label="Send Inquiry"
-                        client={{ phone: client.phone, email: client.email }}
+                        hasPhone={client.phones.length > 0}
+                        hasEmail={client.emails.length > 0}
                         sending={copyingPrefillLink}
                         onSend={(channel) => handleCopyPrefillLink(channel)}
                       />
@@ -2106,7 +2107,8 @@ export default function ClientDetail() {
                     eligibleDepositInquiries.length === 1 ? (
                       <SendChannelButton
                         label="Send Deposit Form"
-                        client={{ phone: client.phone, email: client.email }}
+                        hasPhone={client.phones.length > 0}
+                        hasEmail={client.emails.length > 0}
                         sending={sendingDepositId !== null}
                         onSend={(channel) => handleSendDepositForm(eligibleDepositInquiries[0].id, channel)}
                       />
@@ -2122,10 +2124,10 @@ export default function ClientDetail() {
                             ? 'No inquiry is in Deposit Pending status with a price estimate set'
                             : 'Send Deposit Form'
                         }
-                        className="flex shrink-0 items-center gap-2 rounded-full border border-border px-4 py-2 text-fg transition hover:bg-surface disabled:opacity-60"
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface disabled:opacity-60 md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                       >
                         <SendIcon className="h-4 w-4" />
-                        <span className="whitespace-nowrap text-sm font-semibold">
+                        <span className="hidden whitespace-nowrap text-sm font-semibold md:inline">
                           {sendingDepositId ? 'Sending…' : 'Send Deposit Form'}
                         </span>
                       </button>
@@ -2320,7 +2322,8 @@ export default function ClientDetail() {
                     eligibleWaiverAppointments.length === 1 ? (
                       <SendChannelButton
                         label="Send Waiver"
-                        client={{ phone: client.phone, email: client.email }}
+                        hasPhone={client.phones.length > 0}
+                        hasEmail={client.emails.length > 0}
                         sending={sendingWaiverId !== null}
                         onSend={(channel) => handleSendWaiver(eligibleWaiverAppointments[0].id, channel)}
                       />
@@ -2336,10 +2339,10 @@ export default function ClientDetail() {
                             ? 'No confirmed appointment without a waiver yet'
                             : 'Send Waiver'
                         }
-                        className="flex shrink-0 items-center gap-2 rounded-full border border-border px-4 py-2 text-fg transition hover:bg-surface disabled:opacity-60"
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface disabled:opacity-60 md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                       >
                         <SendIcon className="h-4 w-4" />
-                        <span className="whitespace-nowrap text-sm font-semibold">
+                        <span className="hidden whitespace-nowrap text-sm font-semibold md:inline">
                           {sendingWaiverId ? 'Sending…' : 'Send Waiver'}
                         </span>
                       </button>

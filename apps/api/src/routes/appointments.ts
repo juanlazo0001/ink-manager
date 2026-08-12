@@ -401,7 +401,21 @@ const APPOINTMENT_DETAIL_INCLUDE = {
   // reuses the code already generated at this client's own creation, not a
   // new code system (see referrals.ts).
   // phone/email added for the Send Waiver channel picker.
-  client: { select: { id: true, firstName: true, lastName: true, referralCode: true, phone: true, email: true } },
+  // phones/emails (minimal -- just presence) for the send-channel picker's
+  // real-contact-row availability check -- see routes/inquiries.ts's own
+  // INQUIRY_INCLUDE comment for the full "legacy-singular" bug this closes.
+  client: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      referralCode: true,
+      phone: true,
+      email: true,
+      phones: { select: { id: true } },
+      emails: { select: { id: true } },
+    },
+  },
   // The project this session belongs to -- via inquiryId/inquiryProject, not
   // the older 1:1 `inquiry` back-relation (Inquiry.appointmentId), which is
   // a different, usually-null link left over from the original scheduling flow.

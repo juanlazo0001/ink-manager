@@ -204,21 +204,35 @@ export async function sendClientSms(params: {
   const { studioId, clientId, conversationId, body, actorUserId, bypassOptOutCheck, replyToId, logAttemptEvenOnFailure } =
     params;
 
-  const client = await prisma.client.findUnique({ where: { id: clientId } });
+  const client = await prisma.client.findUnique({
+    where: { id: clientId },
+    include: { phones: { orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }], take: 1 } },
+  });
   if (!client) {
     return { sent: false, reason: "no_phone" };
   }
   if (client.smsOptedOutAt && !bypassOptOutCheck) {
     return { sent: false, reason: "opted_out" };
   }
-  if (!client.phone) {
+  // Legacy-singular bug fix (validation pass, live-reproduced): Client.phone
+  // is supposed to always mirror the primary ClientPhone row (syncPrimaryPhone's
+  // own comment states that invariant), but a real gap in POST /:id/phones
+  // let it drift -- a client could have a real phone on file (visible in
+  // ClientDetail.tsx's own Contact Info widget, which reads the real rows)
+  // while this scalar sat null, silently failing every send. That write-path
+  // gap is now fixed, but this read falls back to the real row regardless,
+  // so a send is never wrongly refused for a client who plainly has a phone
+  // on file -- including any pre-existing client whose data drifted before
+  // the fix above landed.
+  const resolvedPhone = client.phone ?? client.phones[0]?.phone ?? null;
+  if (!resolvedPhone) {
     return { sent: false, reason: "no_phone" };
   }
 
   return sendSmsMessage({
     studioId,
     conversationId,
-    toPhone: client.phone,
+    toPhone: resolvedPhone,
     body,
     actorUserId,
     replyToId,

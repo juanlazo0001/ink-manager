@@ -135,7 +135,14 @@ interface Inquiry {
   transferredAt: string | null
   transferredToStudio: { id: string; name: string } | null
   clientId: string
-  client: { firstName: string; lastName: string; email: string | null; phone: string | null }
+  client: {
+    firstName: string
+    lastName: string
+    email: string | null
+    phone: string | null
+    phones: { id: string }[]
+    emails: { id: string }[]
+  }
   preferredArtist: { id: string; user: { name: string | null; email: string; avatarUrl: string | null } } | null
   assignedArtist:
     | {
@@ -2607,7 +2614,8 @@ export default function InquiryDetail() {
                       <div className="mt-3 flex flex-wrap gap-3">
                         <SendChannelButton
                           label={inquiry.estimateSentAt ? 'Generate & Resend Estimate' : 'Generate & Send Estimate'}
-                          client={{ phone: inquiry.client.phone, email: inquiry.client.email }}
+                          hasPhone={inquiry.client.phones.length > 0}
+                          hasEmail={inquiry.client.emails.length > 0}
                           sending={sendingEstimate}
                           onSend={(channel) => handleSendEstimate(channel)}
                         />
@@ -4198,7 +4206,8 @@ export default function InquiryDetail() {
                     <div className="flex gap-3">
                       <SendChannelButton
                         label="Revise & Send for Approval"
-                        client={{ phone: inquiry.client.phone, email: inquiry.client.email }}
+                        hasPhone={inquiry.client.phones.length > 0}
+                        hasEmail={inquiry.client.emails.length > 0}
                         sending={revisingEstimate}
                         onSend={(channel) => handleReviseEstimate(channel)}
                         className="flex flex-1 items-center justify-center gap-2 rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60"

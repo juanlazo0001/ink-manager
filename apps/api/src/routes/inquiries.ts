@@ -562,7 +562,24 @@ const PROJECT_STATUSES: InquiryStatus[] = [InquiryStatus.SCHEDULING, InquiryStat
 const ESTIMATE_REVISION_ONLY_STATUSES: InquiryStatus[] = [InquiryStatus.DEPOSIT_PENDING, ...PROJECT_STATUSES];
 
 const INQUIRY_INCLUDE = {
-  client: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
+  // phones/emails (minimal -- just presence) added for the send-channel
+  // picker's own availability check, which reads the real contact rows
+  // rather than the singular email/phone scalars above -- those can drift
+  // null even when a client genuinely has a phone/email on file (a real,
+  // live-reproduced bug: POST /clients/:id/phones and /emails used to
+  // never sync back to the scalar). Fixed at the write path too
+  // (routes/clients.ts), but the read side stays defensive regardless.
+  client: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      email: true,
+      phone: true,
+      phones: { select: { id: true } },
+      emails: { select: { id: true } },
+    },
+  },
   transferredToStudio: { select: { id: true, name: true } },
   projectCompletedBy: { select: { id: true, name: true, email: true } },
   preferredArtist: { select: { id: true, user: { select: { name: true, email: true, avatarUrl: true } } } },

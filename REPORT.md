@@ -17907,3 +17907,154 @@ tests above possible without any additional setup. All throwaway
 verification/cleanup scripts lived briefly in `apps/api/` and were
 deleted immediately after use; no stray screenshot files left in the
 repo.
+
+# Send-channel picker: Juan's live validation pass
+
+Juan (product owner) tested the send-channel picker epic himself and sent five
+findings from live use. All five investigated and/or fixed in this session.
+
+## 1. Toolbar buttons wrapping to two lines
+
+`Clients.tsx`'s Import Clients / Export CSV / Add Client (and the Cancel /
+Export Selected pair that replaces them in selection mode) had no
+`shrink-0`/`whitespace-nowrap` protection -- a squeezed flex row let their
+text wrap mid-label, turning them into tall two-line pills instead of failing
+by wrapping to a new row. Fixed by wrapping each label in its own
+`whitespace-nowrap` span, adding `shrink-0` to every button/link (matching
+the exact pattern already established for `ClientDetail.tsx`'s action row in
+an earlier session), and adding `flex-wrap` to the button-group container
+itself so the group wraps as whole pills onto a second row on narrow
+viewports rather than compressing individual buttons. Verified live at 1440px
+(all three buttons fit on one row) and 390px (Import Clients + Export CSV on
+one row, Add Client wraps cleanly to its own row below -- no button ever
+wraps its own label).
+
+## 2. Send buttons: restore icon-only-mobile
+
+Direct reversal of this session's own earlier UI-batch decision, per Juan's
+live judgment after seeing both states: per-item "Send X" actions
+(`SendChannelButton`) go back to icon-only at mobile widths / full-labeled at
+desktop, while toolbar-level buttons (item 1 above) stay always-full-label.
+`SendChannelButton`'s default class changed to
+`h-11 w-11 ... md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2` with the label
+in a `hidden ... md:inline` span; every disabled/single-channel/menu render
+branch keeps `aria-label`/`title` for accessibility on the icon-only state.
+Two sibling buttons in `ClientDetail.tsx` that aren't `SendChannelButton`
+instances -- the "which inquiry/appointment?" picker trigger for Send Deposit
+Form / Send Waiver when 0 or 2+ eligible items exist -- got the identical
+treatment for consistency; without it, the same logical button would flip
+between icon-only and full-label purely based on how many eligible records
+happened to exist, which would read as a bug. Verified live: both widgets
+render icon-only at 390px (accessible name preserved, confirmed via
+accessibility snapshot) and full-labeled at 1440px.
+
+## 3. INVESTIGATED -- "Send Inquiry via Email" for a client with both
+
+Hypothesis (b) confirmed: the legacy-singular family bug, not gating-as-
+designed. Root cause, reproduced live end-to-end in this session (not
+assumed): `POST /clients/:id/phones` and `/emails` never synced their write
+back to `Client.phone`/`Client.email` (the scalar "primary mirror" fields),
+violating `clientContacts.ts`'s own stated invariant that every write path to
+those scalars must go through `syncPrimaryPhone`/`syncPrimaryEmail`. A client
+whose phone/email were added via the "+Add phone"/"+Add email" UI buttons
+(rather than set at client-creation time, which does populate the scalars
+directly) ended up with real, non-primary `ClientPhone`/`ClientEmail` rows
+while the scalars sat `null` -- and `SendChannelButton`'s original prop API
+took a `client: { phone, email }` object, reading exactly those `null`
+scalars, so the button silently offered only whichever channel happened to
+already have its scalar populated.
+
+Fixed at both ends:
+- **Write path** (`routes/clients.ts`): `POST /:id/phones` and `/:id/emails`
+  now detect a client's *first* phone/email and promote it to
+  `isPrimary: true` plus sync the scalar in the same transaction --
+  restoring the invariant `clientContacts.ts` already claimed to hold.
+- **Read path, defensively** (`lib/clientSms.ts`, `lib/clientEmail.ts`):
+  `sendClientSms`/`sendClientEmail` now resolve the destination via
+  `client.phone ?? client.phones[0]?.phone` (same pattern for email) instead
+  of trusting the scalar alone, so even un-backfilled existing rows can't
+  silently fail a send.
+- **`SendChannelButton`'s prop API**: changed from `client: { phone, email }`
+  to plain `hasPhone`/`hasEmail` booleans, forcing every caller to derive
+  availability from the real contact arrays (`client.phones.length > 0`) and
+  making it structurally impossible to reintroduce this bug at a new call
+  site by reaching for the scalar out of convenience. Swept and fixed all
+  four call sites: `ClientDetail.tsx` (Send Inquiry, Send Deposit Form, Send
+  Waiver), `InquiryDetail.tsx` (Generate/Resend Estimate, Revise & Send for
+  Approval), `AppointmentDetail.tsx` (Create & Send Waiver), `GiftCardDetail.tsx`
+  (Send Receipt) -- each needed its backend `select`/`include` widened to
+  return `phones`/`emails` id arrays alongside the existing scalar fields
+  (`routes/inquiries.ts`, `routes/appointments.ts`, `routes/giftCards.ts`).
+
+**Live-reproduced, exact data shape.** Created a client with no phone/email
+at creation time, then added one phone and one email via the separate
+"+Add phone"/"+Add email" buttons (the exact path that used to break):
+resulting record was `{ phone: "5557778899", email: "channelpicker.verify@...",
+phones: [{ phone: "5557778899", isPrimary: true }], emails: [{ email:
+"channelpicker.verify@...", isPrimary: true }] }` -- scalar and relational now
+in sync because of the write-path fix. The "Send Inquiry" button correctly
+rendered as `aria-label="Send Inquiry -- choose SMS or Email"` opening a
+two-item "via SMS"/"via Email" menu, not an Email-only single button.
+(Note: Juan's real "Juan Lazo" client wasn't reachable from this session's
+dev database -- searched by name/email, zero results -- so this reproduces
+the identical bug *mechanism* against a fresh test client rather than his
+literal record; whether production has existing divergent scalar/relational
+data for pre-fix clients is outside this session's DB access and unverified.)
+
+## 4. DropdownPortal default panel chrome
+
+Already landed in an earlier session on this branch (`DEFAULT_PANEL_CLASSES`
+merged into every render). Confirmed still present and correct: the "via
+SMS"/"via Email" menu renders with proper background/border/shadow at both
+widths.
+
+**Found only by live-clicking at mobile width, not asked for by name:** the
+same menu opened *off-screen* at 390px -- its trigger (`SendChannelButton`
+inside a widget header whose title had wrapped, pushing the icon-only mobile
+actions row flush against the widget's left edge) sits near `x=93`, but
+`DropdownPortal`'s `align="end"` unconditionally opens the panel *leftward*
+from the trigger's right edge with no horizontal collision detection,
+computing a negative `left` and rendering roughly half the menu past the
+screen's edge (`rect: { left: -67, right: 93 }` at 390px width). A
+`.z-50.overflow-y-auto` selector trap here too: an unrelated element (the
+mobile hamburger sidebar) coincidentally has both classes in its list, so a
+naive `document.querySelector('.z-50.overflow-y-auto')` grabs the wrong
+element -- had to enumerate all matches to find the real menu panel.
+
+Fixed with a second, guarded `useLayoutEffect` in `DropdownPortal.tsx`: after
+the panel actually renders (so its real, content-determined width is known,
+which isn't true synchronously the way the anchor's rect is), measure it and
+nudge `left`/`right` back inside an 8px viewport margin if it overflows
+either edge. No-op (no extra render) for any panel that already fit --
+spot-checked the unrelated Copy-options menu at 390px afterward to confirm
+zero regression. Re-verified live: the Send Inquiry menu now opens fully
+on-screen (clamped to `left: 8px`, flipped to open upward given the limited
+vertical room too) at 390px, and desktop behavior is pixel-identical to
+before the fix.
+
+## 5. 30-minute time dropdowns
+
+Already fully built (`components/TimeSelect.tsx`, from an earlier session/
+epic per REPORT.md's own "1. Time selection" section) and still wired into
+`DateAndTimeRangeFields.tsx` across all 5 scheduling surfaces --
+`for (let m = min; m <= max; m += 30)` confirmed present and unchanged. No
+work needed; the Export CSV button Juan's message flagged as circumstantial
+evidence is unrelated to this feature (it's the client-list bulk-export
+button, no connection to time selection).
+
+## Verification
+
+`tsc -b --noEmit` clean on both apps after every change. Live-verified at
+1440px and 390px via Playwright MCP: toolbar buttons (item 1), icon-only/
+full-label Send buttons in both the deposit-form/waiver 0-eligible state and
+the SendChannelButton menu state (item 2), the two-channel picker end-to-end
+against a live-reproduced legacy-singular-bug client (item 3), the picker's
+on-screen positioning at both widths post-fix (item 4), and TimeSelect's
+continued presence in code (item 5). Test client (`ChannelPicker
+VerifyTest`) deleted via the API afterward; no other data left behind.
+
+## CLAUDE.md hygiene
+
+No schema changes. No database reset offered or accepted. No dev servers
+started/stopped -- the session's already-running API (port 4000) and web
+(port 5173) dev servers were reused throughout. No scratch scripts committed.
