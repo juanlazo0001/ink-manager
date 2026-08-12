@@ -1451,7 +1451,7 @@ export default function ClientDetail() {
                       </div>
                     </div>
 
-                    <div className="flex shrink-0 gap-2">
+                    <div className="flex flex-wrap shrink-0 gap-2">
                       {canMessage && !isEnded && (
                         <button
                           type="button"
@@ -1459,10 +1459,10 @@ export default function ClientDetail() {
                           disabled={startingConversation}
                           aria-label="Message"
                           title="Message"
-                          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface disabled:opacity-60 md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
+                          className="flex shrink-0 items-center gap-2 rounded-full border border-border px-4 py-2 text-fg transition hover:bg-surface disabled:opacity-60"
                         >
                           <MessageIcon className="h-4 w-4" />
-                          <span className="hidden text-sm font-semibold md:inline">Message</span>
+                          <span className="whitespace-nowrap text-sm font-semibold">Message</span>
                         </button>
                       )}
                       {canGeneratePrefillLink && !isEnded && (
@@ -1472,10 +1472,10 @@ export default function ClientDetail() {
                             onClick={() => setShowCopyMenu((v) => !v)}
                             aria-label="Copy options"
                             title="Copy options"
-                            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
+                            className="flex shrink-0 items-center gap-2 rounded-full border border-border px-4 py-2 text-fg transition hover:bg-surface"
                           >
                             <CopyIcon className="h-4 w-4" />
-                            <span className="hidden text-sm font-semibold md:inline">Copy</span>
+                            <span className="whitespace-nowrap text-sm font-semibold">Copy</span>
                           </button>
                           {showCopyMenu && (
                             <>
@@ -1519,10 +1519,10 @@ export default function ClientDetail() {
                           onClick={startEditing}
                           aria-label="Edit"
                           title="Edit"
-                          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
+                          className="flex shrink-0 items-center gap-2 rounded-full border border-border px-4 py-2 text-fg transition hover:bg-surface"
                         >
                           <PencilIcon className="h-4 w-4" />
-                          <span className="hidden text-sm font-semibold md:inline">Edit</span>
+                          <span className="whitespace-nowrap text-sm font-semibold">Edit</span>
                         </button>
                       )}
                       {(canArchiveClient || isOwner) && (
@@ -1848,17 +1848,17 @@ export default function ClientDetail() {
                 title="Inquiries"
                 actions={
                   canCreateInquiry && !isEnded ? (
-                    <div className="flex shrink-0 items-center gap-2">
+                    <div className="flex flex-wrap shrink-0 items-center gap-2">
                       <button
                         type="button"
                         onClick={handleCopyPrefillLink}
                         disabled={copyingPrefillLink}
                         aria-label="Send Inquiry"
                         title="Send Inquiry"
-                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface disabled:opacity-60 md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
+                        className="flex shrink-0 items-center gap-2 rounded-full border border-border px-4 py-2 text-fg transition hover:bg-surface disabled:opacity-60"
                       >
                         <SendIcon className="h-4 w-4" />
-                        <span className="hidden text-sm font-semibold md:inline">
+                        <span className="whitespace-nowrap text-sm font-semibold">
                           {copyingPrefillLink ? 'Sending…' : 'Send Inquiry'}
                         </span>
                       </button>
@@ -1867,10 +1867,10 @@ export default function ClientDetail() {
                         onClick={() => setShowNewInquiry(true)}
                         aria-label="New Inquiry"
                         title="New Inquiry"
-                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
+                        className="flex shrink-0 items-center gap-2 rounded-full border border-border px-4 py-2 text-fg transition hover:bg-surface"
                       >
                         <PlusIcon className="h-4 w-4" />
-                        <span className="hidden text-sm font-semibold md:inline">New Inquiry</span>
+                        <span className="whitespace-nowrap text-sm font-semibold">New Inquiry</span>
                       </button>
                     </div>
                   ) : null
@@ -2016,10 +2016,10 @@ export default function ClientDetail() {
                       onClick={() => setShowIssueModal(true)}
                       aria-label="Issue Gift Card"
                       title="Issue Gift Card"
-                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
+                      className="flex shrink-0 items-center gap-2 rounded-full border border-border px-4 py-2 text-fg transition hover:bg-surface"
                     >
                       <GiftCardIcon className="h-4 w-4" />
-                      <span className="hidden text-sm font-semibold md:inline">Issue Gift Card</span>
+                      <span className="whitespace-nowrap text-sm font-semibold">Issue Gift Card</span>
                     </button>
                   )
                 }
@@ -2123,10 +2123,10 @@ export default function ClientDetail() {
                             ? 'No inquiry is in Deposit Pending status with a price estimate set'
                             : 'Send Deposit Form'
                         }
-                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface disabled:opacity-60 md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
+                        className="flex shrink-0 items-center gap-2 rounded-full border border-border px-4 py-2 text-fg transition hover:bg-surface disabled:opacity-60"
                       >
                         <SendIcon className="h-4 w-4" />
-                        <span className="hidden text-sm font-semibold md:inline">
+                        <span className="whitespace-nowrap text-sm font-semibold">
                           {sendingDepositId ? 'Sending…' : 'Send Deposit Form'}
                         </span>
                       </button>
@@ -2334,10 +2334,10 @@ export default function ClientDetail() {
                             ? 'No confirmed appointment without a waiver yet'
                             : 'Send Waiver'
                         }
-                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface disabled:opacity-60 md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
+                        className="flex shrink-0 items-center gap-2 rounded-full border border-border px-4 py-2 text-fg transition hover:bg-surface disabled:opacity-60"
                       >
                         <SendIcon className="h-4 w-4" />
-                        <span className="hidden text-sm font-semibold md:inline">
+                        <span className="whitespace-nowrap text-sm font-semibold">
                           {sendingWaiverId ? 'Sending…' : 'Send Waiver'}
                         </span>
                       </button>

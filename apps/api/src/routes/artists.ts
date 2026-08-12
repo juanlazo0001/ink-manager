@@ -96,7 +96,21 @@ function membershipInclude(viewerStudioId: string) {
 
 function artistInclude(viewerStudioId: string) {
   return {
-    user: { select: { id: true, email: true, role: true, name: true, phone: true, avatarUrl: true, studioId: true } },
+    user: {
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        name: true,
+        phone: true,
+        avatarUrl: true,
+        studioId: true,
+        // UI batch item 2: staff need the artist's HOME studio slug to
+        // build the public artist page / flash gallery URLs shown on the
+        // staff detail page -- neither URL is reachable from just studioId.
+        studio: { select: { slug: true } },
+      },
+    },
     // Service lines: which services this artist is tagged as offering (see
     // ArtistService) -- the detail page's checkboxes read this to know
     // what's currently checked.

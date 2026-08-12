@@ -66,7 +66,7 @@ export default function Widget({
       ].join(' ')}
       style={{ opacity: isDragging ? 0.5 : 1 }}
     >
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1">
           <button
             type="button"
@@ -90,7 +90,7 @@ export default function Widget({
             {title}
           </h2>
         </div>
-        {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+        {actions && <div className="flex flex-wrap shrink-0 items-center gap-2">{actions}</div>}
       </div>
 
       {!collapsed && <div className={isEditorial ? 'mt-5' : 'mt-4'}>{children}</div>}

@@ -17451,3 +17451,94 @@ Session-Plan linkage fix, are now live on `main` and in production.
 Carried forward, not addressed here (deliberately out of scope for this
 merge, per instruction): the `mark-lost`/`reopen` wrong-studio
 audit-log/`emitInvalidation` bug flagged in Part 3.
+
+# UI batch — five small items
+
+Five independent, small UI fixes, verified live against a running dev
+build and screenshotted at 390px and desktop before being marked done
+(evidence: Artifact "UI Batch — Five Small Items, Verified").
+REPORT.md line count before this entry: 17453 (verified via `git show
+HEAD:REPORT.md | wc -l`) -- pure addition.
+
+1. **Artist public page: more air above BOOK.** `.artist-actions`
+   (`apps/web/src/index.css`) gained `margin-top: 16px` -- previously
+   `margin: 0 auto`, so the gap above BOOK/FLASH was only the last
+   studio card's own 18px bottom margin. Verified at both viewports.
+
+2. **Staff artist page: public page + flash gallery links.** New
+   "Public presence" widget in `ArtistDetail.tsx`, right after Social
+   Links (and in `ARTIST_WIDGET_ORDER`) -- full URL, copy-to-clipboard,
+   open-in-new-tab, for both links. Public page shows "not published"
+   plainly when `publishedAt` is null (publishing itself stays
+   artist-only, no staff bypass -- unchanged); flash gallery has no
+   publish gate so it always renders. Needed the artist's home studio
+   slug, which `artistInclude` (`apps/api/src/routes/artists.ts`)
+   didn't select before -- added `user.select.studio: { select: {
+   slug: true } }`.
+
+3. **Client page: action buttons never word-wrap.** All eight of
+   `ClientDetail.tsx`'s action buttons (Message, Copy, Edit, Send
+   Inquiry, New Inquiry, Issue Gift Card, Send Deposit Form, Send
+   Waiver) previously collapsed to icon-only below the `md` breakpoint
+   (label `hidden md:inline`) -- switched to always-visible,
+   `whitespace-nowrap` labels on a pill that grows to fit, with
+   `flex-wrap` on every button-group container so multiple buttons
+   flow to the next row as whole units instead of squeezing. Also
+   added `flex-wrap` to the shared `Widget.tsx` header row (title +
+   actions), since several of these buttons render through a Widget's
+   `actions` slot -- a pure robustness addition (wrap instead of
+   overflow) that also benefits every other page using `Widget`
+   (Inquiry, Appointment, Artist, Team), not just this one. Verified
+   at 390px specifically with the longest label ("Send Deposit Form")
+   and confirmed desktop is visually unchanged.
+
+4. **Client list: checkboxes only in selection mode.** `Clients.tsx`
+   gained a `selectionMode` flag (default off). Checkboxes (both the
+   header select-all and every row's own) now render only when it's
+   on. The "Export CSV" button, when off, just turns selection mode on
+   instead of exporting immediately; once on, it's replaced by Cancel
+   + an Export button (labelled "Export All" or "Export N Selected").
+   A successful export or Cancel both exit selection mode and clear
+   the selection. Verified live: clean rows by default, checkboxes
+   appear on Export, count updates on selection, Cancel restores clean
+   rows.
+
+5. **Gift cards: Transfer to Client + Attach to Session.** "Attach to
+   client" is renamed "Transfer to Client" everywhere it's user-facing
+   (button, modal title) in `GiftCardDetail.tsx`. The underlying
+   action string on `PATCH /:id/holder` stays `reassign-holder` (an
+   internal identifier, not shown to anyone) -- what actually changes
+   the *displayed* activity-log verb is a new `AuditTrail.tsx`
+   `ACTION_LABELS` entry ("transferred this card to another client"),
+   which is the part users actually read. New "Attach to Session"
+   button + modal lists the client's upcoming (`REQUESTED`/
+   `CONFIRMED`, not yet started) appointments and calls the *existing*
+   `PATCH /:id/attachment` route on selection -- the same route
+   checkout's own stackable-card redemption already reads, so no new
+   balance/redemption math was written anywhere. That route's own
+   `rollover` audit action also got an `ACTION_LABELS` entry ("moved
+   this card to a different appointment") since it previously had no
+   explicit label. Both actions are gated on the same tier
+   (`giftCards.issue`, matching `canReassignHolder`) the spec asked
+   for ("matrix-gated like transfer"). Verified live end-to-end on a
+   real seeded gift card: attached to a different session (confirmed
+   stacked "alongside 3 other cards"), activity log read in plain
+   English, then reverted the card to its original appointment
+   afterward so the shared dev DB was left as found.
+
+## Verification
+
+`tsc -b --noEmit` clean on both apps after every item. Every item
+clicked through live in a real browser (Playwright, `--isolated`
+profile) against the shared dev server -- screenshots in the linked
+Artifact are the actual rendered app. Temporary DB mutations made
+during verification (a test artist's `publicSlug`/`publishedAt`, one
+gift card's `appointmentId`) were both reverted afterward via small
+throwaway scripts, deleted immediately after use.
+
+## CLAUDE.md hygiene
+
+No schema touched. No database reset offered or accepted. No dev
+servers started, restarted, or killed by this session -- the shared
+one was already running. No stray screenshot files or scratch scripts
+left in the repo (all removed after building the evidence Artifact).

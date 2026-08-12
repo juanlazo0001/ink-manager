@@ -92,9 +92,16 @@ export default function Clients() {
   const [form, setForm] = useState(EMPTY_FORM)
   const [formError, setFormError] = useState<string | null>(null)
 
+  const [selectionMode, setSelectionMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
+
+  function exitSelectionMode() {
+    setSelectionMode(false)
+    setSelectedIds(new Set())
+    setExportError(null)
+  }
 
   const queryClient = useQueryClient()
   const baseQueryKey = clientsQueryKey(user!.studioId)
@@ -197,6 +204,8 @@ export default function Clients() {
         method: 'POST',
         body: JSON.stringify(body),
       })
+      setSelectionMode(false)
+      setSelectedIds(new Set())
     } catch (err) {
       setExportError(err instanceof Error ? err.message : 'Failed to export clients')
     } finally {
@@ -245,19 +254,38 @@ export default function Clients() {
                     Import Clients
                   </Link>
                 )}
-                {canExportClients && (
+                {canExportClients && !selectionMode && (
                   <button
                     type="button"
-                    onClick={handleExport}
-                    disabled={exporting}
-                    className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                    onClick={() => setSelectionMode(true)}
+                    className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface"
                   >
-                    {exporting
-                      ? 'Exporting…'
-                      : selectedIds.size > 0
-                        ? `Export ${selectedIds.size} Selected`
-                        : 'Export CSV'}
+                    Export CSV
                   </button>
+                )}
+                {canExportClients && selectionMode && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={exitSelectionMode}
+                      disabled={exporting}
+                      className="rounded-full border border-border px-4 py-2 text-sm font-medium text-fg transition hover:bg-surface disabled:opacity-60"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleExport}
+                      disabled={exporting}
+                      className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
+                    >
+                      {exporting
+                        ? 'Exporting…'
+                        : selectedIds.size > 0
+                          ? `Export ${selectedIds.size} Selected`
+                          : 'Export All'}
+                    </button>
+                  </>
                 )}
                 {canAddClient && (
                   <button
@@ -336,7 +364,7 @@ export default function Clients() {
                 <table className="w-full text-left text-sm">
                   <thead>
                     <tr className="bg-surface-inset text-xs text-fg-muted">
-                      {canExportClients && (
+                      {canExportClients && selectionMode && (
                         <th className="w-8 py-2 font-medium">
                           <input
                             type="checkbox"
@@ -368,7 +396,7 @@ export default function Clients() {
                           onClick={() => navigate(`/clients/${client.id}`)}
                           className="cursor-pointer hover:bg-surface/40"
                         >
-                          {canExportClients && (
+                          {canExportClients && selectionMode && (
                             <td className="py-3" onClick={(e) => e.stopPropagation()}>
                               <input
                                 type="checkbox"

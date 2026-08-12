@@ -6,7 +6,7 @@ import { uploadPortfolioImage } from '../lib/cloudinary'
 import { formatPhoneInput } from '../lib/format'
 import { useUserProfile } from '../context/useUserProfile'
 import { useEffectiveUser } from '../context/useEffectiveUser'
-import { ArrowLeftIcon, CloseIcon, InstagramIcon, FacebookIcon, EmailIcon } from '../components/icons'
+import { ArrowLeftIcon, ArrowUpRightIcon, CloseIcon, CopyIcon, InstagramIcon, FacebookIcon, EmailIcon } from '../components/icons'
 import DatePickerField from '../components/DatePickerField'
 import ScheduleEditor, {
   defaultScheduleDays,
@@ -38,8 +38,18 @@ interface Artist {
   // Client self-scheduling exploration: off by default -- see the schema
   // field's own comment on Artist for what turning it on does.
   allowsClientSelfScheduling: boolean
+  publicSlug: string | null
+  publishedAt: string | null
   artistServices: { serviceId: string }[]
-  user: { id: string; email: string; name: string | null; phone: string | null; avatarUrl: string | null; studioId: string }
+  user: {
+    id: string
+    email: string
+    name: string | null
+    phone: string | null
+    avatarUrl: string | null
+    studioId: string
+    studio: { slug: string }
+  }
   // Solo artist architecture, Phase 4, extended in artist mobility Part 2:
   // the ACTIVE membership connecting this artist to the VIEWING studio --
   // HOME if this is their home studio, GUEST if the viewer is hosting them
@@ -70,6 +80,7 @@ const ARTIST_WIDGET_ORDER = [
   'rates',
   'scheduling-buffer',
   'social-links',
+  'public-presence',
   'specialties',
   'services',
   'preferred-schedule',
@@ -102,6 +113,7 @@ export default function ArtistDetail() {
   const [schedulingBufferMinutes, setSchedulingBufferMinutes] = useState('')
   const [allowsClientSelfScheduling, setAllowsClientSelfScheduling] = useState(false)
   const [uploadingItems, setUploadingItems] = useState<UploadItem[]>([])
+  const [copiedLinkKey, setCopiedLinkKey] = useState<'public' | 'flash' | null>(null)
 
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -220,6 +232,16 @@ export default function ArtistDetail() {
   // Whether this page is interactive for the viewer at all, regardless of
   // which specific fields they can touch -- drives the Save button.
   const canEdit = canEditProfileFields
+
+  async function handleCopyLink(key: 'public' | 'flash', url: string) {
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopiedLinkKey(key)
+      setTimeout(() => setCopiedLinkKey((k) => (k === key ? null : k)), 2000)
+    } catch {
+      // Non-critical -- the URL is still shown and can be selected by hand.
+    }
+  }
 
   async function handleSaveSchedule() {
     if (!id) return
@@ -700,6 +722,31 @@ export default function ArtistDetail() {
                 )}
               </Widget>
 
+              <Widget key="public-presence" id="public-presence" title="Public presence">
+                {artist.publishedAt && artist.publicSlug ? (
+                  <PublicLinkRow
+                    label="Public page"
+                    url={`${window.location.origin}/artist/${artist.publicSlug}`}
+                    copied={copiedLinkKey === 'public'}
+                    onCopy={() => handleCopyLink('public', `${window.location.origin}/artist/${artist.publicSlug}`)}
+                  />
+                ) : (
+                  <p className="mt-3 text-sm text-fg-secondary">
+                    Public page not published. Only the artist can publish it, from their own Profile page.
+                  </p>
+                )}
+                <div className="mt-3">
+                  <PublicLinkRow
+                    label="Flash gallery"
+                    url={`${window.location.origin}/flash/${artist.user.studio.slug}/${artist.id}`}
+                    copied={copiedLinkKey === 'flash'}
+                    onCopy={() =>
+                      handleCopyLink('flash', `${window.location.origin}/flash/${artist.user.studio.slug}/${artist.id}`)
+                    }
+                  />
+                </div>
+              </Widget>
+
               <Widget key="specialties" id="specialties" title="Specialties">
                 {canManageStaff && !canEditProfileFields && (
                   <p className="mt-1 text-xs text-fg-muted">
@@ -885,6 +932,46 @@ export default function ArtistDetail() {
               )}
             </>
           )}
+    </div>
+  )
+}
+
+function PublicLinkRow({
+  label,
+  url,
+  copied,
+  onCopy,
+}: {
+  label: string
+  url: string
+  copied: boolean
+  onCopy: () => void
+}) {
+  return (
+    <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface-inset px-4 py-3">
+      <div className="min-w-0">
+        <p className="text-xs text-fg-muted">{label}</p>
+        <p className="truncate text-sm font-medium text-fg">{url}</p>
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        <button
+          type="button"
+          onClick={onCopy}
+          className="flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+        >
+          <CopyIcon className="h-3.5 w-3.5" />
+          {copied ? 'Copied!' : 'Copy'}
+        </button>
+        <a
+          href={url}
+          target="_blank"
+          rel="noreferrer"
+          className="flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-xs font-medium text-fg transition hover:bg-surface"
+        >
+          <ArrowUpRightIcon className="h-3.5 w-3.5" />
+          Open
+        </a>
+      </div>
     </div>
   )
 }
