@@ -601,6 +601,19 @@ model Artist {
   // seeing their calendar at all.
   allowsClientSelfScheduling Boolean @default(false)
 
+  // Flash requests + artist review toggle: whether a flash-gallery booking
+  // request for THIS artist's own pieces needs their own approve/decline
+  // before the client can pay -- artist-owned, full stop, same
+  // "no staff bypass exists" shape as publishedAt below (NOT
+  // allowsClientSelfScheduling's studio-manageable pattern above, since
+  // this isn't a studio booking-policy switch, it's the artist's own call
+  // on their own art). Default true preserves today's only behavior
+  // (front desk approval was previously the sole, mandatory gate) so no
+  // existing artist sees a silent change -- the gate just moves to them.
+  // false skips straight to FLASH_PAYMENT_PENDING at request time (see
+  // routes/flashPieces.ts's POST /:id/request).
+  reviewsFlashRequestsBeforeBooking Boolean @default(true)
+
   // Onboarding wizard eligibility gate. Null means "hasn't finished or
   // explicitly skipped the first-login wizard yet" -- the web app shows it
   // whenever this is null for the logged-in artist. Set once, on finish OR

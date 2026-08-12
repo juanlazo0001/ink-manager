@@ -82,6 +82,11 @@ export const INQUIRIES_TAB_STATUSES = [
   'AWAITING_CLIENT_RESPONSE',
   'BUDGET_NEGOTIATION',
   'DEPOSIT_PENDING',
+  // Flash requests in Inquiries: leads, not yet a converted project --
+  // same placement reasoning as DEPOSIT_PENDING just above (awaiting a
+  // payment, not yet SCHEDULING).
+  'FLASH_PENDING_APPROVAL',
+  'FLASH_PAYMENT_PENDING',
   'CLOSED_LOST',
   'COLD_LEAD',
   // Transfer-to-artist epic: same terminal, out-of-pipeline treatment as
@@ -116,7 +121,23 @@ const CANDIDACY_REVIEW_COLUMN: KanbanColumn = {
   statuses: ['CANDIDACY_REVIEW'],
 }
 
+// Flash requests in Inquiries: both flash-only statuses collapse into one
+// column, same "group related statuses into one column" precedent as the
+// existing Inactive column below -- awaiting approval and awaiting payment
+// are both "not yet a real booking," and a flash-sourced lead skips
+// straight from here to SCHEDULING (Projects tab) once paid, same as
+// CANDIDACY_REVIEW's own card never passes through the four columns
+// below it either. Prepended, not interleaved -- the earliest possible
+// stage for a flash-sourced lead specifically, distinct from the normal
+// intake pipeline CANDIDACY_REVIEW guards.
+const FLASH_REQUEST_COLUMN: KanbanColumn = {
+  key: 'FLASH_REQUEST',
+  label: 'Flash Request',
+  statuses: ['FLASH_PENDING_APPROVAL', 'FLASH_PAYMENT_PENDING'],
+}
+
 export const INQUIRY_TAB_COLUMNS: KanbanColumn[] = [
+  FLASH_REQUEST_COLUMN,
   CANDIDACY_REVIEW_COLUMN,
   ...PIPELINE_STEPS.slice(0, 4).map((step) => ({ key: step.label, label: step.label, statuses: step.statuses })),
   { key: 'INACTIVE', label: 'Inactive', statuses: ['CLOSED_LOST', 'COLD_LEAD', 'TRANSFERRED'] },
@@ -926,7 +947,7 @@ export default function Inquiries() {
                 columns={activeTab === 'projects' ? PROJECT_TAB_COLUMNS : INQUIRY_TAB_COLUMNS}
                 interactiveColumnKeys={(activeTab === 'projects' ? PROJECT_TAB_COLUMNS : INQUIRY_TAB_COLUMNS)
                   .map((column) => column.key)
-                  .filter((key) => key !== 'CANDIDACY_REVIEW')}
+                  .filter((key) => key !== 'CANDIDACY_REVIEW' && key !== 'FLASH_REQUEST')}
                 resolveTransition={(params) =>
                   activeTab === 'projects'
                     ? resolveProjectsTabTransition({ ...params, inquiry: params.inquiry as Inquiry })

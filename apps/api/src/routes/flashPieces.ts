@@ -4,7 +4,8 @@ import { Channel, FlashPieceStatus, InquiryStatus, Role } from "../../generated/
 import { requireAuth } from "../middleware/auth";
 import { hasPermission, requirePermission } from "../lib/permissions";
 import { diffObjects, logAudit } from "../lib/audit";
-import { emitInvalidation } from "../lib/realtime/registry";
+import { emitInvalidation, emitUserInvalidation } from "../lib/realtime/registry";
+import { approveFlashRequest } from "../lib/flashApproval";
 import { normalizePhone } from "../lib/phone";
 import { syncPrimaryEmail, syncPrimaryPhone } from "../lib/clientContacts";
 import { generateUniqueReferralCode } from "../lib/referrals";
@@ -242,7 +243,10 @@ router.post("/:id/request", async (req, res) => {
     return res.status(400).json({ error: "Missing required field(s)" });
   }
 
-  const piece = await prisma.flashPiece.findUnique({ where: { id } });
+  const piece = await prisma.flashPiece.findUnique({
+    where: { id },
+    include: { artist: { select: { userId: true, reviewsFlashRequestsBeforeBooking: true } } },
+  });
   if (!piece || piece.status !== FlashPieceStatus.AVAILABLE) {
     return res.status(409).json({ error: "This piece is no longer available -- please pick another." });
   }
@@ -335,6 +339,13 @@ router.post("/:id/request", async (req, res) => {
       // REPORT.md rather than silently assumed either way.
       hasBeenTattooedBefore: false,
       placementImages: [placementPhotoUrl],
+      // Flash requests in Inquiries: the piece's own art, not the client's
+      // placement photo -- this is what the payment-confirmation page's
+      // pre-existing referenceImages[0] background (DepositResponse.tsx/
+      // FlashPaymentResponse.tsx, deposits.ts/flashPayments.ts) reads. That
+      // feature already existed; it was always null for flash-origin
+      // inquiries purely because nothing set this field until now.
+      referenceImages: [piece.imageUrl],
       status: InquiryStatus.FLASH_PENDING_APPROVAL,
       priceEstimateLow: priceDollars,
       priceEstimateHigh: priceDollars,
@@ -358,7 +369,22 @@ router.post("/:id/request", async (req, res) => {
   emitInvalidation({ type: "inquiry.created", studioId });
   emitInvalidation({ type: "flash.changed", studioId });
 
-  res.status(201).json({ success: true });
+  // Artist review toggle: OFF means instant booking -- auto-approve right
+  // here, in the same request, reusing the exact mechanics a human
+  // clicking Approve would trigger (see lib/flashApproval.ts). ON means
+  // this sits at FLASH_PENDING_APPROVAL for the assigned artist alone to
+  // act on -- push it to their Tasks page live, the same
+  // emitUserInvalidation pattern the transfer-to-artist epic's own
+  // accept/decline routes use for a personal, not studio-room, target.
+  if (piece.artist.reviewsFlashRequestsBeforeBooking) {
+    emitUserInvalidation(piece.artist.userId, [["tasks", piece.artist.userId]]);
+  } else {
+    await approveFlashRequest(inquiry.id, null);
+  }
+
+  // Lets the confirmation screen say something honest: "we'll review this"
+  // is wrong when review is off and a payment link already went out.
+  res.status(201).json({ success: true, instantlyApproved: !piece.artist.reviewsFlashRequestsBeforeBooking });
 });
 
 router.use(requireAuth);

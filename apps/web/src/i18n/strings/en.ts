@@ -289,6 +289,7 @@ export const en = {
     unavailableDefault: 'This gallery is unavailable.',
     requestSentHeading: 'Request sent!',
     requestSentBody: "{{studioName}} will review your placement and get back to you shortly to confirm and collect payment -- this isn't booked yet.",
+    requestSentBodyInstant: "Your payment link is on its way -- pay to lock in your booking and pick a time.",
     titleFirst: 'Flash',
     titleSecond: 'Gallery',
     currentlyAt: 'Currently at {{studioName}}',

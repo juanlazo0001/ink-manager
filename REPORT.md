@@ -17542,3 +17542,200 @@ No schema touched. No database reset offered or accepted. No dev
 servers started, restarted, or killed by this session -- the shared
 one was already running. No stray screenshot files or scratch scripts
 left in the repo (all removed after building the evidence Artifact).
+
+# Flash requests in Inquiries + artist review toggle
+
+REPORT.md line count before this entry: 17544 (verified via `git show
+HEAD:REPORT.md | wc -l`) -- pure addition.
+
+## Part 1 -- investigation, before any code
+
+Flash-gallery bookings already create a real `Inquiry` row
+(`channel: FLASH_GALLERY`, `flashPieceId` set, `status:
+FLASH_PENDING_APPROVAL`) via `POST /flash-pieces/:id/request` -- there
+was no separate model to merge in. But that status, and its successor
+`FLASH_PAYMENT_PENDING`, were simply absent from both
+`INQUIRIES_TAB_STATUSES` and `PROJECTS_TAB_STATUSES`
+(`Inquiries.tsx`), so every flash request was invisible on the
+Inquiries list/Kanban and on My Inquiries (which reuses the same
+column constants) -- the only way to reach one was a Tasks-page deep
+link, studio-wide, for any front-desk staffer with `inquiries.edit`.
+That was also the *only* approval gate before a client could pay --
+no artist-side step existed anywhere in the code.
+
+Confirmed directly in code, before writing anything: `referenceImages`
+and `placementImages` are separate arrays, and
+`POST /flash-pieces/:id/request` only ever set `placementImages` (the
+client's own body photo). `FlashPaymentResponse.tsx` and
+`apps/api/src/routes/flashPayments.ts` **already** build a
+personalized payment-confirmation background from
+`inquiry.referenceImages[0]` -- their own comments said it's always
+null for flash "by construction, not a special case." Setting
+`referenceImages` to the piece's own art at creation time is the
+entire fix for the confirmation-background side effect; that feature
+itself needed zero new code.
+
+## Part 2 -- flash requests surface in Inquiries
+
+- `apps/web/src/pages/Inquiries.tsx`: both flash statuses added to
+  `INQUIRIES_TAB_STATUSES` (leads, same placement reasoning as
+  `DEPOSIT_PENDING`); new `FLASH_REQUEST_COLUMN` groups both statuses
+  into one Kanban column, prepended before Candidacy Review, excluded
+  from drag interactivity (same treatment as that column).
+- `apps/web/src/components/kanban/InquiryKanbanCard.tsx` +
+  `lib/kanban.ts`: a small "Flash" tag renders on any card whose
+  `channel === 'FLASH_GALLERY'`, in every column -- a repeatable piece
+  can be requested again after an earlier booking's already moved on
+  elsewhere in the pipeline.
+- `apps/api/src/routes/flashPieces.ts`'s `POST /:id/request` now sets
+  `referenceImages: [piece.imageUrl]` on inquiry creation.
+- Verified live: submitting a flash request made it appear immediately
+  in the Inquiries Kanban's new Flash Request column, tagged -- and, as
+  a bonus confirmation the fix is correct rather than narrow, an
+  **existing** flash inquiry from before this session (pre-dating the
+  column entirely) also surfaced correctly the first time the board
+  loaded, proving this wasn't a creation-time-only patch.
+
+## Part 3 -- artist review toggle
+
+**Judgment call: the front-desk gate is REPLACED, not additive, when
+artist review is ON.** "The artist's approve/decline is theirs
+(inalienable-family, no matrix gates it)" mirrors the
+transfer-to-artist epic's own "no staff bypass exists on the backend,
+full stop" phrasing for artist-owned decisions. "Default ON... no
+silent behavior change" only holds if there's still exactly *one*
+approval gate before payment, just moved from front desk to the
+artist -- coexisting would be a strictly new, stricter requirement
+(two approvals) nobody asked for. So: `POST /:id/flash/approve` and
+`/decline` stay the same routes, but when the piece's artist has
+review ON, only that artist may call them -- an unconditional identity
+check (`assignedArtist.userId === req.user.userId`), not a permission
+check. Front desk's `inquiries.edit`-gated path is left in the code
+(not deleted) as the correct fallback for the one case that still
+needs it: **declining a stalled payment** at `FLASH_PAYMENT_PENDING`
+stays staff-only regardless of the toggle, on the judgment that
+cleaning up an abandoned checkout is administrative work, not the
+artist's original "should I take this booking" decision the task
+asked to be theirs -- a real distinction this session drew that the
+plan itself hadn't separated out until implementing it made the
+route's own pre-existing "manual escape hatch staff needs" comment
+impossible to ignore.
+
+- `Artist.reviewsFlashRequestsBeforeBooking Boolean @default(true)`
+  (migration `20260812000000_flash_artist_review`) -- artist-owned,
+  full stop, same "no staff bypass exists" shape as `publishedAt`
+  (deliberately *not* `allowsClientSelfScheduling`'s studio-manageable
+  pattern -- this isn't a studio booking policy, it's the artist's own
+  call on their own art). Settable only by the artist themselves
+  through the general `PATCH /artists/:id` route, a new self-only
+  carve-out alongside the existing `profileSetupCompletedAt` one.
+- `apps/api/src/lib/flashApproval.ts` (new): the token-mint +
+  status-transition + audit + best-effort-SMS mechanics extracted from
+  the approve route, so both a human clicking Approve and the new
+  auto-approve path (toggle OFF) share one implementation instead of
+  two copies drifting apart. `actorUserId: null` for the automatic
+  path logs a distinct `flash_request_auto_approved` action.
+- `apps/api/src/routes/flashPieces.ts`'s request route: toggle OFF
+  calls `approveFlashRequest` in the same request, instantly --
+  "instant booking, no approval step" means the inquiry never sits at
+  `FLASH_PENDING_APPROVAL` at all for that artist's pieces.
+- New `apps/api/src/lib/tasks/flashRequestArtistPending.ts`, mirroring
+  `artistTransferPending.ts`'s exact shape (personal to the artist, not
+  in `TASK_SOURCE_REGISTRY`, wired directly into `routes/tasks.ts`'s
+  `GET /`). The existing studio-wide `flashRequestPending.ts` gained a
+  filter documenting the now-true invariant (only reachable for a
+  toggle-OFF artist, which by construction never happens) rather than
+  being deleted.
+- New `apps/web/src/pages/MyFlashRequestDetail.tsx` +
+  `/my-flash-requests/:id` route, modeled directly on
+  `MyTransferDetail.tsx` -- and a **new, separate** backend route
+  (`GET /inquiries/my-flash-requests/:id`) rather than reusing the
+  existing `GET /assigned-to-me/:id`, because that route is gated by
+  `hasPermissionAt(..., "inquiries.view")`, a real matrix key this
+  repo's own dev fixtures have toggled off for ARTIST before (flagged
+  in memory from an earlier session). This request is the artist's
+  alone to decide either way, so the identity check itself -- exactly
+  like `POST /:id/flash/approve` -- IS the entire authorization.
+- `apps/web/src/pages/ArtistDetail.tsx`: new checkbox, self-only (no
+  staff-visible branch at all, unlike the self-scheduling checkbox
+  beside it), saved through the general PATCH with the field omitted
+  entirely for anyone but the artist themselves.
+- `apps/web/src/pages/InquiryDetail.tsx`'s existing front-desk
+  flash-approval widget now hides its Approve/Decline buttons (and
+  says so plainly) when the assigned artist owns the decision --
+  otherwise a staff click there would 403 with no explanation.
+- `apps/web/src/pages/MyInquiries.tsx`: a flash card's own onOpenCard
+  now routes to `/my-flash-requests/:id` instead of
+  `/my-inquiries/:id` -- the latter (MyProjectDetail.tsx) assumes a
+  converted project and hits the same matrix-gated backend route this
+  session deliberately avoided building on.
+
+## A real gap found only by testing live, not by code review
+
+`apps/web/src/pages/Tasks.tsx` unconditionally hides its entire
+"Studio Queue" system-task section for `role === 'ARTIST'`
+(`{user?.role !== 'ARTIST' && (...)}`) -- the new
+`FLASH_REQUEST_ARTIST_PENDING` task type landed in that same generic
+bucket and would have been computed correctly by the backend
+(confirmed via direct API check) yet never rendered anywhere for the
+one audience it exists for. No amount of backend testing would have
+caught this; it only showed up logging in as the artist and looking at
+the actual page. Fixed the same way `ARTIST_TRANSFER_PENDING` already
+solves this exact problem: split into its own always-visible "Flash
+bookings" section, outside the ARTIST-hidden gate.
+
+Also fixed along the way, found the same live-testing way: the public
+gallery's post-submission copy ("{{studio}} will review your placement
+and get back to you shortly") is flatly wrong when review is OFF --
+nobody reviews anything, a payment link goes out immediately.
+`POST /flash-pieces/:id/request` now returns `instantlyApproved` in
+its response; the frontend picks between two copy variants (both
+languages -- `requestSentBodyInstant` added to `en.ts`/`es.ts`/the
+regenerated ES review doc) instead of always claiming a review that
+may not happen.
+
+## Verification
+
+`tsc -b --noEmit` clean on both apps throughout. Live-verified end to
+end, twice (once per fixture round, screenshots kept from the second):
+submit with review ON -> confirmed `referenceImages` set,
+`FLASH_PENDING_APPROVAL`, visible tagged in the Inquiries Kanban, task
+appears for the artist (not front desk) via a fresh Tasks-page load,
+identity-only Approve succeeds with the ARTIST role holding zero
+`inquiries.*` permissions, transitions to `FLASH_PAYMENT_PENDING` with
+a real payment token, confirmed `referenceBackgroundUrl` now resolves
+(previously always null) via the verify endpoint's own response.
+Toggle OFF (flipped live through the artist's own self-service
+checkbox, confirmed via API read after save) -> a second request
+landed directly at `FLASH_PAYMENT_PENDING` with no
+`FLASH_PENDING_APPROVAL` stop and no task for anyone, corrected
+confirmation copy shown. Payment page copy confirmed in both English
+and Spanish via the client's own `preferredLocale`.
+
+Honest gap, flagged rather than hidden: dev-studio has no Stripe
+Connect configured, so the actual post-payment confirmation screen
+(where the reference-art background image renders full-bleed, via
+`PaymentConfirmationStage.tsx`'s existing, unchanged `createPortal`
+code) couldn't be reached or screenshotted live in this environment --
+confirmed instead at the data layer (the URL the frontend would
+receive is now correctly non-null) and by reading that already-shipped
+rendering code directly.
+
+All fixtures (2 flash pieces, 4 inquiries, their clients, one
+temporarily-flipped artist toggle) created across two rounds of live
+testing were deleted/reverted afterward -- confirmed via a final query
+showing zero remaining test rows and the artist's toggle back at its
+default `true`. Evidence Artifact: "Flash Requests in Inquiries --
+Verified."
+
+## CLAUDE.md hygiene
+
+Schema changed once, correctly: `migrate diff` (against
+`--from-config-datasource`, the Prisma 7 flag rename from the
+`--from-schema-datasource` this repo's own earlier notes reference) +
+a hand-written migration file + `migrate deploy` -- never `migrate
+dev`. No database reset offered or accepted. No dev servers started,
+restarted, or killed -- the shared one was already running throughout.
+All throwaway verification/cleanup scripts lived briefly in
+`apps/api/` and were deleted immediately after use; no stray
+screenshot files left in the repo.

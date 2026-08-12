@@ -141,6 +141,7 @@ interface Inquiry {
         id: string
         hourlyRateCents: number | null
         flatRateCents: number | null
+        reviewsFlashRequestsBeforeBooking: boolean
         user: { name: string | null; email: string; avatarUrl: string | null }
       }
     | null
@@ -2346,8 +2347,10 @@ export default function InquiryDetail() {
               {inquiry.status === 'FLASH_PENDING_APPROVAL' && (
                 <Widget key="flash-approval" id="flash-approval" title="Flash Booking — Review">
                   <p className="mt-1 text-sm text-fg-secondary">
-                    Submitted for {inquiry.description}. Review the placement below, then approve to move this
-                    customer to payment, or decline to reopen the piece.
+                    Submitted for {inquiry.description}.{' '}
+                    {inquiry.assignedArtist?.reviewsFlashRequestsBeforeBooking
+                      ? "This artist reviews their own flash requests -- it's on their own Tasks page, not actionable here."
+                      : 'Review the placement below, then approve to move this customer to payment, or decline to reopen the piece.'}
                   </p>
 
                   <p className="mt-3 text-sm font-medium text-fg-secondary">Placement</p>
@@ -2363,7 +2366,7 @@ export default function InquiryDetail() {
                     </div>
                   )}
 
-                  {(canEditInquiry || canMarkLost) && (
+                  {!inquiry.assignedArtist?.reviewsFlashRequestsBeforeBooking && (canEditInquiry || canMarkLost) && (
                     <div className="mt-4 space-y-3">
                       {canMarkLost && (
                         <input

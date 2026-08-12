@@ -245,6 +245,7 @@ export const es: typeof en = {
     unavailableDefault: 'Esta galería no está disponible.',
     requestSentHeading: '¡Solicitud enviada!',
     requestSentBody: '{{studioName}} revisará tu ubicación y se pondrá en contacto contigo pronto para confirmar y cobrar el pago -- esto todavía no está reservado.',
+    requestSentBodyInstant: 'Tu enlace de pago está en camino -- paga para confirmar tu reserva y elegir un horario.',
     titleFirst: 'Galería',
     titleSecond: 'Flash',
     currentlyAt: 'Actualmente en {{studioName}}',

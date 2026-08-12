@@ -93,6 +93,10 @@ function FlashPublicGalleryContent() {
   const [placementPhoto, setPlacementPhoto] = useState<ImageUploadState>({ urls: [], uploading: false })
 
   const [submitting, setSubmitting] = useState(false)
+  // Artist review toggle: whether this piece's artist has review off, so
+  // the confirmation screen says something honest instead of always
+  // claiming a human will look at it.
+  const [instantlyApproved, setInstantlyApproved] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
   // Language becomes customer-specific, amended: anonymous pages (this
@@ -199,7 +203,7 @@ function FlashPublicGalleryContent() {
 
     setSubmitting(true)
     try {
-      await apiFetch(`/flash-pieces/${selectedPiece.id}/request`, {
+      const result = await apiFetch<{ success: true; instantlyApproved: boolean }>(`/flash-pieces/${selectedPiece.id}/request`, {
         method: 'POST',
         body: JSON.stringify({
           placementDescription: placementDescription.trim(),
@@ -216,6 +220,7 @@ function FlashPublicGalleryContent() {
           preferredLocale: locale,
         }),
       })
+      setInstantlyApproved(result.instantlyApproved)
       setState('success')
     } catch (err) {
       setSubmitError(err instanceof ApiError ? err.message : t('common.somethingWentWrong'))
@@ -366,7 +371,9 @@ function FlashPublicGalleryContent() {
             <motion.div key="success" variants={crossfadeVariants} initial="initial" animate="animate" exit="exit" transition={uiSpringTransition} className="text-center">
               <h1 className="login-jura text-xl font-semibold text-fg">{t('flashGallery.requestSentHeading')}</h1>
               <p className="mt-2 text-sm text-fg-secondary">
-                {t('flashGallery.requestSentBody', { studioName: gallery?.studioName ?? '' })}
+                {instantlyApproved
+                  ? t('flashGallery.requestSentBodyInstant')
+                  : t('flashGallery.requestSentBody', { studioName: gallery?.studioName ?? '' })}
               </p>
             </motion.div>
           )}

@@ -295,6 +295,14 @@ router.patch("/:id", requirePermissionOrSelfArtist("artists.manage"), async (req
   // on finish or explicit skip.
   const { profileSetupCompletedAt } = req.body ?? {};
 
+  // Flash requests + artist review toggle: same "self-only, outside every
+  // other gate" shape as profileSetupCompletedAt above -- artist-owned,
+  // full stop, same "no staff bypass exists" precedent as
+  // Artist.publishedAt (NOT allowsClientSelfScheduling's studio-manageable
+  // pattern a few lines up, since this isn't a studio booking policy, it's
+  // the artist's own call on their own art).
+  const { reviewsFlashRequestsBeforeBooking } = req.body ?? {};
+
   const artist = await prisma.artist.findUnique({
     where: { id },
     include: { user: true, artistServices: { select: { serviceId: true } }, ...membershipInclude(req.user!.studioId) },
@@ -383,6 +391,15 @@ router.patch("/:id", requirePermissionOrSelfArtist("artists.manage"), async (req
     }
     if (!isSelf) {
       return res.status(403).json({ error: "Only the artist themselves can complete their own onboarding wizard" });
+    }
+  }
+
+  if (reviewsFlashRequestsBeforeBooking !== undefined) {
+    if (typeof reviewsFlashRequestsBeforeBooking !== "boolean") {
+      return res.status(400).json({ error: "reviewsFlashRequestsBeforeBooking must be a boolean" });
+    }
+    if (!isSelf) {
+      return res.status(403).json({ error: "Only the artist themselves can set their own flash review preference" });
     }
   }
 
@@ -487,6 +504,7 @@ router.patch("/:id", requirePermissionOrSelfArtist("artists.manage"), async (req
     ...(schedulingBufferMinutes !== undefined ? { schedulingBufferMinutes } : {}),
     ...(allowsClientSelfScheduling !== undefined ? { allowsClientSelfScheduling } : {}),
     ...(profileSetupCompletedAt === true ? { profileSetupCompletedAt: new Date() } : {}),
+    ...(reviewsFlashRequestsBeforeBooking !== undefined ? { reviewsFlashRequestsBeforeBooking } : {}),
   };
 
   const nextServiceIds: string[] | undefined = serviceIds !== undefined ? [...new Set(serviceIds as string[])] : undefined;

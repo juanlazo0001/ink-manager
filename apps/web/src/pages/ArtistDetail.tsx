@@ -38,6 +38,7 @@ interface Artist {
   // Client self-scheduling exploration: off by default -- see the schema
   // field's own comment on Artist for what turning it on does.
   allowsClientSelfScheduling: boolean
+  reviewsFlashRequestsBeforeBooking: boolean
   publicSlug: string | null
   publishedAt: string | null
   artistServices: { serviceId: string }[]
@@ -112,6 +113,7 @@ export default function ArtistDetail() {
   const [flatRate, setFlatRate] = useState('')
   const [schedulingBufferMinutes, setSchedulingBufferMinutes] = useState('')
   const [allowsClientSelfScheduling, setAllowsClientSelfScheduling] = useState(false)
+  const [reviewsFlashRequestsBeforeBooking, setReviewsFlashRequestsBeforeBooking] = useState(true)
   const [uploadingItems, setUploadingItems] = useState<UploadItem[]>([])
   const [copiedLinkKey, setCopiedLinkKey] = useState<'public' | 'flash' | null>(null)
 
@@ -199,6 +201,7 @@ export default function ArtistDetail() {
       artist.schedulingBufferMinutes != null ? artist.schedulingBufferMinutes.toString() : '',
     )
     setAllowsClientSelfScheduling(artist.allowsClientSelfScheduling)
+    setReviewsFlashRequestsBeforeBooking(artist.reviewsFlashRequestsBeforeBooking)
     setScheduleDays(scheduleBlocksToDays(artist.preferredSchedule))
   }
 
@@ -335,6 +338,9 @@ export default function ArtistDetail() {
           flatRateCents: flatRate ? Math.round(Number(flatRate) * 100) : null,
           schedulingBufferMinutes: schedulingBufferMinutes ? Math.round(Number(schedulingBufferMinutes)) : null,
           allowsClientSelfScheduling,
+          // Self-only on the backend (403s for anyone else) -- omitted
+          // entirely for a staff caller rather than sent and rejected.
+          ...(isSelf ? { reviewsFlashRequestsBeforeBooking } : {}),
         }),
       })
 
@@ -626,6 +632,32 @@ export default function ArtistDetail() {
                     </p>
                   )}
                 </div>
+
+                {/* Flash requests + artist review toggle: self-only, no
+                    staff branch at all -- unlike self-scheduling just
+                    above, this isn't a studio booking policy, it's the
+                    artist's own call on their own art (same "no staff
+                    bypass exists" shape as publishing their public page).
+                    Staff viewing someone else's profile simply never sees
+                    this block. */}
+                {isSelf && (
+                  <div className="mt-4 border-t border-border pt-4">
+                    <p className="text-xs text-fg-muted">
+                      When someone requests one of your flash pieces, review the placement photo and approve or
+                      decline it yourself before they can pay. Off means instant booking -- no review step, the
+                      payment link goes out right away.
+                    </p>
+                    <label className="mt-3 flex items-center gap-2 text-sm text-fg">
+                      <input
+                        type="checkbox"
+                        checked={reviewsFlashRequestsBeforeBooking}
+                        onChange={(e) => setReviewsFlashRequestsBeforeBooking(e.target.checked)}
+                        className="h-4 w-4 rounded border-border text-accent focus:ring-accent"
+                      />
+                      Review flash requests before booking
+                    </label>
+                  </div>
+                )}
               </Widget>
 
               <Widget key="social-links" id="social-links" title="Social Links">

@@ -25,6 +25,7 @@ import Profile from './pages/Profile'
 import Team from './pages/Team'
 import StartArtistTransfer from './pages/StartArtistTransfer'
 import MyTransferDetail from './pages/MyTransferDetail'
+import MyFlashRequestDetail from './pages/MyFlashRequestDetail'
 import FlashGallery from './pages/FlashGallery'
 import FlashPublicGallery from './pages/FlashPublicGallery'
 import ArtistPublicPage from './pages/ArtistPublicPage'
@@ -237,6 +238,7 @@ function AppRoutes() {
           <Route path="/team" element={<Team />} />
           <Route path="/team/transfer" element={<StartArtistTransfer />} />
           <Route path="/my-transfers/:id" element={<MyTransferDetail />} />
+          <Route path="/my-flash-requests/:id" element={<MyFlashRequestDetail />} />
           <Route path="/flash" element={<FlashGallery />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/conversations/:id" element={<ConversationDeepLink />} />

@@ -330,7 +330,20 @@ export default function MyInquiries() {
                   resolveTransition={(params) =>
                     resolveArtistTransition({ ...params, inquiry: params.inquiry })
                   }
-                  onOpenCard={(id) => navigate(`/my-inquiries/${id}`)}
+                  onOpenCard={(id) => {
+                    // Flash requests in Inquiries: a card still at
+                    // FLASH_PENDING_APPROVAL/FLASH_PAYMENT_PENDING hasn't
+                    // converted to a project yet -- MyProjectDetail.tsx
+                    // assumes post-conversion fields, and its own backend
+                    // route is matrix-gated (inquiries.view), unlike this
+                    // request's own dedicated, identity-only page.
+                    const inquiry = kanbanInquiries?.find((i) => i.id === id)
+                    if (inquiry?.channel === 'FLASH_GALLERY' && inquiry.status.startsWith('FLASH_')) {
+                      navigate(`/my-flash-requests/${id}`)
+                    } else {
+                      navigate(`/my-inquiries/${id}`)
+                    }
+                  }}
                   emptyMessage="Nothing assigned to you right now."
                 />
               )}

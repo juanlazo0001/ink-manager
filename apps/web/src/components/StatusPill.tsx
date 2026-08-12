@@ -32,6 +32,11 @@ const STATUS_TONE: Record<string, Tone> = {
   AWAITING_CLIENT_RESPONSE: 'warning',
   BUDGET_NEGOTIATION: 'warning',
   DEPOSIT_PENDING: 'highlight',
+  // Flash requests in Inquiries: action-needed stages, same tone family as
+  // CANDIDACY_REVIEW/AWAITING_CLIENT_RESPONSE above -- awaiting either the
+  // artist's/front-desk's review or the client's payment.
+  FLASH_PENDING_APPROVAL: 'warning',
+  FLASH_PAYMENT_PENDING: 'warning',
   SCHEDULING: 'success',
   WAITLISTED: 'success',
   CONFIRMED: 'success',
