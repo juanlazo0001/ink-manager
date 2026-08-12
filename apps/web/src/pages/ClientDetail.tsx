@@ -1463,10 +1463,10 @@ export default function ClientDetail() {
                           disabled={startingConversation}
                           aria-label="Message"
                           title="Message"
-                          className="flex shrink-0 items-center gap-2 rounded-full border border-border px-4 py-2 text-fg transition hover:bg-surface disabled:opacity-60"
+                          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface disabled:opacity-60 md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                         >
                           <MessageIcon className="h-4 w-4" />
-                          <span className="whitespace-nowrap text-sm font-semibold">Message</span>
+                          <span className="hidden whitespace-nowrap text-sm font-semibold md:inline">Message</span>
                         </button>
                       )}
                       {canGeneratePrefillLink && !isEnded && (
@@ -1476,10 +1476,10 @@ export default function ClientDetail() {
                             onClick={() => setShowCopyMenu((v) => !v)}
                             aria-label="Copy options"
                             title="Copy options"
-                            className="flex shrink-0 items-center gap-2 rounded-full border border-border px-4 py-2 text-fg transition hover:bg-surface"
+                            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                           >
                             <CopyIcon className="h-4 w-4" />
-                            <span className="whitespace-nowrap text-sm font-semibold">Copy</span>
+                            <span className="hidden whitespace-nowrap text-sm font-semibold md:inline">Copy</span>
                           </button>
                           {showCopyMenu && (
                             <>
@@ -1523,10 +1523,10 @@ export default function ClientDetail() {
                           onClick={startEditing}
                           aria-label="Edit"
                           title="Edit"
-                          className="flex shrink-0 items-center gap-2 rounded-full border border-border px-4 py-2 text-fg transition hover:bg-surface"
+                          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                         >
                           <PencilIcon className="h-4 w-4" />
-                          <span className="whitespace-nowrap text-sm font-semibold">Edit</span>
+                          <span className="hidden whitespace-nowrap text-sm font-semibold md:inline">Edit</span>
                         </button>
                       )}
                       {(canArchiveClient || isOwner) && (
@@ -1865,10 +1865,10 @@ export default function ClientDetail() {
                         onClick={() => setShowNewInquiry(true)}
                         aria-label="New Inquiry"
                         title="New Inquiry"
-                        className="flex shrink-0 items-center gap-2 rounded-full border border-border px-4 py-2 text-fg transition hover:bg-surface"
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                       >
                         <PlusIcon className="h-4 w-4" />
-                        <span className="whitespace-nowrap text-sm font-semibold">New Inquiry</span>
+                        <span className="hidden whitespace-nowrap text-sm font-semibold md:inline">New Inquiry</span>
                       </button>
                     </div>
                   ) : null
@@ -2014,10 +2014,10 @@ export default function ClientDetail() {
                       onClick={() => setShowIssueModal(true)}
                       aria-label="Issue Gift Card"
                       title="Issue Gift Card"
-                      className="flex shrink-0 items-center gap-2 rounded-full border border-border px-4 py-2 text-fg transition hover:bg-surface"
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border text-fg transition hover:bg-surface md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2"
                     >
                       <GiftCardIcon className="h-4 w-4" />
-                      <span className="whitespace-nowrap text-sm font-semibold">Issue Gift Card</span>
+                      <span className="hidden whitespace-nowrap text-sm font-semibold md:inline">Issue Gift Card</span>
                     </button>
                   )
                 }

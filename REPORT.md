@@ -18058,3 +18058,45 @@ VerifyTest`) deleted via the API afterward; no other data left behind.
 No schema changes. No database reset offered or accepted. No dev servers
 started/stopped -- the session's already-running API (port 4000) and web
 (port 5173) dev servers were reused throughout. No scratch scripts committed.
+
+# Icon-only-mobile pattern extended to all widget-header action buttons
+
+Follow-up to the validation pass above: Juan asked for the same icon-only-
+mobile / full-label-desktop treatment applied to the Send buttons to also
+cover every other icon+label action button in a widget or card header, citing
+"Issue Gift Card, New Inquiry" as examples.
+
+Scope was ambiguous enough to ask rather than guess, since two sibling button
+classes had *just* been given the opposite treatment earlier in this same
+session on explicit instruction: `Clients.tsx`'s page-level toolbar (Import
+Clients / Export CSV / Add Client -- fixed minutes earlier to stay wide and
+never shrink) and `ClientDetail.tsx`'s profile-card row (Message / Copy /
+Edit -- fixed in an even earlier session to nowrap+grow-wider). Confirmed
+with Juan: profile-card row and widget-header actions -- yes; page-level
+toolbar -- no, leave it wide.
+
+Used the Explore agent to inventory every icon+label pill button across the
+staff-facing app matching the un-migrated `flex items-center gap-2
+rounded-full ... px-4 py-2` shape (excluding anything already on the
+responsive pattern, excluding modals/wizards/public client-token pages,
+excluding toolbars). Verified the report by spot-checking a sample of the
+"0 in-scope" pages directly (`InquiryDetail.tsx`, `AppointmentDetail.tsx`,
+`GiftCardDetail.tsx`) -- confirmed their remaining `rounded-full border
+border-border px-4 py-2` buttons are genuinely text-only (no icon), correctly
+excluded, and every icon+label button already uses the responsive pattern
+from the send-channel-picker epic. Real in-scope set was small:
+`ClientDetail.tsx`'s Message, Copy, Edit (profile card), New Inquiry (Inquiries
+widget), and Issue Gift Card (Gift Cards widget) -- all converted to the same
+`h-11 w-11 shrink-0 ... md:h-auto md:w-auto md:gap-2 md:px-4 md:py-2` +
+`hidden ... md:inline` label pattern as `SendChannelButton`.
+
+Deliberately left `ConversationsPanel.tsx`'s "New Chat" button untouched --
+it's the lone primary action in a global side-panel header shared across
+every page (not one of several small actions competing for space in a
+per-item widget row), closer in kind to a toolbar button than to the crowded
+per-item action rows this pattern targets.
+
+`tsc -b --noEmit` clean. Verified live at 1440px (unchanged, full labels)
+and 390px (Message/Copy/Edit/New Inquiry/Issue Gift Card all render as
+icon-only circles, consistent with the already-fixed Send buttons sitting in
+the same rows) via Playwright MCP.
