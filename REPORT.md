@@ -18284,3 +18284,99 @@ for testing was restored to its original state, confirmed via a fresh
 page reload afterward, not just assumed. No dev servers started/
 stopped -- the session's already-running API and web dev servers were
 reused throughout.
+
+# Session-Plan display fix: self-heals the production desync
+
+Follow-up to the pre-merge Session-Plan/DepositForm linkage fix already
+live on `main`: a real production record (paid Session 1) still showed
+"Deposit not yet generated," since the guard/reconciliation fix only
+stops *new* desyncs -- the backfill for existing ones was never run
+against production. Investigated before touching anything, per
+instruction.
+
+## Findings (reported, then implemented on go-ahead)
+
+**The Session Plan widget's display derivation still trusted the
+stored link, not session number** -- confirmed by reading the code:
+`InquiryDetail.tsx`'s `depositStatus = !ps.depositForm ? 'not_generated'
+: ...` reads `plannedSessions[].depositForm`
+(`PlannedSession.depositFormId`), the exact FK the linkage bug desyncs.
+The hardened send guard (`lib/deposits.ts`) never trusted that FK --
+it does its own `findFirst({ where: { inquiryId, sessionNumber } })`
+lookup. The data needed to fix the display the same way was already in
+the same API response (`inquiry.depositForms`, the flat list the
+separate Deposit Forms widget already uses) -- a frontend-only fix,
+self-healing on load, no migration needed.
+
+The backfill script (`scripts/backfill-planned-session-deposit-linkage.ts`)
+already had everything asked for -- `--dry-run`, exact per-row
+before/after reporting, ambiguous-vs-unambiguous split, idempotent.
+Staged the production invocation for Juan to run himself
+(`DATABASE_URL="$DATABASE_PUBLIC_URL" npx tsx -r dotenv/config
+scripts/backfill-planned-session-deposit-linkage.ts --dry-run`, from
+`apps/api`) -- matching this repo's own established `DATABASE_PUBLIC_URL`
+pattern for external production access, no script changes needed.
+
+Confirmed the guard already blocks Send Deposit Form on the affected
+record today, independent of the badge -- both call sites
+(`handleSendDepositForm`, all 4 button locations) hit
+`POST /inquiries/:id/deposit-form` -> `generateAndSendDepositForm`,
+whose own by-sessionNumber lookup never reads anything the (buggy)
+display derives. The bug is cosmetic, not a double-charge risk.
+
+## Fix
+
+- **`InquiryDetail.tsx`'s Session Plan widget**: every `ps.depositForm`
+  read (status badge, scheduling-conflict `proposedStartAt`/`paidAt`
+  checks, the conflict banner's tentative-time display) replaced with a
+  `resolvedDepositForm` -- `inquiry.depositForms` filtered by
+  `sessionNumber`, sorted to the latest by `createdAt` (mirrors the
+  guard's own `orderBy: { createdAt: "desc" }`; two rows CAN
+  legitimately share a sessionNumber, exactly the shape the linkage bug
+  produces).
+- **A second call site with the identical bug, found by grepping every
+  `ps.depositForm` reference before considering this done, not just the
+  one named in the report**: `reviseLockedSessions` -- the guard that
+  stops a revision from silently altering or dropping an already-paid
+  session's hours/price -- also read `ps.depositForm?.paidAt` directly.
+  On a desynced record this would have let staff revise a genuinely
+  paid session as if it were untouched. Fixed with the same
+  by-sessionNumber `.some()` check against `inquiry.depositForms`.
+- **A third, read-only instance**: `ClientDetail.tsx`'s own per-project
+  session badges (`sessionDepositBadge(ps.depositForm)`, the client
+  profile's Projects widget) had the exact same bug. Fixed identically.
+- **Backend**: `INQUIRY_INCLUDE.depositForms` (`routes/inquiries.ts`)
+  and the equivalent select in `routes/clients.ts` both gained
+  `createdAt` -- needed for the latest-by-sessionNumber resolution,
+  wasn't selected before.
+
+## Live verification
+
+Reproduced the exact desync mechanism directly (not simulated): created
+a fresh inquiry with a real signed-and-paid `DepositForm{sessionNumber:
+1}`, then a `PlannedSession{sessionNumber: 1, depositFormId: null}` --
+the precise post-fix-but-never-backfilled shape a pre-fix production
+record is in. Screenshotted three surfaces, all self-healed with zero
+backfill run:
+- `InquiryDetail.tsx`'s Session Plan widget: Session 1 correctly shows
+  "Deposit paid" and offers "Book Appointment" (not "Send Deposit
+  Form"); Session 2 (genuinely untouched, no deposit form) correctly
+  still shows "Deposit not yet generated" -- confirms the fix doesn't
+  over-trigger.
+- The Revise Estimate modal: Session 1 renders as locked ("2-3 hrs ·
+  $400-$500 -- locked (deposit paid)", no editable fields), Session 2
+  stays fully editable.
+- `ClientDetail.tsx`'s Projects widget: same "Deposit paid"/"Deposit
+  not yet generated" split, matching the staff detail page exactly.
+
+`tsc -b && vite build` (web) and `tsc` (api) both clean.
+
+## CLAUDE.md hygiene
+
+No schema change, no migration. No database reset offered or accepted.
+Test data (1 client, 1 inquiry, 1 deposit form, 2 planned sessions)
+deleted immediately after verification. No dev servers started/
+stopped. Production backfill deliberately NOT run by this session --
+staged for Juan, per instruction, since this session has no production
+credentials and the task was explicit that he reviews the dry-run
+output before any live run.

@@ -50,6 +50,7 @@ interface DepositFormSummary {
   paidManually: boolean
   paidAt: string | null
   paidVia: 'STRIPE' | 'MANUAL' | null
+  createdAt: string
   giftCard: { id: string; code: string; amountCents: number; status: string } | null
 }
 
@@ -1936,7 +1937,15 @@ export default function ClientDetail() {
                           {project.plannedSessions.length > 0 ? (
                             <div className="mt-2 space-y-1.5">
                               {project.plannedSessions.map((ps) => {
-                                const depositBadge = sessionDepositBadge(ps.depositForm)
+                                // Session-Plan/DepositForm linkage bug fix: same
+                                // by-sessionNumber resolution as InquiryDetail.tsx's
+                                // Session Plan widget -- never ps.depositForm
+                                // (PlannedSession.depositFormId) alone.
+                                const resolvedDepositForm =
+                                  project.depositForms
+                                    .filter((df) => df.sessionNumber === ps.sessionNumber)
+                                    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] ?? null
+                                const depositBadge = sessionDepositBadge(resolvedDepositForm)
                                 const appointmentBadge = sessionAppointmentBadge(ps.appointmentId, ps.appointment)
                                 return (
                                   <div key={ps.id} className="flex flex-wrap items-center justify-between gap-2">

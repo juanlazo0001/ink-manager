@@ -711,6 +711,16 @@ const INQUIRY_INCLUDE = {
       paidVia: true,
       proposedStartAt: true,
       proposedEndAt: true,
+      // Session-Plan/DepositForm linkage bug fix: the Session Plan widget's
+      // display now resolves each session's deposit status by sessionNumber
+      // against this same flat list (never PlannedSession.depositFormId
+      // alone -- see lib/deposits.ts's own send-guard comment for why that
+      // FK can't be trusted), same as the guard already does server-side.
+      // Two rows CAN legitimately share a sessionNumber (an un-planned form
+      // generated before a plan existed, followed by a plan-generated one)
+      // -- createdAt is what lets the frontend pick the latest, matching
+      // the guard's own `orderBy: { createdAt: "desc" }`.
+      createdAt: true,
       giftCard: { select: { id: true, code: true, amountCents: true, status: true } },
     },
     orderBy: { sessionNumber: "asc" },

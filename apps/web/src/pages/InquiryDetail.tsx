@@ -185,6 +185,8 @@ interface Inquiry {
     }[]
   }[]
   // Package M: one per tattoo session, oldest first (Session 1, Session 2, ...).
+  // Two rows CAN share a sessionNumber (see the Session Plan widget's own
+  // resolution logic below) -- createdAt disambiguates which is latest.
   depositForms: {
     id: string
     token: string
@@ -198,6 +200,7 @@ interface Inquiry {
     signatureData: string | null
     paidManually: boolean
     paidAt: string | null
+    createdAt: string
     // Phase 7C: "STRIPE" | "MANUAL" once paid, null before that -- more
     // precise than paidManually alone (which stays the "is this paid"
     // flag every other consumer reads, true for both payment paths).
@@ -1069,7 +1072,15 @@ export default function InquiryDetail() {
   // sessions, or the whole plan on a project that never had one) stays
   // freely editable, same as the original pre-conversion flow.
   const reviseLockedSessions: LockedSession[] = (inquiry?.plannedSessions ?? [])
-    .filter((ps) => ps.depositForm?.paidAt != null || ps.appointment != null)
+    .filter((ps) => {
+      // Session-Plan/DepositForm linkage bug fix: same by-sessionNumber
+      // resolution as the Session Plan widget below -- ps.depositForm
+      // (PlannedSession.depositFormId) can be null even when this session's
+      // deposit is genuinely paid, which would have silently let a revision
+      // alter or drop a paid session's hours/price instead of locking it.
+      const isPaid = (inquiry?.depositForms ?? []).some((df) => df.sessionNumber === ps.sessionNumber && df.paidAt != null)
+      return isPaid || ps.appointment != null
+    })
     .map((ps) => ({
       sessionNumber: ps.sessionNumber,
       estimatedHoursMin: ps.estimatedHoursMin,
@@ -3462,7 +3473,25 @@ export default function InquiryDetail() {
                 <Widget key="session-plan" id="session-plan" title="Session Plan">
                   <div className="mt-4 divide-y divide-border">
                     {inquiry.plannedSessions.map((ps) => {
-                      const depositStatus = !ps.depositForm ? 'not_generated' : ps.depositForm.paidAt ? 'paid' : 'pending'
+                      // Session-Plan/DepositForm linkage bug fix: resolve by
+                      // sessionNumber against the same flat inquiry.depositForms
+                      // list the Deposit Forms widget already uses, never
+                      // ps.depositForm (PlannedSession.depositFormId) alone --
+                      // that FK can be null even when a real, already-paid
+                      // DepositForm exists for this exact session (a plan
+                      // declared/revised after an un-planned deposit was
+                      // already collected; see lib/deposits.ts's send-guard
+                      // comment). Picks the latest by createdAt when more
+                      // than one row shares this sessionNumber, matching the
+                      // guard's own `orderBy: { createdAt: "desc" }` exactly
+                      // -- a stale link can no longer make a paid session
+                      // display as "not yet generated," in production
+                      // included, without needing the one-time backfill.
+                      const resolvedDepositForm =
+                        inquiry.depositForms
+                          .filter((df) => df.sessionNumber === ps.sessionNumber)
+                          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] ?? null
+                      const depositStatus = !resolvedDepositForm ? 'not_generated' : resolvedDepositForm.paidAt ? 'paid' : 'pending'
                       const appointmentStatus = !ps.appointment
                         ? 'not_booked'
                         : ps.appointment.checkedOutAt
@@ -3478,13 +3507,13 @@ export default function InquiryDetail() {
                       const hasSchedulingConflict =
                         appointmentStatus === 'not_booked' &&
                         depositStatus === 'paid' &&
-                        !!ps.depositForm?.proposedStartAt &&
+                        !!resolvedDepositForm?.proposedStartAt &&
                         // Judgment call (see apps/api/src/lib/tasks/schedulingConflict.ts):
                         // excludes deposits paid before this feature shipped,
                         // which can only ever be an ordinary "not booked yet"
                         // project (nothing could have produced a real conflict
                         // before this code existed), not a genuine conflict.
-                        new Date(ps.depositForm!.paidAt!) >= AUTO_BOOK_SHIPPED_AT
+                        new Date(resolvedDepositForm!.paidAt!) >= AUTO_BOOK_SHIPPED_AT
                       const depositBadge =
                         depositStatus === 'paid'
                           ? { label: 'Deposit paid', className: 'border-success/30 bg-success/10 text-success' }
@@ -3527,7 +3556,7 @@ export default function InquiryDetail() {
 
                           {hasSchedulingConflict && (
                             <p className="mt-2 rounded-lg border border-danger/30 bg-danger/10 p-2.5 text-xs text-danger">
-                              The tentative time ({formatDateTime(ps.depositForm!.proposedStartAt!)}) was no longer
+                              The tentative time ({formatDateTime(resolvedDepositForm!.proposedStartAt!)}) was no longer
                               available when this deposit was paid, so it wasn't booked automatically. Pick a new
                               time below.
                             </p>

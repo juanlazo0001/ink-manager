@@ -406,6 +406,12 @@ router.get("/:id", async (req, res) => {
               paidManually: true,
               paidAt: true,
               paidVia: true,
+              // Session-Plan/DepositForm linkage bug fix: same by-sessionNumber
+              // resolution ClientDetail.tsx's session badges now use (never
+              // PlannedSession.depositFormId alone) -- createdAt disambiguates
+              // when two rows share a sessionNumber, matching the send guard's
+              // own `orderBy: { createdAt: "desc" }`.
+              createdAt: true,
               giftCard: { select: { id: true, code: true, amountCents: true, status: true } },
             },
             orderBy: { sessionNumber: "asc" },
