@@ -36,6 +36,7 @@ import { apiFetch, ApiError, downloadFile } from '../lib/api'
 import { formatDateTime, formatDuration, formatPhoneInput, formatStatus, describeInquiryStatus, formatPriceEstimate } from '../lib/format'
 import { describeSendResult, type ClientSendResult } from '../lib/sendResult'
 import SendChannelButton, { type SendChannel } from '../components/SendChannelButton'
+import FlashApprovalPanel from '../components/FlashApprovalPanel'
 import {
   AppointmentsIcon,
   ArrowLeftIcon,
@@ -149,10 +150,20 @@ interface Inquiry {
         id: string
         hourlyRateCents: number | null
         flatRateCents: number | null
-        reviewsFlashRequestsBeforeBooking: boolean
+        flashReviewMode: 'ARTIST' | 'STUDIO' | 'NONE'
         user: { name: string | null; email: string; avatarUrl: string | null }
       }
     | null
+  // View parity + studio-review mode: the shared FlashApprovalPanel needs
+  // the piece's own art/price/duration, which this page never fetched
+  // before (only placement/placementImages off the Inquiry itself).
+  flashPiece: {
+    title: string
+    imageUrl: string
+    priceCents: number
+    estimatedDurationMinutes: number
+    isOneOfOne: boolean
+  } | null
   appointment: { id: string; startTime: string; endTime: string; status: string } | null
   sessions: {
     id: string
@@ -849,7 +860,6 @@ export default function InquiryDetail() {
   const [approvingFlash, setApprovingFlash] = useState(false)
   const [flashActionError, setFlashActionError] = useState<string | null>(null)
   const [decliningFlash, setDecliningFlash] = useState(false)
-  const [flashDeclineReason, setFlashDeclineReason] = useState('')
 
   const [showReopenModal, setShowReopenModal] = useState(false)
   const [reopenStatus, setReopenStatus] = useState('')
@@ -1403,7 +1413,7 @@ export default function InquiryDetail() {
     }
   }
 
-  async function handleDeclineFlash() {
+  async function handleDeclineFlash(reason?: string) {
     if (!id) return
 
     setDecliningFlash(true)
@@ -1412,9 +1422,8 @@ export default function InquiryDetail() {
     try {
       await apiFetch(`/inquiries/${id}/flash/decline`, {
         method: 'POST',
-        body: JSON.stringify({ reason: flashDeclineReason.trim() || undefined }),
+        body: JSON.stringify({ reason }),
       })
-      setFlashDeclineReason('')
       invalidateInquiry()
     } catch (err) {
       setFlashActionError(err instanceof Error ? err.message : 'Failed to decline this request')
@@ -2325,63 +2334,25 @@ export default function InquiryDetail() {
 
               {inquiry.status === 'FLASH_PENDING_APPROVAL' && (
                 <Widget key="flash-approval" id="flash-approval" title="Flash Booking — Review">
-                  <p className="mt-1 text-sm text-fg-secondary">
-                    Submitted for {inquiry.description}.{' '}
-                    {inquiry.assignedArtist?.reviewsFlashRequestsBeforeBooking
-                      ? "This artist reviews their own flash requests -- it's on their own Tasks page, not actionable here."
-                      : 'Review the placement below, then approve to move this customer to payment, or decline to reopen the piece.'}
-                  </p>
+                  <p className="mt-1 text-sm text-fg-secondary">Submitted for {inquiry.description}.</p>
 
-                  <p className="mt-3 text-sm font-medium text-fg-secondary">Placement</p>
-                  <p className="mt-1 text-sm text-fg">{inquiry.placement}</p>
-
-                  {inquiry.placementImages.length > 0 && (
-                    <div className="mt-3 grid grid-cols-3 gap-3 sm:grid-cols-4">
-                      {inquiry.placementImages.map((url) => (
-                        <a key={url} href={url} target="_blank" rel="noopener noreferrer" className="block overflow-hidden rounded-lg border border-border">
-                          <img src={url} alt="Placement" className="aspect-square w-full object-cover" />
-                        </a>
-                      ))}
-                    </div>
-                  )}
-
-                  {!inquiry.assignedArtist?.reviewsFlashRequestsBeforeBooking && (canEditInquiry || canMarkLost) && (
-                    <div className="mt-4 space-y-3">
-                      {canMarkLost && (
-                        <input
-                          type="text"
-                          value={flashDeclineReason}
-                          onChange={(e) => setFlashDeclineReason(e.target.value)}
-                          placeholder="Decline reason (optional)"
-                          className="w-full max-w-sm rounded-lg border border-border bg-surface-inset px-3 py-1.5 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                        />
-                      )}
-                      <div className="flex flex-wrap gap-3">
-                        {canEditInquiry && (
-                          <button
-                            type="button"
-                            onClick={handleApproveFlash}
-                            disabled={approvingFlash || decliningFlash}
-                            className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
-                          >
-                            {approvingFlash ? 'Approving…' : 'Approve'}
-                          </button>
-                        )}
-                        {canMarkLost && (
-                          <button
-                            type="button"
-                            onClick={handleDeclineFlash}
-                            disabled={approvingFlash || decliningFlash}
-                            className="rounded-full border border-danger/40 px-4 py-2 text-sm font-medium text-danger transition hover:bg-danger/10 disabled:opacity-60"
-                          >
-                            {decliningFlash ? 'Declining…' : 'Decline'}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {flashActionError && <p className="mt-3 text-sm text-danger">{flashActionError}</p>}
+                  <div className="mt-3">
+                    <FlashApprovalPanel
+                      mode="studio"
+                      flashPiece={inquiry.flashPiece}
+                      placement={inquiry.placement}
+                      placementImages={inquiry.placementImages}
+                      artistOwnsDecision={inquiry.assignedArtist?.flashReviewMode === 'ARTIST'}
+                      canApprove={canEditInquiry}
+                      canDecline={canMarkLost}
+                      approving={approvingFlash}
+                      declining={decliningFlash}
+                      error={flashActionError}
+                      onApprove={handleApproveFlash}
+                      onDecline={handleDeclineFlash}
+                      allowDeclineReason
+                    />
+                  </div>
                 </Widget>
               )}
 

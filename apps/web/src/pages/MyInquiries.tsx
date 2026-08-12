@@ -378,6 +378,19 @@ export default function MyInquiries() {
                 // request -- staff's own Inquiries.tsx makes the same swap
                 // for its Projects tab date column.
                 const nextSession = kanbanTab === 'projects' ? findNextSession(inquiry.sessions) : null
+                // View parity (house rule, CLAUDE.md): same special-case
+                // redirect the Kanban board's onOpenCard already applies --
+                // a still-pending flash request hasn't converted to a
+                // project yet, so it needs its own dedicated, identity-only
+                // detail page instead of /my-inquiries/:id (which assumes
+                // post-conversion fields). Previously only Kanban had this;
+                // List always linked to /my-inquiries/:id regardless,
+                // landing an artist on a broken page for the exact same
+                // request Kanban opened correctly.
+                const detailHref =
+                  inquiry.channel === 'FLASH_GALLERY' && inquiry.status.startsWith('FLASH_')
+                    ? `/my-flash-requests/${inquiry.id}`
+                    : `/my-inquiries/${inquiry.id}`
                 return (
                 <div key={inquiry.id} className="rounded-2xl card-surface border border-border bg-surface p-5">
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -418,7 +431,7 @@ export default function MyInquiries() {
                         </>
                       )}
                       <Link
-                        to={`/my-inquiries/${inquiry.id}`}
+                        to={detailHref}
                         className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
                       >
                         View details

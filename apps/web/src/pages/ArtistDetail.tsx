@@ -38,7 +38,7 @@ interface Artist {
   // Client self-scheduling exploration: off by default -- see the schema
   // field's own comment on Artist for what turning it on does.
   allowsClientSelfScheduling: boolean
-  reviewsFlashRequestsBeforeBooking: boolean
+  flashReviewMode: 'ARTIST' | 'STUDIO' | 'NONE'
   publicSlug: string | null
   publishedAt: string | null
   artistServices: { serviceId: string }[]
@@ -64,6 +64,26 @@ interface ServiceOption {
   name: string
   isActive: boolean
 }
+
+const FLASH_REVIEW_MODE_OPTIONS: { value: 'ARTIST' | 'STUDIO' | 'NONE'; label: string; description: string }[] = [
+  {
+    value: 'ARTIST',
+    label: 'You review each request',
+    description:
+      "When someone requests one of your flash pieces, you review the placement photo and approve or decline it yourself before they can pay. This is yours alone to decide.",
+  },
+  {
+    value: 'STUDIO',
+    label: 'Front desk reviews each request',
+    description:
+      "Requests go to front desk's task queue instead of yours -- they review the placement and approve or decline before the client can pay.",
+  },
+  {
+    value: 'NONE',
+    label: 'No review -- instant booking',
+    description: 'No review step at all -- the payment link goes out right away.',
+  },
+]
 
 interface UploadItem {
   id: string
@@ -113,7 +133,7 @@ export default function ArtistDetail() {
   const [flatRate, setFlatRate] = useState('')
   const [schedulingBufferMinutes, setSchedulingBufferMinutes] = useState('')
   const [allowsClientSelfScheduling, setAllowsClientSelfScheduling] = useState(false)
-  const [reviewsFlashRequestsBeforeBooking, setReviewsFlashRequestsBeforeBooking] = useState(true)
+  const [flashReviewMode, setFlashReviewMode] = useState<'ARTIST' | 'STUDIO' | 'NONE'>('ARTIST')
   const [uploadingItems, setUploadingItems] = useState<UploadItem[]>([])
   const [copiedLinkKey, setCopiedLinkKey] = useState<'public' | 'flash' | null>(null)
 
@@ -201,7 +221,7 @@ export default function ArtistDetail() {
       artist.schedulingBufferMinutes != null ? artist.schedulingBufferMinutes.toString() : '',
     )
     setAllowsClientSelfScheduling(artist.allowsClientSelfScheduling)
-    setReviewsFlashRequestsBeforeBooking(artist.reviewsFlashRequestsBeforeBooking)
+    setFlashReviewMode(artist.flashReviewMode)
     setScheduleDays(scheduleBlocksToDays(artist.preferredSchedule))
   }
 
@@ -340,7 +360,7 @@ export default function ArtistDetail() {
           allowsClientSelfScheduling,
           // Self-only on the backend (403s for anyone else) -- omitted
           // entirely for a staff caller rather than sent and rejected.
-          ...(isSelf ? { reviewsFlashRequestsBeforeBooking } : {}),
+          ...(isSelf ? { flashReviewMode } : {}),
         }),
       })
 
@@ -633,29 +653,41 @@ export default function ArtistDetail() {
                   )}
                 </div>
 
-                {/* Flash requests + artist review toggle: self-only, no
-                    staff branch at all -- unlike self-scheduling just
-                    above, this isn't a studio booking policy, it's the
-                    artist's own call on their own art (same "no staff
-                    bypass exists" shape as publishing their public page).
-                    Staff viewing someone else's profile simply never sees
-                    this block. */}
+                {/* Flash review mode expansion: self-only, no staff branch
+                    at all -- unlike self-scheduling just above, this isn't
+                    a studio booking policy, it's the artist's own call on
+                    their own art (same "no staff bypass exists" shape as
+                    publishing their public page), including the choice to
+                    let the studio review it instead. Staff viewing someone
+                    else's profile simply never sees this block. "Yours
+                    alone" language stays scoped to the ARTIST option only
+                    -- never true once STUDIO is picked. */}
                 {isSelf && (
                   <div className="mt-4 border-t border-border pt-4">
-                    <p className="text-xs text-fg-muted">
-                      When someone requests one of your flash pieces, review the placement photo and approve or
-                      decline it yourself before they can pay. Off means instant booking -- no review step, the
-                      payment link goes out right away.
-                    </p>
-                    <label className="mt-3 flex items-center gap-2 text-sm text-fg">
-                      <input
-                        type="checkbox"
-                        checked={reviewsFlashRequestsBeforeBooking}
-                        onChange={(e) => setReviewsFlashRequestsBeforeBooking(e.target.checked)}
-                        className="h-4 w-4 rounded border-border text-accent focus:ring-accent"
-                      />
-                      Review flash requests before booking
-                    </label>
+                    <p className="text-xs font-medium uppercase tracking-wider text-fg-muted">Flash Booking Review</p>
+                    <div className="mt-3 space-y-2">
+                      {FLASH_REVIEW_MODE_OPTIONS.map((option) => (
+                        <label
+                          key={option.value}
+                          className={[
+                            'flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 transition',
+                            flashReviewMode === option.value ? 'border-accent bg-accent/5' : 'border-border hover:bg-surface',
+                          ].join(' ')}
+                        >
+                          <input
+                            type="radio"
+                            name="flashReviewMode"
+                            checked={flashReviewMode === option.value}
+                            onChange={() => setFlashReviewMode(option.value)}
+                            className="mt-0.5 h-4 w-4 border-border text-accent focus:ring-accent"
+                          />
+                          <span>
+                            <span className="block text-sm font-medium text-fg">{option.label}</span>
+                            <span className="block text-xs text-fg-muted">{option.description}</span>
+                          </span>
+                        </label>
+                      ))}
+                    </div>
                   </div>
                 )}
               </Widget>

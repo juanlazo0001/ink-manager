@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Link, Navigate, useParams } from 'react-router-dom'
+import { useState, type FormEvent } from 'react'
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { apiFetch, ApiError, downloadFile } from '../lib/api'
 import { formatDateTime, formatPriceEstimate, formatStatus } from '../lib/format'
@@ -8,6 +8,7 @@ import { sanitizeHtml } from '../lib/sanitizeHtml'
 import { deriveProjectStage, PROJECT_STAGE_LABELS } from '../lib/kanban'
 import { useEffectiveUser } from '../context/useEffectiveUser'
 import StatusPill from '../components/StatusPill'
+import Modal from '../components/Modal'
 import { ArrowLeftIcon, DocumentIcon, DownloadIcon, GiftCardIcon } from '../components/icons'
 import { AttachmentChip } from '../components/NotesSection'
 import type { NoteAttachment } from '../lib/cloudinary'
@@ -161,6 +162,7 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
 export default function MyProjectDetail() {
   const { id } = useParams<{ id: string }>()
   const user = useEffectiveUser()
+  const navigate = useNavigate()
 
   // Artist mobility: a solo studio's owner is role OWNER with their own
   // attached Artist profile (soloStudio.ts), not role ARTIST -- this page
@@ -195,6 +197,38 @@ export default function MyProjectDetail() {
     queryFn: () => apiFetch<Project>(`/inquiries/assigned-to-me/${id}`),
     enabled: !!id && canViewOwnAssignments,
   })
+
+  // View parity (house rule, CLAUDE.md): ARTIST_ASSIGNED's Decline was
+  // reachable only from MyInquiries.tsx's List row -- Kanban has no drag
+  // gesture for it (declining isn't a forward step, see that page's own
+  // comment) and clicking the card through to this same detail page landed
+  // here with no way to act either. Approve stays List/Kanban-drag only
+  // (that modal's full estimate-entry form lives in MyInquiries.tsx and
+  // Kanban's drag already opens it) -- this is just the missing half.
+  const [showDeclineModal, setShowDeclineModal] = useState(false)
+  const [declineNote, setDeclineNote] = useState('')
+  const [declineError, setDeclineError] = useState<string | null>(null)
+  const [declineSubmitting, setDeclineSubmitting] = useState(false)
+
+  async function handleDeclineSubmit(event: FormEvent) {
+    event.preventDefault()
+    if (!id) return
+
+    setDeclineError(null)
+    setDeclineSubmitting(true)
+
+    try {
+      await apiFetch(`/inquiries/${id}/respond`, {
+        method: 'PATCH',
+        body: JSON.stringify({ decision: 'DECLINE', declineNote }),
+      })
+      navigate(user?.role === 'OWNER' ? '/inquiries' : '/my-inquiries')
+    } catch (err) {
+      setDeclineError(err instanceof Error ? err.message : 'Failed to decline inquiry')
+    } finally {
+      setDeclineSubmitting(false)
+    }
+  }
 
   if (user && !canViewOwnAssignments) {
     return <Navigate to="/dashboard" replace />
@@ -261,10 +295,25 @@ export default function MyProjectDetail() {
                   </span>
                 )}
               </div>
-              <StatusPill
-                status={projectStage ?? project.status}
-                label={projectStage ? PROJECT_STAGE_LABELS[projectStage] : undefined}
-              />
+              <div className="flex shrink-0 items-center gap-3">
+                {project.status === 'ARTIST_ASSIGNED' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDeclineNote('')
+                      setDeclineError(null)
+                      setShowDeclineModal(true)
+                    }}
+                    className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface"
+                  >
+                    Decline
+                  </button>
+                )}
+                <StatusPill
+                  status={projectStage ?? project.status}
+                  label={projectStage ? PROJECT_STAGE_LABELS[projectStage] : undefined}
+                />
+              </div>
             </div>
           </div>
 
@@ -424,6 +473,44 @@ export default function MyProjectDetail() {
           </Card>
           )}
         </div>
+      )}
+
+      {showDeclineModal && project && (
+        <Modal
+          title={`Decline — ${project.client.firstName} ${project.client.lastName}`}
+          onClose={() => setShowDeclineModal(false)}
+        >
+          <form onSubmit={handleDeclineSubmit}>
+            {declineError && (
+              <div className="mb-4 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+                {declineError}
+              </div>
+            )}
+
+            <label htmlFor="declineNote" className="mb-1 block text-sm font-medium text-fg-secondary">
+              Why are you declining?
+            </label>
+            <textarea
+              id="declineNote"
+              required
+              rows={4}
+              value={declineNote}
+              onChange={(event) => setDeclineNote(event.target.value)}
+              className="w-full rounded-lg border border-border bg-surface-inset px-3 py-2 text-sm text-fg focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+            />
+            <p className="mt-1 text-xs text-fg-muted">
+              This goes back to staff so they can reassign it — the inquiry returns to the New pool.
+            </p>
+
+            <button
+              type="submit"
+              disabled={declineSubmitting}
+              className="mt-4 w-full rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg transition hover:bg-accent-hover disabled:opacity-60"
+            >
+              {declineSubmitting ? 'Declining…' : 'Confirm Decline'}
+            </button>
+          </form>
+        </Modal>
       )}
     </div>
   )

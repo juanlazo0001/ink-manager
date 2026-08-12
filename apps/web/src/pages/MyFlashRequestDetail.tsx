@@ -6,6 +6,7 @@ import { tasksQueryKey } from '../lib/queryKeys'
 import { useAuth } from '../context/useAuth'
 import { useUserProfile } from '../context/useUserProfile'
 import { formatDateTime } from '../lib/format'
+import FlashApprovalPanel, { type FlashApprovalMode } from '../components/FlashApprovalPanel'
 
 interface FlashRequestDetail {
   id: string
@@ -22,6 +23,8 @@ interface FlashRequestDetail {
     isOneOfOne: boolean
   } | null
 }
+
+const MODE: FlashApprovalMode = 'artist'
 
 // Same profile-loading race MyTransferDetail.tsx's own comment documents --
 // gating on `user` alone (before useUserProfile()'s fetch has resolved)
@@ -40,12 +43,12 @@ export default function MyFlashRequestDetail() {
     enabled: !!id && isArtist,
   })
 
-  const [responding, setResponding] = useState(false)
+  const [respondingAction, setRespondingAction] = useState<'approve' | 'decline' | null>(null)
   const [responseError, setResponseError] = useState<string | null>(null)
 
   async function respond(action: 'approve' | 'decline') {
     if (!id) return
-    setResponding(true)
+    setRespondingAction(action)
     setResponseError(null)
     try {
       await apiFetch(`/inquiries/${id}/flash/${action}`, { method: 'POST' })
@@ -54,7 +57,7 @@ export default function MyFlashRequestDetail() {
     } catch (err) {
       setResponseError(err instanceof ApiError ? err.message : `Failed to ${action} this request`)
     } finally {
-      setResponding(false)
+      setRespondingAction(null)
     }
   }
 
@@ -89,37 +92,7 @@ export default function MyFlashRequestDetail() {
               wants to book{' '}
               <strong>{request.flashPiece?.title ?? 'this flash piece'}</strong>.
             </p>
-            <p className="mt-1 text-xs text-fg-muted">
-              This is yours alone to decide -- your response, nobody else's. Requested{' '}
-              {formatDateTime(request.createdAt)}.
-            </p>
-
-            {request.flashPiece && (
-              <div className="mt-4 flex items-start gap-4">
-                <img
-                  src={request.flashPiece.imageUrl}
-                  alt={request.flashPiece.title}
-                  className="h-24 w-24 shrink-0 rounded-lg border border-border object-cover"
-                />
-                <div className="text-sm text-fg-secondary">
-                  <p className="text-fg">${(request.flashPiece.priceCents / 100).toFixed(2)}</p>
-                  <p>~{Math.round((request.flashPiece.estimatedDurationMinutes / 60) * 10) / 10} hours</p>
-                  {request.flashPiece.isOneOfOne && <p className="text-xs text-fg-muted">One-of-one piece</p>}
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="rounded-lg border border-border bg-surface-inset p-4 text-sm">
-            <p className="mb-2 text-xs font-medium uppercase tracking-wider text-fg-muted">Placement</p>
-            <p className="text-fg-secondary">{request.placement}</p>
-            {request.placementImages.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {request.placementImages.map((url) => (
-                  <img key={url} src={url} alt="Placement" className="h-20 w-20 rounded-lg border border-border object-cover" />
-                ))}
-              </div>
-            )}
+            <p className="mt-1 text-xs text-fg-muted">Requested {formatDateTime(request.createdAt)}.</p>
           </div>
 
           {request.status === 'FLASH_PAYMENT_PENDING' && (
@@ -133,30 +106,21 @@ export default function MyFlashRequestDetail() {
             </div>
           )}
 
-          {responseError && (
-            <div className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
-              {responseError}
-            </div>
-          )}
-
           {request.status === 'FLASH_PENDING_APPROVAL' && (
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => respond('approve')}
-                disabled={responding}
-                className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-bg transition hover:bg-accent-hover disabled:opacity-60"
-              >
-                {responding ? 'Saving…' : 'Approve'}
-              </button>
-              <button
-                type="button"
-                onClick={() => respond('decline')}
-                disabled={responding}
-                className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-fg transition hover:bg-surface disabled:opacity-60"
-              >
-                {responding ? 'Saving…' : 'Decline'}
-              </button>
+            <div className="rounded-lg border border-border bg-surface-inset p-4">
+              <FlashApprovalPanel
+                mode={MODE}
+                flashPiece={request.flashPiece}
+                placement={request.placement}
+                placementImages={request.placementImages}
+                canApprove
+                canDecline
+                approving={respondingAction === 'approve'}
+                declining={respondingAction === 'decline'}
+                error={responseError}
+                onApprove={() => respond('approve')}
+                onDecline={() => respond('decline')}
+              />
             </div>
           )}
         </div>

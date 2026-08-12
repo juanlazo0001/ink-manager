@@ -601,18 +601,17 @@ model Artist {
   // seeing their calendar at all.
   allowsClientSelfScheduling Boolean @default(false)
 
-  // Flash requests + artist review toggle: whether a flash-gallery booking
-  // request for THIS artist's own pieces needs their own approve/decline
-  // before the client can pay -- artist-owned, full stop, same
-  // "no staff bypass exists" shape as publishedAt below (NOT
-  // allowsClientSelfScheduling's studio-manageable pattern above, since
-  // this isn't a studio booking-policy switch, it's the artist's own call
-  // on their own art). Default true preserves today's only behavior
-  // (front desk approval was previously the sole, mandatory gate) so no
-  // existing artist sees a silent change -- the gate just moves to them.
-  // false skips straight to FLASH_PAYMENT_PENDING at request time (see
-  // routes/flashPieces.ts's POST /:id/request).
-  reviewsFlashRequestsBeforeBooking Boolean @default(true)
+  // Flash requests + review mode expansion: who reviews a flash-gallery
+  // booking request for THIS artist's own pieces before the client can pay
+  // -- artist-owned, full stop, same "no staff bypass exists" shape as
+  // publishedAt below (NOT allowsClientSelfScheduling's studio-manageable
+  // pattern above, since this isn't a studio booking-policy switch, it's
+  // the artist's own call on their own art -- including the choice to let
+  // the studio review it instead). Was a Boolean (reviewsFlashRequestsBeforeBooking);
+  // migrated true -> ARTIST, false -> NONE, preserving both existing
+  // behaviors exactly. STUDIO is the new third option -- see
+  // FlashReviewMode's own comment.
+  flashReviewMode FlashReviewMode @default(ARTIST)
 
   // Onboarding wizard eligibility gate. Null means "hasn't finished or
   // explicitly skipped the first-login wizard yet" -- the web app shows it
@@ -867,6 +866,19 @@ model ArtistMembershipInvite {
 
   @@index([studioId])
   @@index([email])
+}
+
+// View parity + studio-review mode: who reviews a flash-gallery booking
+// request for THIS artist's own pieces before the client can pay.
+// ARTIST/NONE are the exact same two behaviors reviewsFlashRequestsBeforeBooking
+// (true/false) always had; STUDIO is new -- the request stays at
+// FLASH_PENDING_APPROVAL for front desk to approve/decline instead of the
+// artist, matrix-gated the same way appointment approvals are (see
+// POST /:id/flash/approve and /decline in routes/inquiries.ts).
+enum FlashReviewMode {
+  ARTIST
+  STUDIO
+  NONE
 }
 
 enum FlashPieceStatus {

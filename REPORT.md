@@ -18100,3 +18100,187 @@ per-item action rows this pattern targets.
 and 390px (Message/Copy/Edit/New Inquiry/Issue Gift Card all render as
 icon-only circles, consistent with the already-fixed Send buttons sitting in
 the same rows) via Playwright MCP.
+
+# Flash review: view parity + studio-review mode
+
+## Context
+
+Juan's spec: a house rule ("List and Kanban are VIEWS of the same
+entities -- every capability available from one must be available from
+the other; capabilities attach to the entity, never the navigation
+path"), a parity investigation/fix, and expanding the per-artist flash
+review toggle into a three-mode setting (ARTIST / STUDIO / NONE). Sized
+this as a plan-mode task given the schema migration and permission-model
+work; plan approved before implementation.
+
+Added the house rule verbatim to `CLAUDE.md` under a new `## Views`
+section.
+
+## Part 1 -- parity investigation and fix
+
+**What the investigation actually found, vs. the stated hypothesis.**
+Juan's hypothesis was "a Kanban-only request panel vs standard
+InquiryDetail." Reading the code first (not assumed) found something
+more precise: **staff side has no bug at all** -- `Inquiries.tsx`'s List
+and Kanban already share one `openInquiry(id)` function, both landing on
+`/inquiries/:id`. That page already had a "Flash Booking -- Review"
+widget for `FLASH_PENDING_APPROVAL`, already correctly gated
+(`canEditInquiry`/`canMarkLost` when front desk owns it; a read-only
+message when the artist does) -- the real, working front-desk review UI,
+just missing the flash piece's own art/price/duration display (only had
+placement + images).
+
+**The real bug was on the artist's own board** (`MyInquiries.tsx`,
+which has its own List/Kanban toggle). Kanban's `onOpenCard` already
+special-cased a `FLASH_PENDING_APPROVAL`/`FLASH_PAYMENT_PENDING` +
+`FLASH_GALLERY` card, redirecting to `/my-flash-requests/:id`
+(`MyFlashRequestDetail.tsx`, a deliberately separate, identity-only-gated
+route -- necessary because the normal `assigned-to-me/:id` route is
+matrix-gated on `inquiries.view`, which some studios have off for
+ARTIST, and flash approve/decline is meant to be inalienable). **List's
+"View details" link had no such special case** -- always pointed to
+`/my-inquiries/:id` (`MyProjectDetail.tsx`), whose own comment says it
+"assumes post-conversion fields." Same artist, same request: Kanban
+worked, List didn't. Fixed by applying Kanban's exact redirect condition
+to List's link target too.
+
+**Second gap, found doing the "diff everything else" pass Part 1 step 3
+asked for**: `ARTIST_ASSIGNED` Decline was *also* List-only -- Kanban has
+no drag gesture for declining (not a forward step, by design) and the
+shared click-through page (`MyProjectDetail.tsx`) had zero decline UI at
+all, so a Kanban-only artist had no way to decline an assignment,
+period. Fixed by adding a self-contained Decline button + reason modal
+directly to `MyProjectDetail.tsx` (mirroring `MyInquiries.tsx`'s
+existing modal exactly), and widened its backing route
+(`PATCH /inquiries/:id/respond`) from `requireRole(Role.ARTIST)` to
+`requireRole(Role.ARTIST, Role.OWNER)`, matching the sibling
+`GET /assigned-to-me/:id` route's own existing precedent for a solo
+studio's owner-artist.
+
+**Converged the approval UI into one shared component**, not per-view
+copies: new `apps/web/src/components/FlashApprovalPanel.tsx` (art/price/
+duration/one-of-one badge, placement + images, Approve/Decline,
+mode-aware copy). Mounted in the two places that had near-duplicate
+inline versions of this UI -- `MyFlashRequestDetail.tsx` (artist,
+`mode="artist"`) and `InquiryDetail.tsx`'s existing widget (staff,
+`mode="studio"`) -- replacing that inline JSX in both. Deliberately
+*not* a single shared route: artist and staff reach this entity through
+two legitimately different, pre-existing permission surfaces
+(identity-only vs. matrix-gated OWNER/FRONT_DESK), which is real
+architecture, not the bug. `INQUIRY_INCLUDE` gained `flashPiece` (never
+selected before), so staff now sees the piece's own art/price/duration
+too -- a genuine capability upgrade from the convergence, not just a
+refactor.
+
+## Part 2 -- review mode expansion
+
+**Load-bearing finding that reshaped the estimate**: the "studio
+reviews" path was already mostly built. `flashRequestPendingSource`
+(front-desk task queue) and the front-desk-actionable branch of
+`POST /:id/flash/approve`/`/decline` already existed -- both explicitly
+documented in their own comments as permanently dead code, because
+today's boolean's OFF state meant *instant auto-approval*, never
+front-desk review. Part 2 was substantially about giving that dead code
+a real path in, not building a new subsystem.
+
+- **Schema**: `Artist.reviewsFlashRequestsBeforeBooking Boolean` ->
+  `Artist.flashReviewMode FlashReviewMode` (new enum: `ARTIST | STUDIO |
+  NONE`). Migration (`prisma/migrations/20260812150000_flash_review_mode`)
+  generated via `prisma migrate diff` per CLAUDE.md, hand-edited to add
+  the column nullable first, backfill (`true -> ARTIST`, `false ->
+  NONE`) via a `CASE WHEN` `UPDATE`, then set `NOT NULL` + default and
+  drop the old column -- applied via `prisma migrate deploy`. Verified
+  the backfill directly against the dev DB afterward: all 74 existing
+  artists landed on `ARTIST` (none had the boolean off).
+- **Backend**: `POST /flash-pieces/:id/request`'s two-way if/else became
+  a three-way switch (STUDIO's new branch stays at
+  `FLASH_PENDING_APPROVAL` and emits `task.changed` for a live front-desk
+  update, matching the convention `routes/tasks.ts`'s own mutation
+  routes already use). `POST /:id/flash/approve` and `/decline`: the
+  front-desk branch swapped `hasPermissionAt` for
+  `hasPermissionOrSoloArtistAt` -- the exact primitive
+  `appointments.ts`'s own `POST /:id/approve` uses for "matrix-gated, but
+  a genuine solo studio's owner-artist still can," reused rather than
+  hand-rolled, since this is what makes the solo-studio verification
+  below trustworthy rather than coincidental. Both handlers now also
+  emit `task.changed` so an approved/declined front-desk task disappears
+  live for every staff member, not just whoever acted.
+  `flashRequestPending.ts`/`flashRequestArtistPending.ts`: swapped
+  filters for the enum equivalent -- `flashRequestArtistPending.ts`
+  actually needed a NEW filter it never had before (previously
+  unconditional on `assignedArtistId` alone, safe only because
+  `FLASH_PENDING_APPROVAL` could never exist for a non-ARTIST-mode
+  artist under the old binary model; now it genuinely can, via STUDIO,
+  so without the added `flashReviewMode: ARTIST` filter an artist would
+  have started seeing STUDIO-owned requests duplicated into their own
+  personal queue).
+- **`ArtistDetail.tsx`**: checkbox replaced with a 3-option radio-card
+  picker, self-only editable (unchanged gate), "yours alone" copy scoped
+  to the ARTIST option only.
+- **i18n**: per explicit confirmation, staff surfaces stay English-only
+  (matching every other staff page in this codebase -- no
+  `t()`/`useTranslations` precedent broken). Verified
+  `FlashPublicGallery.tsx`'s existing bilingual confirmation copy
+  (`"{{studioName}} will review your placement..."`) already reads
+  correctly for both ARTIST and STUDIO without any new keys, since the
+  client never needs to know *who* reviews it.
+
+## Part 3 -- verification (live, via Playwright MCP + direct API calls)
+
+All three modes tested end-to-end against the real dev DB, with cleanup
+after each (test clients/inquiries deleted, flash pieces reset to
+AVAILABLE, both test artists' modes restored to ARTIST, and the
+dev-studio `inquiries.view`/Artist permission -- off by default in this
+fixture, temporarily enabled to unblock artist-role List/Kanban testing
+-- restored to its original off state).
+
+- **List vs. Kanban parity**: same pending flash request opened from
+  the artist's List and Kanban both landed on the identical
+  `/my-flash-requests/:id` page (screenshotted both paths, pixel-
+  identical). Staff List click-through confirmed working end-to-end.
+- **Mode ARTIST**: artist saw the task on their own Tasks page with
+  working Approve/Decline (via `FlashApprovalPanel`, "yours alone to
+  decide" copy); staff opening the same inquiry from their own List saw
+  it read-only ("This artist reviews their own flash requests...", zero
+  action buttons).
+- **Mode STUDIO**: submitting a request created a live front-desk task
+  (no reload needed, confirmed via the `task.changed` realtime
+  invalidation); staff approved it from the List-opened
+  `/inquiries/:id` detail, booking moved to `FLASH_PAYMENT_PENDING`; a
+  raw authenticated `POST /:id/flash/approve` from the ARTIST-role
+  owner of that same piece (no `inquiries.edit` grant) returned a real
+  HTTP 403, not just a UI-hidden button.
+- **Mode NONE**: request returned `instantlyApproved: true` and the
+  inquiry's status was `FLASH_PAYMENT_PENDING` immediately -- it never
+  passed through `FLASH_PENDING_APPROVAL`, so no task was ever created
+  anywhere to find.
+- **Solo studio-of-one**: found a genuine pre-existing solo studio
+  fixture (`isSoloStudio: true`, OWNER with an attached Artist) missing
+  basic setup (no Service/IntakeForm) unrelated to this task -- rather
+  than building that out through the UI, constructed the
+  `FLASH_PENDING_APPROVAL` inquiry directly via Prisma to isolate
+  exactly the permission logic under test. Confirmed via raw
+  authenticated HTTP that the owner-artist could approve successfully
+  in **both** ARTIST mode (via the identity-only bypass) and STUDIO mode
+  (via the new `hasPermissionOrSoloArtistAt` bypass) -- both returned
+  200 and the same `FLASH_PAYMENT_PENDING` transition, no weirdness.
+
+`tsc -b && vite build` (web) and `tsc` (api) both clean -- the full
+production builds CLAUDE.md's "Trusting a build" section calls for, not
+just `--noEmit`.
+
+## CLAUDE.md hygiene
+
+Migration generated via `prisma migrate diff` + hand-edited backfill,
+applied via `prisma migrate deploy` -- `prisma migrate dev` never
+invoked. No database reset offered or accepted. All scratch verification
+scripts (solo-studio fixture setup, cleanup, backfill spot-check) lived
+briefly in `apps/api/` and were deleted immediately after use. Every
+piece of test data this session created (5 dev-studio test clients/
+inquiries, 1 solo-studio test client/inquiry/flash piece/service/intake
+form) was deleted afterward, confirmed via a follow-up query showing
+zero stragglers. The dev-studio permission toggle temporarily flipped
+for testing was restored to its original state, confirmed via a fresh
+page reload afterward, not just assumed. No dev servers started/
+stopped -- the session's already-running API and web dev servers were
+reused throughout.

@@ -5,6 +5,7 @@ import {
   AppointmentStatus,
   Channel,
   FlashPieceStatus,
+  FlashReviewMode,
   InquiryStatus,
   MessageChannel,
   MessageDirection,
@@ -31,7 +32,12 @@ import { resolveRequiredDepositCents, resolveDepositTiers } from "../lib/deposit
 import { generateAndSendDepositForm } from "../lib/deposits";
 import { generateAndSendEstimate, saveEstimateDraft } from "../lib/estimates";
 import { generateUniqueReferralCode } from "../lib/referrals";
-import { studioHasActiveMembership, callerBelongsToStudio, hasPermissionAt } from "../lib/artistAccess";
+import {
+  studioHasActiveMembership,
+  callerBelongsToStudio,
+  hasPermissionAt,
+  hasPermissionOrSoloArtistAt,
+} from "../lib/artistAccess";
 import {
   applyArtistFieldVisibility,
   getArtistFieldVisibility,
@@ -592,14 +598,21 @@ const INQUIRY_INCLUDE = {
       id: true,
       hourlyRateCents: true,
       flatRateCents: true,
-      // Flash requests + artist review toggle: InquiryDetail.tsx's own
-      // front-desk flash-approval widget needs this to know whether ITS
-      // Approve/Decline buttons are actually actionable -- when this
-      // artist owns the decision (see routes/inquiries.ts's own
-      // POST /:id/flash/approve comment), front desk's click would 403.
-      reviewsFlashRequestsBeforeBooking: true,
+      // Flash requests + review mode expansion: InquiryDetail.tsx's own
+      // FlashApprovalPanel needs this to know whether ITS Approve/Decline
+      // buttons are actually actionable -- when this artist's own mode is
+      // ARTIST, front desk's click would 403 (see this file's own
+      // POST /:id/flash/approve comment).
+      flashReviewMode: true,
       user: { select: { id: true, name: true, email: true, avatarUrl: true } },
     },
+  },
+  // View parity + studio-review mode: InquiryDetail.tsx's flash-approval
+  // widget now renders the same FlashApprovalPanel MyFlashRequestDetail.tsx
+  // does (art/price/duration), which needs this -- previously the widget
+  // only had placement/placementImages off the Inquiry itself.
+  flashPiece: {
+    select: { title: true, imageUrl: true, priceCents: true, estimatedDurationMinutes: true, isOneOfOne: true },
   },
   appointment: { select: { id: true, startTime: true, endTime: true, status: true } },
   // UI-1 §3: every appointment/session under this project (1:many via
@@ -1473,7 +1486,13 @@ const DECISIONS = ["APPROVE", "DECLINE"] as const;
 // artist's own estimate and hands it back to staff (AWAITING_CLIENT_RESPONSE).
 // DECLINE unassigns it and puts it back in the pool (NEW) with a note for
 // staff explaining why, so it can be reassigned.
-router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST), async (req, res) => {
+// View parity: widened to also allow OWNER, same as GET /assigned-to-me/:id
+// just above -- a solo studio's owner is role OWNER with their own attached
+// Artist profile, and MyProjectDetail.tsx (which this endpoint backs,
+// including its own newly-added Decline button) is already reachable by
+// that role for a guest-studio assignment. The artist!.id scoping below
+// already narrows correctly regardless of which role got here.
+router.patch("/:id/respond", requireAuth, requireRole(Role.ARTIST, Role.OWNER), async (req, res) => {
   const id = req.params.id as string;
   const { decision, priceEstimateLow, priceEstimateHigh, timeEstimateHoursMin, timeEstimateHoursMax, sessions, declineNote } =
     req.body ?? {};
@@ -2352,28 +2371,29 @@ router.post("/:id/mark-lost", requireAuth, async (req, res) => {
   res.json(updated);
 });
 
-// Flash gallery + artist review toggle: review of a FLASH_PENDING_APPROVAL
+// Flash gallery + review mode expansion: review of a FLASH_PENDING_APPROVAL
 // inquiry (the placement photo/description + customer info submitted
 // through POST /flash-pieces/:id/request). Approve moves straight to
 // FLASH_PAYMENT_PENDING and generates the payment link (see
 // lib/flashApproval.ts's approveFlashRequest, shared with the instant-
 // booking auto-approve path on the request route itself).
 //
-// Who may call this: if the flash piece's OWN artist has
-// reviewsFlashRequestsBeforeBooking on, this is THEIRS alone -- an
-// unconditional identity check, no permission matrix involved at all,
-// same "inalienable, no staff bypass" shape as the transfer-to-artist
-// epic's own accept/decline. That artist's review being off means their
-// requests never reach this status in the first place (auto-approved at
-// creation), so the pre-existing inquiries.edit-gated staff path below is
-// unreachable by construction today -- left in rather than removed, since
-// it's still a correct fallback if that invariant is ever violated.
+// Who may call this: if the flash piece's OWN artist has flashReviewMode
+// ARTIST, this is THEIRS alone -- an unconditional identity check, no
+// permission matrix involved at all, same "inalienable, no staff bypass"
+// shape as the transfer-to-artist epic's own accept/decline. Otherwise
+// (STUDIO) it's front desk's call, matrix-gated exactly like appointment
+// approvals -- hasPermissionOrSoloArtistAt + the same "only your own"
+// narrowing appointments.ts's own POST /:id/approve applies for a genuine
+// solo studio's owner-artist (there's no OWNER/FRONT_DESK gatekeeper left
+// to protect there). NONE never reaches FLASH_PENDING_APPROVAL at all
+// (auto-approved at creation).
 router.post("/:id/flash/approve", requireAuth, async (req, res) => {
   const id = req.params.id as string;
 
   const inquiry = await prisma.inquiry.findUnique({
     where: { id },
-    include: { flashPiece: { include: { artist: { select: { userId: true, reviewsFlashRequestsBeforeBooking: true } } } } },
+    include: { flashPiece: { include: { artist: { select: { userId: true, flashReviewMode: true } } } } },
   });
   if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
@@ -2381,15 +2401,20 @@ router.post("/:id/flash/approve", requireAuth, async (req, res) => {
 
   const pieceArtist = inquiry.flashPiece?.artist;
   const isOwnArtist = pieceArtist?.userId === req.user!.userId;
-  const artistOwnsApproval = pieceArtist?.reviewsFlashRequestsBeforeBooking ?? false;
+  const artistOwnsApproval = pieceArtist?.flashReviewMode === FlashReviewMode.ARTIST;
 
   if (artistOwnsApproval) {
     if (!isOwnArtist) {
       return res.status(403).json({ error: "Only the assigned artist can approve this flash request" });
     }
-  } else if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.edit"))) {
-    // Permission-context fix: evaluated at the inquiry's own studio.
-    return res.status(403).json({ error: "Forbidden" });
+  } else {
+    const { allowed, viaSoloArtistBypass } = await hasPermissionOrSoloArtistAt(req.user!, inquiry.studioId, "inquiries.edit");
+    if (!allowed) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    if (viaSoloArtistBypass && pieceArtist?.userId !== req.user!.userId) {
+      return res.status(403).json({ error: "As a solo artist, you can only manage your own flash pieces" });
+    }
   }
 
   if (inquiry.status !== InquiryStatus.FLASH_PENDING_APPROVAL) {
@@ -2399,6 +2424,8 @@ router.post("/:id/flash/approve", requireAuth, async (req, res) => {
   const { paymentUrl, flashPaymentSendResult } = await approveFlashRequest(id, req.user!.userId, {
     autoSend: req.body?.autoSend !== false,
   });
+
+  emitInvalidation({ type: "task.changed", studioId: inquiry.studioId });
 
   if (pieceArtist) {
     emitUserInvalidation(pieceArtist.userId, [["tasks", pieceArtist.userId]]);
@@ -2426,16 +2453,16 @@ router.post("/:id/flash/approve", requireAuth, async (req, res) => {
 // hatch staff needs for a one-of-one piece stuck reserved behind a booking
 // that's genuinely never going to complete.
 //
-// Artist review toggle: the artist-inalienable identity bypass (see
+// Review mode expansion: the artist-inalienable identity bypass (see
 // POST /:id/flash/approve's own comment) applies ONLY to declining at
 // FLASH_PENDING_APPROVAL -- the original "should I take this booking"
 // decision the task asked to be theirs. A stalled payment at
 // FLASH_PAYMENT_PENDING is a different concern (administrative cleanup of
 // an abandoned checkout the client already saw and didn't finish, not a
 // business decision about the artist's own work) and stays staff-only
-// regardless of the toggle -- the route comment above already calls this
-// "the manual escape hatch STAFF needs," which the artist toggle was never
-// meant to take away.
+// regardless of the mode -- the route comment above already calls this
+// "the manual escape hatch STAFF needs," which the artist's own mode was
+// never meant to take away.
 router.post("/:id/flash/decline", requireAuth, async (req, res) => {
   const id = req.params.id as string;
   const { reason } = req.body ?? {};
@@ -2446,7 +2473,7 @@ router.post("/:id/flash/decline", requireAuth, async (req, res) => {
 
   const inquiry = await prisma.inquiry.findUnique({
     where: { id },
-    include: { flashPiece: { include: { artist: { select: { userId: true, reviewsFlashRequestsBeforeBooking: true } } } } },
+    include: { flashPiece: { include: { artist: { select: { userId: true, flashReviewMode: true } } } } },
   });
   if (!inquiry || !(await callerBelongsToStudio(req.user!, inquiry.studioId))) {
     return res.status(404).json({ error: "Inquiry not found" });
@@ -2454,15 +2481,21 @@ router.post("/:id/flash/decline", requireAuth, async (req, res) => {
 
   const pieceArtist = inquiry.flashPiece?.artist;
   const isOwnArtist = pieceArtist?.userId === req.user!.userId;
-  const artistOwnsThisDecision = inquiry.status === InquiryStatus.FLASH_PENDING_APPROVAL && (pieceArtist?.reviewsFlashRequestsBeforeBooking ?? false);
+  const artistOwnsThisDecision =
+    inquiry.status === InquiryStatus.FLASH_PENDING_APPROVAL && pieceArtist?.flashReviewMode === FlashReviewMode.ARTIST;
 
   if (artistOwnsThisDecision) {
     if (!isOwnArtist) {
       return res.status(403).json({ error: "Only the assigned artist can decline this flash request" });
     }
-  } else if (!(await hasPermissionAt(req.user!, inquiry.studioId, "inquiries.markLost"))) {
-    // Permission-context fix: evaluated at the inquiry's own studio.
-    return res.status(403).json({ error: "Forbidden" });
+  } else {
+    const { allowed, viaSoloArtistBypass } = await hasPermissionOrSoloArtistAt(req.user!, inquiry.studioId, "inquiries.markLost");
+    if (!allowed) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    if (viaSoloArtistBypass && pieceArtist?.userId !== req.user!.userId) {
+      return res.status(403).json({ error: "As a solo artist, you can only manage your own flash pieces" });
+    }
   }
 
   if (inquiry.status !== InquiryStatus.FLASH_PENDING_APPROVAL && inquiry.status !== InquiryStatus.FLASH_PAYMENT_PENDING) {
@@ -2503,6 +2536,7 @@ router.post("/:id/flash/decline", requireAuth, async (req, res) => {
   });
 
   emitInvalidation({ type: "inquiry.updated", studioId: inquiry.studioId, inquiryId: id });
+  emitInvalidation({ type: "task.changed", studioId: inquiry.studioId });
   if (inquiry.flashPiece?.isOneOfOne) {
     emitInvalidation({ type: "flash.changed", studioId: inquiry.studioId });
   }

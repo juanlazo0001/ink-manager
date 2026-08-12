@@ -3,7 +3,7 @@ import jwt from "jsonwebtoken";
 import { prisma } from "../lib/prisma";
 import { requireAuth } from "../middleware/auth";
 import type { AuthPayload } from "../middleware/auth";
-import { Role } from "../../generated/prisma/enums";
+import { FlashReviewMode, Role } from "../../generated/prisma/enums";
 import type { Prisma } from "../../generated/prisma/client";
 import { hasPermission, requirePermission, requirePermissionOrSelfArtist } from "../lib/permissions";
 import { diffObjects, logAudit } from "../lib/audit";
@@ -295,13 +295,13 @@ router.patch("/:id", requirePermissionOrSelfArtist("artists.manage"), async (req
   // on finish or explicit skip.
   const { profileSetupCompletedAt } = req.body ?? {};
 
-  // Flash requests + artist review toggle: same "self-only, outside every
+  // Flash requests + review mode expansion: same "self-only, outside every
   // other gate" shape as profileSetupCompletedAt above -- artist-owned,
   // full stop, same "no staff bypass exists" precedent as
   // Artist.publishedAt (NOT allowsClientSelfScheduling's studio-manageable
   // pattern a few lines up, since this isn't a studio booking policy, it's
   // the artist's own call on their own art).
-  const { reviewsFlashRequestsBeforeBooking } = req.body ?? {};
+  const { flashReviewMode } = req.body ?? {};
 
   const artist = await prisma.artist.findUnique({
     where: { id },
@@ -394,9 +394,9 @@ router.patch("/:id", requirePermissionOrSelfArtist("artists.manage"), async (req
     }
   }
 
-  if (reviewsFlashRequestsBeforeBooking !== undefined) {
-    if (typeof reviewsFlashRequestsBeforeBooking !== "boolean") {
-      return res.status(400).json({ error: "reviewsFlashRequestsBeforeBooking must be a boolean" });
+  if (flashReviewMode !== undefined) {
+    if (!Object.values(FlashReviewMode).includes(flashReviewMode)) {
+      return res.status(400).json({ error: `flashReviewMode must be one of: ${Object.values(FlashReviewMode).join(", ")}` });
     }
     if (!isSelf) {
       return res.status(403).json({ error: "Only the artist themselves can set their own flash review preference" });
@@ -504,7 +504,7 @@ router.patch("/:id", requirePermissionOrSelfArtist("artists.manage"), async (req
     ...(schedulingBufferMinutes !== undefined ? { schedulingBufferMinutes } : {}),
     ...(allowsClientSelfScheduling !== undefined ? { allowsClientSelfScheduling } : {}),
     ...(profileSetupCompletedAt === true ? { profileSetupCompletedAt: new Date() } : {}),
-    ...(reviewsFlashRequestsBeforeBooking !== undefined ? { reviewsFlashRequestsBeforeBooking } : {}),
+    ...(flashReviewMode !== undefined ? { flashReviewMode } : {}),
   };
 
   const nextServiceIds: string[] | undefined = serviceIds !== undefined ? [...new Set(serviceIds as string[])] : undefined;

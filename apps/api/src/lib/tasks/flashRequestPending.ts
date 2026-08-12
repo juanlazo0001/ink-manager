@@ -1,23 +1,22 @@
 import { prisma } from "../prisma";
-import { InquiryStatus } from "../../../generated/prisma/enums";
+import { FlashReviewMode, InquiryStatus } from "../../../generated/prisma/enums";
 import { truncate, type SystemTask, type TaskSource } from "./types";
 
-// Flash gallery + artist review toggle: front desk's own queue for a
+// Flash gallery + review mode expansion: front desk's own queue for a
 // FLASH_PENDING_APPROVAL inquiry. Scoped to pieces whose artist has
-// reviewsFlashRequestsBeforeBooking OFF -- by construction that status is
-// never actually reached for such a piece (POST /flash-pieces/:id/request
-// auto-approves it instantly instead), so this filter documents the
-// invariant rather than changing today's runtime result. Left in rather
-// than deleted: still the correct fallback if that invariant is ever
-// violated, and every ON-toggle request now belongs to
-// flashRequestArtistPending.ts instead (the artist's own queue, not
-// front desk's -- see that file's comment for why).
+// flashReviewMode STUDIO -- this used to be permanently unreachable dead
+// code (the old boolean's OFF state meant instant auto-approve, never
+// front-desk review; see the removed field's own migration comment
+// history), now genuinely live now that STUDIO exists as its own mode.
+// Every ARTIST-mode request belongs to flashRequestArtistPending.ts
+// instead (the artist's own queue, not front desk's -- see that file's
+// comment for why); NONE never reaches FLASH_PENDING_APPROVAL at all.
 async function fetch(studioId: string, _userId: string): Promise<SystemTask[]> {
   const inquiries = await prisma.inquiry.findMany({
     where: {
       studioId,
       status: InquiryStatus.FLASH_PENDING_APPROVAL,
-      flashPiece: { artist: { reviewsFlashRequestsBeforeBooking: false } },
+      flashPiece: { artist: { flashReviewMode: FlashReviewMode.STUDIO } },
     },
     select: { id: true, description: true, createdAt: true },
     orderBy: { createdAt: "asc" },

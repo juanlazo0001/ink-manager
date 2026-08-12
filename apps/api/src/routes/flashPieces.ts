@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
-import { Channel, FlashPieceStatus, InquiryStatus, Role } from "../../generated/prisma/enums";
+import { Channel, FlashPieceStatus, FlashReviewMode, InquiryStatus, Role } from "../../generated/prisma/enums";
 import { requireAuth } from "../middleware/auth";
 import { hasPermission, requirePermission } from "../lib/permissions";
 import { diffObjects, logAudit } from "../lib/audit";
@@ -245,7 +245,7 @@ router.post("/:id/request", async (req, res) => {
 
   const piece = await prisma.flashPiece.findUnique({
     where: { id },
-    include: { artist: { select: { userId: true, reviewsFlashRequestsBeforeBooking: true } } },
+    include: { artist: { select: { userId: true, flashReviewMode: true } } },
   });
   if (!piece || piece.status !== FlashPieceStatus.AVAILABLE) {
     return res.status(409).json({ error: "This piece is no longer available -- please pick another." });
@@ -369,22 +369,27 @@ router.post("/:id/request", async (req, res) => {
   emitInvalidation({ type: "inquiry.created", studioId });
   emitInvalidation({ type: "flash.changed", studioId });
 
-  // Artist review toggle: OFF means instant booking -- auto-approve right
-  // here, in the same request, reusing the exact mechanics a human
-  // clicking Approve would trigger (see lib/flashApproval.ts). ON means
-  // this sits at FLASH_PENDING_APPROVAL for the assigned artist alone to
-  // act on -- push it to their Tasks page live, the same
-  // emitUserInvalidation pattern the transfer-to-artist epic's own
-  // accept/decline routes use for a personal, not studio-room, target.
-  if (piece.artist.reviewsFlashRequestsBeforeBooking) {
+  // Review mode expansion: three-way now instead of the old boolean's
+  // if/else. ARTIST -- unchanged, push it to the assigned artist's own
+  // Tasks page live (emitUserInvalidation, personal target, same pattern
+  // the transfer-to-artist epic's own accept/decline routes use). STUDIO
+  // -- new: stays at FLASH_PENDING_APPROVAL same as ARTIST, but the
+  // decision belongs to front desk instead -- emitInvalidation's
+  // studio-wide "task.changed" (same event routes/tasks.ts's own mutation
+  // routes already emit) so it shows up live in their queue, not just on
+  // next poll. NONE -- unchanged, auto-approve right here reusing the
+  // exact mechanics a human clicking Approve would trigger (lib/flashApproval.ts).
+  if (piece.artist.flashReviewMode === FlashReviewMode.ARTIST) {
     emitUserInvalidation(piece.artist.userId, [["tasks", piece.artist.userId]]);
+  } else if (piece.artist.flashReviewMode === FlashReviewMode.STUDIO) {
+    emitInvalidation({ type: "task.changed", studioId });
   } else {
     await approveFlashRequest(inquiry.id, null);
   }
 
   // Lets the confirmation screen say something honest: "we'll review this"
   // is wrong when review is off and a payment link already went out.
-  res.status(201).json({ success: true, instantlyApproved: !piece.artist.reviewsFlashRequestsBeforeBooking });
+  res.status(201).json({ success: true, instantlyApproved: piece.artist.flashReviewMode === FlashReviewMode.NONE });
 });
 
 router.use(requireAuth);

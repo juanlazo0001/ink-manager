@@ -1,16 +1,17 @@
 import { prisma } from "../prisma";
-import { InquiryStatus } from "../../../generated/prisma/enums";
+import { FlashReviewMode, InquiryStatus } from "../../../generated/prisma/enums";
 import { truncate, type SystemTask, type TaskSource } from "./types";
 
-// Flash requests + artist review toggle: personal to whoever the flash
+// Flash requests + review mode expansion: personal to whoever the flash
 // piece's own artistId belongs to, not studioId-scoped front-desk work --
 // same reasoning and same "deliberately NOT in TASK_SOURCE_REGISTRY,
 // called directly from routes/tasks.ts's GET / instead, merged into
 // `system` unconditionally regardless of tasks.viewQueue" shape as
 // artistTransferPending.ts. Only ever non-empty for an artist whose own
-// reviewsFlashRequestsBeforeBooking is on -- when it's off, POST
-// /flash-pieces/:id/request auto-approves instantly and this artist never
-// sees a FLASH_PENDING_APPROVAL row for their own pieces at all.
+// flashReviewMode is ARTIST -- STUDIO belongs to flashRequestPending.ts's
+// front-desk queue instead, and NONE auto-approves instantly at
+// POST /flash-pieces/:id/request, so this artist never sees a
+// FLASH_PENDING_APPROVAL row for their own pieces in either of those modes.
 async function fetch(_studioId: string, userId: string): Promise<SystemTask[]> {
   const artist = await prisma.artist.findUnique({ where: { userId }, select: { id: true } });
   if (!artist) return [];
@@ -20,6 +21,7 @@ async function fetch(_studioId: string, userId: string): Promise<SystemTask[]> {
       status: InquiryStatus.FLASH_PENDING_APPROVAL,
       flashPieceId: { not: null },
       assignedArtistId: artist.id,
+      assignedArtist: { flashReviewMode: FlashReviewMode.ARTIST },
     },
     select: { id: true, description: true, createdAt: true },
     orderBy: { createdAt: "asc" },
